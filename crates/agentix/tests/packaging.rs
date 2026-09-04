@@ -14,7 +14,7 @@ fn repository_file(path: &str) -> String {
 fn release_workflow_builds_tag_aligned_native_archives() {
     let workflow = repository_file(".github/workflows/release.yml");
 
-    assert!(workflow.contains("push:\n    tags:\n      - \"v*\""));
+    assert!(workflow.contains("push:\n    tags:\n      - \"[0-9]+.[0-9]+.[0-9]+\""));
     assert!(workflow.contains("workflow_dispatch:"));
     assert!(workflow.contains(".github/scripts/verify-release-version.sh"));
     assert!(workflow.contains("agentix $VERSION"));
