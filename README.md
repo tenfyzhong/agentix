@@ -30,7 +30,24 @@ Each IM conversation is mapped explicitly and durably to an agent session. Live 
 
 ## Quick start
 
-Install the Rust toolchain declared by `rust-toolchain.toml`, then build from source:
+On macOS and Linux, install Agentix with Homebrew:
+
+```sh
+brew tap tenfyzhong/tap
+brew install agentix
+mkdir -p ~/.config/agentix
+cp "$(brew --prefix agentix)/share/agentix/agentix.example.toml" ~/.config/agentix/config.toml
+```
+
+After editing the configuration, run Agentix directly or start it as a Homebrew service:
+
+```sh
+agentix serve
+# Or:
+brew services start tenfyzhong/tap/agentix
+```
+
+To build from source instead, install the Rust toolchain declared by `rust-toolchain.toml`, then run:
 
 ```sh
 make release
@@ -190,7 +207,7 @@ make check
 
 GitHub Actions keeps linting in `ci.yml`. The `tests.yml` workflow runs the full suite on Linux and macOS, and checks the workspace plus the native TCP control suite on Windows. It runs for pull requests and pushes to `main`, and it can also be started manually with `workflow_dispatch`.
 
-Pushing a `v<version>` tag starts the `Release` workflow. The tag version must exactly match `[workspace.package].version` in `Cargo.toml`; a mismatch stops the release before any artifact is published. The workflow builds native archives for macOS arm64, Linux x86_64/arm64, and Windows x86_64, verifies each binary's `--version`, then publishes checksums and a GitHub Release. Homebrew automation and its formula template are present, but the Release workflow does not invoke it while its `publish-homebrew` job remains commented out. The standalone Homebrew workflow can still be run manually for an existing tag and requires `HOMEBREW_TAP_TOKEN`.
+Pushing a `v<version>` tag starts the `Release` workflow. The tag version must exactly match `[workspace.package].version` in `Cargo.toml`; a mismatch stops the release before any artifact is published. The workflow builds native archives for macOS arm64, Linux x86_64/arm64, and Windows x86_64, verifies each binary's `--version`, then publishes checksums and a GitHub Release. After the release is published, the workflow builds a Homebrew bottle, uploads it to the release, and opens or updates the formula PR in `tenfyzhong/homebrew-tap`. Homebrew publishing requires the `HOMEBREW_TAP_TOKEN` repository secret.
 
 Run `make` for a debug build or `make help` to list the available targets.
 

@@ -30,8 +30,9 @@ fn release_workflow_builds_tag_aligned_native_archives() {
     assert!(workflow.contains("agentix-${RELEASE_TAG}-${TARGET}.zip"));
     assert!(workflow.contains("gh release create"));
     assert!(workflow.contains("gh release upload"));
-    assert!(workflow.contains("TODO(homebrew): Enable after the tap is configured"));
-    assert!(!workflow.lines().any(|line| line == "  publish-homebrew:"));
+    assert!(workflow.lines().any(|line| line == "  publish-homebrew:"));
+    assert!(workflow.contains("uses: ./.github/workflows/homebrew.yml"));
+    assert!(workflow.contains("HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}"));
 }
 
 #[test]
@@ -60,7 +61,7 @@ fn release_version_verifier_requires_the_tag_to_match_cargo() {
 }
 
 #[test]
-fn homebrew_workflow_is_manual_until_the_release_call_is_enabled() {
+fn homebrew_workflow_builds_a_bottle_and_updates_the_tap() {
     let workflow = repository_file(".github/workflows/homebrew.yml");
     let formula = repository_file("packaging/homebrew/agentix.rb");
 
@@ -78,4 +79,14 @@ fn homebrew_workflow_is_manual_until_the_release_call_is_enabled() {
     assert!(formula.contains("depends_on \"rust\" => :build"));
     assert!(formula.contains("std_cargo_args(path: \"crates/agentix\")"));
     assert!(formula.contains("assert_match version.to_s"));
+}
+
+#[test]
+fn readme_documents_homebrew_installation_on_macos_and_linux() {
+    let readme = repository_file("README.md");
+
+    assert!(readme.contains("macOS and Linux"));
+    assert!(readme.contains("brew tap tenfyzhong/tap"));
+    assert!(readme.contains("brew install agentix"));
+    assert!(readme.contains("brew services start tenfyzhong/tap/agentix"));
 }
