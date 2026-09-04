@@ -1,4 +1,4 @@
-# Development and Operations
+# Configuration and Operations
 
 ## Configuration
 
@@ -7,6 +7,8 @@ Copy `config/agentix.example.toml` to `$HOME/.config/agentix/config.toml` and se
 Secrets are loaded from the environment variable names in the config. Agentix never needs a Telegram token or Feishu app secret stored in TOML.
 
 Every filesystem path accepts `~` or `~/...` and expands it to the current user's home directory. This includes `storage.path`, agent commands, Pi/OMP session directories, and the path portion of Agentix or Codex `unix://` endpoints. Named-user forms such as `~someone` and environment variables such as `$HOME` are not expanded.
+
+Set `agent.rmux_directory` to choose the workspace used when `/rmux` creates a session, window, or pane; it defaults to the current user's home directory. The former `agent.multiplexer_directory` key remains available as a compatibility alias.
 
 ### Local control endpoint
 
@@ -75,7 +77,7 @@ Send the command to the selected bot in a private chat. The adapter compares it 
 
 ## Feishu app setup
 
-Create a bot application and configure event delivery through a long connection. Enable message receive events and card action callbacks. Grant the minimum bot scopes needed to read messages and send/edit interactive messages. Add the bot to each intended group.
+Create a bot application and configure event delivery through a long connection. Enable message receive events and card action callbacks. Grant the minimum bot scopes needed to read messages and send or edit interactive messages. Reply context requires either `im:message` or `im:message:readonly`; quoting group messages additionally requires `im:message.group_msg`. Add the bot to each intended group.
 
 Agentix requires a mention in groups. The Feishu SDK acknowledges card actions within the callback window before the core executes the action.
 
@@ -126,36 +128,6 @@ RUST_LOG=agentix=debug agentix serve
 
 Tracing timestamps use RFC 3339 in the computer's local time zone and include its UTC offset. For example, a machine configured for Asia/Shanghai emits `2026-09-04T11:42:22.975758+08:00` rather than the equivalent UTC timestamp ending in `Z`.
 
-## Testing
-
-```sh
-cargo fmt --all --check
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo test --workspace --all-features
-```
-
-Tests include an in-memory SQLite state, fake channel/agent orchestration, managed Codex daemon startup, a stateful WebSocket-over-UDS Codex app-server with metadata-only paginated resume and repeated-reconnect attach/history recovery, a reusable fake Pi RPC subprocess, Unix and TCP Agentix control protocols, file-log rotation and retention, graceful service restart/shutdown, and process-level CLI checks. In-process Telegram Bot API and Feishu OpenAPI/WebSocket services exercise the real channel adapters without live credentials or network services. They cover channel startup, inbound messages and actions, authorization, in-memory expiring owner claims for both channels, owner config persistence, command menus, sends and edits, action cleanup, acknowledgements, transport failures, MarkdownV2, and Feishu Card JSON 2.0. Full-stack cases route a real mocked Telegram or Feishu event through the channel adapter and engine to the stateful Codex mock, then verify the completed answer at the channel API. The Feishu mock rotates tenant credentials and injects deterministic API failures so every Agentix-owned OpenAPI call site is checked for one-shot `99991663` recovery, retry exhaustion, unrelated-error pass-through, and refresh failure without message replay.
-
-The rmux boundary is exercised through typed SDK-to-domain mapping tests, the core workspace-runtime port, and a Unix-socket mock daemon that decodes the actual `rmux-proto` packets emitted by `rmux-sdk` for pane input, process respawn, session creation, window creation, and pane splitting. A live rmux daemon remains an environment smoke test because its server implementation belongs to rmux rather than Agentix.
-
-CI runs all platform-applicable workspace tests on Linux, macOS, and Windows, so the TCP control suite executes natively on every supported control-server platform. The Codex app-server backend itself remains unavailable on Windows because the supported Codex transport is a Unix socket.
-
-The GitHub Actions `Tests` workflow runs for pull requests and pushes to `main`, and supports manual dispatch. Its platform matrix installs `protoc`, runs `cargo test --workspace --all-features` on Linux and macOS, and checks the workspace plus the TCP control tests on Windows. Formatting and Clippy remain in the separate `CI` workflow.
-
-## Publishing releases
-
-The workspace version in `[workspace.package]` is the release source of truth. Update it and `Cargo.lock` in the release commit, then create a matching tag such as `v0.2.0`. `.github/scripts/verify-release-version.sh` strips only the optional leading `v` and rejects a tag that is not semantic versioning or does not exactly match the workspace version.
-
-Pushing the tag runs the `Release` workflow, which:
-
-1. verifies that the tag points at the checked-out commit and matches the Cargo version;
-2. builds native `agentix` binaries for macOS arm64, Linux x86_64/arm64, and Windows x86_64;
-3. verifies `agentix --version` against the tag;
-4. publishes `.tar.gz` archives, a Windows `.zip`, `SHA256SUMS`, and generated notes to the matching GitHub Release;
-5. invokes the Homebrew workflow after the GitHub Release is available.
-
-The `Homebrew` workflow validates the same tag again, builds an arm64 macOS bottle from `packaging/homebrew/agentix.rb`, uploads the bottle to the matching release, merges its checksum into the formula, and opens or updates a PR in `tenfyzhong/homebrew-tap`. It is invoked automatically after a tag release and remains manually runnable for an existing tag. Both paths require a configured `HOMEBREW_TAP_TOKEN` with permission to create branches and pull requests.
-
 ## Compatibility and limits
 
 - Rust 1.95 or newer is required by the pinned Feishu SDK.
@@ -167,12 +139,4 @@ The `Homebrew` workflow validates the same tag again, builds an arm64 macOS bott
 - Codex's persistent queue API is experimental. External queue entries execute automatically, but Codex CLI 0.153.0 keeps Tab-submitted follow-ups in a private, in-process TUI queue and ignores `thread/queue/changed`. That local queue and the app-server queue used by Agentix do not synchronize or deduplicate through the official protocol. The TUI may not show an Agentix queue entry until its turn starts, and Agentix cannot list a Tab-queued TUI entry; `/queue` is authoritative only for the app-server queue. If both queues contain input when a turn ends, each owner may try to submit its next item, producing back-to-back turns with no shared ordering guarantee. Do not use both queues concurrently for the same session.
 - Claude Code support is deferred until a stable, authenticated control transport and approval protocol are selected.
 
-## Release checklist
-
-1. Run formatting, clippy, all tests, and documentation tests.
-2. Run `agentix doctor` against the intended runtime user.
-3. Verify the selected channel's owner allowlist and group mention behavior.
-4. Exercise two concurrent sessions and confirm their cards update independently.
-5. Restart Agentix during an active turn and verify its original message receives a fresh Stop action, then completes in place.
-6. Restart the Codex daemon and verify reconnect plus subscription recovery.
-7. Start a fresh Codex TUI without sending a message, select its `Untitled` item from `/sessions`, and verify that Agentix attaches with empty history; send the first IM prompt and verify that the session materializes and resumes.
+For the development workflow, test architecture, CI, and release process, see [Contributing to Agentix](../CONTRIBUTING.md).

@@ -67,6 +67,20 @@ cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 ```
 
+The test suite is layered. Protocol and rendering tests cover pure mappings; adapter tests cover Telegram, Feishu, Pi, and Codex transports; and core tests exercise routing, persistence, actions, interactions, and lifecycle transitions. Full-stack tests pass mocked Telegram and Feishu events through the channel adapter, engine, and Codex client before verifying the completed response at the channel API.
+
+Codex uses a stateful mock app-server under `crates/agentix-codex/tests/support/`. It follows the Codex CLI 0.153.0 protocol subset used by Agentix, including session lifecycle, settings, approvals, input questions, pagination, failures, and reconnects. Telegram and Feishu use in-process API services, Pi uses a reusable fake RPC subprocess, and rmux tests exchange typed SDK packets with a Unix-socket mock daemon. These fixtures keep the suite deterministic and independent of live credentials, public networks, local session data, and running daemons.
+
+GitHub Actions keeps formatting and Clippy in `ci.yml`. The `tests.yml` workflow runs the full suite on Linux and macOS and checks the workspace plus the native TCP control suite on Windows. It runs for pull requests and pushes to `main`, and supports manual dispatch.
+
+## Workspace architecture
+
+The main crates are `agentix-core`, `agentix-codex`, `agentix-pi`, `agentix-telegram`, `agentix-feishu`, and the `agentix` executable.
+
+The core exposes a small common agent interface plus optional queue, attached-session control, and workspace-runtime ports. A serialized runtime loop feeds IM and agent events into coordinator-owned session, turn, interaction, and rmux state. See the [architecture document](docs/architecture.md) for the state/effect and retry boundaries.
+
+Run `make` for a debug build, `make release` for a release build, or `make help` to list the available targets.
+
 ## Code and documentation style
 
 - Follow rustfmt and the workspace Clippy configuration.
@@ -114,4 +128,22 @@ Review feedback should normally be addressed with additional commits. Keep the p
 
 Before tagging a release, update `[workspace.package].version` in `Cargo.toml` and refresh `Cargo.lock`. Create a tag with the same version and an optional leading `v`, for example `v0.2.0`; the release workflow rejects mismatches instead of rewriting package metadata during publishing.
 
-The `Release` workflow publishes native archives and then invokes the Homebrew workflow to build a bottle and update `tenfyzhong/homebrew-tap`. The Homebrew job requires the `HOMEBREW_TAP_TOKEN` repository secret. See `docs/development-and-operations.md` for the complete artifact flow.
+Pushing the tag starts the `Release` workflow, which:
+
+1. verifies that the tag points at the checked-out commit and matches the Cargo version;
+2. builds native binaries for macOS arm64, Linux x86_64/arm64, and Windows x86_64;
+3. verifies each binary's `--version` against the tag;
+4. publishes native archives, `SHA256SUMS`, and generated notes to the matching GitHub Release;
+5. invokes the Homebrew workflow after the GitHub Release is available.
+
+The Homebrew workflow builds an arm64 macOS bottle from `packaging/homebrew/agentix.rb`, uploads it to the release, updates the formula, and opens or updates a PR in `tenfyzhong/homebrew-tap`. Automatic and manually dispatched publishing both require a `HOMEBREW_TAP_TOKEN` with permission to create branches and pull requests.
+
+Before tagging a release:
+
+1. Run formatting, Clippy, all tests, and documentation tests.
+2. Run `agentix doctor` as the intended runtime user.
+3. Verify the selected channel's owner allowlist and group mention behavior.
+4. Exercise concurrent sessions and confirm their cards update independently.
+5. Restart Agentix during an active turn and verify that the original message recovers its Stop action and completes in place.
+6. Restart the Codex daemon and verify reconnect and subscription recovery.
+7. Attach a fresh Codex TUI before its first prompt, send that prompt from IM, and verify that the session materializes and resumes.
