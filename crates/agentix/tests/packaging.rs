@@ -1,3 +1,4 @@
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -16,7 +17,9 @@ fn release_workflow_builds_tag_aligned_native_archives() {
 
     assert!(workflow.contains("push:\n    tags:\n      - \"[0-9]+.[0-9]+.[0-9]+\""));
     assert!(workflow.contains("workflow_dispatch:"));
-    assert!(workflow.contains(".github/scripts/verify-release-version.sh"));
+    assert!(workflow.contains(".github/scripts/release-version.sh"));
+    assert!(workflow.contains(".github/scripts/set-release-version.sh"));
+    assert!(workflow.contains("Set release version"));
     assert!(workflow.contains("agentix $VERSION"));
     for target in [
         "aarch64-apple-darwin",
@@ -36,27 +39,71 @@ fn release_workflow_builds_tag_aligned_native_archives() {
 }
 
 #[test]
-fn release_version_verifier_requires_the_tag_to_match_cargo() {
-    let script = repository_root().join(".github/scripts/verify-release-version.sh");
-    let expected = env!("CARGO_PKG_VERSION");
-    let accepted = Command::new(&script)
-        .arg(format!("v{expected}"))
-        .current_dir(repository_root())
-        .output()
-        .unwrap();
-    assert!(accepted.status.success());
-    assert_eq!(String::from_utf8(accepted.stdout).unwrap().trim(), expected);
+fn workspace_uses_a_development_version_until_release_packaging() {
+    assert_eq!(env!("CARGO_PKG_VERSION"), "0.0.0-dev");
+}
 
-    let rejected = Command::new(script)
-        .arg("v999.0.0")
+#[test]
+fn release_version_setter_updates_workspace_packages_from_the_tag() {
+    let temporary_repository = tempfile::tempdir().unwrap();
+    let manifest = temporary_repository.path().join("Cargo.toml");
+    let lockfile = temporary_repository.path().join("Cargo.lock");
+    let crate_directory = temporary_repository.path().join("crates/agentix");
+    fs::create_dir_all(&crate_directory).unwrap();
+    fs::write(
+        &manifest,
+        "[workspace]\nmembers = [\"crates/agentix\"]\n\n[workspace.package]\nversion = \"0.0.0-dev\"\n",
+    )
+    .unwrap();
+    fs::write(
+        crate_directory.join("Cargo.toml"),
+        "[package]\nname = \"agentix\"\nversion.workspace = true\n",
+    )
+    .unwrap();
+    fs::write(
+        &lockfile,
+        "version = 4\n\n[[package]]\nname = \"agentix\"\nversion = \"0.0.0-dev\"\n\n[[package]]\nname = \"unrelated\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+
+    let script = repository_root().join(".github/scripts/set-release-version.sh");
+    let rejected = Command::new(&script)
+        .args([
+            "not-a-version",
+            manifest.to_str().unwrap(),
+            lockfile.to_str().unwrap(),
+        ])
         .current_dir(repository_root())
         .output()
         .unwrap();
     assert!(!rejected.status.success());
     assert!(
-        String::from_utf8(rejected.stderr)
+        fs::read_to_string(&manifest)
             .unwrap()
-            .contains("does not match workspace version")
+            .contains("version = \"0.0.0-dev\"")
+    );
+
+    let prepared = Command::new(script)
+        .args([
+            "v1.2.3",
+            manifest.to_str().unwrap(),
+            lockfile.to_str().unwrap(),
+        ])
+        .current_dir(repository_root())
+        .output()
+        .unwrap();
+    assert!(prepared.status.success());
+    assert_eq!(String::from_utf8(prepared.stdout).unwrap().trim(), "1.2.3");
+    assert!(
+        fs::read_to_string(manifest)
+            .unwrap()
+            .contains("version = \"1.2.3\"")
+    );
+    let updated_lockfile = fs::read_to_string(lockfile).unwrap();
+    assert!(updated_lockfile.contains("name = \"agentix\"\nversion = \"1.2.3\""));
+    assert!(
+        updated_lockfile.contains("name = \"unrelated\"\nversion = \"0.1.0\""),
+        "unrelated packages must not be changed"
     );
 }
 
@@ -74,6 +121,8 @@ fn homebrew_workflow_builds_a_bottle_and_updates_the_tap() {
     assert!(workflow.contains("brew bottle --json --no-rebuild"));
     assert!(workflow.contains("gh release upload"));
     assert!(workflow.contains("peter-evans/create-pull-request@v7"));
+    assert!(workflow.contains(".github/scripts/release-version.sh"));
+    assert!(formula.contains(".github/scripts/set-release-version.sh"));
     assert!(formula.contains("class Agentix < Formula"));
     assert!(formula.contains("depends_on \"protobuf\" => :build"));
     assert!(formula.contains("depends_on \"rust\" => :build"));

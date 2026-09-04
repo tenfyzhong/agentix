@@ -126,17 +126,17 @@ Review feedback should normally be addressed with additional commits. Keep the p
 
 ## Releases
 
-Before tagging a release, update `[workspace.package].version` in `Cargo.toml` and refresh `Cargo.lock`. Create a tag with the same version and an optional leading `v`, for example `v0.2.0`; the release workflow rejects mismatches instead of rewriting package metadata during publishing.
+The repository keeps `[workspace.package].version` and its workspace entries in `Cargo.lock` at `0.0.0-dev`. Create a semantic-version tag with an optional leading `v`, for example `v0.2.0`. The release workflow derives the release version from that tag and updates the checked-out Cargo metadata before compiling; release versions are not committed to the development branch.
 
 Pushing the tag starts the `Release` workflow, which:
 
-1. verifies that the tag points at the checked-out commit and matches the Cargo version;
-2. builds native binaries for macOS arm64, Linux x86_64/arm64, and Windows x86_64;
+1. verifies that the tag points at the checked-out commit and contains a supported semantic version;
+2. applies that version to the workspace manifest and lockfile, then builds native binaries for macOS arm64, Linux x86_64/arm64, and Windows x86_64;
 3. verifies each binary's `--version` against the tag;
 4. publishes native archives, `SHA256SUMS`, and generated notes to the matching GitHub Release;
 5. invokes the Homebrew workflow after the GitHub Release is available.
 
-The Homebrew workflow builds an arm64 macOS bottle from `packaging/homebrew/agentix.rb`, uploads it to the release, updates the formula, and opens or updates a PR in `tenfyzhong/homebrew-tap`. Automatic and manually dispatched publishing both require a `HOMEBREW_TAP_TOKEN` with permission to create branches and pull requests.
+The Homebrew formula applies its source tag version to the Cargo metadata before its locked source build. The workflow builds an arm64 macOS bottle, uploads it to the release, updates the formula, and opens or updates a PR in `tenfyzhong/homebrew-tap`. Automatic and manually dispatched publishing both require a `HOMEBREW_TAP_TOKEN` with permission to create branches and pull requests.
 
 Before tagging a release:
 
