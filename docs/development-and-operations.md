@@ -1,0 +1,178 @@
+# Development and Operations
+
+## Configuration
+
+Copy `config/agentix.example.toml` to `$HOME/.config/agentix/config.toml` and select exactly one agent backend. This is the default path when `--config` is omitted. The required `[channel].kind` field selects exactly one active IM transport: `telegram` or `feishu`. Its matching `[channel.telegram]` or `[channel.feishu]` table must exist. Either channel may start with an empty owner list so its one-time claim flow can initialize the allowlist. The inactive nested channel table may remain in the file, but Agentix does not validate its owner list, read its credentials, or start its adapter.
+
+Secrets are loaded from the environment variable names in the config. Agentix never needs a Telegram token or Feishu app secret stored in TOML.
+
+Every filesystem path accepts `~` or `~/...` and expands it to the current user's home directory. This includes `storage.path`, agent commands, Pi/OMP session directories, and the path portion of Agentix or Codex `unix://` endpoints. Named-user forms such as `~someone` and environment variables such as `$HOME` are not expanded.
+
+### Local control endpoint
+
+`agentix serve` exposes a local newline-delimited JSON control endpoint used by every `agentix client` subcommand. The platform defaults are:
+
+- macOS/Linux: `unix://~/.local/share/agentix/control.sock`
+- Windows: `tcp://127.0.0.1:32198`
+
+Override the endpoint with `[server].endpoint`. Explicit TCP endpoints are accepted on every platform but must use a numeric loopback address; remote binds are rejected. On Unix, Agentix creates parent directories, sets the socket mode to `0600`, rejects a live duplicate server, removes a stale socket, and removes its socket on graceful shutdown.
+
+The control protocol handles one request and one response per connection. `client sessions` goes through the running adapter, `client call` is passed through the server's existing Codex app-server connection, and `client claim` creates claim state inside the running server. Consequently, all client commands require `agentix serve` to be running and use the same backend state as the IM channel.
+
+### Codex
+
+The Codex adapter requires Codex CLI 0.153.0 or newer from OpenAI's official standalone installer:
+
+```sh
+curl -fsSL https://chatgpt.com/codex/install.sh | sh
+```
+
+The Homebrew package is not compatible with this integration because it does not install the managed standalone app-server layout. Configure `agent.command = "~/.codex/packages/standalone/current/codex"`; do not point Agentix at a Homebrew `codex` executable.
+
+Agentix starts the managed daemon automatically when the default control socket is missing or refusing connections, waits for it to become ready, and then completes the app-server handshake. Verify the integration with:
+
+```sh
+~/.codex/packages/standalone/current/codex --version
+~/.codex/packages/standalone/current/codex app-server daemon version
+agentix doctor
+```
+
+`endpoint = "unix://"` resolves to the current Codex home control socket. `command = "codex"` selects the executable used for `codex app-server daemon start`; use an absolute or `~/...` path when the service environment has a restricted `PATH`. A custom endpoint must resolve to an absolute Unix socket path, for example `unix://~/.codex/custom.sock`, and is never auto-started. TCP WebSocket endpoints are intentionally rejected by this release.
+
+For the managed `unix://` endpoint, Agentix uses `ps` and `lsof` to correlate interactive Codex TUI processes with standalone writer locks and daemon-backed threads. Both commands must be available on `PATH`. Inactive sessions persisted on disk and orphaned daemon threads are not listed. Custom socket endpoints fall back to the app-server's `thread/loaded/list` view.
+
+### Pi
+
+Configure the executable and session root, normally `~/.pi/agent/sessions`. The executable must support `--mode rpc` and `--session <path|id>`.
+
+### Oh My Pi
+
+Configure `kind = "oh-my-pi"`, the `omp` executable, and its JSONL session root. Agentix resumes each file with `--resume` and uses protocol-v1 JSONL framing for compatibility.
+
+## Owner claim setup
+
+For first-time Telegram or Feishu setup, omit the selected channel's owner list or set it to `[]`:
+
+- Telegram: `channel.telegram.owner_user_ids`
+- Feishu: `channel.feishu.owner_open_ids`
+
+Start `agentix serve`, then generate a temporary claim code from another local terminal:
+
+```sh
+agentix client claim
+agentix client claim --ttl-minutes 30
+```
+
+The command prints a ready-to-send line such as:
+
+```text
+/claim 12AB34CD56EF
+```
+
+The default lifetime is 10 minutes; `--ttl-minutes` accepts 1 through 1440. The plaintext is written only to the command's stdout and is never logged. The running server keeps one pending code and its expiry only in memory. Generating a new code replaces the previous code, and restarting `serve` invalidates it. Neither the code, a hash, nor its expiry is written to TOML or SQLite.
+
+Send the command to the selected bot in a private chat. The adapter compares it with the shared in-memory registry and obtains the numeric Telegram user ID or Feishu `open_id` from the official message event. A successful match atomically adds that ID to the selected channel's owner list in the config file, consumes the code, and enables the owner immediately. There is no `--write` option or restart step. The claim message is consumed by the channel and is never forwarded to the coding agent. Generation exists only through the local Agentix control client; it is not available from remote IM. Claims are rejected after expiry, after the first success, when an owner is already configured, and in group messages.
+
+## Feishu app setup
+
+Create a bot application and configure event delivery through a long connection. Enable message receive events and card action callbacks. Grant the minimum bot scopes needed to read messages and send/edit interactive messages. Add the bot to each intended group.
+
+Agentix requires a mention in groups. The Feishu SDK acknowledges card actions within the callback window before the core executes the action.
+
+## Telegram bot setup
+
+Create a bot token and set the token environment variable. Add numeric owner user IDs directly or initialize the first owner through the claim flow above. In group chats, privacy mode and bot permissions must still allow mentioned messages to reach the bot. Agentix ignores unmentioned group text.
+
+At channel startup, Agentix registers the detached `sessions`, `rmux`, `cancel`, and `help` menu with Telegram and selects the commands menu button for private chats. After attachment it registers the extended session-command menu, including clickable `/model` and `/reasoning` selectors; `/thinking` is not exposed. Menu registration is refreshed on every restart, so BotFather command configuration is not required. `/attach` is intentionally omitted from the menu because it requires a session ID; use the title buttons from `/sessions` instead.
+
+## Service operation
+
+Run in the foreground:
+
+```sh
+RUST_LOG=agentix=info agentix serve
+```
+
+Without `RUST_LOG`, `[logging].level` supplies the tracing filter. `[logging.file]` can enable a second, ANSI-free destination with a Home-relative path, `never`, `minutely`, `hourly`, or `daily` rotation, and a positive `max_files` retention count. Agentix creates the parent directory before initializing the appender. Both stderr and file logs use the computer's local RFC 3339 time.
+
+Use the operating system's user service manager for production. Run the process as the same user that owns the coding-agent session files and Codex socket. Restrict config and environment files to that user.
+
+Graceful shutdown cancels channel listeners, stops inbound/event loops, checkpoints SQLite WAL state, removes live turn controls, restores detached IM menus, and sends an offline notification. Durable bindings are retained without stopping the coding-agent session. Channel adapters share one five-second shutdown deadline, so multiple adapters do not multiply the wait. Active turn text, status, owner context, and IM message references are checkpointed so a restart refreshes the existing Stop action and later completion edits the original message instead of creating a duplicate.
+
+At startup, Agentix sends an online notification to each conversation with a saved binding and automatically reattaches sessions that remain available. If the agent rejects a saved session because it is no longer attachable, Agentix removes that stale binding, keeps the IM detached, and reports the result. For the managed Codex socket, Agentix polls the local interactive process set every two seconds and confirms an attached-session exit after two consecutive missing snapshots. It then notifies the bound IM conversation, removes live controls, and suspends the binding while continuing to watch that session ID. Running `codex resume` for the same session restores the app-server subscription and IM binding automatically. A manual detach or attaching another session cancels that watch. App-server disconnects, `thread/closed`, and `notLoaded` do not suspend the durable binding. Custom Codex sockets do not automatically detect process exit or resume because their process tree is not locally discoverable.
+
+## Diagnostics
+
+`agentix doctor` checks:
+
+- TOML structure and selected-channel owner configuration
+- required credential environment variables without printing values
+- state directory existence
+- Codex managed-daemon startup plus initialize/list handshake, or Pi/OMP executable and session discovery
+
+Useful operational checks:
+
+```sh
+agentix doctor
+agentix client sessions
+agentix client call thread/loaded/list --params '{"limit":10}' | jq
+agentix client call thread/queue/list --params '{"threadId":"019...","limit":100}' | jq
+agentix client claim --ttl-minutes 10
+codex app-server daemon version
+RUST_LOG=agentix=debug agentix serve
+```
+
+`agentix client sessions` works with every configured backend and emits a normalized JSON page. `agentix client call` is Codex-specific and asks `serve` to send the supplied JSON parameters over its existing app-server connection. Diagnostic JSON is written to stdout and tracing output to stderr. If `serve` is unavailable, the client reports that it could not connect to the configured Agentix control endpoint.
+
+Tracing timestamps use RFC 3339 in the computer's local time zone and include its UTC offset. For example, a machine configured for Asia/Shanghai emits `2026-09-04T11:42:22.975758+08:00` rather than the equivalent UTC timestamp ending in `Z`.
+
+## Testing
+
+```sh
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace --all-features
+```
+
+Tests include an in-memory SQLite state, fake channel/agent orchestration, managed Codex daemon startup, a stateful WebSocket-over-UDS Codex app-server with metadata-only paginated resume and repeated-reconnect attach/history recovery, a reusable fake Pi RPC subprocess, Unix and TCP Agentix control protocols, file-log rotation and retention, graceful service restart/shutdown, and process-level CLI checks. In-process Telegram Bot API and Feishu OpenAPI/WebSocket services exercise the real channel adapters without live credentials or network services. They cover channel startup, inbound messages and actions, authorization, in-memory expiring owner claims for both channels, owner config persistence, command menus, sends and edits, action cleanup, acknowledgements, transport failures, MarkdownV2, and Feishu Card JSON 2.0. Full-stack cases route a real mocked Telegram or Feishu event through the channel adapter and engine to the stateful Codex mock, then verify the completed answer at the channel API. The Feishu mock rotates tenant credentials and injects deterministic API failures so every Agentix-owned OpenAPI call site is checked for one-shot `99991663` recovery, retry exhaustion, unrelated-error pass-through, and refresh failure without message replay.
+
+The rmux boundary is exercised through typed SDK-to-domain mapping tests, the core workspace-runtime port, and a Unix-socket mock daemon that decodes the actual `rmux-proto` packets emitted by `rmux-sdk` for pane input, process respawn, session creation, window creation, and pane splitting. A live rmux daemon remains an environment smoke test because its server implementation belongs to rmux rather than Agentix.
+
+CI runs all platform-applicable workspace tests on Linux, macOS, and Windows, so the TCP control suite executes natively on every supported control-server platform. The Codex app-server backend itself remains unavailable on Windows because the supported Codex transport is a Unix socket.
+
+The GitHub Actions `Tests` workflow runs for pull requests and pushes to `main`, and supports manual dispatch. Its platform matrix installs `protoc`, runs `cargo test --workspace --all-features` on Linux and macOS, and checks the workspace plus the TCP control tests on Windows. Formatting and Clippy remain in the separate `CI` workflow.
+
+## Publishing releases
+
+The workspace version in `[workspace.package]` is the release source of truth. Update it and `Cargo.lock` in the release commit, then create a matching tag such as `v0.2.0`. `.github/scripts/verify-release-version.sh` strips only the optional leading `v` and rejects a tag that is not semantic versioning or does not exactly match the workspace version.
+
+Pushing the tag runs the `Release` workflow, which:
+
+1. verifies that the tag points at the checked-out commit and matches the Cargo version;
+2. builds native `agentix` binaries for macOS arm64, Linux x86_64/arm64, and Windows x86_64;
+3. verifies `agentix --version` against the tag;
+4. publishes `.tar.gz` archives, a Windows `.zip`, `SHA256SUMS`, and generated notes to the matching GitHub Release;
+5. leaves the prepared Homebrew publishing stage disabled until the tap is configured.
+
+The prepared `Homebrew` workflow validates the same tag again, builds an arm64 macOS bottle from `packaging/homebrew/agentix.rb`, uploads the bottle to the matching release, merges its checksum into the formula, and opens or updates a PR in `tenfyzhong/homebrew-tap`. Its call from `Release` is commented out, so tag releases do not publish Homebrew automatically. The standalone workflow remains manually runnable for an existing tag and requires a configured `HOMEBREW_TAP_TOKEN` with permission to create branches and pull requests. Uncomment the `publish-homebrew` job in `release.yml` when automatic publishing should be enabled.
+
+## Compatibility and limits
+
+- Rust 1.95 or newer is required by the pinned Feishu SDK.
+- The Codex backend requires the official standalone Codex CLI 0.153.0 or newer. Homebrew installations do not include the managed app-server layout required by Agentix.
+- One service process selects one agent backend and one IM channel. Run separate config/state instances to expose different backends or channels at the same time.
+- Telegram converts standard Markdown in quoted agent replies to MarkdownV2 for sends and streamed edits, preserving paragraph and list boundaries inside the quote. Automatic link previews are disabled to keep structured bot responses free of unrelated webpage cards. Rendered output is conservatively bounded to 4,096 UTF-8 bytes.
+- Feishu card body output is bounded before transport.
+- Pi/OMP session listing scans JSONL files recursively; very large stores should be indexed in a later release.
+- Codex's persistent queue API is experimental. External queue entries execute automatically, but Codex CLI 0.153.0 keeps Tab-submitted follow-ups in a private, in-process TUI queue and ignores `thread/queue/changed`. That local queue and the app-server queue used by Agentix do not synchronize or deduplicate through the official protocol. The TUI may not show an Agentix queue entry until its turn starts, and Agentix cannot list a Tab-queued TUI entry; `/queue` is authoritative only for the app-server queue. If both queues contain input when a turn ends, each owner may try to submit its next item, producing back-to-back turns with no shared ordering guarantee. Do not use both queues concurrently for the same session.
+- Claude Code support is deferred until a stable, authenticated control transport and approval protocol are selected.
+
+## Release checklist
+
+1. Run formatting, clippy, all tests, and documentation tests.
+2. Run `agentix doctor` against the intended runtime user.
+3. Verify the selected channel's owner allowlist and group mention behavior.
+4. Exercise two concurrent sessions and confirm their cards update independently.
+5. Restart Agentix during an active turn and verify its original message receives a fresh Stop action, then completes in place.
+6. Restart the Codex daemon and verify reconnect plus subscription recovery.
+7. Start a fresh Codex TUI without sending a message, select its `Untitled` item from `/sessions`, and verify that Agentix attaches with empty history; send the first IM prompt and verify that the session materializes and resumes.

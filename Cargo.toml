@@ -1,0 +1,58 @@
+[workspace]
+members = [
+  "crates/agentix",
+  "crates/agentix-codex",
+  "crates/agentix-core",
+  "crates/agentix-feishu",
+  "crates/agentix-pi",
+  "crates/agentix-telegram",
+]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+license = "MIT"
+repository = "https://github.com/tenfyzhong/agentix"
+
+[workspace.dependencies]
+anyhow = "1.0"
+async-trait = "0.1"
+clap = { version = "4.5", features = ["derive"] }
+futures-util = "0.3"
+dirs = "6.0"
+prost = "0.13"
+rmux-proto = "0.10.0"
+rmux-sdk = { version = "0.10.0", default-features = false }
+larksuite-oapi-sdk-rs = { version = "=0.3.11", features = ["channel"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "migrate"] }
+thiserror = "2.0"
+tempfile = "3.23"
+teloxide = { version = "0.17.0", default-features = false, features = ["rustls"] }
+telegram-markdown-v2 = "0.2.2"
+time = { version = "0.3", features = ["local-offset"] }
+tokio = { version = "1.48", features = ["full"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+tokio-tungstenite = "0.28"
+tracing = "0.1"
+tracing-appender = "0.2"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "local-time"] }
+toml = "0.9"
+toml_edit = "0.25"
+url = "2.5"
+uuid = { version = "1.18", features = ["v4", "serde"] }
+walkdir = "2.5"
+
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+format_push_string = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"

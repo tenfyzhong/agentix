@@ -1,0 +1,56 @@
+# Defaults to unix://~/.local/share/agentix/control.sock on macOS/Linux and
+# tcp://127.0.0.1:32198 on Windows. TCP must use a numeric loopback address.
+# [server]
+# endpoint = "unix://~/.local/share/agentix/control.sock"
+
+[logging]
+# Used unless RUST_LOG is set.
+level = "info"
+
+[logging.file]
+enabled = false
+path = "~/.local/state/agentix/agentix.log"
+# never, minutely, hourly, or daily
+rotation = "daily"
+max_files = 7
+
+[agent]
+kind = "codex"
+# Agentix requires Codex CLI 0.153.0+ from the official standalone installer.
+# Homebrew does not install the managed app-server layout.
+command = "~/.codex/packages/standalone/current/codex"
+endpoint = "unix://"
+# Used by /rmux when creating a session, window, or pane. Defaults to Home.
+rmux_directory = "~"
+
+# To use Pi instead:
+# [agent]
+# kind = "pi"
+# command = "pi"
+# session_dir = "~/.pi/agent/sessions"
+
+# To use Oh My Pi instead:
+# [agent]
+# kind = "oh-my-pi"
+# command = "omp"
+# session_dir = "~/.omp/agent/sessions"
+
+[storage]
+path = "~/.local/share/agentix/state.sqlite3"
+
+[channel]
+kind = "telegram"
+
+[channel.telegram]
+token_env = "AGENTIX_TELEGRAM_TOKEN"
+# Leave this empty or omit it on first setup. Run `agentix client claim` locally,
+# then send the printed `/claim <code>` in a private chat to fill it automatically.
+owner_user_ids = []
+
+# To use Feishu, set `channel.kind = "feishu"` above and configure this section.
+# [channel.feishu]
+# app_id_env = "AGENTIX_FEISHU_APP_ID"
+# app_secret_env = "AGENTIX_FEISHU_APP_SECRET"
+# Leave this empty or omit it on first setup. Run `agentix client claim` locally,
+# then send the printed `/claim <code>` in a private chat to fill it automatically.
+# owner_open_ids = []

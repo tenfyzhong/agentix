@@ -1,0 +1,185 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing Git tag to publish
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  resolve-version:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+      - name: Verify tag and workspace version
+        id: release
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          PUSHED_TAG: ${{ github.ref_name }}
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            release_tag="$INPUT_TAG"
+          else
+            release_tag="$PUSHED_TAG"
+          fi
+
+          tag_commit="$(git rev-parse --verify "refs/tags/${release_tag}^{commit}")"
+          head_commit="$(git rev-parse HEAD)"
+          if [[ "$tag_commit" != "$head_commit" ]]; then
+            echo "Tag '$release_tag' does not point at the checked-out commit" >&2
+            exit 1
+          fi
+
+          version="$(.github/scripts/verify-release-version.sh "$release_tag")"
+          echo "tag=$release_tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  build-release-binaries:
+    needs: resolve-version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15
+            target: aarch64-apple-darwin
+          - runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-version.outputs.tag }}
+      - name: Install protobuf compiler on Linux
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes protobuf-compiler
+      - name: Install protobuf compiler on macOS
+        if: runner.os == 'macOS'
+        run: brew install protobuf
+      - name: Install protobuf compiler on Windows
+        if: runner.os == 'Windows'
+        run: choco install protoc --yes --no-progress
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.95.0
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: release-${{ matrix.target }}
+      - name: Build release binary
+        run: cargo build --locked --release --target "${{ matrix.target }}" --package agentix
+      - name: Verify binary version
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          VERSION: ${{ needs.resolve-version.outputs.version }}
+        run: |
+          binary="target/$TARGET/release/agentix"
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            binary="${binary}.exe"
+          fi
+          version_output="$("$binary" --version)"
+          if [[ "$version_output" != "agentix $VERSION" ]]; then
+            echo "Binary version '$version_output' does not match tag version '$VERSION'" >&2
+            exit 1
+          fi
+      - name: Package release binary
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ needs.resolve-version.outputs.tag }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          mkdir -p dist/stage
+          cp README.md LICENSE config/agentix.example.toml dist/stage/
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            cp "target/$TARGET/release/agentix.exe" dist/stage/
+            tar -C dist/stage -czf "dist/agentix-${RELEASE_TAG}-${TARGET}.tar.gz" .
+            tar -C dist/stage -a -cf "dist/agentix-${RELEASE_TAG}-${TARGET}.zip" .
+          else
+            cp "target/$TARGET/release/agentix" dist/stage/
+            tar -C dist/stage -czf "dist/agentix-${RELEASE_TAG}-${TARGET}.tar.gz" .
+          fi
+      - name: Upload release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentix-${{ matrix.target }}
+          path: |
+            dist/agentix-*.tar.gz
+            dist/agentix-*.zip
+          if-no-files-found: error
+
+  publish-release:
+    needs:
+      - resolve-version
+      - build-release-binaries
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: agentix-*
+          path: dist
+          merge-multiple: true
+      - name: Create checksums
+        working-directory: dist
+        run: sha256sum agentix-* > SHA256SUMS
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.resolve-version.outputs.tag }}
+        run: |
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "GitHub release '$RELEASE_TAG' already exists"
+          else
+            gh release create "$RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --verify-tag \
+              --generate-notes \
+              --title "$RELEASE_TAG"
+          fi
+      - name: Upload release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.resolve-version.outputs.tag }}
+        run: gh release upload "$RELEASE_TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+
+  # TODO(homebrew): Enable after the tap is configured.
+  # publish-homebrew:
+  #   needs:
+  #     - resolve-version
+  #     - publish-release
+  #   permissions:
+  #     contents: write
+  #   uses: ./.github/workflows/homebrew.yml
+  #   with:
+  #     tag: ${{ needs.resolve-version.outputs.tag }}
+  #   secrets:
+  #     HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}

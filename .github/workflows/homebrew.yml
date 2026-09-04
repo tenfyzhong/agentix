@@ -1,0 +1,125 @@
+name: Homebrew
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Existing Git tag with a published GitHub Release
+        required: true
+        type: string
+    secrets:
+      HOMEBREW_TAP_TOKEN:
+        required: true
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing Git tag with a published GitHub Release
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: homebrew-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  publish-homebrew:
+    runs-on: macos-15
+    env:
+      FORMULA: agentix
+      FORMULA_PATH: ${{ github.workspace }}/homebrew-tap/Formula/agentix.rb
+      RELEASE_TAG: ${{ inputs.tag }}
+      TAP_NAME: tenfyzhong/tap
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.tag }}
+      - name: Verify tag and workspace version
+        id: release
+        run: |
+          tag_commit="$(git rev-parse --verify "refs/tags/${RELEASE_TAG}^{commit}")"
+          head_commit="$(git rev-parse HEAD)"
+          if [[ "$tag_commit" != "$head_commit" ]]; then
+            echo "Tag '$RELEASE_TAG' does not point at the checked-out commit" >&2
+            exit 1
+          fi
+          version="$(.github/scripts/verify-release-version.sh "$RELEASE_TAG")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Check out Homebrew tap
+        uses: actions/checkout@v4
+        with:
+          repository: tenfyzhong/homebrew-tap
+          ref: main
+          path: homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          persist-credentials: false
+      - name: Update formula source
+        run: |
+          set -o pipefail
+          mkdir -p "$(dirname "$FORMULA_PATH")"
+          cp packaging/homebrew/agentix.rb "$FORMULA_PATH"
+          source_url="https://github.com/${GITHUB_REPOSITORY}/archive/refs/tags/${RELEASE_TAG}.tar.gz"
+          source_sha256="$(curl --fail --location --silent --show-error "$source_url" | shasum -a 256 | awk '{print $1}')"
+          if [[ -z "$source_sha256" ]]; then
+            echo "Could not calculate the source archive checksum" >&2
+            exit 1
+          fi
+          export SOURCE_URL="$source_url"
+          export SOURCE_SHA256="$source_sha256"
+          ruby <<'RUBY'
+          formula_path = ENV.fetch("FORMULA_PATH")
+          formula = File.read(formula_path)
+          formula.sub!(/^  url ".*"$/, %(  url "#{ENV.fetch("SOURCE_URL")}")) or abort("Formula URL not found")
+          formula.sub!(/^  sha256 ".*"$/, %(  sha256 "#{ENV.fetch("SOURCE_SHA256")}")) or abort("Formula SHA-256 not found")
+          File.write(formula_path, formula)
+          RUBY
+      - name: Set up Homebrew tap
+        run: |
+          brew tap "$TAP_NAME"
+          brew trust "$TAP_NAME"
+          tap_formula_path="$(brew --repository "$TAP_NAME")/Formula/$FORMULA.rb"
+          cp "$FORMULA_PATH" "$tap_formula_path"
+      - name: Build Homebrew bottle
+        env:
+          BOTTLE_ROOT_URL: https://github.com/${{ github.repository }}/releases/download/${{ inputs.tag }}
+        run: |
+          brew uninstall --force "$FORMULA" || true
+          brew install --build-bottle "$TAP_NAME/$FORMULA"
+          brew bottle --json --no-rebuild --root-url "$BOTTLE_ROOT_URL" "$TAP_NAME/$FORMULA"
+      - name: Normalize Homebrew bottle asset name
+        run: |
+          bottle="$(find . -maxdepth 1 -name 'agentix--*.bottle.tar.gz' -print -quit)"
+          if [[ -z "$bottle" ]]; then
+            echo "Homebrew bottle archive is missing" >&2
+            exit 1
+          fi
+          mv "$bottle" "${bottle/agentix--/agentix-}"
+      - name: Upload bottle to GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$RELEASE_TAG" ./*.bottle.tar.gz --repo "$GITHUB_REPOSITORY" --clobber
+      - name: Add bottle metadata to formula
+        run: |
+          tap_formula_path="$(brew --repository "$TAP_NAME")/Formula/$FORMULA.rb"
+          bottle_json="$(find . -maxdepth 1 -name '*.bottle.json' -print -quit)"
+          if [[ -z "$bottle_json" ]]; then
+            echo "Homebrew bottle metadata is missing" >&2
+            exit 1
+          fi
+          brew bottle --merge --write --no-commit "$bottle_json"
+          cp "$tap_formula_path" "$FORMULA_PATH"
+      - name: Create formula bump pull request
+        uses: peter-evans/create-pull-request@v7
+        with:
+          path: homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          branch: automation/agentix-${{ steps.release.outputs.version }}
+          delete-branch: true
+          commit-message: "agentix ${{ inputs.tag }}"
+          title: "agentix ${{ inputs.tag }}"
+          body: |
+            Updates Agentix to `${{ inputs.tag }}` and adds the macOS arm64 bottle.
