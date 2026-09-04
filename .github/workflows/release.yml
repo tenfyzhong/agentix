@@ -171,15 +171,14 @@ jobs:
           RELEASE_TAG: ${{ needs.resolve-version.outputs.tag }}
         run: gh release upload "$RELEASE_TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber
 
-  # TODO(homebrew): Enable after the tap is configured.
-  # publish-homebrew:
-  #   needs:
-  #     - resolve-version
-  #     - publish-release
-  #   permissions:
-  #     contents: write
-  #   uses: ./.github/workflows/homebrew.yml
-  #   with:
-  #     tag: ${{ needs.resolve-version.outputs.tag }}
-  #   secrets:
-  #     HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+  publish-homebrew:
+    needs:
+      - resolve-version
+      - publish-release
+    permissions:
+      contents: write
+    uses: ./.github/workflows/homebrew.yml
+    with:
+      tag: ${{ needs.resolve-version.outputs.tag }}
+    secrets:
+      HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}

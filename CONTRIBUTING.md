@@ -114,4 +114,4 @@ Review feedback should normally be addressed with additional commits. Keep the p
 
 Before tagging a release, update `[workspace.package].version` in `Cargo.toml` and refresh `Cargo.lock`. Create a tag with the same version and an optional leading `v`, for example `v0.2.0`; the release workflow rejects mismatches instead of rewriting package metadata during publishing.
 
-The `Release` workflow publishes native archives. Its Homebrew call is currently commented out; the standalone Homebrew workflow remains available for manual publishing once the tap and `HOMEBREW_TAP_TOKEN` are configured. See `docs/development-and-operations.md` for the complete artifact flow and the change required to enable automatic Homebrew publishing later.
+The `Release` workflow publishes native archives and then invokes the Homebrew workflow to build a bottle and update `tenfyzhong/homebrew-tap`. The Homebrew job requires the `HOMEBREW_TAP_TOKEN` repository secret. See `docs/development-and-operations.md` for the complete artifact flow.

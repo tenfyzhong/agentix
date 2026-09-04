@@ -152,9 +152,9 @@ Pushing the tag runs the `Release` workflow, which:
 2. builds native `agentix` binaries for macOS arm64, Linux x86_64/arm64, and Windows x86_64;
 3. verifies `agentix --version` against the tag;
 4. publishes `.tar.gz` archives, a Windows `.zip`, `SHA256SUMS`, and generated notes to the matching GitHub Release;
-5. leaves the prepared Homebrew publishing stage disabled until the tap is configured.
+5. invokes the Homebrew workflow after the GitHub Release is available.
 
-The prepared `Homebrew` workflow validates the same tag again, builds an arm64 macOS bottle from `packaging/homebrew/agentix.rb`, uploads the bottle to the matching release, merges its checksum into the formula, and opens or updates a PR in `tenfyzhong/homebrew-tap`. Its call from `Release` is commented out, so tag releases do not publish Homebrew automatically. The standalone workflow remains manually runnable for an existing tag and requires a configured `HOMEBREW_TAP_TOKEN` with permission to create branches and pull requests. Uncomment the `publish-homebrew` job in `release.yml` when automatic publishing should be enabled.
+The `Homebrew` workflow validates the same tag again, builds an arm64 macOS bottle from `packaging/homebrew/agentix.rb`, uploads the bottle to the matching release, merges its checksum into the formula, and opens or updates a PR in `tenfyzhong/homebrew-tap`. It is invoked automatically after a tag release and remains manually runnable for an existing tag. Both paths require a configured `HOMEBREW_TAP_TOKEN` with permission to create branches and pull requests.
 
 ## Compatibility and limits
 

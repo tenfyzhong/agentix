@@ -30,7 +30,58 @@ Each IM conversation is mapped explicitly and durably to an agent session. Live 
 
 ## Quick start
 
-Install the Rust toolchain declared by `rust-toolchain.toml`, then build from source:
+### macOS and Linux
+
+On macOS and Linux, install Agentix with Homebrew:
+
+```sh
+brew tap tenfyzhong/tap
+brew install agentix
+mkdir -p ~/.config/agentix
+cp "$(brew --prefix agentix)/share/agentix/agentix.example.toml" ~/.config/agentix/config.toml
+```
+
+After editing the configuration, run Agentix directly or start it as a Homebrew service:
+
+```sh
+agentix serve
+# Or:
+brew services start tenfyzhong/tap/agentix
+```
+
+### Windows (x86_64)
+
+Download `agentix-<version>-x86_64-pc-windows-msvc.zip` and `SHA256SUMS` from the [latest GitHub release](https://github.com/tenfyzhong/agentix/releases/latest). Verify the archive checksum, then extract it in PowerShell:
+
+```powershell
+$archive = Get-ChildItem .\agentix-*-x86_64-pc-windows-msvc.zip | Select-Object -First 1
+Get-FileHash $archive.FullName -Algorithm SHA256
+Expand-Archive $archive.FullName -DestinationPath .\agentix
+$env:Path = "$(Resolve-Path .\agentix);$env:Path"
+
+New-Item -ItemType Directory -Force "$HOME\.config\agentix" | Out-Null
+Copy-Item .\agentix\agentix.example.toml "$HOME\.config\agentix\config.toml"
+```
+
+Keep the extracted directory in a stable location and add it to your user `PATH` for future PowerShell sessions. Edit the copied configuration and select the Pi or Oh My Pi backend. The Codex backend is not available on Windows because its supported transport requires a Unix-domain socket.
+
+Set the credentials for the selected channel, then validate the configuration and start Agentix:
+
+```powershell
+$env:AGENTIX_TELEGRAM_TOKEN = "..."
+# Or, when channel.kind = "feishu":
+$env:AGENTIX_FEISHU_APP_ID = "..."
+$env:AGENTIX_FEISHU_APP_SECRET = "..."
+
+agentix.exe doctor
+agentix.exe serve
+```
+
+PowerShell environment assignments apply to the current session. Configure persistent user environment variables or a service manager when running Agentix in the background.
+
+### Build from source
+
+To build from source instead, install the Rust toolchain declared by `rust-toolchain.toml`, then run:
 
 ```sh
 make release
@@ -190,7 +241,7 @@ make check
 
 GitHub Actions keeps linting in `ci.yml`. The `tests.yml` workflow runs the full suite on Linux and macOS, and checks the workspace plus the native TCP control suite on Windows. It runs for pull requests and pushes to `main`, and it can also be started manually with `workflow_dispatch`.
 
-Pushing a `v<version>` tag starts the `Release` workflow. The tag version must exactly match `[workspace.package].version` in `Cargo.toml`; a mismatch stops the release before any artifact is published. The workflow builds native archives for macOS arm64, Linux x86_64/arm64, and Windows x86_64, verifies each binary's `--version`, then publishes checksums and a GitHub Release. Homebrew automation and its formula template are present, but the Release workflow does not invoke it while its `publish-homebrew` job remains commented out. The standalone Homebrew workflow can still be run manually for an existing tag and requires `HOMEBREW_TAP_TOKEN`.
+Pushing a `v<version>` tag starts the `Release` workflow. The tag version must exactly match `[workspace.package].version` in `Cargo.toml`; a mismatch stops the release before any artifact is published. The workflow builds native archives for macOS arm64, Linux x86_64/arm64, and Windows x86_64, verifies each binary's `--version`, then publishes checksums and a GitHub Release. After the release is published, the workflow builds a Homebrew bottle, uploads it to the release, and opens or updates the formula PR in `tenfyzhong/homebrew-tap`. Homebrew publishing requires the `HOMEBREW_TAP_TOKEN` repository secret.
 
 Run `make` for a debug build or `make help` to list the available targets.
 
