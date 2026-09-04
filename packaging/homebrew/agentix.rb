@@ -9,6 +9,7 @@ class Agentix < Formula
   depends_on "rust" => :build
 
   def install
+    system "bash", ".github/scripts/set-release-version.sh", version.to_s
     system "cargo", "install", *std_cargo_args(path: "crates/agentix")
     pkgshare.install "config/agentix.example.toml"
   end

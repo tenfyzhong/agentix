@@ -38,7 +38,7 @@ jobs:
         with:
           fetch-depth: 0
           ref: ${{ inputs.tag }}
-      - name: Verify tag and workspace version
+      - name: Resolve release version
         id: release
         run: |
           tag_commit="$(git rev-parse --verify "refs/tags/${RELEASE_TAG}^{commit}")"
@@ -47,7 +47,7 @@ jobs:
             echo "Tag '$RELEASE_TAG' does not point at the checked-out commit" >&2
             exit 1
           fi
-          version="$(.github/scripts/verify-release-version.sh "$RELEASE_TAG")"
+          version="$(.github/scripts/release-version.sh "$RELEASE_TAG")"
           echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Check out Homebrew tap
         uses: actions/checkout@v4
