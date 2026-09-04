@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   test:
-    name: ${{ matrix.name }}
+    name: Test-${{ matrix.name }}
     strategy:
       fail-fast: false
       matrix:
