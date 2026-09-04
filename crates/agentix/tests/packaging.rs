@@ -82,11 +82,16 @@ fn homebrew_workflow_builds_a_bottle_and_updates_the_tap() {
 }
 
 #[test]
-fn readme_documents_homebrew_installation_on_macos_and_linux() {
+fn readme_documents_installation_on_all_supported_platforms() {
     let readme = repository_file("README.md");
 
     assert!(readme.contains("macOS and Linux"));
     assert!(readme.contains("brew tap tenfyzhong/tap"));
     assert!(readme.contains("brew install agentix"));
     assert!(readme.contains("brew services start tenfyzhong/tap/agentix"));
+    assert!(readme.contains("### Windows (x86_64)"));
+    assert!(readme.contains("agentix-<version>-x86_64-pc-windows-msvc.zip"));
+    assert!(readme.contains("New-Item -ItemType Directory -Force \"$HOME\\.config\\agentix\""));
+    assert!(readme.contains("agentix.exe doctor"));
+    assert!(readme.contains("Codex backend is not available on Windows"));
 }

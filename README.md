@@ -30,6 +30,8 @@ Each IM conversation is mapped explicitly and durably to an agent session. Live 
 
 ## Quick start
 
+### macOS and Linux
+
 On macOS and Linux, install Agentix with Homebrew:
 
 ```sh
@@ -46,6 +48,38 @@ agentix serve
 # Or:
 brew services start tenfyzhong/tap/agentix
 ```
+
+### Windows (x86_64)
+
+Download `agentix-<version>-x86_64-pc-windows-msvc.zip` and `SHA256SUMS` from the [latest GitHub release](https://github.com/tenfyzhong/agentix/releases/latest). Verify the archive checksum, then extract it in PowerShell:
+
+```powershell
+$archive = Get-ChildItem .\agentix-*-x86_64-pc-windows-msvc.zip | Select-Object -First 1
+Get-FileHash $archive.FullName -Algorithm SHA256
+Expand-Archive $archive.FullName -DestinationPath .\agentix
+$env:Path = "$(Resolve-Path .\agentix);$env:Path"
+
+New-Item -ItemType Directory -Force "$HOME\.config\agentix" | Out-Null
+Copy-Item .\agentix\agentix.example.toml "$HOME\.config\agentix\config.toml"
+```
+
+Keep the extracted directory in a stable location and add it to your user `PATH` for future PowerShell sessions. Edit the copied configuration and select the Pi or Oh My Pi backend. The Codex backend is not available on Windows because its supported transport requires a Unix-domain socket.
+
+Set the credentials for the selected channel, then validate the configuration and start Agentix:
+
+```powershell
+$env:AGENTIX_TELEGRAM_TOKEN = "..."
+# Or, when channel.kind = "feishu":
+$env:AGENTIX_FEISHU_APP_ID = "..."
+$env:AGENTIX_FEISHU_APP_SECRET = "..."
+
+agentix.exe doctor
+agentix.exe serve
+```
+
+PowerShell environment assignments apply to the current session. Configure persistent user environment variables or a service manager when running Agentix in the background.
+
+### Build from source
 
 To build from source instead, install the Rust toolchain declared by `rust-toolchain.toml`, then run:
 
