@@ -1403,6 +1403,86 @@ async fn recv_background_event(
 }
 
 #[tokio::test]
+async fn background_unmaterialized_thread_error_logs_at_debug() {
+    assert_background_error_log(
+        -32600,
+        "thread thr_log is not materialized yet; thread/turns/list is unavailable before first user message",
+        "DEBUG",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn background_unexpected_invalid_request_logs_at_warn() {
+    assert_background_error_log(-32600, "invalid turn list parameters", "WARN").await;
+}
+
+#[tokio::test]
+async fn background_unmaterialized_message_with_unexpected_code_logs_at_warn() {
+    assert_background_error_log(-32000, "thread thr_log is not materialized yet", "WARN").await;
+}
+
+async fn assert_background_error_log(code: i64, message: &str, level: &str) {
+    let logs = RecordedLogs::default();
+    let subscriber = tracing_subscriber::fmt()
+        .without_time()
+        .with_ansi(false)
+        .with_max_level(tracing::Level::DEBUG)
+        .with_writer(logs.clone())
+        .finish();
+    // These tests use a current-thread runtime, including the spawned monitor.
+    let _guard = tracing::subscriber::set_default(subscriber);
+    let server = MockCodexAppServer::start();
+    server
+        .add_thread(MockThread::new("thr_log", "Log levels", "/work/logs"))
+        .await;
+    server.fail_next("thread/turns/list", code, message).await;
+    let _client = CodexClient::connect(server.endpoint()).await.unwrap();
+    let line = tokio::time::timeout(Duration::from_secs(40), async {
+        loop {
+            let output = String::from_utf8(logs.0.lock().unwrap().clone()).unwrap();
+            if let Some(line) = output
+                .lines()
+                .find(|line| line.contains("failed to read background Codex turns"))
+            {
+                break line.to_owned();
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("background polling should log its error");
+    assert!(
+        line.trim_start().starts_with(level),
+        "expected {level}, got {line}"
+    );
+    assert!(line.contains(message), "missing RPC error: {line}");
+    assert!(line.contains("session=thr_log"), "missing session: {line}");
+}
+
+#[derive(Clone, Default)]
+struct RecordedLogs(Arc<Mutex<Vec<u8>>>);
+
+impl std::io::Write for RecordedLogs {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(buffer);
+        Ok(buffer.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for RecordedLogs {
+    type Writer = Self;
+
+    fn make_writer(&'a self) -> Self::Writer {
+        self.clone()
+    }
+}
+
+#[tokio::test]
 async fn background_monitor_discovers_later_pages_and_retries_failed_reads() {
     let server = MockCodexAppServer::start();
     server.set_page_size(1).await;
