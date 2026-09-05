@@ -4,7 +4,7 @@ Each taskcli Task is a Markdown note in its project's `Tasks/` directory. TaskNo
 
 ## Enable the views
 
-**TaskNotes** (`tasknotes`) is the only community plugin required for the generated task notes and boards. Also enable **Bases**, which is built into Obsidian. This integration was checked with TaskNotes 4.12.5. CSS snippets are optional.
+**TaskNotes** (`tasknotes`) is the only community plugin required for the generated task notes and boards. Also enable **Bases**, which is built into Obsidian. This integration was checked with TaskNotes 4.12.5.
 
 In **Settings → TaskNotes → General**, select tag-based task identification and set the task tag to `agent/task`. This identifies the `tags` property of a task note; Job links and checkboxes inside a plan do not create extra task cards. If other notes use another identifying tag, migrate them deliberately before changing this vault-wide setting.
 
@@ -110,7 +110,7 @@ Job archival keeps task notes in `Tasks/`, sets `archived: true`, and adds TaskN
 
 TaskNotes can edit note properties and drag cards between columns. Those actions do not acquire a taskcli lease or change its database. Use taskcli or an agent for managed status changes; sync restores managed frontmatter. Authored body content and custom properties are preserved. This integration does not lock TaskNotes controls.
 
-TaskNotes supplies status colors from its settings. The optional [agent-task-statuses.css](agent-task-statuses.css) adds distinct borders to the seven TaskNotes columns. Install it in `<vault>/.obsidian/snippets/` and enable **agent-task-statuses** in **Settings → Appearance → CSS snippets**.
+TaskNotes supplies status colors from its settings.
 
 If a board is empty, confirm TaskNotes and Bases are loaded, the note is in Reading view or Live Preview, the task tag is `agent/task`, and the task's folder and `project_id` match the Base filters. For unknown-status indicators, check exact status values. For missing completed work, check `archived` and run `taskcli doctor --json`.
 
@@ -120,4 +120,4 @@ TaskNotes can display existing task notes without taskcli's database. This does 
 
 There is no command to import the vault or rebuild SQLite from it. `taskcli sync` writes database state into documents; it does not restore a missing database. Reconstructing current work from notes would require a separate importer and validation, and could not recover all original history or coordination records.
 
-Keep a matched backup of the SQLite database, the document tree, and taskcli configuration. Include Obsidian's TaskNotes settings and optional CSS for the same display on another device. SQLite alone does not retain all published plan bodies or editable Notes. See [data coverage and recovery](../../../docs/task-board.md#data-coverage-and-recovery) for the field coverage and backup procedure.
+Keep a matched backup of the SQLite database, the document tree, and taskcli configuration. Include Obsidian's TaskNotes settings for the same display on another device. SQLite alone does not retain all published plan bodies or editable Notes. See [data coverage and recovery](../../../docs/task-board.md#data-coverage-and-recovery) for the field coverage and backup procedure.

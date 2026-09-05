@@ -221,7 +221,7 @@ For a restorable backup:
 
 1. Pause agent/CLI writers and note edits, run `taskcli sync`, and confirm `taskcli doctor --json` reports a healthy projection.
 2. Create a database snapshot using the [SQLite backup API](https://sqlite.org/backup.html) or the SQLite shell's `.backup` command. Do not rely on copying only the main file of a live WAL database.
-3. Back up the matching document tree and taskcli configuration while writes remain paused. Include TaskNotes settings and optional CSS to preserve the Obsidian display configuration.
+3. Back up the matching document tree and taskcli configuration while writes remain paused. Include TaskNotes settings to preserve the Obsidian display configuration.
 4. Restore the matched database, documents, and configuration with writers stopped. Validate the restored copy separately with `doctor`, then `sync` and `doctor` before resuming work. Recover/reclaim active work through the normal lease workflow.
 
 If only the vault survives, preserve a copy before further taskcli writes. Existing task notes can still be browsed with TaskNotes, but normal agent execution requires a database backup or a separately implemented, explicitly partial reconstruction.

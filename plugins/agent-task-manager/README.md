@@ -102,6 +102,6 @@ TASKCLI_TEST_HOOK_SHELL=fish cargo test -p taskcli --test cli plugin_entrypoints
 
 These tests do not install the plugin in a user's host or invoke a live model. Native host loading, trust policy, and credentialed IM behavior remain separate acceptance checks.
 
-## Optional Obsidian appearance
+## Obsidian setup
 
-See the [TaskNotes setup guide](obsidian/README.md) for task identification, seven English statuses, migration, and usage. [tasknotes-settings.json](obsidian/tasknotes-settings.json) supplies the settings subset; merge it with existing vault settings. TaskNotes provides status colors, and the optional [CSS snippet](obsidian/agent-task-statuses.css) adds column borders. The plugin does not automatically change vault appearance.
+See the [TaskNotes setup guide](obsidian/README.md) for task identification, seven English statuses, migration, and usage. [tasknotes-settings.json](obsidian/tasknotes-settings.json) supplies the settings subset; merge it with existing vault settings. TaskNotes provides status colors. The plugin does not automatically change vault appearance.
