@@ -1,3 +1,5 @@
+mod background;
+
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
@@ -105,6 +107,7 @@ pub struct CodexClient {
     events: broadcast::Sender<AgentEvent>,
     connection: Arc<ConnectionState>,
     subscriptions: Arc<Mutex<HashSet<SessionId>>>,
+    completed_turns: Arc<Mutex<HashSet<(SessionId, String)>>>,
     process_sessions: Arc<Mutex<HashSet<SessionId>>>,
     exited_process_sessions: Arc<Mutex<HashSet<SessionId>>>,
     pending_resumes: Arc<Mutex<HashSet<SessionId>>>,
@@ -137,6 +140,7 @@ impl CodexClient {
         let writer = Arc::new(Mutex::new(writer));
         let pending = Arc::new(Mutex::new(HashMap::new()));
         let subscriptions = Arc::new(Mutex::new(HashSet::new()));
+        let completed_turns = Arc::new(Mutex::new(HashSet::new()));
         let process_sessions = Arc::new(Mutex::new(HashSet::new()));
         let exited_process_sessions = Arc::new(Mutex::new(HashSet::new()));
         let pending_resumes = Arc::new(Mutex::new(HashSet::new()));
@@ -151,6 +155,7 @@ impl CodexClient {
             Arc::clone(&writer),
             Arc::clone(&pending),
             Arc::clone(&subscriptions),
+            Arc::clone(&completed_turns),
             Arc::clone(&token_usage),
             events.clone(),
             endpoint,
@@ -164,6 +169,7 @@ impl CodexClient {
             events,
             connection,
             subscriptions,
+            completed_turns,
             process_sessions,
             exited_process_sessions,
             pending_resumes,
@@ -1251,6 +1257,7 @@ impl CodexClient {
 
 async fn monitor_running_sessions(client: CodexClient) {
     let mut missing_counts = HashMap::new();
+    let mut background = background::BackgroundTurns::new();
     loop {
         tokio::time::sleep(RUNNING_SESSION_POLL_INTERVAL).await;
         let watched = client.process_sessions.lock().await.clone();
@@ -1293,16 +1300,7 @@ async fn monitor_running_sessions(client: CodexClient) {
                 tracing::warn!(%error, session = %session, "failed to release exited Codex session");
             }
         }
-        // Transport subscriptions are independent of IM bindings. Keep observing
-        // unbound sessions so their terminal events can reach the engine.
-        let subscribed = client.subscriptions.lock().await.clone();
-        for session in running.difference(&subscribed) {
-            if !exited.contains(session)
-                && let Err(error) = client.attach(session).await
-            {
-                tracing::warn!(%error, session = %session, "failed to observe background Codex session");
-            }
-        }
+        background.poll(&client, &running).await;
     }
 }
 
@@ -1819,6 +1817,7 @@ async fn read_loop(
     writer: Arc<Mutex<Writer>>,
     pending: Arc<Mutex<PendingMap>>,
     subscriptions: Arc<Mutex<HashSet<SessionId>>>,
+    completed_turns: Arc<Mutex<HashSet<(SessionId, String)>>>,
     token_usage: Arc<Mutex<HashMap<SessionId, Value>>>,
     events: broadcast::Sender<AgentEvent>,
     endpoint: CodexEndpoint,
@@ -1854,6 +1853,17 @@ async fn read_loop(
                             }
                         }
                         Ok(ServerMessage::Event(event)) => {
+                            if let AgentEvent::TurnCompleted {
+                                session_id,
+                                turn_id,
+                                ..
+                            } = &event
+                            {
+                                completed_turns
+                                    .lock()
+                                    .await
+                                    .insert((SessionId::new(session_id), turn_id.clone()));
+                            }
                             let _ = events.send(event);
                         }
                         Ok(ServerMessage::Interaction(request)) => {
