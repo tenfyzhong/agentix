@@ -759,3 +759,19 @@ async fn write_json_response(stream: &mut TcpStream, body: &str) {
     );
     stream.write_all(response.as_bytes()).await.unwrap();
 }
+
+#[test]
+fn background_turns_have_a_distinct_marker_and_preserve_quotes() {
+    let mut view = OutboundView {
+        title: "Codex · Background task".into(),
+        subtitle: Some("Background turn 12345678 · Completed".into()),
+        body: "**🤖 Codex**\n\n> Completed **the task**.".into(),
+        status: serde_json::from_str("\"background\"").unwrap(),
+        actions: Vec::new(),
+    };
+    let background = render_text(&view);
+    assert!(background.starts_with("🟣 Background\n"));
+    assert!(background.contains("> Completed *the task*\\."));
+    view.status = ViewStatus::Success;
+    assert!(!render_text(&view).starts_with("🟣 Background"));
+}

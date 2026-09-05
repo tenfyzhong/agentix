@@ -2624,7 +2624,24 @@ async fn completion_invalidates_the_previous_stop_button() {
 
 #[tokio::test]
 async fn unattached_turn_completion_notifies_the_im_and_can_attach_the_session() {
-    let agent = Arc::new(FakeAgent::new());
+    let agent = Arc::new(FakeAgent::with_history(vec![
+        TurnSummary {
+            id: "turn_background".into(),
+            status: TurnStatus::Completed,
+            user_text: Some("finish the background task".into()),
+            agent_text: Some("Completed **the task**.\n\nAll checks passed.".into()),
+            tools: Vec::new(),
+            items: Vec::new(),
+        },
+        TurnSummary {
+            id: "turn_newer".into(),
+            status: TurnStatus::InProgress,
+            user_text: Some("newer unrelated question".into()),
+            agent_text: Some("newer unrelated answer".into()),
+            tools: Vec::new(),
+            items: Vec::new(),
+        },
+    ]));
     let channel = Arc::new(FakeChannel::default());
     let state = SqliteState::in_memory().await.unwrap();
     let engine = Engine::new(agent.clone(), state, vec![channel.clone()]);
@@ -2652,7 +2669,14 @@ async fn unattached_turn_completion_notifies_the_im_and_can_attach_the_session()
         notification.subtitle.as_deref(),
         Some("Background turn turn_bac · Completed")
     );
-    assert_eq!(notification.status, agentix_core::ViewStatus::Success);
+    assert!(notification.body.contains("> finish the background task"));
+    assert!(notification.body.contains("> Completed **the task**."));
+    assert!(notification.body.contains("> All checks passed."));
+    assert!(!notification.body.contains("newer unrelated"));
+    assert_eq!(
+        serde_json::to_value(notification.status).unwrap(),
+        "background"
+    );
     assert!(notification.body.contains("not attached"));
     assert_eq!(notification.actions.len(), 1);
     assert_eq!(notification.actions[0].label, "Attach");
@@ -2665,6 +2689,71 @@ async fn unattached_turn_completion_notifies_the_im_and_can_attach_the_session()
     )
     .await;
     assert!(agent.calls().contains(&"attach:thr_b".to_owned()));
+}
+
+#[tokio::test]
+async fn disabling_background_notifications_keeps_attached_turns_visible() {
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    )
+    .with_background_turn_notifications(false);
+    engine
+        .handle_inbound(inbound_as("chat-a", "owner-42", "/help"))
+        .await
+        .unwrap();
+    let before = channel.sent().len();
+    for status in [
+        TurnStatus::Completed,
+        TurnStatus::Failed,
+        TurnStatus::Interrupted,
+    ] {
+        engine
+            .handle_agent_event(AgentEvent::TurnCompleted {
+                session_id: "thr_b".into(),
+                turn_id: "turn_background".into(),
+                status,
+                error: None,
+            })
+            .await
+            .unwrap();
+    }
+    assert_eq!(channel.sent().len(), before);
+    assert!(
+        agent.history_cursors().is_empty(),
+        "disabled notices must not fetch content"
+    );
+    engine
+        .handle_inbound(inbound_as("chat-a", "owner-42", "/attach thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::AgentMessageDelta {
+            session_id: "thr_a".into(),
+            turn_id: "turn_attached".into(),
+            item_id: "item_answer".into(),
+            delta: "Attached answer".into(),
+        })
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::TurnCompleted {
+            session_id: "thr_a".into(),
+            turn_id: "turn_attached".into(),
+            status: TurnStatus::Completed,
+            error: None,
+        })
+        .await
+        .unwrap();
+    let updated = channel.updated();
+    assert!(updated.last().unwrap().1.body.contains("Attached answer"));
+    assert_eq!(
+        updated.last().unwrap().1.status,
+        agentix_core::ViewStatus::Success
+    );
 }
 
 #[tokio::test]
@@ -2733,6 +2822,7 @@ async fn draining_turn_completion_adds_an_attach_button() {
     let notification = channel.sent().last().unwrap().1.clone();
     assert_eq!(notification.title, "Codex · Parser cleanup · thr_a");
     assert!(notification.body.contains("background session"));
+    assert_eq!(notification.status, agentix_core::ViewStatus::Background);
     assert_eq!(notification.actions.len(), 1);
     assert_eq!(notification.actions[0].label, "Attach");
 

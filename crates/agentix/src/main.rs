@@ -204,6 +204,7 @@ async fn serve(config: Config, config_path: &Path) -> Result<()> {
         config.server.endpoint,
         config_path.to_owned(),
         claims,
+        config.notifications.background_turns,
         Duration::from_secs(5),
         async {
             tokio::signal::ctrl_c()
@@ -223,6 +224,7 @@ async fn run_service_until_shutdown<F>(
     control_endpoint: String,
     config_path: PathBuf,
     claims: Arc<ClaimRegistry>,
+    background_turn_notifications: bool,
     channel_shutdown_grace: Duration,
     shutdown_signal: F,
 ) -> Result<()>
@@ -235,7 +237,10 @@ where
             .with_context(|| format!("failed to create state directory {}", parent.display()))?;
     }
     let state = SqliteState::open(&state_path).await?;
-    let engine = Arc::new(Engine::new(adapter.clone(), state, channels.clone()));
+    let engine = Arc::new(
+        Engine::new(adapter.clone(), state, channels.clone())
+            .with_background_turn_notifications(background_turn_notifications),
+    );
     let restored = engine.restore_bindings().await?;
     tracing::info!(restored, "restored durable conversation bindings");
 
@@ -966,6 +971,7 @@ mod tests {
                 format!("tcp://{}", unused_loopback_address()),
                 config_path.clone(),
                 Arc::new(super::ClaimRegistry::default()),
+                true,
                 std::time::Duration::from_secs(5),
                 {
                     let shutdown = shutdown.clone();
@@ -1084,6 +1090,7 @@ mod tests {
             format!("tcp://{}", unused_loopback_address()),
             directory.path().join("config.toml"),
             Arc::new(super::ClaimRegistry::default()),
+            true,
             std::time::Duration::from_millis(10),
             async { Ok(()) },
         )

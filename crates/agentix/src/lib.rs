@@ -20,9 +20,25 @@ pub struct Config {
     pub server: ServerConfig,
     #[serde(default)]
     pub logging: LoggingConfig,
+    #[serde(default)]
+    pub notifications: NotificationConfig,
     pub channel: ChannelConfig,
     pub agent: AgentConfig,
     pub storage: StorageConfig,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct NotificationConfig {
+    pub background_turns: bool,
+}
+
+impl Default for NotificationConfig {
+    fn default() -> Self {
+        Self {
+            background_turns: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]

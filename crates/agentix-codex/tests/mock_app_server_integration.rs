@@ -1160,6 +1160,13 @@ async fn background_codex_turn_completion_notifies_im_with_attach_action() {
     assert_eq!(views.len(), before + 1);
     let notification = views.last().unwrap();
     assert_eq!(notification.title, "Codex · Background work · thr_back");
+    assert!(
+        notification
+            .body
+            .contains("> finish outside the attached session")
+    );
+    assert!(notification.body.contains("> Background work completed."));
+    assert_eq!(notification.status, agentix_core::ViewStatus::Background);
     assert_eq!(notification.actions.len(), 1);
     assert_eq!(notification.actions[0].label, "Attach");
 

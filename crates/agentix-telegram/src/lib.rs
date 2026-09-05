@@ -6,7 +6,7 @@ use std::sync::{Arc, RwLock};
 pub use agentix_core::include_reply_context;
 use agentix_core::{
     ActionButton, ChannelAdapter, ChannelError, ChannelKind, CommandMenu, ConversationRef,
-    InboundEnvelope, MessageRef, OutboundView,
+    InboundEnvelope, MessageRef, OutboundView, ViewStatus,
 };
 use async_trait::async_trait;
 use telegram_markdown_v2::{UnsupportedTagsStrategy, convert_with_strategy};
@@ -513,7 +513,11 @@ pub fn attached_menu_commands() -> Vec<BotCommand> {
 
 #[must_use]
 pub fn render_text(view: &OutboundView) -> String {
-    let mut header = view.title.clone();
+    let mut header = if view.status == ViewStatus::Background {
+        format!("🟣 Background\n{}", view.title)
+    } else {
+        view.title.clone()
+    };
     if let Some(subtitle) = &view.subtitle {
         header.push('\n');
         header.push_str(subtitle);

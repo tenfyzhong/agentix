@@ -1177,3 +1177,29 @@ async fn feishu_mock_long_connection_forwards_messages_and_card_actions() {
             .any(|target| target.starts_with("/open-apis/bot/v3/info"))
     );
 }
+
+#[test]
+fn background_turn_cards_use_purple_quoted_content_and_keep_actions() {
+    let view = OutboundView {
+        title: "Codex · Background task".into(),
+        subtitle: Some("Background turn 12345678 · Completed".into()),
+        body: "**👤 You**\n\n> Run checks\n\n**🤖 Codex**\n\n> All checks passed".into(),
+        status: serde_json::from_str("\"background\"").unwrap(),
+        actions: vec![ActionButton {
+            label: "Attach".into(),
+            token: "attach-token".into(),
+            style: ActionStyle::Primary,
+        }],
+    };
+    let value = render_card(&view).unwrap().card().to_json().into_value();
+    assert_eq!(value["header"]["template"], "purple");
+    let quote = &value["body"]["elements"][0]["columns"][0];
+    assert_eq!(quote["background_style"], "rgba(128,64,192,0.12)");
+    assert!(
+        quote["elements"][0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("> All checks passed")
+    );
+    assert_eq!(value["body"]["elements"][1]["text"]["content"], "Attach");
+}

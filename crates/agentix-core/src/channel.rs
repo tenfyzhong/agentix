@@ -147,6 +147,7 @@ pub enum ViewStatus {
     Warning,
     Error,
     Muted,
+    Background,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -73,7 +73,7 @@ When the underlying Codex process exits, Agentix marks any visible running turn 
 
 ### Background completion
 
-When a turn finishes outside the currently attached session, Agentix identifies the completed session by title and short ID and offers a one-tap Attach action. A session that is draining after a switch updates its existing turn card; another unbound session creates one concise notification for each authenticated conversation known to the running service. Replayed terminal events are deduplicated. Completion in the current session remains part of its normal turn card and does not create a second notification.
+When a turn finishes outside the currently attached session, Agentix identifies the completed session by title and short ID and offers a one-tap Attach action. A session that is draining after a switch updates its existing turn card; another unbound session creates one notification containing the completed turn's prompt and response for each authenticated conversation known to the running service. The standalone notices can be disabled with `notifications.background_turns = false`; existing cards still finish in place. Replayed terminal events are deduplicated. Completion in the current session remains part of its normal turn card and does not create a second notification.
 
 ### Prompt, queue, and steer
 
@@ -105,7 +105,7 @@ The old session becomes draining and the new session becomes current. Old stream
 
 Telegram converts agent Markdown to MarkdownV2 in bounded UTF-8 text messages, registers a native command menu, and uses two-column inline keyboards. Feishu uses shared Card JSON 2.0 documents with a status-colored header, title/subtitle, Markdown body, and callback buttons. Because Feishu has no runtime API for per-conversation native bot menus, an interactive command card is sent after attachment and updated in place when attachment state changes. Both presentations are generated from the same channel-neutral `OutboundView` and `CommandMenu` models.
 
-Status colors are semantic: blue for running, orange for waiting/warning, green for success, red for error, and grey for muted/background information.
+Status colors are semantic: blue for running, orange for waiting/warning, green for success, red for error, and grey for muted information, and purple for background turns. Feishu also gives background quoted content a tinted container; Telegram adds a 🟣 Background marker.
 
 ## 6. Security and privacy
 
