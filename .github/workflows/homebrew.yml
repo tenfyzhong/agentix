@@ -60,8 +60,6 @@ jobs:
       - name: Update formula source
         run: |
           set -o pipefail
-          mkdir -p "$(dirname "$FORMULA_PATH")"
-          cp packaging/homebrew/agentix.rb "$FORMULA_PATH"
           source_url="https://github.com/${GITHUB_REPOSITORY}/archive/refs/tags/${RELEASE_TAG}.tar.gz"
           source_sha256="$(curl --fail --location --silent --show-error "$source_url" | shasum -a 256 | awk '{print $1}')"
           if [[ -z "$source_sha256" ]]; then
@@ -75,6 +73,7 @@ jobs:
           formula = File.read(formula_path)
           formula.sub!(/^  url ".*"$/, %(  url "#{ENV.fetch("SOURCE_URL")}")) or abort("Formula URL not found")
           formula.sub!(/^  sha256 ".*"$/, %(  sha256 "#{ENV.fetch("SOURCE_SHA256")}")) or abort("Formula SHA-256 not found")
+          formula.sub!(/^  bottle do\n.*?^  end\n\n?/m, "")
           File.write(formula_path, formula)
           RUBY
       - name: Set up Homebrew tap
