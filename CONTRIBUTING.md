@@ -6,6 +6,8 @@ Thank you for helping improve Agentix. Contributions may include code, tests, do
 
 Agentix is a Rust workspace. Install the toolchain pinned in `rust-toolchain.toml`; it includes Rust 1.95, rustfmt, and Clippy. Linux CI also installs `protobuf-compiler`.
 
+CI uses Rust 1.95.0. Ensure `cargo`, `rustc`, `cargo-clippy`, and `rustfmt` all come from that toolchain rather than mixing Homebrew and rustup installations.
+
 Clone the repository and verify the workspace before making changes:
 
 ```sh
@@ -41,6 +43,9 @@ Agentix uses test-driven development for features, bug fixes, refactors, and oth
 
 Documentation-only and configuration-only changes do not require a failing test first. Keep `README.md` and the documents under `docs/` synchronized with user-visible behavior and architecture changes.
 
+After changing CLI commands or options, run `make completions` and commit the
+updated files. Tests verify that the checked-in completions match the CLI.
+
 ## Tests and external dependencies
 
 Place tests near the boundary they exercise:
@@ -53,7 +58,7 @@ Place tests near the boundary they exercise:
 
 Do not make automated tests depend on live credentials, public network services, a developer's session data, or an already running daemon. Extend the relevant mock when a new external API method, event, error, or state transition is introduced. Keep mock payloads aligned with the upstream wire format used by Agentix.
 
-Run the complete quality gate with:
+Run the complete quality gate to check formatting, run Clippy, and execute the workspace tests:
 
 ```sh
 make check
@@ -72,6 +77,10 @@ The test suite is layered. Protocol and rendering tests cover pure mappings; ada
 Codex uses a stateful mock app-server under `crates/agentix-codex/tests/support/`. It follows the Codex CLI 0.153.0 protocol subset used by Agentix, including session lifecycle, settings, approvals, input questions, pagination, failures, and reconnects. Telegram and Feishu use in-process API services, Pi uses a reusable fake RPC subprocess, and rmux tests exchange typed SDK packets with a Unix-socket mock daemon. These fixtures keep the suite deterministic and independent of live credentials, public networks, local session data, and running daemons.
 
 GitHub Actions keeps formatting and Clippy in `ci.yml`. The `tests.yml` workflow runs the full suite on Linux and macOS and checks the workspace plus the native TCP control suite on Windows. Both workflows run for pull requests and pushes to `main`, except when every changed file is Markdown (`.md`). Changes that include any other file still run both workflows. The Tests workflow also supports manual dispatch regardless of the changed files.
+
+Channel shutdown deadline tests use Tokio's paused clock to verify the shared grace period and task cancellation independently of database and filesystem latency. Service lifecycle tests also exercise startup and shutdown with a temporary SQLite database.
+
+The test suite checks the non-Unix Codex compatibility API on Unix hosts as well, so Windows-only API omissions are caught locally.
 
 ## Workspace architecture
 
