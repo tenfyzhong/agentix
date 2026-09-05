@@ -1383,6 +1383,9 @@ impl Engine {
                 .map(|turn| turn.id.as_str()),
             HistoryPresentation::History => None,
         };
+        if matches!(presentation, HistoryPresentation::Attached) && running_turn_id.is_none() {
+            self.turns.remove_active(session_id).await;
+        }
         for (turn, view) in history.turns.iter().zip(views) {
             if running_turn_id == Some(turn.id.as_str()) {
                 self.hydrate_running_turn(conversation, session_id, turn)
@@ -1454,6 +1457,7 @@ impl Engine {
             .await
             .ok_or(EngineError::NoCurrentSession)?;
         let active = self.turns.is_active(&current).await;
+        self.clear_session_stop_actions(&current).await?;
         self.state.detach(conversation).await?;
         let session = self
             .sessions
@@ -1669,6 +1673,10 @@ impl Engine {
         session_id: &SessionId,
         old_active: bool,
     ) -> Result<(), EngineError> {
+        if let Some(previous) = self.sessions.current(conversation).await {
+            self.clear_session_stop_actions(&previous).await?;
+        }
+        self.clear_session_stop_actions(session_id).await?;
         let persistent = self.state.attach(conversation, session_id).await?;
         let persisted_previous = persistent.previous_session.clone();
         let outcome = self
@@ -1959,7 +1967,7 @@ impl Engine {
                 turn_id,
             } => {
                 self.record_turn_started(SessionId::new(session_id), turn_id.clone())
-                    .await;
+                    .await?;
                 return Ok(());
             }
             _ => {}
@@ -2072,7 +2080,9 @@ impl Engine {
         drop(buffers);
         self.render_turn(conversation, session_id, &turn_id, delivery, true)
             .await?;
-        self.turns.remove_active(session_id).await;
+        if self.turns.active_turn(session_id).await.as_deref() == Some(&turn_id) {
+            self.turns.remove_active(session_id).await;
+        }
         if delivery == DeliveryClass::Draining {
             self.turns
                 .record_background_notification(conversation, session_id, &turn_id)
@@ -2197,7 +2207,17 @@ impl Engine {
         Ok(())
     }
 
-    async fn record_turn_started(&self, session_id: SessionId, turn_id: String) {
+    async fn record_turn_started(
+        &self,
+        session_id: SessionId,
+        turn_id: String,
+    ) -> Result<(), EngineError> {
+        if let Some(previous) = self.turns.active_turn(&session_id).await
+            && previous != turn_id
+        {
+            self.clear_turn_stop_action(&(session_id.clone(), previous))
+                .await?;
+        }
         self.turns
             .set_active(session_id.clone(), turn_id.clone())
             .await;
@@ -2208,6 +2228,7 @@ impl Engine {
             .entry((session_id, turn_id))
             .or_default()
             .ensure_started();
+        Ok(())
     }
 
     async fn handle_session_exit(&self, session_id: &SessionId) -> Result<(), EngineError> {
@@ -2444,7 +2465,7 @@ impl Engine {
         if !self.turns.should_render(&key, force, interval).await {
             return Ok(());
         }
-        let (mut view, can_stop, snapshot) = {
+        let (mut view, is_running, snapshot) = {
             let buffers = self.turns.buffers.lock().await;
             let buffer = buffers.get(&key).expect("turn buffer must exist");
             (
@@ -2459,6 +2480,22 @@ impl Engine {
                 buffer.clone(),
             )
         };
+        let existing = self.turns.views.lock().await.get(&key).cloned();
+        let can_stop = is_running
+            && delivery == DeliveryClass::Live
+            && self.sessions.current(conversation).await.as_ref() == Some(session_id)
+            && {
+                // Some adapters deliver output before a turn-started event.
+                let mut active = self.turns.active.lock().await;
+                if existing.is_none() {
+                    active
+                        .entry(session_id.clone())
+                        .or_insert_with(|| turn_id.to_owned());
+                }
+                active
+                    .get(session_id)
+                    .is_some_and(|active_turn| active_turn == turn_id)
+            };
         let owner_id = self
             .interactions
             .owners
@@ -2473,13 +2510,12 @@ impl Engine {
             view.actions.push(stop_action);
         }
         if delivery == DeliveryClass::Draining
-            && !can_stop
+            && !is_running
             && let Some(owner_id) = owner_id.as_deref()
         {
             view.actions
                 .push(self.attach_action(conversation, owner_id, session_id).await);
         }
-        let existing = self.turns.views.lock().await.get(&key).cloned();
         let message = if let Some(message) = existing {
             self.channel(conversation.channel)?
                 .update(conversation, &message, &view)
@@ -2511,6 +2547,55 @@ impl Engine {
                 .await?;
         } else {
             self.state.delete_turn_view(session_id, turn_id).await?;
+        }
+        Ok(())
+    }
+
+    async fn clear_session_stop_actions(&self, session_id: &SessionId) -> Result<(), EngineError> {
+        let keys: Vec<_> = self
+            .interactions
+            .turn_action_groups
+            .lock()
+            .await
+            .keys()
+            .filter(|(session, _)| session == session_id)
+            .cloned()
+            .collect();
+        for key in keys {
+            self.clear_turn_stop_action(&key).await?;
+        }
+        Ok(())
+    }
+
+    async fn clear_turn_stop_action(&self, key: &(SessionId, String)) -> Result<(), EngineError> {
+        if !self
+            .interactions
+            .turn_action_groups
+            .lock()
+            .await
+            .contains_key(key)
+        {
+            return Ok(());
+        }
+        let message = self.turns.views.lock().await.get(key).cloned();
+        let buffer = self.turns.buffers.lock().await.get(key).cloned();
+        if let (Some(message), Some(buffer)) = (message, buffer)
+            && matches!(buffer.status, TurnStatus::InProgress | TurnStatus::Unknown)
+        {
+            let session_label = self.session_label(&key.0).await;
+            let view = live_turn_view(
+                self.agent.display_name(),
+                &session_label,
+                &key.1,
+                &buffer,
+                DeliveryClass::Live,
+            );
+            self.channel(message.conversation.channel)?
+                .update(&message.conversation, &message, &view)
+                .await?;
+            self.replace_stop_action(key, &message.conversation, None, false)
+                .await;
+            self.state.delete_turn_view(&key.0, &key.1).await?;
         }
         Ok(())
     }
