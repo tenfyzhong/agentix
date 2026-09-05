@@ -34,6 +34,22 @@ background_turns = false
 
 The default is `true`. Disabling notifications also stops automatic background turn polling and full-content reads. When no sessions need exit/resume monitoring, automatic session discovery stops too. Existing attached or draining turn cards still complete in place; attached-session exit/resume monitoring remains active. Both completion deduplication caches keep only the latest completed turn per session, with recipient tracking for that turn, so records do not accumulate for every completed turn.
 
+## Dependencies
+
+### Official Codex CLI
+
+The Codex backend requires Codex CLI 0.153.0 or newer from the official standalone installer on macOS or Linux. The Homebrew Codex package does not include the managed app-server layout Agentix needs.
+
+```sh
+curl -fsSL https://chatgpt.com/codex/install.sh | sh
+```
+
+### rmux (optional)
+
+Install rmux to create new Codex sessions directly from Telegram or Feishu. Send `/rmux` to the bot to browse workspaces and launch Codex in a session, window, or split. Agentix connects to the local rmux daemon and starts it when needed. rmux is optional for connecting to existing Codex sessions.
+
+See [rmux workspaces](docs/usage.md#rmux-workspaces) for details.
+
 ## Quick start
 
 ### Install
@@ -48,12 +64,6 @@ brew install agentix
 ```
 
 The Homebrew formula is maintained in [tenfyzhong/homebrew-tap](https://github.com/tenfyzhong/homebrew-tap/blob/main/Formula/agentix.rb). Release automation updates that formula and publishes a macOS arm64 bottle.
-
-The Codex backend requires Codex CLI 0.153.0 or newer from the official standalone installer. The Homebrew Codex package does not include the managed app-server layout Agentix needs.
-
-```sh
-curl -fsSL https://chatgpt.com/codex/install.sh | sh
-```
 
 #### Windows (x86_64)
 
