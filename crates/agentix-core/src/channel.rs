@@ -215,6 +215,11 @@ pub enum ChannelError {
 
 #[async_trait]
 pub trait ChannelAdapter: Send + Sync {
+    /// Minimum interval for non-terminal stream and working-duration updates.
+    fn streaming_update_interval(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(1)
+    }
+
     fn kind(&self) -> ChannelKind;
 
     async fn run(

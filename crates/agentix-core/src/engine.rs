@@ -2438,7 +2438,10 @@ impl Engine {
     ) -> Result<(), EngineError> {
         let key = (session_id.clone(), turn_id.to_owned());
         let session_label = self.session_label(session_id).await;
-        if !self.turns.should_render(&key, force).await {
+        let interval = self
+            .channel(conversation.channel)?
+            .streaming_update_interval();
+        if !self.turns.should_render(&key, force, interval).await {
             return Ok(());
         }
         let (mut view, can_stop, snapshot) = {
@@ -2623,7 +2626,14 @@ impl Engine {
                 }
                 continue;
             };
-            self.turns.should_render(&key, true).await;
+            let interval = self
+                .channel(conversation.channel)
+                .map_or(Duration::from_secs(1), |channel| {
+                    channel.streaming_update_interval()
+                });
+            if !self.turns.should_render(&key, false, interval).await {
+                continue;
+            }
             let session_label = self.session_label(&session_id).await;
             let mut view = live_turn_view(
                 self.agent.display_name(),

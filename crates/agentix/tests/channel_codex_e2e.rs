@@ -54,7 +54,8 @@ async fn telegram_message_traverses_channel_engine_and_codex_then_updates_telegr
     codex
         .complete_turn("thr_telegram_e2e", &turn_id, "telegram integration answer")
         .await;
-    let updated = tokio::time::timeout(Duration::from_secs(2), async {
+    // Allow the chat budget to pace the start acknowledgement and final edit.
+    let updated = tokio::time::timeout(Duration::from_secs(10), async {
         loop {
             let requests = telegram.requests().await;
             if requests

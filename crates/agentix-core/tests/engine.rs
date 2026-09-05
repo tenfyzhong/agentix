@@ -380,6 +380,7 @@ impl SessionControlPort for FakeAgent {
 #[derive(Clone, Default)]
 struct FakeChannel {
     channel_kind: Option<ChannelKind>,
+    streaming_interval: Option<std::time::Duration>,
     sent: Arc<Mutex<Vec<(ConversationRef, OutboundView)>>>,
     updated: Arc<Mutex<Vec<(MessageRef, OutboundView)>>>,
     disabled_actions: Arc<Mutex<Vec<MessageRef>>>,
@@ -411,6 +412,11 @@ impl FakeChannel {
 
 #[async_trait]
 impl ChannelAdapter for FakeChannel {
+    fn streaming_update_interval(&self) -> std::time::Duration {
+        self.streaming_interval
+            .unwrap_or(std::time::Duration::from_secs(1))
+    }
+
     fn kind(&self) -> ChannelKind {
         self.channel_kind.unwrap_or(ChannelKind::Telegram)
     }
@@ -2948,4 +2954,68 @@ async fn draining_turn_completion_adds_an_attach_button() {
             .count(),
         2
     );
+}
+
+#[tokio::test]
+async fn stream_and_working_timer_share_the_channel_interval_but_completion_flushes() {
+    let channel = Arc::new(FakeChannel {
+        streaming_interval: Some(std::time::Duration::from_secs(5)),
+        ..FakeChannel::default()
+    });
+    let engine = Engine::new(
+        Arc::new(FakeAgent::new()),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound_as("chat-a", "owner-42", "/attach thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound_as("chat-a", "owner-42", "work"))
+        .await
+        .unwrap();
+    let before = channel.updated().len();
+    tokio::time::sleep(std::time::Duration::from_millis(1_100)).await;
+    engine
+        .handle_agent_event(AgentEvent::AgentMessageDelta {
+            session_id: "thr_a".into(),
+            turn_id: "turn_new".into(),
+            item_id: "answer".into(),
+            delta: "Buffered output".into(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        channel.updated().len(),
+        before,
+        "stream must respect the channel interval"
+    );
+    assert_eq!(
+        engine.refresh_working_turns().await,
+        0,
+        "timer must not bypass stream pacing"
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(4_000)).await;
+    assert_eq!(engine.refresh_working_turns().await, 1);
+    assert!(
+        channel
+            .updated()
+            .last()
+            .unwrap()
+            .1
+            .body
+            .contains("Buffered output")
+    );
+    engine
+        .handle_agent_event(AgentEvent::TurnCompleted {
+            session_id: "thr_a".into(),
+            turn_id: "turn_new".into(),
+            status: TurnStatus::Completed,
+            error: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(channel.updated().len(), before + 2);
+    assert!(channel.updated().last().unwrap().1.actions.is_empty());
 }

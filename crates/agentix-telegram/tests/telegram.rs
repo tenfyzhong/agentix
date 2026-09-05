@@ -844,3 +844,59 @@ fn background_turns_have_a_distinct_marker_and_preserve_quotes() {
     view.status = ViewStatus::Success;
     assert!(!render_text(&view).starts_with("⚫ Background"));
 }
+
+#[tokio::test]
+async fn telegram_cooldown_is_shared_between_cloned_adapters_and_api_methods() {
+    let server = MockTelegramApi::start().await;
+    server.rate_limit_next("sendmessage", 1).await;
+    let bot = Bot::new("test-token").set_api_url(server.api_url().parse().unwrap());
+    let adapter = TelegramAdapter::with_bot(bot, TelegramPolicy::new([42]));
+    let sender = adapter.clone();
+    let send = tokio::spawn(async move {
+        sender
+            .send(
+                &ConversationRef::new(ChannelKind::Telegram, "42"),
+                &OutboundView::text("First", "Message"),
+            )
+            .await
+    });
+    wait_for_api_method(&server, "sendmessage").await;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    let conversation = ConversationRef::new(ChannelKind::Telegram, "43");
+    let menu = CommandMenu::default();
+    let mut update = Box::pin(adapter.set_command_menu(&conversation, &menu));
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(300), &mut update)
+            .await
+            .is_err(),
+        "another API method must wait for the same bot cooldown"
+    );
+    assert_eq!(server.requests().await.len(), 1);
+    tokio::time::timeout(std::time::Duration::from_secs(5), update)
+        .await
+        .unwrap()
+        .unwrap();
+    send.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn telegram_spaces_sends_and_edits_in_the_same_chat() {
+    let server = MockTelegramApi::start().await;
+    let bot = Bot::new("test-token").set_api_url(server.api_url().parse().unwrap());
+    let adapter = TelegramAdapter::with_bot(bot, TelegramPolicy::new([42]));
+    for (chat, minimum_ms) in [("42", 1_000), ("-42", 3_000)] {
+        let conversation = ConversationRef::new(ChannelKind::Telegram, chat);
+        let view = OutboundView::text("Turn", "Working");
+        let message = adapter.send(&conversation, &view).await.unwrap();
+        let started = std::time::Instant::now();
+        adapter
+            .clone()
+            .update(&conversation, &message, &view)
+            .await
+            .unwrap();
+        assert!(
+            started.elapsed() >= std::time::Duration::from_millis(minimum_ms),
+            "message edits must share the per-chat send budget"
+        );
+    }
+}

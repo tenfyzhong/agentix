@@ -55,7 +55,7 @@ Turn 019d… · Working 12s     short turn label, state, and elapsed time
 
 Each turn owns a separate IM message/card that is updated in place. Live turns, attach hydration, and `/history` share the same one-message-per-turn layout, with the user input and Markdown agent response shown in separate quoted sections beneath their respective headings. Only a short turn ID and a human-readable status appear in the header. Tool execution events and tool summaries are omitted from both live cards and history views so the conversation remains concise. Approval requests remain visible because they require an owner decision. A second session therefore updates a different message, even if events arrive simultaneously. Background completion and approval cards explicitly identify their background state.
 
-Running turn status includes a working duration that advances once per second even when no agent delta arrives. The refresh edits the existing message/card and reuses its Stop action rather than issuing a new token. Terminal states stop refreshing and retain the final elapsed duration. Restored running turns measure elapsed time from the point Agentix observes them again.
+Running turn status includes a working duration that advances every five seconds on Telegram and every second on Feishu, even when no agent delta arrives. The refresh edits the existing message/card and reuses its Stop action rather than issuing a new token. Terminal states stop refreshing and retain the final elapsed duration. Restored running turns measure elapsed time from the point Agentix observes them again.
 
 ## 4. Main flows
 
@@ -84,7 +84,7 @@ When a turn finishes outside the currently attached session, Agentix identifies 
 - The Codex CLI Tab queue is independent from the app-server queue. Neither side synchronizes or deduplicates the other. When both contain pending input, they may both submit after the active turn ends, producing back-to-back turns with no shared ordering guarantee; users should not operate both queues concurrently for one session.
 - Backends without persistent queue support continue to send ordinary text through their steering operation while a turn is active.
 - Codex automatically starts the next queued message after a completed or failed turn. Interrupting a turn leaves its queue paused until Codex resumes it.
-- The turn card is updated at most once per second during streaming, then flushed immediately at completion.
+- During streaming, the turn card is updated at most once every five seconds on Telegram and once per second on Feishu. Completion bypasses that refresh interval; Telegram outbound pacing and cooldowns still apply.
 
 ### Approval and input
 

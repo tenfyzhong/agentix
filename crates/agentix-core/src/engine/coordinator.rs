@@ -168,13 +168,18 @@ impl TurnCoordinator {
         self.active.lock().await.remove(session)
     }
 
-    pub(super) async fn should_render(&self, key: &(SessionId, String), force: bool) -> bool {
+    pub(super) async fn should_render(
+        &self,
+        key: &(SessionId, String),
+        force: bool,
+        interval: Duration,
+    ) -> bool {
         let now = Instant::now();
         let mut renders = self.last_renders.lock().await;
         if !force
             && renders
                 .get(key)
-                .is_some_and(|last| now.duration_since(*last) < Duration::from_secs(1))
+                .is_some_and(|last| now.duration_since(*last) < interval)
         {
             return false;
         }
