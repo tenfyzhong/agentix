@@ -1,0 +1,267 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { spawn } from "node:child_process";
+import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { runTaskcli } from "../runtime.mjs";
+
+// Cargo supplies its freshly compiled executable: these tests must never fall
+// back to a developer's installed taskcli or normal task database.
+assert.ok(process.env.TASKCLI_BIN, "Run through cargo test -p taskcli");
+
+async function fixture(t, format = "markdown") {
+    const dir = await mkdtemp(join(tmpdir(), "task-plugin 中文 "));
+    const previous = process.env.TASKCLI_CONFIG;
+    const cleanup = [];
+    process.env.TASKCLI_CONFIG = join(dir, "config.toml");
+    t.after(async () => {
+        for (const callback of cleanup.reverse()) await callback();
+        if (previous === undefined) delete process.env.TASKCLI_CONFIG;
+        else process.env.TASKCLI_CONFIG = previous;
+        await rm(dir, { recursive: true, force: true });
+    });
+    const root = join(dir, "vault");
+    await mkdir(join(root, ".obsidian"), { recursive: true });
+    const run = async (args, options = {}) =>
+        (await runTaskcli(args, { cwd: dir, ...options })).result;
+    await run([
+        "init",
+        "--format",
+        format,
+        "--root",
+        root,
+        "--directory",
+        "Tasks 中文",
+        "--database",
+        join(dir, "tasks.sqlite3"),
+    ]);
+    const project = await run([
+        "project",
+        "register",
+        "--root",
+        dir,
+        "--name",
+        "Plugin tests",
+    ]);
+    const job = await run([
+        "job",
+        "create",
+        "--project",
+        project.id,
+        "--title",
+        "Integration",
+    ]);
+    return { dir, root, job, run, cleanup };
+}
+
+async function extension(t, f, host) {
+    const handlers = new Map();
+    let tool;
+    const { default: install } = await import(`../extensions/${host}.ts`);
+    install({
+        on: (name, handler) => handlers.set(name, handler),
+        registerTool: (value) => {
+            tool = value;
+        },
+    });
+    assert.equal(tool.parameters.properties.args.type, "array");
+    assert.ok(tool.parameters.required.includes("args"));
+    const ctx = {
+        cwd: f.dir,
+        sessionManager: { getSessionId: () => `session:${host}` },
+    };
+    await handlers.get("session_start")({}, ctx);
+    f.cleanup.push(() => handlers.get("session_shutdown")({}, ctx));
+    let calls = 0;
+    const invoke = async (args, id = `call-${++calls}`) =>
+        (await tool.execute(id, { args }, undefined, undefined, ctx)).details
+            .result;
+    return { invoke, handlers, ctx };
+}
+
+for (const [host, format] of [
+    ["pi", "markdown"],
+    ["omp", "obsidian"],
+]) {
+    test(`${host} entrypoint uses real CLI, plans, leases and ${format} files`, async (t) => {
+        const f = await fixture(t, format);
+        const x = await extension(t, f, host);
+        const task = await x.invoke([
+            "task",
+            "add",
+            "--job",
+            f.job.id,
+            "--title",
+            "Build $(not-a-shell) 中文",
+        ]);
+        await x.invoke([
+            "plan",
+            "create",
+            task.id,
+            "--body",
+            "# Plan\nAcceptance checks.",
+        ]);
+        const claim = await x.invoke([
+            "task",
+            "claim",
+            task.id,
+            "--delegated-by",
+            "team:test",
+        ]);
+        assert.equal(claim.lease.session_ref, `session:${host}`);
+        assert.equal(claim.lease.delegated_by, "team:test");
+        const context = await x.handlers.get("before_agent_start")({}, x.ctx);
+        assert.ok(context.message.content.includes(task.id));
+        const revision = await x.invoke([
+            "plan",
+            "revise",
+            task.id,
+            "--body",
+            "# Revised plan",
+        ]);
+        assert.equal(revision.version, 2);
+        assert.equal(
+            await readFile(revision.absolute_path, "utf8"),
+            "# Revised plan",
+        );
+        await x.invoke(["task", "wait", task.id, "--reason", "Need review"]);
+        assert.equal(
+            (await f.run(["task", "show", task.id])).status,
+            "WAITING_USER",
+        );
+        await x.invoke(["task", "claim", task.id]);
+        await x.invoke(["task", "done", task.id]);
+        const job = await f.run(["job", "show", f.job.id]);
+        assert.equal(job.status, "COMPLETED");
+        const body = await readFile(
+            join(f.root, "Tasks 中文", job.document_path),
+            "utf8",
+        );
+        assert.ok(body.includes("DONE"));
+        assert.equal(body.includes("[["), format === "obsidian");
+        assert.equal((await f.run(["doctor"])).healthy, true);
+    });
+}
+
+test("tool retries preserve identity after claim, Plan revision and lease-releasing writes", async (t) => {
+    const f = await fixture(t);
+    const x = await extension(t, f, "pi");
+    const task = await x.invoke([
+        "task",
+        "add",
+        "--job",
+        f.job.id,
+        "--title",
+        "Idempotent",
+    ]);
+    await x.invoke(["plan", "create", task.id, "--body", "# Plan"]);
+    const claimArgs = ["task", "claim", task.id];
+    const claim = await x.invoke(claimArgs, "claim-once");
+    assert.deepEqual(await x.invoke(claimArgs, "claim-once"), claim);
+    const planArgs = ["plan", "revise", task.id, "--body", "# Retry safe"];
+    const plan = await x.invoke(planArgs, "revise-once");
+    assert.deepEqual(await x.invoke(planArgs, "revise-once"), plan);
+    const doneArgs = ["task", "done", task.id];
+    const done = await x.invoke(doneArgs, "done-once");
+    const before = await f.run(["event", "list", "--job", f.job.id]);
+    assert.deepEqual(await x.invoke(doneArgs, "done-once"), done);
+    assert.deepEqual(await f.run(["event", "list", "--job", f.job.id]), before);
+    await assert.rejects(
+        x.invoke(["task", "cancel", task.id], "done-once"),
+        /idempotency|different/,
+    );
+});
+
+async function hookProcess(event, command) {
+    const args =
+        command && process.platform !== "win32"
+            ? ["/bin/sh", ["-c", command]]
+            : [process.execPath, [resolve("hooks/run.mjs")]];
+    const child = spawn(args[0], args[1], {
+        env: {
+            ...process.env,
+            CLAUDE_PLUGIN_ROOT: resolve("."),
+            PLUGIN_ROOT: resolve("."),
+        },
+        stdio: ["pipe", "pipe", "pipe"],
+    });
+    const out = [],
+        err = [];
+    child.stdout.on("data", (chunk) => out.push(chunk));
+    child.stderr.on("data", (chunk) => err.push(chunk));
+    const exited = new Promise((resolve, reject) => {
+        child.once("error", reject);
+        child.once("close", (code) => resolve(code));
+    });
+    child.stdin.end(JSON.stringify(event));
+    assert.equal(await exited, 0, Buffer.concat(err).toString());
+    return JSON.parse(Buffer.concat(out).toString());
+}
+
+test("manifest command hooks cross the process boundary and restore fenced leases", async (t) => {
+    const f = await fixture(t);
+    const task = await f.run([
+        "task",
+        "add",
+        "--job",
+        f.job.id,
+        "--title",
+        "Hooks",
+    ]);
+    await f.run(["plan", "create", task.id, "--body", "# Plan"]);
+    const options = { executor: "agent:hooks", session: "host-session" };
+    const claim = await f.run(["task", "claim", task.id], options);
+    const manifest = JSON.parse(await readFile("hooks/hooks.json", "utf8"));
+    for (const name of [
+        "SessionStart",
+        "PreToolUse",
+        "PostToolUse",
+        "Stop",
+        "SessionEnd",
+        "SessionStart",
+    ]) {
+        const command = manifest.hooks[name][0].hooks[0].command;
+        const output = await hookProcess(
+            { hook_event_name: name, session_id: options.session, cwd: f.dir },
+            command,
+        );
+        const current = await f.run(["task", "show", task.id]);
+        assert.equal(
+            current.status,
+            name === "SessionEnd" ? "BLOCKED" : "IN_PROGRESS",
+        );
+        if (name === "SessionStart")
+            assert.ok(
+                output.hookSpecificOutput.additionalContext.includes(task.id),
+            );
+    }
+    const resumed = await f.run(["task", "show", task.id]);
+    assert.notEqual(resumed.lease.token, claim.lease.token);
+    await assert.rejects(
+        f.run(["task", "done", task.id], {
+            ...options,
+            token: claim.lease.token,
+        }),
+        /conflict/,
+    );
+    await f.run(["task", "done", task.id], {
+        ...options,
+        token: resumed.lease.token,
+    });
+});
+
+test("real CLI errors, aborts and identity overrides are not reported as success", async (t) => {
+    const f = await fixture(t);
+    await assert.rejects(f.run(["task", "show", "task_missing"]), /not_found/);
+    await assert.rejects(
+        f.run(["task", "claim", "task_missing", "--session=someone-else"]),
+        /managed by the host/,
+    );
+    const controller = new AbortController();
+    controller.abort();
+    await assert.rejects(
+        f.run(["context"], { signal: controller.signal }),
+        /abort/i,
+    );
+});

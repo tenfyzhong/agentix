@@ -548,6 +548,26 @@ async fn obsidian_alias_separator_is_escaped_only_inside_tables() {
 }
 
 #[tokio::test]
+async fn special_obsidian_titles_keep_entities_outside_wikilink_aliases() {
+    let f = Fixture::new("obsidian").await;
+    let task = f.task("渲染 | 中文 [链接] & <tag> [[injection]]").await;
+    f.plan(&task).await;
+    let state = f.service.store().snapshot().await.unwrap();
+    let board = std::fs::read_to_string(
+        f.service
+            .config()
+            .output_dir()
+            .join(format!("Projects/{}/Board.md", state.projects[0].key)),
+    )
+    .unwrap();
+    assert!(
+        board.contains("\\|Open]] 渲染 &#124; 中文 &#91;链接&#93; &amp; &lt;tag&gt; &#91;&#91;injection&#93;&#93;"),
+        "{board}"
+    );
+    assert!(!board.contains("[[injection]]"));
+}
+
+#[tokio::test]
 async fn plan_idempotent_replay_returns_the_same_result_and_path() {
     let f = Fixture::new("markdown").await;
     let task = f.task("idempotent plan").await;
@@ -641,6 +661,16 @@ async fn projection_failure_does_not_lose_committed_task_and_sync_repairs_it() {
 #[tokio::test]
 async fn concurrent_projections_keep_all_tasks_and_editable_notes() {
     let f = Fixture::new("markdown").await;
+    let job_path = f
+        .service
+        .config()
+        .output_dir()
+        .join(&f.service.store().snapshot().await.unwrap().jobs[0].document_path);
+    let initial = std::fs::read_to_string(&job_path).unwrap().replace(
+        "<!-- taskcli:notes:start -->",
+        "<!-- taskcli:notes:start -->\nConcurrent notes survive.",
+    );
+    std::fs::write(&job_path, initial).unwrap();
     let request_a = json!({"command":"task.add","job":f.job,"title":"Parallel A"});
     let request_b = json!({"command":"task.add","job":f.job,"title":"Parallel B"});
     let other = Service::open(f.service.config().clone()).await.unwrap();
@@ -658,6 +688,212 @@ async fn concurrent_projections_keep_all_tasks_and_editable_notes() {
         .join(&state.jobs[0].document_path);
     let body = std::fs::read_to_string(path).unwrap();
     assert!(body.contains("Parallel A") && body.contains("Parallel B"));
+    assert_eq!(body.matches("Concurrent notes survive.").count(), 1);
+}
+
+async fn task_in_state(f: &Fixture, status: &str) -> String {
+    let id = f.task("state matrix").await;
+    f.task("keep Job active").await;
+    f.plan(&id).await;
+    match status {
+        "TODO" => {}
+        "IN_PROGRESS" | "DONE" | "FAILED" => {
+            let claim = f.claim(&id, "matrix").await;
+            if status != "IN_PROGRESS" {
+                let command = if status == "DONE" {
+                    "task.done"
+                } else {
+                    "task.fail"
+                };
+                f.service
+                    .execute(
+                        json!({"command":command,"task":id,"reason":"matrix setup"}),
+                        owner(&claim),
+                    )
+                    .await
+                    .unwrap();
+            }
+        }
+        _ => {
+            let command = match status {
+                "BLOCKED" => "task.block",
+                "WAITING_USER" => "task.wait",
+                "CANCELLED" => "task.cancel",
+                _ => panic!("unknown fixture state"),
+            };
+            f.service
+                .execute(
+                    json!({"command":command,"task":id,"reason":"matrix setup"}),
+                    WriteOptions::default(),
+                )
+                .await
+                .unwrap();
+        }
+    }
+    id
+}
+
+#[tokio::test]
+async fn every_task_state_accepts_only_its_documented_commands_without_partial_writes() {
+    let cases: [(&str, &[&str]); 7] = [
+        ("TODO", &["claim", "block", "wait", "cancel"]),
+        (
+            "IN_PROGRESS",
+            &["block", "wait", "done", "fail", "cancel", "heartbeat"],
+        ),
+        ("BLOCKED", &["claim", "wait", "fail", "cancel"]),
+        ("WAITING_USER", &["claim", "block", "fail", "cancel"]),
+        ("DONE", &["reopen"]),
+        ("FAILED", &["retry"]),
+        ("CANCELLED", &["reopen"]),
+    ];
+    for (status, allowed) in cases {
+        for command in [
+            "claim",
+            "block",
+            "wait",
+            "done",
+            "fail",
+            "cancel",
+            "heartbeat",
+            "retry",
+            "reopen",
+        ] {
+            let f = Fixture::new("markdown").await;
+            let id = task_in_state(&f, status).await;
+            let before = f.service.store().snapshot().await.unwrap();
+            let sequence = f.service.store().latest_sequence().await.unwrap();
+            let options = if status == "IN_PROGRESS" {
+                owner(&before.task_result(&id).unwrap())
+            } else {
+                WriteOptions::default()
+            };
+            let result = f.service.store().execute(json!({"command":format!("task.{command}"),"task":id,"reason":"matrix transition","executor":"agent:matrix","session":"matrix"}),options).await;
+            assert_eq!(
+                result.is_ok(),
+                allowed.contains(&command),
+                "{status} / {command}: {result:?}"
+            );
+            let after = f.service.store().snapshot().await.unwrap();
+            if allowed.contains(&command) {
+                let expected = match command {
+                    "claim" | "heartbeat" => "IN_PROGRESS",
+                    "block" => "BLOCKED",
+                    "wait" => "WAITING_USER",
+                    "done" => "DONE",
+                    "fail" => "FAILED",
+                    "cancel" => "CANCELLED",
+                    _ => "TODO",
+                };
+                assert_eq!(after.task_result(&id).unwrap()["status"], expected);
+                assert_eq!(after.leases.len(), usize::from(expected == "IN_PROGRESS"));
+            } else {
+                assert_eq!(
+                    serde_json::to_value(before).unwrap(),
+                    serde_json::to_value(after).unwrap()
+                );
+                assert_eq!(f.service.store().latest_sequence().await.unwrap(), sequence);
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn same_executor_session_cannot_claim_two_ready_tasks_and_heartbeat_extends_lease() {
+    let f = Fixture::new("markdown").await;
+    let a = f.task("a").await;
+    let b = f.task("b").await;
+    f.plan(&a).await;
+    f.plan(&b).await;
+    let claim = f.claim(&a, "one").await;
+    assert!(
+        f.service
+            .execute(
+                json!({"command":"task.claim","task":b,"executor":"agent:one","session":"one"}),
+                WriteOptions::default()
+            )
+            .await
+            .is_err()
+    );
+    f.clock.fetch_add(600, Ordering::SeqCst);
+    f.service
+        .execute(json!({"command":"task.heartbeat","task":a}), owner(&claim))
+        .await
+        .unwrap();
+    f.clock.fetch_add(600, Ordering::SeqCst);
+    assert_eq!(f.service.store().reap_expired().await.unwrap(), 0);
+    f.service
+        .execute(
+            json!({"command":"task.release","task":a,"reason":"handoff"}),
+            owner(&claim),
+        )
+        .await
+        .unwrap();
+    let b_claim = f.claim(&b, "one").await;
+    assert!(
+        f.service
+            .execute(json!({"command":"task.done","task":a}), owner(&claim))
+            .await
+            .is_err()
+    );
+    f.service
+        .execute(json!({"command":"task.done","task":b}), owner(&b_claim))
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn plan_revision_requires_current_owner_and_rejected_writes_leave_no_file() {
+    let f = Fixture::new("markdown").await;
+    let id = f.task("owned plan").await;
+    let plan = f.plan(&id).await;
+    let claim = f.claim(&id, "owner").await;
+    let request = json!({"command":"plan.revise","task":id,"body":"# New plan"});
+    for options in [
+        WriteOptions::default(),
+        WriteOptions {
+            session_ref: Some("wrong".into()),
+            ..owner(&claim)
+        },
+        WriteOptions {
+            expected_revision: Some(0),
+            ..owner(&claim)
+        },
+    ] {
+        assert!(f.service.execute(request.clone(), options).await.is_err());
+        assert_eq!(f.service.store().snapshot().await.unwrap().plans.len(), 1);
+        assert!(
+            !std::path::Path::new(plan["absolute_path"].as_str().unwrap())
+                .with_file_name("v002.md")
+                .exists()
+        );
+    }
+    let updated = f.service.execute(request, owner(&claim)).await.unwrap();
+    assert_eq!(updated.result["version"], 2);
+}
+
+#[tokio::test]
+async fn missing_or_duplicate_editable_markers_fail_without_overwriting_notes() {
+    for duplicate in [false, true] {
+        let f = Fixture::new("markdown").await;
+        let state = f.service.store().snapshot().await.unwrap();
+        let path = f
+            .service
+            .config()
+            .output_dir()
+            .join(&state.jobs[0].document_path);
+        let body = std::fs::read_to_string(&path).unwrap().replace(
+            "<!-- taskcli:notes:start -->",
+            if duplicate {
+                "<!-- taskcli:notes:start -->\n<!-- taskcli:notes:start -->\nKeep me"
+            } else {
+                "Keep me"
+            },
+        );
+        std::fs::write(&path, &body).unwrap();
+        assert!(f.service.sync().await.is_err());
+        assert_eq!(std::fs::read_to_string(path).unwrap(), body);
+    }
 }
 
 #[tokio::test]
@@ -821,4 +1057,115 @@ async fn invalid_document_configuration_is_rejected_before_writing() {
     let mut config = f.service.config().clone();
     config.schema_version = 2;
     assert!(config.validate().is_err());
+}
+
+#[tokio::test]
+async fn dependencies_can_cross_jobs_but_cannot_change_after_execution_starts() {
+    let f = Fixture::new("markdown").await;
+    let a = f.task("upstream").await;
+    let job = f
+        .service
+        .execute(
+            json!({"command":"job.create","project":f.project,"title":"Downstream requirement"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap()
+        .result;
+    let b = f
+        .service
+        .execute(
+            json!({"command":"task.add","job":job["id"],"title":"downstream"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap()
+        .result["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    f.plan(&a).await;
+    f.plan(&b).await;
+    f.service
+        .execute(
+            json!({"command":"task.depend","task":b,"dependency":a}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    let first = f.claim(&a, "first").await;
+    f.service
+        .execute(json!({"command":"task.done","task":a}), owner(&first))
+        .await
+        .unwrap();
+    let second = f.claim(&b, "second").await;
+    for command in ["task.depend", "task.undepend"] {
+        assert!(
+            f.service
+                .execute(
+                    json!({"command":command,"task":b,"dependency":a}),
+                    owner(&second)
+                )
+                .await
+                .is_err()
+        );
+    }
+    f.service
+        .execute(json!({"command":"task.done","task":b}), owner(&second))
+        .await
+        .unwrap();
+    assert!(
+        f.service
+            .store()
+            .snapshot()
+            .await
+            .unwrap()
+            .jobs
+            .iter()
+            .all(|j| j.status == agentix_task::JobStatus::Completed)
+    );
+}
+
+#[tokio::test]
+async fn newer_database_schema_is_rejected_without_changing_its_version() {
+    let f = Fixture::new("markdown").await;
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new().filename(&f.service.config().storage.path),
+        )
+        .await
+        .unwrap();
+    sqlx::query("PRAGMA user_version = 99")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(Store::open(&f.service.config().storage.path).await.is_err());
+    let version: i64 = sqlx::query_scalar("PRAGMA user_version")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(version, 99);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn symlinks_cannot_redirect_document_output_or_managed_files_outside_the_root() {
+    let f = Fixture::new("markdown").await;
+    let outside = f.dir.path().join("outside");
+    std::fs::create_dir(&outside).unwrap();
+    let link = f.service.config().documents.root.join("escape");
+    std::os::unix::fs::symlink(&outside, &link).unwrap();
+    let mut config = f.service.config().clone();
+    config.documents.directory = "escape".into();
+    assert!(config.validate().is_err());
+    let target = outside.join("Dashboard.md");
+    std::fs::write(&target, "Outside content must survive").unwrap();
+    let board = f.service.config().output_dir().join("Dashboard.md");
+    std::fs::rename(&board, f.dir.path().join("original-dashboard.md")).unwrap();
+    std::os::unix::fs::symlink(&target, &board).unwrap();
+    assert!(f.service.sync().await.is_err());
+    assert_eq!(
+        std::fs::read_to_string(target).unwrap(),
+        "Outside content must survive"
+    );
 }

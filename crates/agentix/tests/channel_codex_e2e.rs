@@ -137,6 +137,7 @@ async fn feishu_message_traverses_channel_engine_and_codex_then_updates_feishu()
 }
 
 struct StackTasks {
+    engine: Arc<Engine>,
     channel: tokio::task::JoinHandle<Result<(), agentix_core::ChannelError>>,
     inbound: tokio::task::JoinHandle<()>,
     events: tokio::task::JoinHandle<()>,
@@ -150,12 +151,28 @@ async fn run_stack<C>(
 where
     C: ChannelAdapter + 'static,
 {
+    run_stack_with_tasks(client, channel, shutdown, None).await
+}
+
+async fn run_stack_with_tasks<C>(
+    client: Arc<CodexClient>,
+    channel: Arc<C>,
+    shutdown: CancellationToken,
+    task_board: Option<Arc<agentix_task::Service>>,
+) -> StackTasks
+where
+    C: ChannelAdapter + 'static,
+{
     let channel_for_engine: Arc<dyn ChannelAdapter> = channel.clone();
-    let engine = Arc::new(Engine::new(
+    let mut engine = Engine::new(
         client.clone(),
         SqliteState::in_memory().await.unwrap(),
         vec![channel_for_engine],
-    ));
+    );
+    if let Some(service) = task_board {
+        engine = engine.with_task_board(service);
+    }
+    let engine = Arc::new(engine);
     let (inbound_tx, mut inbound_rx) = mpsc::channel(32);
     let channel_task = tokio::spawn({
         let shutdown = shutdown.clone();
@@ -179,6 +196,7 @@ where
     let mut agent_events = client.subscribe();
     let event_task = tokio::spawn({
         let shutdown = shutdown.clone();
+        let engine = engine.clone();
         async move {
             loop {
                 tokio::select! {
@@ -193,10 +211,241 @@ where
         }
     });
     StackTasks {
+        engine,
         channel: channel_task,
         inbound: inbound_task,
         events: event_task,
     }
+}
+
+async fn task_board_fixture() -> (tempfile::TempDir, Arc<agentix_task::Service>, String) {
+    use agentix_task::{
+        Config, DocumentConfig, DocumentFormat, Service, StorageConfig, WriteOptions,
+    };
+    use serde_json::json;
+    let dir = tempfile::tempdir().unwrap();
+    let service = Arc::new(
+        Service::open(Config {
+            schema_version: 1,
+            storage: StorageConfig {
+                path: dir.path().join("tasks.sqlite3"),
+            },
+            documents: DocumentConfig {
+                format: DocumentFormat::Markdown,
+                root: dir.path().to_owned(),
+                directory: "docs".into(),
+            },
+        })
+        .await
+        .unwrap(),
+    );
+    let project = service
+        .execute(
+            json!({"command":"project.register","root":dir.path(),"name":"Channel tests"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap()
+        .result;
+    let job = service
+        .execute(
+            json!({"command":"job.create","project":project["id"],"title":"IM integration"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap()
+        .result;
+    let task = service
+        .execute(
+            json!({"command":"task.add","job":job["id"],"title":"Channel task"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap()
+        .result;
+    let id = task["id"].as_str().unwrap().to_owned();
+    service
+        .execute(
+            json!({"command":"plan.create","task":id,"body":"# Plan"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    service.execute(json!({"command":"task.claim","task":id,"executor":"agent:codex","session":"thr_tasks"}),WriteOptions::default()).await.unwrap();
+    (dir, service, id)
+}
+
+fn task_button_token(value: &serde_json::Value) -> Option<String> {
+    if value["text"] == "Wait" {
+        return value["callback_data"].as_str().map(str::to_owned);
+    }
+    if value["text"]["content"] == "Wait" {
+        return value["behaviors"][0]["value"]["token"]
+            .as_str()
+            .map(str::to_owned);
+    }
+    match value {
+        serde_json::Value::Object(values) => values.values().find_map(task_button_token),
+        serde_json::Value::Array(values) => values.iter().find_map(task_button_token),
+        serde_json::Value::String(value) => {
+            serde_json::from_str(value)
+                .ok()
+                .and_then(|value: serde_json::Value| {
+                    if value.is_object() {
+                        task_button_token(&value)
+                    } else {
+                        None
+                    }
+                })
+        }
+        _ => None,
+    }
+}
+
+#[tokio::test]
+async fn telegram_task_button_reason_database_projection_and_notification_round_trip() {
+    let (_dir, service, id) = task_board_fixture().await;
+    let codex = MockCodexAppServer::start();
+    codex
+        .add_thread(MockThread::new(
+            "thr_tasks",
+            "Task integration",
+            "/work/tasks",
+        ))
+        .await;
+    let client = Arc::new(CodexClient::connect(codex.endpoint()).await.unwrap());
+    let server = MockTelegramApi::start().await;
+    server
+        .push_updates(vec![
+            telegram_message(300, 30, "/attach thr_tasks"),
+            telegram_message(301, 31, &format!("/task {id}")),
+        ])
+        .await;
+    let channel = Arc::new(TelegramAdapter::with_bot(
+        Bot::new("test-token").set_api_url(server.api_url().parse().unwrap()),
+        TelegramPolicy::new([42]),
+    ));
+    let shutdown = CancellationToken::new();
+    let stack =
+        run_stack_with_tasks(client, channel, shutdown.clone(), Some(service.clone())).await;
+    let token = wait_for_value(|| async {
+        server
+            .requests()
+            .await
+            .iter()
+            .filter_map(|r| serde_json::from_str(&r.body).ok())
+            .find_map(|v| task_button_token(&v))
+    })
+    .await;
+    server.push_updates(vec![serde_json::json!({"update_id":302,"callback_query":{"id":"task-callback","from":{"id":42,"is_bot":false,"first_name":"Owner"},"chat_instance":"mock-chat","message":{"message_id":77,"date":1,"chat":{"id":42,"type":"private","first_name":"Owner"},"text":"Task"},"data":token}}),telegram_message(303,33,"Task channel reason")]).await;
+    wait_until(|| async {
+        service.store().snapshot().await.unwrap().tasks[0].status
+            == agentix_task::TaskStatus::WaitingUser
+    })
+    .await;
+    stack.engine.refresh_task_board().await.unwrap();
+    let requests = server.requests().await;
+    assert!(
+        requests
+            .iter()
+            .any(|r| r.body.contains("Task update") && r.body.contains("Task channel reason"))
+    );
+    assert!(requests.iter().any(|r| r.body.contains("task-callback")));
+    assert_task_projection(&service, "Task channel reason").await;
+    shutdown.cancel();
+    join_stack(stack).await;
+}
+
+#[tokio::test]
+async fn feishu_task_card_reason_database_projection_and_notification_round_trip() {
+    let (_dir, service, id) = task_board_fixture().await;
+    let codex = MockCodexAppServer::start();
+    codex
+        .add_thread(MockThread::new(
+            "thr_tasks",
+            "Task integration",
+            "/work/tasks",
+        ))
+        .await;
+    let client = Arc::new(CodexClient::connect(codex.endpoint()).await.unwrap());
+    let server = MockFeishuApi::start().await;
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis()
+        .to_string();
+    server
+        .push_event(feishu_message(
+            "task_attach",
+            &timestamp,
+            "/attach thr_tasks",
+        ))
+        .await;
+    server
+        .push_event(feishu_message(
+            "task_show",
+            &timestamp,
+            &format!("/task {id}"),
+        ))
+        .await;
+    let lark = LarkClient::builder("mock-app", "mock-secret")
+        .base_url(server.base_url())
+        .max_retries(1)
+        .build()
+        .unwrap();
+    let channel = Arc::new(FeishuAdapter::with_client(lark, ["ou_owner"]));
+    let shutdown = CancellationToken::new();
+    let stack =
+        run_stack_with_tasks(client, channel, shutdown.clone(), Some(service.clone())).await;
+    let token = wait_for_value(|| async {
+        server
+            .requests()
+            .await
+            .iter()
+            .filter_map(|r| serde_json::from_str(&r.body).ok())
+            .find_map(|v| task_button_token(&v))
+    })
+    .await;
+    server.push_event(serde_json::json!({"schema":"2.0","header":{"event_id":"task_action","event_type":"card.action.trigger","app_id":"mock-app","tenant_key":"tenant","create_time":timestamp},"event":{"operator":{"open_id":"ou_owner","user_id":"owner_user","tenant_key":"tenant"},"context":{"open_message_id":"om_mock_message","open_chat_id":"oc_mock_chat"},"action":{"tag":"button","name":"wait","value":{"token":token}},"token":"verification-token","host":"feishu","delivery_type":"push"}})).await;
+    server
+        .push_event(feishu_message(
+            "task_reason",
+            &timestamp,
+            "Task channel reason",
+        ))
+        .await;
+    wait_until(|| async {
+        service.store().snapshot().await.unwrap().tasks[0].status
+            == agentix_task::TaskStatus::WaitingUser
+    })
+    .await;
+    stack.engine.refresh_task_board().await.unwrap();
+    assert!(
+        server
+            .requests()
+            .await
+            .iter()
+            .any(|r| r.body.contains("Task update") && r.body.contains("Task channel reason"))
+    );
+    server.wait_for_acknowledgements(4).await;
+    assert_task_projection(&service, "Task channel reason").await;
+    shutdown.cancel();
+    join_stack(stack).await;
+}
+
+async fn assert_task_projection(service: &agentix_task::Service, reason: &str) {
+    let state = service.store().snapshot().await.unwrap();
+    assert!(state.leases.is_empty());
+    assert_eq!(state.tasks[0].reason.as_deref(), Some(reason));
+    service.sync().await.unwrap();
+    let body = std::fs::read_to_string(
+        service
+            .config()
+            .output_dir()
+            .join(&state.jobs[0].document_path),
+    )
+    .unwrap();
+    assert!(body.contains("WAITING_USER") && body.contains(reason));
 }
 
 async fn join_stack(tasks: StackTasks) {

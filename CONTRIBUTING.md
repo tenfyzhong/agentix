@@ -4,7 +4,7 @@ Thank you for helping improve Agentix. Contributions may include code, tests, do
 
 ## Development environment
 
-Agentix is a Rust workspace. Install the toolchain pinned in `rust-toolchain.toml`; it includes Rust 1.95, rustfmt, and Clippy. Node.js 22+ runs the task plugin's built-in test suite. Linux CI also installs `protobuf-compiler`.
+Agentix is a Rust workspace. Install the toolchain pinned in `rust-toolchain.toml`; it includes Rust 1.95, rustfmt, and Clippy. Node.js 24+ and npm run the task plugin tests, including its TypeScript entrypoints against Cargo's freshly compiled `taskcli`. Linux CI also installs `protobuf-compiler`.
 
 Clone the repository and verify the workspace before making changes:
 
@@ -14,7 +14,7 @@ cd agentix
 make check
 ```
 
-Live Telegram, Feishu, Codex, Pi, or rmux credentials and services are not required for the normal test suite. Integration tests use local mock services and fake transports.
+Live Telegram, Feishu, Codex, Pi, or rmux credentials and services are not required for the normal test suite. Integration tests use local mock services and fake transports; task tests additionally run real CLI subprocesses with isolated databases and document directories.
 
 ## Branches and worktrees
 
@@ -62,11 +62,16 @@ make check
 This is equivalent to:
 
 ```sh
+npm ci --ignore-scripts --prefix plugins/agent-task-manager
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 node --test plugins/agent-task-manager/tests/*.test.mjs
 ```
+
+`make check` installs the locked plugin dependencies automatically. When running Cargo directly, run the npm command above first: the taskcli integration suite imports the actual Pi/OMP TypeScript entrypoints. Node is required; these checks never silently skip missing dependencies.
+
+The optional desktop Obsidian smoke test is ignored by default and requires an explicitly selected open test vault. It creates and removes only its own temporary files and tab. See [task board validation](docs/task-board.md#validation) for the command and the boundaries that still require live-system acceptance.
 
 The test suite is layered. Protocol and rendering tests cover pure mappings; adapter tests cover Telegram, Feishu, Pi, and Codex transports; and core tests exercise routing, persistence, actions, interactions, and lifecycle transitions. Full-stack tests pass mocked Telegram and Feishu events through the channel adapter, engine, and Codex client before verifying the completed response at the channel API.
 

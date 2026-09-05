@@ -149,3 +149,160 @@ test("a conflicting explicit lease is not replaced with another task's lease", a
     );
     assert.equal(calls.at(-1).options.token, undefined);
 });
+
+test("heartbeat callbacks serialize renewals, report failure and follow session switches", async () => {
+    const handlers = new Map(),
+        timers = new Map(),
+        calls = [],
+        warnings = [];
+    let nextTimer = 0,
+        session = "first",
+        finish;
+    const host = {
+        on: (name, fn) => handlers.set(name, fn),
+        registerTool() {},
+    };
+    registerExtension(
+        host,
+        "pi",
+        async (args, options) => {
+            calls.push({ args, options });
+            if (args[1] === "heartbeat")
+                await new Promise((resolve, reject) => {
+                    finish = { resolve, reject };
+                });
+            return { schema_version: 1, ok: true, result: {} };
+        },
+        {
+            setInterval: (fn) => {
+                timers.set(++nextTimer, fn);
+                return nextTimer;
+            },
+            clearInterval: (id) => timers.delete(id),
+        },
+    );
+    const ctx = {
+        cwd: "/work",
+        sessionManager: { getSessionId: () => session },
+        ui: { notify: (message) => warnings.push(message) },
+    };
+    await handlers.get("session_start")({}, ctx);
+    const tick = timers.get(1);
+    const pending = tick();
+    await tick();
+    assert.equal(calls.filter((c) => c.args[1] === "heartbeat").length, 1);
+    finish.reject(new Error("temporary process failure"));
+    await pending;
+    assert.ok(warnings[0].includes("temporary process failure"));
+    const retry = tick();
+    finish.resolve();
+    await retry;
+    session = "second";
+    await handlers.get("session_start")({}, ctx);
+    assert.equal(timers.size, 1);
+    assert.ok(!timers.has(1));
+    assert.ok(
+        calls.some(
+            (c) => c.args[1] === "session-end" && c.options.session === "first",
+        ),
+    );
+    const renewed = timers.get(2)();
+    assert.equal(calls.at(-1).options.session, "second");
+    finish.resolve();
+    await renewed;
+    await handlers.get("session_shutdown")({}, ctx);
+    assert.equal(timers.size, 0);
+});
+
+test("transport failure retries retain the original lease even if current context is gone", async () => {
+    let tool,
+        committed = false;
+    const tokens = [];
+    registerExtension(
+        {
+            on() {},
+            registerTool: (value) => {
+                tool = value;
+            },
+        },
+        "omp",
+        async (args, options) => {
+            if (args[0] === "context")
+                return {
+                    result: committed
+                        ? {}
+                        : { task_id: "task_one", lease: { token: "original" } },
+                };
+            tokens.push(options.token);
+            if (!committed) {
+                committed = true;
+                throw new Error("reply lost after commit");
+            }
+            return { schema_version: 1, ok: true, result: { status: "DONE" } };
+        },
+    );
+    const ctx = {
+        cwd: "/work",
+        sessionManager: { getSessionId: () => "session" },
+    };
+    const invoke = () =>
+        tool.execute(
+            "same-call",
+            {
+                args: [
+                    "task",
+                    "done",
+                    "task_one",
+                    "--idempotency-key=explicit-key",
+                ],
+            },
+            undefined,
+            undefined,
+            ctx,
+        );
+    await assert.rejects(invoke(), /reply lost/);
+    assert.equal((await invoke()).details.result.status, "DONE");
+    assert.deepEqual(tokens, ["original", "original"]);
+});
+
+test("retry tokens are scoped by the exact session and idempotency key", async () => {
+    let tool,
+        session = "a:b";
+    const tokens = [];
+    registerExtension(
+        {
+            on() {},
+            registerTool(value) {
+                tool = value;
+            },
+        },
+        "pi",
+        async (args, options) => {
+            if (args[0] === "context")
+                return {
+                    result: {
+                        task_id: "task_one",
+                        lease: { token: `token:${session}` },
+                    },
+                };
+            tokens.push(options.token);
+            return { result: {} };
+        },
+    );
+    const ctx = {
+        cwd: "/work",
+        sessionManager: { getSessionId: () => session },
+    };
+    const invoke = (key) =>
+        tool.execute(
+            "call",
+            { args: ["task", "done", "task_one", "--idempotency-key", key] },
+            undefined,
+            undefined,
+            ctx,
+        );
+    await invoke("c");
+    session = "a";
+    await invoke("b:c");
+    assert.deepEqual(tokens, ["token:a:b", "token:a"]);
+});

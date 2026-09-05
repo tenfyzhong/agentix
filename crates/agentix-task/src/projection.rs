@@ -391,7 +391,9 @@ impl Service {
     }
 
     fn link(&self, from: &str, to: &str, anchor: Option<&str>, label: &str) -> String {
-        let label = escape(label);
+        let escaped_label = escape(label);
+        let needs_plain_label = escaped_label != label;
+        let label = escaped_label;
         match self.config.documents.format {
             DocumentFormat::Obsidian => {
                 let to = self
@@ -403,7 +405,19 @@ impl Service {
                     .replace('\\', "/");
                 let to = to.trim_start_matches("./").trim_end_matches(".md");
                 let anchor = anchor.map_or_else(String::new, |s| format!("#^{s}"));
-                format!("[[{to}{anchor}|{label}]]")
+                if needs_plain_label {
+                    // Obsidian aliases do not decode HTML entities. Keep labels
+                    // with reserved characters outside a stable wiki link.
+                    let label = label
+                        .replace('\\', "&#92;")
+                        .replace('*', "&#42;")
+                        .replace('_', "&#95;")
+                        .replace('`', "&#96;")
+                        .replace('~', "&#126;");
+                    format!("[[{to}{anchor}|Open]] {label}")
+                } else {
+                    format!("[[{to}{anchor}|{label}]]")
+                }
             }
             DocumentFormat::Markdown => {
                 let from: Vec<_> = from.split('/').collect();

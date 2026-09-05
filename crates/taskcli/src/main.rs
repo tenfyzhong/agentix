@@ -211,7 +211,12 @@ enum TaskCommand {
 #[derive(Args)]
 struct PlanBody {
     task: String,
-    #[arg(long, required_unless_present = "file", conflicts_with = "file")]
+    #[arg(
+        long,
+        required_unless_present = "file",
+        conflicts_with = "file",
+        allow_hyphen_values = true
+    )]
     body: Option<String>,
     #[arg(long)]
     file: Option<PathBuf>,

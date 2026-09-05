@@ -4,7 +4,7 @@ CARGO ?= cargo
 
 .DEFAULT_GOAL := build
 
-.PHONY: build release check fmt clippy test clean help
+.PHONY: build release check fmt clippy test plugin-deps clean help
 
 build:
 	$(CARGO) build --workspace --all-features
@@ -20,7 +20,10 @@ fmt:
 clippy:
 	$(CARGO) clippy --workspace --all-targets --all-features -- -D warnings
 
-test:
+plugin-deps:
+	npm ci --ignore-scripts --prefix plugins/agent-task-manager
+
+test: plugin-deps
 	$(CARGO) test --workspace --all-features
 	node --test plugins/agent-task-manager/tests/*.test.mjs
 

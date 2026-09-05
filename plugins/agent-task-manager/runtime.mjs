@@ -99,6 +99,9 @@ export function registerExtension(
     let timer;
     let activeSession;
     let refreshing = false;
+    // Retries of one host call must retain the original authorization input,
+    // even when the first attempt committed and released the current lease.
+    const requestTokens = new Map();
     const optionsFor = (ctx) => ({
         cwd: ctx.cwd,
         session: ctx.sessionManager.getSessionId(),
@@ -194,6 +197,31 @@ export function registerExtension(
                 !params.args.some((a) => a.startsWith("--idempotency-key"))
             )
                 options.idempotencyKey = `${host}:${options.session}:${toolCallId}`;
+            if (writes.has(params.args[1])) {
+                const explicit = params.args.findIndex(
+                    (arg) =>
+                        arg === "--idempotency-key" ||
+                        arg.startsWith("--idempotency-key="),
+                );
+                const key =
+                    options.idempotencyKey ??
+                    (explicit >= 0
+                        ? params.args[explicit].split("=").slice(1).join("=") ||
+                          params.args[explicit + 1]
+                        : undefined);
+                if (key) {
+                    const scopedKey = JSON.stringify([options.session, key]);
+                    if (requestTokens.has(scopedKey))
+                        options.token = requestTokens.get(scopedKey);
+                    else {
+                        requestTokens.set(scopedKey, options.token);
+                        if (requestTokens.size > 512)
+                            requestTokens.delete(
+                                requestTokens.keys().next().value,
+                            );
+                    }
+                }
+            }
             const result = await runner(params.args, options);
             return {
                 content: [{ type: "text", text: JSON.stringify(result) }],

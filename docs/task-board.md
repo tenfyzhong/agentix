@@ -96,6 +96,8 @@ Projects/<project-key>/
 
 Boards contain seven static state columns. They have no Kanban metadata or task checkboxes, and do not require community plugins. Obsidian links are vault-relative wikilinks (escaped correctly inside tables); plain Markdown links are source-relative URLs with encoded path segments. Task anchors use Obsidian block references or Markdown HTML anchors.
 
+Obsidian does not decode HTML entities in wikilink aliases. Titles containing reserved characters such as `|`, brackets, or HTML delimiters therefore appear as a stable `Open` wikilink followed by the safely escaped title; ordinary titles remain the link label. This preserves readable punctuation without injecting extra links or breaking the table.
+
 Generated regions are logically read-only, not filesystem-protected. Manual edits to status, title, dependencies, or ordering are overwritten by the next projection and never imported. There is no `watch` command. Goal/Notes markers preserve their editable bodies. Explicit `job update --goal` replaces a manually edited Goal; Notes remain untouched. Missing/duplicated editable markers fail synchronization instead of dropping content.
 
 Plan files contain authoritative Markdown bodies. `plan revise` creates a new version and preserves previous files. Manual edits refresh hashes during `sync`, `plan show`, and claim; incidental file history can be managed by Git. Agents editing Obsidian bodies must load the available Obsidian skill and use `[[wikilinks]]`; other directories use standard Markdown.
@@ -125,6 +127,8 @@ Installing the package also exposes its shared Skill. When loading only an exten
 
 SessionStart restores eligible Tasks and supplies task context. SessionEnd blocks active work. Stop means a turn ended and only renews the lease. Tool hooks renew at tool boundaries; no hook daemon is spawned. A Codex/Claude operation or idle gap longer than 15 minutes can expire a lease. Pi/OMP extensions renew every minute while the session is open, inject current task facts before the agent runs, and expose a structured taskcli tool with session, executor, current lease token, and request idempotency key. A stale-token rejection requires inspecting and reacquiring work, never forcing a completion.
 
+Within one Pi/OMP extension instance, the most recent 512 write requests retain their original injected lease token for idempotent retries, including after a successful write releases the lease or its response is lost. This token cache is not persisted across host restarts. Retrying beyond that window must preserve the original CLI request explicitly; do not assume a newly discovered lease will replay the old request.
+
 Host session references remain unchanged so Agentix bindings can route notifications. Team context belongs to future Team tooling, keyed by `job_id`; `context --json`, cursor-based events, and optional `--delegated-by team:<id>` provide the integration boundary.
 
 ## Agentix integration
@@ -142,4 +146,26 @@ Agentix incrementally consumes SQLite events during its existing runtime tick. W
 
 ## Validation
 
-`make check` runs Rust formatting, Clippy, workspace tests, and the Node built-in plugin tests. Tests use temporary databases/directories and fake agent/channel transports. They cover claim races, multiple Jobs, stale leases, dependencies, idempotency, Plan revisions, archival, editable-body preservation, projection failures, both link formats, host lifecycle, IM token scoping, and notification cursors. CI also exercises taskcli and its core on Windows.
+`make check` installs locked plugin dependencies, then runs Rust formatting, Clippy, workspace tests, and the Node built-in plugin tests. Install Node.js 24+ and npm. Direct Cargo invocations require `npm ci --ignore-scripts --prefix plugins/agent-task-manager` first. Normal tests use temporary databases/directories and local mock services, not live accounts.
+
+| Boundary | Automated coverage |
+| --- | --- |
+| State and ownership | All seven Task states against nine commands (63 cases), no partial writes on rejection, same-session claim limits, lease renewal/handoff, stale tokens, ownership/revision checks, dependency changes, archival |
+| Processes and storage | Eight competing CLI processes with exactly one claim winner; four concurrent Jobs in both formats; kill after SQLite commit but before projection, then replay without duplicate events and repair files |
+| Document projection | Editable Notes survive concurrent writes; malformed markers and symlink escapes fail safely; unsupported schema versions are not downgraded; CLI rejects invalid inputs without changing state/configuration; YAML-frontmatter Plan bodies round-trip |
+| Host plugin | Actual Pi/OMP TypeScript entrypoints and lifecycle hooks invoke the compiled CLI; structured tool schema, plans, leases, both link formats, retry identity after lease release/lost responses, errors, aborts, identity fencing, and periodic heartbeat behavior |
+| IM orchestration | Session/revision/owner scoping, Wait/Fail reasons, cancellation, Job completion, notification paging, route isolation, retry after channel failure, durable delivery cursor after Engine reconstruction |
+| Channel adapters | Actual Telegram HTTP and Feishu HTTP/WebSocket adapters pass task callbacks and reason messages through the Engine; tests verify SQLite state, projected Markdown, and notifications at local mock APIs |
+
+The plugin tests use a minimal host API harness, not installed Pi/OMP loaders or model-generated tool calls. Codex/Claude hook tests execute their manifest commands with representative payloads, not live host sessions. CI runs the normal suite on Linux/macOS and task core/CLI/plugin checks on Windows; Unix-only symlink cases are excluded on Windows.
+
+For actual Obsidian rendering, enable the separate ignored desktop test explicitly. Open a test vault, enable the Obsidian CLI, and ensure the chosen parent directory already exists:
+
+```sh
+TASKCLI_OBSIDIAN_VAULT="Test vault" TASKCLI_OBSIDIAN_PARENT="Tests" \
+  cargo test -p taskcli --test obsidian_smoke -- --ignored --nocapture
+```
+
+`OBSIDIAN_BIN` can select a specific CLI executable. The test creates an isolated `taskcli-smoke-*` directory under that parent (default `00-Inbox/agent`) and a temporary tab, then restores the previous tab and deletes only its own generated files. It verifies seven rendered columns, no interactive checkboxes, Unicode/punctuation labels, Plan navigation, and Task block anchors. A force-killed test process can leave its temporary directory/tab behind; do not run it concurrently with manual edits in that directory.
+
+These tests do not establish complete branch coverage or live-system acceptance. Real IM credentials/permissions, host installer and loader compatibility, model-directed tool selection, desktop themes/plugins, and multi-machine/network-filesystem behavior require separate checks. The supported concurrency target remains multiple local processes on one computer.
