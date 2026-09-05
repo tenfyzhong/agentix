@@ -174,9 +174,7 @@ impl CodexClient {
         let _ = client.events.send(AgentEvent::Connected {
             generation: client.connection.generation.load(Ordering::Acquire),
         });
-        if client.process_discovery.is_some() {
-            tokio::spawn(monitor_running_sessions(client.clone()));
-        }
+        tokio::spawn(monitor_running_sessions(client.clone()));
         Ok(client)
     }
 
@@ -1256,22 +1254,13 @@ async fn monitor_running_sessions(client: CodexClient) {
     loop {
         tokio::time::sleep(RUNNING_SESSION_POLL_INTERVAL).await;
         let watched = client.process_sessions.lock().await.clone();
-        if watched.is_empty() {
-            missing_counts.clear();
-            continue;
-        }
-        let page = match client.list_sessions(None, u32::MAX).await {
-            Ok(page) => page,
+        let running = match discover_running_sessions(&client).await {
+            Ok(running) => running,
             Err(error) => {
                 tracing::warn!(%error, "failed to inspect running Codex sessions");
                 continue;
             }
         };
-        let running = page
-            .sessions
-            .into_iter()
-            .map(|session| session.id)
-            .collect::<HashSet<_>>();
         let pending_resumes = client.pending_resumes.lock().await.clone();
         for session in pending_resumes.intersection(&running) {
             if let Err(error) = client.try_resume_pending_session(session).await {
@@ -1303,6 +1292,31 @@ async fn monitor_running_sessions(client: CodexClient) {
             {
                 tracing::warn!(%error, session = %session, "failed to release exited Codex session");
             }
+        }
+        // Transport subscriptions are independent of IM bindings. Keep observing
+        // unbound sessions so their terminal events can reach the engine.
+        let subscribed = client.subscriptions.lock().await.clone();
+        for session in running.difference(&subscribed) {
+            if !exited.contains(session)
+                && let Err(error) = client.attach(session).await
+            {
+                tracing::warn!(%error, session = %session, "failed to observe background Codex session");
+            }
+        }
+    }
+}
+
+async fn discover_running_sessions(
+    client: &CodexClient,
+) -> Result<HashSet<SessionId>, ClientError> {
+    let mut running = HashSet::new();
+    let mut cursor = None;
+    loop {
+        let page = client.list_sessions(cursor, u32::MAX).await?;
+        running.extend(page.sessions.into_iter().map(|session| session.id));
+        cursor = page.next_cursor;
+        if cursor.is_none() {
+            return Ok(running);
         }
     }
 }

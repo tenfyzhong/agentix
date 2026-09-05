@@ -1143,6 +1143,7 @@ async fn background_codex_turn_completion_notifies_im_with_attach_action() {
 
     engine.handle_inbound(inbound("/help")).await.unwrap();
     let before = channel.views().len();
+    server.wait_for_subscription("thr_background").await;
     server
         .complete_turn(
             "thr_background",
@@ -1180,6 +1181,89 @@ async fn background_codex_turn_completion_notifies_im_with_attach_action() {
             .iter()
             .any(|method| method == "thread/resume")
     );
+}
+
+#[tokio::test]
+async fn background_monitor_discovers_later_pages_and_retries_failed_subscriptions() {
+    let server = MockCodexAppServer::start();
+    server.set_page_size(1).await;
+    let client = CodexClient::connect(server.endpoint()).await.unwrap();
+    let mut events = client.subscribe();
+    // The service has no attached sessions, and these sessions appear after it starts.
+    server.wait_for_request_count("thread/loaded/list", 1).await;
+    for id in ["thr_first", "thr_later"] {
+        server
+            .add_thread(MockThread::new(id, id, "/work").with_turn(
+                MockTurn::in_progress_with_output("turn_external", "external work", ""),
+            ))
+            .await;
+    }
+    server
+        .fail_next("thread/resume", -32000, "temporary subscription failure")
+        .await;
+    server.wait_for_subscription("thr_later").await;
+    server.wait_for_subscription("thr_first").await;
+    server
+        .complete_turn("thr_later", "turn_external", "done")
+        .await;
+    loop {
+        if let AgentEvent::TurnCompleted {
+            session_id, status, ..
+        } = recv_event(&mut events).await
+        {
+            assert_eq!(session_id, "thr_later");
+            assert_eq!(status, TurnStatus::Completed);
+            break;
+        }
+    }
+}
+
+#[tokio::test]
+async fn detached_codex_session_keeps_notifying_about_later_turns() {
+    let server = MockCodexAppServer::start();
+    server
+        .add_thread(MockThread::new("thr_detached", "Detached work", "/work"))
+        .await;
+    let client = Arc::new(CodexClient::connect(server.endpoint()).await.unwrap());
+    let channel = Arc::new(RecordingChannel::default());
+    let state = SqliteState::in_memory().await.unwrap();
+    let engine = Engine::new(client.clone(), state.clone(), vec![channel.clone()]);
+    let mut events = client.subscribe();
+    engine
+        .handle_inbound(inbound("/attach thr_detached"))
+        .await
+        .unwrap();
+    engine.handle_inbound(inbound("/detach")).await.unwrap();
+    let before = channel.views().len();
+    server.wait_for_subscription("thr_detached").await;
+    server
+        .add_thread(
+            MockThread::new("thr_detached", "Detached work", "/work").with_turn(
+                MockTurn::in_progress_with_output("turn_later", "more work", ""),
+            ),
+        )
+        .await;
+    server
+        .complete_turn("thr_detached", "turn_later", "done")
+        .await;
+    for _ in 0..3 {
+        engine
+            .handle_agent_event(recv_event(&mut events).await)
+            .await
+            .unwrap();
+    }
+    assert_eq!(channel.views().len(), before + 1);
+    assert!(
+        channel
+            .views()
+            .last()
+            .unwrap()
+            .subtitle
+            .as_ref()
+            .unwrap()
+            .contains("Background")
+    );
+    assert!(state.list_bindings().await.unwrap().is_empty());
 }
 
 #[tokio::test]

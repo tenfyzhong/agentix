@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -177,6 +177,7 @@ struct ServerState {
     threads: BTreeMap<String, MockThread>,
     queues: HashMap<String, Vec<QueuedSubmission>>,
     request_methods: Vec<String>,
+    subscriptions: HashSet<String>,
     results: HashMap<String, Vec<Value>>,
     notifications: Vec<Value>,
     server_requests: Vec<Value>,
@@ -316,7 +317,7 @@ impl MockCodexAppServer {
     }
 
     pub async fn wait_for_request_count(&self, method: &str, expected: usize) {
-        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        tokio::time::timeout(std::time::Duration::from_secs(6), async {
             loop {
                 let count = self
                     .request_methods()
@@ -332,6 +333,26 @@ impl MockCodexAppServer {
         })
         .await
         .unwrap_or_else(|_| panic!("timed out waiting for {expected} {method} requests"));
+    }
+
+    pub async fn wait_for_subscription(&self, thread_id: &str) {
+        tokio::time::timeout(std::time::Duration::from_secs(6), async {
+            loop {
+                if self
+                    .shared
+                    .state
+                    .lock()
+                    .await
+                    .subscriptions
+                    .contains(thread_id)
+                {
+                    return;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("timed out waiting for subscription to {thread_id}"));
     }
 
     pub async fn complete_turn(&self, thread_id: &str, turn_id: &str, answer: &str) {
@@ -571,6 +592,36 @@ impl Drop for MockCodexAppServer {
     }
 }
 
+async fn update_subscriptions(
+    server: &SharedServer,
+    subscriptions: &mut HashSet<String>,
+    method: &str,
+    params: &Value,
+    result: &Value,
+) {
+    match method {
+        "thread/resume" | "thread/start" | "thread/fork" => {
+            if let Some(thread_id) = result["thread"]["id"].as_str() {
+                subscriptions.insert(thread_id.to_owned());
+                server
+                    .state
+                    .lock()
+                    .await
+                    .subscriptions
+                    .insert(thread_id.to_owned());
+            }
+        }
+        "thread/unsubscribe" => {
+            if let Some(thread_id) = params["threadId"].as_str() {
+                subscriptions.remove(thread_id);
+                server.state.lock().await.subscriptions.remove(thread_id);
+            }
+        }
+        _ => {}
+    }
+}
+
+#[allow(clippy::too_many_lines)]
 async fn serve_connection<S>(
     mut websocket: tokio_tungstenite::WebSocketStream<S>,
     server: SharedServer,
@@ -578,6 +629,7 @@ async fn serve_connection<S>(
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
     let mut outbound = server.outbound.subscribe();
+    let mut subscriptions = HashSet::<String>::new();
     loop {
         tokio::select! {
             frame = websocket.next() => {
@@ -617,6 +669,9 @@ async fn serve_connection<S>(
                         break;
                     }
                     let (result, notifications) = handle_request(&server, method, &params).await;
+                    if let Ok(result) = &result {
+                        update_subscriptions(&server, &mut subscriptions, method, &params, result).await;
+                    }
                     let response = match result {
                         Ok(result) => json!({"id": id, "result": result}),
                         Err((code, message)) => {
@@ -627,6 +682,11 @@ async fn serve_connection<S>(
                         break;
                     }
                     for notification in notifications {
+                        if let Some(thread_id) = notification["params"]["threadId"].as_str()
+                            && !subscriptions.contains(thread_id)
+                        {
+                            continue;
+                        }
                         if websocket
                             .send(Message::Text(notification.to_string().into()))
                             .await
@@ -652,6 +712,11 @@ async fn serve_connection<S>(
                             == Some("disconnect")
                         {
                             break;
+                        }
+                        if let Some(thread_id) = notification["params"]["threadId"].as_str()
+                            && !subscriptions.contains(thread_id)
+                        {
+                            continue;
                         }
                         if websocket
                             .send(Message::Text(notification.to_string().into()))

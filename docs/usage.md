@@ -74,7 +74,7 @@ Session-specific output uses `title · short-id` in current-session views, histo
 
 Agentix creates a turn message immediately with `Working 0s`, edits it at most once per second while the turn runs, and preserves its Stop action. Completion, interruption, or failure leaves the final elapsed time in the status line. After an Agentix restart, a restored running turn begins a new locally observed duration because the agent protocol does not expose its original monotonic start time.
 
-When a turn finishes in a session that is not attached to an IM conversation, Agentix notifies authenticated conversations known to the running service and includes a single-use Attach action. Replayed completion events do not create duplicate notices.
+When a turn finishes in a session that is not attached to an IM conversation, Agentix notifies authenticated conversations known to the running service and includes a single-use Attach action. Replayed completion events do not create duplicate notices. For Codex, the service discovers running sessions and establishes event subscriptions every two seconds, even when no IM conversation is attached. `/detach` removes the IM binding; a running session is rediscovered for background notifications. Send `/help` to the bot after starting the service if you have no restored binding and want to receive these notifications.
 
 Telegram uses native command menus that change with attachment state. Feishu sends an interactive command card and updates it as the state changes. Contextual commands use a `✌️` marker. `/attach` remains available as typed input, but the normal path is the Attach action returned by `/sessions`.
 

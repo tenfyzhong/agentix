@@ -16,6 +16,8 @@ Each IM conversation maps explicitly and durably to an agent session. Messages i
 - Durable bindings, restart recovery, process-exit notifications, and automatic Codex reattachment
 - Streamed in-place responses, background completion notifications, and reply context
 
+While `agentix serve` is running, Codex sessions are discovered and subscribed to every two seconds, including sessions that have never been attached or were detached from IM. Once subscribed, their turn completions notify authenticated IM conversations known to the service and include an Attach button. Send the bot `/help` once to register a conversation for these notifications; attaching a session is optional.
+
 ## Quick start
 
 ### Install
