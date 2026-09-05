@@ -1,4 +1,6 @@
 mod control;
+#[cfg(test)]
+mod proxy_tests;
 
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -6,14 +8,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use agentix::{
-    AgentConfig, Config, ImChannel, LogRotation, LoggingConfig, add_feishu_owner,
-    add_telegram_owner,
+    AgentConfig, Config, ImChannel, LogRotation, LoggingConfig, NetworkConfig, TelegramConfig,
+    add_feishu_owner, add_telegram_owner,
 };
 use agentix_codex::{CodexClient, CodexEndpoint};
 use agentix_core::{AgentAdapter, AgentError, ChannelAdapter, Engine, EngineError, SqliteState};
 use agentix_feishu::{FeishuAdapter, FeishuOwnerClaimer};
 use agentix_pi::{PiFlavor, PiRpcAdapter};
-use agentix_telegram::{TelegramAdapter, TelegramOwnerClaimer};
+use agentix_telegram::{TelegramAdapter, TelegramOwnerClaimer, TelegramPolicy};
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use clap::{Parser, Subcommand};
@@ -191,7 +193,8 @@ fn print_json(value: &impl Serialize) -> Result<()> {
 }
 
 async fn serve(config: Config, config_path: &Path) -> Result<()> {
-    let BuiltAgent { adapter, codex } = build_agent(&config.agent).await?;
+    let BuiltAgent { adapter, codex } =
+        build_agent(&config.agent, config.notifications.background_turns).await?;
     let claims = Arc::new(ClaimRegistry::default());
     let channels = build_channels(&config, config_path, claims.clone())?;
     let task_board = if let Some(task_board) = &config.task_board {
@@ -209,6 +212,7 @@ async fn serve(config: Config, config_path: &Path) -> Result<()> {
         config.server.endpoint,
         config_path.to_owned(),
         claims,
+        config.notifications.background_turns,
         Duration::from_secs(5),
         async {
             tokio::signal::ctrl_c()
@@ -229,6 +233,7 @@ async fn run_service_until_shutdown<F>(
     control_endpoint: String,
     config_path: PathBuf,
     claims: Arc<ClaimRegistry>,
+    background_turn_notifications: bool,
     channel_shutdown_grace: Duration,
     shutdown_signal: F,
 ) -> Result<()>
@@ -241,7 +246,8 @@ where
             .with_context(|| format!("failed to create state directory {}", parent.display()))?;
     }
     let state = SqliteState::open(&state_path).await?;
-    let mut engine = Engine::new(adapter.clone(), state, channels.clone());
+    let mut engine = Engine::new(adapter.clone(), state, channels.clone())
+        .with_background_turn_notifications(background_turn_notifications);
     if let Some(task_board) = task_board {
         engine = engine
             .with_task_board(task_board)
@@ -305,7 +311,19 @@ where
         Err(error) => tracing::error!(%error, "failed to finish graceful shutdown preparation"),
     }
 
-    let deadline = tokio::time::Instant::now() + channel_shutdown_grace;
+    wait_for_channel_shutdown(channel_tasks, channel_shutdown_grace).await;
+    if control_failure.is_none() {
+        let _ = control_task.await;
+    }
+    let _ = control_handler_task.await;
+    control_failure.map_or(Ok(()), Err)
+}
+
+async fn wait_for_channel_shutdown(
+    channel_tasks: Vec<tokio::task::JoinHandle<()>>,
+    grace: Duration,
+) {
+    let deadline = tokio::time::Instant::now() + grace;
     for mut task in channel_tasks {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
         if remaining.is_zero() || tokio::time::timeout(remaining, &mut task).await.is_err() {
@@ -313,11 +331,6 @@ where
             let _ = task.await;
         }
     }
-    if control_failure.is_none() {
-        let _ = control_task.await;
-    }
-    let _ = control_handler_task.await;
-    control_failure.map_or(Ok(()), Err)
 }
 
 async fn run_engine_loop(
@@ -403,10 +416,11 @@ async fn doctor(config: &Config) -> Result<()> {
             rmux_directory,
         } => {
             let endpoint = CodexEndpoint::parse(endpoint)?;
-            let client = CodexClient::connect_with_command_and_rmux_directory(
+            let client = CodexClient::connect_with_background_turn_notifications(
                 endpoint,
                 command,
                 rmux_directory,
+                false,
             )
             .await?;
             let page = client.list_sessions(None, 1).await?;
@@ -433,7 +447,10 @@ struct BuiltAgent {
     codex: Option<CodexClient>,
 }
 
-async fn build_agent(config: &AgentConfig) -> Result<BuiltAgent> {
+async fn build_agent(
+    config: &AgentConfig,
+    background_turn_notifications: bool,
+) -> Result<BuiltAgent> {
     match config {
         AgentConfig::Codex {
             endpoint,
@@ -441,10 +458,11 @@ async fn build_agent(config: &AgentConfig) -> Result<BuiltAgent> {
             rmux_directory,
         } => {
             let endpoint = CodexEndpoint::parse(endpoint)?;
-            let client = CodexClient::connect_with_command_and_rmux_directory(
+            let client = CodexClient::connect_with_background_turn_notifications(
                 endpoint,
                 command,
                 rmux_directory,
+                background_turn_notifications,
             )
             .await?;
             Ok(BuiltAgent {
@@ -679,9 +697,9 @@ fn build_channels(
                 .telegram
                 .as_ref()
                 .expect("configuration was validated");
-            let mut adapter = TelegramAdapter::new(
-                telegram.token.clone(),
-                telegram.owner_user_ids.iter().copied(),
+            let mut adapter = TelegramAdapter::with_bot(
+                build_telegram_bot(telegram, &config.network)?,
+                TelegramPolicy::new(telegram.owner_user_ids.iter().copied()),
             );
             if telegram.owner_user_ids.is_empty() {
                 adapter = adapter.with_owner_claimer(Arc::new(MemoryTelegramOwnerClaimer {
@@ -712,6 +730,11 @@ fn build_channels(
         }
     };
     Ok(vec![channel])
+}
+
+fn build_telegram_bot(telegram: &TelegramConfig, network: &NetworkConfig) -> Result<teloxide::Bot> {
+    let client = network.http_client(teloxide::net::default_reqwest_settings())?;
+    Ok(teloxide::Bot::with_client(telegram.token.clone(), client))
 }
 
 fn doctor_pi(flavor: PiFlavor, command: &Path, session_dir: &Path) -> Result<()> {
@@ -970,6 +993,7 @@ mod tests {
                 format!("tcp://{}", unused_loopback_address()),
                 config_path.clone(),
                 Arc::new(super::ClaimRegistry::default()),
+                true,
                 std::time::Duration::from_secs(5),
                 {
                     let shutdown = shutdown.clone();
@@ -1018,10 +1042,67 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn service_shutdown_aborts_a_stuck_channel_after_the_shared_deadline() {
-        let directory = tempfile::tempdir().unwrap();
+    #[tokio::test(start_paused = true)]
+    async fn channel_shutdown_returns_when_tasks_finish_before_the_deadline() {
+        let completed = CancellationToken::new();
+        let task_completed = completed.clone();
+        let task = tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(4)).await;
+            task_completed.cancel();
+        });
         let started = tokio::time::Instant::now();
+
+        super::wait_for_channel_shutdown(vec![task], std::time::Duration::from_millis(10)).await;
+
+        assert!(completed.is_cancelled());
+        assert_eq!(started.elapsed(), std::time::Duration::from_millis(4));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn channel_shutdown_aborts_stuck_tasks_after_one_shared_deadline() {
+        let mut tasks = vec![tokio::spawn(async {
+            tokio::time::sleep(std::time::Duration::from_millis(4)).await;
+        })];
+        let mut cancelled = Vec::new();
+        let mut abort_handles = Vec::new();
+        for _ in 0..2 {
+            let token = CancellationToken::new();
+            let guard = token.clone().drop_guard();
+            let task = tokio::spawn(async move {
+                let _guard = guard;
+                std::future::pending::<()>().await;
+            });
+            cancelled.push(token);
+            abort_handles.push(task.abort_handle());
+            tasks.push(task);
+        }
+        tokio::task::yield_now().await;
+        assert!(cancelled.iter().all(|token| !token.is_cancelled()));
+        let started = tokio::time::Instant::now();
+
+        let shutdown = tokio::spawn(super::wait_for_channel_shutdown(
+            tasks,
+            std::time::Duration::from_millis(10),
+        ));
+        tokio::task::yield_now().await;
+        tokio::time::advance(std::time::Duration::from_millis(9)).await;
+        tokio::task::yield_now().await;
+        assert!(!shutdown.is_finished());
+        assert!(cancelled.iter().all(|token| !token.is_cancelled()));
+        shutdown.await.unwrap();
+
+        assert_eq!(started.elapsed(), std::time::Duration::from_millis(10));
+        assert!(cancelled.iter().all(CancellationToken::is_cancelled));
+        assert!(
+            abort_handles
+                .iter()
+                .all(tokio::task::AbortHandle::is_finished)
+        );
+    }
+
+    #[tokio::test]
+    async fn service_shutdown_completes_with_a_stuck_channel() {
+        let directory = tempfile::tempdir().unwrap();
 
         super::run_service_until_shutdown(
             Arc::new(LifecycleAgent::new()),
@@ -1032,15 +1113,12 @@ mod tests {
             format!("tcp://{}", unused_loopback_address()),
             directory.path().join("config.toml"),
             Arc::new(super::ClaimRegistry::default()),
+            true,
             std::time::Duration::from_millis(10),
             async { Ok(()) },
         )
         .await
         .unwrap();
-
-        let elapsed = tokio::time::Instant::now().duration_since(started);
-        assert!(elapsed >= std::time::Duration::from_millis(10));
-        assert!(elapsed < std::time::Duration::from_secs(1));
     }
 
     fn unused_loopback_address() -> std::net::SocketAddr {

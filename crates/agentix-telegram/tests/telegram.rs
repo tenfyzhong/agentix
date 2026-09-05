@@ -648,6 +648,75 @@ async fn telegram_mock_long_polling_answers_callbacks_and_forwards_actions() {
 }
 
 #[tokio::test]
+async fn telegram_retries_rate_limited_menu_registration() {
+    let server = MockTelegramApi::start().await;
+    server.rate_limit_next("setmycommands", 1).await;
+    server.rate_limit_next("setchatmenubutton", 1).await;
+    let bot = Bot::new("test-token").set_api_url(server.api_url().parse().unwrap());
+    let adapter = TelegramAdapter::with_bot(bot, TelegramPolicy::new([42]));
+    let started = std::time::Instant::now();
+
+    tokio::time::timeout(std::time::Duration::from_secs(10), adapter.register_menu())
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert!(started.elapsed() >= std::time::Duration::from_secs(2));
+    for method in ["setmycommands", "setchatmenubutton"] {
+        let requests = server.requests().await;
+        let attempts = requests
+            .iter()
+            .filter(|r| r.target.to_ascii_lowercase().ends_with(method))
+            .collect::<Vec<_>>();
+        assert_eq!(attempts.len(), 2);
+        assert_eq!(attempts[0].body, attempts[1].body);
+    }
+}
+
+#[tokio::test]
+async fn telegram_retries_rate_limited_turn_messages_and_controls() {
+    let server = MockTelegramApi::start().await;
+    let bot = Bot::new("test-token").set_api_url(server.api_url().parse().unwrap());
+    let adapter = TelegramAdapter::with_bot(bot, TelegramPolicy::new([42]));
+    let conversation = ConversationRef::new(ChannelKind::Telegram, "42");
+    let view = OutboundView::text("Restored turn", "Saved response");
+    let message = MessageRef::new(conversation.clone(), "77");
+
+    for method in [
+        "sendmessage",
+        "editmessagetext",
+        "editmessagereplymarkup",
+        "setmycommands",
+    ] {
+        server.rate_limit_next(method, 1).await;
+        let started = std::time::Instant::now();
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            match method {
+                "sendmessage" => adapter.send(&conversation, &view).await.map(|_| ()),
+                "editmessagetext" => adapter.update(&conversation, &message, &view).await,
+                "editmessagereplymarkup" => adapter.disable_actions(&message).await,
+                _ => {
+                    adapter
+                        .set_command_menu(&conversation, &CommandMenu::default())
+                        .await
+                }
+            }
+        })
+        .await
+        .unwrap()
+        .unwrap();
+        assert!(started.elapsed() >= std::time::Duration::from_secs(1));
+        let requests = server.requests().await;
+        let attempts = requests
+            .iter()
+            .filter(|r| r.target.to_ascii_lowercase().ends_with(method))
+            .collect::<Vec<_>>();
+        assert_eq!(attempts.len(), 2);
+        assert_eq!(attempts[0].body, attempts[1].body);
+    }
+}
+
+#[tokio::test]
 async fn telegram_mock_api_errors_are_channel_transport_errors() {
     let server = MockTelegramApi::start().await;
     server
@@ -758,4 +827,192 @@ async fn write_json_response(stream: &mut TcpStream, body: &str) {
         body.len()
     );
     stream.write_all(response.as_bytes()).await.unwrap();
+}
+
+#[test]
+fn background_turns_have_a_distinct_marker_and_preserve_quotes() {
+    let mut view = OutboundView {
+        title: "Codex · Background task".into(),
+        subtitle: Some("Background turn 12345678 · Completed".into()),
+        body: "**🤖 Codex**\n\n> Completed **the task**.".into(),
+        status: serde_json::from_str("\"background\"").unwrap(),
+        actions: Vec::new(),
+    };
+    let background = render_text(&view);
+    assert!(background.starts_with("⚫ Background\n"));
+    assert!(background.contains("> Completed *the task*\\."));
+    view.status = ViewStatus::Success;
+    assert!(!render_text(&view).starts_with("⚫ Background"));
+}
+
+#[tokio::test]
+async fn telegram_cooldown_is_shared_between_cloned_adapters_and_api_methods() {
+    let server = MockTelegramApi::start().await;
+    server.rate_limit_next("sendmessage", 1).await;
+    let bot = Bot::new("test-token").set_api_url(server.api_url().parse().unwrap());
+    let adapter = TelegramAdapter::with_bot(bot, TelegramPolicy::new([42]));
+    let sender = adapter.clone();
+    let send = tokio::spawn(async move {
+        sender
+            .send(
+                &ConversationRef::new(ChannelKind::Telegram, "42"),
+                &OutboundView::text("First", "Message"),
+            )
+            .await
+    });
+    wait_for_api_method(&server, "sendmessage").await;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    let conversation = ConversationRef::new(ChannelKind::Telegram, "43");
+    let menu = CommandMenu::default();
+    let mut update = Box::pin(adapter.set_command_menu(&conversation, &menu));
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(300), &mut update)
+            .await
+            .is_err(),
+        "another API method must wait for the same bot cooldown"
+    );
+    assert_eq!(server.requests().await.len(), 1);
+    tokio::time::timeout(std::time::Duration::from_secs(5), update)
+        .await
+        .unwrap()
+        .unwrap();
+    send.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn telegram_spaces_sends_and_edits_in_the_same_chat() {
+    let server = MockTelegramApi::start().await;
+    let bot = Bot::new("test-token").set_api_url(server.api_url().parse().unwrap());
+    let adapter = TelegramAdapter::with_bot(bot, TelegramPolicy::new([42]));
+    for (chat, minimum_ms) in [("42", 1_000), ("-42", 3_000)] {
+        let conversation = ConversationRef::new(ChannelKind::Telegram, chat);
+        let view = OutboundView::text("Turn", "Working");
+        let message = adapter.send(&conversation, &view).await.unwrap();
+        let started = std::time::Instant::now();
+        adapter
+            .clone()
+            .update(&conversation, &message, &view)
+            .await
+            .unwrap();
+        assert!(
+            started.elapsed() >= std::time::Duration::from_millis(minimum_ms),
+            "message edits must share the per-chat send budget"
+        );
+    }
+}
+
+#[tokio::test]
+async fn telegram_rate_limited_head_is_retried_before_later_requests() {
+    let server = MockTelegramApi::start().await;
+    server.rate_limit_next("sendmessage", 1).await;
+    server.rate_limit_next("sendmessage", 1).await;
+    let bot = Bot::new("test-token").set_api_url(server.api_url().parse().unwrap());
+    let adapter = TelegramAdapter::with_bot(bot, TelegramPolicy::new([42]));
+    let sender = adapter.clone();
+    let head = tokio::spawn(async move {
+        sender
+            .send(
+                &ConversationRef::new(ChannelKind::Telegram, "42"),
+                &OutboundView::text("First", "Retry this before later requests"),
+            )
+            .await
+    });
+    wait_for_api_method(&server, "sendmessage").await;
+    tokio::time::timeout(std::time::Duration::from_secs(6), async {
+        adapter
+            .set_command_menu(
+                &ConversationRef::new(ChannelKind::Telegram, "43"),
+                &CommandMenu::default(),
+            )
+            .await
+            .unwrap();
+        head.await.unwrap().unwrap();
+    })
+    .await
+    .unwrap();
+    let methods = server
+        .requests()
+        .await
+        .iter()
+        .map(|request| {
+            request
+                .target
+                .rsplit('/')
+                .next()
+                .unwrap()
+                .to_ascii_lowercase()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        methods,
+        ["sendmessage", "sendmessage", "sendmessage", "setmycommands"]
+    );
+}
+
+#[tokio::test]
+async fn telegram_inbound_action_does_not_wait_for_rate_limited_acknowledgement() {
+    let server = MockTelegramApi::start().await;
+    server.rate_limit_next("answercallbackquery", 4).await;
+    server
+        .push_updates(vec![serde_json::json!({
+            "update_id": 200,
+            "callback_query": {
+                "id": "callback-1",
+                "from": {"id": 42, "is_bot": false, "first_name": "Owner"},
+                "chat_instance": "mock-chat-instance",
+                "message": {
+                    "message_id": 20,
+                    "date": 1,
+                    "chat": {"id": 42, "type": "private", "first_name": "Owner"},
+                    "text": "Choose"
+                },
+                "data": "opaque-action-token"
+            }
+        })])
+        .await;
+    let bot = Bot::new("test-token").set_api_url(server.api_url().parse().unwrap());
+    let adapter = TelegramAdapter::with_bot(bot, TelegramPolicy::new([42]));
+    let shutdown = CancellationToken::new();
+    let (sender, mut receiver) = mpsc::channel(4);
+    let task = tokio::spawn({
+        let shutdown = shutdown.clone();
+        async move { adapter.run(sender, shutdown).await }
+    });
+
+    wait_for_api_method(&server, "answercallbackquery").await;
+    let envelope = tokio::time::timeout(std::time::Duration::from_secs(1), receiver.recv())
+        .await
+        .unwrap()
+        .unwrap_or_else(|| panic!("adapter stopped before callback delivery"));
+    assert_eq!(envelope.event_id, "callback-1");
+    assert_eq!(
+        envelope.payload,
+        agentix_core::InboundPayload::Action {
+            token: "opaque-action-token".into(),
+            message: Some(MessageRef::new(
+                ConversationRef::new(ChannelKind::Telegram, "42"),
+                "20"
+            ))
+        }
+    );
+
+    shutdown.cancel();
+    tokio::time::timeout(std::time::Duration::from_secs(6), task)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let requests = server.requests().await;
+    let answer = requests
+        .iter()
+        .find(|request| {
+            request
+                .target
+                .to_ascii_lowercase()
+                .ends_with("/answercallbackquery")
+        })
+        .unwrap();
+    assert_eq!(answer.method, "POST");
+    let answer_body: serde_json::Value = serde_json::from_str(&answer.body).unwrap();
+    assert_eq!(answer_body["callback_query_id"], "callback-1");
 }

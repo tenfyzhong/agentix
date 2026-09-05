@@ -36,6 +36,7 @@ dependencies = [
  "futures-util",
  "larksuite-oapi-sdk-rs",
  "prost",
+ "reqwest",
  "serde",
  "serde_json",
  "teloxide",
@@ -49,6 +50,7 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+ "url",
  "uuid",
 ]
 
@@ -70,6 +72,7 @@ dependencies = [
  "tokio",
  "tokio-tungstenite 0.28.0",
  "tracing",
+ "tracing-subscriber",
  "url",
 ]
 

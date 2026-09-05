@@ -8,6 +8,8 @@ Each IM conversation maps explicitly and durably to an agent session. Messages i
 
 - Native Codex app-server integration plus isolated Pi and Oh My Pi RPC transports
 - Telegram long polling and Feishu long-connection support with interactive actions
+- A duplex FIFO message center for IM traffic, with ordered retries at the outbound queue head
+- A global HTTP/HTTPS/SOCKS5 proxy configured in TOML, including for Homebrew services
 - Running-session discovery, attachment, history, prompts, queues, steering, stopping, approvals, and user-input round trips
 - Codex controls for models, reasoning, Fast mode, plans, goals, reviews, diffs, forks, compaction, skills, and MCP servers
 - Interactive rmux workspace browsing and safe Codex session creation from IM
@@ -16,6 +18,23 @@ Each IM conversation maps explicitly and durably to an agent session. Messages i
 - Streamed in-place responses, background completion notifications, and reply context
 - Standalone `taskcli`: SQLite jobs, concurrent task claims, versioned plans, audit events, and read-only Obsidian/Markdown boards
 - Optional IM task controls and a shared Codex, Claude, Pi, and OMP plugin, with stable interfaces for future Agent Team orchestration
+
+While `agentix serve` is running, Agentix checks running Codex sessions for completed turns every ten seconds using read-only history queries, including sessions that have never been attached or were detached from IM. Background monitoring does not resume sessions or acquire their writer locks. New completions include the completed turn's prompt and response, a Background label, and an Attach button. Feishu uses a purple header and a tinted quote area; Telegram uses a ⚫ Background marker and blockquotes. Notifications go to authenticated IM conversations known to the service. Send the bot `/help` once to register a conversation for these notifications; attaching a session is optional.
+
+Before a Codex session's first user message, background history reads may report that the thread is not materialized yet. Agentix logs this expected condition at debug level and keeps polling; other background read errors remain warnings.
+
+Attaching a session restores its latest turn with a Stop button when that turn is running. Only the current attached session's active turn message has Stop; switching sessions, moving the attachment to another conversation, detaching, or finishing the turn removes it from the previous message. Copies shown by `/history` never include Stop.
+
+Startup recovery, automatic reattachment, and shutdown notifications only use channels enabled in the current configuration. Saved bindings and turn messages for other channels are retained for when those channels are enabled again. Each IM adapter and its clones share a duplex FIFO message center. Normalized incoming messages use an independent inbound queue; sends, edits, menus, owner-claim replies, callback acknowledgements, and Feishu reply lookups use the outbound queue. A rate-limited request stays at the head until it succeeds, fails permanently, or is cancelled, so later requests cannot overtake its retries. Telegram honors `retry_after` and spaces requests globally and per chat. Feishu HTTP 429 responses use exponential backoff from one second up to 60 seconds because its SDK does not expose the server retry delay. Cancelling a request removes that operation while preserving the channel cooldown. Telegram streams and working-duration updates refresh at most once every five seconds. Final turn updates bypass that refresh interval while still respecting Telegram cooldowns. Telegram rate-limit logs include the API method and chat ID.
+
+To disable completion notices for unattached sessions, add this to `config.toml` and restart Agentix:
+
+```toml
+[notifications]
+background_turns = false
+```
+
+The default is `true`. Disabling notifications also stops automatic background turn polling and full-content reads. When no sessions need exit/resume monitoring, automatic session discovery stops too. Existing attached or draining turn cards still complete in place; attached-session exit/resume monitoring remains active. Both completion deduplication caches keep only the latest completed turn per session, with recipient tracking for that turn, so records do not accumulate for every completed turn.
 
 ## Quick start
 
@@ -29,6 +48,8 @@ Install Agentix with Homebrew:
 brew tap tenfyzhong/tap
 brew install agentix
 ```
+
+The Homebrew formula is maintained in [tenfyzhong/homebrew-tap](https://github.com/tenfyzhong/homebrew-tap/blob/main/Formula/agentix.rb). Release automation updates that formula and publishes a macOS arm64 bottle.
 
 The Codex backend requires Codex CLI 0.153.0 or newer from the official standalone installer. The Homebrew Codex package does not include the managed app-server layout Agentix needs.
 
@@ -114,6 +135,15 @@ app_secret = "your-feishu-app-secret"
 
 Credentials are read directly from this file, including when running as a Homebrew service. On macOS/Linux, restrict access with `chmod 600 ~/.config/agentix/config.toml`.
 
+To configure the global outbound proxy, add a separate top-level table:
+
+```toml
+[network]
+proxy = "http://127.0.0.1:7890"
+```
+
+Use your proxy's actual address and port. HTTP, HTTPS, SOCKS5, and SOCKS5h proxies are supported. The setting covers all Telegram requests and works without shell proxy variables. The Feishu SDK does not use this setting and retains its existing network behavior. After changing it, restart a running Homebrew service with `brew services restart tenfyzhong/tap/agentix`.
+
 See [Configuration and operations](docs/development-and-operations.md) for backend details, Feishu permissions, logging, service management, and diagnostics.
 
 ### Start
@@ -135,18 +165,24 @@ For a source build that is not on `PATH`, replace `agentix` with `target/release
 
 If the selected channel has no configured owner, keep `agentix serve` running, execute `agentix client claim` in another local terminal, and send the printed `/claim <code>` command to the bot in a private chat.
 
+## Development
+
+Run `make check` to check formatting, run Clippy, and execute the workspace tests. Channel shutdown deadline tests use Tokio's paused clock to verify the shared grace period and task cancellation independently of database and filesystem latency. Service lifecycle tests also exercise startup and shutdown with a temporary SQLite database.
+
+CI uses Rust 1.95.0. Ensure `cargo`, `rustc`, `cargo-clippy`, and `rustfmt` all come from that toolchain rather than mixing Homebrew and rustup installations. The test suite checks the non-Unix Codex compatibility API on Unix hosts as well, so Windows-only API omissions are caught locally.
+
 ## Documentation
 
 - [Usage guide](docs/usage.md)
 - [Configuration and operations](docs/development-and-operations.md)
 - [Contributing](CONTRIBUTING.md)
 - [Product design](docs/product-design.md)
-- [Architecture](docs/architecture.md)
+- [Internal architecture and message flow diagrams](docs/architecture.md): service components, duplex FIFO queues, and rate-limit retry ordering
 - [Task board, standalone CLI, and agent plugin](docs/task-board.md)
 
 ## Task board
 
-`taskcli` works independently of the IM bridge. Choose an existing output directory explicitly:
+`taskcli` works independently of the IM bridge. Use a release archive or a source build to obtain it and the host plugin; Homebrew packaging is maintained separately in the tap. Choose an existing output directory explicitly:
 
 ```sh
 taskcli init --format markdown --root /absolute/path/to/documents --directory "Agent Tasks"

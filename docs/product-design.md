@@ -55,7 +55,7 @@ Turn 019d… · Working 12s     short turn label, state, and elapsed time
 
 Each turn owns a separate IM message/card that is updated in place. Live turns, attach hydration, and `/history` share the same one-message-per-turn layout, with the user input and Markdown agent response shown in separate quoted sections beneath their respective headings. Only a short turn ID and a human-readable status appear in the header. Tool execution events and tool summaries are omitted from both live cards and history views so the conversation remains concise. Approval requests remain visible because they require an owner decision. A second session therefore updates a different message, even if events arrive simultaneously. Background completion and approval cards explicitly identify their background state.
 
-Running turn status includes a working duration that advances once per second even when no agent delta arrives. The refresh edits the existing message/card and reuses its Stop action rather than issuing a new token. Terminal states stop refreshing and retain the final elapsed duration. Restored running turns measure elapsed time from the point Agentix observes them again.
+Running turn status includes a working duration that advances every five seconds on Telegram and every second on Feishu, even when no agent delta arrives. The refresh edits the existing message/card and reuses its Stop action rather than issuing a new token. Terminal states stop refreshing and retain the final elapsed duration. Restored running turns measure elapsed time from the point Agentix observes them again.
 
 ## 4. Main flows
 
@@ -73,7 +73,7 @@ When the underlying Codex process exits, Agentix marks any visible running turn 
 
 ### Background completion
 
-When a turn finishes outside the currently attached session, Agentix identifies the completed session by title and short ID and offers a one-tap Attach action. A session that is draining after a switch updates its existing turn card; another unbound session creates one concise notification for each authenticated conversation known to the running service. Replayed terminal events are deduplicated. Completion in the current session remains part of its normal turn card and does not create a second notification.
+When a turn finishes outside the currently attached session, Agentix identifies the completed session by title and short ID and offers a one-tap Attach action. A session that is draining after a switch updates its existing turn card; another unbound session creates one notification containing the completed turn's prompt and response for each authenticated conversation known to the running service. The standalone notices can be disabled with `notifications.background_turns = false`; existing cards still finish in place. Replayed terminal events are deduplicated. Completion in the current session remains part of its normal turn card and does not create a second notification.
 
 ### Prompt, queue, and steer
 
@@ -84,7 +84,7 @@ When a turn finishes outside the currently attached session, Agentix identifies 
 - The Codex CLI Tab queue is independent from the app-server queue. Neither side synchronizes or deduplicates the other. When both contain pending input, they may both submit after the active turn ends, producing back-to-back turns with no shared ordering guarantee; users should not operate both queues concurrently for one session.
 - Backends without persistent queue support continue to send ordinary text through their steering operation while a turn is active.
 - Codex automatically starts the next queued message after a completed or failed turn. Interrupting a turn leaves its queue paused until Codex resumes it.
-- The turn card is updated at most once per second during streaming, then flushed immediately at completion.
+- During streaming, the turn card is updated at most once every five seconds on Telegram and once per second on Feishu. Completion bypasses that refresh interval; Telegram outbound pacing and cooldowns still apply.
 
 ### Approval and input
 
@@ -105,7 +105,7 @@ The old session becomes draining and the new session becomes current. Old stream
 
 Telegram converts agent Markdown to MarkdownV2 in bounded UTF-8 text messages, registers a native command menu, and uses two-column inline keyboards. Feishu uses shared Card JSON 2.0 documents with a status-colored header, title/subtitle, Markdown body, and callback buttons. Because Feishu has no runtime API for per-conversation native bot menus, an interactive command card is sent after attachment and updated in place when attachment state changes. Both presentations are generated from the same channel-neutral `OutboundView` and `CommandMenu` models.
 
-Status colors are semantic: blue for running, orange for waiting/warning, green for success, red for error, and grey for muted/background information.
+Status colors are semantic: blue for running, orange for waiting/warning, green for success, red for error, and grey for muted information, and purple for background turns. Feishu also gives background quoted content a tinted container; Telegram adds a ⚫ Background marker.
 
 ## 6. Security and privacy
 

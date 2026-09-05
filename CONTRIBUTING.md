@@ -143,7 +143,7 @@ Pushing the tag starts the `Release` workflow, which:
 4. publishes native archives, `SHA256SUMS`, and generated notes to the matching GitHub Release;
 5. invokes the Homebrew workflow after the GitHub Release is available.
 
-The Homebrew formula applies its source tag version to the Cargo metadata before its locked source build. The workflow builds an arm64 macOS bottle, uploads it to the release, updates the formula, and opens or updates a PR in `tenfyzhong/homebrew-tap`. Automatic and manually dispatched publishing both require a `HOMEBREW_TAP_TOKEN` with permission to create branches and pull requests.
+The Homebrew formula is maintained exclusively in [`tenfyzhong/homebrew-tap`](https://github.com/tenfyzhong/homebrew-tap/blob/main/Formula/agentix.rb); edit dependencies, installation steps, and service settings there. Do not add a formula template to this repository. The formula applies its source tag version to the Cargo metadata before its locked source build. The workflow checks out the tap, updates the existing formula's source URL and checksum, and removes stale bottle metadata while preserving the tap's other settings. It then builds an arm64 macOS bottle, uploads it to the release, adds its metadata, and opens or updates a PR in the tap. Automatic and manually dispatched publishing both require a `HOMEBREW_TAP_TOKEN` with permission to create branches and pull requests.
 
 Before tagging a release:
 

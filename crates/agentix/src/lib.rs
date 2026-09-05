@@ -1,5 +1,9 @@
 //! Agentix configuration and runtime assembly.
 
+mod network;
+
+pub use network::NetworkConfig;
+
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -11,9 +15,13 @@ use toml_edit::{Array, DocumentMut, Item, Table, Value};
 #[serde(deny_unknown_fields)]
 pub struct Config {
     #[serde(default)]
+    pub network: NetworkConfig,
+    #[serde(default)]
     pub server: ServerConfig,
     #[serde(default)]
     pub logging: LoggingConfig,
+    #[serde(default)]
+    pub notifications: NotificationConfig,
     pub channel: ChannelConfig,
     pub agent: AgentConfig,
     pub storage: StorageConfig,
@@ -25,6 +33,20 @@ pub struct Config {
 #[serde(deny_unknown_fields)]
 pub struct TaskBoardConfig {
     pub config: PathBuf,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct NotificationConfig {
+    pub background_turns: bool,
+}
+
+impl Default for NotificationConfig {
+    fn default() -> Self {
+        Self {
+            background_turns: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -173,6 +195,7 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<()> {
+        self.network.validate()?;
         match self.channel.kind {
             ImChannel::Telegram => {
                 let telegram = self.channel.telegram.as_ref().context(

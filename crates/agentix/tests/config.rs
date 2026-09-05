@@ -27,6 +27,58 @@ fn task_board_configuration_is_optional_and_expands_home() {
 }
 
 #[test]
+fn accepts_global_proxy_configuration_for_either_channel() {
+    for (kind, credentials) in [
+        ("telegram", "[channel.telegram]\ntoken = 'mock-token'"),
+        (
+            "feishu",
+            "[channel.feishu]\napp_id = 'mock-app'\napp_secret = 'mock-secret'",
+        ),
+    ] {
+        for proxy in [
+            "http://127.0.0.1:7890",
+            "https://proxy.example:8443",
+            "socks5://127.0.0.1:1080",
+            "socks5h://user:password@proxy.example:1080",
+            "http://[::1]:7890",
+        ] {
+            Config::from_toml(&credential_config(
+                kind,
+                &format!("{credentials}\n[network]\nproxy = '{proxy}'"),
+            ))
+            .unwrap();
+        }
+    }
+}
+
+#[test]
+fn rejects_invalid_global_proxy_without_exposing_credentials() {
+    for proxy in [
+        "",
+        "   ",
+        "127.0.0.1:7890",
+        "ftp://user:private-password@proxy.example:7890",
+        "http://",
+        "http://user:private-password@proxy.example:99999",
+        "http://proxy.example/path",
+        "http://proxy.example?query=1",
+        "http://proxy.example#fragment",
+    ] {
+        let error = Config::from_toml(&credential_config(
+            "telegram",
+            &format!("[channel.telegram]\ntoken = 'mock-token'\n[network]\nproxy = '{proxy}'"),
+        ))
+        .unwrap_err();
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("network.proxy"),
+            "unexpected error: {message}"
+        );
+        assert!(!message.contains("private-password"));
+    }
+}
+
+#[test]
 fn accepts_inline_channel_credentials_without_environment_lookup() {
     for (kind, tables) in [
         (
@@ -682,4 +734,30 @@ owner_open_ids = ["ou_owner"]
 
     assert_eq!(config.channel.kind, ImChannel::Feishu);
     assert_eq!(config.channel.feishu.unwrap().app_id, "cli_mock");
+}
+
+#[test]
+fn accepts_disabling_background_turn_notifications() {
+    let config = Config::from_toml(&credential_config(
+        "telegram",
+        "[channel.telegram]\ntoken = 'mock-token'\n[notifications]\nbackground_turns = false",
+    ))
+    .unwrap();
+    assert!(!config.notifications.background_turns);
+}
+
+#[test]
+fn background_turn_notifications_default_to_enabled() {
+    for extra in [
+        "",
+        "\n[notifications]",
+        "\n[notifications]\nbackground_turns = true",
+    ] {
+        let config = Config::from_toml(&credential_config(
+            "telegram",
+            &format!("[channel.telegram]\ntoken = 'mock-token'{extra}"),
+        ))
+        .unwrap();
+        assert!(config.notifications.background_turns);
+    }
 }

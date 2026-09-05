@@ -116,7 +116,7 @@ taskcli sync
 
 ## Host plugin
 
-The shared package is `plugins/agent-task-manager`, also included in release archives and Homebrew's `share/agentix/plugins`. It has Codex/Claude manifests, a shared Skill, command hooks, and Pi/OMP TypeScript entrypoints. Node.js 22 or newer is required for command hooks. Put `taskcli` on PATH or set `TASKCLI_BIN`; set `TASKCLI_CONFIG` when using a non-default config.
+The shared package is `plugins/agent-task-manager`, also included with `taskcli` in release archives. Use the archive or a source checkout for the plugin; Homebrew packaging is maintained separately in the tap. It has Codex/Claude manifests, a shared Skill, command hooks, and Pi/OMP TypeScript entrypoints. Node.js 22 or newer is required for command hooks. Put `taskcli` on PATH or set `TASKCLI_BIN`; set `TASKCLI_CONFIG` when using a non-default config.
 
 For local Codex plugin development, use the host's plugin installation flow with this package directory. The manifest exposes `skills/`, and Codex discovers `hooks/hooks.json`. Claude can load it with `claude --plugin-dir /absolute/path/to/agent-task-manager`. These hosts share the default hook file without duplicate manifest declarations. Review/enable hooks in the host as required; Codex requires reviewing and trusting plugin hooks through `/hooks`. The command resolves plugin-root environment variables inside Node rather than using shell-specific expansion.
 

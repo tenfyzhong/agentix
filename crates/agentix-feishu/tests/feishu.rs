@@ -1177,3 +1177,99 @@ async fn feishu_mock_long_connection_forwards_messages_and_card_actions() {
             .any(|target| target.starts_with("/open-apis/bot/v3/info"))
     );
 }
+
+#[test]
+fn background_turn_cards_use_purple_quoted_content_and_keep_actions() {
+    let view = OutboundView {
+        title: "Codex · Background task".into(),
+        subtitle: Some("Background turn 12345678 · Completed".into()),
+        body: "**👤 You**\n\n> Run checks\n\n**🤖 Codex**\n\n> All checks passed".into(),
+        status: serde_json::from_str("\"background\"").unwrap(),
+        actions: vec![ActionButton {
+            label: "Attach".into(),
+            token: "attach-token".into(),
+            style: ActionStyle::Primary,
+        }],
+    };
+    let value = render_card(&view).unwrap().card().to_json().into_value();
+    assert_eq!(value["header"]["template"], "purple");
+    let quote = &value["body"]["elements"][0]["columns"][0];
+    assert_eq!(quote["background_style"], "rgba(128,64,192,0.12)");
+    assert!(
+        quote["elements"][0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("> All checks passed")
+    );
+    assert_eq!(value["body"]["elements"][1]["text"]["content"], "Attach");
+}
+
+#[tokio::test]
+async fn feishu_rate_limited_head_retries_before_later_operations() {
+    let server = MockFeishuApi::start().await;
+    server.rate_limit_next("/open-apis/im/v1/messages?").await;
+    server.rate_limit_next("/open-apis/im/v1/messages?").await;
+    let client = LarkClient::builder("mock-fifo-app", "mock-secret")
+        .base_url(server.base_url())
+        .max_retries(1)
+        .build()
+        .unwrap();
+    let adapter = FeishuAdapter::with_client(client, ["ou_owner"]);
+    let sender = adapter.clone();
+    let started = std::time::Instant::now();
+    let head = tokio::spawn(async move {
+        sender
+            .send(
+                &ConversationRef::new(ChannelKind::Feishu, "oc_first"),
+                &OutboundView::text("First", "Head of the queue"),
+            )
+            .await
+    });
+    wait_for_feishu_message_request(&server).await;
+    tokio::time::timeout(std::time::Duration::from_secs(8), async {
+        adapter
+            .set_command_menu(
+                &ConversationRef::new(ChannelKind::Feishu, "oc_later"),
+                &CommandMenu::default(),
+            )
+            .await
+            .unwrap();
+        head.await.unwrap().unwrap();
+    })
+    .await
+    .unwrap();
+    assert!(started.elapsed() >= std::time::Duration::from_secs(3));
+    let requests = server.requests().await;
+    let destinations = requests
+        .iter()
+        .filter(|request| request.target.starts_with("/open-apis/im/v1/messages?"))
+        .map(|request| {
+            serde_json::from_str::<serde_json::Value>(&request.body).unwrap()["receive_id"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        destinations,
+        ["oc_first", "oc_first", "oc_first", "oc_later"]
+    );
+}
+
+async fn wait_for_feishu_message_request(server: &MockFeishuApi) {
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if server
+                .requests()
+                .await
+                .iter()
+                .any(|request| request.target.starts_with("/open-apis/im/v1/messages?"))
+            {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+}

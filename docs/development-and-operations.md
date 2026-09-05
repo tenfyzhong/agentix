@@ -10,6 +10,29 @@ Every filesystem path accepts `~` or `~/...` and expands it to the current user'
 
 Set `agent.rmux_directory` to choose the workspace used when `/rmux` creates a session, window, or pane; it defaults to the current user's home directory. The former `agent.multiplexer_directory` key remains available as a compatibility alias.
 
+### Global outbound proxy
+
+Configure the global outbound proxy in a top-level table:
+
+```toml
+[network]
+proxy = "http://127.0.0.1:7890"
+```
+
+`network.proxy` accepts `http://`, `https://`, `socks5://`, and `socks5h://` URLs. Use `socks5h://127.0.0.1:1080` when the proxy should resolve destination hostnames. Authentication can be supplied as URL-encoded user information, for example `http://username:password@127.0.0.1:7890`. Proxy URLs must have a host and may have a port; paths, query strings, fragments, and blank values are rejected during configuration validation.
+
+The configured proxy takes precedence over environment proxy settings, including bypass rules, for clients using this setting. It covers all Telegram requests, including polling, menus, messages, edits, and callback acknowledgements. Proxy failures return errors; these requests do not fall back to a direct connection. Omit `network.proxy` to retain the client's existing routing behavior.
+
+The Feishu SDK does not use `network.proxy`. Its token requests, OpenAPI calls, WebSocket bootstrap, and WebSocket connections retain their existing network behavior.
+
+Local control connections, Codex Unix sockets, and Pi/Oh My Pi RPC pipes remain local. Coding agents already running on your computer retain their own provider-network settings.
+
+Homebrew services read the same configuration file and need no shell proxy variables. After editing the file, restart the service:
+
+```sh
+brew services restart tenfyzhong/tap/agentix
+```
+
 ### Local control endpoint
 
 `agentix serve` exposes a local newline-delimited JSON control endpoint used by every `agentix client` subcommand. The platform defaults are:
@@ -101,7 +124,7 @@ Use the operating system's user service manager for production. Run the process 
 
 Graceful shutdown cancels channel listeners, stops inbound/event loops, checkpoints SQLite WAL state, removes live turn controls, restores detached IM menus, and sends an offline notification. Durable bindings are retained without stopping the coding-agent session. Channel adapters share one five-second shutdown deadline, so multiple adapters do not multiply the wait. Active turn text, status, owner context, and IM message references are checkpointed so a restart refreshes the existing Stop action and later completion edits the original message instead of creating a duplicate.
 
-At startup, Agentix sends an online notification to each conversation with a saved binding and automatically reattaches sessions that remain available. If the agent rejects a saved session because it is no longer attachable, Agentix removes that stale binding, keeps the IM detached, and reports the result. For the managed Codex socket, Agentix polls the local interactive process set every two seconds and confirms an attached-session exit after two consecutive missing snapshots. It then notifies the bound IM conversation, removes live controls, and suspends the binding while continuing to watch that session ID. Running `codex resume` for the same session restores the app-server subscription and IM binding automatically. A manual detach or attaching another session cancels that watch. App-server disconnects, `thread/closed`, and `notLoaded` do not suspend the durable binding. Custom Codex sockets do not automatically detect process exit or resume because their process tree is not locally discoverable.
+At startup, Agentix sends an online notification to each conversation with a saved binding and automatically reattaches sessions that remain available. If the agent rejects a saved session because it is no longer attachable, Agentix removes that stale binding, keeps the IM detached, and reports the result. For the managed Codex socket, Agentix polls the local interactive process set every ten seconds and confirms an attached-session exit after two consecutive missing snapshots. It then notifies the bound IM conversation, removes live controls, and suspends the binding while continuing to watch that session ID. Running `codex resume` for the same session restores the app-server subscription and IM binding automatically. A manual detach or attaching another session cancels that watch. App-server disconnects, `thread/closed`, and `notLoaded` do not suspend the durable binding. Custom Codex sockets do not automatically detect process exit or resume because their process tree is not locally discoverable.
 
 ## Diagnostics
 
@@ -109,6 +132,7 @@ At startup, Agentix sends an online notification to each conversation with a sav
 
 - TOML structure and selected-channel owner configuration
 - required credentials in the configuration file without printing values
+- global proxy URL validity (proxy connectivity is exercised when the service connects)
 - state directory existence
 - Codex managed-daemon startup plus initialize/list handshake, or Pi/OMP executable and session discovery
 

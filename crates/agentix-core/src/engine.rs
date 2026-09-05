@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
@@ -193,6 +193,7 @@ pub struct Engine {
     turns: TurnCoordinator,
     interactions: InteractionCoordinator,
     rmux: RmuxController,
+    background_turn_notifications: bool,
 }
 
 impl Engine {
@@ -218,7 +219,15 @@ impl Engine {
             turns: TurnCoordinator::default(),
             interactions: InteractionCoordinator::default(),
             rmux,
+            background_turn_notifications: true,
         }
+    }
+
+    /// Enable or disable completion notices for sessions without an IM binding.
+    #[must_use]
+    pub fn with_background_turn_notifications(mut self, enabled: bool) -> Self {
+        self.background_turn_notifications = enabled;
+        self
     }
 
     /// Restores durable conversation bindings and their upstream subscriptions.
@@ -226,11 +235,20 @@ impl Engine {
         let persisted = self.state.list_bindings().await?;
         let mut restored = 0;
         for (conversation, session) in &persisted {
+            if !self.channels.contains_key(&conversation.channel) {
+                continue;
+            }
             if self.restore_binding(conversation, session).await? {
                 restored += 1;
             }
         }
         for stored in self.state.list_turn_views().await? {
+            if !self
+                .channels
+                .contains_key(&stored.message.conversation.channel)
+            {
+                continue;
+            }
             let is_current = self
                 .sessions
                 .bindings
@@ -375,6 +393,9 @@ impl Engine {
 
         let mut notified = 0;
         for (conversation, session) in &persisted {
+            if !self.channels.contains_key(&conversation.channel) {
+                continue;
+            }
             let session_label = self.session_label(session).await;
             self.sessions
                 .bindings
@@ -1392,6 +1413,9 @@ impl Engine {
                 .map(|turn| turn.id.as_str()),
             HistoryPresentation::History => None,
         };
+        if matches!(presentation, HistoryPresentation::Attached) && running_turn_id.is_none() {
+            self.turns.remove_active(session_id).await;
+        }
         for (turn, view) in history.turns.iter().zip(views) {
             if running_turn_id == Some(turn.id.as_str()) {
                 self.hydrate_running_turn(conversation, session_id, turn)
@@ -1463,6 +1487,7 @@ impl Engine {
             .await
             .ok_or(EngineError::NoCurrentSession)?;
         let active = self.turns.is_active(&current).await;
+        self.clear_session_stop_actions(&current).await?;
         self.state.detach(conversation).await?;
         let session = self
             .sessions
@@ -1678,6 +1703,10 @@ impl Engine {
         session_id: &SessionId,
         old_active: bool,
     ) -> Result<(), EngineError> {
+        if let Some(previous) = self.sessions.current(conversation).await {
+            self.clear_session_stop_actions(&previous).await?;
+        }
+        self.clear_session_stop_actions(session_id).await?;
         let persistent = self.state.attach(conversation, session_id).await?;
         let persisted_previous = persistent.previous_session.clone();
         let outcome = self
@@ -1970,7 +1999,7 @@ impl Engine {
                 turn_id,
             } => {
                 self.record_turn_started(SessionId::new(session_id), turn_id.clone())
-                    .await;
+                    .await?;
                 return Ok(());
             }
             _ => {}
@@ -2083,13 +2112,13 @@ impl Engine {
         drop(buffers);
         self.render_turn(conversation, session_id, &turn_id, delivery, true)
             .await?;
-        self.turns.remove_active(session_id).await;
+        if self.turns.active_turn(session_id).await.as_deref() == Some(&turn_id) {
+            self.turns.remove_active(session_id).await;
+        }
         if delivery == DeliveryClass::Draining {
-            self.turns.background_notifications.lock().await.insert((
-                conversation.clone(),
-                session_id.clone(),
-                turn_id,
-            ));
+            self.turns
+                .record_background_notification(conversation, session_id, &turn_id)
+                .await;
             self.sessions.finish_draining(session_id).await;
             self.agent.unsubscribe(session_id).await?;
         }
@@ -2104,6 +2133,9 @@ impl Engine {
         error: Option<&str>,
     ) -> Result<(), EngineError> {
         self.turns.remove_active(session_id).await;
+        if !self.background_turn_notifications {
+            return Ok(());
+        }
         let recipients = self
             .interactions
             .owners
@@ -2116,16 +2148,28 @@ impl Engine {
             return Ok(());
         }
 
+        let delivered = self.turns.background_notifications.lock().await;
+        let recipients = recipients
+            .into_iter()
+            .filter(|(conversation, _)| {
+                !delivered.get(session_id).is_some_and(|notice| {
+                    notice.turn_id == turn_id && notice.recipients.contains(conversation)
+                })
+            })
+            .collect::<Vec<_>>();
+        drop(delivered);
+        if recipients.is_empty() {
+            return Ok(());
+        }
+        let content = self.background_turn_content(session_id, turn_id).await;
+        let body = format!("{}\n\n{content}", background_completion_body(status, error));
         self.cache_session_summary(session_id).await;
         let session_label = self.session_label(session_id).await;
         for (conversation, owner_id) in recipients {
-            let notification_key = (conversation.clone(), session_id.clone(), turn_id.to_owned());
             if self
                 .turns
-                .background_notifications
-                .lock()
+                .background_notification_delivered(&conversation, session_id, turn_id)
                 .await
-                .contains(&notification_key)
             {
                 continue;
             }
@@ -2141,19 +2185,43 @@ impl Engine {
                         short_identifier(turn_id),
                         turn_status_label(status)
                     )),
-                    body: background_completion_body(status, error),
-                    status: turn_view_status(status),
+                    body: body.clone(),
+                    status: ViewStatus::Background,
                     actions: vec![action],
                 },
             )
             .await?;
             self.turns
-                .background_notifications
-                .lock()
-                .await
-                .insert(notification_key);
+                .record_background_notification(&conversation, session_id, turn_id)
+                .await;
         }
         Ok(())
+    }
+
+    async fn background_turn_content(&self, session: &SessionId, turn_id: &str) -> String {
+        let mut cursor = None;
+        let mut visited = HashSet::new();
+        loop {
+            let page = match self.agent.read_history(session, cursor, 20).await {
+                Ok(page) => page,
+                Err(error) => {
+                    tracing::warn!(%error, %session, %turn_id, "failed to read background turn content");
+                    break;
+                }
+            };
+            if let Some(turn) = page.turns.iter().find(|turn| turn.id == turn_id) {
+                return turn_conversation_body(
+                    self.agent.display_name(),
+                    turn.user_text.as_deref(),
+                    turn.agent_text.as_deref(),
+                );
+            }
+            match page.older_cursor {
+                Some(next) if visited.insert(next.clone()) => cursor = Some(next),
+                _ => break,
+            }
+        }
+        "Turn content is unavailable.".into()
     }
 
     async fn handle_completed_item(
@@ -2171,7 +2239,17 @@ impl Engine {
         Ok(())
     }
 
-    async fn record_turn_started(&self, session_id: SessionId, turn_id: String) {
+    async fn record_turn_started(
+        &self,
+        session_id: SessionId,
+        turn_id: String,
+    ) -> Result<(), EngineError> {
+        if let Some(previous) = self.turns.active_turn(&session_id).await
+            && previous != turn_id
+        {
+            self.clear_turn_stop_action(&(session_id.clone(), previous))
+                .await?;
+        }
         self.turns
             .set_active(session_id.clone(), turn_id.clone())
             .await;
@@ -2182,6 +2260,7 @@ impl Engine {
             .entry((session_id, turn_id))
             .or_default()
             .ensure_started();
+        Ok(())
     }
 
     async fn handle_session_exit(&self, session_id: &SessionId) -> Result<(), EngineError> {
@@ -2265,12 +2344,14 @@ impl Engine {
     }
 
     async fn handle_session_resume(&self, session_id: &SessionId) -> Result<(), EngineError> {
-        let Some((conversation, _)) = self
-            .state
-            .list_bindings()
-            .await?
-            .into_iter()
-            .find(|(_, saved_session)| saved_session == session_id)
+        let Some((conversation, _)) =
+            self.state
+                .list_bindings()
+                .await?
+                .into_iter()
+                .find(|(conversation, saved_session)| {
+                    saved_session == session_id && self.channels.contains_key(&conversation.channel)
+                })
         else {
             return Ok(());
         };
@@ -2410,10 +2491,13 @@ impl Engine {
     ) -> Result<(), EngineError> {
         let key = (session_id.clone(), turn_id.to_owned());
         let session_label = self.session_label(session_id).await;
-        if !self.turns.should_render(&key, force).await {
+        let interval = self
+            .channel(conversation.channel)?
+            .streaming_update_interval();
+        if !self.turns.should_render(&key, force, interval).await {
             return Ok(());
         }
-        let (mut view, can_stop, snapshot) = {
+        let (mut view, is_running, snapshot) = {
             let buffers = self.turns.buffers.lock().await;
             let buffer = buffers.get(&key).expect("turn buffer must exist");
             (
@@ -2428,6 +2512,22 @@ impl Engine {
                 buffer.clone(),
             )
         };
+        let existing = self.turns.views.lock().await.get(&key).cloned();
+        let can_stop = is_running
+            && delivery == DeliveryClass::Live
+            && self.sessions.current(conversation).await.as_ref() == Some(session_id)
+            && {
+                // Some adapters deliver output before a turn-started event.
+                let mut active = self.turns.active.lock().await;
+                if existing.is_none() {
+                    active
+                        .entry(session_id.clone())
+                        .or_insert_with(|| turn_id.to_owned());
+                }
+                active
+                    .get(session_id)
+                    .is_some_and(|active_turn| active_turn == turn_id)
+            };
         let owner_id = self
             .interactions
             .owners
@@ -2442,13 +2542,12 @@ impl Engine {
             view.actions.push(stop_action);
         }
         if delivery == DeliveryClass::Draining
-            && !can_stop
+            && !is_running
             && let Some(owner_id) = owner_id.as_deref()
         {
             view.actions
                 .push(self.attach_action(conversation, owner_id, session_id).await);
         }
-        let existing = self.turns.views.lock().await.get(&key).cloned();
         let message = if let Some(message) = existing {
             self.channel(conversation.channel)?
                 .update(conversation, &message, &view)
@@ -2480,6 +2579,55 @@ impl Engine {
                 .await?;
         } else {
             self.state.delete_turn_view(session_id, turn_id).await?;
+        }
+        Ok(())
+    }
+
+    async fn clear_session_stop_actions(&self, session_id: &SessionId) -> Result<(), EngineError> {
+        let keys: Vec<_> = self
+            .interactions
+            .turn_action_groups
+            .lock()
+            .await
+            .keys()
+            .filter(|(session, _)| session == session_id)
+            .cloned()
+            .collect();
+        for key in keys {
+            self.clear_turn_stop_action(&key).await?;
+        }
+        Ok(())
+    }
+
+    async fn clear_turn_stop_action(&self, key: &(SessionId, String)) -> Result<(), EngineError> {
+        if !self
+            .interactions
+            .turn_action_groups
+            .lock()
+            .await
+            .contains_key(key)
+        {
+            return Ok(());
+        }
+        let message = self.turns.views.lock().await.get(key).cloned();
+        let buffer = self.turns.buffers.lock().await.get(key).cloned();
+        if let (Some(message), Some(buffer)) = (message, buffer)
+            && matches!(buffer.status, TurnStatus::InProgress | TurnStatus::Unknown)
+        {
+            let session_label = self.session_label(&key.0).await;
+            let view = live_turn_view(
+                self.agent.display_name(),
+                &session_label,
+                &key.1,
+                &buffer,
+                DeliveryClass::Live,
+            );
+            self.channel(message.conversation.channel)?
+                .update(&message.conversation, &message, &view)
+                .await?;
+            self.replace_stop_action(key, &message.conversation, None, false)
+                .await;
+            self.state.delete_turn_view(&key.0, &key.1).await?;
         }
         Ok(())
     }
@@ -2595,7 +2743,14 @@ impl Engine {
                 }
                 continue;
             };
-            self.turns.should_render(&key, true).await;
+            let interval = self
+                .channel(conversation.channel)
+                .map_or(Duration::from_secs(1), |channel| {
+                    channel.streaming_update_interval()
+                });
+            if !self.turns.should_render(&key, false, interval).await {
+                continue;
+            }
             let session_label = self.session_label(&session_id).await;
             let mut view = live_turn_view(
                 self.agent.display_name(),
@@ -3386,12 +3541,21 @@ fn live_turn_view(
     OutboundView {
         title: format!("{agent_name} · {session_label}"),
         subtitle: Some(format!(
-            "Turn {} · {}",
+            "{} {} · {}",
+            if delivery == DeliveryClass::Draining {
+                "Background turn"
+            } else {
+                "Turn"
+            },
             short_identifier(turn_id),
             live_turn_status_label(buffer)
         )),
         body: live_turn_body(agent_name, buffer, delivery),
-        status: turn_view_status(&buffer.status),
+        status: if delivery == DeliveryClass::Draining {
+            ViewStatus::Background
+        } else {
+            turn_view_status(&buffer.status)
+        },
         actions: Vec::new(),
     }
 }

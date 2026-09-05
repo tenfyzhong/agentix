@@ -6,6 +6,7 @@ mod binding;
 mod channel;
 mod command;
 mod engine;
+mod message_center;
 mod model;
 mod render;
 mod state;
@@ -27,6 +28,7 @@ pub use channel::{
 };
 pub use command::{AgentCommand, InputParseError, ParsedInput, parse_input};
 pub use engine::{Engine, EngineError};
+pub use message_center::MessageCenter;
 pub use model::{ChannelKind, ConversationRef, SessionId};
 pub use render::{HistoryWatermark, RenderKey, chunk_text};
 pub use state::SqliteState;

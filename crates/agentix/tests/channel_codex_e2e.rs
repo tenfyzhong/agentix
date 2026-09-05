@@ -27,6 +27,9 @@ use teloxide::Bot;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
+// Multi-message round trips must allow Telegram's 1.1-second per-chat pacing.
+const ROUND_TRIP_TIMEOUT: Duration = Duration::from_secs(10);
+
 #[tokio::test]
 async fn telegram_message_traverses_channel_engine_and_codex_then_updates_telegram() {
     let codex = MockCodexAppServer::start();
@@ -54,7 +57,8 @@ async fn telegram_message_traverses_channel_engine_and_codex_then_updates_telegr
     codex
         .complete_turn("thr_telegram_e2e", &turn_id, "telegram integration answer")
         .await;
-    let updated = tokio::time::timeout(Duration::from_secs(2), async {
+    // Allow the chat budget to pace the start acknowledgement and final edit.
+    let updated = tokio::time::timeout(ROUND_TRIP_TIMEOUT, async {
         loop {
             let requests = telegram.requests().await;
             if requests
@@ -472,7 +476,7 @@ where
     F: FnMut() -> Fut,
     Fut: Future<Output = Option<String>>,
 {
-    tokio::time::timeout(Duration::from_secs(2), async {
+    tokio::time::timeout(ROUND_TRIP_TIMEOUT, async {
         loop {
             if let Some(value) = read().await {
                 return value;
@@ -489,7 +493,7 @@ where
     F: FnMut() -> Fut,
     Fut: Future<Output = bool>,
 {
-    tokio::time::timeout(Duration::from_secs(2), async {
+    tokio::time::timeout(ROUND_TRIP_TIMEOUT, async {
         loop {
             if predicate().await {
                 return;

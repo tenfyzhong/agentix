@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use agentix_core::{
@@ -379,12 +380,16 @@ impl SessionControlPort for FakeAgent {
 
 #[derive(Clone, Default)]
 struct FakeChannel {
+    channel_kind: Option<ChannelKind>,
+    streaming_interval: Option<std::time::Duration>,
     sent: Arc<Mutex<Vec<(ConversationRef, OutboundView)>>>,
     updated: Arc<Mutex<Vec<(MessageRef, OutboundView)>>>,
     disabled_actions: Arc<Mutex<Vec<MessageRef>>>,
+    messages: Arc<Mutex<HashMap<MessageRef, OutboundView>>>,
     session_commands: Arc<Mutex<Vec<(ConversationRef, bool)>>>,
     fail_menu_updates: Arc<Mutex<bool>>,
     task_send_failures: Arc<Mutex<usize>>,
+    reject_unchanged_updates: bool,
 }
 
 impl FakeChannel {
@@ -411,8 +416,13 @@ impl FakeChannel {
 
 #[async_trait]
 impl ChannelAdapter for FakeChannel {
+    fn streaming_update_interval(&self) -> std::time::Duration {
+        self.streaming_interval
+            .unwrap_or(std::time::Duration::from_secs(1))
+    }
+
     fn kind(&self) -> ChannelKind {
-        ChannelKind::Telegram
+        self.channel_kind.unwrap_or(ChannelKind::Telegram)
     }
 
     async fn send(
@@ -433,10 +443,12 @@ impl ChannelAdapter for FakeChannel {
             .lock()
             .unwrap()
             .push((conversation.clone(), view.clone()));
-        Ok(MessageRef::new(
-            conversation.clone(),
-            format!("m{}", self.sent().len()),
-        ))
+        let message = MessageRef::new(conversation.clone(), format!("m{}", self.sent().len()));
+        self.messages
+            .lock()
+            .unwrap()
+            .insert(message.clone(), view.clone());
+        Ok(message)
     }
 
     async fn update(
@@ -445,6 +457,14 @@ impl ChannelAdapter for FakeChannel {
         message: &MessageRef,
         view: &OutboundView,
     ) -> Result<(), ChannelError> {
+        if self.reject_unchanged_updates && self.messages.lock().unwrap().get(message) == Some(view)
+        {
+            return Err(ChannelError::Transport("message is not modified".into()));
+        }
+        self.messages
+            .lock()
+            .unwrap()
+            .insert(message.clone(), view.clone());
         self.updated
             .lock()
             .unwrap()
@@ -2100,6 +2120,225 @@ async fn attach_hydrates_the_latest_running_turn_with_a_stop_action() {
     assert_eq!(channel.updated().len(), 1);
 }
 
+fn visible_stop_messages(channel: &FakeChannel) -> Vec<MessageRef> {
+    channel
+        .messages
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(_, view)| view.actions.iter().any(|action| action.label == "Stop"))
+        .map(|(message, _)| message.clone())
+        .collect()
+}
+
+#[tokio::test]
+async fn attach_stop_button_moves_to_only_the_latest_attached_running_turn() {
+    for kind in [ChannelKind::Telegram, ChannelKind::Feishu] {
+        let agent = Arc::new(FakeAgent::with_history(vec![TurnSummary {
+            id: "turn_running".into(),
+            status: TurnStatus::InProgress,
+            user_text: Some("keep working".into()),
+            agent_text: Some("still running".into()),
+            tools: Vec::new(),
+            items: Vec::new(),
+        }]));
+        let channel = Arc::new(FakeChannel {
+            channel_kind: Some(kind),
+            reject_unchanged_updates: true,
+            streaming_interval: Some(std::time::Duration::ZERO),
+            ..FakeChannel::default()
+        });
+        let engine = Engine::new(
+            agent.clone(),
+            SqliteState::in_memory().await.unwrap(),
+            vec![channel.clone()],
+        );
+        let chat = ConversationRef::new(kind, "chat-a");
+        let other_chat = ConversationRef::new(kind, "chat-b");
+        let commands = [
+            (&chat, "/attach thr_a", true),
+            (&chat, "/history", true),
+            (&chat, "/attach thr_b", true),
+            (&chat, "/attach thr_a", true),
+            (&other_chat, "/attach thr_a", true),
+            (&other_chat, "/detach", false),
+            (&chat, "/attach thr_a", true),
+            (&chat, "/attach thr_b", false),
+        ];
+        for (index, (conversation, command, running)) in commands.into_iter().enumerate() {
+            if index == 7 {
+                agent.history_turns.lock().unwrap()[0].status = TurnStatus::Completed;
+            }
+            let old_token = visible_stop_messages(&channel).first().map(|message| {
+                (
+                    message.conversation.clone(),
+                    channel.messages.lock().unwrap()[message].actions[0]
+                        .token
+                        .clone(),
+                )
+            });
+            engine
+                .handle_inbound(InboundEnvelope::text(
+                    format!("command-{index}"),
+                    conversation.clone(),
+                    "owner",
+                    command,
+                ))
+                .await
+                .unwrap();
+            let visible = visible_stop_messages(&channel);
+            assert_eq!(visible.len(), usize::from(running), "{kind:?}: {command}");
+            if running {
+                assert_eq!(&visible[0].conversation, conversation);
+            }
+            if command != "/history"
+                && let Some((old_conversation, token)) = old_token
+            {
+                let result = engine
+                    .handle_inbound(InboundEnvelope::action(
+                        format!("stale-stop-{index}"),
+                        old_conversation,
+                        "owner",
+                        token,
+                    ))
+                    .await;
+                assert!(matches!(result, Err(EngineError::InvalidAction)));
+            }
+        }
+        engine
+            .handle_agent_event(AgentEvent::AgentMessageDelta {
+                session_id: "thr_b".into(),
+                turn_id: "turn_running".into(),
+                item_id: "late-item".into(),
+                delta: "late output".into(),
+            })
+            .await
+            .unwrap();
+        assert!(visible_stop_messages(&channel).is_empty());
+        assert!(!agent.calls().iter().any(|call| call.starts_with("stop:")));
+    }
+}
+
+#[tokio::test]
+async fn attach_stop_button_does_not_return_on_superseded_turn_updates() {
+    let agent = Arc::new(FakeAgent::with_history(vec![TurnSummary {
+        id: "turn_old".into(),
+        status: TurnStatus::InProgress,
+        user_text: Some("old prompt".into()),
+        agent_text: Some("old response".into()),
+        tools: Vec::new(),
+        items: Vec::new(),
+    }]));
+    let channel = Arc::new(FakeChannel {
+        streaming_interval: Some(std::time::Duration::ZERO),
+        ..FakeChannel::default()
+    });
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::TurnStarted {
+            session_id: "thr_a".into(),
+            turn_id: "turn_new".into(),
+        })
+        .await
+        .unwrap();
+    assert!(visible_stop_messages(&channel).is_empty());
+    for turn in ["turn_new", "turn_old"] {
+        engine
+            .handle_agent_event(AgentEvent::AgentMessageDelta {
+                session_id: "thr_a".into(),
+                turn_id: turn.into(),
+                item_id: format!("item-{turn}"),
+                delta: "more output".into(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(visible_stop_messages(&channel).len(), 1);
+    }
+    engine
+        .handle_agent_event(AgentEvent::TurnCompleted {
+            session_id: "thr_a".into(),
+            turn_id: "turn_old".into(),
+            status: TurnStatus::Completed,
+            error: None,
+        })
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound("chat-a", "follow up"))
+        .await
+        .unwrap();
+    assert!(
+        agent
+            .calls()
+            .contains(&"steer:thr_a:turn_new:follow up".into())
+    );
+    engine
+        .handle_agent_event(AgentEvent::TurnCompleted {
+            session_id: "thr_a".into(),
+            turn_id: "turn_new".into(),
+            status: TurnStatus::Completed,
+            error: None,
+        })
+        .await
+        .unwrap();
+    assert!(visible_stop_messages(&channel).is_empty());
+}
+
+#[tokio::test]
+async fn late_output_cannot_restore_stop_on_an_old_turn_after_the_latest_turn_finishes() {
+    let channel = Arc::new(FakeChannel {
+        streaming_interval: Some(std::time::Duration::ZERO),
+        ..FakeChannel::default()
+    });
+    let engine = Engine::new(
+        Arc::new(FakeAgent::new()),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound("chat-a", "start work"))
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::TurnStarted {
+            session_id: "thr_a".into(),
+            turn_id: "turn_latest".into(),
+        })
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::TurnCompleted {
+            session_id: "thr_a".into(),
+            turn_id: "turn_latest".into(),
+            status: TurnStatus::Completed,
+            error: None,
+        })
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::AgentMessageDelta {
+            session_id: "thr_a".into(),
+            turn_id: "turn_new".into(),
+            item_id: "late-item".into(),
+            delta: "late output".into(),
+        })
+        .await
+        .unwrap();
+    assert!(visible_stop_messages(&channel).is_empty());
+}
+
 #[tokio::test]
 async fn attach_and_history_render_one_message_per_turn_with_distinct_speakers() {
     let agent = Arc::new(FakeAgent::with_history(vec![
@@ -2730,6 +2969,109 @@ async fn restore_reopens_persisted_agent_subscriptions() {
     assert!(agent.calls().contains(&"start:thr_a:continue".to_string()));
 }
 
+async fn seed_feishu_turn(state: &SqliteState) {
+    let channel = Arc::new(FakeChannel {
+        channel_kind: Some(ChannelKind::Feishu),
+        ..FakeChannel::default()
+    });
+    let engine = Engine::new(Arc::new(FakeAgent::new()), state.clone(), vec![channel]);
+    engine
+        .handle_inbound(InboundEnvelope::text(
+            "feishu-attach",
+            ConversationRef::new(ChannelKind::Feishu, "saved-chat"),
+            "owner-42",
+            "/attach thr_b",
+        ))
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::AgentMessageDelta {
+            session_id: "thr_b".into(),
+            turn_id: "feishu-turn".into(),
+            item_id: "item".into(),
+            delta: "Saved Feishu response".into(),
+        })
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn restore_preserves_disabled_channels_without_subscribing_or_rendering_them() {
+    let state = SqliteState::in_memory().await.unwrap();
+    seed_feishu_turn(&state).await;
+    let telegram = ConversationRef::new(ChannelKind::Telegram, "chat-a");
+    state
+        .attach(&telegram, &SessionId::new("thr_a"))
+        .await
+        .unwrap();
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(agent.clone(), state.clone(), vec![channel.clone()]);
+
+    assert_eq!(engine.restore_bindings().await.unwrap(), 1);
+    assert!(agent.calls().contains(&"attach:thr_a".into()));
+    assert!(!agent.calls().contains(&"attach:thr_b".into()));
+    assert!(
+        channel
+            .sent()
+            .iter()
+            .all(|(conversation, _)| conversation == &telegram)
+    );
+    assert_eq!(state.list_bindings().await.unwrap().len(), 2);
+
+    let feishu = Arc::new(FakeChannel {
+        channel_kind: Some(ChannelKind::Feishu),
+        ..FakeChannel::default()
+    });
+    let restarted = Engine::new(agent, state, vec![feishu.clone()]);
+    assert_eq!(restarted.restore_bindings().await.unwrap(), 1);
+    assert_eq!(feishu.updated().len(), 1);
+    assert!(feishu.updated()[0].1.body.contains("Saved Feishu response"));
+}
+
+#[tokio::test]
+async fn resumed_sessions_do_not_reactivate_disabled_channels() {
+    let state = SqliteState::in_memory().await.unwrap();
+    seed_feishu_turn(&state).await;
+    let engine = Engine::new(
+        Arc::new(FakeAgent::new()),
+        state,
+        vec![Arc::new(FakeChannel::default())],
+    );
+    engine
+        .handle_agent_event(AgentEvent::SessionResumed {
+            session_id: "thr_b".into(),
+        })
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::AgentMessageDelta {
+            session_id: "thr_b".into(),
+            turn_id: "feishu-turn".into(),
+            item_id: "item".into(),
+            delta: "Later Feishu response".into(),
+        })
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn shutdown_skips_disabled_channels_and_preserves_their_state() {
+    let state = SqliteState::in_memory().await.unwrap();
+    seed_feishu_turn(&state).await;
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        Arc::new(FakeAgent::new()),
+        state.clone(),
+        vec![channel.clone()],
+    );
+
+    assert_eq!(engine.prepare_shutdown().await.unwrap(), 0);
+    assert!(channel.sent().is_empty());
+    assert!(channel.updated().is_empty());
+    assert_eq!(state.list_bindings().await.unwrap().len(), 1);
+}
+
 #[tokio::test]
 async fn graceful_shutdown_persists_the_binding_and_detaches_the_im() {
     let agent = Arc::new(FakeAgent::new());
@@ -3278,7 +3620,24 @@ async fn completion_invalidates_the_previous_stop_button() {
 
 #[tokio::test]
 async fn unattached_turn_completion_notifies_the_im_and_can_attach_the_session() {
-    let agent = Arc::new(FakeAgent::new());
+    let agent = Arc::new(FakeAgent::with_history(vec![
+        TurnSummary {
+            id: "turn_background".into(),
+            status: TurnStatus::Completed,
+            user_text: Some("finish the background task".into()),
+            agent_text: Some("Completed **the task**.\n\nAll checks passed.".into()),
+            tools: Vec::new(),
+            items: Vec::new(),
+        },
+        TurnSummary {
+            id: "turn_newer".into(),
+            status: TurnStatus::InProgress,
+            user_text: Some("newer unrelated question".into()),
+            agent_text: Some("newer unrelated answer".into()),
+            tools: Vec::new(),
+            items: Vec::new(),
+        },
+    ]));
     let channel = Arc::new(FakeChannel::default());
     let state = SqliteState::in_memory().await.unwrap();
     let engine = Engine::new(agent.clone(), state, vec![channel.clone()]);
@@ -3306,7 +3665,14 @@ async fn unattached_turn_completion_notifies_the_im_and_can_attach_the_session()
         notification.subtitle.as_deref(),
         Some("Background turn turn_bac · Completed")
     );
-    assert_eq!(notification.status, agentix_core::ViewStatus::Success);
+    assert!(notification.body.contains("> finish the background task"));
+    assert!(notification.body.contains("> Completed **the task**."));
+    assert!(notification.body.contains("> All checks passed."));
+    assert!(!notification.body.contains("newer unrelated"));
+    assert_eq!(
+        serde_json::to_value(notification.status).unwrap(),
+        "background"
+    );
     assert!(notification.body.contains("not attached"));
     assert_eq!(notification.actions.len(), 1);
     assert_eq!(notification.actions[0].label, "Attach");
@@ -3319,6 +3685,71 @@ async fn unattached_turn_completion_notifies_the_im_and_can_attach_the_session()
     )
     .await;
     assert!(agent.calls().contains(&"attach:thr_b".to_owned()));
+}
+
+#[tokio::test]
+async fn disabling_background_notifications_keeps_attached_turns_visible() {
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    )
+    .with_background_turn_notifications(false);
+    engine
+        .handle_inbound(inbound_as("chat-a", "owner-42", "/help"))
+        .await
+        .unwrap();
+    let before = channel.sent().len();
+    for status in [
+        TurnStatus::Completed,
+        TurnStatus::Failed,
+        TurnStatus::Interrupted,
+    ] {
+        engine
+            .handle_agent_event(AgentEvent::TurnCompleted {
+                session_id: "thr_b".into(),
+                turn_id: "turn_background".into(),
+                status,
+                error: None,
+            })
+            .await
+            .unwrap();
+    }
+    assert_eq!(channel.sent().len(), before);
+    assert!(
+        agent.history_cursors().is_empty(),
+        "disabled notices must not fetch content"
+    );
+    engine
+        .handle_inbound(inbound_as("chat-a", "owner-42", "/attach thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::AgentMessageDelta {
+            session_id: "thr_a".into(),
+            turn_id: "turn_attached".into(),
+            item_id: "item_answer".into(),
+            delta: "Attached answer".into(),
+        })
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::TurnCompleted {
+            session_id: "thr_a".into(),
+            turn_id: "turn_attached".into(),
+            status: TurnStatus::Completed,
+            error: None,
+        })
+        .await
+        .unwrap();
+    let updated = channel.updated();
+    assert!(updated.last().unwrap().1.body.contains("Attached answer"));
+    assert_eq!(
+        updated.last().unwrap().1.status,
+        agentix_core::ViewStatus::Success
+    );
 }
 
 #[tokio::test]
@@ -3387,6 +3818,7 @@ async fn draining_turn_completion_adds_an_attach_button() {
     let notification = channel.sent().last().unwrap().1.clone();
     assert_eq!(notification.title, "Codex · Parser cleanup · thr_a");
     assert!(notification.body.contains("background session"));
+    assert_eq!(notification.status, agentix_core::ViewStatus::Background);
     assert_eq!(notification.actions.len(), 1);
     assert_eq!(notification.actions[0].label, "Attach");
 
@@ -3408,4 +3840,68 @@ async fn draining_turn_completion_adds_an_attach_button() {
             .count(),
         2
     );
+}
+
+#[tokio::test]
+async fn stream_and_working_timer_share_the_channel_interval_but_completion_flushes() {
+    let channel = Arc::new(FakeChannel {
+        streaming_interval: Some(std::time::Duration::from_secs(5)),
+        ..FakeChannel::default()
+    });
+    let engine = Engine::new(
+        Arc::new(FakeAgent::new()),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound_as("chat-a", "owner-42", "/attach thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound_as("chat-a", "owner-42", "work"))
+        .await
+        .unwrap();
+    let before = channel.updated().len();
+    tokio::time::sleep(std::time::Duration::from_millis(1_100)).await;
+    engine
+        .handle_agent_event(AgentEvent::AgentMessageDelta {
+            session_id: "thr_a".into(),
+            turn_id: "turn_new".into(),
+            item_id: "answer".into(),
+            delta: "Buffered output".into(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        channel.updated().len(),
+        before,
+        "stream must respect the channel interval"
+    );
+    assert_eq!(
+        engine.refresh_working_turns().await,
+        0,
+        "timer must not bypass stream pacing"
+    );
+    tokio::time::sleep(std::time::Duration::from_secs(4)).await;
+    assert_eq!(engine.refresh_working_turns().await, 1);
+    assert!(
+        channel
+            .updated()
+            .last()
+            .unwrap()
+            .1
+            .body
+            .contains("Buffered output")
+    );
+    engine
+        .handle_agent_event(AgentEvent::TurnCompleted {
+            session_id: "thr_a".into(),
+            turn_id: "turn_new".into(),
+            status: TurnStatus::Completed,
+            error: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(channel.updated().len(), before + 2);
+    assert!(channel.updated().last().unwrap().1.actions.is_empty());
 }

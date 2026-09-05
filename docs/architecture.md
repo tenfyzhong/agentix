@@ -6,27 +6,66 @@ Agentix uses a ports-and-adapters layout. The core owns identity, binding, routi
 
 ```mermaid
 flowchart LR
-    TG[Telegram long polling] --> CA[ChannelAdapter]
-    FS[Feishu long connection] --> CA
-    CA --> RT[Serialized runtime loop]
-    AA --> RT
-    RT --> E[Engine facade]
-    E --> SC[SessionCoordinator]
-    E --> TC[TurnCoordinator]
-    E --> IC[InteractionCoordinator]
-    E --> RC[RmuxController]
-    E <--> DB[(SQLite)]
-    E --> AV[OutboundView]
-    AV --> CA
-    CX[Codex WS over UDS] --> AA[AgentAdapter ports]
-    PI[Pi JSONL RPC] --> AA
-    OMP[Oh My Pi JSONL RPC] --> AA
-    CLI[agentix client] --> CT[Local control endpoint]
-    CT --> RT
-    CT --> AA
+    IM["Telegram or Feishu"]
+    CLI["agentix client"]
+    BACKEND["Codex app-server or Pi / Oh My Pi RPC"]
+    RMUX["rmux daemon"]
+
+    subgraph SERVICE["agentix serve"]
+        subgraph CHANNEL["Selected ChannelAdapter and its clones"]
+            DECODE["Owner policy and event normalization"]
+            LOCAL["Menus, claims, acknowledgements, reply lookups"]
+            subgraph CENTER["Shared MessageCenter · agentix-core"]
+                IN["Inbound FIFO"]
+                OUT["Outbound FIFO"]
+            end
+            HEAD["Queue head: API call, pacing and retries"]
+        end
+
+        subgraph RUNTIME["Runtime and orchestration"]
+            RT["Serialized engine loop"]
+            TICK["Working-duration timer"]
+            E["Engine facade"]
+            SC["SessionCoordinator: bindings and history cursors"]
+            TC["TurnCoordinator: buffers and message references"]
+            IC["InteractionCoordinator: actions and approvals"]
+            RC["RmuxController"]
+            DB[("SqliteState: bindings, event claims, checkpoints")]
+        end
+
+        AA["Shared AgentAdapter and optional capability ports"]
+        CT["Local control endpoint and handler"]
+        CLAIM["Owner claim registry"]
+    end
+
+    IM -->|"IM events"| DECODE
+    DECODE -->|"InboundEnvelope"| IN
+    IN -->|"Bounded runtime channel"| RT
+    TICK --> RT
+    AA -->|"AgentEvent subscription"| RT
+    RT --> E
+    E --> SC
+    E --> TC
+    E --> IC
+    E --> RC
+    E <--> DB
+    E -->|"Agent commands"| AA
+    RC -->|"WorkspaceRuntimePort"| AA
+    AA <-->|"Backend protocol"| BACKEND
+    AA <-->|"rmux SDK when supported"| RMUX
+    E -->|"ChannelAdapter calls: views, menus, action cleanup"| OUT
+    LOCAL --> OUT
+    OUT --> HEAD
+    HEAD -->|"IM API requests"| IM
+    CLI <--> CT
+    CT -->|"Session listing and raw Codex RPC"| AA
+    CT -->|"Issue claim code"| CLAIM
+    DECODE -.->|"Validate and consume claim"| CLAIM
 ```
 
-The executable selects one `AgentAdapter` and one or more `ChannelAdapter` implementations from validated TOML configuration.
+The executable selects one backend and one IM channel from validated TOML configuration. The engine supports a collection of channel adapters, while `serve` currently assembles only the configured channel. The diagram shows logical components inside that process, not a separate task for every box. `MessageCenter` is defined in `agentix-core` and owned by each selected channel adapter; clones share the same two queues.
+
+The local control handler runs separately from the serialized engine loop and uses the same backend client for session listing and raw Codex requests. Its claim requests use the owner claim registry. SDK polling, connection setup, and WebSocket control frames are omitted from the application message paths shown above.
 
 `Engine` is the orchestration facade rather than the owner of one large shared state bag. `SessionCoordinator` owns bindings, session metadata, and history cursors; `TurnCoordinator` owns active turns, render buffers, and message references; `InteractionCoordinator` owns pending interactions and scoped actions; and `RmuxController` isolates workspace-runtime access. External I/O remains in the facade so durable transitions and follow-up effects have an explicit order.
 
@@ -34,7 +73,7 @@ The executable selects one `AgentAdapter` and one or more `ChannelAdapter` imple
 
 | Crate | Responsibility |
 | --- | --- |
-| `agentix-core` | domain types, capability ports, coordinators, command parsing, SQLite state, routing, and rendering orchestration |
+| `agentix-core` | domain types, duplex FIFO message center, capability ports, coordinators, command parsing, SQLite state, routing, and rendering orchestration |
 | `agentix-codex` | app-server protocol, native WebSocket-over-UDS client, history fallback, reconnect/resubscribe |
 | `agentix-pi` | shared Pi/Oh My Pi JSONL RPC subprocess client and JSONL session discovery |
 | `agentix-telegram` | owner policy, mention handling, native command menu, long polling, message edit, callback acknowledgment |
@@ -46,12 +85,15 @@ The executable selects one `AgentAdapter` and one or more `ChannelAdapter` imple
 ```mermaid
 sequenceDiagram
     participant IM as IM adapter
+    participant In as MessageCenter inbound FIFO
     participant Runtime as Serialized runtime
     participant Core as Engine facade
     participant DB as SQLite
     participant Agent as Agent adapter
+    participant Out as MessageCenter outbound FIFO
 
-    IM->>Runtime: InboundEnvelope(event, conversation, owner, text/action)
+    IM->>In: Normalized InboundEnvelope
+    In->>Runtime: Deliver through bounded runtime channel
     Runtime->>Core: handle inbound envelope
     Core->>DB: claim event as processing
     DB-->>Core: claimed or already in flight/completed
@@ -61,8 +103,49 @@ sequenceDiagram
     Agent-->>Runtime: AgentEvent(session, turn, item, delta/status)
     Runtime->>Core: handle agent event
     Core->>Core: route by exact session ID
-    Core->>IM: send/update OutboundView
+    Core->>Out: ChannelAdapter send/update with OutboundView
+    Out->>IM: Execute API operation at queue head
+    IM-->>Out: MessageRef or delivery result
+    Out-->>Core: Complete the awaiting channel call
 ```
+
+The two FIFO directions progress independently. The following example shows a later outbound request waiting behind a rate-limited head while an already-normalized inbound envelope is delivered to the runtime channel:
+
+```mermaid
+sequenceDiagram
+    participant A as Caller A
+    participant B as Caller B
+    participant Out as Outbound FIFO
+    participant API as IM API
+    participant In as Inbound FIFO
+    participant Runtime as Runtime channel
+
+    A->>Out: Submit operation A
+    activate Out
+    Out->>API: Attempt A
+    API-->>Out: Rate limit
+    B->>Out: Submit operation B and wait behind A
+    Note over Out: A retains the head during cooldown
+    In->>Runtime: Deliver a normalized inbound envelope
+    loop Until A succeeds, fails permanently, or is cancelled
+        Out->>API: Retry A after cooldown
+        API-->>Out: Result
+    end
+    Out-->>A: Return result, or abandon cancelled operation
+    deactivate Out
+    Note over Out: A saved cooldown still applies if A was cancelled
+    activate Out
+    Out->>API: Attempt B when permitted
+    API-->>Out: Result
+    Out-->>B: Return result
+    deactivate Out
+```
+
+Independent delivery does not make the engine concurrent: if the serialized loop is awaiting an outbound call, it handles buffered inbound envelopes after that call completes. A Feishu reply-context lookup also uses the outbound queue before normalization can finish. The queue implementation does not spawn background workers; cancelling a caller drops that operation and releases its queue position.
+
+Each IM adapter and all of its clones share a core `MessageCenter`. Its two independent FIFO admission queues are backed by Tokio's fair mutex wait queues. Admission order is the order in which operation futures are first polled; no ordering is claimed before normalization or before a future is polled. The inbound head delivers one `InboundEnvelope` to the bounded runtime channel, preserving backpressure. The outbound head owns the entire API operation, including pacing, token refresh, and rate-limit retries; later operations cannot run between its attempts. Queued work lives in the caller's future, without detached workers or an extra unbounded message buffer. Dropping that future deliberately abandons its operation and releases its queue position. Established transport cooldowns remain in shared adapter state for the next head. The existing shutdown deadline can therefore cancel queued or active operations without leaving background retries.
+
+The center covers all Agentix-owned IM API paths: sends, edits, action cleanup, command menus, owner-claim replies, Telegram bot initialization and callback acknowledgements, and Feishu reply-context lookups. SDK polling, connection bootstrap, heartbeats, and WebSocket frame acknowledgements remain transport mechanics outside the application queues. Inbound delivery is independent of outbound pacing; a Telegram callback can reach the runtime while its acknowledgement waits. A Feishu prompt that requires a reply-context lookup must finish that queued lookup before its normalized envelope is ready.
 
 The runtime owns one `tokio::select!` loop for inbound IM envelopes and agent events. Both streams therefore enter the engine serially, while each transport may continue doing its own network I/O concurrently. This removes races between an inbound action and the event that completes or invalidates the same turn.
 
@@ -94,7 +177,13 @@ The `/sessions` picker renders each session as a numbered quote block with a tit
 
 Turn buffers are keyed by `(session_id, turn_id)` and accumulate user text and assistant deltas. Message references use the same key. The first visible conversation event sends a message; later visible events edit that exact message. Live turns, attach hydration, and history pages all use the same conversation layout: the user input and Markdown agent output appear in separate quoted sections under their respective headings. When attach hydration finds that the latest turn is still in progress, it restores the active-turn route, buffer, and message checkpoint, then issues a fresh owner-bound Stop action. Live headers use short turn IDs and human-readable statuses. Tool start and completion events do not trigger IM sends or edits, and history rendering omits tool summaries. Approval requests remain separate actionable views.
 
-A terminal event without a live or draining route is a background completion. The engine sends it only to authenticated IM conversations already known to the current process, labels it with the session title and short ID, and issues an owner- and conversation-bound Attach action. A draining completion edits the existing turn card and adds the same action. Successful deliveries are deduplicated by `(conversation, session_id, turn_id)`, including a draining event replayed after its route has been removed. Current-session completions stay on their live card and never produce the background notice.
+The Codex runtime polls running-session discovery every ten seconds, following session-list pagination even when no IM session is attached. Background observation uses `thread/turns/list` with `itemsView: "notLoaded"` and falls back to `thread/read` with turns if pagination is unsupported. It never calls `thread/resume` to monitor a session: another process may already own that session's writer lock. Explicit IM attachment retains its existing resume/subscription behavior.
+
+The observer pages through new terminal turns until it reaches its previous completion, then emits completed, failed, and interrupted events in execution order, preserving error details. Its initial snapshot skips historical completions predating service startup; timestamped completions since startup are still reported if they finish before discovery. Failed reads preserve the previous completion marker for retry, and a disappearing session receives a final read. Completions received over the live subscription are recorded too, so detaching before the next poll does not replay them as background notices. The mock app-server enforces per-connection subscriptions and rejects resume for externally owned writers.
+
+A terminal event without a live or draining route is a background completion. The engine sends it only to authenticated IM conversations already known to the current process, labels it with the session title and short ID, and issues an owner- and conversation-bound Attach action. A draining completion edits the existing turn card and adds the same action. The Codex client keeps one latest completed turn ID per session. The engine likewise keeps one latest turn per session with a set of recipients already notified; a new turn replaces the previous record. Duplicate delivery of that latest turn is suppressed per conversation, including a draining event replayed after its route has been removed. Current-session completions stay on their live card and never produce the background notice.
+
+`notifications.background_turns` defaults to true and controls standalone completion notices in the engine. The setting is passed to the Codex client before its monitor starts. Disabled notices do not poll background turn metadata or fetch full turn content, and skip automatic discovery entirely when no attached sessions or pending resumes need lifecycle monitoring. Enabled notices fetch read-only history, following pages until the completed turn ID is found; they include its user input and agent response, preserving Markdown quotes. A failed or missing history read leaves the outcome notification available. `ViewStatus::Background` gives these notices and draining cards a purple Feishu header and a tinted quote container, while Telegram uses a ⚫ Background marker with standard blockquotes. The textual subtitle preserves completion, failure, or interruption status independently of the background color.
 
 For Codex, ordinary input received during an active turn uses the experimental `thread/queue/add` API instead of `turn/steer`. The server persists each input as a separate FIFO follow-up turn and emits `thread/queue/changed`; Agentix parses that notification and reads `thread/queue/list` to render `/queue` and determine the position shown in its immediate enqueue confirmation. Idle input still uses `turn/start`. Adapters that do not advertise persistent queue support retain same-turn steering.
 
@@ -102,7 +191,7 @@ This app-server queue is distinct from the Codex TUI's Tab queue in Codex CLI 0.
 
 Queueing is an optional `QueuedPromptPort`; attached-session commands use `SessionControlPort`; and rmux operations use `WorkspaceRuntimePort`. `AgentAdapter` contains only operations common to every backend and exposes an `AgentCapabilities` value derived from the optional ports. The engine uses those capabilities to construct help and command menus instead of relying on backend-name checks or a growing set of support booleans.
 
-Non-final event rendering is throttled to one update per second. Independently, the engine loop ticks once per second and refreshes every visible attached turn so its locally measured working duration advances even without agent output. Timer refreshes reuse the current Stop action token; they do not create an action-invalidating race. Completion is never throttled, always flushes the accumulated text, records the final duration, and removes the turn from future ticks. Restored running turns start a fresh local measurement because upstream history does not expose a compatible monotonic start instant. This balances responsive progress with Telegram edit pressure and Feishu card churn. Telegram converts quoted sections independently to escaped MarkdownV2 before restoring their quote markers, preserving paragraph and list boundaries inside each visual block. Conversion happens before length enforcement so truncation cannot leave broken formatting delimiters.
+Non-final event rendering uses the channel update interval: five seconds for Telegram and one second for Feishu. The engine loop ticks once per second, but working-duration refreshes share that same interval with streamed content instead of bypassing it. Buffered content and locally measured duration are refreshed even without new agent output. Timer refreshes reuse the current Stop action token; they do not create an action-invalidating race. Completion bypasses the refresh interval, flushes the accumulated text, records the final duration, and removes the turn from future ticks. Restored running turns start a fresh local measurement because upstream history does not expose a compatible monotonic start instant. Telegram sends, edits, command menus, owner-claim replies, and callback acknowledgements enter the same outbound message-center queue per adapter and its clones. The Telegram pacing helper only manages deadlines for the admitted head. It spaces requests globally by at least 50 ms and chat-scoped requests by 1.1 seconds in private chats or 3.1 seconds in groups. A 429 response stores a shared cooldown for the requested delay plus a 100 ms margin; cancelling one retry does not clear the cooldown. Completed-turn messages also respect these transport limits. Expired per-chat pacing entries are removed on subsequent requests. Telegram converts quoted sections independently to escaped MarkdownV2 before restoring their quote markers, preserving paragraph and list boundaries inside each visual block. Conversion happens before length enforcement so truncation cannot leave broken formatting delimiters.
 
 ## 6. Agent transports
 
@@ -123,7 +212,7 @@ The current generation is shared atomically by every `CodexClient` clone so acti
 
 For the managed control socket, session discovery starts from interactive Codex TUI processes. Standalone sessions are mapped through their open `thread-writer-locks/<session-id>.lock` files. Daemon-backed clients are matched one-to-one by working directory against `thread/loaded/list`, preferring active and recently updated threads. Agentix then uses `thread/read` to normalize metadata and discards ephemeral threads without a rollout before matching. This includes standalone sessions that the daemon reports as `notLoaded` while excluding stored sessions and orphaned daemon threads. Attach calls `thread/resume` in metadata-only mode and then pages history independently. If Codex reports that a listed running thread has no rollout because it has not received its first user message, Agentix records a provisional subscription and presents empty history; the first `turn/start` materializes the thread and completes `thread/resume`. A session that cannot be confirmed in the running list is still rejected, so a stale or forged action cannot bind an internal thread.
 
-The Codex adapter checks subscribed sessions against the same process-backed discovery snapshot every two seconds. Two consecutive missing snapshots confirm an exit and avoid detaching on a single transient process-inspection race. Only that process-backed signal suspends the live attachment: app-server `thread/closed`, `notLoaded`, transport disconnects, and Agentix shutdown are not proof that the interactive Codex process exited. The core marks any visible running turn as interrupted, invalidates its Stop action, retains the durable desired binding, and sends an automatic-detach warning to the bound IM conversation. The adapter keeps the exited session in its process watch set. When the same session ID reappears after `codex resume`, it restores the metadata-only app-server subscription, emits a resume event, and the core atomically restores the live IM binding and attached command menu. Manual detach or replacement removes the process watch. Graceful Agentix shutdown likewise retains the durable binding while temporarily presenting the IM as detached; restart and transport reconnect restore the subscription.
+The Codex adapter checks subscribed sessions against the same process-backed discovery snapshot every ten seconds. Two consecutive missing snapshots confirm an exit and avoid detaching on a single transient process-inspection race. Only that process-backed signal suspends the live attachment: app-server `thread/closed`, `notLoaded`, transport disconnects, and Agentix shutdown are not proof that the interactive Codex process exited. The core marks any visible running turn as interrupted, invalidates its Stop action, retains the durable desired binding, and sends an automatic-detach warning to the bound IM conversation. The adapter keeps the exited session in its process watch set. When the same session ID reappears after `codex resume`, it restores the metadata-only app-server subscription, emits a resume event, and the core atomically restores the live IM binding and attached command menu. Manual detach or replacement removes the process watch. Graceful Agentix shutdown likewise retains the durable binding while temporarily presenting the IM as detached; restart and transport reconnect restore the subscription.
 
 Custom Codex sockets cannot be correlated with the managed local process tree, so they use `thread/loaded/list` directly.
 
@@ -147,7 +236,7 @@ Each prompt is assigned a local turn ID before it is written. Stream, tool, comp
 
 ## 7. Channel transports
 
-Each service process starts exactly one channel adapter selected by `[channel].kind`. Telegram settings live under `[channel.telegram]` and Feishu settings under `[channel.feishu]`. Telegram uses long polling; callback queries are answered immediately and then normalized. Feishu uses the SDK's long WebSocket connection with automatic reconnect and callback acknowledgment. It resolves reply `parent_id` values through the get-message OpenAPI and falls back to the unquoted prompt when the parent is unavailable. Feishu OpenAPI operations treat business code `99991663` as a stale tenant access token: the adapter expires the exact cached token entry and replays the operation once, while a repeated failure is returned without further replay. The SDK client uses one transport attempt per operation so this adapter-level bound is preserved. The SDK policy and Agentix policy both enforce owner and mention rules. When either channel starts without configured owners, its adapter accepts only `/claim <code>` as an enrollment operation from unknown private-chat senders.
+Each service process starts exactly one channel adapter selected by `[channel].kind`. Telegram settings live under `[channel.telegram]` and Feishu settings under `[channel.feishu]`. Telegram uses long polling; authorized callback queries are normalized independently of their queued acknowledgements. Feishu uses the SDK's long WebSocket connection with automatic reconnect and callback acknowledgment. It resolves reply `parent_id` values through the get-message OpenAPI and falls back to the unquoted prompt when the parent is unavailable. Feishu OpenAPI operations treat business code `99991663` as a stale tenant access token: the adapter expires the exact cached token entry and replays the operation once, while a repeated failure is returned without further replay. The SDK client uses one transport attempt per operation so this adapter-level bound is preserved. HTTP 429 responses keep the outbound queue head and retry with exponential delays of 1, 2, 4 seconds and so on, capped at 60 seconds, until delivery or cancellation. SDK 0.3.11 discards `Retry-After`, so this is a fallback backoff rather than the exact server delay. The cooldown deadline survives cancellation. Other transport and business errors return without replay, and stale-token refresh remains limited to once across all attempts of one operation. The SDK policy and Agentix policy both enforce owner and mention rules. When either channel starts without configured owners, its adapter accepts only `/claim <code>` as an enrollment operation from unknown private-chat senders.
 
 The local `agentix client claim` request asks `serve` to replace its single pending claim with a random code and Unix expiry held only in memory. The same registry is injected into the selected Telegram or Feishu adapter. A successful private-chat match atomically persists the sender's numeric Telegram user ID or Feishu `open_id` before enabling it in memory and consumes the claim. Expired or mismatched codes do not change authorization. The code, hash, and expiry are never persisted, so service restart invalidates every pending claim. Running both transports requires separate Agentix config/state instances.
 
@@ -188,6 +277,8 @@ The workspace uses four complementary test layers:
 The Codex integration fixture is an in-process mock app-server under `crates/agentix-codex/tests/support/`. Its wire shapes follow the Codex CLI 0.153.0 generated schema for the subset consumed by Agentix. It owns mutable thread, turn, queue, model, reasoning, and goal state; records RPC results, notifications, server requests, and client responses; supports cursor pagination and deterministic RPC failure injection; emits lifecycle, queue, tool, approval, user-input, and externally resolved interaction events; and accepts replacement connections.
 
 The integration suite exercises all 21 client RPC methods used by Agentix. It verifies required protocol fields, session and turn lifecycle, history pagination and fallback, queued prompts, every attached-session command, command and file approvals, plan-style user input, status and tool events, reconnect/resubscribe, and complete Telegram/Feishu-to-engine-to-Codex round trips. Agentix control tests exercise Unix and TCP socket lifecycle, malformed and oversized requests, and process-level client requests without allowing the client to contact the mock Codex socket directly. Service tests cover durable reattachment across restarts, offline notification, retained bindings, control-listener orchestration, and the shared five-second shutdown deadline. CLI diagnostics verify runtime file logging, local timestamps, ANSI-free files, rotation, and bounded retention. The fixtures are hermetic: they do not depend on a developer's Codex installation, daemon state, session files, or network.
+
+Core message-center tests verify FIFO admission across clones, independent inbound progress and backpressure, cancellation, and failure release. Adapter regressions verify that repeated 429 responses cannot let later operations overtake the head, that cancelled heads preserve cooldowns, and that Telegram inbound actions do not wait for rate-limited acknowledgements.
 
 The Telegram fixture implements the Bot API methods used by the adapter and records requests while serving queued polling updates and injected failures. It verifies bot discovery, menus, owner filtering and claiming, callback acknowledgement, send/edit payloads, MarkdownV2, and inline-keyboard cleanup. The Feishu fixture implements the consumed token, bot, message, and WebSocket endpoints. It issues rotating tenant credentials, sends official SDK protobuf frames, and verifies inbound message/card-action delivery, frame acknowledgements, interactive cards, updates, authorization, owner claiming, and API error mapping. Invalid-token coverage exercises every Agentix-owned Feishu OpenAPI call site: sends, card edits, action cleanup, both command-menu mutations, reply lookup, and claim responses. Separate cases prove retry exhaustion, no retry for unrelated API errors, and no business-request replay when refreshing the token itself fails. CLI integration tests launch the compiled binary against a mock Agentix control endpoint, including terminal-only claim generation, while the Pi fixture provides a deterministic JSON-RPC subprocess.
 
