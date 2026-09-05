@@ -19,7 +19,10 @@ impl Fixture {
     async fn new(format: &str) -> Self {
         let dir = TempDir::new().unwrap();
         let root = dir.path().join("documents");
-        std::fs::create_dir_all(root.join(".obsidian")).unwrap();
+        std::fs::create_dir_all(&root).unwrap();
+        if format == "obsidian" {
+            std::fs::create_dir_all(root.join(".obsidian")).unwrap();
+        }
         let config: Config = toml::from_str(&format!(
             "schema_version = 1\n[storage]\npath = {:?}\n[documents]\nformat = {format:?}\nroot = {:?}\ndirectory = 'Tasks \u{2603}'\n",
             dir.path().join("tasks.sqlite3").to_str().unwrap(), root.to_str().unwrap()
@@ -104,6 +107,181 @@ fn owner(claim: &Value) -> WriteOptions {
         lease_token: claim["lease"]["token"].as_str().map(str::to_owned),
         ..WriteOptions::default()
     }
+}
+
+fn task_status_names() -> Vec<String> {
+    agentix_task::TaskStatus::ALL
+        .iter()
+        .map(ToString::to_string)
+        .collect()
+}
+
+fn board_columns(board: &str) -> Vec<String> {
+    board
+        .lines()
+        .filter_map(|line| line.strip_prefix("## ").map(str::to_owned))
+        .collect()
+}
+
+async fn populate_board_states(f: &Fixture) {
+    for (title, command) in [
+        ("TODO", None),
+        ("IN_PROGRESS", Some("task.claim")),
+        ("BLOCKED", Some("task.block")),
+        ("WAITING_USER", Some("task.wait")),
+        ("DONE", Some("task.done")),
+        ("FAILED", Some("task.fail")),
+        ("CANCELLED", Some("task.cancel")),
+    ] {
+        let task = f.task(title).await;
+        match command {
+            Some("task.claim") => {
+                f.claim(&task, title).await;
+            }
+            Some("task.done") => {
+                let claim = f.start(&task, title).await;
+                f.service
+                    .execute(json!({"command":"task.done","task":task}), owner(&claim))
+                    .await
+                    .unwrap();
+            }
+            Some(command) => {
+                let options = if command == "task.fail" {
+                    owner(&f.claim(&task, title).await)
+                } else {
+                    WriteOptions::default()
+                };
+                f.service
+                    .execute(
+                        json!({"command":command,"task":task,"reason":"View coverage"}),
+                        options,
+                    )
+                    .await
+                    .unwrap();
+            }
+            None => {}
+        }
+    }
+}
+
+#[tokio::test]
+async fn kanban_and_tasks_views_are_generated_for_both_directory_formats() {
+    for format in ["markdown", "obsidian"] {
+        let f = Fixture::new(format).await;
+        let project = f.service.store().snapshot().await.unwrap().projects[0].clone();
+        let output = f.service.config().output_dir();
+        let board_path = output.join(format!("Projects/{}/Board.md", project.key));
+        let empty = std::fs::read_to_string(&board_path).unwrap();
+        assert!(empty.starts_with("---\nkanban-plugin: board\n"), "{empty}");
+        assert_eq!(board_columns(&empty), task_status_names());
+        assert!(
+            !empty.lines().any(|line| line.starts_with("# ")),
+            "Kanban treats every heading as a lane"
+        );
+        for setting in [
+            "show-checkboxes",
+            "show-add-list",
+            "show-archive-all",
+            "show-board-settings",
+        ] {
+            assert!(empty.contains(&format!("{setting}: false")));
+        }
+        populate_board_states(&f).await;
+        let board = std::fs::read_to_string(&board_path).unwrap();
+        assert_eq!(
+            board.lines().filter(|line| line.starts_with("- [")).count(),
+            7
+        );
+        for status in task_status_names() {
+            let marker = if status == "DONE" { "- [x] " } else { "- [ ] " };
+            let heading = format!("## {status}\n");
+            let lane = board
+                .split_once(&heading)
+                .unwrap()
+                .1
+                .split("\n## ")
+                .next()
+                .unwrap();
+            assert_eq!(
+                lane.lines().filter(|line| line.starts_with(marker)).count(),
+                1,
+                "{lane}"
+            );
+            assert!(lane.contains("#task"));
+            assert!(lane.contains(" ^task-"));
+        }
+        let query =
+            std::fs::read_to_string(output.join(format!("Projects/{}/Tasks.md", project.key)))
+                .unwrap();
+        assert_eq!(board_columns(&query), task_status_names());
+        assert_eq!(query.matches("```tasks\n").count(), 7);
+        assert_eq!(query.matches("hide edit button").count(), 7);
+        assert_eq!(query.matches("hide postpone button").count(), 7);
+        assert!(
+            !query.contains("- [ ]"),
+            "Queries must not duplicate source tasks"
+        );
+        assert_eq!(query.contains("[["), format == "obsidian");
+        let dashboard = std::fs::read_to_string(output.join("Dashboard.md")).unwrap();
+        assert!(dashboard.contains("Tasks"));
+        assert_eq!(
+            f.service.config().documents.root.join(".obsidian").exists(),
+            format == "obsidian"
+        );
+        let before = f.service.store().snapshot().await.unwrap();
+        std::fs::write(&board_path, board.replace("- [ ]", "- [x]")).unwrap();
+        f.service.sync().await.unwrap();
+        assert_eq!(f.service.store().snapshot().await.unwrap(), before);
+        assert_eq!(std::fs::read_to_string(board_path).unwrap(), board);
+    }
+}
+
+#[tokio::test]
+async fn tasks_queries_scope_exact_board_and_state_without_path_interpolation() {
+    let f = Fixture::new("markdown").await;
+    let project = f.service.store().snapshot().await.unwrap().projects[0].clone();
+    let path = f
+        .service
+        .config()
+        .output_dir()
+        .join(format!("Projects/{}/Tasks.md", project.key));
+    let query = std::fs::read_to_string(path).unwrap();
+    let filters: Vec<_> = query
+        .lines()
+        .filter_map(|line| line.strip_prefix("filter by function "))
+        .collect();
+    assert_eq!(filters.len(), 7);
+    let output = std::process::Command::new("node")
+        .args(["--input-type=module", "--eval", r#"
+import assert from 'node:assert/strict';
+const filters = JSON.parse(process.argv[1]);
+const statuses = JSON.parse(process.argv[2]);
+for (const folder of ['', 'Projects/demo/', 'Tasks ☃/Projects/demo/', 'A [x] "quote"/Projects/demo/']) {
+    const query = {file: {path: folder + 'Tasks.md'}};
+    filters.forEach((source, i) => {
+        const matches = new Function('task', 'query', 'return (' + source + ')');
+        for (const [path, expected] of [
+            [folder + 'Board.md', true],
+            [folder + 'Jobs/Active/example.md', false],
+            [folder + 'Plans/task/v001.md', false],
+            [folder + 'Archive/Board.md', false],
+            ['another/' + folder + 'Board.md', false],
+        ]) {
+            for (const heading of statuses) {
+                assert.equal(matches({file: {path}, heading}, query), expected && heading === statuses[i]);
+            }
+        }
+    });
+}
+"#])
+        .arg(serde_json::to_string(&filters).unwrap())
+        .arg(serde_json::to_string(&task_status_names()).unwrap())
+        .output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[tokio::test]
@@ -195,9 +373,7 @@ async fn board_and_job_show_planning_and_executing_without_extra_columns() {
         for phase in ["PLANNING", "EXECUTING"] {
             let body = std::fs::read_to_string(&board).unwrap();
             assert!(body.contains(phase), "{body}");
-            assert!(body.contains(
-                "| TODO | IN_PROGRESS | BLOCKED | WAITING_USER | DONE | FAILED | CANCELLED |"
-            ));
+            assert_eq!(board_columns(&body), task_status_names());
             assert!(std::fs::read_to_string(&job).unwrap().contains(phase));
             if phase == "PLANNING" {
                 f.service
@@ -759,8 +935,8 @@ async fn projections_are_read_only_preserve_notes_and_archive_links() {
         f.service.sync().await.unwrap();
         let board = std::fs::read_to_string(&board_path).unwrap();
         assert!(!board.contains("manual state edit"));
-        assert!(!board.contains("- [ ]"));
-        assert!(!board.contains("kanban-plugin"));
+        assert!(board.contains("- [ ]"));
+        assert!(board.contains("kanban-plugin: board"));
         assert_eq!(board.contains("[["), format == "obsidian");
         if format == "markdown" {
             assert!(board.contains("](Plans/"));
@@ -887,7 +1063,7 @@ async fn concurrent_jobs_are_independent_and_cross_project_dependencies_are_reje
 }
 
 #[tokio::test]
-async fn obsidian_alias_separator_is_escaped_only_inside_tables() {
+async fn obsidian_alias_separators_are_not_table_escaped_in_kanban_cards() {
     let f = Fixture::new("obsidian").await;
     let task = f.task("Linked task").await;
     f.claim(&task, "links").await;
@@ -901,7 +1077,8 @@ async fn obsidian_alias_separator_is_escaped_only_inside_tables() {
         output.join(format!("Projects/{}/Board.md", state.projects[0].key)),
     )
     .unwrap();
-    assert!(board.contains("\\|Linked task]]"));
+    assert!(board.contains("|Linked task]]"));
+    assert!(!board.contains("\\|Linked task]]"));
 }
 
 #[tokio::test]
@@ -921,7 +1098,7 @@ async fn special_obsidian_titles_keep_entities_outside_wikilink_aliases() {
     )
     .unwrap();
     assert!(
-        board.contains("\\|Open]] Render &#124; Unicode \u{2603} &#91;link&#93; &amp; &lt;tag&gt; &#91;&#91;injection&#93;&#93;"),
+        board.contains("|Open]] Render &#124; Unicode \u{2603} &#91;link&#93; &amp; &lt;tag&gt; &#91;&#91;injection&#93;&#93;"),
         "{board}"
     );
     assert!(!board.contains("[[injection]]"));

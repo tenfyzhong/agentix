@@ -89,7 +89,7 @@ impl DesktopFixture {
         serde_json::from_slice::<Value>(&output.stdout).unwrap()["result"].clone()
     }
 
-    fn open(&self, path: &str) {
+    fn open(&self, path: &str, view_type: &str) {
         wait_for(
             &self.vault,
             &format!("!!app.vault.getAbstractFileByPath({})", json!(path)),
@@ -100,7 +100,7 @@ impl DesktopFixture {
             &format!(
                 "(() => {{ app.workspace.getLeafById({}).setViewState({}); return true; }})()",
                 self.leaf,
-                json!({"type":"markdown","state":{"file":path,"mode":"preview"}})
+                json!({"type":view_type,"state":{"file":path,"mode":"preview"}})
             ),
         );
     }
@@ -110,7 +110,7 @@ impl Drop for DesktopFixture {
     fn drop(&mut self) {
         // Do not panic a second time if the app was closed during a failed test.
         let expression = format!(
-            "(() => {{ app.workspace.getLeafById({})?.detach(); for (const leaf of app.workspace.getLeavesOfType('markdown')) {{ if (leaf.view.file?.path.startsWith({})) leaf.detach(); }} const original = app.workspace.getLeafById({}); if (original) app.workspace.setActiveLeaf(original, {{focus:true}}); return true; }})()",
+            "(() => {{ app.workspace.getLeafById({})?.detach(); for (const leaf of ['markdown','kanban'].flatMap(type=>app.workspace.getLeavesOfType(type))) {{ if (leaf.view.file?.path.startsWith({})) leaf.detach(); }} const original = app.workspace.getLeafById({}); if (original) app.workspace.setActiveLeaf(original, {{focus:true}}); return true; }})()",
             self.leaf,
             json!(format!("{}/", self.relative)),
             self.original_leaf
@@ -124,13 +124,27 @@ impl Drop for DesktopFixture {
 }
 
 #[test]
-#[allow(clippy::too_many_lines)] // Keep the opt-in desktop scenario and cleanup visible together.
-#[ignore = "requires TASKCLI_OBSIDIAN_VAULT and an open desktop Obsidian instance"]
-fn actual_obsidian_renders_seven_columns_and_navigates_plan_and_task_links() {
+#[ignore = "requires TASKCLI_OBSIDIAN_VAULT and enabled Tasks/Kanban plugins in an open desktop vault"]
+fn actual_plugins_render_both_formats_and_navigate_plan_and_task_links() {
     let vault =
         std::env::var("TASKCLI_OBSIDIAN_VAULT").expect("choose the open test vault explicitly");
+    assert_eq!(
+        obsidian(
+            &vault,
+            "!!app.plugins.plugins['obsidian-kanban'] && !!app.plugins.plugins['obsidian-tasks-plugin']"
+        ),
+        true,
+        "Install and enable Kanban and Tasks in the chosen test vault before running this test"
+    );
+    for format in ["obsidian", "markdown"] {
+        exercise_plugin_views(&vault, format);
+    }
+}
+
+#[allow(clippy::too_many_lines)] // Keep the opt-in desktop scenario and cleanup visible together.
+fn exercise_plugin_views(vault: &str, format: &str) {
     let info = obsidian(
-        &vault,
+        vault,
         "({root:app.vault.adapter.basePath,leaf:app.workspace.getMostRecentLeaf()?.id})",
     );
     let root = PathBuf::from(info["root"].as_str().unwrap())
@@ -154,13 +168,13 @@ fn actual_obsidian_renders_seven_columns_and_navigates_plan_and_task_links() {
         .to_string_lossy()
         .replace('\\', "/");
     obsidian_action(
-        &vault,
+        vault,
         "app.workspace.setActiveLeaf(app.workspace.getLeaf('tab'),{focus:true})",
     );
-    let leaf = obsidian(&vault, "app.workspace.getMostRecentLeaf()?.id");
+    let leaf = obsidian(vault, "app.workspace.getMostRecentLeaf()?.id");
     assert_ne!(leaf, info["leaf"], "use a dedicated test tab");
     let f = DesktopFixture {
-        vault,
+        vault: vault.to_owned(),
         original_leaf: info["leaf"].clone(),
         leaf,
         relative,
@@ -170,7 +184,7 @@ fn actual_obsidian_renders_seven_columns_and_navigates_plan_and_task_links() {
     f.cli(&[
         "init",
         "--format",
-        "obsidian",
+        format,
         "--root",
         root.to_str().unwrap(),
         "--directory",
@@ -235,9 +249,9 @@ fn actual_obsidian_renders_seven_columns_and_navigates_plan_and_task_links() {
         f.relative,
         project["key"].as_str().unwrap()
     );
-    f.open(&board);
+    f.open(&board, "kanban");
     let expression = format!(
-        "(() => {{ const view=app.workspace.getLeafById({}).view;return {{headers:[...view.contentEl.querySelectorAll('table th')].map(e=>e.textContent.trim()),cells:[...view.contentEl.querySelectorAll('table td')].map(e=>e.textContent),links:[...view.contentEl.querySelectorAll('table a.internal-link')].map(e=>({{text:e.textContent,href:e.getAttribute('data-href')}})),checkboxes:view.contentEl.querySelectorAll('input[type=checkbox]').length}}; }})()",
+        "(() => {{ const view=app.workspace.getLeafById({}).view;return {{type:view.getViewType(),headers:[...view.contentEl.querySelectorAll('.kanban-plugin__lane-title-text')].map(e=>e.textContent.trim()),cells:[...view.contentEl.querySelectorAll('.kanban-plugin__item-title')].map(e=>e.textContent),links:[...view.contentEl.querySelectorAll('.kanban-plugin__item-title a.internal-link')].map(e=>({{text:e.textContent,href:e.getAttribute('data-href')}})),checkboxes:view.contentEl.querySelectorAll('.kanban-plugin__item input[type=checkbox]').length}}; }})()",
         f.leaf
     );
     let rendered = wait_for(&f.vault, &expression, |v| {
@@ -255,15 +269,37 @@ fn actual_obsidian_renders_seven_columns_and_navigates_plan_and_task_links() {
             "CANCELLED"
         ])
     );
+    assert_eq!(rendered["type"], "kanban");
     assert_eq!(rendered["checkboxes"], 0);
     assert!(
         rendered["cells"].as_array().unwrap().iter().any(|cell| cell
-            == "Open Render | Unicode \u{2603} [link] & <tag> [[internal]] *bold* · PLANNING"),
+            .as_str()
+            .is_some_and(|text| text
+                .contains("Render | Unicode \u{2603} [link] & <tag> [[internal]]")
+                && text.contains("PLANNING"))),
         "{rendered}"
     );
+    let tasks = board.replace("/Board.md", "/Tasks.md");
+    f.open(&tasks, "markdown");
+    let query_results = format!(
+        "(() => {{ const el=app.workspace.getLeafById({}).view.contentEl; return {{count:el.querySelectorAll('input[type=checkbox]').length,text:el.textContent}}; }})()",
+        f.leaf
+    );
+    let results = wait_for(&f.vault, &query_results, |v| v["count"] == 2);
+    assert!(
+        results["text"]
+            .as_str()
+            .unwrap()
+            .contains("Task without a Plan")
+    );
+    assert!(results["text"].as_str().unwrap().contains("PLANNING"));
     for (label, expected) in [
         (
-            "Open",
+            if format == "obsidian" {
+                "Open"
+            } else {
+                "Render | Unicode"
+            },
             format!("{}/{}", f.relative, plan["path"].as_str().unwrap()),
         ),
         (
@@ -271,9 +307,9 @@ fn actual_obsidian_renders_seven_columns_and_navigates_plan_and_task_links() {
             format!("{}/{}", f.relative, job["document_path"].as_str().unwrap()),
         ),
     ] {
-        f.open(&board);
+        f.open(&board, "kanban");
         let ready = format!(
-            "[...app.workspace.getLeafById({}).view.contentEl.querySelectorAll('table a.internal-link')].some(a=>a.textContent==={})",
+            "[...app.workspace.getLeafById({}).view.contentEl.querySelectorAll('.kanban-plugin__item-title a.internal-link')].some(a=>a.textContent.startsWith({}))",
             f.leaf,
             json!(label)
         );
@@ -281,7 +317,7 @@ fn actual_obsidian_renders_seven_columns_and_navigates_plan_and_task_links() {
         obsidian_action(
             &f.vault,
             &format!(
-                "(() => {{[...app.workspace.getLeafById({}).view.contentEl.querySelectorAll('table a.internal-link')].find(a=>a.textContent==={}).click();return true;}})()",
+                "(() => {{[...app.workspace.getLeafById({}).view.contentEl.querySelectorAll('.kanban-plugin__item-title a.internal-link')].find(a=>a.textContent.startsWith({})).click();return true;}})()",
                 f.leaf,
                 json!(label)
             ),
@@ -290,15 +326,17 @@ fn actual_obsidian_renders_seven_columns_and_navigates_plan_and_task_links() {
             v.as_str() == Some(&expected)
         });
     }
-    let anchor = unplanned["id"].as_str().unwrap().replace('_', "-");
-    wait_for(
-        &f.vault,
-        &format!(
-            "!!app.metadataCache.getFileCache(app.workspace.getActiveFile())?.blocks?.[{}]",
-            json!(anchor)
-        ),
-        |v| v == true,
-    );
+    if format == "obsidian" {
+        let anchor = unplanned["id"].as_str().unwrap().replace('_', "-");
+        wait_for(
+            &f.vault,
+            &format!(
+                "!!app.metadataCache.getFileCache(app.workspace.getActiveFile())?.blocks?.[{}]",
+                json!(anchor)
+            ),
+            |v| v == true,
+        );
+    }
     // Keep the TempDir alive through all app reads; Drop restores views first.
     assert!(f.output.path().exists());
 }

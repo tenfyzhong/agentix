@@ -16,7 +16,7 @@ Each IM conversation maps explicitly and durably to an agent session. Messages i
 - Owner allowlists, one-time owner claiming, group mention requirements, event deduplication, and single-use actions
 - Durable bindings, restart recovery, process-exit notifications, and automatic Codex reattachment
 - Streamed in-place responses, background completion notifications, and reply context
-- Standalone `taskcli`: SQLite jobs, concurrent task claims, versioned plans, audit events, and read-only Obsidian/Markdown boards
+- Standalone `taskcli`: SQLite jobs, concurrent task claims, versioned plans, audit events, and generated Kanban/Tasks views in Obsidian or Markdown directories
 - Optional IM task controls and a shared Codex, Claude, Pi, and OMP plugin, with stable interfaces for future Agent Team orchestration
 
 While `agentix serve` is running, Agentix checks running Codex sessions for completed turns every ten seconds using read-only history queries, including sessions that have never been attached or were detached from IM. Background monitoring does not resume sessions or acquire their writer locks. New completions include the completed turn's prompt and response, a Background label, and an Attach button. Feishu uses a purple header and a tinted quote area; Telegram uses a ⚫ Background marker and blockquotes. Notifications go to authenticated IM conversations known to the service. Send the bot `/help` once to register a conversation for these notifications; attaching a session is optional.
@@ -243,12 +243,14 @@ CI uses Rust 1.95.0. Ensure `cargo`, `rustc`, `cargo-clippy`, and `rustfmt` all 
 
 ## Task board
 
-`taskcli` works independently of the IM bridge. Use a `taskcli-*` release archive or a source build to obtain it and the host plugin; the `agentix-*` archive does not include them. Homebrew packaging is maintained separately in the tap. Choose an existing output directory explicitly:
+`taskcli` works independently of the IM bridge. Use a `taskcli-*` release archive or a source build to obtain it and the host plugin; the `agentix-*` archive does not include them. Homebrew packaging is maintained separately in the tap.
+
+We recommend using an Obsidian vault with the Kanban and Tasks plugins enabled, and initializing taskcli with `--format obsidian`. This provides the rendered board, task queries, and wikilink navigation together. Plain Markdown directories remain supported for CLI-only workflows or use with other editors. Choose one initialization method:
 
 ```sh
-taskcli init --format markdown --root /absolute/path/to/documents --directory "Agent Tasks"
-# Or use an Obsidian vault root:
 taskcli init --format obsidian --root /absolute/path/to/vault --directory "Agent Tasks"
+# Alternative: run this instead of the Obsidian initialization above.
+# taskcli init --format markdown --root /absolute/path/to/documents --directory "Agent Tasks"
 taskcli project register
 taskcli job create --title "Deliver a feature" --goal "Acceptance checks"
 ```
@@ -257,7 +259,9 @@ One Git repository stays one Project across worktrees and time; each independent
 
 The workflow is `claim → Plan → start → execute/verify → done`. Claim reserves planning ownership before any Plan is written; start checks the Plan and dependencies without replacing the lease. Both phases appear in the existing `IN_PROGRESS` column, and hooks renew/recover planning leases too. Only the current lease holder can create or revise a Plan.
 
-Task state changes go through CLI commands or Agentix IM actions. Generated boards are logically read-only, use `[[wikilinks]]` in Obsidian or relative Markdown links elsewhere, and require no Kanban/Tasks plugin or file watcher. See the [task board guide](docs/task-board.md) for plans, claiming, plugin installation, recovery, and IM configuration.
+Both document formats generate `Projects/<project-key>/Board.md` for the Obsidian Kanban plugin and `Tasks.md` for the Tasks plugin. The dashboard links to both views. Obsidian mode uses `[[wikilinks]]`; Markdown mode uses relative `[label](path.md)` links and does not require a vault directory. To render the plugin views, open the files in Obsidian with Kanban and Tasks enabled. Outside Obsidian, the Kanban file remains a readable Markdown checklist and Tasks queries remain code blocks.
+
+Task state changes still go through CLI commands or Agentix IM actions. Plugin edits are never imported into SQLite and the next projection overwrites them; there is no file watcher. Generated settings hide some editing controls, but native plugin views are not fully read-only. After upgrading, run `taskcli sync` to replace the old table boards and create the Tasks views. See the [task board guide](docs/task-board.md) for plugin setup, ownership, and read-only limitations.
 
 For the design rationale, read [task decomposition, Skill, and Hook mechanisms](docs/task-workflow-mechanisms.md), covering responsibility boundaries, ownership, concurrency, recovery, and future Agent Team integration.
 

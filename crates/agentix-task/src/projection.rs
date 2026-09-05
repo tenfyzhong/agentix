@@ -219,13 +219,20 @@ impl Service {
         let mut dashboard = header("Task dashboard");
         for project in &state.projects {
             let board_path = format!("Projects/{}/Board.md", project.key);
+            let tasks_path = format!("Projects/{}/Tasks.md", project.key);
             dashboard.push_str(&format!(
-                "\n## {}\n\n{}\n",
+                "\n## {}\n\n{} · {}\n",
                 escape(&project.name),
-                self.link("Dashboard.md", &board_path, None, "Board")
+                self.link("Dashboard.md", &board_path, None, "Kanban board"),
+                self.link("Dashboard.md", &tasks_path, None, "Tasks")
             ));
-            let mut board = header(&format!("{} — task board", project.name));
-            board.push_str("\n| TODO | IN_PROGRESS | BLOCKED | WAITING_USER | DONE | FAILED | CANCELLED |\n| --- | --- | --- | --- | --- | --- | --- |\n");
+            // Kanban treats every Markdown heading as a lane, including H1.
+            // Put the title in frontmatter so there are exactly seven lanes.
+            let mut board = format!(
+                "---\nkanban-plugin: board\ntitle: {}\ntaskcli-generated: true\nshow-checkboxes: false\nshow-add-list: false\nshow-archive-all: false\nshow-board-settings: false\n---\n\n> GENERATED — DO NOT EDIT task fields. Use taskcli or an Agent.\n\n{}\n",
+                json!(format!("{} — task board", project.name)),
+                self.link(&board_path, &tasks_path, None, "Tasks view")
+            );
             let mut columns: Vec<Vec<String>> = vec![Vec::new(); 7];
             let mut tasks: Vec<_> = state
                 .tasks
@@ -246,25 +253,34 @@ impl Service {
                     .position(|s| *s == task.status)
                     .context("unknown task state")?;
                 let (path, anchor) = task_target(&state, task)?;
-                let mut cell = self.link(&board_path, &path, anchor.as_deref(), &task.title);
+                let mut card = self.link(&board_path, &path, anchor.as_deref(), &task.title);
                 if let Some(phase) = task.phase {
-                    cell.push_str(&format!(" · {phase}"));
+                    card.push_str(&format!(" · {phase}"));
                 }
-                columns[column].push(cell.replace('|', "\\|"));
+                let check = if task.status == TaskStatus::Done {
+                    'x'
+                } else {
+                    ' '
+                };
+                columns[column].push(format!(
+                    "- [{check}] {card} #task ^{}",
+                    task.id.replace('_', "-")
+                ));
             }
-            for row in 0..columns.iter().map(Vec::len).max().unwrap_or(0) {
-                board.push_str("| ");
-                board.push_str(
-                    &columns
-                        .iter()
-                        .map(|col| col.get(row).map_or("", String::as_str))
-                        .collect::<Vec<_>>()
-                        .join(" | "),
-                );
-                board.push_str(" |\n");
+            for (status, cards) in TaskStatus::ALL.iter().zip(columns) {
+                board.push_str(&format!("\n## {status}\n\n"));
+                for card in cards {
+                    board.push_str(&card);
+                    board.push('\n');
+                }
             }
             files.insert(board_path.clone(), board);
-            paths.insert(format!("board:{}", project.id), board_path);
+            paths.insert(format!("board:{}", project.id), board_path.clone());
+            files.insert(
+                tasks_path.clone(),
+                self.tasks_view(&project.name, &tasks_path, &board_path),
+            );
+            paths.insert(format!("tasks:{}", project.id), tasks_path);
             for job in state.jobs.iter().filter(|j| j.project_id == project.id) {
                 if job.archived_at.is_none() {
                     dashboard.push_str(&format!(
@@ -391,6 +407,22 @@ impl Service {
             .set_metadata("sequence", &json!(sequence))
             .await?;
         Ok(())
+    }
+
+    fn tasks_view(&self, project: &str, path: &str, board: &str) -> String {
+        let title = format!("{project} — Tasks view");
+        let mut document = format!(
+            "---\ntitle: {}\ntaskcli-generated: true\n---\n\n{}\n{}\n\nRequires the Obsidian Tasks plugin (5.3.0+). Source tasks are the Kanban cards, not Job or Plan checklists. The checkbox represents DONE only; the heading is the task state. Plugin edits never update SQLite and are overwritten by `taskcli sync`.\n",
+            json!(title),
+            header(&title),
+            self.link(path, board, None, "Kanban board")
+        );
+        for status in TaskStatus::ALL {
+            document.push_str(&format!(
+                "\n## {status}\n\n```tasks\nfilter by function task.file.path === query.file.path.replace(/Tasks\\.md$/, 'Board.md') && task.heading === '{status}'\nhide edit button\nhide postpone button\n```\n"
+            ));
+        }
+        document
     }
 
     fn link(&self, from: &str, to: &str, anchor: Option<&str>, label: &str) -> String {

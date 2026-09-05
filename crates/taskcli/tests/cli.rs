@@ -9,7 +9,10 @@ struct Cli {
 impl Cli {
     fn new(format: &str) -> Self {
         let dir = TempDir::new().unwrap();
-        std::fs::create_dir_all(dir.path().join("vault/.obsidian")).unwrap();
+        std::fs::create_dir_all(dir.path().join("vault")).unwrap();
+        if format == "obsidian" {
+            std::fs::create_dir_all(dir.path().join("vault/.obsidian")).unwrap();
+        }
         let cli = Self { dir };
         cli.ok(&[
             "init",
@@ -619,6 +622,47 @@ fn inline_plan_bodies_accept_yaml_frontmatter_and_preserve_it_verbatim() {
             token,
         ]);
         assert_eq!(cli.ok(&["plan", "show", id])["body"], body);
+    }
+}
+
+#[test]
+fn cli_creates_and_repairs_plugin_views_without_installing_obsidian_plugins() {
+    for format in ["markdown", "obsidian"] {
+        let cli = Cli::new(format);
+        let job = cli.job("Plugin-compatible views");
+        let task = cli.task(&job, "Visible card");
+        let project = cli.ok(&["project", "list"])[0].clone();
+        let output = cli.dir.path().join("vault/Tasks \u{2603}");
+        let directory = output.join(format!("Projects/{}", project["key"].as_str().unwrap()));
+        let board = std::fs::read_to_string(directory.join("Board.md")).unwrap();
+        let tasks = std::fs::read_to_string(directory.join("Tasks.md")).unwrap();
+        assert!(board.starts_with("---\nkanban-plugin: board\n"));
+        assert!(board.contains("Visible card"));
+        assert_eq!(board.contains("[["), format == "obsidian");
+        assert_eq!(tasks.contains("[["), format == "obsidian");
+        if format == "markdown" {
+            assert!(board.contains("](Jobs/Active/"));
+            assert!(tasks.contains("](Board.md)"));
+        }
+        assert_eq!(tasks.matches("```tasks\n").count(), 7);
+        let before = cli.ok(&["task", "show", &task]);
+        std::fs::write(directory.join("Board.md"), "# Old table or manual edit\n").unwrap();
+        std::fs::remove_file(directory.join("Tasks.md")).unwrap();
+        cli.ok(&["sync"]);
+        assert_eq!(
+            std::fs::read_to_string(directory.join("Board.md")).unwrap(),
+            board
+        );
+        assert_eq!(
+            std::fs::read_to_string(directory.join("Tasks.md")).unwrap(),
+            tasks
+        );
+        assert_eq!(cli.ok(&["task", "show", &task]), before);
+        let settings = cli.dir.path().join("vault/.obsidian");
+        assert_eq!(settings.exists(), format == "obsidian");
+        if settings.exists() {
+            assert_eq!(std::fs::read_dir(settings).unwrap().count(), 0);
+        }
     }
 }
 

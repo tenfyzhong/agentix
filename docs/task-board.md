@@ -24,9 +24,13 @@ Source checkouts and `taskcli-*` release archives include `completions/taskcli.b
 
 ## Configuration
 
+We recommend Obsidian for day-to-day task management. Use an existing vault, enable the Kanban and Tasks plugins, and select `--format obsidian` for rendered boards, task queries, and wikilink navigation. See [Obsidian plugin setup](#obsidian-plugin-setup). Choose `--format markdown` when you prefer a plain directory or another editor; storage and CLI workflows remain supported, but generic Markdown viewers do not render the plugin views.
+
 ```sh
-taskcli init --format markdown --root /existing/documents --directory "Agent Tasks"
+# Recommended:
 taskcli init --format obsidian --root /existing/vault --directory "Agent Tasks"
+# Alternative: run this instead of the Obsidian initialization above.
+# taskcli init --format markdown --root /existing/documents --directory "Agent Tasks"
 ```
 
 Run only the applicable initialization. Default config: `~/.config/taskcli/config.toml`; override with `--config` or `TASKCLI_CONFIG`. Initialization refuses to overwrite an existing config. `--database` selects the independent task database. The config has this shape:
@@ -38,8 +42,8 @@ schema_version = 1
 path = "~/.local/share/taskcli/tasks.sqlite3"
 
 [documents]
-format = "markdown"
-root = "/existing/documents"
+format = "obsidian"
+root = "/existing/vault"
 directory = "Agent Tasks"
 ```
 
@@ -99,17 +103,39 @@ Timestamp fields are Unix seconds in UTC; creation date filters include both spe
 Dashboard.md
 Projects/<project-key>/
   Board.md
+  Tasks.md
   Sync Status.md
   Jobs/Active/<job-id>.md
   Jobs/Archive/YYYY/MM/<job-id>.md
   Plans/<task-id>/v001.md
 ```
 
-Boards contain seven static state columns, with PLANNING/EXECUTING labels inside IN_PROGRESS. Job task sections and JSON context expose the phase too. They have no Kanban metadata or task checkboxes, and do not require community plugins. Obsidian links are vault-relative wikilinks (escaped correctly inside tables); plain Markdown links are source-relative URLs with encoded path segments. Task anchors use Obsidian block references or Markdown HTML anchors.
+Both `--format obsidian` and `--format markdown` generate the same plugin-compatible structure:
 
-Obsidian does not decode HTML entities in wikilink aliases. Titles containing reserved characters such as `|`, brackets, or HTML delimiters therefore appear as a stable `Open` wikilink followed by the safely escaped title; ordinary titles remain the link label. This preserves readable punctuation without injecting extra links or breaking the table.
+- `Board.md` has `kanban-plugin: board` frontmatter and exactly seven heading-based Kanban lanes. Its title is a frontmatter property, not an extra heading that would become an eighth lane.
+- Cards are checkbox items with a `#task` marker and a stable task block ID. Only DONE uses `[x]`; every other state, including CANCELLED, uses `[ ]`. The lane heading carries the seven-state meaning without requiring custom Tasks checkbox statuses. PLANNING/EXECUTING labels remain inside IN_PROGRESS cards.
+- `Tasks.md` contains seven Tasks query blocks in the same state order. Each query selects only the sibling `Board.md` and its matching heading. It does not copy checkboxes or scan Job/Plan checklists, avoiding duplicate results. Query paths are derived from the query file at runtime, so spaces, Unicode, quotes, and different output roots are safe.
+- `Dashboard.md` links to both views. Boards retain the existing scope: Tasks in active, unarchived Jobs. Completed/cancelled Jobs remain accessible through their Job documents.
+
+Obsidian links are vault-relative wikilinks; plain Markdown links are source-relative URLs with encoded path segments. Kanban cards are not table cells, so wikilink alias separators are not backslash-escaped. Task targets still use Obsidian block references or Markdown HTML anchors, and cards with a Plan link to its current version.
+
+Obsidian does not decode HTML entities in wikilink aliases. Titles containing reserved characters such as `|`, brackets, or HTML delimiters therefore appear as a stable `Open` wikilink followed by the safely escaped title; ordinary titles remain the link label. This preserves readable punctuation without injecting extra links.
+
+### Obsidian plugin setup
+
+Install and enable [Kanban](https://github.com/mgmeyers/obsidian-kanban) (`obsidian-kanban`) and [Tasks](https://github.com/obsidian-tasks-group/obsidian-tasks) (`obsidian-tasks-plugin`) in the vault where you view the documents. Tasks 5.3.0 or newer is required: the queries use [query-file properties in custom filters](https://github.com/obsidian-tasks-group/obsidian-tasks/blob/main/docs/Scripting/Query%20Properties.md) and hide the [postpone button introduced in 5.3.0](https://github.com/obsidian-tasks-group/obsidian-tasks/blob/main/docs/Editing/Postponing.md). Open `Board.md` as a Kanban board and `Tasks.md` in reading view.
+
+Leave the Tasks Global Filter empty or set it to `#task`. A different global filter, or a Global Query that excludes these cards, can suppress results; taskcli does not change those vault-wide settings. No custom checkbox statuses are needed.
+
+Markdown mode still accepts a directory without `.obsidian` and never installs plugins, creates vault settings, or changes an existing vault's configuration. The generated files can be opened inside an Obsidian vault later. A generic Markdown viewer can display the board as headings and checklists, but cannot execute Tasks queries or render Kanban lanes without the Obsidian plugins.
+
+Run `taskcli sync` after upgrading an existing output directory. It regenerates old table boards as Kanban files and creates Tasks views while preserving Job Goal/Notes bodies and Plan versions. Normal task mutations continue refreshing both views automatically.
+
+### Read-only boundary
 
 Generated regions are logically read-only, not filesystem-protected. Manual edits to status, title, dependencies, or ordering are overwritten by the next projection and never imported. There is no `watch` command. Goal/Notes markers preserve their editable bodies. Explicit `job update --goal` replaces a manually edited Goal; Notes remain untouched. Missing/duplicated editable markers fail synchronization instead of dropping content.
+
+Kanban board settings hide card checkboxes and the add-list, archive-all, and board-settings header buttons. Tasks queries hide edit and postpone buttons. These settings are not a complete UI lock: Kanban dragging/card menus and Tasks checkboxes can still edit Markdown, temporarily changing what the views show. They never claim, start, or complete a task in SQLite. Use an agent/taskcli for state changes and run `taskcli sync` to repair an accidental plugin edit. Strict UI-level prevention would require an additional integration; taskcli does not claim to provide it.
 
 Plan files contain authoritative Markdown bodies. Agents must claim first, then publish through `plan create` or `plan revise` with the current lease. Revision creates a new version and preserves previous files; do not directly overwrite registered Plans. Agents authoring Obsidian bodies must load the available Obsidian skill and use `[[wikilinks]]`; use a session-specific temporary draft when necessary and let taskcli publish the registered file after checking ownership. Other directories use standard Markdown. Raw filesystem writes cannot be lease-fenced: manual edits are detected by hash refresh during `sync` and `plan show`, not prevented by SQLite. Do not use those edits as a concurrent agent workflow.
 
@@ -169,20 +195,20 @@ Agentix incrementally consumes SQLite events during its existing runtime tick. W
 | --- | --- |
 | State and ownership | Seven Task states with IN_PROGRESS split into two phases against ten commands (80 cases), no partial writes on rejection, claim-before-Plan, Plan/start ownership, missing/blank Plans, lease renewal/recovery/handoff, stale tokens, dependency changes, archival |
 | Processes and storage | Eight competing CLI processes with exactly one claim winner; four concurrent Jobs in both formats; start waits for Plan writes and rechecks lease expiry; v1 phase migration preserves leases/timestamps; kill after SQLite commit but before projection, then replay without duplicate events and repair files |
-| Document projection | Editable Notes survive concurrent writes; malformed markers and symlink escapes fail safely; unsupported schema versions are not downgraded; CLI rejects invalid inputs without changing state/configuration; YAML-frontmatter Plan bodies round-trip |
+| Document projection | Kanban lanes and Tasks queries in both formats, exact query scope across special-character paths, checkbox-to-state projection and repair without SQLite writes, old-table migration, editable Notes under concurrent writes, safe marker/symlink failures, and YAML-frontmatter Plan bodies |
 | Host plugin | Actual Pi/OMP TypeScript entrypoints and lifecycle hooks invoke the compiled CLI; structured tool schema, plans, leases, both link formats, retry identity after lease release/lost responses, errors, aborts, identity fencing, and periodic heartbeat behavior |
 | IM orchestration | Session/revision/owner scoping, Wait/Fail reasons, cancellation, Job completion, notification paging, route isolation, retry after channel failure, durable delivery cursor after Engine reconstruction |
 | Channel adapters | Actual Telegram HTTP and Feishu HTTP/WebSocket adapters pass task callbacks and reason messages through the Engine; tests verify SQLite state, projected Markdown, and notifications at local mock APIs |
 
 The plugin tests use a minimal host API harness, not installed Pi/OMP loaders or model-generated tool calls. Codex/Claude hook tests execute their manifest commands with representative payloads, not live host sessions. CI runs the normal suite on Linux/macOS and task core/CLI/plugin checks on Windows; Unix-only symlink cases are excluded on Windows.
 
-For actual Obsidian rendering, enable the separate ignored desktop test explicitly. Open a test vault, enable the Obsidian CLI, and ensure the chosen parent directory already exists:
+For actual Obsidian rendering, enable the separate ignored desktop test explicitly. Open a test vault with Kanban and Tasks enabled, enable the Obsidian CLI, and ensure the chosen parent directory already exists:
 
 ```sh
 TASKCLI_OBSIDIAN_VAULT="Test vault" TASKCLI_OBSIDIAN_PARENT="Tests" \
   cargo test -p taskcli --test obsidian_smoke -- --ignored --nocapture
 ```
 
-`OBSIDIAN_BIN` can select a specific CLI executable. The test creates an isolated `taskcli-smoke-*` directory under that parent (default `00-Inbox/agent`) and a temporary tab, then restores the previous tab and deletes only its own generated files. It verifies seven rendered columns, no interactive checkboxes, Unicode/punctuation labels, Plan navigation, and Task block anchors. A force-killed test process can leave its temporary directory/tab behind; do not run it concurrently with manual edits in that directory.
+`OBSIDIAN_BIN` can select a specific CLI executable. For each format, the test creates an isolated `taskcli-smoke-*` directory under that parent (default `00-Inbox/agent`) and a temporary tab, then restores the previous tab and deletes only its own generated files. It checks the actual Kanban view type, seven rendered lanes, hidden Kanban checkboxes, Tasks query results without duplicates, Unicode/punctuation labels, Plan navigation, and Obsidian Task block anchors. It does not install or enable plugins. A force-killed test process can leave its temporary directory/tab behind; do not run it concurrently with manual edits in that directory.
 
 These tests do not establish complete branch coverage or live-system acceptance. Real IM credentials/permissions, host installer and loader compatibility, model-directed tool selection, desktop themes/plugins, and multi-machine/network-filesystem behavior require separate checks. The supported concurrency target remains multiple local processes on one computer.

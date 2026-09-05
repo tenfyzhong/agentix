@@ -232,6 +232,12 @@ This distinction prevents a session restart from being mistaken for confirmation
 
 SQLite is authoritative for task status, dependencies, revisions, ownership, and other metadata. Board, Dashboard, and Job task sections are logically read-only views generated from those facts. Kanban dragging and Tasks checkboxes do not feed status changes back into the system.
 
+Both output formats now generate an Obsidian Kanban-compatible `Board.md` and a sibling `Tasks.md` with Tasks-plugin queries. The board holds the generated checkbox cards; each query selects only that exact board and one status heading. Job/Plan checklists are excluded from these queries, so a Task is not counted twice. Link syntax remains format-specific: wikilinks for Obsidian and relative Markdown links for ordinary directories. Plugin rendering requires Obsidian with Kanban and Tasks enabled, but generating Markdown output does not require a vault or modify its settings.
+
+Obsidian with both plugins enabled is the recommended viewing environment; use `--format obsidian` when initializing against a vault. Plain Markdown mode remains available for CLI-only workflows and other editors. This recommendation changes neither SQLite ownership rules nor the requirement to route task-state changes through taskcli or Agentix.
+
+Some plugin editing controls are hidden, not all. Dragging cards, using card menus, or toggling Tasks checkboxes may change the projected Markdown until the next sync. Those edits cannot obtain a lease or change SQLite task state. This is a logical read-only boundary, not a complete UI or filesystem lock, and still needs no watcher.
+
 Plan bodies live in separate files. Projection preserves editable Goal/Notes sections, while an explicit `job update --goal` replaces the Goal. Agents must publish Plans through `plan create/revise`, not overwrite registered versions directly.
 
 - For Obsidian, agents use the separate Obsidian Skill to author bodies with `[[wikilinks]]`. If a temporary draft is needed, use a session-specific path and publish through taskcli with the lease.
