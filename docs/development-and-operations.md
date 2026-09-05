@@ -4,7 +4,7 @@
 
 Copy `config/agentix.example.toml` to `$HOME/.config/agentix/config.toml` and select exactly one agent backend. This is the default path when `--config` is omitted. The required `[channel].kind` field selects exactly one active IM transport: `telegram` or `feishu`. Its matching `[channel.telegram]` or `[channel.feishu]` table must exist. Either channel may start with an empty owner list so its one-time claim flow can initialize the allowlist. The inactive nested channel table may remain in the file, but Agentix does not validate its owner list, read its credentials, or start its adapter.
 
-Secrets are loaded from the environment variable names in the config. Agentix never needs a Telegram token or Feishu app secret stored in TOML.
+Store the actual credentials in TOML: `channel.telegram.token` for Telegram, or `channel.feishu.app_id` and `channel.feishu.app_secret` for Feishu. The selected channel's credentials must be present and nonblank. Agentix reads them directly from the file, so Homebrew services need no credential environment variables. The former `token_env`, `app_id_env`, and `app_secret_env` keys are no longer accepted; replace them with the new keys and actual values, not the former environment variable names. Restrict the file to your user (`chmod 600 ~/.config/agentix/config.toml` on macOS/Linux).
 
 Every filesystem path accepts `~` or `~/...` and expands it to the current user's home directory. This includes `storage.path`, agent commands, Pi/OMP session directories, and the path portion of Agentix or Codex `unix://` endpoints. Named-user forms such as `~someone` and environment variables such as `$HOME` are not expanded.
 
@@ -83,7 +83,7 @@ Agentix requires a mention in groups. The Feishu SDK acknowledges card actions w
 
 ## Telegram bot setup
 
-Create a bot token and set the token environment variable. Add numeric owner user IDs directly or initialize the first owner through the claim flow above. In group chats, privacy mode and bot permissions must still allow mentioned messages to reach the bot. Agentix ignores unmentioned group text.
+Create a bot token and set `channel.telegram.token` to its value. Add numeric owner user IDs directly or initialize the first owner through the claim flow above. In group chats, privacy mode and bot permissions must still allow mentioned messages to reach the bot. Agentix ignores unmentioned group text.
 
 At channel startup, Agentix registers the detached `sessions`, `rmux`, `cancel`, and `help` menu with Telegram and selects the commands menu button for private chats. After attachment it registers the extended session-command menu, including clickable `/model` and `/reasoning` selectors; `/thinking` is not exposed. Menu registration is refreshed on every restart, so BotFather command configuration is not required. `/attach` is intentionally omitted from the menu because it requires a session ID; use the title buttons from `/sessions` instead.
 
@@ -97,7 +97,7 @@ RUST_LOG=agentix=info agentix serve
 
 Without `RUST_LOG`, `[logging].level` supplies the tracing filter. `[logging.file]` can enable a second, ANSI-free destination with a Home-relative path, `never`, `minutely`, `hourly`, or `daily` rotation, and a positive `max_files` retention count. Agentix creates the parent directory before initializing the appender. Both stderr and file logs use the computer's local RFC 3339 time.
 
-Use the operating system's user service manager for production. Run the process as the same user that owns the coding-agent session files and Codex socket. Restrict config and environment files to that user.
+Use the operating system's user service manager for production. Run the process as the same user that owns the coding-agent session files and Codex socket. Restrict the configuration file containing credentials to that user.
 
 Graceful shutdown cancels channel listeners, stops inbound/event loops, checkpoints SQLite WAL state, removes live turn controls, restores detached IM menus, and sends an offline notification. Durable bindings are retained without stopping the coding-agent session. Channel adapters share one five-second shutdown deadline, so multiple adapters do not multiply the wait. Active turn text, status, owner context, and IM message references are checkpointed so a restart refreshes the existing Stop action and later completion edits the original message instead of creating a duplicate.
 
@@ -108,7 +108,7 @@ At startup, Agentix sends an online notification to each conversation with a sav
 `agentix doctor` checks:
 
 - TOML structure and selected-channel owner configuration
-- required credential environment variables without printing values
+- required credentials in the configuration file without printing values
 - state directory existence
 - Codex managed-daemon startup plus initialize/list handshake, or Pi/OMP executable and session discovery
 

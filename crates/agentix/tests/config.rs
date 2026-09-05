@@ -2,6 +2,70 @@ use std::path::Path;
 
 use agentix::{AgentConfig, Config, ImChannel, LogRotation, add_feishu_owner, add_telegram_owner};
 
+fn credential_config(kind: &str, tables: &str) -> String {
+    format!(
+        r#"[channel]
+kind = "{kind}"
+[agent]
+kind = "codex"
+[storage]
+path = "/tmp/agentix.sqlite3"
+{tables}
+"#
+    )
+}
+
+#[test]
+fn accepts_inline_channel_credentials_without_environment_lookup() {
+    for (kind, tables) in [
+        (
+            "telegram",
+            "[channel.telegram]\ntoken = '123:literal-token'\n[channel.feishu]",
+        ),
+        (
+            "feishu",
+            "[channel.feishu]\napp_id = 'cli_literal'\napp_secret = 'literal-secret'\n[channel.telegram]",
+        ),
+    ] {
+        Config::from_toml(&credential_config(kind, tables)).unwrap();
+    }
+}
+
+#[test]
+fn rejects_missing_or_blank_selected_channel_credentials() {
+    for (kind, field, other) in [
+        ("telegram", "token", ""),
+        ("feishu", "app_id", "app_secret = 'literal-secret'"),
+        ("feishu", "app_secret", "app_id = 'cli_literal'"),
+    ] {
+        for value in [None, Some(""), Some("   ")] {
+            let mut table = format!("[channel.{kind}]\n{other}\n");
+            if let Some(value) = value {
+                table.push_str(&format!("{field} = '{value}'\n"));
+            }
+            let error = Config::from_toml(&credential_config(kind, &table)).unwrap_err();
+            assert!(
+                format!("{error:#}").contains(&format!("channel.{kind}.{field}")),
+                "unexpected error: {error:#}"
+            );
+            assert!(!format!("{error:#}").contains("literal-secret"));
+        }
+    }
+}
+
+#[test]
+fn rejects_legacy_credential_environment_fields() {
+    for (kind, field) in [
+        ("telegram", "token_env"),
+        ("feishu", "app_id_env"),
+        ("feishu", "app_secret_env"),
+    ] {
+        let table = format!("[channel.{kind}]\n{field} = 'OLD_CREDENTIAL_VARIABLE'");
+        let error = Config::from_toml(&credential_config(kind, &table)).unwrap_err();
+        assert!(format!("{error:#}").contains(&format!("unknown field `{field}`")));
+    }
+}
+
 #[test]
 fn logging_defaults_to_info_on_stderr_only() {
     let config = Config::from_toml(
@@ -9,6 +73,7 @@ fn logging_defaults_to_info_on_stderr_only() {
 [channel]
 kind = "telegram"
 [channel.telegram]
+token = "mock-token"
 [agent]
 kind = "codex"
 [storage]
@@ -39,6 +104,7 @@ max_files = 12
 [channel]
 kind = "telegram"
 [channel.telegram]
+token = "mock-token"
 [agent]
 kind = "codex"
 [storage]
@@ -70,6 +136,7 @@ max_files = 0
 [channel]
 kind = "telegram"
 [channel.telegram]
+token = "mock-token"
 [agent]
 kind = "codex"
 [storage]
@@ -82,7 +149,7 @@ path = "/tmp/agentix.sqlite3"
 }
 
 #[test]
-fn parses_a_codex_telegram_configuration_without_inline_secrets() {
+fn parses_a_codex_telegram_configuration_with_inline_credentials() {
     let config = Config::from_toml(
         r#"
 [channel]
@@ -96,7 +163,7 @@ endpoint = "unix:///tmp/codex.sock"
 path = "/tmp/agentix.sqlite3"
 
 [channel.telegram]
-token_env = "AGENTIX_TEST_TELEGRAM_TOKEN"
+token = "mock-token"
 owner_user_ids = [42]
 "#,
     )
@@ -145,7 +212,7 @@ command = "/opt/codex/bin/codex"
 path = "/tmp/agentix.sqlite3"
 
 [channel.telegram]
-token_env = "AGENTIX_TEST_TELEGRAM_TOKEN"
+token = "mock-token"
 owner_user_ids = [42]
 "#,
     )
@@ -175,7 +242,7 @@ rmux_directory = "~/workspace"
 path = "~/.local/share/agentix/state.sqlite3"
 
 [channel.telegram]
-token_env = "AGENTIX_TEST_TELEGRAM_TOKEN"
+token = "mock-token"
 owner_user_ids = [42]
 "#,
     )
@@ -216,6 +283,7 @@ multiplexer_directory = "~/workspace"
 path = "~/.local/state/agentix/state.db"
 
 [channel.telegram]
+token = "mock-token"
 owner_user_ids = [42]
 "#,
     )
@@ -249,6 +317,7 @@ session_dir = "{session_dir}"
 path = "~/agentix.sqlite3"
 
 [channel.telegram]
+token = "mock-token"
 owner_user_ids = [42]
 "#
         ))
@@ -289,6 +358,7 @@ kind = "codex"
 path = "~"
 
 [channel.telegram]
+token = "mock-token"
 owner_user_ids = [42]
 "#,
     )
@@ -313,6 +383,7 @@ endpoint = "unix://~someone/.codex/socket"
 path = "~someone/agentix.sqlite3"
 
 [channel.telegram]
+token = "mock-token"
 owner_user_ids = [42]
 "#,
     )
@@ -340,6 +411,7 @@ session_dir = "/tmp/pi-sessions"
 path = "/tmp/agentix.sqlite3"
 
 [channel.telegram]
+token = "mock-token"
 owner_user_ids = [42]
 "#,
     )
@@ -376,8 +448,8 @@ session_dir = "/tmp/omp-sessions"
 [storage]
 path = "/tmp/agentix.sqlite3"
 [channel.feishu]
-app_id_env = "APP_ID"
-app_secret_env = "APP_SECRET"
+app_id = "cli_mock"
+app_secret = "mock-secret"
 "#,
     )
     .unwrap();
@@ -400,7 +472,7 @@ kind = "codex"
 [storage]
 path = "/tmp/agentix.sqlite3"
 [channel.telegram]
-token_env = "TELEGRAM_TOKEN"
+token = "mock-token"
 "#,
     )
     .unwrap();
@@ -425,8 +497,8 @@ fn claimed_feishu_owner_is_written_without_losing_config_formatting() {
 kind = "feishu"
 
 [channel.feishu]
-app_id_env = "APP_ID"
-app_secret_env = "APP_SECRET"
+app_id = "cli_mock"
+app_secret = "mock-secret"
 owner_open_ids = [] # Claimed owners.
 
 [agent]
@@ -461,8 +533,8 @@ path = "~/agentix.sqlite3"
         r#"[channel]
 kind = "feishu"
 [channel.feishu]
-app_id_env = "APP_ID"
-app_secret_env = "APP_SECRET"
+app_id = "cli_mock"
+app_secret = "mock-secret"
 [agent]
 kind = "codex"
 [storage]
@@ -493,7 +565,7 @@ fn claimed_telegram_owner_is_written_without_losing_config_formatting() {
 kind = "telegram"
 
 [channel.telegram]
-token_env = "TELEGRAM_TOKEN"
+token = "mock-token"
 owner_user_ids = [] # Claimed owners.
 
 [agent]
@@ -539,6 +611,7 @@ kind = "codex"
 path = "/tmp/agentix.sqlite3"
 
 [channel.telegram]
+token = "mock-token"
 owner_user_ids = [42]
 "#,
     )
@@ -548,7 +621,7 @@ owner_user_ids = [42]
 }
 
 #[test]
-fn resolves_credentials_only_from_named_environment_entries() {
+fn preserves_literal_feishu_credentials() {
     let config = Config::from_toml(
         r#"
 [channel]
@@ -560,23 +633,15 @@ endpoint = "unix:///tmp/codex.sock"
 [storage]
 path = "/tmp/agentix.sqlite3"
 [channel.feishu]
-app_id_env = "FEISHU_ID"
-app_secret_env = "FEISHU_SECRET"
+app_id = "cli_mock"
+app_secret = "mock-secret"
 owner_open_ids = ["ou_owner"]
 "#,
     )
     .unwrap();
-    let credentials = config
-        .feishu_credentials_with(|name| match name {
-            "FEISHU_ID" => Some("cli_a".into()),
-            "FEISHU_SECRET" => Some("secret".into()),
-            _ => None,
-        })
-        .unwrap()
-        .unwrap();
-
-    assert_eq!(credentials.0, "cli_a");
-    assert_eq!(credentials.1, "secret");
+    let credentials = config.channel.feishu.unwrap();
+    assert_eq!(credentials.app_id, "cli_mock");
+    assert_eq!(credentials.app_secret, "mock-secret");
 }
 
 #[test]
@@ -593,31 +658,17 @@ kind = "codex"
 path = "/tmp/agentix.sqlite3"
 
 [channel.telegram]
-token_env = "UNSET_TELEGRAM_TOKEN"
+token = "mock-token"
 owner_user_ids = []
 
 [channel.feishu]
-app_id_env = "FEISHU_ID"
-app_secret_env = "FEISHU_SECRET"
+app_id = "cli_mock"
+app_secret = "mock-secret"
 owner_open_ids = ["ou_owner"]
 "#,
     )
     .unwrap();
 
     assert_eq!(config.channel.kind, ImChannel::Feishu);
-    assert_eq!(
-        config
-            .telegram_token_with(|_| panic!("inactive Telegram credentials were read"))
-            .unwrap(),
-        None
-    );
-    assert_eq!(
-        config
-            .feishu_credentials_with(|name| Some(format!("value-for-{name}")))
-            .unwrap(),
-        Some((
-            "value-for-FEISHU_ID".into(),
-            "value-for-FEISHU_SECRET".into()
-        ))
-    );
+    assert_eq!(config.channel.feishu.unwrap().app_id, "cli_mock");
 }

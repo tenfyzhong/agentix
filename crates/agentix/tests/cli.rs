@@ -31,7 +31,7 @@ path = "/tmp/unused-agentix.sqlite3"
 kind = "telegram"
 
 [channel.telegram]
-token_env = "TELEGRAM_TOKEN"
+token = "mock-token"
 owner_user_ids = []
 "#,
                 control_socket.display()
@@ -212,7 +212,9 @@ owner_user_ids = []
             .arg("--config")
             .arg(config)
             .arg("doctor")
-            .env("AGENTIX_TELEGRAM_TOKEN", "mock-token")
+            .env_remove("AGENTIX_TELEGRAM_TOKEN")
+            .env_remove("AGENTIX_FEISHU_APP_ID")
+            .env_remove("AGENTIX_FEISHU_APP_SECRET")
             .stdin(Stdio::null())
             .output()
             .await
@@ -225,8 +227,13 @@ owner_user_ids = []
         );
         let stdout = String::from_utf8(output.stdout).unwrap();
         assert!(stdout.contains("ok: configuration and selected-channel owner policy"));
+        assert!(stdout.contains("ok: selected channel credentials are configured"));
+        assert!(!stdout.contains("mock-token"));
+        assert!(!String::from_utf8_lossy(&output.stderr).contains("mock-token"));
         assert!(
-            stdout.contains("ok: selected channel credential environment variables are present")
+            !std::fs::read_to_string(&log_path)
+                .unwrap()
+                .contains("mock-token")
         );
         assert!(stdout.contains("ok: Codex WebSocket-over-UDS handshake"));
         assert!(log_path.exists(), "configured file logger was not created");
@@ -268,7 +275,7 @@ owner_user_ids = []
             .arg("--config")
             .arg(&config)
             .arg("doctor")
-            .env("AGENTIX_TELEGRAM_TOKEN", "mock-token")
+            .env_remove("AGENTIX_TELEGRAM_TOKEN")
             .stdin(Stdio::null())
             .output()
             .await
@@ -337,6 +344,7 @@ endpoint = "unix:///must-not-connect-to-codex.sock"
 path = "{}"
 
 [channel.telegram]
+token = "mock-token"
 owner_user_ids = [42]
 "#,
                 control_socket.display(),
@@ -364,6 +372,7 @@ endpoint = "unix://{}"
 path = "{}"
 
 [channel.telegram]
+token = "mock-token"
 owner_user_ids = [42]
 "#,
                 socket.display(),

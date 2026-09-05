@@ -112,7 +112,7 @@ Status colors are semantic: blue for running, orange for waiting/warning, green 
 - Default deny: only configured user IDs/open IDs are accepted.
 - Groups additionally require a bot mention.
 - Bot messages and unsupported message types are rejected.
-- Secrets are environment-variable references, not inline configuration fields.
+- Channel credentials are stored directly in the local configuration file, which should be accessible only to its owner.
 - Codex transport is Unix-domain-socket only in this release.
 - IM event IDs are deduplicated durably.
 - Action tokens contain no session ID, RPC ID, decision, or secret.

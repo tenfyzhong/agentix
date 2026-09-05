@@ -98,23 +98,19 @@ command = "~/.codex/packages/standalone/current/codex"
 endpoint = "unix://"
 ```
 
-Export only the credentials for the selected channel:
+Fill in the actual credentials for the selected channel in `config.toml`:
 
-```sh
-export AGENTIX_TELEGRAM_TOKEN='...'
+```toml
+[channel.telegram]
+token = "your-telegram-bot-token"
+
 # Or, when channel.kind = "feishu":
-export AGENTIX_FEISHU_APP_ID='...'
-export AGENTIX_FEISHU_APP_SECRET='...'
+[channel.feishu]
+app_id = "your-feishu-app-id"
+app_secret = "your-feishu-app-secret"
 ```
 
-In PowerShell, set the equivalent credentials for the current session:
-
-```powershell
-$env:AGENTIX_TELEGRAM_TOKEN = "..."
-# Or, when channel.kind = "feishu":
-$env:AGENTIX_FEISHU_APP_ID = "..."
-$env:AGENTIX_FEISHU_APP_SECRET = "..."
-```
+Credentials are read directly from this file, including when running as a Homebrew service. Replace the former `token_env`, `app_id_env`, and `app_secret_env` keys with these fields and their actual values. On macOS/Linux, restrict access with `chmod 600 ~/.config/agentix/config.toml`.
 
 See [Configuration and operations](docs/development-and-operations.md) for backend details, Feishu permissions, logging, service management, and diagnostics.
 
