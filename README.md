@@ -110,7 +110,7 @@ app_id = "your-feishu-app-id"
 app_secret = "your-feishu-app-secret"
 ```
 
-Credentials are read directly from this file, including when running as a Homebrew service. Replace the former `token_env`, `app_id_env`, and `app_secret_env` keys with these fields and their actual values. On macOS/Linux, restrict access with `chmod 600 ~/.config/agentix/config.toml`.
+Credentials are read directly from this file, including when running as a Homebrew service. On macOS/Linux, restrict access with `chmod 600 ~/.config/agentix/config.toml`.
 
 See [Configuration and operations](docs/development-and-operations.md) for backend details, Feishu permissions, logging, service management, and diagnostics.
 
