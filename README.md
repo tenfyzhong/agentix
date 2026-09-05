@@ -8,6 +8,7 @@ Each IM conversation maps explicitly and durably to an agent session. Messages i
 
 - Native Codex app-server integration plus isolated Pi and Oh My Pi RPC transports
 - Telegram long polling and Feishu long-connection support with interactive actions
+- A duplex FIFO message center for IM traffic, with ordered retries at the outbound queue head
 - A global HTTP/HTTPS/SOCKS5 proxy configured in TOML, including for Homebrew services
 - Running-session discovery, attachment, history, prompts, queues, steering, stopping, approvals, and user-input round trips
 - Codex controls for models, reasoning, Fast mode, plans, goals, reviews, diffs, forks, compaction, skills, and MCP servers
@@ -20,7 +21,7 @@ While `agentix serve` is running, Agentix checks running Codex sessions for comp
 
 Attaching a session restores its latest turn with a Stop button when that turn is running. Only the current attached session's active turn message has Stop; switching sessions, moving the attachment to another conversation, detaching, or finishing the turn removes it from the previous message. Copies shown by `/history` never include Stop.
 
-Startup recovery, automatic reattachment, and shutdown notifications only use channels enabled in the current configuration. Saved bindings and turn messages for other channels are retained for when those channels are enabled again. Telegram outbound requests share a cooldown across sends, edits, command menus, and callback acknowledgements. A `retry_after` response pauses all these paths for at least the specified delay before retrying; requests are also spaced globally and per chat. Telegram streams and working-duration updates refresh at most once every five seconds. Final turn updates bypass that refresh interval while still respecting Telegram cooldowns. Rate-limit logs include the API method and chat ID.
+Startup recovery, automatic reattachment, and shutdown notifications only use channels enabled in the current configuration. Saved bindings and turn messages for other channels are retained for when those channels are enabled again. Each IM adapter and its clones share a duplex FIFO message center. Normalized incoming messages use an independent inbound queue; sends, edits, menus, owner-claim replies, callback acknowledgements, and Feishu reply lookups use the outbound queue. A rate-limited request stays at the head until it succeeds, fails permanently, or is cancelled, so later requests cannot overtake its retries. Telegram honors `retry_after` and spaces requests globally and per chat. Feishu HTTP 429 responses use exponential backoff from one second up to 60 seconds because its SDK does not expose the server retry delay. Cancelling a request removes that operation while preserving the channel cooldown. Telegram streams and working-duration updates refresh at most once every five seconds. Final turn updates bypass that refresh interval while still respecting Telegram cooldowns. Telegram rate-limit logs include the API method and chat ID.
 
 To disable completion notices for unattached sessions, add this to `config.toml` and restart Agentix:
 
