@@ -293,7 +293,19 @@ where
         Err(error) => tracing::error!(%error, "failed to finish graceful shutdown preparation"),
     }
 
-    let deadline = tokio::time::Instant::now() + channel_shutdown_grace;
+    wait_for_channel_shutdown(channel_tasks, channel_shutdown_grace).await;
+    if control_failure.is_none() {
+        let _ = control_task.await;
+    }
+    let _ = control_handler_task.await;
+    control_failure.map_or(Ok(()), Err)
+}
+
+async fn wait_for_channel_shutdown(
+    channel_tasks: Vec<tokio::task::JoinHandle<()>>,
+    grace: Duration,
+) {
+    let deadline = tokio::time::Instant::now() + grace;
     for mut task in channel_tasks {
         let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
         if remaining.is_zero() || tokio::time::timeout(remaining, &mut task).await.is_err() {
@@ -301,11 +313,6 @@ where
             let _ = task.await;
         }
     }
-    if control_failure.is_none() {
-        let _ = control_task.await;
-    }
-    let _ = control_handler_task.await;
-    control_failure.map_or(Ok(()), Err)
 }
 
 async fn run_engine_loop(
@@ -1007,10 +1014,67 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn service_shutdown_aborts_a_stuck_channel_after_the_shared_deadline() {
-        let directory = tempfile::tempdir().unwrap();
+    #[tokio::test(start_paused = true)]
+    async fn channel_shutdown_returns_when_tasks_finish_before_the_deadline() {
+        let completed = CancellationToken::new();
+        let task_completed = completed.clone();
+        let task = tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(4)).await;
+            task_completed.cancel();
+        });
         let started = tokio::time::Instant::now();
+
+        super::wait_for_channel_shutdown(vec![task], std::time::Duration::from_millis(10)).await;
+
+        assert!(completed.is_cancelled());
+        assert_eq!(started.elapsed(), std::time::Duration::from_millis(4));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn channel_shutdown_aborts_stuck_tasks_after_one_shared_deadline() {
+        let mut tasks = vec![tokio::spawn(async {
+            tokio::time::sleep(std::time::Duration::from_millis(4)).await;
+        })];
+        let mut cancelled = Vec::new();
+        let mut abort_handles = Vec::new();
+        for _ in 0..2 {
+            let token = CancellationToken::new();
+            let guard = token.clone().drop_guard();
+            let task = tokio::spawn(async move {
+                let _guard = guard;
+                std::future::pending::<()>().await;
+            });
+            cancelled.push(token);
+            abort_handles.push(task.abort_handle());
+            tasks.push(task);
+        }
+        tokio::task::yield_now().await;
+        assert!(cancelled.iter().all(|token| !token.is_cancelled()));
+        let started = tokio::time::Instant::now();
+
+        let shutdown = tokio::spawn(super::wait_for_channel_shutdown(
+            tasks,
+            std::time::Duration::from_millis(10),
+        ));
+        tokio::task::yield_now().await;
+        tokio::time::advance(std::time::Duration::from_millis(9)).await;
+        tokio::task::yield_now().await;
+        assert!(!shutdown.is_finished());
+        assert!(cancelled.iter().all(|token| !token.is_cancelled()));
+        shutdown.await.unwrap();
+
+        assert_eq!(started.elapsed(), std::time::Duration::from_millis(10));
+        assert!(cancelled.iter().all(CancellationToken::is_cancelled));
+        assert!(
+            abort_handles
+                .iter()
+                .all(tokio::task::AbortHandle::is_finished)
+        );
+    }
+
+    #[tokio::test]
+    async fn service_shutdown_completes_with_a_stuck_channel() {
+        let directory = tempfile::tempdir().unwrap();
 
         super::run_service_until_shutdown(
             Arc::new(LifecycleAgent::new()),
@@ -1025,10 +1089,6 @@ mod tests {
         )
         .await
         .unwrap();
-
-        let elapsed = tokio::time::Instant::now().duration_since(started);
-        assert!(elapsed >= std::time::Duration::from_millis(10));
-        assert!(elapsed < std::time::Duration::from_secs(1));
     }
 
     fn unused_loopback_address() -> std::net::SocketAddr {

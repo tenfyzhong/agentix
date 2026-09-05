@@ -36,6 +36,7 @@ futures-util.workspace = true
 larksuite-oapi-sdk-rs.workspace = true
 prost.workspace = true
 time = { workspace = true, features = ["parsing"] }
+tokio = { workspace = true, features = ["test-util"] }
 tokio-tungstenite.workspace = true
 
 [lints]
