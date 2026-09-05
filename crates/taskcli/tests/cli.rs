@@ -103,6 +103,37 @@ impl Cli {
 }
 
 #[test]
+fn cli_deletes_jobs_and_projects_with_their_documents() {
+    let cli = Cli::new("markdown");
+    let job = cli.job("Remove me");
+    let task = cli.task(&job, "Remove plan");
+    let claim = cli.claim(&task, "delete");
+    let plan = cli.owned(
+        &["plan", "create", &task, "--body", "# Delete this plan"],
+        &claim,
+    );
+    cli.owned(
+        &["task", "release", &task, "--reason", "ready to delete"],
+        &claim,
+    );
+    let before = cli.ok(&["job", "show", &job]);
+    let project = before["project_id"].as_str().unwrap();
+    assert_eq!(cli.ok(&["job", "delete", &job])["deleted"], true);
+    assert_eq!(cli.run(&["task", "show", &task]).status.code(), Some(1));
+    assert!(!std::path::Path::new(plan["absolute_path"].as_str().unwrap()).exists());
+    let directory = cli.dir.path().join("vault/Tasks ☃/Projects/Demo");
+    std::fs::write(
+        directory.join("attachment.txt"),
+        "Remove project attachment",
+    )
+    .unwrap();
+    assert_eq!(cli.ok(&["project", "delete", project])["deleted"], true);
+    assert!(!directory.exists());
+    assert!(cli.ok(&["project", "list"]).as_array().unwrap().is_empty());
+    assert_eq!(cli.ok(&["doctor"])["healthy"], true);
+}
+
+#[test]
 fn cli_claim_plan_start_done_requires_ownership_and_preserves_lease() {
     let cli = Cli::new("markdown");
     let job = cli.job("Owned planning");
@@ -333,7 +364,7 @@ fn concurrent_cli_jobs_preserve_notes_and_all_projections() {
         for (path, task) in paths.iter().zip(&tasks) {
             let body = std::fs::read_to_string(path).unwrap();
             assert_eq!(body.matches("Keep my notes.").count(), 1);
-            assert!(body.contains("IN_PROGRESS") && body.contains(task));
+            assert!(body.contains("- [/] ") && body.contains(&task.replace('_', "-")));
         }
         assert_eq!(
             cli.ok(&["task", "list", "--status", "IN_PROGRESS"])
@@ -406,7 +437,7 @@ async fn killed_cli_after_database_commit_replays_without_duplicates_and_repairs
     assert!(
         std::fs::read_to_string(cli.dir.path().join("vault/Tasks \u{2603}").join(path))
             .unwrap()
-            .contains(&task.id)
+            .contains(&task.id.replace('_', "-"))
     );
 }
 
@@ -586,7 +617,7 @@ fn cli_dependency_edits_filters_plan_files_and_archive_round_trip() {
 }
 
 #[test]
-fn inline_plan_bodies_accept_yaml_frontmatter_and_preserve_it_verbatim() {
+fn inline_plan_bodies_accept_yaml_frontmatter_and_merge_properties() {
     let cli = Cli::new("obsidian");
     let job = cli.job("Frontmatter");
     let task = cli.ok(&[
@@ -621,7 +652,9 @@ fn inline_plan_bodies_accept_yaml_frontmatter_and_preserve_it_verbatim() {
             "--lease-token",
             token,
         ]);
-        assert_eq!(cli.ok(&["plan", "show", id])["body"], body);
+        let shown = cli.ok(&["plan", "show", id]);
+        assert_eq!(shown["body"], "# Plan\n");
+        assert_eq!(shown["properties"]["title"], title);
     }
 }
 
@@ -641,7 +674,7 @@ fn cli_creates_and_repairs_plugin_views_without_installing_obsidian_plugins() {
         assert_eq!(board.contains("[["), format == "obsidian");
         assert_eq!(tasks.contains("[["), format == "obsidian");
         if format == "markdown" {
-            assert!(board.contains("](Jobs/Active/"));
+            assert!(board.contains("](Jobs/"));
             assert!(tasks.contains("](Board.md)"));
         }
         assert_eq!(tasks.matches("```tasks\n").count(), 7);
@@ -838,4 +871,108 @@ fn git_worktrees_share_one_project() {
     let second = cli.ok(&["project", "register", "--root", worktree.to_str().unwrap()]);
     assert_eq!(first["id"], second["id"]);
     assert_eq!(cli.ok(&["project", "list"]).as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn legacy_document_language_is_ignored_without_accepting_other_unknown_fields() {
+    let cli = Cli::new("markdown");
+    let path = cli.dir.path().join("config.toml");
+    let mut config: toml::Value = toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    config["documents"]
+        .as_table_mut()
+        .unwrap()
+        .insert("language".into(), toml::Value::String("fr".into()));
+    std::fs::write(&path, toml::to_string(&config).unwrap()).unwrap();
+    let docs = &cli.ok(&["doctor"])["documents"];
+    assert!(docs.get("language").is_none());
+    config["documents"].as_table_mut().unwrap().insert(
+        "unknown_setting".into(),
+        toml::Value::String("invalid".into()),
+    );
+    std::fs::write(&path, toml::to_string(&config).unwrap()).unwrap();
+    assert_eq!(cli.run(&["doctor"]).status.code(), Some(1));
+}
+
+#[test]
+fn taskcli_preserves_authored_language_without_language_configuration() {
+    let cli = Cli::new("markdown");
+    let job = cli.job("Long requirement");
+    let task = cli.ok(&[
+        "task",
+        "add",
+        "--job",
+        &job,
+        "--title",
+        "Implement all acceptance checks for this long requirement",
+        "--name",
+        "验收检查",
+    ]);
+    assert_eq!(task["name"], "验收检查");
+    let output = cli
+        .command(&["sync"])
+        .env("TASKCLI_LANGUAGE", "zh-CN")
+        .env("AGENT_TASK_LANG", "ja")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let dashboard =
+        std::fs::read_to_string(cli.dir.path().join("vault/Tasks ☃/Dashboard.md")).unwrap();
+    assert!(dashboard.contains("Task dashboard"), "{dashboard}");
+    assert!(
+        std::fs::read_to_string(cli.dir.path().join("vault/Tasks ☃/Projects/Demo/Board.md"))
+            .unwrap()
+            .contains("验收检查")
+    );
+    let output = cli
+        .command(&["sync"])
+        .env("TASKCLI_LANGUAGE", "unsupported")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let project = cli.ok(&["project", "list"])[0]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    cli.ok(&["job", "cancel", &job]);
+    cli.ok(&["project", "archive", &project]);
+    assert!(cli.ok(&["project", "list"]).as_array().unwrap().is_empty());
+    assert_eq!(cli.ok(&["project", "list", "--archived"])[0]["id"], project);
+    cli.ok(&["project", "unarchive", &project]);
+    assert_eq!(cli.ok(&["project", "list"])[0]["id"], project);
+}
+
+#[test]
+fn initialization_ignores_language_environment_and_omits_language_configuration() {
+    let cli = Cli {
+        dir: TempDir::new().unwrap(),
+    };
+    let root = cli.dir.path().join("documents");
+    std::fs::create_dir(&root).unwrap();
+    let output = cli
+        .command(&[
+            "init",
+            "--format",
+            "markdown",
+            "--root",
+            root.to_str().unwrap(),
+            "--database",
+            cli.dir.path().join("tasks.sqlite3").to_str().unwrap(),
+        ])
+        .env("TASKCLI_LANGUAGE", "zh-CN")
+        .env("AGENT_TASK_LANG", "ja")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(
+        std::fs::read_to_string(root.join("Dashboard.md"))
+            .unwrap()
+            .contains("Task dashboard")
+    );
+    let config = std::fs::read_to_string(cli.dir.path().join("config.toml")).unwrap();
+    assert!(!config.contains("language"));
+    assert!(cli.ok(&["doctor"])["documents"].get("language").is_none());
 }

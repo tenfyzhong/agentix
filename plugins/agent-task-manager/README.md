@@ -67,6 +67,10 @@ OMP links local packages and reads `omp.extensions` and `omp.skills`. Keep the p
 
 An npm-installed copy uses `npm install --ignore-scripts` if dependencies need reinstalling: npm does not ship `package-lock.json`. Source and release copies include the lockfile and can use `npm ci`. The separate Obsidian skill is still required when an agent edits Obsidian Plan/Notes bodies.
 
+## Document layout
+
+Generated documents use readable names, YAML frontmatter and type tags. Job and Task Plan filenames include a stable `YYMMDD-seq-` prefix, with separate daily counters per project and type; taskcli assigns these automatically. Each Task has one file in the project’s `Plans/` directory; revisions update it in place. Agents choose concise Job/Task names with `--name`. Unarchived Jobs are stored directly in `Jobs/`; archived Jobs are stored in `Jobs/Archived/`. Completed Tasks remain on the Board until their Job is archived. `taskcli job delete JOB_ID` permanently deletes the Job and its Tasks/Plans; `taskcli project delete PROJECT_ID` removes all project work and its entire generated project directory. Release active Task leases first; remove dependencies from surviving Jobs before deleting a Job. `sync` retries interrupted file cleanup. `AGENT_TASK_LANG=zh-CN` tells the skill to decompose tasks and author names, goals, Notes, and Plans in Chinese. Hooks and extensions expose this preference as `task_language` in agent context. Unset or blank defaults to English; other languages such as `ja` are supported by the agent. taskcli has no language setting and renders fixed English labels. Configure the seven Tasks statuses from the [task board guide](../../docs/task-board.md#obsidian-plugin-setup).
+
 ## Lifecycle behavior
 
 The shared Skill uses `claim → Plan → start → execute/verify → done`. Claim reserves PLANNING before the agent drafts a Plan; Plan publication requires the current lease. Start checks the Plan and dependencies and switches to EXECUTING with the same token. Pi/OMP automatically attach the lease and idempotency key to start as well as Plan writes. Codex/Claude shell calls supply them explicitly.

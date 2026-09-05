@@ -56,6 +56,15 @@ async function fixture(t, format = "markdown") {
     return { dir, root, job, run, cleanup };
 }
 
+function taskLanguage(t, language) {
+    const previous = process.env.AGENT_TASK_LANG;
+    process.env.AGENT_TASK_LANG = language;
+    t.after(() => {
+        if (previous === undefined) delete process.env.AGENT_TASK_LANG;
+        else process.env.AGENT_TASK_LANG = previous;
+    });
+}
+
 async function extension(t, f, host) {
     const handlers = new Map();
     let tool;
@@ -90,6 +99,7 @@ for (const [host, format] of [
     ["omp", "obsidian"],
 ]) {
     test(`${host} entrypoint uses real CLI, plans, leases and ${format} files`, async (t) => {
+        taskLanguage(t, "zh-CN");
         const f = await fixture(t, format);
         const x = await extension(t, f, host);
         const task = await x.invoke([
@@ -119,6 +129,9 @@ for (const [host, format] of [
         ]);
         const context = await x.handlers.get("before_agent_start")({}, x.ctx);
         assert.ok(context.message.content.includes(task.id));
+        const injected = JSON.parse(context.message.content.split("\n").at(-1));
+        assert.equal(injected.task_language, "zh-CN");
+        assert.equal(injected.documents.language, undefined);
         const revision = await x.invoke([
             "plan",
             "revise",
@@ -127,10 +140,7 @@ for (const [host, format] of [
             "# Revised plan",
         ]);
         assert.equal(revision.version, 2);
-        assert.equal(
-            await readFile(revision.absolute_path, "utf8"),
-            "# Revised plan",
-        );
+        assert.ok((await readFile(revision.absolute_path, "utf8")).endsWith("# Revised plan"));
         await x.invoke(["task", "wait", task.id, "--reason", "Need review"]);
         assert.equal(
             (await f.run(["task", "show", task.id])).status,
@@ -149,7 +159,7 @@ for (const [host, format] of [
             join(f.root, "Tasks \u{2603}", job.document_path),
             "utf8",
         );
-        assert.ok(body.includes("DONE"));
+        assert.ok(body.includes(`- [x] ${task.name}`));
         assert.equal(body.includes("[["), format === "obsidian");
         assert.equal((await f.run(["doctor"])).healthy, true);
     });
@@ -221,6 +231,7 @@ for (const host of ["codex", "claude"]) {
         ["/bin/sh", process.env.TASKCLI_TEST_HOOK_SHELL].filter(Boolean),
     )) {
         test(`${host} bundled hooks run through ${process.platform === "win32" ? "cmd.exe" : shell} and restore fenced leases`, async (t) => {
+            taskLanguage(t, "ja");
             const f = await fixture(t);
             const root = join(f.dir, "installed plugin \u{2603}");
             await mkdir(root);
@@ -270,6 +281,11 @@ for (const host of ["codex", "claude"]) {
                     current.status,
                     name === "SessionEnd" ? "BLOCKED" : "IN_PROGRESS",
                 );
+                if (name === "SessionStart")
+                    assert.equal(
+                        JSON.parse(output.hookSpecificOutput.additionalContext.split("\n").at(-1)).task_language,
+                        "ja",
+                    );
                 if (name === "SessionStart")
                     assert.ok(
                         output.hookSpecificOutput.additionalContext.includes(

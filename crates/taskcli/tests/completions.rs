@@ -66,6 +66,7 @@ fn completions_skip_configuration_and_task_state_and_match_checked_in_files() {
                 "claim",
                 "start",
                 "done",
+                "delete",
                 "session-start",
                 "completions",
             ] {

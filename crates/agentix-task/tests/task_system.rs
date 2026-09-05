@@ -7,6 +7,9 @@ use agentix_task::{Config, Service, Store, WriteOptions};
 use serde_json::{Value, json};
 use tempfile::TempDir;
 
+#[path = "support/deletion.rs"]
+mod deletion;
+
 struct Fixture {
     dir: TempDir,
     service: Service,
@@ -193,7 +196,15 @@ async fn kanban_and_tasks_views_are_generated_for_both_directory_formats() {
             7
         );
         for status in task_status_names() {
-            let marker = if status == "DONE" { "- [x] " } else { "- [ ] " };
+            let marker = match status.as_str() {
+                "IN_PROGRESS" => "- [/] ",
+                "BLOCKED" => "- [!] ",
+                "WAITING_USER" => "- [?] ",
+                "DONE" => "- [x] ",
+                "FAILED" => "- [f] ",
+                "CANCELLED" => "- [-] ",
+                _ => "- [ ] ",
+            };
             let heading = format!("## {status}\n");
             let lane = board
                 .split_once(&heading)
@@ -208,7 +219,10 @@ async fn kanban_and_tasks_views_are_generated_for_both_directory_formats() {
                 "{lane}"
             );
             assert!(lane.contains("#task"));
-            assert!(lane.contains(" ^task-"));
+            assert!(
+                !lane.contains(" ^task-"),
+                "Tasks queries must not display database IDs: {lane}"
+            );
         }
         let query =
             std::fs::read_to_string(output.join(format!("Projects/{}/Tasks.md", project.key)))
@@ -262,13 +276,14 @@ for (const folder of ['', 'Projects/demo/', 'Tasks ☃/Projects/demo/', 'A [x] "
         const matches = new Function('task', 'query', 'return (' + source + ')');
         for (const [path, expected] of [
             [folder + 'Board.md', true],
-            [folder + 'Jobs/Active/example.md', false],
+            [folder + 'Jobs/example.md', false],
             [folder + 'Plans/task/v001.md', false],
             [folder + 'Archive/Board.md', false],
             ['another/' + folder + 'Board.md', false],
         ]) {
-            for (const heading of statuses) {
-                assert.equal(matches({file: {path}, heading}, query), expected && heading === statuses[i]);
+            for (const [index, heading] of statuses.entries()) {
+                const symbol = [' ', '/', '!', '?', 'x', 'f', '-'][index];
+                assert.equal(matches({file: {path}, heading: 'translated heading', status: {symbol}}, query), expected && heading === statuses[i]);
             }
         }
     });
@@ -625,7 +640,7 @@ async fn legacy_executing_tasks_migrate_without_losing_their_lease_or_history() 
         .fetch_one(&mut db)
         .await
         .unwrap();
-    assert_eq!(version, 2);
+    assert_eq!(version, 6);
 }
 
 #[tokio::test]
@@ -922,7 +937,7 @@ async fn projections_are_read_only_preserve_notes_and_archive_links() {
         let state = f.service.store().snapshot().await.unwrap();
         let project = &state.projects[0];
         let output = f.service.config().output_dir();
-        let job_path = output.join(format!("Projects/{}/Jobs/Active/{}.md", project.key, f.job));
+        let job_path = output.join(&state.jobs[0].document_path);
         let job = std::fs::read_to_string(&job_path).unwrap();
         assert!(job.contains("GENERATED"));
         let changed = job.replace(
@@ -935,7 +950,7 @@ async fn projections_are_read_only_preserve_notes_and_archive_links() {
         f.service.sync().await.unwrap();
         let board = std::fs::read_to_string(&board_path).unwrap();
         assert!(!board.contains("manual state edit"));
-        assert!(board.contains("- [ ]"));
+        assert!(board.contains("- [/]"));
         assert!(board.contains("kanban-plugin: board"));
         assert_eq!(board.contains("[["), format == "obsidian");
         if format == "markdown" {
@@ -961,10 +976,12 @@ async fn projections_are_read_only_preserve_notes_and_archive_links() {
             .await
             .unwrap();
         assert_eq!(revised.result["version"], 2);
-        assert_eq!(
-            std::fs::read_to_string(&plan_path).unwrap(),
-            "# My revised plan\n"
+        assert!(
+            std::fs::read_to_string(&plan_path)
+                .unwrap()
+                .ends_with("# Second version\n")
         );
+        assert_eq!(revised.result["absolute_path"], plan["absolute_path"]);
         assert!(!before.is_empty());
         f.service
             .execute(json!({"command":"task.start","task":id}), owner(&claim))
@@ -984,7 +1001,7 @@ async fn projections_are_read_only_preserve_notes_and_archive_links() {
         let archived = f.service.store().snapshot().await.unwrap().jobs[0]
             .document_path
             .clone();
-        assert!(archived.contains("/Archive/2026/09/"));
+        assert!(archived.contains("/Jobs/Archived/"));
         assert!(!job_path.exists());
         assert!(
             std::fs::read_to_string(output.join(archived))
@@ -1063,6 +1080,153 @@ async fn concurrent_jobs_are_independent_and_cross_project_dependencies_are_reje
 }
 
 #[tokio::test]
+async fn dashboard_stays_project_only_as_jobs_grow() {
+    for format in ["markdown", "obsidian"] {
+        let f = Fixture::new(format).await;
+        let output = f.service.config().output_dir();
+        let before = std::fs::read_to_string(output.join("Dashboard.md")).unwrap();
+        for index in 0..20 {
+            f.service
+                .store()
+                .execute(
+                    json!({"command":"job.create", "project":f.project,
+                        "title":format!("Extra job {index}"), "goal":"Ship it"}),
+                    WriteOptions::default(),
+                )
+                .await
+                .unwrap();
+        }
+        f.service.sync().await.unwrap();
+        let dashboard = std::fs::read_to_string(output.join("Dashboard.md")).unwrap();
+        assert_eq!(
+            dashboard, before,
+            "Job count must not change {format} Dashboard"
+        );
+        assert!(dashboard.contains("## demo"));
+        for entry in ["meta", "Board", "Tasks"] {
+            assert!(dashboard.contains(&format!("Projects/demo/{entry}")));
+        }
+        assert!(!dashboard.contains("Feature"));
+        assert!(!dashboard.contains("Jobs/"));
+        for job in f.service.store().snapshot().await.unwrap().jobs {
+            assert!(output.join(job.document_path).is_file());
+        }
+    }
+}
+
+#[tokio::test]
+async fn job_type_tags_switch_exclusively_on_archive_and_restore() {
+    for format in ["markdown", "obsidian"] {
+        let f = Fixture::new(format).await;
+        for (command, tag) in [
+            ("job.cancel", "agent/job"),
+            ("job.archive", "agent/archived/job"),
+            ("job.unarchive", "agent/job"),
+        ] {
+            let job = f
+                .service
+                .execute(
+                    json!({"command":command,"job":f.job}),
+                    WriteOptions::default(),
+                )
+                .await
+                .unwrap()
+                .result;
+            let path = f
+                .service
+                .config()
+                .output_dir()
+                .join(job["document_path"].as_str().unwrap());
+            for repair in [false, true] {
+                if repair {
+                    let old = std::fs::read_to_string(&path).unwrap();
+                    let old = old
+                        .lines()
+                        .map(|line| {
+                            if line.starts_with("tags:") {
+                                "tags: [agent/job, agent/archived/job]"
+                            } else {
+                                line
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    std::fs::write(&path, old).unwrap();
+                    f.service.sync().await.unwrap();
+                }
+                let doc = std::fs::read_to_string(&path).unwrap();
+                let yaml = doc
+                    .strip_prefix("---\n")
+                    .unwrap()
+                    .split_once("\n---\n")
+                    .unwrap()
+                    .0;
+                let properties: Value = serde_yaml::from_str(yaml).unwrap();
+                assert_eq!(properties["tags"], json!([tag]), "{format}: {command}");
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn job_frontmatter_omits_paths_titles_names_and_embedded_tasks() {
+    for format in ["markdown", "obsidian"] {
+        let f = Fixture::new(format).await;
+        f.task("Visible task").await;
+        for archived in [false, true] {
+            if archived {
+                for command in ["job.cancel", "job.archive"] {
+                    f.service
+                        .execute(
+                            json!({"command":command,"job":f.job}),
+                            WriteOptions::default(),
+                        )
+                        .await
+                        .unwrap();
+                }
+            }
+            let state = f.service.store().snapshot().await.unwrap();
+            let job = &state.jobs[0];
+            let doc =
+                std::fs::read_to_string(f.service.config().output_dir().join(&job.document_path))
+                    .unwrap();
+            let (_, rest) = doc.split_once("---\n").unwrap();
+            let (yaml, body) = rest.split_once("---\n").unwrap();
+            let properties: Value = serde_yaml::from_str(yaml).unwrap();
+            for field in ["document_path", "task", "tasks", "title", "name"] {
+                assert!(
+                    properties.get(field).is_none(),
+                    "{field} must be absent in {format} Job properties"
+                );
+            }
+            for field in [
+                "id",
+                "project_id",
+                "status",
+                "revision",
+                "sequence",
+                "created_at",
+                "updated_at",
+                "started_at",
+                "completed_at",
+                "cancelled_at",
+                "archived_at",
+                "tags",
+            ] {
+                assert!(properties.get(field).is_some(), "{field} must remain");
+            }
+            assert_eq!(properties["id"], f.job);
+            assert_eq!(properties["archived_at"].is_null(), !archived);
+            assert!(body.contains("# Feature"));
+            assert!(body.contains("Visible task"));
+            assert_eq!(job.name, "Feature");
+            assert_eq!(job.title, "Feature");
+            assert_eq!(state.tasks.len(), 1);
+        }
+    }
+}
+
+#[tokio::test]
 async fn obsidian_alias_separators_are_not_table_escaped_in_kanban_cards() {
     let f = Fixture::new("obsidian").await;
     let task = f.task("Linked task").await;
@@ -1071,14 +1235,14 @@ async fn obsidian_alias_separators_are_not_table_escaped_in_kanban_cards() {
     let state = f.service.store().snapshot().await.unwrap();
     let output = f.service.config().output_dir();
     let dashboard = std::fs::read_to_string(output.join("Dashboard.md")).unwrap();
-    assert!(dashboard.contains("|Feature]]"));
-    assert!(!dashboard.contains("\\|Feature]]"));
+    assert!(dashboard.contains("|Kanban board]]"));
+    assert!(!dashboard.contains("\\|Kanban board]]"));
     let board = std::fs::read_to_string(
         output.join(format!("Projects/{}/Board.md", state.projects[0].key)),
     )
     .unwrap();
-    assert!(board.contains("|Linked task]]"));
-    assert!(!board.contains("\\|Linked task]]"));
+    assert!(board.contains("|Plan]]"));
+    assert!(!board.contains("\\|Plan]]"));
 }
 
 #[tokio::test]
@@ -1098,7 +1262,8 @@ async fn special_obsidian_titles_keep_entities_outside_wikilink_aliases() {
     )
     .unwrap();
     assert!(
-        board.contains("|Open]] Render &#124; Unicode \u{2603} &#91;link&#93; &amp; &lt;tag&gt; &#91;&#91;injection&#93;&#93;"),
+        board.contains("Render Unicode \u{2603} link &amp; tag injection")
+            && board.contains("|Plan]]"),
         "{board}"
     );
     assert!(!board.contains("[[injection]]"));
@@ -1573,9 +1738,12 @@ async fn dependency_projection_has_no_trailing_whitespace() {
         let job = f.service.store().snapshot().await.unwrap().jobs[0].clone();
         let body = std::fs::read_to_string(f.service.config().output_dir().join(job.document_path))
             .unwrap();
+        if format == "markdown" {
+            assert!(body.contains(&format!("<a id=\"{}\"></a>", first.replace('_', "-"))));
+        }
         let dependencies = body
             .lines()
-            .find(|line| line.starts_with("Dependencies:"))
+            .find(|line| line.trim_start().starts_with("Dependencies:"))
             .unwrap();
         assert_eq!(dependencies, dependencies.trim_end());
     }
@@ -1721,5 +1889,891 @@ async fn symlinks_cannot_redirect_document_output_or_managed_files_outside_the_r
     assert_eq!(
         std::fs::read_to_string(target).unwrap(),
         "Outside content must survive"
+    );
+}
+
+#[tokio::test]
+async fn numbered_filenames_use_creation_day_and_project_scoped_daily_sequences() {
+    let f = Fixture::new("obsidian").await;
+    let task = f.task("First task").await;
+    for index in 2..=11 {
+        let job = f.service.execute(
+            json!({"command":"job.create", "project":f.project, "title":format!("Job {index}")}),
+            WriteOptions::default(),
+        ).await.unwrap().result;
+        assert_eq!(job["sequence"], index);
+        assert_eq!(
+            job["document_path"],
+            format!("Projects/demo/Jobs/260905-{index:04}-Job {index}.md")
+        );
+        let task = f
+            .service
+            .execute(
+                json!({"command":"task.add", "job":job["id"], "title":format!("Task {index}")}),
+                WriteOptions::default(),
+            )
+            .await
+            .unwrap()
+            .result;
+        assert_eq!(task["sequence"], index);
+    }
+    let state = f.service.store().snapshot().await.unwrap();
+    let paths: Vec<_> = state.jobs.iter().map(|j| j.document_path.clone()).collect();
+    let mut sorted = paths.clone();
+    sorted.sort();
+    assert_eq!(paths, sorted);
+    f.clock.fetch_add(86400, Ordering::SeqCst);
+    f.claim(&task, "next-day").await;
+    assert_eq!(
+        f.plan(&task).await["path"],
+        "Projects/demo/Plans/260905-0001-First task.md"
+    );
+    let next = f
+        .service
+        .execute(
+            json!({"command":"job.create", "project":f.project, "title":"Next day"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap()
+        .result;
+    assert_eq!(next["sequence"], 1);
+    assert_eq!(
+        next["document_path"],
+        "Projects/demo/Jobs/260906-0001-Next day.md"
+    );
+    let next_task = f.task("Next task").await;
+    f.claim(&next_task, "another").await;
+    assert_eq!(
+        f.plan(&next_task).await["path"],
+        "Projects/demo/Plans/260906-0001-Next task.md"
+    );
+    let other_project = f.service.execute(
+        json!({"command":"project.register", "name":"other", "root":f.dir.path().join("other")}),
+        WriteOptions::default(),
+    ).await.unwrap().result;
+    let other_job = f
+        .service
+        .execute(
+            json!({"command":"job.create", "project":other_project["id"], "title":"Independent"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap()
+        .result;
+    assert_eq!(other_job["sequence"], 1);
+    assert_eq!(
+        other_job["document_path"],
+        "Projects/other/Jobs/260906-0001-Independent.md"
+    );
+}
+
+#[tokio::test]
+async fn numbered_filenames_are_allocated_atomically_and_survive_archive() {
+    let f = Fixture::new("markdown").await;
+    let now = f.clock.clone();
+    let other = Store::open_with_clock(
+        &f.service.config().storage.path,
+        Arc::new(move || now.load(Ordering::SeqCst)),
+    )
+    .await
+    .unwrap();
+    let request = json!({"command":"job.create", "project":f.project, "title":"Concurrent"});
+    let (a, b) = tokio::join!(
+        f.service
+            .store()
+            .execute(request.clone(), WriteOptions::default()),
+        other.execute(request, WriteOptions::default()),
+    );
+    let a = a.unwrap().result;
+    let b = b.unwrap().result;
+    let mut sequences = vec![
+        a["sequence"].as_u64().unwrap(),
+        b["sequence"].as_u64().unwrap(),
+    ];
+    sequences.sort_unstable();
+    assert_eq!(sequences, [2, 3]);
+    let request = json!({"command":"task.add", "job":f.job, "title":"Concurrent task"});
+    let (a, b) = tokio::join!(
+        f.service
+            .store()
+            .execute(request.clone(), WriteOptions::default()),
+        other.execute(request, WriteOptions::default()),
+    );
+    let mut sequences = vec![
+        a.unwrap().result["sequence"].as_u64().unwrap(),
+        b.unwrap().result["sequence"].as_u64().unwrap(),
+    ];
+    sequences.sort_unstable();
+    assert_eq!(sequences, [1, 2]);
+    f.service
+        .execute(
+            json!({"command":"job.cancel", "job":f.job}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    f.clock.fetch_add(86400, Ordering::SeqCst);
+    let archived = f
+        .service
+        .execute(
+            json!({"command":"job.archive", "job":f.job}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap()
+        .result;
+    assert_eq!(
+        archived["document_path"],
+        "Projects/demo/Jobs/Archived/260905-0001-Feature.md"
+    );
+    let restored = f
+        .service
+        .execute(
+            json!({"command":"job.unarchive", "job":f.job}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap()
+        .result;
+    assert_eq!(
+        restored["document_path"],
+        "Projects/demo/Jobs/260905-0001-Feature.md"
+    );
+}
+
+#[tokio::test]
+#[allow(clippy::too_many_lines)] // Build legacy active/archive files and verify metadata, content, and links in both formats.
+async fn jobs_layout_migrates_v4_active_and_archived_documents() {
+    use sqlx::Connection;
+    for format in ["markdown", "obsidian"] {
+        let f = Fixture::new(format).await;
+        let archived = f
+            .service
+            .execute(
+                json!({"command":"job.create", "project":f.project, "title":"Old work"}),
+                WriteOptions::default(),
+            )
+            .await
+            .unwrap()
+            .result;
+        for command in ["job.cancel", "job.archive"] {
+            f.service
+                .execute(
+                    json!({"command":command,"job":archived["id"]}),
+                    WriteOptions::default(),
+                )
+                .await
+                .unwrap();
+        }
+        f.task("Linked task").await;
+        let before = f.service.store().snapshot().await.unwrap();
+        let root = f.service.config().output_dir();
+        let mut db = sqlx::SqliteConnection::connect(&format!(
+            "sqlite:{}",
+            f.service.config().storage.path.display()
+        ))
+        .await
+        .unwrap();
+        let mut documents = f
+            .service
+            .store()
+            .metadata("documents")
+            .await
+            .unwrap()
+            .unwrap();
+        for job in &before.jobs {
+            let folder = if job.archived_at.is_some() {
+                "Archive/2026/09"
+            } else {
+                "Active"
+            };
+            let filename = job.document_path.rsplit('/').next().unwrap();
+            let legacy = format!("Projects/demo/Jobs/{folder}/{filename}");
+            let body = std::fs::read_to_string(root.join(&job.document_path))
+                .unwrap()
+                .replace(
+                    "<!-- taskcli:notes:start -->",
+                    "<!-- taskcli:notes:start -->\nPreserve notes.",
+                );
+            std::fs::remove_file(root.join(&job.document_path)).unwrap();
+            std::fs::create_dir_all(root.join(&legacy).parent().unwrap()).unwrap();
+            std::fs::write(root.join(&legacy), body).unwrap();
+            sqlx::query("UPDATE jobs SET data = json_set(data, '$.document_path', ?) WHERE id = ?")
+                .bind(&legacy)
+                .bind(&job.id)
+                .execute(&mut db)
+                .await
+                .unwrap();
+            documents[format!("job:{}", job.id)] = json!(legacy);
+        }
+        f.service
+            .store()
+            .set_metadata("documents", &documents)
+            .await
+            .unwrap();
+        sqlx::query("PRAGMA user_version = 4")
+            .execute(&mut db)
+            .await
+            .unwrap();
+        let service = Service::open(f.service.config().clone()).await.unwrap();
+        service.sync().await.unwrap();
+        let after = service.store().snapshot().await.unwrap();
+        for (old, job) in before.jobs.iter().zip(&after.jobs) {
+            let folder = if job.archived_at.is_some() {
+                "Archived/"
+            } else {
+                ""
+            };
+            let filename = old.document_path.rsplit('/').next().unwrap();
+            assert_eq!(
+                job.document_path,
+                format!("Projects/demo/Jobs/{folder}{filename}")
+            );
+            assert_eq!(
+                (
+                    job.sequence,
+                    job.created_at,
+                    job.archived_at,
+                    job.status,
+                    job.revision
+                ),
+                (
+                    old.sequence,
+                    old.created_at,
+                    old.archived_at,
+                    old.status,
+                    old.revision
+                )
+            );
+            let text = std::fs::read_to_string(root.join(&job.document_path)).unwrap();
+            assert!(text.contains("Preserve notes."));
+            assert_eq!(
+                text.contains("agent/archived/job"),
+                job.archived_at.is_some()
+            );
+        }
+        assert!(!root.join("Projects/demo/Jobs/Active").exists());
+        assert!(!root.join("Projects/demo/Jobs/Archive").exists());
+        let board = std::fs::read_to_string(root.join("Projects/demo/Board.md")).unwrap();
+        assert!(board.contains("Jobs/260905-0001-Feature"));
+        assert!(!board.contains("Jobs/Active/"));
+        service.sync().await.unwrap();
+        assert_eq!(service.store().snapshot().await.unwrap().jobs, after.jobs);
+    }
+}
+
+#[tokio::test]
+#[allow(clippy::too_many_lines)] // Exercise legacy files, failed migration publication, and restart recovery together.
+async fn numbered_filenames_migrate_v3_and_recover_after_a_destination_conflict() {
+    use sqlx::Connection;
+    let f = Fixture::new("markdown").await;
+    let task = f.task("Keep plan").await;
+    let claim = f.claim(&task, "migration").await;
+    f.plan(&task).await;
+    let state = f.service.store().snapshot().await.unwrap();
+    let root = f.service.config().output_dir();
+    let old_job = "Projects/demo/Jobs/Active/Feature.md";
+    let old_plan = "Projects/demo/Plans/Keep plan.md";
+    let job_body = std::fs::read_to_string(root.join(&state.jobs[0].document_path))
+        .unwrap()
+        .replace(
+            "<!-- taskcli:notes:start -->",
+            "<!-- taskcli:notes:start -->\nKeep notes",
+        );
+    std::fs::remove_file(root.join(&state.jobs[0].document_path)).unwrap();
+    std::fs::remove_file(root.join(&state.plans[0].path)).unwrap();
+    std::fs::create_dir_all(root.join(old_job).parent().unwrap()).unwrap();
+    std::fs::write(root.join(old_job), job_body).unwrap();
+    std::fs::write(
+        root.join(old_plan),
+        "---\ncustom: retained\n---\nKeep authored plan.",
+    )
+    .unwrap();
+    let mut db = sqlx::SqliteConnection::connect(&format!(
+        "sqlite:{}",
+        f.service.config().storage.path.display()
+    ))
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE jobs SET data = json_remove(json_set(data, '$.document_path', ?), '$.sequence')",
+    )
+    .bind(old_job)
+    .execute(&mut db)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE tasks SET data = json_remove(data, '$.sequence')")
+        .execute(&mut db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE plans SET data = json_set(data, '$.path', ?)")
+        .bind(old_plan)
+        .execute(&mut db)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM projection_state WHERE key = 'documents'")
+        .execute(&mut db)
+        .await
+        .unwrap();
+    sqlx::query("PRAGMA user_version = 3")
+        .execute(&mut db)
+        .await
+        .unwrap();
+    let destination = root.join("Projects/demo/Plans/260905-0001-Keep plan.md");
+    std::fs::write(&destination, "Personal note").unwrap();
+    let now = f.clock.clone();
+    let store = Store::open_with_clock(
+        &f.service.config().storage.path,
+        Arc::new(move || now.load(Ordering::SeqCst)),
+    )
+    .await
+    .unwrap();
+    let service = Service::new(f.service.config().clone(), store).unwrap();
+    assert!(service.sync().await.is_err());
+    assert_eq!(
+        std::fs::read_to_string(&destination).unwrap(),
+        "Personal note"
+    );
+    assert!(root.join(old_job).exists());
+    assert!(root.join(old_plan).exists());
+    std::fs::remove_file(&destination).unwrap();
+    drop(service);
+    let now = f.clock.clone();
+    let store = Store::open_with_clock(
+        &f.service.config().storage.path,
+        Arc::new(move || now.load(Ordering::SeqCst)),
+    )
+    .await
+    .unwrap();
+    let service = Service::new(f.service.config().clone(), store).unwrap();
+    service.sync().await.unwrap();
+    let migrated = service.store().snapshot().await.unwrap();
+    assert_eq!(
+        migrated.plans[0].path,
+        "Projects/demo/Plans/260905-0001-Keep plan.md"
+    );
+    assert_eq!(migrated.plans[0].id, state.plans[0].id);
+    assert_eq!(migrated.plans[0].version, state.plans[0].version);
+    assert_eq!(migrated.tasks[0].revision, state.tasks[0].revision);
+    assert_eq!(migrated.leases, state.leases);
+    let body = std::fs::read_to_string(&destination).unwrap();
+    assert!(body.contains("Keep authored plan."));
+    assert!(body.contains("custom: \"retained\""));
+    assert!(
+        std::fs::read_to_string(root.join(&migrated.jobs[0].document_path))
+            .unwrap()
+            .contains("Keep notes")
+    );
+    assert!(
+        std::fs::read_to_string(root.join("Projects/demo/Board.md"))
+            .unwrap()
+            .contains("260905-0001-Keep%20plan.md")
+    );
+    assert!(!root.join(old_job).exists());
+    assert!(!root.join(old_plan).exists());
+    service.sync().await.unwrap();
+    assert_eq!(body, std::fs::read_to_string(destination).unwrap());
+    service
+        .execute(json!({"command":"task.start", "task":task}), owner(&claim))
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn readable_names_only_gain_suffixes_on_collision() {
+    let f = Fixture::new("obsidian").await;
+    let state = f.service.store().snapshot().await.unwrap();
+    assert_eq!(state.projects[0].key, "demo");
+    assert_eq!(
+        state.jobs[0].document_path,
+        "Projects/demo/Jobs/260905-0001-Feature.md"
+    );
+    let duplicate = f
+        .service
+        .execute(
+            json!({"command":"project.register","name":"demo","root":f.dir.path().join("other")}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap()
+        .result;
+    assert_eq!(duplicate["key"], "demo-2");
+    assert_eq!(duplicate["name"], "demo-2");
+    let other = f
+        .service
+        .execute(
+            json!({"command":"job.create","project":f.project,"title":"Feature"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap()
+        .result;
+    assert_eq!(
+        other["document_path"],
+        "Projects/demo/Jobs/260905-0002-Feature-2.md"
+    );
+    let a = f.task("实现功能").await;
+    let b = f.task("实现功能").await;
+    f.claim(&a, "a").await;
+    f.claim(&b, "b").await;
+    assert_eq!(
+        f.plan(&a).await["path"],
+        "Projects/demo/Plans/260905-0001-实现功能.md"
+    );
+    assert_eq!(
+        f.plan(&b).await["path"],
+        "Projects/demo/Plans/260905-0002-实现功能-2.md"
+    );
+}
+
+#[tokio::test]
+async fn plan_revisions_replace_one_file_and_keep_lifecycle_properties() {
+    let f = Fixture::new("markdown").await;
+    let task = f.task("Short task").await;
+    let claim = f.claim(&task, "writer").await;
+    let first = f.plan(&task).await;
+    f.clock.fetch_add(10, Ordering::SeqCst);
+    let second = f
+        .service
+        .execute(
+            json!({"command":"plan.revise","task":task,"body":"# Revised\nAcceptance."}),
+            owner(&claim),
+        )
+        .await
+        .unwrap();
+    assert_eq!(second.result["path"], first["path"]);
+    assert_eq!(second.result["id"], first["id"]);
+    assert_eq!(second.result["version"], 2);
+    assert_eq!(f.service.store().snapshot().await.unwrap().plans.len(), 1);
+    let path = first["absolute_path"].as_str().unwrap();
+    let contents = std::fs::read_to_string(path).unwrap();
+    assert!(contents.starts_with("---\n"));
+    assert!(contents.contains("agent/plan"));
+    assert!(contents.contains("version: 2"));
+    assert!(contents.ends_with("# Revised\nAcceptance."));
+    assert!(!contents.contains("Implement and verify"));
+    assert_eq!(
+        std::fs::read_dir(std::path::Path::new(path).parent().unwrap())
+            .unwrap()
+            .count(),
+        1
+    );
+    f.service
+        .execute(json!({"command":"task.start","task":task}), owner(&claim))
+        .await
+        .unwrap();
+    f.clock.fetch_add(10, Ordering::SeqCst);
+    f.service
+        .execute(json!({"command":"task.done","task":task}), owner(&claim))
+        .await
+        .unwrap();
+    let contents = std::fs::read_to_string(path).unwrap();
+    assert!(
+        contents.contains("started_at: \"2026-09-05T00:00:10Z\""),
+        "{contents}"
+    );
+    assert!(
+        contents.contains("completed_at: \"2026-09-05T00:00:20Z\""),
+        "{contents}"
+    );
+}
+
+#[tokio::test]
+async fn metadata_and_status_checklists_include_completed_jobs_until_archived() {
+    for format in ["obsidian", "markdown"] {
+        let f = Fixture::new(format).await;
+        let task = f.task("Short task").await;
+        let claim = f.start(&task, "complete").await;
+        f.service
+            .execute(json!({"command":"task.done","task":task}), owner(&claim))
+            .await
+            .unwrap();
+        let state = f.service.store().snapshot().await.unwrap();
+        let root = f.service.config().output_dir();
+        let board = std::fs::read_to_string(
+            root.join(format!("Projects/{}/Board.md", state.projects[0].key)),
+        )
+        .unwrap();
+        assert!(
+            board.split_once("## DONE\n").unwrap().1.contains("- [x]"),
+            "{board}"
+        );
+        for (path, tag) in [
+            ("meta.md", "agent/project"),
+            ("Board.md", "agent/board"),
+            ("Tasks.md", "agent/tasks"),
+        ] {
+            let body = std::fs::read_to_string(
+                root.join(format!("Projects/{}/{path}", state.projects[0].key)),
+            )
+            .unwrap();
+            let fm = body
+                .strip_prefix("---\n")
+                .unwrap()
+                .split_once("\n---\n")
+                .unwrap()
+                .0;
+            assert!(fm.contains(tag));
+            assert!(fm.contains("id:"));
+            assert!(fm.contains("created_at:"));
+            if path == "meta.md" {
+                assert!(fm.contains("sync_status:"));
+                let properties: Value = serde_yaml::from_str(fm).unwrap();
+                assert_eq!(properties["sync_status"], "synced");
+                assert!(properties["sync_sequence"].is_number());
+                assert!(fm.contains("root:"));
+                assert!(fm.contains("remote:"));
+            }
+        }
+        let path = root.join(&state.jobs[0].document_path);
+        let body = std::fs::read_to_string(&path).unwrap();
+        let (fm, body) = body
+            .strip_prefix("---\n")
+            .unwrap()
+            .split_once("\n---\n")
+            .unwrap();
+        for key in [
+            "id:",
+            "status:",
+            "revision:",
+            "created_at:",
+            "started_at:",
+            "completed_at:",
+            "agent/job",
+        ] {
+            assert!(fm.contains(key), "{fm}");
+        }
+        assert!(!body.contains(&f.job));
+        assert!(body.contains("- [x] Short task"), "{body}");
+        assert!(body.contains(if format == "obsidian" { "[[" } else { "![" }));
+        f.service
+            .execute(
+                json!({"command":"job.archive","job":f.job}),
+                WriteOptions::default(),
+            )
+            .await
+            .unwrap();
+        let job = &f.service.store().snapshot().await.unwrap().jobs[0];
+        assert!(
+            std::fs::read_to_string(root.join(&job.document_path))
+                .unwrap()
+                .contains("agent/archived/job")
+        );
+        assert!(
+            !std::fs::read_to_string(
+                root.join(format!("Projects/{}/Board.md", state.projects[0].key))
+            )
+            .unwrap()
+            .contains("Short task")
+        );
+    }
+}
+
+#[tokio::test]
+async fn project_archive_requires_closed_work_and_can_be_reversed() {
+    let f = Fixture::new("markdown").await;
+    let request = json!({"command":"project.archive","project":f.project});
+    assert!(
+        f.service
+            .execute(request.clone(), WriteOptions::default())
+            .await
+            .is_err()
+    );
+    f.service
+        .execute(
+            json!({"command":"job.cancel","job":f.job}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    let archived = f
+        .service
+        .execute(request, WriteOptions::default())
+        .await
+        .unwrap();
+    assert!(archived.result["archived_at"].is_number());
+    let dashboard =
+        std::fs::read_to_string(f.service.config().output_dir().join("Dashboard.md")).unwrap();
+    assert!(!dashboard.contains("## demo"));
+    assert!(
+        f.service
+            .execute(
+                json!({"command":"job.create","project":f.project,"title":"New"}),
+                WriteOptions::default()
+            )
+            .await
+            .is_err()
+    );
+    f.service
+        .execute(
+            json!({"command":"project.unarchive","project":f.project}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    let dashboard =
+        std::fs::read_to_string(f.service.config().output_dir().join("Dashboard.md")).unwrap();
+    assert!(dashboard.contains("## demo"));
+}
+
+#[tokio::test]
+#[allow(clippy::too_many_lines)] // Arrange an actual legacy database and verify recovered files.
+async fn legacy_layout_migrates_without_losing_notes_or_latest_plan() {
+    use sqlx::Connection;
+    let f = Fixture::new("markdown").await;
+    let task = f.task("Read logs").await;
+    f.claim(&task, "migration").await;
+    f.plan(&task).await;
+    let state = f.service.store().snapshot().await.unwrap();
+    let root = f.service.config().output_dir();
+    let legacy_root = "Projects/demo-12345678";
+    let legacy_job = format!("{legacy_root}/Jobs/Active/{}.md", f.job);
+    let legacy_plan = format!("{legacy_root}/Plans/{task}/v002.md");
+    let legacy_first = format!("{legacy_root}/Plans/{task}/v001.md");
+    let mut documents = f
+        .service
+        .store()
+        .metadata("documents")
+        .await
+        .unwrap()
+        .unwrap();
+    for value in documents.as_object_mut().unwrap().values_mut() {
+        if let Some(path) = value.as_str() {
+            *value = json!(path.replace("Projects/demo/", &format!("{legacy_root}/")));
+        }
+    }
+    documents[format!("job:{}", f.job)] = json!(legacy_job);
+    documents[format!("plan:{}", state.plans[0].id)] = json!(legacy_plan);
+    let job_body = std::fs::read_to_string(root.join(&state.jobs[0].document_path))
+        .unwrap()
+        .replace(
+            "<!-- taskcli:notes:start -->",
+            "<!-- taskcli:notes:start -->\nKeep my notes",
+        );
+    std::fs::create_dir_all(root.join(&legacy_job).parent().unwrap()).unwrap();
+    std::fs::create_dir_all(root.join(&legacy_plan).parent().unwrap()).unwrap();
+    std::fs::write(root.join(&legacy_job), job_body).unwrap();
+    std::fs::write(
+        root.join(&legacy_plan),
+        "# Latest plan\nKeep acceptance checks.",
+    )
+    .unwrap();
+    std::fs::write(root.join(&legacy_first), "# Obsolete version").unwrap();
+    std::fs::remove_file(root.join(&state.jobs[0].document_path)).unwrap();
+    std::fs::remove_file(root.join(&state.plans[0].path)).unwrap();
+    let mut db = sqlx::SqliteConnection::connect(&format!(
+        "sqlite:{}",
+        f.service.config().storage.path.display()
+    ))
+    .await
+    .unwrap();
+    sqlx::query("UPDATE projects SET data = json_set(data, '$.key', 'demo-12345678')")
+        .execute(&mut db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE jobs SET data = json_remove(json_set(data, '$.document_path', ?), '$.name', '$.started_at')").bind(&legacy_job).execute(&mut db).await.unwrap();
+    sqlx::query("UPDATE tasks SET data = json_remove(data, '$.name', '$.completed_at')")
+        .execute(&mut db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE plans SET data = json_remove(json_set(data, '$.path', ?, '$.version', 2), '$.updated_at', '$.pending_body')").bind(&legacy_plan).execute(&mut db).await.unwrap();
+    let mut old = serde_json::to_value(&state.plans[0]).unwrap();
+    old["id"] = json!("plan_legacy");
+    old["version"] = json!(1);
+    old["path"] = json!(legacy_first);
+    sqlx::query("INSERT INTO plans(id,data) VALUES ('plan_legacy',?)")
+        .bind(old.to_string())
+        .execute(&mut db)
+        .await
+        .unwrap();
+    f.service
+        .store()
+        .set_metadata("documents", &documents)
+        .await
+        .unwrap();
+    sqlx::query("PRAGMA user_version = 2")
+        .execute(&mut db)
+        .await
+        .unwrap();
+    let service = Service::open(f.service.config().clone()).await.unwrap();
+    service.sync().await.unwrap();
+    let migrated = service.store().snapshot().await.unwrap();
+    assert_eq!(migrated.projects[0].key, "demo");
+    assert_eq!(migrated.plans.len(), 1);
+    assert_eq!(
+        migrated.plans[0].path,
+        "Projects/demo/Plans/260905-0001-Read logs.md"
+    );
+    assert!(
+        std::fs::read_to_string(root.join(&migrated.plans[0].path))
+            .unwrap()
+            .contains("Keep acceptance checks.")
+    );
+    assert!(
+        std::fs::read_to_string(root.join(&migrated.jobs[0].document_path))
+            .unwrap()
+            .contains("Keep my notes")
+    );
+    assert!(!root.join(legacy_first).exists());
+    assert!(!root.join(legacy_plan).exists());
+    assert!(!root.join(legacy_job).exists());
+    let first = std::fs::read_to_string(root.join(&migrated.plans[0].path)).unwrap();
+    service.sync().await.unwrap();
+    assert_eq!(
+        std::fs::read_to_string(root.join(&migrated.plans[0].path)).unwrap(),
+        first
+    );
+}
+
+#[tokio::test]
+async fn short_names_can_be_improved_after_completion_without_new_plan_versions() {
+    let f = Fixture::new("markdown").await;
+    let task = f.task("A long implementation task").await;
+    let claim = f.start(&task, "rename").await;
+    f.service
+        .execute(json!({"command":"task.done","task":task}), owner(&claim))
+        .await
+        .unwrap();
+    let old = f.service.store().snapshot().await.unwrap();
+    f.clock.fetch_add(86400, Ordering::SeqCst);
+    f.service
+        .execute(
+            json!({"command":"task.update","task":task,"name":"实现功能"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    f.service
+        .execute(
+            json!({"command":"job.update","job":f.job,"name":"发布功能"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    let state = f.service.store().snapshot().await.unwrap();
+    assert_eq!(state.tasks[0].name, "实现功能");
+    assert_eq!(state.plans[0].version, old.plans[0].version);
+    assert_eq!(
+        state.plans[0].path,
+        "Projects/demo/Plans/260905-0001-实现功能.md"
+    );
+    assert_eq!(
+        state.jobs[0].document_path,
+        "Projects/demo/Jobs/260905-0001-发布功能.md"
+    );
+    let root = f.service.config().output_dir();
+    assert!(!root.join(&old.plans[0].path).exists());
+    assert!(
+        std::fs::read_to_string(root.join(&state.plans[0].path))
+            .unwrap()
+            .contains("Implement and verify")
+    );
+    assert!(
+        std::fs::read_to_string(root.join("Projects/demo/Board.md"))
+            .unwrap()
+            .contains("实现功能")
+    );
+}
+
+#[tokio::test]
+async fn plans_merge_authored_properties_and_reject_metadata_only_execution() {
+    let f = Fixture::new("obsidian").await;
+    let task = f.task("Authored properties").await;
+    let claim = f.claim(&task, "properties").await;
+    let plan = f.service.execute(json!({"command":"plan.create","task":task,"body":"---\ntitle: Authored title\ntags:\n  - custom/plan\nowner: Alice\n---\n\n# Acceptance\nVerify the result."}),owner(&claim)).await.unwrap().result;
+    let path = plan["absolute_path"].as_str().unwrap();
+    let text = std::fs::read_to_string(path).unwrap();
+    assert_eq!(
+        text.lines().filter(|line| *line == "---").count(),
+        2,
+        "{text}"
+    );
+    let (properties, _) = text
+        .strip_prefix("---\n")
+        .unwrap()
+        .split_once("\n---\n")
+        .unwrap();
+    assert!(properties.contains("custom/plan"));
+    assert!(properties.contains("agent/plan"));
+    assert!(properties.contains("Alice"));
+    std::fs::write(path, format!("---\n{properties}\n---\n\n")).unwrap();
+    assert!(
+        f.service
+            .execute(json!({"command":"task.start","task":task}), owner(&claim))
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn pending_plan_publication_survives_failure_and_rejected_writers() {
+    let f = Fixture::new("markdown").await;
+    let task = f.task("Recover publication").await;
+    let claim = f.claim(&task, "publication").await;
+    let plan = f.plan(&task).await;
+    let path = std::path::Path::new(plan["absolute_path"].as_str().unwrap());
+    let saved = path.with_extension("saved");
+    std::fs::rename(path, &saved).unwrap();
+    std::fs::create_dir(path).unwrap();
+    let result = f
+        .service
+        .execute(
+            json!({"command":"plan.revise","task":task,"body":"# Latest committed body"}),
+            owner(&claim),
+        )
+        .await
+        .unwrap();
+    assert!(result.projection_pending.is_some());
+    assert!(
+        f.service
+            .execute(
+                json!({"command":"plan.revise","task":task,"body":"# Unauthorized"}),
+                WriteOptions::default()
+            )
+            .await
+            .is_err()
+    );
+    std::fs::remove_dir(path).unwrap();
+    std::fs::rename(saved, path).unwrap();
+    f.service.sync().await.unwrap();
+    let text = std::fs::read_to_string(path).unwrap();
+    assert!(text.ends_with("# Latest committed body"));
+    assert!(!text.contains("Unauthorized"));
+    assert_eq!(f.service.store().snapshot().await.unwrap().plans.len(), 1);
+}
+
+#[tokio::test]
+async fn a_renamed_plan_never_overwrites_an_unmanaged_note() {
+    let f = Fixture::new("markdown").await;
+    let task = f.task("Original").await;
+    let claim = f.claim(&task, "collision").await;
+    let plan = f.plan(&task).await;
+    let destination = f
+        .service
+        .config()
+        .output_dir()
+        .join("Projects/demo/Plans/260905-0001-Personal.md");
+    std::fs::write(&destination, "# Personal note\nKeep this.").unwrap();
+    let result = f
+        .service
+        .execute(
+            json!({"command":"task.update","task":task,"name":"Personal"}),
+            owner(&claim),
+        )
+        .await
+        .unwrap();
+    assert!(result.projection_pending.is_some());
+    assert_eq!(
+        std::fs::read_to_string(&destination).unwrap(),
+        "# Personal note\nKeep this."
+    );
+    assert!(std::path::Path::new(plan["absolute_path"].as_str().unwrap()).exists());
+    std::fs::rename(&destination, destination.with_extension("saved")).unwrap();
+    f.service.sync().await.unwrap();
+    assert!(
+        std::fs::read_to_string(destination)
+            .unwrap()
+            .contains("Implement and verify")
     );
 }

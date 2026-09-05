@@ -35,10 +35,19 @@ pub enum DocumentFormat {
 impl Config {
     pub fn load(path: &Path) -> Result<Self> {
         let path = expand_home(path)?;
-        let mut config: Self = toml::from_str(
+        let mut value: toml::Value = toml::from_str(
             &std::fs::read_to_string(&path)
                 .with_context(|| format!("read task config {}", path.display()))?,
         )?;
+        // Older releases stored a template locale here. Language now belongs to
+        // the agent skill; tolerate the obsolete key without exposing or using it.
+        if let Some(documents) = value
+            .get_mut("documents")
+            .and_then(toml::Value::as_table_mut)
+        {
+            documents.remove("language");
+        }
+        let mut config: Self = value.try_into()?;
         config.storage.path = expand_home(&config.storage.path)?;
         config.documents.root = expand_home(&config.documents.root)?;
         config.validate()?;

@@ -97,21 +97,35 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand sync" -l expect-revision
 complete -c taskcli -n "__fish_taskcli_using_subcommand sync" -l idempotency-key -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand sync" -l json
 complete -c taskcli -n "__fish_taskcli_using_subcommand sync" -s h -l help -d 'Print help'
-complete -c taskcli -n "__fish_taskcli_using_subcommand project; and not __fish_seen_subcommand_from register list show help" -l config -r -F
-complete -c taskcli -n "__fish_taskcli_using_subcommand project; and not __fish_seen_subcommand_from register list show help" -l project -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand project; and not __fish_seen_subcommand_from register list show help" -l actor -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand project; and not __fish_seen_subcommand_from register list show help" -l executor -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand project; and not __fish_seen_subcommand_from register list show help" -l session -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand project; and not __fish_seen_subcommand_from register list show help" -l delegated-by -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand project; and not __fish_seen_subcommand_from register list show help" -l lease-token -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand project; and not __fish_seen_subcommand_from register list show help" -l expect-revision -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand project; and not __fish_seen_subcommand_from register list show help" -l idempotency-key -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand project; and not __fish_seen_subcommand_from register list show help" -l json
-complete -c taskcli -n "__fish_taskcli_using_subcommand project; and not __fish_seen_subcommand_from register list show help" -s h -l help -d 'Print help'
-complete -c taskcli -n "__fish_taskcli_using_subcommand project; and not __fish_seen_subcommand_from register list show help" -f -a "register"
-complete -c taskcli -n "__fish_taskcli_using_subcommand project; and not __fish_seen_subcommand_from register list show help" -f -a "list"
-complete -c taskcli -n "__fish_taskcli_using_subcommand project; and not __fish_seen_subcommand_from register list show help" -f -a "show"
-complete -c taskcli -n "__fish_taskcli_using_subcommand project; and not __fish_seen_subcommand_from register list show help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and not __fish_seen_subcommand_from delete register list show archive unarchive help" -l config -r -F
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and not __fish_seen_subcommand_from delete register list show archive unarchive help" -l project -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and not __fish_seen_subcommand_from delete register list show archive unarchive help" -l actor -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and not __fish_seen_subcommand_from delete register list show archive unarchive help" -l executor -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and not __fish_seen_subcommand_from delete register list show archive unarchive help" -l session -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and not __fish_seen_subcommand_from delete register list show archive unarchive help" -l delegated-by -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and not __fish_seen_subcommand_from delete register list show archive unarchive help" -l lease-token -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and not __fish_seen_subcommand_from delete register list show archive unarchive help" -l expect-revision -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and not __fish_seen_subcommand_from delete register list show archive unarchive help" -l idempotency-key -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and not __fish_seen_subcommand_from delete register list show archive unarchive help" -l json
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and not __fish_seen_subcommand_from delete register list show archive unarchive help" -s h -l help -d 'Print help'
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and not __fish_seen_subcommand_from delete register list show archive unarchive help" -f -a "delete" -d 'Delete the Project, its work, and its entire generated document directory'
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and not __fish_seen_subcommand_from delete register list show archive unarchive help" -f -a "register"
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and not __fish_seen_subcommand_from delete register list show archive unarchive help" -f -a "list"
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and not __fish_seen_subcommand_from delete register list show archive unarchive help" -f -a "show"
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and not __fish_seen_subcommand_from delete register list show archive unarchive help" -f -a "archive"
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and not __fish_seen_subcommand_from delete register list show archive unarchive help" -f -a "unarchive"
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and not __fish_seen_subcommand_from delete register list show archive unarchive help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from delete" -l config -r -F
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from delete" -l project -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from delete" -l actor -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from delete" -l executor -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from delete" -l session -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from delete" -l delegated-by -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from delete" -l lease-token -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from delete" -l expect-revision -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from delete" -l idempotency-key -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from delete" -l json
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from delete" -s h -l help -d 'Print help'
 complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from register" -l name -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from register" -l root -r -f -a "(__fish_complete_directories)"
 complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from register" -l config -r -F
@@ -134,6 +148,7 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen
 complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from list" -l lease-token -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from list" -l expect-revision -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from list" -l idempotency-key -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from list" -l archived
 complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from list" -l json
 complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from list" -s h -l help -d 'Print help'
 complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from show" -l config -r -F
@@ -147,29 +162,67 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen
 complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from show" -l idempotency-key -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from show" -l json
 complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from show" -s h -l help -d 'Print help'
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from archive" -l config -r -F
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from archive" -l project -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from archive" -l actor -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from archive" -l executor -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from archive" -l session -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from archive" -l delegated-by -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from archive" -l lease-token -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from archive" -l expect-revision -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from archive" -l idempotency-key -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from archive" -l json
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from archive" -s h -l help -d 'Print help'
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from unarchive" -l config -r -F
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from unarchive" -l project -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from unarchive" -l actor -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from unarchive" -l executor -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from unarchive" -l session -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from unarchive" -l delegated-by -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from unarchive" -l lease-token -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from unarchive" -l expect-revision -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from unarchive" -l idempotency-key -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from unarchive" -l json
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from unarchive" -s h -l help -d 'Print help'
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from help" -f -a "delete" -d 'Delete the Project, its work, and its entire generated document directory'
 complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from help" -f -a "register"
 complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from help" -f -a "list"
 complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from help" -f -a "show"
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from help" -f -a "archive"
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from help" -f -a "unarchive"
 complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from create update list show cancel archive unarchive help" -l config -r -F
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from create update list show cancel archive unarchive help" -l project -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from create update list show cancel archive unarchive help" -l actor -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from create update list show cancel archive unarchive help" -l executor -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from create update list show cancel archive unarchive help" -l session -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from create update list show cancel archive unarchive help" -l delegated-by -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from create update list show cancel archive unarchive help" -l lease-token -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from create update list show cancel archive unarchive help" -l expect-revision -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from create update list show cancel archive unarchive help" -l idempotency-key -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from create update list show cancel archive unarchive help" -l json
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from create update list show cancel archive unarchive help" -s h -l help -d 'Print help'
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from create update list show cancel archive unarchive help" -f -a "create"
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from create update list show cancel archive unarchive help" -f -a "update"
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from create update list show cancel archive unarchive help" -f -a "list"
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from create update list show cancel archive unarchive help" -f -a "show"
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from create update list show cancel archive unarchive help" -f -a "cancel"
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from create update list show cancel archive unarchive help" -f -a "archive"
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from create update list show cancel archive unarchive help" -f -a "unarchive"
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from create update list show cancel archive unarchive help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -l config -r -F
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -l project -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -l actor -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -l executor -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -l session -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -l delegated-by -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -l lease-token -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -l expect-revision -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -l idempotency-key -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -l json
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -s h -l help -d 'Print help'
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -f -a "delete" -d 'Delete the Job, its Tasks, and their Plan documents'
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -f -a "create"
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -f -a "update"
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -f -a "list"
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -f -a "show"
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -f -a "cancel"
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -f -a "archive"
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -f -a "unarchive"
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from delete" -l config -r -F
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from delete" -l project -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from delete" -l actor -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from delete" -l executor -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from delete" -l session -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from delete" -l delegated-by -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from delete" -l lease-token -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from delete" -l expect-revision -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from delete" -l idempotency-key -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from delete" -l json
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from delete" -s h -l help -d 'Print help'
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from create" -l name -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from create" -l title -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from create" -l goal -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from create" -l config -r -F
@@ -183,6 +236,7 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_sub
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from create" -l idempotency-key -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from create" -l json
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from create" -s h -l help -d 'Print help'
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from update" -l name -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from update" -l title -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from update" -l goal -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from update" -l config -r -F
@@ -257,6 +311,7 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_sub
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from unarchive" -l idempotency-key -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from unarchive" -l json
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from unarchive" -s h -l help -d 'Print help'
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from help" -f -a "delete" -d 'Delete the Job, its Tasks, and their Plan documents'
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from help" -f -a "create"
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from help" -f -a "update"
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from help" -f -a "list"
@@ -294,6 +349,7 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand task; and not __fish_see
 complete -c taskcli -n "__fish_taskcli_using_subcommand task; and not __fish_seen_subcommand_from add update list show depend undepend claim start heartbeat release block wait fail done cancel retry reopen help" -f -a "retry"
 complete -c taskcli -n "__fish_taskcli_using_subcommand task; and not __fish_seen_subcommand_from add update list show depend undepend claim start heartbeat release block wait fail done cancel retry reopen help" -f -a "reopen"
 complete -c taskcli -n "__fish_taskcli_using_subcommand task; and not __fish_seen_subcommand_from add update list show depend undepend claim start heartbeat release block wait fail done cancel retry reopen help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c taskcli -n "__fish_taskcli_using_subcommand task; and __fish_seen_subcommand_from add" -l name -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand task; and __fish_seen_subcommand_from add" -l job -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand task; and __fish_seen_subcommand_from add" -l title -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand task; and __fish_seen_subcommand_from add" -l config -r -F
@@ -307,6 +363,7 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand task; and __fish_seen_su
 complete -c taskcli -n "__fish_taskcli_using_subcommand task; and __fish_seen_subcommand_from add" -l idempotency-key -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand task; and __fish_seen_subcommand_from add" -l json
 complete -c taskcli -n "__fish_taskcli_using_subcommand task; and __fish_seen_subcommand_from add" -s h -l help -d 'Print help'
+complete -c taskcli -n "__fish_taskcli_using_subcommand task; and __fish_seen_subcommand_from update" -l name -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand task; and __fish_seen_subcommand_from update" -l title -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand task; and __fish_seen_subcommand_from update" -l position -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand task; and __fish_seen_subcommand_from update" -l config -r -F
@@ -672,9 +729,13 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand help; and not __fish_see
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and not __fish_seen_subcommand_from completions init doctor sync project job task plan event context hook help" -f -a "context"
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and not __fish_seen_subcommand_from completions init doctor sync project job task plan event context hook help" -f -a "hook"
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and not __fish_seen_subcommand_from completions init doctor sync project job task plan event context hook help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from project" -f -a "delete" -d 'Delete the Project, its work, and its entire generated document directory'
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from project" -f -a "register"
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from project" -f -a "list"
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from project" -f -a "show"
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from project" -f -a "archive"
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from project" -f -a "unarchive"
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from job" -f -a "delete" -d 'Delete the Job, its Tasks, and their Plan documents'
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from job" -f -a "create"
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from job" -f -a "update"
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from job" -f -a "list"

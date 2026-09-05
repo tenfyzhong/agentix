@@ -1,6 +1,6 @@
 use std::{path::Path, sync::Arc, time::Duration};
 
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -71,7 +71,7 @@ impl Store {
             .fetch_one(&mut *tx)
             .await?;
         ensure!(
-            version <= 2,
+            version <= 6,
             "unsupported task database schema version {version}"
         );
         sqlx::raw_sql(include_str!("schema.sql"))
@@ -81,6 +81,15 @@ impl Store {
             sqlx::query("UPDATE tasks SET data = json_set(data, '$.phase', CASE WHEN json_extract(data, '$.status') = 'IN_PROGRESS' THEN 'EXECUTING' ELSE NULL END)")
                 .execute(&mut *tx)
                 .await?;
+        }
+        if version > 0 && version < 3 {
+            migrate_layout(&mut tx).await?;
+        }
+        if version > 0 && version < 4 {
+            migrate_numbered_paths(&mut tx).await?;
+        }
+        if version > 0 && version < 5 {
+            migrate_job_directories(&mut tx).await?;
         }
         tx.commit().await?;
         Ok(())
@@ -153,6 +162,7 @@ impl Store {
         let before = load(&mut tx).await?;
         let mut state = before.clone();
         let result = mutations::apply(&mut state, &request, &options, self.now())?;
+        crate::deletion::check_pending_paths(&mut tx, &before, &state).await?;
         persist(&mut tx, &before, &state, &command, &options, self.now()).await?;
         let sequence = max_sequence(&mut tx).await?;
         let outcome = Outcome {
@@ -260,10 +270,264 @@ impl Store {
             .await?;
         Ok(())
     }
+
+    pub(crate) async fn publish_plan(&self, id: &str, version: i64, hash: &str) -> Result<()> {
+        sqlx::query("UPDATE plans SET data = json_remove(json_set(data, '$.hash', ?), '$.pending_body') WHERE id = ? AND version = ?")
+            .bind(hash).bind(id).bind(version).execute(&self.pool).await?;
+        Ok(())
+    }
+
+    pub(crate) async fn pending_deletions(&self) -> Result<Vec<crate::deletion::Cleanup>> {
+        let rows: Vec<String> =
+            sqlx::query_scalar("SELECT data FROM document_deletions ORDER BY rowid")
+                .fetch_all(&self.pool)
+                .await?;
+        rows.into_iter()
+            .map(|row| serde_json::from_str(&row).map_err(Into::into))
+            .collect()
+    }
+
+    pub(crate) async fn finish_deletion(&self, id: &str) -> Result<()> {
+        sqlx::query("DELETE FROM document_deletions WHERE id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+}
+
+/// Keep legacy locations until projection acknowledges all new files. A failed
+/// or interrupted migration can then retry without discarding editable content.
+#[allow(clippy::too_many_lines)] // All entity paths and recovery locations migrate in one transaction.
+async fn migrate_layout(conn: &mut SqliteConnection) -> Result<()> {
+    use crate::naming::unique_name;
+    let mut state = load(conn).await?;
+    let old: Option<String> =
+        sqlx::query_scalar("SELECT value FROM projection_state WHERE key = 'documents'")
+            .fetch_optional(&mut *conn)
+            .await?;
+    let mut documents: Value = old
+        .map(|v| serde_json::from_str(&v))
+        .transpose()?
+        .unwrap_or_else(|| json!({}));
+    for i in 0..state.projects.len() {
+        let project = &state.projects[i];
+        for (kind, name) in [
+            ("board", "Board.md"),
+            ("tasks", "Tasks.md"),
+            ("sync", "Sync Status.md"),
+        ] {
+            let key = format!("{kind}:{}", project.id);
+            if documents.get(&key).is_none() {
+                documents[key] = json!(format!("Projects/{}/{name}", project.key));
+            }
+        }
+        state.projects[i].key = unique_name(
+            &project.name,
+            state.projects[..i].iter().map(|p| p.key.as_str()),
+        );
+        let project = &mut state.projects[i];
+        project.name.clone_from(&project.key);
+    }
+    for i in 0..state.jobs.len() {
+        let job = &state.jobs[i];
+        let key = format!("job:{}", job.id);
+        if documents.get(&key).is_none() {
+            documents[key] = json!(job.document_path);
+        }
+        let project = &state.projects[state.project_index(&job.project_id)?];
+        let name = unique_name(
+            &job.title,
+            state.jobs[..i]
+                .iter()
+                .filter(|j| j.project_id == job.project_id)
+                .map(|j| j.name.as_str()),
+        );
+        let folder = job
+            .document_path
+            .split("/Jobs/")
+            .nth(1)
+            .and_then(|p| p.rsplit_once('/').map(|(folder, _)| folder))
+            .unwrap_or("Active");
+        state.jobs[i].document_path = format!("Projects/{}/Jobs/{folder}/{name}.md", project.key);
+        state.jobs[i].name = name;
+        state.jobs[i].started_at = state
+            .tasks
+            .iter()
+            .filter(|t| t.job_id == state.jobs[i].id)
+            .filter_map(|t| t.started_at)
+            .min();
+    }
+    for i in 0..state.tasks.len() {
+        let task = &state.tasks[i];
+        state.tasks[i].name = unique_name(
+            &task.title,
+            state.tasks[..i]
+                .iter()
+                .filter(|t| t.project_id == task.project_id)
+                .map(|t| t.name.as_str()),
+        );
+        if state.tasks[i].status.terminal() {
+            state.tasks[i].completed_at = Some(state.tasks[i].updated_at);
+        }
+    }
+    let old_plans = state.plans.clone();
+    for plan in &old_plans {
+        documents[format!("plan:{}", plan.id)] = json!(plan.path);
+    }
+    state.plans.retain(|p| {
+        state
+            .tasks
+            .iter()
+            .any(|t| t.current_plan.as_ref() == Some(&p.id))
+    });
+    for plan in &mut state.plans {
+        let task = state.tasks.iter().find(|t| t.id == plan.task_id).unwrap();
+        let project = state
+            .projects
+            .iter()
+            .find(|p| p.id == task.project_id)
+            .unwrap();
+        plan.path = format!("Projects/{}/Plans/{}.md", project.key, task.name);
+        plan.updated_at = plan.created_at;
+        plan.created_at = old_plans
+            .iter()
+            .filter(|p| p.task_id == task.id)
+            .map(|p| p.created_at)
+            .min()
+            .unwrap_or(plan.created_at);
+    }
+    for project in &state.projects {
+        upsert(conn, "projects", &project.id, project).await?;
+    }
+    for job in &state.jobs {
+        upsert(conn, "jobs", &job.id, job).await?;
+    }
+    for task in &state.tasks {
+        upsert(conn, "tasks", &task.id, task).await?;
+    }
+    sqlx::query("DELETE FROM plans").execute(&mut *conn).await?;
+    for plan in &state.plans {
+        upsert(conn, "plans", &plan.id, plan).await?;
+    }
+    sqlx::query("INSERT INTO projection_state(key,value) VALUES ('documents',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(documents.to_string()).execute(&mut *conn).await?;
+    Ok(())
+}
+
+async fn migrate_numbered_paths(conn: &mut SqliteConnection) -> Result<()> {
+    use crate::naming::{next_sequence, numbered_name};
+
+    let mut state = load(conn).await?;
+    let old: Option<String> =
+        sqlx::query_scalar("SELECT value FROM projection_state WHERE key = 'documents'")
+            .fetch_optional(&mut *conn)
+            .await?;
+    let mut documents: Value = old
+        .map(|v| serde_json::from_str(&v))
+        .transpose()?
+        .unwrap_or_else(|| json!({}));
+    state
+        .jobs
+        .sort_by(|a, b| (a.created_at, &a.id).cmp(&(b.created_at, &b.id)));
+    state
+        .tasks
+        .sort_by(|a, b| (a.created_at, &a.id).cmp(&(b.created_at, &b.id)));
+    for i in 0..state.jobs.len() {
+        let job = &state.jobs[i];
+        let sequence = next_sequence(
+            job.created_at,
+            state.jobs[..i]
+                .iter()
+                .filter(|j| j.project_id == job.project_id)
+                .map(|j| (j.created_at, j.sequence)),
+        )?;
+        let job = &mut state.jobs[i];
+        let key = format!("job:{}", job.id);
+        if documents.get(&key).is_none() {
+            documents[key] = json!(job.document_path);
+        }
+        job.sequence = sequence;
+        let parent = job
+            .document_path
+            .rsplit_once('/')
+            .context("invalid Job path")?
+            .0;
+        let filename = numbered_name(&job.name, job.created_at, job.sequence)?;
+        job.document_path = format!("{parent}/{filename}.md");
+        upsert(conn, "jobs", &job.id, job).await?;
+    }
+    for i in 0..state.tasks.len() {
+        let task = &state.tasks[i];
+        let sequence = next_sequence(
+            task.created_at,
+            state.tasks[..i]
+                .iter()
+                .filter(|t| t.project_id == task.project_id)
+                .map(|t| (t.created_at, t.sequence)),
+        )?;
+        let task = &mut state.tasks[i];
+        task.sequence = sequence;
+        upsert(conn, "tasks", &task.id, task).await?;
+    }
+    for plan in &mut state.plans {
+        let task = state
+            .tasks
+            .iter()
+            .find(|t| t.id == plan.task_id)
+            .context("missing Plan task")?;
+        let key = format!("plan:{}", plan.id);
+        if documents.get(&key).is_none() {
+            documents[key] = json!(plan.path);
+        }
+        let parent = plan.path.rsplit_once('/').context("invalid Plan path")?.0;
+        let filename = numbered_name(&task.name, task.created_at, task.sequence)?;
+        plan.path = format!("{parent}/{filename}.md");
+        upsert(conn, "plans", &plan.id, plan).await?;
+    }
+    sqlx::query("INSERT INTO projection_state(key,value) VALUES ('documents',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(documents.to_string()).execute(&mut *conn).await?;
+    Ok(())
+}
+
+async fn migrate_job_directories(conn: &mut SqliteConnection) -> Result<()> {
+    let state = load(conn).await?;
+    let old: Option<String> =
+        sqlx::query_scalar("SELECT value FROM projection_state WHERE key = 'documents'")
+            .fetch_optional(&mut *conn)
+            .await?;
+    let mut documents: Value = old
+        .map(|v| serde_json::from_str(&v))
+        .transpose()?
+        .unwrap_or_else(|| json!({}));
+    for original in &state.jobs {
+        let mut job = original.clone();
+        let key = format!("job:{}", job.id);
+        if documents.get(&key).is_none() {
+            documents[key] = json!(job.document_path);
+        }
+        let project = &state.projects[state.project_index(&job.project_id)?];
+        let filename = crate::naming::numbered_name(&job.name, job.created_at, job.sequence)?;
+        let folder = if job.archived_at.is_some() {
+            "Archived/"
+        } else {
+            ""
+        };
+        job.document_path = format!("Projects/{}/Jobs/{folder}{filename}.md", project.key);
+        upsert(conn, "jobs", &job.id, &job).await?;
+    }
+    sqlx::query("INSERT INTO projection_state(key,value) VALUES ('documents',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(documents.to_string()).execute(&mut *conn).await?;
+    Ok(())
 }
 
 async fn load(conn: &mut SqliteConnection) -> Result<Snapshot> {
+    let sequences: Option<String> =
+        sqlx::query_scalar("SELECT value FROM projection_state WHERE key = 'document_sequences'")
+            .fetch_optional(&mut *conn)
+            .await?;
     Ok(Snapshot {
+        document_sequences: sequences
+            .map(|v| serde_json::from_str(&v))
+            .transpose()?
+            .unwrap_or_default(),
         projects: read_entities(conn, "projects").await?,
         jobs: read_entities(conn, "jobs").await?,
         tasks: read_entities(conn, "tasks").await?,
@@ -414,6 +678,11 @@ async fn persist(
                 .await?;
         }
     }
+    crate::deletion::persist(conn, before, after, command, options, now).await?;
+    if before.document_sequences != after.document_sequences {
+        sqlx::query("INSERT INTO projection_state(key,value) VALUES ('document_sequences',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+            .bind(serde_json::to_string(&after.document_sequences)?).execute(&mut *conn).await?;
+    }
     Ok(())
 }
 
@@ -433,7 +702,7 @@ async fn upsert(
     Ok(())
 }
 
-fn event(command: &str, options: &WriteOptions, now: i64) -> TaskEvent {
+pub(crate) fn event(command: &str, options: &WriteOptions, now: i64) -> TaskEvent {
     TaskEvent {
         sequence: 0,
         event_id: new_id("evt"),
@@ -450,7 +719,7 @@ fn event(command: &str, options: &WriteOptions, now: i64) -> TaskEvent {
     }
 }
 
-async fn append_event(conn: &mut SqliteConnection, event: TaskEvent) -> Result<()> {
+pub(crate) async fn append_event(conn: &mut SqliteConnection, event: TaskEvent) -> Result<()> {
     sqlx::query("INSERT INTO task_events(event_id,job_id,data) VALUES (?,?,?)")
         .bind(&event.event_id)
         .bind(&event.job_id)

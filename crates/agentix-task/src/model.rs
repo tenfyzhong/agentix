@@ -105,6 +105,8 @@ pub struct Project {
     pub remote: Option<String>,
     pub revision: i64,
     pub created_at: i64,
+    #[serde(default)]
+    pub archived_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -112,11 +114,17 @@ pub struct Job {
     pub id: String,
     pub project_id: String,
     pub title: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub sequence: u64,
     pub goal: String,
     pub status: JobStatus,
     pub revision: i64,
     pub created_at: i64,
     pub updated_at: i64,
+    #[serde(default)]
+    pub started_at: Option<i64>,
     pub completed_at: Option<i64>,
     pub cancelled_at: Option<i64>,
     pub archived_at: Option<i64>,
@@ -129,6 +137,10 @@ pub struct Task {
     pub project_id: String,
     pub job_id: String,
     pub title: String,
+    #[serde(default)]
+    pub name: String,
+    #[serde(default)]
+    pub sequence: u64,
     pub status: TaskStatus,
     #[serde(default)]
     pub phase: Option<TaskPhase>,
@@ -137,6 +149,8 @@ pub struct Task {
     pub created_at: i64,
     pub updated_at: i64,
     pub started_at: Option<i64>,
+    #[serde(default)]
+    pub completed_at: Option<i64>,
     pub reason: Option<String>,
     pub dependencies: Vec<String>,
     pub current_plan: Option<String>,
@@ -154,6 +168,11 @@ pub struct Plan {
     pub path: String,
     pub hash: String,
     pub created_at: i64,
+    #[serde(default)]
+    pub updated_at: i64,
+    /// Pending publication survives a crash between the database commit and sync.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_body: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -168,6 +187,8 @@ pub struct Lease {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Snapshot {
+    #[serde(default)]
+    pub document_sequences: std::collections::BTreeMap<String, u64>,
     pub projects: Vec<Project>,
     pub jobs: Vec<Job>,
     pub tasks: Vec<Task>,

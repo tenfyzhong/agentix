@@ -4,7 +4,7 @@
 
 ## Model and concurrency
 
-A Project identifies a Git repository or stable directory. Git worktrees share their repository's common directory and reuse one Project. Jobs represent independently acceptable requirements, while Tasks are executable steps. New requirements after delivery create new Jobs; completed and cancelled Jobs can be manually archived by UTC year and month. There is no milestone layer or Job-level exclusive lock.
+A Project identifies a Git repository or stable directory. Git worktrees share their repository's common directory and reuse one Project. Jobs represent independently acceptable requirements, while Tasks are executable steps. New requirements after delivery create new Jobs; completed and cancelled Jobs can be manually archived into `Jobs/Archived/`. Unarchived Jobs, including completed ones, remain directly in `Jobs/`. There is no milestone layer or Job-level exclusive lock.
 
 Tasks use `TODO`, `IN_PROGRESS`, `BLOCKED`, `WAITING_USER`, `DONE`, `FAILED`, and `CANCELLED`. IN_PROGRESS has two phases: claim enters `PLANNING`; explicit start enters `EXECUTING`. Only EXECUTING can finish with done. Both phases can fail, block, wait, release, or cancel. TODO can be claimed, blocked, put into WAITING_USER, or cancelled. BLOCKED and WAITING_USER can switch between each other, return to PLANNING through claim, fail, or cancel. FAILED requires `retry`; DONE/CANCELLED require `reopen`. Outside IN_PROGRESS, `phase` is null. Reopening a prerequisite after a downstream Task started executing is rejected; planning alone does not freeze dependencies.
 
@@ -14,7 +14,7 @@ Each Task has at most one effective lease, and each executor/session pair has at
 
 SQLite uses WAL, a ten-second busy timeout, short immediate write transactions, foreign keys, revision checks, and optional idempotency keys. Entity documents are stored as typed JSON rows with relational generated columns and indexes; dependency edges and events have their own tables. Mutations load the local task graph inside a write transaction to validate invariants and persist only changed entities. This first version targets local repositories and modest task graphs on one computer, not shared database files on network filesystems.
 
-Database schema v2 migrates existing v1 IN_PROGRESS Tasks to EXECUTING, preserving their leases and timestamps. Other Tasks have no phase. Back up SQLite and documents together before upgrading, and stop old writers first: all taskcli, Agentix, and plugin processes sharing the database must use the new workflow. Older binaries reject v2 when opening it. Configuration and JSON envelope `schema_version` remain 1; database `PRAGMA user_version` is separate.
+Database schema v6 adds durable deletion cleanup and preserved document sequence counters, and migrates v1/v2/v3/v4/v5 databases to flat `Jobs/` and `Jobs/Archived/` directories, dated and numbered Job and Task Plan filenames, readable project names, project archival, lifecycle timestamps, and one current Plan per Task. Existing Jobs and Tasks receive daily sequence numbers in creation order (ID breaks timestamp ties), independently per project and entity type. The migration preserves IDs, leases, editable Goal/Notes, and the latest Plan body. Old Plan files are removed only after the replacement documents are written; empty old directories are removed too. Back up SQLite and documents together before upgrading all writers. Older binaries reject v6. Configuration and JSON envelope `schema_version` remain 1; database `PRAGMA user_version` is separate.
 
 ## Shell completions
 
@@ -84,7 +84,7 @@ A lease lasts 15 minutes. Renew at least once a minute during planning and execu
 
 Use `--expect-revision N` to protect an update based on an earlier read. Use `--idempotency-key KEY` to retry identical requests without duplicate entities/events; reuse with different arguments fails. Local CLI access is not a Team authorization boundary. Lease tokens fence stale executions, while operating-system access controls protect the local files.
 
-`job update`, `task update`, `task depend/undepend`, `plan revise`, `job cancel`, and `job archive/unarchive` provide the remaining mutations. Consult `--help` for each command.
+`job update`, `task update`, `task depend/undepend`, `plan revise`, `job cancel`, `job archive/unarchive`, `job delete`, and `project delete` provide the remaining mutations. Consult `--help` for each command.
 
 ```sh
 taskcli job list --active
@@ -101,35 +101,97 @@ Timestamp fields are Unix seconds in UTC; creation date filters include both spe
 
 ```text
 Dashboard.md
-Projects/<project-key>/
+Projects/<project-name>/
+  meta.md
   Board.md
   Tasks.md
-  Sync Status.md
-  Jobs/Active/<job-id>.md
-  Jobs/Archive/YYYY/MM/<job-id>.md
-  Plans/<task-id>/v001.md
+  Jobs/YYMMDD-seq-<job-name>.md
+  Jobs/Archived/YYMMDD-seq-<job-name>.md
+  Plans/YYMMDD-seq-<task-name>.md
 ```
 
-Both `--format obsidian` and `--format markdown` generate the same plugin-compatible structure:
+Unarchived Jobs live directly under `Jobs/`; only explicitly archived Jobs move into `Jobs/Archived/`. Archiving and restoring a Job preserve its filename. Migration removes empty legacy `Jobs/Active/` and `Jobs/Archive/YYYY/MM/` directories after publishing the replacement documents and links.
 
-- `Board.md` has `kanban-plugin: board` frontmatter and exactly seven heading-based Kanban lanes. Its title is a frontmatter property, not an extra heading that would become an eighth lane.
-- Cards are checkbox items with a `#task` marker and a stable task block ID. Only DONE uses `[x]`; every other state, including CANCELLED, uses `[ ]`. The lane heading carries the seven-state meaning without requiring custom Tasks checkbox statuses. PLANNING/EXECUTING labels remain inside IN_PROGRESS cards.
-- `Tasks.md` contains seven Tasks query blocks in the same state order. Each query selects only the sibling `Board.md` and its matching heading. It does not copy checkboxes or scan Job/Plan checklists, avoiding duplicate results. Query paths are derived from the query file at runtime, so spaces, Unicode, quotes, and different output roots are safe.
-- `Dashboard.md` links to both views. Boards retain the existing scope: Tasks in active, unarchived Jobs. Completed/cancelled Jobs remain accessible through their Job documents.
+The Dashboard lists unarchived projects with links to their metadata, Board, and Tasks view. It contains no Job lists or details, so adding Jobs does not increase its length.
 
-Obsidian links are vault-relative wikilinks; plain Markdown links are source-relative URLs with encoded path segments. Kanban cards are not table cells, so wikilink alias separators are not backslash-escaped. Task targets still use Obsidian block references or Markdown HTML anchors, and cards with a Plan link to its current version.
+Names preserve Unicode and spaces. IDs stay in YAML frontmatter, not filenames. Only collisions add `-2`, `-3`, etc.; comparison is case insensitive. `job create --name` and `task add --name` accept a concise summary separately from the full `--title`. Names default to a portable, at most 48-character title. Agents should summarize the work when choosing `--name`, rather than rely on truncation. `job update --name` and `task update --name` also work on completed work and update generated links without adding Plan versions.
 
-Obsidian does not decode HTML entities in wikilink aliases. Titles containing reserved characters such as `|`, brackets, or HTML delimiters therefore appear as a stable `Open` wikilink followed by the safely escaped title; ordinary titles remain the link label. This preserves readable punctuation without injecting extra links.
+Job and Task Plan filenames begin with `YYMMDD-seq-`, for example `260905-0001-Implement login.md`. The date is the Job or Task creation date in UTC, even if its Plan is created later. Sequence numbers start at 1 each day, independently for Jobs and Tasks in each project (Tasks across Jobs share the project counter), and use at least four digits. Allocation is transactional; archived or cancelled work keeps its number. Renaming and Plan revisions preserve the prefix, and display names remain concise. The `sequence` property is stored with Job and Task metadata and the Task’s Plan frontmatter.
+
+Every generated document has YAML frontmatter containing an ID, creation time, and a type tag. Job properties include IDs, sequence, status, revision, and creation/update/start/completion/cancellation/archive times. They omit `document_path`, `title`, `name`, and embedded `task`/`tasks` fields; the Job heading and task checklist remain in the document body. Plan properties include its version and Task start/completion times. Frontmatter timestamps are ISO 8601 UTC; CLI JSON timestamps remain Unix seconds. Project `meta.md` records the repository root, Git remote, revision, archive state, `sync_status`, and `sync_sequence`. There is no separate Sync Status note.
+
+| Document | Tags |
+| --- | --- |
+| Project meta | `agent/project` |
+| Job | `agent/job` |
+| Archived Job | `agent/archived/job` |
+| Plan | `agent/plan` |
+| Tasks view | `agent/tasks` |
+| Board | `agent/board` |
+| Dashboard | `agent/dashboard` |
+
+Boards have exactly seven Kanban lanes. Cards and Job tasks use short names followed by a current Plan link: `[[path|Plan]]` in Obsidian, `![Plan](relative-path.md)` in Markdown. Tasks without Plans link from the Board to their Job entry. Job block references sit outside checkbox descriptions, so Tasks query results do not show internal IDs. Markdown image-style note references follow the requested syntax; generic Markdown viewers do not transclude Markdown files as images. All Plans are flat files in the project's `Plans/` directory. `plan revise` replaces the same file and increments `version`; previous Plan files/records are not retained as a document history.
+
+Completed and cancelled Jobs remain on the Board until explicitly archived. `Tasks.md` queries only the sibling Board and the checkbox status symbol, avoiding duplicate Job/Plan checklists and remaining independent of lane names. Goal, Notes, names, and Plan prose are supplied by the author and preserved as written.
+
+### Task language
+
+Task language is a skill preference, configured with `AGENT_TASK_LANG` in the agent host environment. It controls task decomposition, Job/Task titles and concise names, goals, Notes, and Plan prose. The default is English (`en`) when unset or blank; `zh-CN` selects Chinese, and other languages such as `ja` are passed to the agent without a CLI allowlist. Explicit language instructions for the current work take precedence.
+
+```fish
+set -Ux AGENT_TASK_LANG zh-CN
+```
+
+For a macOS desktop host launched outside fish, set the environment before restarting that host:
+
+```sh
+launchctl setenv AGENT_TASK_LANG zh-CN
+```
+
+Codex/Claude hooks and Pi/OMP extensions include `task_language` in injected agent context. This field belongs to the plugin, not `taskcli context`. taskcli has no language option, ignores `AGENT_TASK_LANG` and the obsolete `TASKCLI_LANGUAGE`, and uses fixed English labels for generated sections. Supplied names and prose remain unchanged; changing the skill preference does not translate existing documents.
+
+When upgrading, rename the host environment variable to `AGENT_TASK_LANG`, remove `TASKCLI_LANGUAGE`, and remove `[documents].language` from taskcli configuration. The config loader tolerates and ignores that legacy key so existing installations still open; new configs and CLI context no longer include it. Restart desktop hosts to inherit the new environment.
 
 ### Obsidian plugin setup
 
-Install and enable [Kanban](https://github.com/mgmeyers/obsidian-kanban) (`obsidian-kanban`) and [Tasks](https://github.com/obsidian-tasks-group/obsidian-tasks) (`obsidian-tasks-plugin`) in the vault where you view the documents. Tasks 5.3.0 or newer is required: the queries use [query-file properties in custom filters](https://github.com/obsidian-tasks-group/obsidian-tasks/blob/main/docs/Scripting/Query%20Properties.md) and hide the [postpone button introduced in 5.3.0](https://github.com/obsidian-tasks-group/obsidian-tasks/blob/main/docs/Editing/Postponing.md). Open `Board.md` as a Kanban board and `Tasks.md` in reading view.
+Enable [Kanban](https://github.com/mgmeyers/obsidian-kanban) and [Tasks](https://github.com/obsidian-tasks-group/obsidian-tasks). In Tasks settings, configure the following [custom statuses](https://publish.obsidian.md/tasks/Getting%20Started/Statuses/Status%20Settings):
 
-Leave the Tasks Global Filter empty or set it to `#task`. A different global filter, or a Global Query that excludes these cards, can suppress results; taskcli does not change those vault-wide settings. No custom checkbox statuses are needed.
+| State | Checkbox | Tasks type |
+| --- | --- | --- |
+| TODO | `[ ]` | TODO |
+| IN_PROGRESS | `[/]` | IN_PROGRESS |
+| BLOCKED | `[!]` | IN_PROGRESS |
+| WAITING_USER | `[?]` | IN_PROGRESS |
+| DONE | `[x]` | DONE |
+| FAILED | `[f]` | CANCELLED |
+| CANCELLED | `[-]` | CANCELLED |
 
-Markdown mode still accepts a directory without `.obsidian` and never installs plugins, creates vault settings, or changes an existing vault's configuration. The generated files can be opened inside an Obsidian vault later. A generic Markdown viewer can display the board as headings and checklists, but cannot execute Tasks queries or render Kanban lanes without the Obsidian plugins.
+Keep existing status symbols for other workflows; reconcile any conflicting custom symbol before using these views. Status names may be translated: queries use the symbol. Leave the Tasks Global Filter empty or use `#task`. Tasks 5.3.0+ supports the generated queries; Tasks 8+ also requires enabling JavaScript queries in its per-device settings. Open Board as Kanban and Tasks in reading view. taskcli does not silently modify vault-wide plugin settings.
 
-Run `taskcli sync` after upgrading an existing output directory. It regenerates old table boards as Kanban files and creates Tasks views while preserving Job Goal/Notes bodies and Plan versions. Normal task mutations continue refreshing both views automatically.
+Run `taskcli sync` after upgrading. Migration retains editable notes and the current Plan while replacing old document paths. A plain Markdown directory still works without Obsidian; Kanban rendering and Tasks queries require their plugins.
+
+### Project archival
+
+```sh
+taskcli project archive PROJECT_ID
+taskcli project list --archived
+taskcli project unarchive PROJECT_ID
+```
+
+Complete or cancel all Jobs before archiving a Project. An archived Project is hidden from the Dashboard and the default project list, keeps its documents and history, and rejects new work until restored. Job archive/unarchive remains independent; project unarchive does not unarchive individual Jobs.
+
+### Deleting work
+
+```sh
+taskcli job delete JOB_ID
+taskcli project delete PROJECT_ID
+```
+
+`job delete` permanently removes the Job record and document, its Tasks, dependencies, and Plan records/files, including archived work. Other Jobs and their documents remain. `project delete` removes every Job, Task, and Plan belonging to the Project, then removes its entire `Projects/<project-name>/` directory, including manually added notes, hidden files, and attachments. Its repository directory is outside this cleanup scope. Neither command requires prior archival or completion.
+
+Release active Task leases before deleting. Job deletion rejects dependencies from Tasks in surviving Jobs; remove those dependencies explicitly first. Dependencies wholly within a deleted Project are removed together. Both commands accept `--expect-revision` and `--idempotency-key`; no interactive prompt is added. Audit events and idempotency results remain in SQLite; unfiltered `event list` includes deletion events. Deleted Job/Task filename sequence numbers are not reused within the surviving Project.
+
+Database removal and file-cleanup records commit in one transaction. File failures return `projection_pending`; fix the reported issue and run `taskcli sync`, or retry the exact delete request with the same idempotency key. Cleanup survives process restarts. A Project name whose directory is still pending deletion cannot be registered until cleanup completes. Cleanup refuses paths redirected through symlinks, and removes nested attachment symlinks without following their targets.
 
 ### Read-only boundary
 
@@ -137,9 +199,9 @@ Generated regions are logically read-only, not filesystem-protected. Manual edit
 
 Kanban board settings hide card checkboxes and the add-list, archive-all, and board-settings header buttons. Tasks queries hide edit and postpone buttons. These settings are not a complete UI lock: Kanban dragging/card menus and Tasks checkboxes can still edit Markdown, temporarily changing what the views show. They never claim, start, or complete a task in SQLite. Use an agent/taskcli for state changes and run `taskcli sync` to repair an accidental plugin edit. Strict UI-level prevention would require an additional integration; taskcli does not claim to provide it.
 
-Plan files contain authoritative Markdown bodies. Agents must claim first, then publish through `plan create` or `plan revise` with the current lease. Revision creates a new version and preserves previous files; do not directly overwrite registered Plans. Agents authoring Obsidian bodies must load the available Obsidian skill and use `[[wikilinks]]`; use a session-specific temporary draft when necessary and let taskcli publish the registered file after checking ownership. Other directories use standard Markdown. Raw filesystem writes cannot be lease-fenced: manual edits are detected by hash refresh during `sync` and `plan show`, not prevented by SQLite. Do not use those edits as a concurrent agent workflow.
+Plan files contain authoritative Markdown bodies. Authored YAML properties and tags merge with managed properties into a single frontmatter block; `plan show` returns `properties` separately from `body`. Agents must claim first, then publish through `plan create` or `plan revise` with the current lease. Revision increments the version property and replaces the same file; do not directly overwrite registered Plans. Agents authoring Obsidian bodies must load the available Obsidian skill and use `[[wikilinks]]`; use a session-specific temporary draft when necessary and let taskcli publish the registered file after checking ownership. Other directories use standard Markdown. Raw filesystem writes cannot be lease-fenced: manual edits are detected by hash refresh during `sync` and `plan show`, not prevented by SQLite. Do not use those edits as a concurrent agent workflow.
 
-Database commits happen before generated-document updates. A filesystem failure returns success with `projection_pending` so callers do not recreate committed work. `taskcli sync` repairs the projection. Output file locks serialize independent CLI processes; temporary-file replacement protects each document. Archival writes the destination and updates managed links before removing the previous generated file. Back up the database and document tree together; editable bodies are not recoverable from SQLite alone.
+Database commits happen before generated-document updates. A filesystem failure returns success with `projection_pending` so callers do not recreate committed work. `taskcli sync` repairs the projection. Output file locks serialize independent CLI processes; temporary-file replacement protects each document. Archival writes the destination and updates managed links before removing the previous generated file. A Plan replacement body is committed with its lease check and retained until projection acknowledges it, so interrupted publication can be retried. Back up the database and document tree together; editable bodies are not recoverable from SQLite alone.
 
 ```sh
 taskcli doctor --json  # healthy, missing_plans, database/projection sequence

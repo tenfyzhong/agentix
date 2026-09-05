@@ -104,14 +104,27 @@ enum Format {
 
 #[derive(Subcommand)]
 enum ProjectCommand {
+    /// Delete the Project, its work, and its entire generated document directory.
+    Delete {
+        id: String,
+    },
     Register {
         #[arg(long)]
         name: Option<String>,
         #[arg(long, value_hint = clap::ValueHint::DirPath)]
         root: Option<PathBuf>,
     },
-    List,
+    List {
+        #[arg(long)]
+        archived: bool,
+    },
     Show {
+        id: String,
+    },
+    Archive {
+        id: String,
+    },
+    Unarchive {
         id: String,
     },
 }
@@ -133,7 +146,13 @@ struct JobList {
 }
 #[derive(Subcommand)]
 enum JobCommand {
+    /// Delete the Job, its Tasks, and their Plan documents.
+    Delete {
+        id: String,
+    },
     Create {
+        #[arg(long)]
+        name: Option<String>,
         #[arg(long)]
         title: String,
         #[arg(long, default_value = "")]
@@ -141,6 +160,8 @@ enum JobCommand {
     },
     Update {
         id: String,
+        #[arg(long)]
+        name: Option<String>,
         #[arg(long)]
         title: Option<String>,
         #[arg(long)]
@@ -175,12 +196,16 @@ struct TaskId {
 enum TaskCommand {
     Add {
         #[arg(long)]
+        name: Option<String>,
+        #[arg(long)]
         job: String,
         #[arg(long)]
         title: String,
     },
     Update {
         id: String,
+        #[arg(long)]
+        name: Option<String>,
         #[arg(long)]
         title: Option<String>,
         #[arg(long)]
@@ -443,6 +468,14 @@ async fn mutate(cli: &Cli, service: &Service, request: Value) -> Result<Value> {
 
 async fn project(cli: &Cli, service: &Service, action: &ProjectCommand) -> Result<Value> {
     match action {
+        ProjectCommand::Delete { id } => {
+            mutate(
+                cli,
+                service,
+                json!({"command":"project.delete","project":id}),
+            )
+            .await
+        }
         ProjectCommand::Register { name, root } => {
             let root = root.clone().unwrap_or(std::env::current_dir()?);
             let (root, remote) = git_identity(&root)?;
@@ -457,7 +490,32 @@ async fn project(cli: &Cli, service: &Service, action: &ProjectCommand) -> Resul
             )
             .await
         }
-        ProjectCommand::List => Ok(response(json!(service.store().snapshot().await?.projects))),
+        ProjectCommand::List { archived } => Ok(response(json!(
+            service
+                .store()
+                .snapshot()
+                .await?
+                .projects
+                .into_iter()
+                .filter(|p| p.archived_at.is_some() == *archived)
+                .collect::<Vec<_>>()
+        ))),
+        ProjectCommand::Archive { id } => {
+            mutate(
+                cli,
+                service,
+                json!({"command":"project.archive","project":id}),
+            )
+            .await
+        }
+        ProjectCommand::Unarchive { id } => {
+            mutate(
+                cli,
+                service,
+                json!({"command":"project.unarchive","project":id}),
+            )
+            .await
+        }
         ProjectCommand::Show { id } => {
             let state = service.store().snapshot().await?;
             Ok(response(json!(state.projects[state.project_index(id)?])))
@@ -523,17 +581,28 @@ async fn resolve_project(cli: &Cli, service: &Service) -> Result<String> {
 
 async fn job(cli: &Cli, service: &Service, action: &JobCommand) -> Result<Value> {
     match action {
-        JobCommand::Create { title, goal } => {
+        JobCommand::Delete { id } => {
+            mutate(cli, service, json!({"command":"job.delete","job":id})).await
+        }
+        JobCommand::Create { title, goal, name } => {
             let project = resolve_project(cli, service).await?;
             mutate(
                 cli,
                 service,
-                json!({"command":"job.create","project":project,"title":title,"goal":goal}),
+                json!({"command":"job.create","project":project,"title":title,"goal":goal,"name":name}),
             )
             .await
         }
-        JobCommand::Update { id, title, goal } => {
+        JobCommand::Update {
+            id,
+            title,
+            goal,
+            name,
+        } => {
             let mut request = json!({"command":"job.update","job":id});
+            if let Some(name) = name {
+                request["name"] = json!(name);
+            }
             if let Some(title) = title {
                 request["title"] = json!(title);
             }
@@ -596,13 +665,19 @@ async fn job(cli: &Cli, service: &Service, action: &JobCommand) -> Result<Value>
 
 async fn task(cli: &Cli, service: &Service, action: &TaskCommand) -> Result<Value> {
     let request = match action {
-        TaskCommand::Add { job, title } => json!({"command":"task.add","job":job,"title":title}),
+        TaskCommand::Add { job, title, name } => {
+            json!({"command":"task.add","job":job,"title":title,"name":name})
+        }
         TaskCommand::Update {
             id,
+            name,
             title,
             position,
         } => {
             let mut r = json!({"command":"task.update","task":id});
+            if let Some(name) = name {
+                r["name"] = json!(name);
+            }
             if let Some(t) = title {
                 r["title"] = json!(t);
             }

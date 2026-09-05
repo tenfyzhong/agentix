@@ -131,7 +131,24 @@ _arguments "${_arguments_options[@]}" : \
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:taskcli-project-command-$line[1]:"
         case $line[1] in
-            (register)
+            (delete)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(register)
 _arguments "${_arguments_options[@]}" : \
 '--name=[]:NAME:_default' \
 '--root=[]:ROOT:_files -/' \
@@ -160,12 +177,47 @@ _arguments "${_arguments_options[@]}" : \
 '--lease-token=[]:LEASE_TOKEN:_default' \
 '--expect-revision=[]:EXPECT_REVISION:_default' \
 '--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--archived[]' \
 '--json[]' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0
 ;;
 (show)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(archive)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(unarchive)
 _arguments "${_arguments_options[@]}" : \
 '--config=[]:CONFIG:_files' \
 '--project=[]:PROJECT:_default' \
@@ -194,7 +246,11 @@ _arguments "${_arguments_options[@]}" : \
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:taskcli-project-help-command-$line[1]:"
         case $line[1] in
-            (register)
+            (delete)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(register)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -203,6 +259,14 @@ _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
 (show)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(archive)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(unarchive)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -242,8 +306,26 @@ _arguments "${_arguments_options[@]}" : \
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:taskcli-job-command-$line[1]:"
         case $line[1] in
-            (create)
+            (delete)
 _arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(create)
+_arguments "${_arguments_options[@]}" : \
+'--name=[]:NAME:_default' \
 '--title=[]:TITLE:_default' \
 '--goal=[]:GOAL:_default' \
 '--config=[]:CONFIG:_files' \
@@ -262,6 +344,7 @@ _arguments "${_arguments_options[@]}" : \
 ;;
 (update)
 _arguments "${_arguments_options[@]}" : \
+'--name=[]:NAME:_default' \
 '--title=[]:TITLE:_default' \
 '--goal=[]:GOAL:_default' \
 '--config=[]:CONFIG:_files' \
@@ -381,7 +464,11 @@ _arguments "${_arguments_options[@]}" : \
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:taskcli-job-help-command-$line[1]:"
         case $line[1] in
-            (create)
+            (delete)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(create)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -447,6 +534,7 @@ _arguments "${_arguments_options[@]}" : \
         case $line[1] in
             (add)
 _arguments "${_arguments_options[@]}" : \
+'--name=[]:NAME:_default' \
 '--job=[]:JOB:_default' \
 '--title=[]:TITLE:_default' \
 '--config=[]:CONFIG:_files' \
@@ -465,6 +553,7 @@ _arguments "${_arguments_options[@]}" : \
 ;;
 (update)
 _arguments "${_arguments_options[@]}" : \
+'--name=[]:NAME:_default' \
 '--title=[]:TITLE:_default' \
 '--position=[]:POSITION:_default' \
 '--config=[]:CONFIG:_files' \
@@ -1189,7 +1278,11 @@ _arguments "${_arguments_options[@]}" : \
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:taskcli-help-project-command-$line[1]:"
         case $line[1] in
-            (register)
+            (delete)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(register)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -1198,6 +1291,14 @@ _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
 (show)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(archive)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(unarchive)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -1217,7 +1318,11 @@ _arguments "${_arguments_options[@]}" : \
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:taskcli-help-job-command-$line[1]:"
         case $line[1] in
-            (create)
+            (delete)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(create)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -1572,6 +1677,7 @@ _taskcli__subcmd__help__subcmd__init_commands() {
 (( $+functions[_taskcli__subcmd__help__subcmd__job_commands] )) ||
 _taskcli__subcmd__help__subcmd__job_commands() {
     local commands; commands=(
+'delete:Delete the Job, its Tasks, and their Plan documents' \
 'create:' \
 'update:' \
 'list:' \
@@ -1596,6 +1702,11 @@ _taskcli__subcmd__help__subcmd__job__subcmd__cancel_commands() {
 _taskcli__subcmd__help__subcmd__job__subcmd__create_commands() {
     local commands; commands=()
     _describe -t commands 'taskcli help job create commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__job__subcmd__delete_commands] )) ||
+_taskcli__subcmd__help__subcmd__job__subcmd__delete_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help job delete commands' commands "$@"
 }
 (( $+functions[_taskcli__subcmd__help__subcmd__job__subcmd__list_commands] )) ||
 _taskcli__subcmd__help__subcmd__job__subcmd__list_commands() {
@@ -1644,11 +1755,24 @@ _taskcli__subcmd__help__subcmd__plan__subcmd__show_commands() {
 (( $+functions[_taskcli__subcmd__help__subcmd__project_commands] )) ||
 _taskcli__subcmd__help__subcmd__project_commands() {
     local commands; commands=(
+'delete:Delete the Project, its work, and its entire generated document directory' \
 'register:' \
 'list:' \
 'show:' \
+'archive:' \
+'unarchive:' \
     )
     _describe -t commands 'taskcli help project commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__project__subcmd__archive_commands] )) ||
+_taskcli__subcmd__help__subcmd__project__subcmd__archive_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help project archive commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__project__subcmd__delete_commands] )) ||
+_taskcli__subcmd__help__subcmd__project__subcmd__delete_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help project delete commands' commands "$@"
 }
 (( $+functions[_taskcli__subcmd__help__subcmd__project__subcmd__list_commands] )) ||
 _taskcli__subcmd__help__subcmd__project__subcmd__list_commands() {
@@ -1664,6 +1788,11 @@ _taskcli__subcmd__help__subcmd__project__subcmd__register_commands() {
 _taskcli__subcmd__help__subcmd__project__subcmd__show_commands() {
     local commands; commands=()
     _describe -t commands 'taskcli help project show commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__project__subcmd__unarchive_commands] )) ||
+_taskcli__subcmd__help__subcmd__project__subcmd__unarchive_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help project unarchive commands' commands "$@"
 }
 (( $+functions[_taskcli__subcmd__help__subcmd__sync_commands] )) ||
 _taskcli__subcmd__help__subcmd__sync_commands() {
@@ -1841,6 +1970,7 @@ _taskcli__subcmd__init_commands() {
 (( $+functions[_taskcli__subcmd__job_commands] )) ||
 _taskcli__subcmd__job_commands() {
     local commands; commands=(
+'delete:Delete the Job, its Tasks, and their Plan documents' \
 'create:' \
 'update:' \
 'list:' \
@@ -1867,9 +1997,15 @@ _taskcli__subcmd__job__subcmd__create_commands() {
     local commands; commands=()
     _describe -t commands 'taskcli job create commands' commands "$@"
 }
+(( $+functions[_taskcli__subcmd__job__subcmd__delete_commands] )) ||
+_taskcli__subcmd__job__subcmd__delete_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli job delete commands' commands "$@"
+}
 (( $+functions[_taskcli__subcmd__job__subcmd__help_commands] )) ||
 _taskcli__subcmd__job__subcmd__help_commands() {
     local commands; commands=(
+'delete:Delete the Job, its Tasks, and their Plan documents' \
 'create:' \
 'update:' \
 'list:' \
@@ -1895,6 +2031,11 @@ _taskcli__subcmd__job__subcmd__help__subcmd__cancel_commands() {
 _taskcli__subcmd__job__subcmd__help__subcmd__create_commands() {
     local commands; commands=()
     _describe -t commands 'taskcli job help create commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__job__subcmd__help__subcmd__delete_commands] )) ||
+_taskcli__subcmd__job__subcmd__help__subcmd__delete_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli job help delete commands' commands "$@"
 }
 (( $+functions[_taskcli__subcmd__job__subcmd__help__subcmd__help_commands] )) ||
 _taskcli__subcmd__job__subcmd__help__subcmd__help_commands() {
@@ -1999,22 +2140,48 @@ _taskcli__subcmd__plan__subcmd__show_commands() {
 (( $+functions[_taskcli__subcmd__project_commands] )) ||
 _taskcli__subcmd__project_commands() {
     local commands; commands=(
+'delete:Delete the Project, its work, and its entire generated document directory' \
 'register:' \
 'list:' \
 'show:' \
+'archive:' \
+'unarchive:' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'taskcli project commands' commands "$@"
 }
+(( $+functions[_taskcli__subcmd__project__subcmd__archive_commands] )) ||
+_taskcli__subcmd__project__subcmd__archive_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli project archive commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__project__subcmd__delete_commands] )) ||
+_taskcli__subcmd__project__subcmd__delete_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli project delete commands' commands "$@"
+}
 (( $+functions[_taskcli__subcmd__project__subcmd__help_commands] )) ||
 _taskcli__subcmd__project__subcmd__help_commands() {
     local commands; commands=(
+'delete:Delete the Project, its work, and its entire generated document directory' \
 'register:' \
 'list:' \
 'show:' \
+'archive:' \
+'unarchive:' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'taskcli project help commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__project__subcmd__help__subcmd__archive_commands] )) ||
+_taskcli__subcmd__project__subcmd__help__subcmd__archive_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli project help archive commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__project__subcmd__help__subcmd__delete_commands] )) ||
+_taskcli__subcmd__project__subcmd__help__subcmd__delete_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli project help delete commands' commands "$@"
 }
 (( $+functions[_taskcli__subcmd__project__subcmd__help__subcmd__help_commands] )) ||
 _taskcli__subcmd__project__subcmd__help__subcmd__help_commands() {
@@ -2036,6 +2203,11 @@ _taskcli__subcmd__project__subcmd__help__subcmd__show_commands() {
     local commands; commands=()
     _describe -t commands 'taskcli project help show commands' commands "$@"
 }
+(( $+functions[_taskcli__subcmd__project__subcmd__help__subcmd__unarchive_commands] )) ||
+_taskcli__subcmd__project__subcmd__help__subcmd__unarchive_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli project help unarchive commands' commands "$@"
+}
 (( $+functions[_taskcli__subcmd__project__subcmd__list_commands] )) ||
 _taskcli__subcmd__project__subcmd__list_commands() {
     local commands; commands=()
@@ -2050,6 +2222,11 @@ _taskcli__subcmd__project__subcmd__register_commands() {
 _taskcli__subcmd__project__subcmd__show_commands() {
     local commands; commands=()
     _describe -t commands 'taskcli project show commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__project__subcmd__unarchive_commands] )) ||
+_taskcli__subcmd__project__subcmd__unarchive_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli project unarchive commands' commands "$@"
 }
 (( $+functions[_taskcli__subcmd__sync_commands] )) ||
 _taskcli__subcmd__sync_commands() {

@@ -1,8 +1,10 @@
 //! Persistent task coordination and read-only document projections.
 
 mod config;
+mod deletion;
 mod model;
 mod mutations;
+mod naming;
 mod projection;
 mod store;
 

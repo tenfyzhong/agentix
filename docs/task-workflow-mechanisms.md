@@ -24,7 +24,7 @@ The Skill defines working instructions, hooks adapt host events, and taskcli pro
 - **Project: a long-lived project.** Worktrees of the same Git repository share one Project. Non-Git work can use a stable directory.
 - **Job: an independently acceptable requirement.** New requirements for the same project get new Jobs instead of being appended indefinitely to a completed Job.
 - **Task: work that one agent can claim and deliver.** Each Task should have a clear result, scope, and verification method.
-- **Plan: the current Task's execution approach.** Write it after claiming the Task; publish changes through `plan revise` to preserve previous versions.
+- **Plan: the current Task's execution approach.** Write it after claiming the Task; publish changes through `plan revise` to update the same file and increment its version property.
 
 A Job's `goal` records the overall objective and acceptance conditions. Tasks currently have no separate structured acceptance field. Put the detailed scope, test approach, and risks in the Plan; delivery notes can go in the Job's Notes section.
 
@@ -238,7 +238,7 @@ Obsidian with both plugins enabled is the recommended viewing environment; use `
 
 Some plugin editing controls are hidden, not all. Dragging cards, using card menus, or toggling Tasks checkboxes may change the projected Markdown until the next sync. Those edits cannot obtain a lease or change SQLite task state. This is a logical read-only boundary, not a complete UI or filesystem lock, and still needs no watcher.
 
-Plan bodies live in separate files. Projection preserves editable Goal/Notes sections, while an explicit `job update --goal` replaces the Goal. Agents must publish Plans through `plan create/revise`, not overwrite registered versions directly.
+Plan bodies live in separate files. Projection preserves editable Goal/Notes sections, while an explicit `job update --goal` replaces the Goal. Agents must publish Plans through `plan create/revise`, not overwrite registered files directly.
 
 - For Obsidian, agents use the separate Obsidian Skill to author bodies with `[[wikilinks]]`. If a temporary draft is needed, use a session-specific path and publish through taskcli with the lease.
 - For plain Markdown, use relative `[label](path.md)` links; the directory need not be an Obsidian vault.

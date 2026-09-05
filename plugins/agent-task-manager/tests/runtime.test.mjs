@@ -16,6 +16,37 @@ test("task tool passes arguments without shell interpolation and fences identity
     );
 });
 
+test("skill language is injected by hooks and extensions independently of taskcli", async (t) => {
+    const original = process.env.AGENT_TASK_LANG;
+    const legacy = process.env.TASKCLI_LANGUAGE;
+    t.after(() => {
+        if (original === undefined) delete process.env.AGENT_TASK_LANG;
+        else process.env.AGENT_TASK_LANG = original;
+        if (legacy === undefined) delete process.env.TASKCLI_LANGUAGE;
+        else process.env.TASKCLI_LANGUAGE = legacy;
+    });
+    process.env.TASKCLI_LANGUAGE = "zh-CN";
+    const context = { job_id: "job_one", documents: { format: "markdown" } };
+    const runner = async () => ({ schema_version: 1, ok: true, result: context });
+    for (const [setting, expected] of [[undefined,"en"],["  ","en"],[" zh-CN ","zh-CN"],["ja","ja"]]) {
+        if (setting === undefined) delete process.env.AGENT_TASK_LANG;
+        else process.env.AGENT_TASK_LANG = setting;
+        const hook = await runHook({hook_event_name:"SessionStart",session_id:"s1",cwd:"/work"},runner);
+        const value = JSON.parse(hook.hookSpecificOutput.additionalContext.split("\n").at(-1));
+        assert.equal(value.task_language,expected);
+        assert.deepEqual(value.documents,context.documents);
+        for (const host of ["pi","omp"]) {
+            const handlers = new Map();
+            registerExtension({on:(event,fn)=>handlers.set(event,fn),registerTool(){}},host,runner);
+            const result = await handlers.get("before_agent_start")({}, {cwd:"/work",sessionManager:{getSessionId:()=>"s1"}});
+            const value = JSON.parse(result.message.content.split("\n").at(-1));
+            assert.equal(value.task_language,expected);
+            assert.equal(value.job_id,"job_one");
+        }
+        assert.equal(context.task_language,undefined);
+    }
+});
+
 test("hooks distinguish session end from turn completion and provide session context", async () => {
     const calls = [];
     const runner = async (args, options) => {

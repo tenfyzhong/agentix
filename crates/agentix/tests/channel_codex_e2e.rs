@@ -458,7 +458,8 @@ async fn assert_task_projection(service: &agentix_task::Service, reason: &str) {
             .join(&state.jobs[0].document_path),
     )
     .unwrap();
-    assert!(body.contains("WAITING_USER") && body.contains(reason));
+    assert_eq!(state.tasks[0].status, agentix_task::TaskStatus::WaitingUser);
+    assert!(body.contains(&format!("- [?] {}", state.tasks[0].name)) && body.contains(reason));
 }
 
 async fn join_stack(tasks: StackTasks) {

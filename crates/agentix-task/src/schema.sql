@@ -51,5 +51,9 @@ CREATE TABLE IF NOT EXISTS projection_state (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
-PRAGMA user_version = 2;
+CREATE TABLE IF NOT EXISTS document_deletions (
+    id TEXT PRIMARY KEY,
+    data TEXT NOT NULL CHECK (json_valid(data))
+);
+PRAGMA user_version = 6;
 PRAGMA application_id = 0x4158544b;

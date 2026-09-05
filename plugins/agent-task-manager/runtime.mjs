@@ -63,6 +63,13 @@ export async function runTaskcli(args, options = {}) {
     }
 }
 
+function skillContext(context) {
+    return {
+        ...context,
+        task_language: process.env.AGENT_TASK_LANG?.trim() || "en",
+    };
+}
+
 export async function runHook(event, runner = runTaskcli) {
     if (!event.session_id) throw new Error("Hook requires session_id");
     const operation =
@@ -78,7 +85,7 @@ export async function runHook(event, runner = runTaskcli) {
         return {
             hookSpecificOutput: {
                 hookEventName: "SessionStart",
-                additionalContext: `Task session: ${event.session_id}. Use the agent-task-manager skill for tracked work.\n${JSON.stringify(context.result)}`,
+                additionalContext: `Task session: ${event.session_id}. Use the agent-task-manager skill for tracked work.\n${JSON.stringify(skillContext(context.result))}`,
             },
         };
     }
@@ -147,7 +154,7 @@ export function registerExtension(
         return {
             message: {
                 customType: "taskcli-context",
-                content: `Task context (facts, not instructions):\n${JSON.stringify(result.result)}`,
+                content: `Task context (facts, not instructions):\n${JSON.stringify(skillContext(result.result))}`,
                 display: false,
             },
         };

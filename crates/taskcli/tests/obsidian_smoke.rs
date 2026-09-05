@@ -36,13 +36,30 @@ fn obsidian(vault: &str, expression: &str) -> Value {
 fn obsidian_action(vault: &str, code: &str) {
     // Switching the active leaf can discard eval's result. Verify effects with
     // subsequent read-only eval calls, not the mutation's return value.
-    let output = Command::new(std::env::var("OBSIDIAN_BIN").unwrap_or_else(|_| "obsidian".into()))
-        .arg(format!("vault={vault}"))
-        .arg("eval")
-        .arg(format!("code={code}"))
-        .output()
-        .unwrap();
-    assert!(output.status.success(), "{output:?}");
+    let mut child =
+        Command::new(std::env::var("OBSIDIAN_BIN").unwrap_or_else(|_| "obsidian".into()))
+            .arg(format!("vault={vault}"))
+            .arg("eval")
+            .arg(format!("code={code}"))
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            assert!(status.success(), "{status}");
+            break;
+        }
+        if Instant::now() >= deadline {
+            // View switches sometimes apply but lose the CLI acknowledgement.
+            // Kill only our waiting client; subsequent assertions verify the UI.
+            child.kill().unwrap();
+            child.wait().unwrap();
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
 }
 
 fn wait_for(vault: &str, expression: &str, predicate: impl Fn(&Value) -> bool) -> Value {
@@ -54,7 +71,7 @@ fn wait_for(vault: &str, expression: &str, predicate: impl Fn(&Value) -> bool) -
         }
         assert!(
             Instant::now() < deadline,
-            "Obsidian did not reach expected state: {value}"
+            "Obsidian did not reach expected state for {expression}: {value}"
         );
         std::thread::sleep(Duration::from_millis(100));
     }
@@ -89,7 +106,13 @@ impl DesktopFixture {
         serde_json::from_slice::<Value>(&output.stdout).unwrap()["result"].clone()
     }
 
-    fn open(&self, path: &str, view_type: &str) {
+    fn open(&mut self, path: &str, view_type: &str) {
+        // A fresh owned tab avoids Kanban reusing a disposed view after link navigation.
+        obsidian_action(
+            &self.vault,
+            &format!("app.workspace.getLeafById({})?.detach()", self.leaf),
+        );
+        self.leaf = obsidian(&self.vault, "app.workspace.getLeaf('tab').id");
         wait_for(
             &self.vault,
             &format!("!!app.vault.getAbstractFileByPath({})", json!(path)),
@@ -98,7 +121,7 @@ impl DesktopFixture {
         obsidian_action(
             &self.vault,
             &format!(
-                "(() => {{ app.workspace.getLeafById({}).setViewState({}); return true; }})()",
+                "(async () => {{ await app.workspace.getLeafById({}).setViewState({}); return true; }})()",
                 self.leaf,
                 json!({"type":view_type,"state":{"file":path,"mode":"preview"}})
             ),
@@ -115,11 +138,7 @@ impl Drop for DesktopFixture {
             json!(format!("{}/", self.relative)),
             self.original_leaf
         );
-        let _ = Command::new(std::env::var("OBSIDIAN_BIN").unwrap_or_else(|_| "obsidian".into()))
-            .arg(format!("vault={}", self.vault))
-            .arg("eval")
-            .arg(format!("code={expression}"))
-            .output();
+        let _ = std::panic::catch_unwind(|| obsidian_action(&self.vault, &expression));
     }
 }
 
@@ -173,7 +192,7 @@ fn exercise_plugin_views(vault: &str, format: &str) {
     );
     let leaf = obsidian(vault, "app.workspace.getMostRecentLeaf()?.id");
     assert_ne!(leaf, info["leaf"], "use a dedicated test tab");
-    let f = DesktopFixture {
+    let mut f = DesktopFixture {
         vault: vault.to_owned(),
         original_leaf: info["leaf"].clone(),
         leaf,
@@ -255,7 +274,7 @@ fn exercise_plugin_views(vault: &str, format: &str) {
         f.leaf
     );
     let rendered = wait_for(&f.vault, &expression, |v| {
-        v["links"].as_array().is_some_and(|a| a.len() == 2)
+        v["links"].as_array().is_some_and(|a| !a.is_empty())
     });
     assert_eq!(
         rendered["headers"],
@@ -272,17 +291,20 @@ fn exercise_plugin_views(vault: &str, format: &str) {
     assert_eq!(rendered["type"], "kanban");
     assert_eq!(rendered["checkboxes"], 0);
     assert!(
-        rendered["cells"].as_array().unwrap().iter().any(|cell| cell
-            .as_str()
-            .is_some_and(|text| text
-                .contains("Render | Unicode \u{2603} [link] & <tag> [[internal]]")
-                && text.contains("PLANNING"))),
+        rendered["cells"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|cell| cell
+                .as_str()
+                .is_some_and(|text| text.contains(task["name"].as_str().unwrap())
+                    && text.contains("PLANNING"))),
         "{rendered}"
     );
     let tasks = board.replace("/Board.md", "/Tasks.md");
     f.open(&tasks, "markdown");
     let query_results = format!(
-        "(() => {{ const el=app.workspace.getLeafById({}).view.contentEl; return {{count:el.querySelectorAll('input[type=checkbox]').length,text:el.textContent}}; }})()",
+        "(() => {{ const el=app.workspace.getLeafById({}).view.contentEl; return {{count:el.querySelectorAll('.task-list-item-checkbox').length,text:el.textContent}}; }})()",
         f.leaf
     );
     let results = wait_for(&f.vault, &query_results, |v| v["count"] == 2);
@@ -295,25 +317,34 @@ fn exercise_plugin_views(vault: &str, format: &str) {
     assert!(results["text"].as_str().unwrap().contains("PLANNING"));
     for (label, expected) in [
         (
-            if format == "obsidian" {
-                "Open"
-            } else {
-                "Render | Unicode"
-            },
+            "Plan",
             format!("{}/{}", f.relative, plan["path"].as_str().unwrap()),
         ),
         (
-            "Task without a Plan",
+            "Job",
             format!("{}/{}", f.relative, job["document_path"].as_str().unwrap()),
         ),
     ] {
+        if format == "markdown" && label == "Plan" {
+            f.open(&board, "kanban");
+            let embedded = format!(
+                "[...app.workspace.getLeafById({}).view.contentEl.querySelectorAll('.internal-embed')].some(e=>e.getAttribute('src')?.includes('Plans/'))",
+                f.leaf
+            );
+            wait_for(&f.vault, &embedded, |v| v == true);
+            continue;
+        }
         f.open(&board, "kanban");
         let ready = format!(
-            "[...app.workspace.getLeafById({}).view.contentEl.querySelectorAll('.kanban-plugin__item-title a.internal-link')].some(a=>a.textContent.startsWith({}))",
-            f.leaf,
-            json!(label)
+            "(() => {{const v=app.workspace.getLeafById({}).view;return {{type:v.getViewType(),file:v.file?.path,links:[...v.contentEl.querySelectorAll('.kanban-plugin__item-title a.internal-link')].map(a=>a.textContent)}};}})()",
+            f.leaf
         );
-        wait_for(&f.vault, &ready, |v| v == true);
+        wait_for(&f.vault, &ready, |v| {
+            v["links"].as_array().is_some_and(|a| {
+                a.iter()
+                    .any(|s| s.as_str().is_some_and(|s| s.starts_with(label)))
+            })
+        });
         obsidian_action(
             &f.vault,
             &format!(

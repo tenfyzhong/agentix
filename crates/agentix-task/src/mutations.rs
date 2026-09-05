@@ -1,3 +1,4 @@
+use crate::naming::{next_sequence, numbered_name, unique_name};
 use anyhow::{Context, Result, bail, ensure};
 use serde_json::{Value, json};
 
@@ -31,66 +32,136 @@ pub(crate) fn apply(
     let command = required(request, "command")?;
     match command {
         "project.register" => register_project(state, request, now),
-        "job.create" => {
-            let project = &state.projects[state.project_index(required(request, "project")?)?];
-            let id = new_id("job");
-            let job = Job {
-                document_path: format!("Projects/{}/Jobs/Active/{id}.md", project.key),
-                id,
-                project_id: project.id.clone(),
-                title: required(request, "title")?.into(),
-                goal: request["goal"].as_str().unwrap_or_default().into(),
-                status: JobStatus::Active,
-                revision: 1,
-                created_at: now,
-                updated_at: now,
-                completed_at: None,
-                cancelled_at: None,
-                archived_at: None,
-            };
-            let result = serde_json::to_value(&job)?;
-            state.jobs.push(job);
-            Ok(result)
-        }
+        "project.delete" | "job.delete" => crate::deletion::apply(state, request, options),
+        "project.archive" | "project.unarchive" => archive_project(state, request, options, now),
+        "job.create" => create_job(state, request, now),
         "job.update" | "job.cancel" | "job.archive" | "job.unarchive" => {
             update_job(state, request, options, now)
         }
-        "task.add" => {
-            let job = &state.jobs[state.job_index(required(request, "job")?)?];
-            ensure!(
-                job.status == JobStatus::Active && job.archived_at.is_none(),
-                "conflict: Job is closed or archived; create a new Job for new scope"
-            );
-            let task = Task {
-                id: new_id("task"),
-                project_id: job.project_id.clone(),
-                job_id: job.id.clone(),
-                title: required(request, "title")?.into(),
-                status: TaskStatus::Todo,
-                phase: None,
-                revision: 1,
-                position: i64::try_from(state.tasks.len())?,
-                created_at: now,
-                updated_at: now,
-                started_at: None,
-                reason: None,
-                dependencies: Vec::new(),
-                current_plan: None,
-                last_executor: None,
-                last_session: None,
-                delegated_by: None,
-                system_block: false,
-            };
-            let result = serde_json::to_value(&task)?;
-            state.tasks.push(task);
-            Ok(result)
-        }
+        "task.add" => add_task(state, request, now),
         "session.start" | "session.end" | "session.heartbeat" => session(state, request, now),
         _ if command.starts_with("task.") || command == "plan.register" => {
             update_task(state, request, options, now)
         }
         _ => bail!("invalid: unknown command {command}"),
     }
+}
+
+fn create_job(state: &mut Snapshot, request: &Value, now: i64) -> Result<Value> {
+    let project = &state.projects[state.project_index(required(request, "project")?)?];
+    ensure!(
+        project.archived_at.is_none(),
+        "conflict: Project is archived"
+    );
+    let id = new_id("job");
+    let title = required(request, "title")?;
+    let name = unique_name(
+        request["name"].as_str().unwrap_or(title),
+        state
+            .jobs
+            .iter()
+            .filter(|j| j.project_id == project.id)
+            .map(|j| j.name.as_str()),
+    );
+    let sequence = next_sequence(
+        now,
+        state
+            .jobs
+            .iter()
+            .filter(|j| j.project_id == project.id)
+            .map(|j| (j.created_at, j.sequence))
+            .chain(std::iter::once((
+                now,
+                *state
+                    .document_sequences
+                    .get(&crate::deletion::sequence_key(&project.id, "job", now))
+                    .unwrap_or(&0),
+            ))),
+    )?;
+    let filename = numbered_name(&name, now, sequence)?;
+    let job = Job {
+        document_path: format!("Projects/{}/Jobs/{filename}.md", project.key),
+        sequence,
+        name,
+        id,
+        project_id: project.id.clone(),
+        title: required(request, "title")?.into(),
+        goal: request["goal"].as_str().unwrap_or_default().into(),
+        status: JobStatus::Active,
+        revision: 1,
+        created_at: now,
+        updated_at: now,
+        started_at: None,
+        completed_at: None,
+        cancelled_at: None,
+        archived_at: None,
+    };
+    let result = serde_json::to_value(&job)?;
+    state.jobs.push(job);
+    Ok(result)
+}
+
+fn add_task(state: &mut Snapshot, request: &Value, now: i64) -> Result<Value> {
+    let job = &state.jobs[state.job_index(required(request, "job")?)?];
+    ensure!(
+        state.projects[state.project_index(&job.project_id)?]
+            .archived_at
+            .is_none(),
+        "conflict: Project is archived"
+    );
+    ensure!(
+        job.status == JobStatus::Active && job.archived_at.is_none(),
+        "conflict: Job is closed or archived; create a new Job for new scope"
+    );
+    let task = Task {
+        sequence: next_sequence(
+            now,
+            state
+                .tasks
+                .iter()
+                .filter(|t| t.project_id == job.project_id)
+                .map(|t| (t.created_at, t.sequence))
+                .chain(std::iter::once((
+                    now,
+                    *state
+                        .document_sequences
+                        .get(&crate::deletion::sequence_key(&job.project_id, "task", now))
+                        .unwrap_or(&0),
+                ))),
+        )?,
+        name: unique_name(
+            request["name"]
+                .as_str()
+                .unwrap_or(required(request, "title")?),
+            state
+                .tasks
+                .iter()
+                .filter(|t| t.project_id == job.project_id)
+                .map(|t| t.name.as_str()),
+        ),
+        id: new_id("task"),
+        project_id: job.project_id.clone(),
+        job_id: job.id.clone(),
+        title: required(request, "title")?.into(),
+        status: TaskStatus::Todo,
+        phase: None,
+        revision: 1,
+        position: i64::try_from(state.tasks.len())?,
+        created_at: now,
+        updated_at: now,
+        started_at: None,
+        completed_at: None,
+        reason: None,
+        dependencies: Vec::new(),
+        current_plan: None,
+        last_executor: None,
+        last_session: None,
+        delegated_by: None,
+        system_block: false,
+    };
+    let result = serde_json::to_value(&task)?;
+    state.tasks.push(task);
+    Ok(result)
 }
 
 fn register_project(state: &mut Snapshot, request: &Value, now: i64) -> Result<Value> {
@@ -100,36 +171,51 @@ fn register_project(state: &mut Snapshot, request: &Value, now: i64) -> Result<V
     }
     let name = required(request, "name")?;
     let id = new_id("prj");
-    let slug: String = name
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() {
-                c.to_ascii_lowercase()
-            } else {
-                '-'
-            }
-        })
-        .collect();
-    let slug = slug.trim_matches('-');
-    let key = format!(
-        "{}-{}",
-        if slug.is_empty() { "project" } else { slug },
-        &id[id.len() - 8..]
-    );
+    let key = unique_name(name, state.projects.iter().map(|p| p.key.as_str()));
     let project = Project {
         id,
+        name: key.clone(),
         key,
-        name: name.into(),
         root: root.into(),
         remote: request["remote"].as_str().map(str::to_owned),
         revision: 1,
         created_at: now,
+        archived_at: None,
     };
     let result = serde_json::to_value(&project)?;
     state.projects.push(project);
     Ok(result)
 }
 
+fn archive_project(
+    state: &mut Snapshot,
+    request: &Value,
+    options: &WriteOptions,
+    now: i64,
+) -> Result<Value> {
+    let i = state.project_index(required(request, "project")?)?;
+    let project = &state.projects[i];
+    check_revision(project.revision, options)?;
+    let archive = required(request, "command")? == "project.archive";
+    ensure!(
+        archive == project.archived_at.is_none(),
+        "conflict: Project archive state unchanged"
+    );
+    if archive {
+        ensure!(
+            !state
+                .jobs
+                .iter()
+                .any(|j| j.project_id == project.id && j.status == JobStatus::Active),
+            "conflict: complete or cancel all Jobs before archiving Project"
+        );
+    }
+    state.projects[i].archived_at = archive.then_some(now);
+    state.projects[i].revision += 1;
+    Ok(serde_json::to_value(&state.projects[i])?)
+}
+
+#[allow(clippy::too_many_lines)] // Keep Job validation and state changes together.
 fn update_job(
     state: &mut Snapshot,
     request: &Value,
@@ -138,6 +224,12 @@ fn update_job(
 ) -> Result<Value> {
     let i = state.job_index(required(request, "job")?)?;
     check_revision(state.jobs[i].revision, options)?;
+    ensure!(
+        state.projects[state.project_index(&state.jobs[i].project_id)?]
+            .archived_at
+            .is_none(),
+        "conflict: Project is archived"
+    );
     let command = required(request, "command")?;
     if command == "job.cancel" {
         ensure!(
@@ -157,6 +249,7 @@ fn update_job(
             .iter_mut()
             .filter(|t| t.job_id == job_id && !t.status.terminal())
         {
+            task.completed_at = Some(now);
             task.status = TaskStatus::Cancelled;
             task.phase = None;
             task.revision += 1;
@@ -166,13 +259,42 @@ fn update_job(
         state.jobs[i].status = JobStatus::Cancelled;
         state.jobs[i].cancelled_at = Some(now);
     }
+    let renamed = if command == "job.update" && request.get("name").is_some() {
+        Some(unique_name(
+            required(request, "name")?,
+            state
+                .jobs
+                .iter()
+                .filter(|j| j.project_id == state.jobs[i].project_id && j.id != state.jobs[i].id)
+                .map(|j| j.name.as_str()),
+        ))
+    } else {
+        None
+    };
+    let project_key = state.projects[state.project_index(&state.jobs[i].project_id)?]
+        .key
+        .clone();
     let job = &mut state.jobs[i];
     match command {
         "job.update" => {
             ensure!(
-                job.status == JobStatus::Active && job.archived_at.is_none(),
+                (job.status == JobStatus::Active
+                    || (renamed.is_some()
+                        && request.get("title").is_none()
+                        && request.get("goal").is_none()))
+                    && job.archived_at.is_none(),
                 "conflict: Job is closed"
             );
+            if let Some(name) = renamed {
+                let parent = job
+                    .document_path
+                    .rsplit_once('/')
+                    .context("invalid Job path")?
+                    .0;
+                let filename = numbered_name(&name, job.created_at, job.sequence)?;
+                job.document_path = format!("{parent}/{filename}.md");
+                job.name = name;
+            }
             if request.get("title").is_some() {
                 job.title = required(request, "title")?.into();
             }
@@ -187,21 +309,14 @@ fn update_job(
             );
             ensure!(job.archived_at.is_none(), "conflict: Job already archived");
             job.archived_at = Some(now);
-            let date = time::OffsetDateTime::from_unix_timestamp(now)?;
-            job.document_path = job.document_path.replace(
-                "/Active/",
-                &format!("/Archive/{}/{:02}/", date.year(), u8::from(date.month())),
-            );
+            let filename = numbered_name(&job.name, job.created_at, job.sequence)?;
+            job.document_path = format!("Projects/{project_key}/Jobs/Archived/{filename}.md");
         }
         "job.unarchive" => {
             ensure!(job.archived_at.is_some(), "conflict: Job is not archived");
             job.archived_at = None;
-            let prefix = job
-                .document_path
-                .split("/Jobs/")
-                .next()
-                .context("invalid job path")?;
-            job.document_path = format!("{prefix}/Jobs/Active/{}.md", job.id);
+            let filename = numbered_name(&job.name, job.created_at, job.sequence)?;
+            job.document_path = format!("Projects/{project_key}/Jobs/{filename}.md");
         }
         _ => {}
     }
@@ -239,6 +354,12 @@ fn update_task(
     let j = state.job_index(&task.job_id)?;
     check_revision(task.revision, options)?;
     ensure!(
+        state.projects[state.project_index(&task.project_id)?]
+            .archived_at
+            .is_none(),
+        "conflict: Project is archived"
+    );
+    ensure!(
         state.jobs[j].archived_at.is_none() && state.jobs[j].status != JobStatus::Cancelled,
         "conflict: Job is archived or cancelled"
     );
@@ -273,6 +394,7 @@ fn update_task(
             );
             state.tasks[i].phase = Some(TaskPhase::Executing);
             state.tasks[i].started_at.get_or_insert(now);
+            state.jobs[j].started_at.get_or_insert(now);
         }
         "task.heartbeat" => {
             let lease = state
@@ -284,9 +406,28 @@ fn update_task(
         }
         "task.update" => {
             ensure!(
-                state.jobs[j].status == JobStatus::Active && !task.status.terminal(),
+                (state.jobs[j].status == JobStatus::Active && !task.status.terminal())
+                    || (request.get("name").is_some()
+                        && request.get("title").is_none()
+                        && request.get("position").is_none()),
                 "conflict: Task is closed"
             );
+            if request.get("name").is_some() {
+                let name = unique_name(
+                    required(request, "name")?,
+                    state
+                        .tasks
+                        .iter()
+                        .filter(|t| t.project_id == task.project_id && t.id != task.id)
+                        .map(|t| t.name.as_str()),
+                );
+                let filename = numbered_name(&name, task.created_at, task.sequence)?;
+                for plan in state.plans.iter_mut().filter(|p| p.task_id == task.id) {
+                    let parent = plan.path.rsplit_once('/').context("invalid Plan path")?.0;
+                    plan.path = format!("{parent}/{filename}.md");
+                }
+                state.tasks[i].name = name;
+            }
             if request.get("title").is_some() {
                 state.tasks[i].title = required(request, "title")?.into();
             }
@@ -338,6 +479,7 @@ fn update_task(
                 "conflict: Plan version changed"
             );
             state.tasks[i].current_plan = Some(plan.id.clone());
+            state.plans.retain(|p| p.task_id != task.id);
             state.plans.push(plan.clone());
             state.tasks[i].revision += 1;
             state.tasks[i].updated_at = now;
@@ -359,6 +501,7 @@ fn update_task(
                     .any(|t| t.started_at.is_some() && depends_on(state, &t.id, &task.id)),
                 "conflict: a downstream Task has already started"
             );
+            state.tasks[i].completed_at = None;
             state.tasks[i].status = TaskStatus::Todo;
             state.tasks[i].phase = None;
             state.tasks[i].reason = None;
@@ -393,6 +536,7 @@ fn update_task(
             } else {
                 None
             };
+            state.tasks[i].completed_at = next.terminal().then_some(now);
             state.tasks[i].status = next;
             state.tasks[i].phase = None;
             state.tasks[i].reason = reason;
