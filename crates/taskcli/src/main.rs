@@ -9,7 +9,8 @@ use agentix_task::{
     expand_home,
 };
 use anyhow::{Context, Result, bail, ensure};
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
+use clap_complete::Shell;
 use serde_json::{Value, json};
 
 #[derive(Parser)]
@@ -18,7 +19,7 @@ use serde_json::{Value, json};
     about = "Coordinate agent tasks with SQLite and read-only Markdown boards"
 )]
 struct Cli {
-    #[arg(long, global = true)]
+    #[arg(long, global = true, value_hint = clap::ValueHint::FilePath)]
     config: Option<PathBuf>,
     #[arg(long, global = true)]
     json: bool,
@@ -44,6 +45,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Print a shell completion script without loading task configuration.
+    Completions {
+        #[arg(value_enum)]
+        shell: Shell,
+    },
     Init(Init),
     Doctor,
     Sync,
@@ -83,11 +89,11 @@ enum Command {
 struct Init {
     #[arg(long, value_enum)]
     format: Format,
-    #[arg(long)]
+    #[arg(long, value_hint = clap::ValueHint::DirPath)]
     root: PathBuf,
-    #[arg(long, default_value = ".")]
+    #[arg(long, default_value = ".", value_hint = clap::ValueHint::DirPath)]
     directory: PathBuf,
-    #[arg(long)]
+    #[arg(long, value_hint = clap::ValueHint::FilePath)]
     database: Option<PathBuf>,
 }
 #[derive(Clone, Copy, ValueEnum)]
@@ -101,7 +107,7 @@ enum ProjectCommand {
     Register {
         #[arg(long)]
         name: Option<String>,
-        #[arg(long)]
+        #[arg(long, value_hint = clap::ValueHint::DirPath)]
         root: Option<PathBuf>,
     },
     List,
@@ -219,7 +225,7 @@ struct PlanBody {
         allow_hyphen_values = true
     )]
     body: Option<String>,
-    #[arg(long)]
+    #[arg(long, value_hint = clap::ValueHint::FilePath)]
     file: Option<PathBuf>,
 }
 #[derive(Subcommand)]
@@ -249,6 +255,15 @@ enum HookCommand {
 #[tokio::main]
 async fn main() -> ExitCode {
     let cli = Cli::parse();
+    if let Command::Completions { shell } = &cli.command {
+        clap_complete::generate(
+            *shell,
+            &mut Cli::command(),
+            "taskcli",
+            &mut std::io::stdout(),
+        );
+        return ExitCode::SUCCESS;
+    }
     match run(&cli).await {
         Ok(value) => {
             if cli.json {
@@ -377,7 +392,7 @@ async fn run(cli: &Cli) -> Result<Value> {
             context(cli, &service, task.as_deref(), job.as_deref()).await
         }
         Command::Hook { action } => hook(cli, &service, action).await,
-        Command::Init(_) => unreachable!(),
+        Command::Init(_) | Command::Completions { .. } => unreachable!(),
     }
 }
 

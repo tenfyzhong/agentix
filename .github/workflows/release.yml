@@ -125,30 +125,36 @@ jobs:
           RELEASE_TAG: ${{ needs.resolve-version.outputs.tag }}
           TARGET: ${{ matrix.target }}
         run: |
-          mkdir -p dist/stage
-          cp README.md LICENSE config/agentix.example.toml dist/stage/
-          cp config/taskcli.example.toml dist/stage/
-          mkdir -p dist/stage/plugins/agent-task-manager dist/stage/docs
-          cp docs/task-board.md dist/stage/docs/
-          git archive HEAD plugins/agent-task-manager | tar -x -C dist/stage
-          cp -R completions dist/stage/
-          if [[ "${{ runner.os }}" == "Windows" ]]; then
-            cp "target/$TARGET/release/agentix.exe" dist/stage/
-            cp "target/$TARGET/release/taskcli.exe" dist/stage/
-            tar -C dist/stage -czf "dist/agentix-${RELEASE_TAG}-${TARGET}.tar.gz" .
-            tar -C dist/stage -a -cf "dist/agentix-${RELEASE_TAG}-${TARGET}.zip" .
-          else
-            cp "target/$TARGET/release/agentix" dist/stage/
-            cp "target/$TARGET/release/taskcli" dist/stage/
-            tar -C dist/stage -czf "dist/agentix-${RELEASE_TAG}-${TARGET}.tar.gz" .
-          fi
+          for binary in agentix taskcli; do
+            staging="dist/stage/$binary"
+            mkdir -p "$staging/completions"
+            cp README.md LICENSE "config/$binary.example.toml" "$staging/"
+            cp "completions/$binary.bash" "completions/_$binary" \
+              "completions/$binary.fish" "$staging/completions/"
+            if [[ "$binary" == "taskcli" ]]; then
+              mkdir -p "$staging/docs"
+              cp docs/task-board.md docs/task-workflow-mechanisms.md "$staging/docs/"
+              git archive HEAD plugins/agent-task-manager | tar -x -C "$staging"
+            fi
+            executable="$binary"
+            if [[ "$RUNNER_OS" == "Windows" ]]; then
+              executable="${binary}.exe"
+            fi
+            cp "target/$TARGET/release/$executable" "$staging/"
+            tar -C "$staging" -czf "dist/${binary}-${RELEASE_TAG}-${TARGET}.tar.gz" .
+            if [[ "$RUNNER_OS" == "Windows" ]]; then
+              tar -C "$staging" -a -cf "dist/${binary}-${RELEASE_TAG}-${TARGET}.zip" .
+            fi
+          done
       - name: Upload release artifact
         uses: actions/upload-artifact@v4
         with:
-          name: agentix-${{ matrix.target }}
+          name: release-${{ matrix.target }}
           path: |
             dist/agentix-*.tar.gz
             dist/agentix-*.zip
+            dist/taskcli-*.tar.gz
+            dist/taskcli-*.zip
           if-no-files-found: error
 
   publish-release:
@@ -162,12 +168,12 @@ jobs:
       - name: Download release artifacts
         uses: actions/download-artifact@v4
         with:
-          pattern: agentix-*
+          pattern: release-*
           path: dist
           merge-multiple: true
       - name: Create checksums
         working-directory: dist
-        run: sha256sum agentix-* > SHA256SUMS
+        run: sha256sum agentix-* taskcli-* > SHA256SUMS
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}

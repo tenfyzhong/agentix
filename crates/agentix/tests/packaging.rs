@@ -47,8 +47,8 @@ fn release_workflow_builds_tag_aligned_native_archives() {
     ] {
         assert!(workflow.contains(target), "missing release target {target}");
     }
-    assert!(workflow.contains("agentix-${RELEASE_TAG}-${TARGET}.tar.gz"));
-    assert!(workflow.contains("agentix-${RELEASE_TAG}-${TARGET}.zip"));
+    assert!(workflow.contains("${binary}-${RELEASE_TAG}-${TARGET}.tar.gz"));
+    assert!(workflow.contains("${binary}-${RELEASE_TAG}-${TARGET}.zip"));
     assert!(workflow.contains("gh release create"));
     assert!(workflow.contains("gh release upload"));
     assert!(workflow.lines().any(|line| line == "  publish-homebrew:"));
@@ -62,13 +62,267 @@ fn workspace_uses_a_development_version_until_release_packaging() {
 }
 
 #[test]
-fn release_archives_include_standalone_taskcli_and_host_plugin() {
+fn release_uploads_and_checksums_cover_both_binary_archives() {
     let workflow = repository_file(".github/workflows/release.yml");
     assert!(workflow.contains("--package taskcli"));
-    assert!(workflow.contains("release/taskcli.exe"));
-    assert!(workflow.contains("release/taskcli\""));
-    assert!(workflow.contains("plugins/agent-task-manager"));
-    assert!(workflow.contains("config/taskcli.example.toml"));
+    assert!(workflow.contains("name: release-${{ matrix.target }}"));
+    assert!(workflow.contains("pattern: release-*"));
+    for binary in ["agentix", "taskcli"] {
+        for extension in ["tar.gz", "zip"] {
+            assert!(workflow.contains(&format!("dist/{binary}-*.{extension}")));
+        }
+    }
+    assert!(workflow.contains("sha256sum agentix-* taskcli-* > SHA256SUMS"));
+}
+
+#[cfg(unix)]
+mod release_archives {
+    use super::*;
+    use std::collections::BTreeSet;
+
+    const PLUGIN_FILES: [&str; 12] = [
+        ".codex-plugin/plugin.json",
+        ".claude-plugin/plugin.json",
+        "package.json",
+        "package-lock.json",
+        "README.md",
+        "runtime.mjs",
+        "hooks/hooks.json",
+        "hooks/run.mjs",
+        "extensions/pi.ts",
+        "extensions/omp.ts",
+        "skills/agent-task-manager/SKILL.md",
+        "skills/agent-task-manager/references/commands.md",
+    ];
+
+    fn step_script(workflow: &str, name: &str) -> String {
+        let step = workflow
+            .split(&format!("      - name: {name}\n"))
+            .nth(1)
+            .unwrap_or_else(|| panic!("missing workflow step: {name}"))
+            .split("\n      - name:")
+            .next()
+            .unwrap();
+        let script = step.split_once("        run: ").unwrap().1;
+        if let Some(block) = script.strip_prefix("|\n") {
+            block
+                .lines()
+                .map(|line| line.strip_prefix("          ").unwrap_or(line))
+                .collect::<Vec<_>>()
+                .join("\n")
+        } else {
+            script.trim().to_owned()
+        }
+    }
+
+    fn fixture_file(root: &Path, path: &str, body: &[u8]) {
+        let path = root.join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, body).unwrap();
+    }
+
+    fn archive_files(path: &Path, tar: &str) -> BTreeSet<String> {
+        assert!(path.is_file(), "missing archive: {}", path.display());
+        let output = Command::new(tar).arg("-tf").arg(path).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .lines()
+            .filter(|line| !line.ends_with('/'))
+            .map(|line| line.trim_start_matches("./").to_owned())
+            .collect()
+    }
+
+    fn git(root: &Path, args: &[&str]) {
+        let output = Command::new("git")
+            .args([
+                "-c",
+                "user.name=Release Test",
+                "-c",
+                "user.email=release@example.com",
+                "-c",
+                "commit.gpgsign=false",
+                "-c",
+                "core.hooksPath=/dev/null",
+            ])
+            .args(args)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .current_dir(root)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn prepare_repository(target: &str, suffix: &str) -> tempfile::TempDir {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        for path in [
+            "README.md",
+            "LICENSE",
+            "docs/task-board.md",
+            "docs/task-workflow-mechanisms.md",
+        ] {
+            fixture_file(root, path, repository_file(path).as_bytes());
+        }
+        for binary in ["agentix", "taskcli"] {
+            fixture_file(
+                root,
+                &format!("config/{binary}.example.toml"),
+                binary.as_bytes(),
+            );
+            fixture_file(
+                root,
+                &format!("target/{target}/release/{binary}{suffix}"),
+                binary.as_bytes(),
+            );
+            for file in [
+                format!("{binary}.bash"),
+                format!("_{binary}"),
+                format!("{binary}.fish"),
+            ] {
+                let path = format!("completions/{file}");
+                fixture_file(root, &path, repository_file(&path).as_bytes());
+            }
+        }
+        for file in PLUGIN_FILES {
+            let path = format!("plugins/agent-task-manager/{file}");
+            fixture_file(root, &path, repository_file(&path).as_bytes());
+        }
+        git(root, &["init", "--initial-branch=test/release-packaging"]);
+        git(root, &["add", "plugins"]);
+        git(
+            root,
+            &["commit", "-s", "-m", "test: prepare release plugin fixture"],
+        );
+        fixture_file(
+            root,
+            "plugins/agent-task-manager/node_modules/untracked.txt",
+            b"exclude me",
+        );
+        directory
+    }
+
+    fn expected_archive_files(binary: &str, suffix: &str) -> BTreeSet<String> {
+        let mut expected = BTreeSet::from([
+            format!("{binary}{suffix}"),
+            "README.md".into(),
+            "LICENSE".into(),
+            format!("{binary}.example.toml"),
+            format!("completions/{binary}.bash"),
+            format!("completions/_{binary}"),
+            format!("completions/{binary}.fish"),
+        ]);
+        if binary == "taskcli" {
+            expected.extend([
+                "docs/task-board.md".into(),
+                "docs/task-workflow-mechanisms.md".into(),
+            ]);
+            expected.extend(PLUGIN_FILES.map(|file| format!("plugins/agent-task-manager/{file}")));
+        }
+        expected
+    }
+
+    #[test]
+    fn packaging_keeps_binaries_and_resources_separate_and_checksums_both_archives() {
+        let workflow = repository_file(".github/workflows/release.yml");
+        let packaging = step_script(&workflow, "Package release binary");
+        let checksums = step_script(&workflow, "Create checksums");
+        for (runner, target) in [
+            ("macOS", "aarch64-apple-darwin"),
+            ("Linux", "x86_64-unknown-linux-gnu"),
+            ("Linux", "aarch64-unknown-linux-gnu"),
+            // macOS and Windows both ship libarchive tar with ZIP support.
+            #[cfg(target_os = "macos")]
+            ("Windows", "x86_64-pc-windows-msvc"),
+        ] {
+            let suffix = if runner == "Windows" { ".exe" } else { "" };
+            let extensions: &[&str] = if runner == "Windows" {
+                &["tar.gz", "zip"]
+            } else {
+                &["tar.gz"]
+            };
+            let directory = prepare_repository(target, suffix);
+            let root = directory.path();
+            let tar = if runner == "Windows" { "bsdtar" } else { "tar" };
+            let script = if runner == "Windows" {
+                format!("tar() {{ bsdtar \"$@\"; }}\n{packaging}")
+            } else {
+                packaging.clone()
+            };
+            let output = Command::new("bash")
+                .args(["--noprofile", "--norc", "-e", "-o", "pipefail", "-c"])
+                .arg(script)
+                .env("RUNNER_OS", runner)
+                .env("RELEASE_TAG", "1.2.3")
+                .env("TARGET", target)
+                .current_dir(root)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            for binary in ["agentix", "taskcli"] {
+                let expected = expected_archive_files(binary, suffix);
+                for extension in extensions {
+                    let archive = root.join(format!("dist/{binary}-1.2.3-{target}.{extension}"));
+                    assert_eq!(
+                        archive_files(&archive, tar),
+                        expected,
+                        "unexpected contents of {}",
+                        archive.display()
+                    );
+                    if *extension == "zip" {
+                        assert!(fs::read(archive).unwrap().starts_with(b"PK\x03\x04"));
+                    }
+                }
+            }
+            let output = Command::new("bash")
+                .args([
+                    "--noprofile",
+                    "--norc",
+                    "-e",
+                    "-o",
+                    "pipefail",
+                    "-c",
+                    &checksums,
+                ])
+                .current_dir(root.join("dist"))
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let sums = fs::read_to_string(root.join("dist/SHA256SUMS")).unwrap();
+            assert_eq!(sums.lines().count(), 2 * extensions.len());
+            for binary in ["agentix", "taskcli"] {
+                for extension in extensions {
+                    assert!(sums.contains(&format!("{binary}-1.2.3-{target}.{extension}")));
+                }
+            }
+            assert!(
+                Command::new("sha256sum")
+                    .args(["--check", "SHA256SUMS"])
+                    .current_dir(root.join("dist"))
+                    .output()
+                    .unwrap()
+                    .status
+                    .success()
+            );
+        }
+    }
 }
 
 #[test]

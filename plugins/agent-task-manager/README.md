@@ -17,25 +17,53 @@ Codex and Claude share one hook file. Their manifests intentionally do not add a
 
 Install Node.js 22+ and put `taskcli` on PATH, or set `TASKCLI_BIN` to its executable path. Initialize taskcli with your chosen document directory before enabling the plugin. Set `TASKCLI_CONFIG` if its configuration is not in the default location.
 
-For Codex, install this directory through its plugin installation flow, enable the plugin, then use `/hooks` to review and trust its hook definitions. Installing a plugin does not bypass hook trust. Keep the default `hooks/hooks.json` in place; no user/project hook configuration needs to be merged. See [Codex bundled hooks](https://learn.chatgpt.com/docs/hooks#plugin-bundled-hooks).
+### Codex: marketplace
 
-For Claude Code, load the complete directory:
+The repository provides the `agentix` marketplace in `.agents/plugins/marketplace.json`. From a checkout containing that catalog, add the repository or worktree root, then install the plugin:
 
 ```sh
-claude --plugin-dir /absolute/path/to/agent-task-manager
+codex plugin marketplace add /absolute/path/to/agentix
+codex plugin add agent-task-manager@agentix
+codex plugin list
 ```
 
-Review the discovered plugin hooks with `/hooks`. The shared file follows [Claude's default plugin hook location](https://code.claude.com/docs/en/plugins-reference#hooks).
+Use the repository root, not `plugins/agent-task-manager`, as the marketplace path. Start a new Codex thread after installation, then use `/hooks` to review and trust the bundled hooks. Installation does not bypass hook trust. See [Codex marketplace commands](https://learn.chatgpt.com/docs/developer-commands#codex-plugin-marketplace) and [plugin commands](https://learn.chatgpt.com/docs/developer-commands#codex-plugin).
 
-For local Pi/OMP packages, install dependencies first, then use the relevant host command:
+### Claude Code: marketplace
+
+The repository also provides `.claude-plugin/marketplace.json` with the same marketplace and plugin names. Run these commands in your terminal:
+
+```sh
+claude plugin marketplace add /absolute/path/to/agentix
+claude plugin install agent-task-manager@agentix
+claude plugin list
+```
+
+Inside Claude Code, the equivalent commands start with `/plugin`. Reload plugins if the host requests it, and review the discovered hooks with `/hooks`. See [Claude Code marketplace installation](https://code.claude.com/docs/en/plugin-marketplaces#manage-marketplaces-from-the-cli).
+
+For either host, once these catalogs are published on the repository's default branch, you can replace the local marketplace path with `tenfyzhong/agentix`. Until then, use the checkout containing the catalogs. Source checkouts contain both catalogs; `taskcli-*` release archives provide the plugin directory, not a marketplace root. The `agentix-*` archives do not include the plugin. Both hosts load the same `hooks/hooks.json`; no per-project hook files need to be copied.
+
+### Pi: install
+
+Use the complete plugin directory from a source checkout or extracted taskcli release archive. Install its dependencies, then register it with Pi:
 
 ```sh
 npm ci --ignore-scripts --prefix /absolute/path/to/agent-task-manager
 pi install /absolute/path/to/agent-task-manager
-omp plugin link /absolute/path/to/agent-task-manager
 ```
 
-The last two commands are alternatives, one for each host. Restart or reload the host after installation. The [OMP package loader](https://github.com/can1357/oh-my-pi/blob/main/docs/skills/authoring-extensions.md#packagejson-manifest) selects `omp.extensions`; Pi selects `pi.extensions`. If loading an individual `.ts` file with `-e` instead, also enable the sibling skill directory.
+The local package stays at that path; Pi reads `pi.extensions` and `pi.skills` from `package.json`. Restart or reload Pi after installation. See [Pi package installation](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/packages.md#install-and-manage).
+
+### OMP: install
+
+Use OMP's `install` command for the complete package:
+
+```sh
+npm ci --ignore-scripts --prefix /absolute/path/to/agent-task-manager
+omp install /absolute/path/to/agent-task-manager
+```
+
+OMP links local packages and reads `omp.extensions` and `omp.skills`. Keep the package at a stable path and restart OMP after installation. See the [OMP install command](https://github.com/can1357/oh-my-pi/blob/main/packages/coding-agent/src/commands/install.ts) and [package loader](https://github.com/can1357/oh-my-pi/blob/main/docs/skills/authoring-extensions.md#packagejson-manifest). Use a version whose `omp install --help` lists local paths as supported targets.
 
 An npm-installed copy uses `npm install --ignore-scripts` if dependencies need reinstalling: npm does not ship `package-lock.json`. Source and release copies include the lockfile and can use `npm ci`. The separate Obsidian skill is still required when an agent edits Obsidian Plan/Notes bodies.
 
@@ -60,7 +88,7 @@ The shared `SessionEnd` hook has a three-second timeout to respect Codex's shutd
 
 ## Validation
 
-From the repository root, run `make check` with Node.js 24+ and npm. Tests inspect default hook discovery, import the manifest-selected Pi/OMP extensions, and verify the npm package file list. Cargo additionally exercises the configured commands with the compiled taskcli, one host root variable at a time, from an unrelated working directory and a plugin path containing spaces/Unicode. Linux/macOS CI exercises both sh and fish; Windows tests execute the configured command through `cmd.exe` rather than bypassing it.
+From the repository root, run `make check` with Node.js 24+ and npm. Tests validate both marketplace entries, inspect default hook discovery, import the manifest-selected Pi/OMP extensions, and verify the npm package file list. Cargo additionally exercises the configured commands with the compiled taskcli, one host root variable at a time, from an unrelated working directory and a plugin path containing spaces/Unicode. Linux/macOS CI exercises both sh and fish; Windows tests execute the configured command through `cmd.exe` rather than bypassing it.
 
 To additionally exercise a Unix hook shell such as fish:
 

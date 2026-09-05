@@ -1,0 +1,2287 @@
+#compdef taskcli
+
+autoload -U is-at-least
+
+_taskcli() {
+    typeset -A opt_args
+    typeset -a _arguments_options
+    local ret=1
+
+    if is-at-least 5.2; then
+        _arguments_options=(-s -S -C)
+    else
+        _arguments_options=(-s -C)
+    fi
+
+    local context curcontext="$curcontext" state line
+    _arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'-V[Print version]' \
+'--version[Print version]' \
+":: :_taskcli_commands" \
+"*::: :->taskcli" \
+&& ret=0
+    case $state in
+    (taskcli)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskcli-command-$line[1]:"
+        case $line[1] in
+            (completions)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':shell:(bash elvish fish powershell zsh)' \
+&& ret=0
+;;
+(init)
+_arguments "${_arguments_options[@]}" : \
+'--format=[]:FORMAT:(obsidian markdown)' \
+'--root=[]:ROOT:_files -/' \
+'--directory=[]:DIRECTORY:_files -/' \
+'--database=[]:DATABASE:_files' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(doctor)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(sync)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(project)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_taskcli__subcmd__project_commands" \
+"*::: :->project" \
+&& ret=0
+
+    case $state in
+    (project)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskcli-project-command-$line[1]:"
+        case $line[1] in
+            (register)
+_arguments "${_arguments_options[@]}" : \
+'--name=[]:NAME:_default' \
+'--root=[]:ROOT:_files -/' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(show)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_taskcli__subcmd__project__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskcli-project-help-command-$line[1]:"
+        case $line[1] in
+            (register)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(show)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(job)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_taskcli__subcmd__job_commands" \
+"*::: :->job" \
+&& ret=0
+
+    case $state in
+    (job)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskcli-job-command-$line[1]:"
+        case $line[1] in
+            (create)
+_arguments "${_arguments_options[@]}" : \
+'--title=[]:TITLE:_default' \
+'--goal=[]:GOAL:_default' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(update)
+_arguments "${_arguments_options[@]}" : \
+'--title=[]:TITLE:_default' \
+'--goal=[]:GOAL:_default' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+'--period=[]:PERIOD:_default' \
+'--created-from=[]:CREATED_FROM:_default' \
+'--created-to=[]:CREATED_TO:_default' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'(--completed --archived)--active[]' \
+'(--archived)--completed[]' \
+'--archived[]' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(show)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(cancel)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(archive)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(unarchive)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_taskcli__subcmd__job__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskcli-job-help-command-$line[1]:"
+        case $line[1] in
+            (create)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(update)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(show)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(cancel)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(archive)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(unarchive)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(task)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_taskcli__subcmd__task_commands" \
+"*::: :->task" \
+&& ret=0
+
+    case $state in
+    (task)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskcli-task-command-$line[1]:"
+        case $line[1] in
+            (add)
+_arguments "${_arguments_options[@]}" : \
+'--job=[]:JOB:_default' \
+'--title=[]:TITLE:_default' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(update)
+_arguments "${_arguments_options[@]}" : \
+'--title=[]:TITLE:_default' \
+'--position=[]:POSITION:_default' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+'--job=[]:JOB:_default' \
+'--status=[]:STATUS:_default' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--ready[]' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(show)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(depend)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+':dependency:_default' \
+&& ret=0
+;;
+(undepend)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+':dependency:_default' \
+&& ret=0
+;;
+(claim)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(start)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(heartbeat)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(release)
+_arguments "${_arguments_options[@]}" : \
+'--reason=[]:REASON:_default' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(block)
+_arguments "${_arguments_options[@]}" : \
+'--reason=[]:REASON:_default' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(wait)
+_arguments "${_arguments_options[@]}" : \
+'--reason=[]:REASON:_default' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(fail)
+_arguments "${_arguments_options[@]}" : \
+'--reason=[]:REASON:_default' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(done)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(cancel)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(retry)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(reopen)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_taskcli__subcmd__task__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskcli-task-help-command-$line[1]:"
+        case $line[1] in
+            (add)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(update)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(show)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(depend)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(undepend)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(claim)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(start)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(heartbeat)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(release)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(block)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(wait)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(fail)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(done)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(cancel)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(retry)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(reopen)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(plan)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_taskcli__subcmd__plan_commands" \
+"*::: :->plan" \
+&& ret=0
+
+    case $state in
+    (plan)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskcli-plan-command-$line[1]:"
+        case $line[1] in
+            (create)
+_arguments "${_arguments_options[@]}" : \
+'(--file)--body=[]:BODY:_default' \
+'--file=[]:FILE:_files' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':task:_default' \
+&& ret=0
+;;
+(revise)
+_arguments "${_arguments_options[@]}" : \
+'(--file)--body=[]:BODY:_default' \
+'--file=[]:FILE:_files' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':task:_default' \
+&& ret=0
+;;
+(show)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':task:_default' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_taskcli__subcmd__plan__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskcli-plan-help-command-$line[1]:"
+        case $line[1] in
+            (create)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(revise)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(show)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(event)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_taskcli__subcmd__event_commands" \
+"*::: :->event" \
+&& ret=0
+
+    case $state in
+    (event)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskcli-event-command-$line[1]:"
+        case $line[1] in
+            (list)
+_arguments "${_arguments_options[@]}" : \
+'--job=[]:JOB:_default' \
+'--after=[]:AFTER:_default' \
+'--limit=[]:LIMIT:_default' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_taskcli__subcmd__event__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskcli-event-help-command-$line[1]:"
+        case $line[1] in
+            (list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(context)
+_arguments "${_arguments_options[@]}" : \
+'--task=[]:TASK:_default' \
+'--job=[]:JOB:_default' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(hook)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_taskcli__subcmd__hook_commands" \
+"*::: :->hook" \
+&& ret=0
+
+    case $state in
+    (hook)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskcli-hook-command-$line[1]:"
+        case $line[1] in
+            (session-start)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(session-end)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(heartbeat)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_taskcli__subcmd__hook__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskcli-hook-help-command-$line[1]:"
+        case $line[1] in
+            (session-start)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(session-end)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(heartbeat)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_taskcli__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskcli-help-command-$line[1]:"
+        case $line[1] in
+            (completions)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(init)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(doctor)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(sync)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(project)
+_arguments "${_arguments_options[@]}" : \
+":: :_taskcli__subcmd__help__subcmd__project_commands" \
+"*::: :->project" \
+&& ret=0
+
+    case $state in
+    (project)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskcli-help-project-command-$line[1]:"
+        case $line[1] in
+            (register)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(show)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(job)
+_arguments "${_arguments_options[@]}" : \
+":: :_taskcli__subcmd__help__subcmd__job_commands" \
+"*::: :->job" \
+&& ret=0
+
+    case $state in
+    (job)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskcli-help-job-command-$line[1]:"
+        case $line[1] in
+            (create)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(update)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(show)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(cancel)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(archive)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(unarchive)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(task)
+_arguments "${_arguments_options[@]}" : \
+":: :_taskcli__subcmd__help__subcmd__task_commands" \
+"*::: :->task" \
+&& ret=0
+
+    case $state in
+    (task)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskcli-help-task-command-$line[1]:"
+        case $line[1] in
+            (add)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(update)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(show)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(depend)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(undepend)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(claim)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(start)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(heartbeat)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(release)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(block)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(wait)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(fail)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(done)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(cancel)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(retry)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(reopen)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(plan)
+_arguments "${_arguments_options[@]}" : \
+":: :_taskcli__subcmd__help__subcmd__plan_commands" \
+"*::: :->plan" \
+&& ret=0
+
+    case $state in
+    (plan)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskcli-help-plan-command-$line[1]:"
+        case $line[1] in
+            (create)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(revise)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(show)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(event)
+_arguments "${_arguments_options[@]}" : \
+":: :_taskcli__subcmd__help__subcmd__event_commands" \
+"*::: :->event" \
+&& ret=0
+
+    case $state in
+    (event)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskcli-help-event-command-$line[1]:"
+        case $line[1] in
+            (list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(context)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(hook)
+_arguments "${_arguments_options[@]}" : \
+":: :_taskcli__subcmd__help__subcmd__hook_commands" \
+"*::: :->hook" \
+&& ret=0
+
+    case $state in
+    (hook)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskcli-help-hook-command-$line[1]:"
+        case $line[1] in
+            (session-start)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(session-end)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(heartbeat)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+}
+
+(( $+functions[_taskcli_commands] )) ||
+_taskcli_commands() {
+    local commands; commands=(
+'completions:Print a shell completion script without loading task configuration' \
+'init:' \
+'doctor:' \
+'sync:' \
+'project:' \
+'job:' \
+'task:' \
+'plan:' \
+'event:' \
+'context:' \
+'hook:' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'taskcli commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__completions_commands] )) ||
+_taskcli__subcmd__completions_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli completions commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__context_commands] )) ||
+_taskcli__subcmd__context_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli context commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__doctor_commands] )) ||
+_taskcli__subcmd__doctor_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli doctor commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__event_commands] )) ||
+_taskcli__subcmd__event_commands() {
+    local commands; commands=(
+'list:' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'taskcli event commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__event__subcmd__help_commands] )) ||
+_taskcli__subcmd__event__subcmd__help_commands() {
+    local commands; commands=(
+'list:' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'taskcli event help commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__event__subcmd__help__subcmd__help_commands] )) ||
+_taskcli__subcmd__event__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli event help help commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__event__subcmd__help__subcmd__list_commands] )) ||
+_taskcli__subcmd__event__subcmd__help__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli event help list commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__event__subcmd__list_commands] )) ||
+_taskcli__subcmd__event__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli event list commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help_commands] )) ||
+_taskcli__subcmd__help_commands() {
+    local commands; commands=(
+'completions:Print a shell completion script without loading task configuration' \
+'init:' \
+'doctor:' \
+'sync:' \
+'project:' \
+'job:' \
+'task:' \
+'plan:' \
+'event:' \
+'context:' \
+'hook:' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'taskcli help commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__completions_commands] )) ||
+_taskcli__subcmd__help__subcmd__completions_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help completions commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__context_commands] )) ||
+_taskcli__subcmd__help__subcmd__context_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help context commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__doctor_commands] )) ||
+_taskcli__subcmd__help__subcmd__doctor_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help doctor commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__event_commands] )) ||
+_taskcli__subcmd__help__subcmd__event_commands() {
+    local commands; commands=(
+'list:' \
+    )
+    _describe -t commands 'taskcli help event commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__event__subcmd__list_commands] )) ||
+_taskcli__subcmd__help__subcmd__event__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help event list commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__help_commands] )) ||
+_taskcli__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help help commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__hook_commands] )) ||
+_taskcli__subcmd__help__subcmd__hook_commands() {
+    local commands; commands=(
+'session-start:' \
+'session-end:' \
+'heartbeat:' \
+    )
+    _describe -t commands 'taskcli help hook commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__hook__subcmd__heartbeat_commands] )) ||
+_taskcli__subcmd__help__subcmd__hook__subcmd__heartbeat_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help hook heartbeat commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__hook__subcmd__session-end_commands] )) ||
+_taskcli__subcmd__help__subcmd__hook__subcmd__session-end_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help hook session-end commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__hook__subcmd__session-start_commands] )) ||
+_taskcli__subcmd__help__subcmd__hook__subcmd__session-start_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help hook session-start commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__init_commands] )) ||
+_taskcli__subcmd__help__subcmd__init_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help init commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__job_commands] )) ||
+_taskcli__subcmd__help__subcmd__job_commands() {
+    local commands; commands=(
+'create:' \
+'update:' \
+'list:' \
+'show:' \
+'cancel:' \
+'archive:' \
+'unarchive:' \
+    )
+    _describe -t commands 'taskcli help job commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__job__subcmd__archive_commands] )) ||
+_taskcli__subcmd__help__subcmd__job__subcmd__archive_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help job archive commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__job__subcmd__cancel_commands] )) ||
+_taskcli__subcmd__help__subcmd__job__subcmd__cancel_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help job cancel commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__job__subcmd__create_commands] )) ||
+_taskcli__subcmd__help__subcmd__job__subcmd__create_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help job create commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__job__subcmd__list_commands] )) ||
+_taskcli__subcmd__help__subcmd__job__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help job list commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__job__subcmd__show_commands] )) ||
+_taskcli__subcmd__help__subcmd__job__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help job show commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__job__subcmd__unarchive_commands] )) ||
+_taskcli__subcmd__help__subcmd__job__subcmd__unarchive_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help job unarchive commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__job__subcmd__update_commands] )) ||
+_taskcli__subcmd__help__subcmd__job__subcmd__update_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help job update commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__plan_commands] )) ||
+_taskcli__subcmd__help__subcmd__plan_commands() {
+    local commands; commands=(
+'create:' \
+'revise:' \
+'show:' \
+    )
+    _describe -t commands 'taskcli help plan commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__plan__subcmd__create_commands] )) ||
+_taskcli__subcmd__help__subcmd__plan__subcmd__create_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help plan create commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__plan__subcmd__revise_commands] )) ||
+_taskcli__subcmd__help__subcmd__plan__subcmd__revise_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help plan revise commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__plan__subcmd__show_commands] )) ||
+_taskcli__subcmd__help__subcmd__plan__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help plan show commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__project_commands] )) ||
+_taskcli__subcmd__help__subcmd__project_commands() {
+    local commands; commands=(
+'register:' \
+'list:' \
+'show:' \
+    )
+    _describe -t commands 'taskcli help project commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__project__subcmd__list_commands] )) ||
+_taskcli__subcmd__help__subcmd__project__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help project list commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__project__subcmd__register_commands] )) ||
+_taskcli__subcmd__help__subcmd__project__subcmd__register_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help project register commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__project__subcmd__show_commands] )) ||
+_taskcli__subcmd__help__subcmd__project__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help project show commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__sync_commands] )) ||
+_taskcli__subcmd__help__subcmd__sync_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help sync commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__task_commands] )) ||
+_taskcli__subcmd__help__subcmd__task_commands() {
+    local commands; commands=(
+'add:' \
+'update:' \
+'list:' \
+'show:' \
+'depend:' \
+'undepend:' \
+'claim:' \
+'start:' \
+'heartbeat:' \
+'release:' \
+'block:' \
+'wait:' \
+'fail:' \
+'done:' \
+'cancel:' \
+'retry:' \
+'reopen:' \
+    )
+    _describe -t commands 'taskcli help task commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__task__subcmd__add_commands] )) ||
+_taskcli__subcmd__help__subcmd__task__subcmd__add_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help task add commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__task__subcmd__block_commands] )) ||
+_taskcli__subcmd__help__subcmd__task__subcmd__block_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help task block commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__task__subcmd__cancel_commands] )) ||
+_taskcli__subcmd__help__subcmd__task__subcmd__cancel_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help task cancel commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__task__subcmd__claim_commands] )) ||
+_taskcli__subcmd__help__subcmd__task__subcmd__claim_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help task claim commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__task__subcmd__depend_commands] )) ||
+_taskcli__subcmd__help__subcmd__task__subcmd__depend_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help task depend commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__task__subcmd__done_commands] )) ||
+_taskcli__subcmd__help__subcmd__task__subcmd__done_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help task done commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__task__subcmd__fail_commands] )) ||
+_taskcli__subcmd__help__subcmd__task__subcmd__fail_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help task fail commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__task__subcmd__heartbeat_commands] )) ||
+_taskcli__subcmd__help__subcmd__task__subcmd__heartbeat_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help task heartbeat commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__task__subcmd__list_commands] )) ||
+_taskcli__subcmd__help__subcmd__task__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help task list commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__task__subcmd__release_commands] )) ||
+_taskcli__subcmd__help__subcmd__task__subcmd__release_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help task release commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__task__subcmd__reopen_commands] )) ||
+_taskcli__subcmd__help__subcmd__task__subcmd__reopen_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help task reopen commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__task__subcmd__retry_commands] )) ||
+_taskcli__subcmd__help__subcmd__task__subcmd__retry_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help task retry commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__task__subcmd__show_commands] )) ||
+_taskcli__subcmd__help__subcmd__task__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help task show commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__task__subcmd__start_commands] )) ||
+_taskcli__subcmd__help__subcmd__task__subcmd__start_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help task start commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__task__subcmd__undepend_commands] )) ||
+_taskcli__subcmd__help__subcmd__task__subcmd__undepend_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help task undepend commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__task__subcmd__update_commands] )) ||
+_taskcli__subcmd__help__subcmd__task__subcmd__update_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help task update commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__task__subcmd__wait_commands] )) ||
+_taskcli__subcmd__help__subcmd__task__subcmd__wait_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help task wait commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__hook_commands] )) ||
+_taskcli__subcmd__hook_commands() {
+    local commands; commands=(
+'session-start:' \
+'session-end:' \
+'heartbeat:' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'taskcli hook commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__hook__subcmd__heartbeat_commands] )) ||
+_taskcli__subcmd__hook__subcmd__heartbeat_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli hook heartbeat commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__hook__subcmd__help_commands] )) ||
+_taskcli__subcmd__hook__subcmd__help_commands() {
+    local commands; commands=(
+'session-start:' \
+'session-end:' \
+'heartbeat:' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'taskcli hook help commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__hook__subcmd__help__subcmd__heartbeat_commands] )) ||
+_taskcli__subcmd__hook__subcmd__help__subcmd__heartbeat_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli hook help heartbeat commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__hook__subcmd__help__subcmd__help_commands] )) ||
+_taskcli__subcmd__hook__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli hook help help commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__hook__subcmd__help__subcmd__session-end_commands] )) ||
+_taskcli__subcmd__hook__subcmd__help__subcmd__session-end_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli hook help session-end commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__hook__subcmd__help__subcmd__session-start_commands] )) ||
+_taskcli__subcmd__hook__subcmd__help__subcmd__session-start_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli hook help session-start commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__hook__subcmd__session-end_commands] )) ||
+_taskcli__subcmd__hook__subcmd__session-end_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli hook session-end commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__hook__subcmd__session-start_commands] )) ||
+_taskcli__subcmd__hook__subcmd__session-start_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli hook session-start commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__init_commands] )) ||
+_taskcli__subcmd__init_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli init commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__job_commands] )) ||
+_taskcli__subcmd__job_commands() {
+    local commands; commands=(
+'create:' \
+'update:' \
+'list:' \
+'show:' \
+'cancel:' \
+'archive:' \
+'unarchive:' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'taskcli job commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__job__subcmd__archive_commands] )) ||
+_taskcli__subcmd__job__subcmd__archive_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli job archive commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__job__subcmd__cancel_commands] )) ||
+_taskcli__subcmd__job__subcmd__cancel_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli job cancel commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__job__subcmd__create_commands] )) ||
+_taskcli__subcmd__job__subcmd__create_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli job create commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__job__subcmd__help_commands] )) ||
+_taskcli__subcmd__job__subcmd__help_commands() {
+    local commands; commands=(
+'create:' \
+'update:' \
+'list:' \
+'show:' \
+'cancel:' \
+'archive:' \
+'unarchive:' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'taskcli job help commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__job__subcmd__help__subcmd__archive_commands] )) ||
+_taskcli__subcmd__job__subcmd__help__subcmd__archive_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli job help archive commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__job__subcmd__help__subcmd__cancel_commands] )) ||
+_taskcli__subcmd__job__subcmd__help__subcmd__cancel_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli job help cancel commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__job__subcmd__help__subcmd__create_commands] )) ||
+_taskcli__subcmd__job__subcmd__help__subcmd__create_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli job help create commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__job__subcmd__help__subcmd__help_commands] )) ||
+_taskcli__subcmd__job__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli job help help commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__job__subcmd__help__subcmd__list_commands] )) ||
+_taskcli__subcmd__job__subcmd__help__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli job help list commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__job__subcmd__help__subcmd__show_commands] )) ||
+_taskcli__subcmd__job__subcmd__help__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli job help show commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__job__subcmd__help__subcmd__unarchive_commands] )) ||
+_taskcli__subcmd__job__subcmd__help__subcmd__unarchive_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli job help unarchive commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__job__subcmd__help__subcmd__update_commands] )) ||
+_taskcli__subcmd__job__subcmd__help__subcmd__update_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli job help update commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__job__subcmd__list_commands] )) ||
+_taskcli__subcmd__job__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli job list commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__job__subcmd__show_commands] )) ||
+_taskcli__subcmd__job__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli job show commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__job__subcmd__unarchive_commands] )) ||
+_taskcli__subcmd__job__subcmd__unarchive_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli job unarchive commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__job__subcmd__update_commands] )) ||
+_taskcli__subcmd__job__subcmd__update_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli job update commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__plan_commands] )) ||
+_taskcli__subcmd__plan_commands() {
+    local commands; commands=(
+'create:' \
+'revise:' \
+'show:' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'taskcli plan commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__plan__subcmd__create_commands] )) ||
+_taskcli__subcmd__plan__subcmd__create_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli plan create commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__plan__subcmd__help_commands] )) ||
+_taskcli__subcmd__plan__subcmd__help_commands() {
+    local commands; commands=(
+'create:' \
+'revise:' \
+'show:' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'taskcli plan help commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__plan__subcmd__help__subcmd__create_commands] )) ||
+_taskcli__subcmd__plan__subcmd__help__subcmd__create_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli plan help create commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__plan__subcmd__help__subcmd__help_commands] )) ||
+_taskcli__subcmd__plan__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli plan help help commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__plan__subcmd__help__subcmd__revise_commands] )) ||
+_taskcli__subcmd__plan__subcmd__help__subcmd__revise_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli plan help revise commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__plan__subcmd__help__subcmd__show_commands] )) ||
+_taskcli__subcmd__plan__subcmd__help__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli plan help show commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__plan__subcmd__revise_commands] )) ||
+_taskcli__subcmd__plan__subcmd__revise_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli plan revise commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__plan__subcmd__show_commands] )) ||
+_taskcli__subcmd__plan__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli plan show commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__project_commands] )) ||
+_taskcli__subcmd__project_commands() {
+    local commands; commands=(
+'register:' \
+'list:' \
+'show:' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'taskcli project commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__project__subcmd__help_commands] )) ||
+_taskcli__subcmd__project__subcmd__help_commands() {
+    local commands; commands=(
+'register:' \
+'list:' \
+'show:' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'taskcli project help commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__project__subcmd__help__subcmd__help_commands] )) ||
+_taskcli__subcmd__project__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli project help help commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__project__subcmd__help__subcmd__list_commands] )) ||
+_taskcli__subcmd__project__subcmd__help__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli project help list commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__project__subcmd__help__subcmd__register_commands] )) ||
+_taskcli__subcmd__project__subcmd__help__subcmd__register_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli project help register commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__project__subcmd__help__subcmd__show_commands] )) ||
+_taskcli__subcmd__project__subcmd__help__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli project help show commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__project__subcmd__list_commands] )) ||
+_taskcli__subcmd__project__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli project list commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__project__subcmd__register_commands] )) ||
+_taskcli__subcmd__project__subcmd__register_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli project register commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__project__subcmd__show_commands] )) ||
+_taskcli__subcmd__project__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli project show commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__sync_commands] )) ||
+_taskcli__subcmd__sync_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli sync commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__task_commands] )) ||
+_taskcli__subcmd__task_commands() {
+    local commands; commands=(
+'add:' \
+'update:' \
+'list:' \
+'show:' \
+'depend:' \
+'undepend:' \
+'claim:' \
+'start:' \
+'heartbeat:' \
+'release:' \
+'block:' \
+'wait:' \
+'fail:' \
+'done:' \
+'cancel:' \
+'retry:' \
+'reopen:' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'taskcli task commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__task__subcmd__add_commands] )) ||
+_taskcli__subcmd__task__subcmd__add_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli task add commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__task__subcmd__block_commands] )) ||
+_taskcli__subcmd__task__subcmd__block_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli task block commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__task__subcmd__cancel_commands] )) ||
+_taskcli__subcmd__task__subcmd__cancel_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli task cancel commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__task__subcmd__claim_commands] )) ||
+_taskcli__subcmd__task__subcmd__claim_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli task claim commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__task__subcmd__depend_commands] )) ||
+_taskcli__subcmd__task__subcmd__depend_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli task depend commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__task__subcmd__done_commands] )) ||
+_taskcli__subcmd__task__subcmd__done_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli task done commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__task__subcmd__fail_commands] )) ||
+_taskcli__subcmd__task__subcmd__fail_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli task fail commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__task__subcmd__heartbeat_commands] )) ||
+_taskcli__subcmd__task__subcmd__heartbeat_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli task heartbeat commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__task__subcmd__help_commands] )) ||
+_taskcli__subcmd__task__subcmd__help_commands() {
+    local commands; commands=(
+'add:' \
+'update:' \
+'list:' \
+'show:' \
+'depend:' \
+'undepend:' \
+'claim:' \
+'start:' \
+'heartbeat:' \
+'release:' \
+'block:' \
+'wait:' \
+'fail:' \
+'done:' \
+'cancel:' \
+'retry:' \
+'reopen:' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'taskcli task help commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__task__subcmd__help__subcmd__add_commands] )) ||
+_taskcli__subcmd__task__subcmd__help__subcmd__add_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli task help add commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__task__subcmd__help__subcmd__block_commands] )) ||
+_taskcli__subcmd__task__subcmd__help__subcmd__block_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli task help block commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__task__subcmd__help__subcmd__cancel_commands] )) ||
+_taskcli__subcmd__task__subcmd__help__subcmd__cancel_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli task help cancel commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__task__subcmd__help__subcmd__claim_commands] )) ||
+_taskcli__subcmd__task__subcmd__help__subcmd__claim_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli task help claim commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__task__subcmd__help__subcmd__depend_commands] )) ||
+_taskcli__subcmd__task__subcmd__help__subcmd__depend_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli task help depend commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__task__subcmd__help__subcmd__done_commands] )) ||
+_taskcli__subcmd__task__subcmd__help__subcmd__done_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli task help done commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__task__subcmd__help__subcmd__fail_commands] )) ||
+_taskcli__subcmd__task__subcmd__help__subcmd__fail_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli task help fail commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__task__subcmd__help__subcmd__heartbeat_commands] )) ||
+_taskcli__subcmd__task__subcmd__help__subcmd__heartbeat_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli task help heartbeat commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__task__subcmd__help__subcmd__help_commands] )) ||
+_taskcli__subcmd__task__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli task help help commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__task__subcmd__help__subcmd__list_commands] )) ||
+_taskcli__subcmd__task__subcmd__help__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli task help list commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__task__subcmd__help__subcmd__release_commands] )) ||
+_taskcli__subcmd__task__subcmd__help__subcmd__release_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli task help release commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__task__subcmd__help__subcmd__reopen_commands] )) ||
+_taskcli__subcmd__task__subcmd__help__subcmd__reopen_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli task help reopen commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__task__subcmd__help__subcmd__retry_commands] )) ||
+_taskcli__subcmd__task__subcmd__help__subcmd__retry_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli task help retry commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__task__subcmd__help__subcmd__show_commands] )) ||
+_taskcli__subcmd__task__subcmd__help__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli task help show commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__task__subcmd__help__subcmd__start_commands] )) ||
+_taskcli__subcmd__task__subcmd__help__subcmd__start_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli task help start commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__task__subcmd__help__subcmd__undepend_commands] )) ||
+_taskcli__subcmd__task__subcmd__help__subcmd__undepend_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli task help undepend commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__task__subcmd__help__subcmd__update_commands] )) ||
+_taskcli__subcmd__task__subcmd__help__subcmd__update_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli task help update commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__task__subcmd__help__subcmd__wait_commands] )) ||
+_taskcli__subcmd__task__subcmd__help__subcmd__wait_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli task help wait commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__task__subcmd__list_commands] )) ||
+_taskcli__subcmd__task__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli task list commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__task__subcmd__release_commands] )) ||
+_taskcli__subcmd__task__subcmd__release_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli task release commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__task__subcmd__reopen_commands] )) ||
+_taskcli__subcmd__task__subcmd__reopen_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli task reopen commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__task__subcmd__retry_commands] )) ||
+_taskcli__subcmd__task__subcmd__retry_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli task retry commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__task__subcmd__show_commands] )) ||
+_taskcli__subcmd__task__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli task show commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__task__subcmd__start_commands] )) ||
+_taskcli__subcmd__task__subcmd__start_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli task start commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__task__subcmd__undepend_commands] )) ||
+_taskcli__subcmd__task__subcmd__undepend_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli task undepend commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__task__subcmd__update_commands] )) ||
+_taskcli__subcmd__task__subcmd__update_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli task update commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__task__subcmd__wait_commands] )) ||
+_taskcli__subcmd__task__subcmd__wait_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli task wait commands' commands "$@"
+}
+
+if [ "$funcstack[1]" = "_taskcli" ]; then
+    _taskcli "$@"
+else
+    compdef _taskcli taskcli
+fi

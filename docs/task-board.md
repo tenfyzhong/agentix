@@ -16,6 +16,12 @@ SQLite uses WAL, a ten-second busy timeout, short immediate write transactions, 
 
 Database schema v2 migrates existing v1 IN_PROGRESS Tasks to EXECUTING, preserving their leases and timestamps. Other Tasks have no phase. Back up SQLite and documents together before upgrading, and stop old writers first: all taskcli, Agentix, and plugin processes sharing the database must use the new workflow. Older binaries reject v2 when opening it. Configuration and JSON envelope `schema_version` remain 1; database `PRAGMA user_version` is separate.
 
+## Shell completions
+
+`taskcli completions bash`, `taskcli completions zsh`, and `taskcli completions fish` print shell scripts directly, including when `--json` is present. Generation skips configuration loading and does not open or mutate the task database, so it works before `taskcli init`.
+
+Source checkouts and `taskcli-*` release archives include `completions/taskcli.bash`, `completions/_taskcli`, and `completions/taskcli.fish`. Follow the [shell installation instructions](../README.md#shell-completions). Contributors regenerate all Agentix and taskcli scripts with `make completions`; tests compare the generated output with these files and exercise nested commands, options, formats, and file paths.
+
 ## Configuration
 
 ```sh
@@ -116,21 +122,23 @@ taskcli sync
 
 ## Host plugin
 
-The shared package is `plugins/agent-task-manager`, also included with `taskcli` in release archives. Use the archive or a source checkout for the plugin; Homebrew packaging is maintained separately in the tap. It has Codex/Claude manifests, a shared Skill, command hooks, and Pi/OMP TypeScript entrypoints. Node.js 22 or newer is required for command hooks. Put `taskcli` on PATH or set `TASKCLI_BIN`; set `TASKCLI_CONFIG` when using a non-default config.
+The shared package is `plugins/agent-task-manager`, included in the standalone `taskcli-*` release archives, not the `agentix-*` archives. Use a taskcli archive or a source checkout for the plugin; Homebrew packaging is maintained separately in the tap. It has Codex/Claude manifests, a shared Skill, command hooks, and Pi/OMP TypeScript entrypoints. Node.js 22 or newer is required for command hooks. Put `taskcli` on PATH or set `TASKCLI_BIN`; set `TASKCLI_CONFIG` when using a non-default config.
 
-For local Codex plugin development, use the host's plugin installation flow with this package directory. The manifest exposes `skills/`, and Codex discovers `hooks/hooks.json`. Claude can load it with `claude --plugin-dir /absolute/path/to/agent-task-manager`. These hosts share the default hook file without duplicate manifest declarations. Review/enable hooks in the host as required; Codex requires reviewing and trusting plugin hooks through `/hooks`. The command resolves plugin-root environment variables inside Node rather than using shell-specific expansion.
+Install through the repository's `agentix` marketplace in Codex and Claude Code. Add the repository/worktree root as the marketplace, then install `agent-task-manager@agentix`. Codex uses `codex plugin marketplace add` followed by `codex plugin add`; Claude Code uses `claude plugin marketplace add` followed by `claude plugin install`. The catalogs are `.agents/plugins/marketplace.json` and `.claude-plugin/marketplace.json`. See the [complete installation commands](../plugins/agent-task-manager/README.md#prerequisites-and-activation), including when GitHub-based installation is available.
+
+These hosts share the default hook file without duplicate manifest declarations. Review/enable hooks in the host as required; Codex requires reviewing and trusting plugin hooks through `/hooks`. The command resolves plugin-root environment variables inside Node rather than using shell-specific expansion.
 
 The package explicitly includes its manifests, hooks, extensions, runtime, skills, and activation guide in npm distributions. Pi and OMP each select their own entrypoint through `package.json`; installing the complete package does not require copying hooks into project settings. See the [plugin activation and lifecycle guide](../plugins/agent-task-manager/README.md).
 
-For Pi/OMP, install the local package with their package/plugin manager or load `extensions/pi.ts` / `extensions/omp.ts`. A manually copied package needs its dependency installed:
+For Pi/OMP, install dependencies and use the host's `install` command on the complete plugin directory from a source checkout or taskcli release archive:
 
 ```sh
 npm ci --ignore-scripts --prefix /absolute/path/to/agent-task-manager
-pi -e /absolute/path/to/agent-task-manager/extensions/pi.ts
-omp -e /absolute/path/to/agent-task-manager/extensions/omp.ts
+pi install /absolute/path/to/agent-task-manager
+omp install /absolute/path/to/agent-task-manager
 ```
 
-Installing the package also exposes its shared Skill. When loading only an extension entrypoint, configure the sibling `skills/` directory in the host's skill paths as well. Obsidian editing requires the user's separate Obsidian skill package; taskcli's generated structure is deterministic and does not launch an Agent itself.
+Run only the install command for your chosen host, then restart or reload it. Both hosts load the selected extension and the shared Skill from `package.json`; keep the local package at a stable path. Obsidian editing requires the user's separate Obsidian skill package; taskcli's generated structure is deterministic and does not launch an Agent itself.
 
 SessionStart restores eligible Tasks and supplies task context. SessionEnd blocks active work. Stop means a turn ended and only renews the lease. Tool hooks renew at tool boundaries; no hook daemon is spawned. A Codex/Claude operation or idle gap longer than 15 minutes can expire a lease. Pi/OMP extensions renew every minute while the session is open, inject current task facts before the agent runs, and expose a structured taskcli tool with session, executor, current lease token, and request idempotency key. A stale-token rejection requires inspecting and reacquiring work, never forcing a completion.
 

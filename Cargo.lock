@@ -3337,6 +3337,7 @@ dependencies = [
  "agentix-task",
  "anyhow",
  "clap",
+ "clap_complete",
  "serde_json",
  "tempfile",
  "time",

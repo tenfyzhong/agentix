@@ -8,6 +8,30 @@ const root = new URL("../", import.meta.url);
 const readJson = async (path) =>
     JSON.parse(await readFile(new URL(path, root), "utf8"));
 
+test("repository marketplaces resolve the same complete host plugin", async () => {
+    const codex = await readJson("../../.agents/plugins/marketplace.json");
+    const claude = await readJson("../../.claude-plugin/marketplace.json");
+    assert.equal(codex.name, "agentix");
+    assert.equal(claude.name, codex.name);
+    assert.equal(codex.interface.displayName, "Agentix");
+    assert.equal(claude.owner.name, "tenfyzhong");
+    for (const [host, marketplace] of [["codex", codex], ["claude", claude]]) {
+        assert.equal(marketplace.plugins.length, 1);
+        const entry = marketplace.plugins[0];
+        assert.equal(entry.name, "agent-task-manager");
+        const source = host === "codex" ? entry.source.path : entry.source;
+        assert.equal(source, "./plugins/agent-task-manager");
+        const manifest = await readJson(`../../${source}/.${host}-plugin/plugin.json`);
+        assert.equal(manifest.name, entry.name);
+    }
+    assert.equal(codex.plugins[0].source.source, "local");
+    assert.deepEqual(codex.plugins[0].policy, {
+        installation: "AVAILABLE",
+        authentication: "ON_INSTALL",
+    });
+    assert.equal(codex.plugins[0].category, "Productivity");
+});
+
 test("both command-hook hosts discover exactly one bundled lifecycle configuration", async () => {
     for (const host of ["codex", "claude"]) {
         const manifest = await readJson(`.${host}-plugin/plugin.json`);

@@ -10,6 +10,7 @@ repository.workspace = true
 agentix-task = { path = "../agentix-task" }
 anyhow.workspace = true
 clap.workspace = true
+clap_complete.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 toml.workspace = true

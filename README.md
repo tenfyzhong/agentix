@@ -70,6 +70,17 @@ $env:Path = "$(Resolve-Path .\agentix);$env:Path"
 
 Keep the extracted directory in a stable location and add it to your user `PATH`. Windows supports the Pi and Oh My Pi backends; the Codex backend is not available on Windows because its transport requires a Unix-domain socket.
 
+#### Separate release archives
+
+Each [GitHub release](https://github.com/tenfyzhong/agentix/releases/latest) publishes Agentix and taskcli separately, using the same version and targets (macOS arm64, Linux x86_64/arm64, and Windows x86_64):
+
+- `agentix-<version>-<target>.tar.gz`: Agentix, its example configuration, and its shell completions.
+- `taskcli-<version>-<target>.tar.gz`: taskcli, its example configuration, its shell completions, task documentation, and `plugins/agent-task-manager/`.
+
+Both archives include `README.md` and `LICENSE`. Windows also has `.zip` archives for each tool. The shared `SHA256SUMS` covers both tools and all archive formats. Verify the downloaded archive against its matching checksum before extracting it, then add the extracted binary's directory to `PATH`.
+
+Download the taskcli archive to use the task board independently; Agentix is not required. Download both archives if you need both tools. Keep the taskcli plugin directory at a stable path and follow the [plugin activation guide](plugins/agent-task-manager/README.md).
+
 #### Build from source
 
 Install the Rust toolchain declared by `rust-toolchain.toml`, then run:
@@ -82,14 +93,15 @@ The binaries are written to `target/release/agentix` and `target/release/taskcli
 
 ### Shell completions
 
-Generate completions for the installed CLI with `agentix completions bash`,
-`agentix completions zsh`, or `agentix completions fish`. This command does not
-require a configuration file or a running server.
+Both CLIs support `completions bash`, `completions zsh`, and `completions fish`.
+For example, use `agentix completions bash` or `taskcli completions bash`.
+Generation requires no configuration, running server, or task database.
 
 For bash, add this line to `~/.bashrc` (or `~/.bash_profile` on macOS):
 
 ```bash
 source <(agentix completions bash)
+source <(taskcli completions bash)
 ```
 
 For zsh, save the completion file:
@@ -97,6 +109,7 @@ For zsh, save the completion file:
 ```zsh
 mkdir -p ~/.zsh/completions
 agentix completions zsh > ~/.zsh/completions/_agentix
+taskcli completions zsh > ~/.zsh/completions/_taskcli
 ```
 
 Add the following to `~/.zshrc`, placing the `fpath` line before any existing
@@ -114,12 +127,15 @@ For fish:
 ```fish
 mkdir -p ~/.config/fish/completions
 agentix completions fish > ~/.config/fish/completions/agentix.fish
+taskcli completions fish > ~/.config/fish/completions/taskcli.fish
 ```
 
 Restart your shell after installation. Regenerate saved files after upgrading
-Agentix. Source checkouts and release archives also include ready-to-use files
-in `completions/`: `agentix.bash`, `_agentix`, and `agentix.fish`. You can source
-the bash file or copy the zsh/fish file to the directories above.
+either CLI. Source checkouts include ready-to-use files
+in `completions/`: `agentix.bash`, `_agentix`, `agentix.fish`, `taskcli.bash`,
+`_taskcli`, and `taskcli.fish`. Each release archive includes only its own CLI's
+three completion files. Enable only the CLIs you have installed. You can
+source the bash files or copy the zsh/fish files to the directories above.
 
 ### Configure
 
@@ -211,7 +227,8 @@ If the selected channel has no configured owner, keep `agentix serve` running, e
 Run `make check` to check formatting, run Clippy, and execute the workspace tests. Channel shutdown deadline tests use Tokio's paused clock to verify the shared grace period and task cancellation independently of database and filesystem latency. Service lifecycle tests also exercise startup and shutdown with a temporary SQLite database.
 
 After changing CLI commands or options, run `make completions` and commit the
-updated files. Tests verify that the checked-in completions match the CLI.
+updated files for both CLIs. Tests verify that the checked-in completions match
+their CLI and that taskcli generation does not read configuration or create task state.
 
 CI uses Rust 1.95.0. Ensure `cargo`, `rustc`, `cargo-clippy`, and `rustfmt` all come from that toolchain rather than mixing Homebrew and rustup installations. The test suite checks the non-Unix Codex compatibility API on Unix hosts as well, so Windows-only API omissions are caught locally.
 
@@ -226,7 +243,7 @@ CI uses Rust 1.95.0. Ensure `cargo`, `rustc`, `cargo-clippy`, and `rustfmt` all 
 
 ## Task board
 
-`taskcli` works independently of the IM bridge. Use a release archive or a source build to obtain it and the host plugin; Homebrew packaging is maintained separately in the tap. Choose an existing output directory explicitly:
+`taskcli` works independently of the IM bridge. Use a `taskcli-*` release archive or a source build to obtain it and the host plugin; the `agentix-*` archive does not include them. Homebrew packaging is maintained separately in the tap. Choose an existing output directory explicitly:
 
 ```sh
 taskcli init --format markdown --root /absolute/path/to/documents --directory "Agent Tasks"
@@ -244,6 +261,6 @@ Task state changes go through CLI commands or Agentix IM actions. Generated boar
 
 For the design rationale, read [task decomposition, Skill, and Hook mechanisms](docs/task-workflow-mechanisms.md), covering responsibility boundaries, ownership, concurrency, recovery, and future Agent Team integration.
 
-The [agent-task-manager plugin](plugins/agent-task-manager/README.md) bundles Codex/Claude lifecycle hooks and manifest-selected Pi/OMP extensions. Enable the package in the chosen host and review its hooks; no per-project hook configuration needs to be copied.
+The [agent-task-manager plugin](plugins/agent-task-manager/README.md) bundles Codex/Claude lifecycle hooks and manifest-selected Pi/OMP extensions. Install it through the `agentix` marketplace in Codex/Claude Code, or with `pi install` / `omp install` for Pi/OMP. Follow the host-specific instructions and review its hooks; no per-project hook configuration needs to be copied.
 
 `make check` covers concurrent CLI processes, recovery after a committed write is interrupted, the Task state/command matrix, real plugin-to-CLI calls, and task actions through both IM adapters. It requires Node.js 24+ and npm in addition to Rust. An opt-in desktop test checks actual Obsidian rendering and link navigation; see [validation and remaining live-system checks](docs/task-board.md#validation).
