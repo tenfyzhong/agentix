@@ -154,7 +154,7 @@ fn commands_are_distinct_from_prompts() {
 
 #[test]
 fn chunks_respect_utf8_boundaries_and_reassemble_exactly() {
-    let original = "Agentix 你好，世界。Codex streaming works.";
+    let original = "Agentix \u{2603} \u{1f680} streaming works.";
     let chunks = chunk_text(original, 13);
 
     assert!(chunks.iter().all(|chunk| chunk.len() <= 13));

@@ -12,7 +12,7 @@ import { runTaskcli } from "../runtime.mjs";
 assert.ok(process.env.TASKCLI_BIN, "Run through cargo test -p taskcli");
 
 async function fixture(t, format = "markdown") {
-    const dir = await mkdtemp(join(tmpdir(), "task-plugin 中文 "));
+    const dir = await mkdtemp(join(tmpdir(), "task-plugin \u{2603} "));
     const previous = process.env.TASKCLI_CONFIG;
     const cleanup = [];
     process.env.TASKCLI_CONFIG = join(dir, "config.toml");
@@ -33,7 +33,7 @@ async function fixture(t, format = "markdown") {
         "--root",
         root,
         "--directory",
-        "Tasks 中文",
+        "Tasks \u{2603}",
         "--database",
         join(dir, "tasks.sqlite3"),
     ]);
@@ -98,7 +98,7 @@ for (const [host, format] of [
             "--job",
             f.job.id,
             "--title",
-            "Build $(not-a-shell) 中文",
+            "Build $(not-a-shell) Unicode \u{2603}",
         ]);
         const claim = await x.invoke([
             "task",
@@ -146,7 +146,7 @@ for (const [host, format] of [
         const job = await f.run(["job", "show", f.job.id]);
         assert.equal(job.status, "COMPLETED");
         const body = await readFile(
-            join(f.root, "Tasks 中文", job.document_path),
+            join(f.root, "Tasks \u{2603}", job.document_path),
             "utf8",
         );
         assert.ok(body.includes("DONE"));
@@ -222,7 +222,7 @@ for (const host of ["codex", "claude"]) {
     )) {
         test(`${host} bundled hooks run through ${process.platform === "win32" ? "cmd.exe" : shell} and restore fenced leases`, async (t) => {
             const f = await fixture(t);
-            const root = join(f.dir, "installed plugin 中文");
+            const root = join(f.dir, "installed plugin \u{2603}");
             await mkdir(root);
             for (const path of ["hooks", "runtime.mjs"]) {
                 await cp(resolve(path), join(root, path), { recursive: true });

@@ -18,7 +18,7 @@ impl Cli {
             "--root",
             cli.dir.path().join("vault").to_str().unwrap(),
             "--directory",
-            "Tasks 中文",
+            "Tasks \u{2603}",
             "--database",
             cli.dir.path().join("state.sqlite3").to_str().unwrap(),
         ]);
@@ -281,7 +281,7 @@ fn concurrent_cli_jobs_preserve_notes_and_all_projections() {
             .enumerate()
             .map(|(i, j)| cli.task(j, &format!("Parallel {i}")))
             .collect();
-        let output = cli.dir.path().join("vault/Tasks 中文");
+        let output = cli.dir.path().join("vault/Tasks \u{2603}");
         let paths: Vec<_> = jobs
             .iter()
             .map(|j| {
@@ -350,7 +350,8 @@ async fn killed_cli_after_database_commit_replays_without_duplicates_and_repairs
     let store = agentix_task::Store::open(&cli.dir.path().join("state.sqlite3"))
         .await
         .unwrap();
-    let lock = std::fs::File::open(cli.dir.path().join("vault/Tasks 中文/.taskcli.lock")).unwrap();
+    let lock =
+        std::fs::File::open(cli.dir.path().join("vault/Tasks \u{2603}/.taskcli.lock")).unwrap();
     lock.lock().unwrap();
     let args = [
         "task",
@@ -400,7 +401,7 @@ async fn killed_cli_after_database_commit_replays_without_duplicates_and_repairs
         .unwrap()
         .to_owned();
     assert!(
-        std::fs::read_to_string(cli.dir.path().join("vault/Tasks 中文").join(path))
+        std::fs::read_to_string(cli.dir.path().join("vault/Tasks \u{2603}").join(path))
             .unwrap()
             .contains(&task.id)
     );

@@ -162,7 +162,7 @@ The workflow is `claim → Plan → start → execute/verify → done`. Claim re
 
 Task state changes go through CLI commands or Agentix IM actions. Generated boards are logically read-only, use `[[wikilinks]]` in Obsidian or relative Markdown links elsewhere, and require no Kanban/Tasks plugin or file watcher. See the [task board guide](docs/task-board.md) for plans, claiming, plugin installation, recovery, and IM configuration.
 
-For the design rationale, read [task decomposition, Skill, and Hook mechanisms (中文)](docs/task-workflow-mechanisms.md), covering responsibility boundaries, ownership, concurrency, recovery, and future Agent Team integration.
+For the design rationale, read [task decomposition, Skill, and Hook mechanisms](docs/task-workflow-mechanisms.md), covering responsibility boundaries, ownership, concurrency, recovery, and future Agent Team integration.
 
 The [agent-task-manager plugin](plugins/agent-task-manager/README.md) bundles Codex/Claude lifecycle hooks and manifest-selected Pi/OMP extensions. Enable the package in the chosen host and review its hooks; no per-project hook configuration needs to be copied.
 

@@ -95,7 +95,8 @@ Run `make` for a debug build, `make release` for a release build, or `make help`
 - Keep abstractions at transport boundaries so orchestration can be tested independently.
 - Preserve existing user changes and avoid unrelated rewrites.
 - Use consistent indentation and leave no trailing whitespace.
-- Write code comments and repository documentation in English.
+- Use English for repository documentation, code comments, identifiers, user-facing messages, and test descriptions and fixture labels.
+- Preserve Unicode test coverage with English labels and escaped Unicode symbols rather than non-English prose. Unicode punctuation and interface icons do not need to be ASCII.
 
 ## Commits
 

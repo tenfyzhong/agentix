@@ -21,7 +21,7 @@ impl Fixture {
         let root = dir.path().join("documents");
         std::fs::create_dir_all(root.join(".obsidian")).unwrap();
         let config: Config = toml::from_str(&format!(
-            "schema_version = 1\n[storage]\npath = {:?}\n[documents]\nformat = {format:?}\nroot = {:?}\ndirectory = 'Tasks 中文'\n",
+            "schema_version = 1\n[storage]\npath = {:?}\n[documents]\nformat = {format:?}\nroot = {:?}\ndirectory = 'Tasks \u{2603}'\n",
             dir.path().join("tasks.sqlite3").to_str().unwrap(), root.to_str().unwrap()
         )).unwrap();
         let clock = Arc::new(AtomicI64::new(1_788_566_400));
@@ -740,7 +740,7 @@ async fn cancelled_only_jobs_are_not_completed_and_finished_jobs_reject_new_task
 async fn projections_are_read_only_preserve_notes_and_archive_links() {
     for format in ["markdown", "obsidian"] {
         let f = Fixture::new(format).await;
-        let id = f.task("Task | 中文 [x]").await;
+        let id = f.task("Task | Unicode \u{2603} [x]").await;
         let claim = f.claim(&id, "archive").await;
         let plan = f.plan(&id).await;
         let state = f.service.store().snapshot().await.unwrap();
@@ -907,7 +907,9 @@ async fn obsidian_alias_separator_is_escaped_only_inside_tables() {
 #[tokio::test]
 async fn special_obsidian_titles_keep_entities_outside_wikilink_aliases() {
     let f = Fixture::new("obsidian").await;
-    let task = f.task("渲染 | 中文 [链接] & <tag> [[injection]]").await;
+    let task = f
+        .task("Render | Unicode \u{2603} [link] & <tag> [[injection]]")
+        .await;
     f.claim(&task, "special").await;
     f.plan(&task).await;
     let state = f.service.store().snapshot().await.unwrap();
@@ -919,7 +921,7 @@ async fn special_obsidian_titles_keep_entities_outside_wikilink_aliases() {
     )
     .unwrap();
     assert!(
-        board.contains("\\|Open]] 渲染 &#124; 中文 &#91;链接&#93; &amp; &lt;tag&gt; &#91;&#91;injection&#93;&#93;"),
+        board.contains("\\|Open]] Render &#124; Unicode \u{2603} &#91;link&#93; &amp; &lt;tag&gt; &#91;&#91;injection&#93;&#93;"),
         "{board}"
     );
     assert!(!board.contains("[[injection]]"));

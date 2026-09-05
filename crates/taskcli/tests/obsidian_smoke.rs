@@ -182,7 +182,7 @@ fn actual_obsidian_renders_seven_columns_and_navigates_plan_and_task_links() {
         "project",
         "register",
         "--name",
-        "渲染验收",
+        "Rendering acceptance",
         "--root",
         f.metadata.path().to_str().unwrap(),
     ]);
@@ -192,7 +192,7 @@ fn actual_obsidian_renders_seven_columns_and_navigates_plan_and_task_links() {
         "--project",
         project["id"].as_str().unwrap(),
         "--title",
-        "任务看板渲染验收",
+        "Task board rendering acceptance",
     ]);
     let task = f.cli(&[
         "task",
@@ -200,7 +200,7 @@ fn actual_obsidian_renders_seven_columns_and_navigates_plan_and_task_links() {
         "--job",
         job["id"].as_str().unwrap(),
         "--title",
-        "渲染 | 中文 [链接] & <标签> [[内部]] *bold*",
+        "Render | Unicode \u{2603} [link] & <tag> [[internal]] *bold*",
     ]);
     let claim = f.cli(&[
         "task",
@@ -216,7 +216,7 @@ fn actual_obsidian_renders_seven_columns_and_navigates_plan_and_task_links() {
         "create",
         task["id"].as_str().unwrap(),
         "--body",
-        "---\ntitle: 渲染验收计划\ntags:\n  - para/inbox\n---\n\n# 渲染验收计划\n\n验证链接跳转。",
+        "---\ntitle: Rendering acceptance plan\ntags:\n  - para/inbox\n---\n\n# Rendering acceptance plan\n\nVerify link navigation.",
         "--session",
         "smoke",
         "--lease-token",
@@ -228,7 +228,7 @@ fn actual_obsidian_renders_seven_columns_and_navigates_plan_and_task_links() {
         "--job",
         job["id"].as_str().unwrap(),
         "--title",
-        "尚未创建计划的任务",
+        "Task without a Plan",
     ]);
     let board = format!(
         "{}/Projects/{}/Board.md",
@@ -257,11 +257,8 @@ fn actual_obsidian_renders_seven_columns_and_navigates_plan_and_task_links() {
     );
     assert_eq!(rendered["checkboxes"], 0);
     assert!(
-        rendered["cells"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|cell| cell == "Open 渲染 | 中文 [链接] & <标签> [[内部]] *bold* · PLANNING"),
+        rendered["cells"].as_array().unwrap().iter().any(|cell| cell
+            == "Open Render | Unicode \u{2603} [link] & <tag> [[internal]] *bold* · PLANNING"),
         "{rendered}"
     );
     for (label, expected) in [
@@ -270,7 +267,7 @@ fn actual_obsidian_renders_seven_columns_and_navigates_plan_and_task_links() {
             format!("{}/{}", f.relative, plan["path"].as_str().unwrap()),
         ),
         (
-            "尚未创建计划的任务",
+            "Task without a Plan",
             format!("{}/{}", f.relative, job["document_path"].as_str().unwrap()),
         ),
     ] {

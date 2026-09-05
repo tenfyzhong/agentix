@@ -243,7 +243,7 @@ fn telegram_views_are_labeled_and_bounded() {
     let view = OutboundView {
         title: "Codex · 9f31c2ab".into(),
         subtitle: Some("Turn 0187 · running".into()),
-        body: "你".repeat(2_000),
+        body: "\u{2603}".repeat(2_000),
         status: ViewStatus::Running,
         actions: Vec::new(),
     };
