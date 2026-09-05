@@ -171,4 +171,4 @@ CI uses Rust 1.95.0. Ensure `cargo`, `rustc`, `cargo-clippy`, and `rustfmt` all 
 - [Configuration and operations](docs/development-and-operations.md)
 - [Contributing](CONTRIBUTING.md)
 - [Product design](docs/product-design.md)
-- [Architecture](docs/architecture.md)
+- [Internal architecture and message flow diagrams](docs/architecture.md): service components, duplex FIFO queues, and rate-limit retry ordering

@@ -6,29 +6,66 @@ Agentix uses a ports-and-adapters layout. The core owns identity, binding, routi
 
 ```mermaid
 flowchart LR
-    TG[Telegram long polling] --> CA[ChannelAdapter]
-    FS[Feishu long connection] --> CA
-    CA --> IN[MessageCenter inbound FIFO]
-    IN --> RT[Serialized runtime loop]
-    AA --> RT
-    RT --> E[Engine facade]
-    E --> SC[SessionCoordinator]
-    E --> TC[TurnCoordinator]
-    E --> IC[InteractionCoordinator]
-    E --> RC[RmuxController]
-    E <--> DB[(SQLite)]
-    E --> AV[OutboundView]
-    AV --> OUT[MessageCenter outbound FIFO]
-    OUT --> CA
-    CX[Codex WS over UDS] --> AA[AgentAdapter ports]
-    PI[Pi JSONL RPC] --> AA
-    OMP[Oh My Pi JSONL RPC] --> AA
-    CLI[agentix client] --> CT[Local control endpoint]
-    CT --> RT
-    CT --> AA
+    IM["Telegram or Feishu"]
+    CLI["agentix client"]
+    BACKEND["Codex app-server or Pi / Oh My Pi RPC"]
+    RMUX["rmux daemon"]
+
+    subgraph SERVICE["agentix serve"]
+        subgraph CHANNEL["Selected ChannelAdapter and its clones"]
+            DECODE["Owner policy and event normalization"]
+            LOCAL["Menus, claims, acknowledgements, reply lookups"]
+            subgraph CENTER["Shared MessageCenter · agentix-core"]
+                IN["Inbound FIFO"]
+                OUT["Outbound FIFO"]
+            end
+            HEAD["Queue head: API call, pacing and retries"]
+        end
+
+        subgraph RUNTIME["Runtime and orchestration"]
+            RT["Serialized engine loop"]
+            TICK["Working-duration timer"]
+            E["Engine facade"]
+            SC["SessionCoordinator: bindings and history cursors"]
+            TC["TurnCoordinator: buffers and message references"]
+            IC["InteractionCoordinator: actions and approvals"]
+            RC["RmuxController"]
+            DB[("SqliteState: bindings, event claims, checkpoints")]
+        end
+
+        AA["Shared AgentAdapter and optional capability ports"]
+        CT["Local control endpoint and handler"]
+        CLAIM["Owner claim registry"]
+    end
+
+    IM -->|"IM events"| DECODE
+    DECODE -->|"InboundEnvelope"| IN
+    IN -->|"Bounded runtime channel"| RT
+    TICK --> RT
+    AA -->|"AgentEvent subscription"| RT
+    RT --> E
+    E --> SC
+    E --> TC
+    E --> IC
+    E --> RC
+    E <--> DB
+    E -->|"Agent commands"| AA
+    RC -->|"WorkspaceRuntimePort"| AA
+    AA <-->|"Backend protocol"| BACKEND
+    AA <-->|"rmux SDK when supported"| RMUX
+    E -->|"ChannelAdapter calls: views, menus, action cleanup"| OUT
+    LOCAL --> OUT
+    OUT --> HEAD
+    HEAD -->|"IM API requests"| IM
+    CLI <--> CT
+    CT -->|"Session listing and raw Codex RPC"| AA
+    CT -->|"Issue claim code"| CLAIM
+    DECODE -.->|"Validate and consume claim"| CLAIM
 ```
 
-The executable selects one `AgentAdapter` and one or more `ChannelAdapter` implementations from validated TOML configuration.
+The executable selects one backend and one IM channel from validated TOML configuration. The engine supports a collection of channel adapters, while `serve` currently assembles only the configured channel. The diagram shows logical components inside that process, not a separate task for every box. `MessageCenter` is defined in `agentix-core` and owned by each selected channel adapter; clones share the same two queues.
+
+The local control handler runs separately from the serialized engine loop and uses the same backend client for session listing and raw Codex requests. Its claim requests use the owner claim registry. SDK polling, connection setup, and WebSocket control frames are omitted from the application message paths shown above.
 
 `Engine` is the orchestration facade rather than the owner of one large shared state bag. `SessionCoordinator` owns bindings, session metadata, and history cursors; `TurnCoordinator` owns active turns, render buffers, and message references; `InteractionCoordinator` owns pending interactions and scoped actions; and `RmuxController` isolates workspace-runtime access. External I/O remains in the facade so durable transitions and follow-up effects have an explicit order.
 
@@ -48,12 +85,15 @@ The executable selects one `AgentAdapter` and one or more `ChannelAdapter` imple
 ```mermaid
 sequenceDiagram
     participant IM as IM adapter
+    participant In as MessageCenter inbound FIFO
     participant Runtime as Serialized runtime
     participant Core as Engine facade
     participant DB as SQLite
     participant Agent as Agent adapter
+    participant Out as MessageCenter outbound FIFO
 
-    IM->>Runtime: InboundEnvelope(event, conversation, owner, text/action)
+    IM->>In: Normalized InboundEnvelope
+    In->>Runtime: Deliver through bounded runtime channel
     Runtime->>Core: handle inbound envelope
     Core->>DB: claim event as processing
     DB-->>Core: claimed or already in flight/completed
@@ -63,8 +103,45 @@ sequenceDiagram
     Agent-->>Runtime: AgentEvent(session, turn, item, delta/status)
     Runtime->>Core: handle agent event
     Core->>Core: route by exact session ID
-    Core->>IM: send/update OutboundView
+    Core->>Out: ChannelAdapter send/update with OutboundView
+    Out->>IM: Execute API operation at queue head
+    IM-->>Out: MessageRef or delivery result
+    Out-->>Core: Complete the awaiting channel call
 ```
+
+The two FIFO directions progress independently. The following example shows a later outbound request waiting behind a rate-limited head while an already-normalized inbound envelope is delivered to the runtime channel:
+
+```mermaid
+sequenceDiagram
+    participant A as Caller A
+    participant B as Caller B
+    participant Out as Outbound FIFO
+    participant API as IM API
+    participant In as Inbound FIFO
+    participant Runtime as Runtime channel
+
+    A->>Out: Submit operation A
+    activate Out
+    Out->>API: Attempt A
+    API-->>Out: Rate limit
+    B->>Out: Submit operation B and wait behind A
+    Note over Out: A retains the head during cooldown
+    In->>Runtime: Deliver a normalized inbound envelope
+    loop Until A succeeds, fails permanently, or is cancelled
+        Out->>API: Retry A after cooldown
+        API-->>Out: Result
+    end
+    Out-->>A: Return result, or abandon cancelled operation
+    deactivate Out
+    Note over Out: A saved cooldown still applies if A was cancelled
+    activate Out
+    Out->>API: Attempt B when permitted
+    API-->>Out: Result
+    Out-->>B: Return result
+    deactivate Out
+```
+
+Independent delivery does not make the engine concurrent: if the serialized loop is awaiting an outbound call, it handles buffered inbound envelopes after that call completes. A Feishu reply-context lookup also uses the outbound queue before normalization can finish. The queue implementation does not spawn background workers; cancelling a caller drops that operation and releases its queue position.
 
 Each IM adapter and all of its clones share a core `MessageCenter`. Its two independent FIFO admission queues are backed by Tokio's fair mutex wait queues. Admission order is the order in which operation futures are first polled; no ordering is claimed before normalization or before a future is polled. The inbound head delivers one `InboundEnvelope` to the bounded runtime channel, preserving backpressure. The outbound head owns the entire API operation, including pacing, token refresh, and rate-limit retries; later operations cannot run between its attempts. Queued work lives in the caller's future, without detached workers or an extra unbounded message buffer. Dropping that future deliberately abandons its operation and releases its queue position. Established transport cooldowns remain in shared adapter state for the next head. The existing shutdown deadline can therefore cancel queued or active operations without leaving background retries.
 
