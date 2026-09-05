@@ -105,7 +105,7 @@ The old session becomes draining and the new session becomes current. Old stream
 
 Telegram converts agent Markdown to MarkdownV2 in bounded UTF-8 text messages, registers a native command menu, and uses two-column inline keyboards. Feishu uses shared Card JSON 2.0 documents with a status-colored header, title/subtitle, Markdown body, and callback buttons. Because Feishu has no runtime API for per-conversation native bot menus, an interactive command card is sent after attachment and updated in place when attachment state changes. Both presentations are generated from the same channel-neutral `OutboundView` and `CommandMenu` models.
 
-Status colors are semantic: blue for running, orange for waiting/warning, green for success, red for error, and grey for muted information, and purple for background turns. Feishu also gives background quoted content a tinted container; Telegram adds a 🟣 Background marker.
+Status colors are semantic: blue for running, orange for waiting/warning, green for success, red for error, and grey for muted information, and purple for background turns. Feishu also gives background quoted content a tinted container; Telegram adds a ⚫ Background marker.
 
 ## 6. Security and privacy
 

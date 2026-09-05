@@ -11,6 +11,7 @@ use agentix_core::{
 use async_trait::async_trait;
 use telegram_markdown_v2::{UnsupportedTagsStrategy, convert_with_strategy};
 use teloxide::prelude::*;
+use teloxide::requests::{Output, Request};
 use teloxide::sugar::request::RequestLinkPreviewExt;
 use teloxide::types::{
     BotCommand, BotCommandScope, InlineKeyboardButton, InlineKeyboardMarkup, MenuButton, MessageId,
@@ -160,15 +161,16 @@ impl TelegramAdapter {
 
     /// Registers the supported commands and selects the commands menu button.
     pub async fn register_menu(&self) -> Result<(), ChannelError> {
-        self.bot
-            .set_my_commands(menu_commands())
+        send_with_retry(self.bot.set_my_commands(menu_commands()))
             .await
             .map_err(|error| ChannelError::Transport(error.to_string()))?;
-        self.bot
-            .set_chat_menu_button()
-            .menu_button(MenuButton::Commands)
-            .await
-            .map_err(|error| ChannelError::Transport(error.to_string()))?;
+        send_with_retry(
+            self.bot
+                .set_chat_menu_button()
+                .menu_button(MenuButton::Commands),
+        )
+        .await
+        .map_err(|error| ChannelError::Transport(error.to_string()))?;
         Ok(())
     }
 }
@@ -184,9 +186,7 @@ impl ChannelAdapter for TelegramAdapter {
         inbound: mpsc::Sender<InboundEnvelope>,
         shutdown: CancellationToken,
     ) -> Result<(), ChannelError> {
-        let me = self
-            .bot
-            .get_me()
+        let me = send_with_retry(self.bot.get_me())
             .await
             .map_err(|error| ChannelError::Transport(error.to_string()))?;
         self.register_menu().await?;
@@ -249,7 +249,7 @@ impl ChannelAdapter for TelegramAdapter {
                 let policy = callback_policy.clone();
                 let inbound = callback_inbound.clone();
                 async move {
-                    bot.answer_callback_query(query.id.clone()).await?;
+                    send_with_retry(bot.answer_callback_query(query.id.clone())).await?;
                     if !policy.is_owner(query.from.id.0) {
                         return Ok::<(), teloxide::RequestError>(());
                     }
@@ -298,16 +298,14 @@ impl ChannelAdapter for TelegramAdapter {
             .send_message(chat_id, render_text(view))
             .parse_mode(ParseMode::MarkdownV2)
             .disable_link_preview(true);
-        let message = if let Some(keyboard) = render_keyboard(&view.actions) {
-            request
-                .reply_markup(keyboard)
-                .await
-                .map_err(|error| ChannelError::Transport(error.to_string()))?
+        let request = if let Some(keyboard) = render_keyboard(&view.actions) {
+            request.reply_markup(keyboard)
         } else {
             request
-                .await
-                .map_err(|error| ChannelError::Transport(error.to_string()))?
         };
+        let message = send_with_retry(request)
+            .await
+            .map_err(|error| ChannelError::Transport(error.to_string()))?;
         Ok(MessageRef::new(
             conversation.clone(),
             message.id.0.to_string(),
@@ -331,19 +329,11 @@ impl ChannelAdapter for TelegramAdapter {
             .edit_message_text(chat_id, message_id, render_text(view))
             .parse_mode(ParseMode::MarkdownV2)
             .disable_link_preview(true);
-        if let Some(keyboard) = render_keyboard(&view.actions) {
-            request
-                .reply_markup(keyboard)
-                .await
-                .map_err(|error| ChannelError::Transport(error.to_string()))?;
-        } else {
-            request
-                .reply_markup(InlineKeyboardMarkup::new(
-                    Vec::<Vec<InlineKeyboardButton>>::new(),
-                ))
-                .await
-                .map_err(|error| ChannelError::Transport(error.to_string()))?;
-        }
+        let keyboard = render_keyboard(&view.actions)
+            .unwrap_or_else(|| InlineKeyboardMarkup::new(Vec::<Vec<InlineKeyboardButton>>::new()));
+        send_with_retry(request.reply_markup(keyboard))
+            .await
+            .map_err(|error| ChannelError::Transport(error.to_string()))?;
         Ok(())
     }
 
@@ -354,13 +344,15 @@ impl ChannelAdapter for TelegramAdapter {
             .parse::<i32>()
             .map(MessageId)
             .map_err(|error| ChannelError::InvalidPayload(error.to_string()))?;
-        self.bot
-            .edit_message_reply_markup(chat_id, message_id)
-            .reply_markup(InlineKeyboardMarkup::new(
-                Vec::<Vec<InlineKeyboardButton>>::new(),
-            ))
-            .await
-            .map_err(|error| ChannelError::Transport(error.to_string()))?;
+        send_with_retry(
+            self.bot
+                .edit_message_reply_markup(chat_id, message_id)
+                .reply_markup(InlineKeyboardMarkup::new(
+                    Vec::<Vec<InlineKeyboardButton>>::new(),
+                )),
+        )
+        .await
+        .map_err(|error| ChannelError::Transport(error.to_string()))?;
         Ok(())
     }
 
@@ -382,14 +374,36 @@ impl ChannelAdapter for TelegramAdapter {
                 BotCommand::new(&command.name, description)
             })
             .collect::<Vec<_>>();
-        self.bot
-            .set_my_commands(commands)
-            .scope(BotCommandScope::Chat {
-                chat_id: chat_id.into(),
-            })
-            .await
-            .map_err(|error| ChannelError::Transport(error.to_string()))?;
+        send_with_retry(
+            self.bot
+                .set_my_commands(commands)
+                .scope(BotCommandScope::Chat {
+                    chat_id: chat_id.into(),
+                }),
+        )
+        .await
+        .map_err(|error| ChannelError::Transport(error.to_string()))?;
         Ok(())
+    }
+}
+
+/// Telegram rejects rate-limited requests before executing them, so retry the
+/// same payload after its requested delay. Other errors remain visible to callers.
+async fn send_with_retry<R>(request: R) -> Result<Output<R>, teloxide::RequestError>
+where
+    R: Request<Err = teloxide::RequestError>,
+{
+    loop {
+        match request.send_ref().await {
+            Err(teloxide::RequestError::RetryAfter(delay)) => {
+                tracing::warn!(
+                    retry_after_seconds = delay.duration().as_secs(),
+                    "Telegram rate limit reached; waiting before retrying request"
+                );
+                tokio::time::sleep(delay.duration()).await;
+            }
+            result => return result,
+        }
     }
 }
 
@@ -455,7 +469,7 @@ fn parse_claim_command(input: &str) -> Option<&str> {
 }
 
 async fn send_claim_response(bot: &Bot, chat_id: ChatId, text: &str) {
-    if let Err(error) = bot.send_message(chat_id, text).await {
+    if let Err(error) = send_with_retry(bot.send_message(chat_id, text)).await {
         tracing::warn!(%error, "failed to send Telegram owner claim response");
     }
 }
@@ -514,7 +528,7 @@ pub fn attached_menu_commands() -> Vec<BotCommand> {
 #[must_use]
 pub fn render_text(view: &OutboundView) -> String {
     let mut header = if view.status == ViewStatus::Background {
-        format!("🟣 Background\n{}", view.title)
+        format!("⚫ Background\n{}", view.title)
     } else {
         view.title.clone()
     };

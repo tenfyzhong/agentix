@@ -648,6 +648,75 @@ async fn telegram_mock_long_polling_answers_callbacks_and_forwards_actions() {
 }
 
 #[tokio::test]
+async fn telegram_retries_rate_limited_menu_registration() {
+    let server = MockTelegramApi::start().await;
+    server.rate_limit_next("setmycommands", 1).await;
+    server.rate_limit_next("setchatmenubutton", 1).await;
+    let bot = Bot::new("test-token").set_api_url(server.api_url().parse().unwrap());
+    let adapter = TelegramAdapter::with_bot(bot, TelegramPolicy::new([42]));
+    let started = std::time::Instant::now();
+
+    tokio::time::timeout(std::time::Duration::from_secs(10), adapter.register_menu())
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert!(started.elapsed() >= std::time::Duration::from_secs(2));
+    for method in ["setmycommands", "setchatmenubutton"] {
+        let requests = server.requests().await;
+        let attempts = requests
+            .iter()
+            .filter(|r| r.target.to_ascii_lowercase().ends_with(method))
+            .collect::<Vec<_>>();
+        assert_eq!(attempts.len(), 2);
+        assert_eq!(attempts[0].body, attempts[1].body);
+    }
+}
+
+#[tokio::test]
+async fn telegram_retries_rate_limited_turn_messages_and_controls() {
+    let server = MockTelegramApi::start().await;
+    let bot = Bot::new("test-token").set_api_url(server.api_url().parse().unwrap());
+    let adapter = TelegramAdapter::with_bot(bot, TelegramPolicy::new([42]));
+    let conversation = ConversationRef::new(ChannelKind::Telegram, "42");
+    let view = OutboundView::text("Restored turn", "Saved response");
+    let message = MessageRef::new(conversation.clone(), "77");
+
+    for method in [
+        "sendmessage",
+        "editmessagetext",
+        "editmessagereplymarkup",
+        "setmycommands",
+    ] {
+        server.rate_limit_next(method, 1).await;
+        let started = std::time::Instant::now();
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            match method {
+                "sendmessage" => adapter.send(&conversation, &view).await.map(|_| ()),
+                "editmessagetext" => adapter.update(&conversation, &message, &view).await,
+                "editmessagereplymarkup" => adapter.disable_actions(&message).await,
+                _ => {
+                    adapter
+                        .set_command_menu(&conversation, &CommandMenu::default())
+                        .await
+                }
+            }
+        })
+        .await
+        .unwrap()
+        .unwrap();
+        assert!(started.elapsed() >= std::time::Duration::from_secs(1));
+        let requests = server.requests().await;
+        let attempts = requests
+            .iter()
+            .filter(|r| r.target.to_ascii_lowercase().ends_with(method))
+            .collect::<Vec<_>>();
+        assert_eq!(attempts.len(), 2);
+        assert_eq!(attempts[0].body, attempts[1].body);
+    }
+}
+
+#[tokio::test]
 async fn telegram_mock_api_errors_are_channel_transport_errors() {
     let server = MockTelegramApi::start().await;
     server
@@ -770,8 +839,8 @@ fn background_turns_have_a_distinct_marker_and_preserve_quotes() {
         actions: Vec::new(),
     };
     let background = render_text(&view);
-    assert!(background.starts_with("🟣 Background\n"));
+    assert!(background.starts_with("⚫ Background\n"));
     assert!(background.contains("> Completed *the task*\\."));
     view.status = ViewStatus::Success;
-    assert!(!render_text(&view).starts_with("🟣 Background"));
+    assert!(!render_text(&view).starts_with("⚫ Background"));
 }

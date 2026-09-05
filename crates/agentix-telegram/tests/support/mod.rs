@@ -18,6 +18,7 @@ pub struct CapturedRequest {
 struct PlannedFailure {
     method: String,
     description: String,
+    retry_after: Option<u32>,
 }
 
 pub struct MockTelegramApi {
@@ -69,6 +70,15 @@ impl MockTelegramApi {
         self.failures.lock().await.push_back(PlannedFailure {
             method: method.to_ascii_lowercase(),
             description: description.into(),
+            retry_after: None,
+        });
+    }
+
+    pub async fn rate_limit_next(&self, method: &str, seconds: u32) {
+        self.failures.lock().await.push_back(PlannedFailure {
+            method: method.to_ascii_lowercase(),
+            description: format!("Too Many Requests: retry after {seconds}"),
+            retry_after: Some(seconds),
         });
     }
 
@@ -111,11 +121,15 @@ async fn serve_request(
             .then(|| failures.pop_front().unwrap())
     };
     let body = if let Some(failure) = failure {
-        json!({
+        let mut response = json!({
             "ok": false,
-            "error_code": 400,
+            "error_code": if failure.retry_after.is_some() { 429 } else { 400 },
             "description": failure.description
-        })
+        });
+        if let Some(seconds) = failure.retry_after {
+            response["parameters"] = json!({"retry_after": seconds});
+        }
+        response
     } else {
         match api_method.as_str() {
             "getme" => json!({

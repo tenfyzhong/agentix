@@ -16,7 +16,9 @@ Each IM conversation maps explicitly and durably to an agent session. Messages i
 - Durable bindings, restart recovery, process-exit notifications, and automatic Codex reattachment
 - Streamed in-place responses, background completion notifications, and reply context
 
-While `agentix serve` is running, Agentix checks running Codex sessions for completed turns every two seconds using read-only history queries, including sessions that have never been attached or were detached from IM. Background monitoring does not resume sessions or acquire their writer locks. New completions include the completed turn's prompt and response, a Background label, and an Attach button. Feishu uses a purple header and a tinted quote area; Telegram uses a 🟣 Background marker and blockquotes. Notifications go to authenticated IM conversations known to the service. Send the bot `/help` once to register a conversation for these notifications; attaching a session is optional.
+While `agentix serve` is running, Agentix checks running Codex sessions for completed turns every two seconds using read-only history queries, including sessions that have never been attached or were detached from IM. Background monitoring does not resume sessions or acquire their writer locks. New completions include the completed turn's prompt and response, a Background label, and an Attach button. Feishu uses a purple header and a tinted quote area; Telegram uses a ⚫ Background marker and blockquotes. Notifications go to authenticated IM conversations known to the service. Send the bot `/help` once to register a conversation for these notifications; attaching a session is optional.
+
+Startup recovery, automatic reattachment, and shutdown notifications only use channels enabled in the current configuration. Saved bindings and turn messages for other channels are retained for when those channels are enabled again. Telegram requests that return `retry_after` wait for the specified delay and retry automatically, including restored turn updates and command menus.
 
 To disable completion notices for unattached sessions, add this to `config.toml` and restart Agentix:
 

@@ -222,11 +222,20 @@ impl Engine {
         let persisted = self.state.list_bindings().await?;
         let mut restored = 0;
         for (conversation, session) in &persisted {
+            if !self.channels.contains_key(&conversation.channel) {
+                continue;
+            }
             if self.restore_binding(conversation, session).await? {
                 restored += 1;
             }
         }
         for stored in self.state.list_turn_views().await? {
+            if !self
+                .channels
+                .contains_key(&stored.message.conversation.channel)
+            {
+                continue;
+            }
             let is_current = self
                 .sessions
                 .bindings
@@ -371,6 +380,9 @@ impl Engine {
 
         let mut notified = 0;
         for (conversation, session) in &persisted {
+            if !self.channels.contains_key(&conversation.channel) {
+                continue;
+            }
             let session_label = self.session_label(session).await;
             self.sessions
                 .bindings
@@ -2284,12 +2296,14 @@ impl Engine {
     }
 
     async fn handle_session_resume(&self, session_id: &SessionId) -> Result<(), EngineError> {
-        let Some((conversation, _)) = self
-            .state
-            .list_bindings()
-            .await?
-            .into_iter()
-            .find(|(_, saved_session)| saved_session == session_id)
+        let Some((conversation, _)) =
+            self.state
+                .list_bindings()
+                .await?
+                .into_iter()
+                .find(|(conversation, saved_session)| {
+                    saved_session == session_id && self.channels.contains_key(&conversation.channel)
+                })
         else {
             return Ok(());
         };

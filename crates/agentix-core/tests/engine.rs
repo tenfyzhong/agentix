@@ -379,6 +379,7 @@ impl SessionControlPort for FakeAgent {
 
 #[derive(Clone, Default)]
 struct FakeChannel {
+    channel_kind: Option<ChannelKind>,
     sent: Arc<Mutex<Vec<(ConversationRef, OutboundView)>>>,
     updated: Arc<Mutex<Vec<(MessageRef, OutboundView)>>>,
     disabled_actions: Arc<Mutex<Vec<MessageRef>>>,
@@ -411,7 +412,7 @@ impl FakeChannel {
 #[async_trait]
 impl ChannelAdapter for FakeChannel {
     fn kind(&self) -> ChannelKind {
-        ChannelKind::Telegram
+        self.channel_kind.unwrap_or(ChannelKind::Telegram)
     }
 
     async fn send(
@@ -2074,6 +2075,109 @@ async fn restore_reopens_persisted_agent_subscriptions() {
         .await
         .unwrap();
     assert!(agent.calls().contains(&"start:thr_a:continue".to_string()));
+}
+
+async fn seed_feishu_turn(state: &SqliteState) {
+    let channel = Arc::new(FakeChannel {
+        channel_kind: Some(ChannelKind::Feishu),
+        ..FakeChannel::default()
+    });
+    let engine = Engine::new(Arc::new(FakeAgent::new()), state.clone(), vec![channel]);
+    engine
+        .handle_inbound(InboundEnvelope::text(
+            "feishu-attach",
+            ConversationRef::new(ChannelKind::Feishu, "saved-chat"),
+            "owner-42",
+            "/attach thr_b",
+        ))
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::AgentMessageDelta {
+            session_id: "thr_b".into(),
+            turn_id: "feishu-turn".into(),
+            item_id: "item".into(),
+            delta: "Saved Feishu response".into(),
+        })
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn restore_preserves_disabled_channels_without_subscribing_or_rendering_them() {
+    let state = SqliteState::in_memory().await.unwrap();
+    seed_feishu_turn(&state).await;
+    let telegram = ConversationRef::new(ChannelKind::Telegram, "chat-a");
+    state
+        .attach(&telegram, &SessionId::new("thr_a"))
+        .await
+        .unwrap();
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(agent.clone(), state.clone(), vec![channel.clone()]);
+
+    assert_eq!(engine.restore_bindings().await.unwrap(), 1);
+    assert!(agent.calls().contains(&"attach:thr_a".into()));
+    assert!(!agent.calls().contains(&"attach:thr_b".into()));
+    assert!(
+        channel
+            .sent()
+            .iter()
+            .all(|(conversation, _)| conversation == &telegram)
+    );
+    assert_eq!(state.list_bindings().await.unwrap().len(), 2);
+
+    let feishu = Arc::new(FakeChannel {
+        channel_kind: Some(ChannelKind::Feishu),
+        ..FakeChannel::default()
+    });
+    let restarted = Engine::new(agent, state, vec![feishu.clone()]);
+    assert_eq!(restarted.restore_bindings().await.unwrap(), 1);
+    assert_eq!(feishu.updated().len(), 1);
+    assert!(feishu.updated()[0].1.body.contains("Saved Feishu response"));
+}
+
+#[tokio::test]
+async fn resumed_sessions_do_not_reactivate_disabled_channels() {
+    let state = SqliteState::in_memory().await.unwrap();
+    seed_feishu_turn(&state).await;
+    let engine = Engine::new(
+        Arc::new(FakeAgent::new()),
+        state,
+        vec![Arc::new(FakeChannel::default())],
+    );
+    engine
+        .handle_agent_event(AgentEvent::SessionResumed {
+            session_id: "thr_b".into(),
+        })
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::AgentMessageDelta {
+            session_id: "thr_b".into(),
+            turn_id: "feishu-turn".into(),
+            item_id: "item".into(),
+            delta: "Later Feishu response".into(),
+        })
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn shutdown_skips_disabled_channels_and_preserves_their_state() {
+    let state = SqliteState::in_memory().await.unwrap();
+    seed_feishu_turn(&state).await;
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        Arc::new(FakeAgent::new()),
+        state.clone(),
+        vec![channel.clone()],
+    );
+
+    assert_eq!(engine.prepare_shutdown().await.unwrap(), 0);
+    assert!(channel.sent().is_empty());
+    assert!(channel.updated().is_empty());
+    assert_eq!(state.list_bindings().await.unwrap().len(), 1);
 }
 
 #[tokio::test]
