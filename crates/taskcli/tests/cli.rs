@@ -364,7 +364,14 @@ fn concurrent_cli_jobs_preserve_notes_and_all_projections() {
         for (path, task) in paths.iter().zip(&tasks) {
             let body = std::fs::read_to_string(path).unwrap();
             assert_eq!(body.matches("Keep my notes.").count(), 1);
-            assert!(body.contains("- [/] ") && body.contains(&task.replace('_', "-")));
+            assert!(body.contains("Tasks/") && body.contains(&task.replace('_', "-")));
+            let folder = path.parent().unwrap().parent().unwrap().join("Tasks");
+            let note = std::fs::read_dir(folder)
+                .unwrap()
+                .map(|e| std::fs::read_to_string(e.unwrap().path()).unwrap())
+                .find(|s| s.contains(task))
+                .unwrap();
+            assert!(note.contains("status: \"IN_PROGRESS\""));
         }
         assert_eq!(
             cli.ok(&["task", "list", "--status", "IN_PROGRESS"])
@@ -668,28 +675,29 @@ fn cli_creates_and_repairs_plugin_views_without_installing_obsidian_plugins() {
         let output = cli.dir.path().join("vault/Tasks \u{2603}");
         let directory = output.join(format!("Projects/{}", project["key"].as_str().unwrap()));
         let board = std::fs::read_to_string(directory.join("Board.md")).unwrap();
-        let tasks = std::fs::read_to_string(directory.join("Tasks.md")).unwrap();
-        assert!(board.starts_with("---\nkanban-plugin: board\n"));
-        assert!(board.contains("Visible card"));
+        assert!(!directory.join("Tasks.md").exists());
+        assert!(board.starts_with("---\n"));
+        assert!(board.contains("tasknotesKanban"));
+        assert!(!board.contains("kanban-plugin:"));
+        assert!(
+            std::fs::read_dir(directory.join("Tasks"))
+                .unwrap()
+                .any(|e| e
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .contains("Visible card"))
+        );
         assert_eq!(board.contains("[["), format == "obsidian");
-        assert_eq!(tasks.contains("[["), format == "obsidian");
-        if format == "markdown" {
-            assert!(board.contains("](Jobs/"));
-            assert!(tasks.contains("](Board.md)"));
-        }
-        assert_eq!(tasks.matches("```tasks\n").count(), 7);
+        assert!(!board.contains("Task list"));
         let before = cli.ok(&["task", "show", &task]);
         std::fs::write(directory.join("Board.md"), "# Old table or manual edit\n").unwrap();
-        std::fs::remove_file(directory.join("Tasks.md")).unwrap();
         cli.ok(&["sync"]);
         assert_eq!(
             std::fs::read_to_string(directory.join("Board.md")).unwrap(),
             board
         );
-        assert_eq!(
-            std::fs::read_to_string(directory.join("Tasks.md")).unwrap(),
-            tasks
-        );
+        assert!(!directory.join("Tasks.md").exists());
         assert_eq!(cli.ok(&["task", "show", &task]), before);
         let settings = cli.dir.path().join("vault/.obsidian");
         assert_eq!(settings.exists(), format == "obsidian");
@@ -923,9 +931,13 @@ fn taskcli_preserves_authored_language_without_language_configuration() {
         std::fs::read_to_string(cli.dir.path().join("vault/Tasks ☃/Dashboard.md")).unwrap();
     assert!(dashboard.contains("Task dashboard"), "{dashboard}");
     assert!(
-        std::fs::read_to_string(cli.dir.path().join("vault/Tasks ☃/Projects/Demo/Board.md"))
+        std::fs::read_dir(cli.dir.path().join("vault/Tasks ☃/Projects/Demo/Tasks"))
             .unwrap()
-            .contains("验收检查")
+            .any(|e| e
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .contains("验收检查"))
     );
     let output = cli
         .command(&["sync"])
@@ -975,4 +987,48 @@ fn initialization_ignores_language_environment_and_omits_language_configuration(
     let config = std::fs::read_to_string(cli.dir.path().join("config.toml")).unwrap();
     assert!(!config.contains("language"));
     assert!(cli.ok(&["doctor"])["documents"].get("language").is_none());
+}
+
+#[test]
+fn task_note_timestamps_follow_the_process_local_zone() {
+    let cli = Cli::new("markdown");
+    let job = cli.job("Local time projection");
+    let id = cli.task(&job, "Time zones");
+    let task = cli.ok(&["task", "show", &id]);
+    let project = cli.ok(&["project", "list"])[0].clone();
+    let folder = cli
+        .dir
+        .path()
+        .join("vault/Tasks ☃/Projects")
+        .join(project["key"].as_str().unwrap())
+        .join("Tasks");
+    let path = std::fs::read_dir(folder)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    for (zone, hours) in [("Asia/Tokyo", 9), ("Etc/GMT+5", -5), ("UTC", 0)] {
+        let output = cli.command(&["sync"]).env("TZ", zone).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        let doc = std::fs::read_to_string(&path).unwrap();
+        let created =
+            time::OffsetDateTime::from_unix_timestamp(task["created_at"].as_i64().unwrap())
+                .unwrap();
+        let expected = created
+            .to_offset(time::UtcOffset::from_hms(hours, 0, 0).unwrap())
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap();
+        assert!(
+            doc.contains(&format!("created_at: {expected:?}")),
+            "{zone}: {doc}"
+        );
+        assert!(doc.contains(&format!("dateCreated: {expected:?}")));
+        assert!(doc.contains("completed_at: null"));
+        assert!(!doc.lines().any(|line| line.starts_with("version:")));
+    }
 }

@@ -1,0 +1,187 @@
+/* Agent task statuses — TaskNotes 4.12.
+ * Enable as agent-task-statuses in Settings > Appearance > CSS snippets.
+ * Also styles ordinary Markdown checkbox markers in Reading view and Live Preview.
+ * TaskNotes: generated uppercase status values in native Kanban columns.
+ * No task data or click behavior is changed by this stylesheet.
+ */
+
+body {
+    --agent-todo: #526274;
+    --agent-progress: #165dcc;
+    --agent-blocked: #9a5200;
+    --agent-waiting: #7836ad;
+    --agent-done: #16703d;
+    --agent-failed: #b42332;
+    --agent-cancelled: #6b6273;
+}
+
+body.theme-dark {
+    --agent-todo: #b3c1d1;
+    --agent-progress: #82b5ff;
+    --agent-blocked: #ffc16b;
+    --agent-waiting: #d2a5ff;
+    --agent-done: #79d9a0;
+    --agent-failed: #ff909b;
+    --agent-cancelled: #c2b5cd;
+}
+
+li.task-list-item[data-task=""],
+.HyperMD-task-line[data-task=""],
+li.task-list-item[data-task=" "],
+.HyperMD-task-line[data-task=" "] {
+    --agent-status-color: var(--agent-todo);
+    --agent-status-icon: "○";
+    --agent-status-label: "Todo";
+}
+
+li.task-list-item[data-task="/"],
+.HyperMD-task-line[data-task="/"] {
+    --agent-status-color: var(--agent-progress);
+    --agent-status-icon: "▶";
+    --agent-status-label: "In Progress";
+}
+
+li.task-list-item[data-task="!"],
+.HyperMD-task-line[data-task="!"] {
+    --agent-status-color: var(--agent-blocked);
+    --agent-status-icon: "!";
+    --agent-status-label: "Blocked";
+}
+
+li.task-list-item[data-task="?"],
+.HyperMD-task-line[data-task="?"] {
+    --agent-status-color: var(--agent-waiting);
+    --agent-status-icon: "?";
+    --agent-status-label: "Waiting User";
+}
+
+li.task-list-item[data-task="x"],
+.HyperMD-task-line[data-task="x"] {
+    --agent-status-color: var(--agent-done);
+    --agent-status-icon: "✓";
+    --agent-status-label: "Done";
+}
+
+li.task-list-item[data-task="f"],
+.HyperMD-task-line[data-task="f"] {
+    --agent-status-color: var(--agent-failed);
+    --agent-status-icon: "×";
+    --agent-status-label: "Failed";
+}
+
+li.task-list-item[data-task="-"],
+.HyperMD-task-line[data-task="-"] {
+    --agent-status-color: var(--agent-cancelled);
+    --agent-status-icon: "−";
+    --agent-status-label: "Cancelled";
+}
+
+/* A visible status rail; keep titles and links readable even for terminal states. */
+body li.task-list-item:is([data-task=""], [data-task=" "], [data-task="/"], [data-task="!"], [data-task="?"], [data-task="x"], [data-task="f"], [data-task="-"]) {
+    border-inline-start: 4px solid var(--agent-status-color);
+    border-radius: 5px;
+    background-color: color-mix(in srgb, var(--agent-status-color) 9%, var(--background-primary));
+    padding: 0.35em 0.65em 0.35em 1.8em;
+    margin-block: 0.35em;
+    color: var(--text-normal);
+    opacity: 1;
+    text-decoration: none;
+    --checklist-done-decoration: none;
+    --checklist-done-color: var(--text-normal);
+}
+
+body li.task-list-item:is([data-task=""], [data-task=" "], [data-task="/"], [data-task="!"], [data-task="?"], [data-task="x"], [data-task="f"], [data-task="-"]) > .tasks-list-text {
+    color: var(--text-normal);
+    text-decoration: none;
+    opacity: 1;
+}
+
+body li.task-list-item:is([data-task=""], [data-task=" "], [data-task="/"], [data-task="!"], [data-task="?"], [data-task="x"], [data-task="f"], [data-task="-"])::after {
+    content: var(--agent-status-label);
+    display: inline-block;
+    margin-inline-start: 0.6em;
+    padding: 0.08em 0.5em;
+    border: 1px solid currentColor;
+    border-radius: 4px;
+    color: var(--agent-status-color);
+    font-size: 0.72em;
+    font-weight: 700;
+    line-height: 1.5;
+    vertical-align: middle;
+    text-decoration: none;
+    white-space: nowrap;
+}
+
+/* Override theme checkbox masks, including Border's alternate checkboxes. */
+body :is(li.task-list-item, .HyperMD-task-line):is([data-task=""], [data-task=" "], [data-task="/"], [data-task="!"], [data-task="?"], [data-task="x"], [data-task="f"], [data-task="-"]) input[type="checkbox"] {
+    appearance: none !important;
+    -webkit-appearance: none !important;
+    background: var(--background-primary) !important;
+    border: 2px solid var(--agent-status-color) !important;
+    border-radius: 5px !important;
+    color: var(--agent-status-color) !important;
+    width: 1.1em;
+    height: 1.1em;
+    position: relative;
+    box-shadow: none !important;
+    transform: none !important;
+    opacity: 1 !important;
+}
+
+body :is(li.task-list-item, .HyperMD-task-line):is([data-task=""], [data-task=" "], [data-task="/"], [data-task="!"], [data-task="?"], [data-task="x"], [data-task="f"], [data-task="-"]) input[type="checkbox"]::before {
+    content: none !important;
+}
+
+body :is(li.task-list-item, .HyperMD-task-line):is([data-task=""], [data-task=" "], [data-task="/"], [data-task="!"], [data-task="?"], [data-task="x"], [data-task="f"], [data-task="-"]) input[type="checkbox"]::after {
+    content: var(--agent-status-icon) !important;
+    -webkit-mask: none !important;
+    mask: none !important;
+    background: none !important;
+    position: absolute;
+    inset: 0;
+    width: auto;
+    height: auto;
+    display: grid;
+    place-items: center;
+    font: 800 0.85em/1 var(--font-interface);
+    color: var(--agent-status-color) !important;
+    transform: none !important;
+    clip-path: none !important;
+}
+
+body :is(li.task-list-item, .HyperMD-task-line):is([data-task=""], [data-task=" "], [data-task="/"], [data-task="!"], [data-task="?"], [data-task="x"], [data-task="f"], [data-task="-"]) input[type="checkbox"]:focus-visible {
+    outline: 2px solid var(--agent-status-color);
+    outline-offset: 3px;
+}
+
+/* TaskNotes supplies status colors. Match semantic status values rather than
+ * column positions or folder names.
+ */
+
+.kanban-view__column[data-group="TODO"] {
+    border-top: 4px solid var(--agent-todo);
+}
+
+.kanban-view__column[data-group="IN_PROGRESS"] {
+    border-top: 4px solid var(--agent-progress);
+}
+
+.kanban-view__column[data-group="BLOCKED"] {
+    border-top: 4px solid var(--agent-blocked);
+}
+
+.kanban-view__column[data-group="WAITING_USER"] {
+    border-top: 4px solid var(--agent-waiting);
+}
+
+.kanban-view__column[data-group="DONE"] {
+    border-top: 4px solid var(--agent-done);
+}
+
+.kanban-view__column[data-group="FAILED"] {
+    border-top: 4px solid var(--agent-failed);
+}
+
+.kanban-view__column[data-group="CANCELLED"] {
+    border-top: 4px solid var(--agent-cancelled);
+}

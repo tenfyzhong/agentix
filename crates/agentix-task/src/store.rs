@@ -71,7 +71,7 @@ impl Store {
             .fetch_one(&mut *tx)
             .await?;
         ensure!(
-            version <= 6,
+            version <= 7,
             "unsupported task database schema version {version}"
         );
         sqlx::raw_sql(include_str!("schema.sql"))
@@ -90,6 +90,9 @@ impl Store {
         }
         if version > 0 && version < 5 {
             migrate_job_directories(&mut tx).await?;
+        }
+        if version > 0 && version < 7 {
+            migrate_task_notes(&mut tx).await?;
         }
         tx.commit().await?;
         Ok(())
@@ -294,6 +297,35 @@ impl Store {
             .await?;
         Ok(())
     }
+}
+
+async fn migrate_task_notes(conn: &mut SqliteConnection) -> Result<()> {
+    let state = load(conn).await?;
+    let old: Option<String> =
+        sqlx::query_scalar("SELECT value FROM projection_state WHERE key = 'documents'")
+            .fetch_optional(&mut *conn)
+            .await?;
+    let mut documents: Value = old
+        .map(|v| serde_json::from_str(&v))
+        .transpose()?
+        .unwrap_or_else(|| json!({}));
+    for plan in &state.plans {
+        let task = &state.tasks[state.task_index(&plan.task_id)?];
+        let key = format!("plan:{}", plan.id);
+        if documents.get(&key).is_none() {
+            documents[&key] = json!(plan.path);
+        }
+        let mut migrated = plan.clone();
+        migrated.path = crate::naming::task_path(&state, task)?;
+        sqlx::query("UPDATE plans SET data=? WHERE id=?")
+            .bind(serde_json::to_string(&migrated)?)
+            .bind(&plan.id)
+            .execute(&mut *conn)
+            .await?;
+    }
+    sqlx::query("INSERT INTO projection_state(key,value) VALUES ('documents',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+        .bind(documents.to_string()).execute(&mut *conn).await?;
+    Ok(())
 }
 
 /// Keep legacy locations until projection acknowledges all new files. A failed

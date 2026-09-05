@@ -9,7 +9,7 @@ use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
 
 use crate::{
-    Config, DocumentFormat, Job, Outcome, Plan, Snapshot, Store, Task, TaskStatus, WriteOptions,
+    Config, DocumentFormat, Outcome, Plan, Snapshot, Store, Task, TaskStatus, WriteOptions,
     config::resolved_path, mutations::required, new_id, store::hash_bytes,
 };
 
@@ -148,17 +148,12 @@ impl Service {
             .max()
             .unwrap_or(0)
             + 1;
-        let project = &state.projects[state.project_index(&task.project_id)?];
         let current = state.plans.iter().find(|p| p.task_id == task.id);
-        let filename = crate::naming::numbered_name(&task.name, task.created_at, task.sequence)?;
         let plan = Plan {
             id: current.map_or_else(|| new_id("plan"), |p| p.id.clone()),
             task_id: task.id.clone(),
             version,
-            path: current.map_or_else(
-                || format!("Projects/{}/Plans/{filename}.md", project.key),
-                |p| p.path.clone(),
-            ),
+            path: crate::naming::task_path(&state, task)?,
             hash: hash_bytes(body.as_bytes()),
             created_at: current.map_or_else(|| self.store.now(), |p| p.created_at),
             updated_at: self.store.now(),
@@ -169,8 +164,14 @@ impl Service {
         // Validate ownership and state before touching the filesystem.
         let mut preview = state.clone();
         crate::mutations::apply(&mut preview, &registration, &options, self.store.now())?;
+        let managed_task = if current.is_none() && path.is_file() {
+            let (properties, _) = split_properties(&std::fs::read_to_string(&path)?)?;
+            properties["taskcli-generated"] == true && properties["id"] == task.id
+        } else {
+            false
+        };
         ensure!(
-            current.is_some() || !path.exists(),
+            current.is_some() || !path.exists() || managed_task,
             "conflict: unregistered Plan file exists; preserve or move it before retrying"
         );
         // Commit authorization and the replacement body together. Sync publishes it
@@ -251,15 +252,13 @@ impl Service {
         dashboard.push_str(&Self::header("Task dashboard"));
         for project in &state.projects {
             let board_path = format!("Projects/{}/Board.md", project.key);
-            let tasks_path = format!("Projects/{}/Tasks.md", project.key);
             let meta_path = format!("Projects/{}/meta.md", project.key);
             if project.archived_at.is_none() {
                 dashboard.push_str(&format!(
-                    "\n## {}\n\n{} · {} · {}\n",
+                    "\n## {}\n\n{} · {}\n",
                     escape(&project.name),
                     self.link("Dashboard.md", &meta_path, None, "Project"),
-                    self.link("Dashboard.md", &board_path, None, "Kanban board"),
-                    self.link("Dashboard.md", &tasks_path, None, "Tasks")
+                    self.link("Dashboard.md", &board_path, None, "Kanban board")
                 ));
             }
             let mut meta = frontmatter(
@@ -267,55 +266,16 @@ impl Service {
             );
             meta.push_str(&Self::header(&project.name));
             meta.push_str(&format!(
-                "\n{} · {}\n",
-                self.link(&meta_path, &board_path, None, "Kanban board"),
-                self.link(&meta_path, &tasks_path, None, "Tasks")
+                "\n{}\n",
+                self.link(&meta_path, &board_path, None, "Kanban board")
             ));
             files.insert(meta_path.clone(), meta);
-            paths.insert(format!("meta:{}", project.id), meta_path);
-            let mut board = frontmatter(
-                json!({"id":format!("board:{}",project.id), "created_at":timestamp(project.created_at), "tags":["agent/board"], "title":format!("{} — task board",project.name), "show-checkboxes":false,"show-add-list":false,"show-archive-all":false,"show-board-settings":false}),
-            );
-            board = board.replacen("---\n", "---\nkanban-plugin: board\n", 1);
-            board.push_str(&format!(
-                "\n{}\n\n{}\n",
-                Self::notice(),
-                self.link(&board_path, &tasks_path, None, "Tasks view")
-            ));
-            let mut columns: Vec<Vec<String>> = vec![Vec::new(); 7];
-            let mut tasks: Vec<_> = state
-                .tasks
-                .iter()
-                .filter(|t| {
-                    t.project_id == project.id
-                        && state
-                            .jobs
-                            .iter()
-                            .any(|j| j.id == t.job_id && j.archived_at.is_none())
-                })
-                .collect();
-            tasks.sort_by_key(|t| (t.position, t.id.clone()));
-            for task in tasks {
-                let column = TaskStatus::ALL
-                    .iter()
-                    .position(|s| *s == task.status)
-                    .context("unknown task state")?;
-                columns[column].push(self.task_line(&state, task, &board_path)?);
-            }
-            for (status, cards) in TaskStatus::ALL.iter().zip(columns) {
-                board.push_str(&format!("\n## {status}\n\n"));
-                for card in cards {
-                    board.push_str(&card);
-                    board.push('\n');
-                }
-            }
-            files.insert(board_path.clone(), board);
-            paths.insert(format!("board:{}", project.id), board_path.clone());
+            paths.insert(format!("meta:{}", project.id), meta_path.clone());
             files.insert(
-                tasks_path.clone(),
-                self.tasks_view(project, &tasks_path, &board_path),
+                board_path.clone(),
+                self.tasknotes_board(project, &board_path, &meta_path)?,
             );
-            paths.insert(format!("tasks:{}", project.id), tasks_path);
+            paths.insert(format!("board:{}", project.id), board_path.clone());
             for job in state.jobs.iter().filter(|j| j.project_id == project.id) {
                 let key = format!("job:{}", job.id);
                 let previous_path = previous.get(&key).unwrap_or(&job.document_path);
@@ -398,43 +358,41 @@ impl Service {
                 paths.insert(key, job.document_path.clone());
             }
         }
-        for plan in &state.plans {
-            let task = &state.tasks[state.task_index(&plan.task_id)?];
-            let key = format!("plan:{}", plan.id);
-            let source = self.safe_path(previous.get(&key).unwrap_or(&plan.path))?;
-            let source = if source.exists() {
-                source
+        for task in &state.tasks {
+            let plan = state
+                .plans
+                .iter()
+                .find(|p| Some(&p.id) == task.current_plan.as_ref());
+            let path = crate::naming::task_path(&state, task)?;
+            let key = format!("task:{}", task.id);
+            let candidates = [
+                previous.get(&key),
+                plan.and_then(|p| previous.get(&format!("plan:{}", p.id))),
+                Some(&path),
+            ];
+            let mut source = self.safe_path(&path)?;
+            for candidate in candidates.into_iter().flatten() {
+                let candidate = self.safe_path(candidate)?;
+                if candidate.exists() {
+                    source = candidate;
+                    break;
+                }
+            }
+            let existing = if source.exists() {
+                std::fs::read_to_string(&source)?
             } else {
-                self.safe_path(&plan.path)?
+                ensure!(
+                    plan.is_none_or(|p| p.pending_body.is_some()),
+                    "missing Plan {path}"
+                );
+                String::new()
             };
-            let body = if let Some(body) = &plan.pending_body {
-                body.clone()
-            } else {
-                std::fs::read_to_string(source)
-                    .with_context(|| format!("missing Plan {}", plan.path))?
-            };
-            let (mut authored, body) = split_properties(&body)?;
-            let generated = json!({"id":plan.id,"task_id":task.id,"job_id":task.job_id,"project_id":task.project_id,"sequence":task.sequence,"version":plan.version,"created_at":timestamp(plan.created_at),"updated_at":timestamp(plan.updated_at),"started_at":optional_timestamp(task.started_at),"completed_at":optional_timestamp(task.completed_at),"status":task.status});
-            let authored_tags = authored["tags"].clone();
-            if authored["title"].is_null() {
-                authored["title"] = json!(task.name);
+            let doc = self.task_document(&state, task, plan, &existing)?;
+            files.insert(path.clone(), doc);
+            paths.insert(key, path.clone());
+            if let Some(plan) = plan {
+                paths.insert(format!("plan:{}", plan.id), path);
             }
-            for (key, value) in generated.as_object().unwrap() {
-                authored[key] = value.clone();
-            }
-            let mut tags = match authored_tags {
-                Value::Array(tags) => tags,
-                Value::String(tag) => vec![json!(tag)],
-                _ => Vec::new(),
-            };
-            if !tags.contains(&json!("agent/plan")) {
-                tags.push(json!("agent/plan"));
-            }
-            authored["tags"] = json!(tags);
-            let mut doc = frontmatter(authored);
-            doc.push_str(body);
-            files.insert(plan.path.clone(), doc);
-            paths.insert(key, plan.path.clone());
         }
         files.insert("Dashboard.md".into(), dashboard);
         paths.insert("dashboard".into(), "Dashboard.md".into());
@@ -551,55 +509,128 @@ impl Service {
         "> GENERATED — DO NOT EDIT task fields. Use taskcli or an Agent."
     }
 
+    fn tasknotes_board(
+        &self,
+        project: &crate::Project,
+        path: &str,
+        project_path: &str,
+    ) -> Result<String> {
+        let title = format!("{} — Task board", project.name);
+        let folder = self
+            .config
+            .documents
+            .directory
+            .join(format!("Projects/{}/Tasks", project.key));
+        let folder = folder.to_string_lossy().replace('\\', "/");
+        let folder = folder.trim_start_matches("./");
+        let mut view = json!({
+            "type": "tasknotesKanban",
+            "name": "Task board",
+            "groupBy": {"property":"status", "direction":"ASC"},
+            "order": ["status"],
+            "sort": [{"column":"file.name", "direction":"ASC"}]
+        });
+        view["columnOrder"] = json!({"status":TaskStatus::ALL});
+        view["hideEmptyColumns"] = json!(false);
+        view["columnWidth"] = json!(300);
+        let base = json!({
+            "filters": {"and": [format!("file.folder == {}", json!(folder)), "file.hasTag(\"agent/task\")", format!("project_id == {}", json!(project.id)), "archived != true"]},
+            "views": [view]
+        });
+        let mut doc = frontmatter(
+            json!({"id":format!("board:{}",project.id),"created_at":timestamp(project.created_at),"title":title,"tags":["agent/board"]}),
+        );
+        doc.push_str(&Self::header(&title));
+        doc.push_str(&format!(
+            "\n{}\n\n```base\n{}\n```\n",
+            self.link(path, project_path, None, "Project"),
+            serde_yaml::to_string(&base)?.trim_end()
+        ));
+        Ok(doc)
+    }
+
+    fn task_document(
+        &self,
+        state: &Snapshot,
+        task: &Task,
+        plan: Option<&Plan>,
+        existing: &str,
+    ) -> Result<String> {
+        let (mut authored, existing_body) = split_properties(existing)?;
+        let default_body = format!("# {}\n\n{}\n", escape(&task.name), escape(&task.title));
+        let body = if let Some(pending) = plan.and_then(|p| p.pending_body.as_ref()) {
+            let (properties, body) = split_properties(pending)?;
+            authored
+                .as_object_mut()
+                .unwrap()
+                .extend(properties.as_object().unwrap().clone());
+            body
+        } else if existing.is_empty() {
+            &default_body
+        } else {
+            existing_body
+        };
+        let project = &state.projects[state.project_index(&task.project_id)?];
+        let job = &state.jobs[state.job_index(&task.job_id)?];
+        let wiki = |path: &str| {
+            format!(
+                "[[{}]]",
+                self.config
+                    .documents
+                    .directory
+                    .join(path)
+                    .to_string_lossy()
+                    .replace('\\', "/")
+                    .trim_start_matches("./")
+                    .trim_end_matches(".md")
+            )
+        };
+        let generated = json!({
+            "id":task.id,"task_id":task.id,"plan_id":task.current_plan,"job_id":task.job_id,"project_id":task.project_id,
+            "sequence":task.sequence,"revision":task.revision,
+            "status":task.status,"phase":task.phase,"archived":job.archived_at.is_some() || project.archived_at.is_some(),
+            "created_at":local_timestamp(task.created_at)?,"updated_at":local_timestamp(task.updated_at)?,
+            "started_at":optional_local_timestamp(task.started_at)?,"completed_at":optional_local_timestamp(task.completed_at)?,
+            "dateCreated":local_timestamp(task.created_at)?,"dateModified":local_timestamp(task.updated_at)?,"completedDate":optional_local_timestamp(task.completed_at)?,
+            "projects":[wiki(&format!("Projects/{}/meta.md",project.key))],"job":wiki(&job.document_path)
+        });
+        authored.as_object_mut().unwrap().remove("version");
+        if authored["title"].is_null() || authored["title"] == authored["name"] {
+            authored["title"] = json!(task.name);
+        }
+        authored["name"] = json!(task.name);
+        for (key, value) in generated.as_object().unwrap() {
+            authored[key] = value.clone();
+        }
+        let mut tags = match authored["tags"].clone() {
+            Value::Array(tags) => tags,
+            Value::String(tag) => vec![json!(tag)],
+            _ => Vec::new(),
+        };
+        tags.retain(|tag| tag != "agent/plan" && tag != "task" && tag != "archived");
+        if authored["archived"] == true {
+            tags.push(json!("archived"));
+        }
+        if !tags.contains(&json!("agent/task")) {
+            tags.push(json!("agent/task"));
+        }
+        authored["tags"] = json!(tags);
+        let mut doc = frontmatter(authored);
+        doc.push_str(body);
+        Ok(doc)
+    }
+
     fn header(title: &str) -> String {
         format!("# {}\n\n{}\n", escape(title), Self::notice())
     }
 
     fn task_line(&self, state: &Snapshot, task: &Task, from: &str) -> Result<String> {
-        let mut line = format!("- [{}] {}", checkbox(task.status), escape(&task.name));
-        if let Some(phase) = task.phase {
-            line.push_str(&format!(" · {phase}"));
-        }
-        if let Some(plan) = state
-            .plans
-            .iter()
-            .find(|p| Some(&p.id) == task.current_plan.as_ref())
-        {
-            let reference = self.link(from, &plan.path, None, "Plan");
-            line.push(' ');
-            if self.config.documents.format == DocumentFormat::Markdown {
-                line.push('!');
-            }
-            line.push_str(&reference);
-        } else {
-            let job = &state.jobs[state.job_index(&task.job_id)?];
-            if from != job.document_path {
-                line.push_str(&format!(
-                    " {}",
-                    self.link(
-                        from,
-                        &job.document_path,
-                        Some(&task.id.replace('_', "-")),
-                        "Job"
-                    )
-                ));
-            }
-        }
-        line.push_str(" #task");
-        Ok(line)
-    }
-
-    fn tasks_view(&self, project: &crate::Project, path: &str, board: &str) -> String {
-        let title = format!("{} — Tasks view", project.name);
-        let mut document = frontmatter(
-            json!({"id":format!("tasks:{}",project.id), "created_at":timestamp(project.created_at), "title":title,"tags":["agent/tasks"]}),
-        );
-        document.push_str(&Self::header(&title));
-        document.push_str(&format!("\n{}\n\n{}\n",self.link(path, board, None, "Kanban board"), "Requires the Obsidian Tasks plugin with taskcli custom statuses. Queries use Board cards only to avoid duplicate Job and Plan checklists."));
-        for status in TaskStatus::ALL {
-            document.push_str(&format!("\n## {}\n\n```tasks\nfilter by function task.file.path === query.file.path.replace(/Tasks\\.md$/, 'Board.md') && task.status.symbol === '{}'\nhide edit button\nhide postpone button\n```\n",status,checkbox(status)));
-        }
-        document
+        let path = crate::naming::task_path(state, task)?;
+        let label = Path::new(&path)
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .context("Task path must have a UTF-8 filename")?;
+        Ok(format!("- {}", self.link(from, &path, None, label)))
     }
 
     fn link(&self, from: &str, to: &str, anchor: Option<&str>, label: &str) -> String {
@@ -654,16 +685,22 @@ impl Service {
     }
 }
 
-fn checkbox(status: TaskStatus) -> char {
-    match status {
-        TaskStatus::Todo => ' ',
-        TaskStatus::InProgress => '/',
-        TaskStatus::Blocked => '!',
-        TaskStatus::WaitingUser => '?',
-        TaskStatus::Done => 'x',
-        TaskStatus::Failed => 'f',
-        TaskStatus::Cancelled => '-',
-    }
+fn local_timestamp(value: i64) -> Result<Value> {
+    let instant = time::OffsetDateTime::from_unix_timestamp(value)?;
+    let offset = time::UtcOffset::local_offset_at(instant)
+        .context("cannot resolve the computer's local time zone")?;
+    Ok(json!(
+        instant
+            .to_offset(offset)
+            .format(&time::format_description::well_known::Rfc3339)?
+    ))
+}
+
+fn optional_local_timestamp(value: Option<i64>) -> Result<Value> {
+    Ok(value
+        .map(local_timestamp)
+        .transpose()?
+        .unwrap_or(Value::Null))
 }
 
 fn timestamp(value: i64) -> Value {
@@ -735,15 +772,7 @@ fn encode(text: &str) -> String {
     result
 }
 fn task_target(state: &Snapshot, task: &Task) -> Result<(String, Option<String>)> {
-    if let Some(plan) = state
-        .plans
-        .iter()
-        .find(|p| Some(&p.id) == task.current_plan.as_ref())
-    {
-        return Ok((plan.path.clone(), None));
-    }
-    let job: &Job = &state.jobs[state.job_index(&task.job_id)?];
-    Ok((job.document_path.clone(), Some(task.id.replace('_', "-"))))
+    Ok((crate::naming::task_path(state, task)?, None))
 }
 fn section(body: &str, name: &str) -> Result<Option<String>> {
     if body.is_empty() {
@@ -766,6 +795,10 @@ fn section(body: &str, name: &str) -> Result<Option<String>> {
 }
 
 fn atomic_write(path: &Path, body: &str) -> Result<()> {
+    // Unchanged Base documents should keep their live Obsidian views mounted.
+    if std::fs::read(path).is_ok_and(|existing| existing == body.as_bytes()) {
+        return Ok(());
+    }
     let parent = path.parent().context("document has no parent")?;
     std::fs::create_dir_all(parent)?;
     let mut file = tempfile::NamedTempFile::new_in(parent)?;

@@ -10,6 +10,9 @@ use tempfile::TempDir;
 #[path = "support/deletion.rs"]
 mod deletion;
 
+#[path = "support/tasknotes.rs"]
+mod tasknotes;
+
 struct Fixture {
     dir: TempDir,
     service: Service,
@@ -119,13 +122,6 @@ fn task_status_names() -> Vec<String> {
         .collect()
 }
 
-fn board_columns(board: &str) -> Vec<String> {
-    board
-        .lines()
-        .filter_map(|line| line.strip_prefix("## ").map(str::to_owned))
-        .collect()
-}
-
 async fn populate_board_states(f: &Fixture) {
     for (title, command) in [
         ("TODO", None),
@@ -165,138 +161,6 @@ async fn populate_board_states(f: &Fixture) {
             None => {}
         }
     }
-}
-
-#[tokio::test]
-async fn kanban_and_tasks_views_are_generated_for_both_directory_formats() {
-    for format in ["markdown", "obsidian"] {
-        let f = Fixture::new(format).await;
-        let project = f.service.store().snapshot().await.unwrap().projects[0].clone();
-        let output = f.service.config().output_dir();
-        let board_path = output.join(format!("Projects/{}/Board.md", project.key));
-        let empty = std::fs::read_to_string(&board_path).unwrap();
-        assert!(empty.starts_with("---\nkanban-plugin: board\n"), "{empty}");
-        assert_eq!(board_columns(&empty), task_status_names());
-        assert!(
-            !empty.lines().any(|line| line.starts_with("# ")),
-            "Kanban treats every heading as a lane"
-        );
-        for setting in [
-            "show-checkboxes",
-            "show-add-list",
-            "show-archive-all",
-            "show-board-settings",
-        ] {
-            assert!(empty.contains(&format!("{setting}: false")));
-        }
-        populate_board_states(&f).await;
-        let board = std::fs::read_to_string(&board_path).unwrap();
-        assert_eq!(
-            board.lines().filter(|line| line.starts_with("- [")).count(),
-            7
-        );
-        for status in task_status_names() {
-            let marker = match status.as_str() {
-                "IN_PROGRESS" => "- [/] ",
-                "BLOCKED" => "- [!] ",
-                "WAITING_USER" => "- [?] ",
-                "DONE" => "- [x] ",
-                "FAILED" => "- [f] ",
-                "CANCELLED" => "- [-] ",
-                _ => "- [ ] ",
-            };
-            let heading = format!("## {status}\n");
-            let lane = board
-                .split_once(&heading)
-                .unwrap()
-                .1
-                .split("\n## ")
-                .next()
-                .unwrap();
-            assert_eq!(
-                lane.lines().filter(|line| line.starts_with(marker)).count(),
-                1,
-                "{lane}"
-            );
-            assert!(lane.contains("#task"));
-            assert!(
-                !lane.contains(" ^task-"),
-                "Tasks queries must not display database IDs: {lane}"
-            );
-        }
-        let query =
-            std::fs::read_to_string(output.join(format!("Projects/{}/Tasks.md", project.key)))
-                .unwrap();
-        assert_eq!(board_columns(&query), task_status_names());
-        assert_eq!(query.matches("```tasks\n").count(), 7);
-        assert_eq!(query.matches("hide edit button").count(), 7);
-        assert_eq!(query.matches("hide postpone button").count(), 7);
-        assert!(
-            !query.contains("- [ ]"),
-            "Queries must not duplicate source tasks"
-        );
-        assert_eq!(query.contains("[["), format == "obsidian");
-        let dashboard = std::fs::read_to_string(output.join("Dashboard.md")).unwrap();
-        assert!(dashboard.contains("Tasks"));
-        assert_eq!(
-            f.service.config().documents.root.join(".obsidian").exists(),
-            format == "obsidian"
-        );
-        let before = f.service.store().snapshot().await.unwrap();
-        std::fs::write(&board_path, board.replace("- [ ]", "- [x]")).unwrap();
-        f.service.sync().await.unwrap();
-        assert_eq!(f.service.store().snapshot().await.unwrap(), before);
-        assert_eq!(std::fs::read_to_string(board_path).unwrap(), board);
-    }
-}
-
-#[tokio::test]
-async fn tasks_queries_scope_exact_board_and_state_without_path_interpolation() {
-    let f = Fixture::new("markdown").await;
-    let project = f.service.store().snapshot().await.unwrap().projects[0].clone();
-    let path = f
-        .service
-        .config()
-        .output_dir()
-        .join(format!("Projects/{}/Tasks.md", project.key));
-    let query = std::fs::read_to_string(path).unwrap();
-    let filters: Vec<_> = query
-        .lines()
-        .filter_map(|line| line.strip_prefix("filter by function "))
-        .collect();
-    assert_eq!(filters.len(), 7);
-    let output = std::process::Command::new("node")
-        .args(["--input-type=module", "--eval", r#"
-import assert from 'node:assert/strict';
-const filters = JSON.parse(process.argv[1]);
-const statuses = JSON.parse(process.argv[2]);
-for (const folder of ['', 'Projects/demo/', 'Tasks ☃/Projects/demo/', 'A [x] "quote"/Projects/demo/']) {
-    const query = {file: {path: folder + 'Tasks.md'}};
-    filters.forEach((source, i) => {
-        const matches = new Function('task', 'query', 'return (' + source + ')');
-        for (const [path, expected] of [
-            [folder + 'Board.md', true],
-            [folder + 'Jobs/example.md', false],
-            [folder + 'Plans/task/v001.md', false],
-            [folder + 'Archive/Board.md', false],
-            ['another/' + folder + 'Board.md', false],
-        ]) {
-            for (const [index, heading] of statuses.entries()) {
-                const symbol = [' ', '/', '!', '?', 'x', 'f', '-'][index];
-                assert.equal(matches({file: {path}, heading: 'translated heading', status: {symbol}}, query), expected && heading === statuses[i]);
-            }
-        }
-    });
-}
-"#])
-        .arg(serde_json::to_string(&filters).unwrap())
-        .arg(serde_json::to_string(&task_status_names()).unwrap())
-        .output().unwrap();
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
 }
 
 #[tokio::test]
@@ -375,27 +239,19 @@ async fn rejected_start_does_not_refresh_plan_metadata() {
 }
 
 #[tokio::test]
-async fn board_and_job_show_planning_and_executing_without_extra_columns() {
-    for format in ["markdown", "obsidian"] {
-        let f = Fixture::new(format).await;
-        let id = f.task("Visible phase").await;
-        let claim = f.claim(&id, "visible").await;
-        f.plan(&id).await;
-        let state = f.service.store().snapshot().await.unwrap();
-        let output = f.service.config().output_dir();
-        let board = output.join(format!("Projects/{}/Board.md", state.projects[0].key));
-        let job = output.join(&state.jobs[0].document_path);
-        for phase in ["PLANNING", "EXECUTING"] {
-            let body = std::fs::read_to_string(&board).unwrap();
-            assert!(body.contains(phase), "{body}");
-            assert_eq!(board_columns(&body), task_status_names());
-            assert!(std::fs::read_to_string(&job).unwrap().contains(phase));
-            if phase == "PLANNING" {
-                f.service
-                    .execute(json!({"command":"task.start","task":id}), owner(&claim))
-                    .await
-                    .unwrap();
-            }
+async fn task_note_shows_planning_and_executing_in_frontmatter() {
+    let f = Fixture::new("obsidian").await;
+    let id = f.task("Visible phase").await;
+    let claim = f.claim(&id, "visible").await;
+    let plan = f.plan(&id).await;
+    for phase in ["PLANNING", "EXECUTING"] {
+        let body = std::fs::read_to_string(plan["absolute_path"].as_str().unwrap()).unwrap();
+        assert!(body.contains(&format!("phase: \"{phase}\"")));
+        if phase == "PLANNING" {
+            f.service
+                .execute(json!({"command":"task.start","task":id}), owner(&claim))
+                .await
+                .unwrap();
         }
     }
 }
@@ -640,7 +496,7 @@ async fn legacy_executing_tasks_migrate_without_losing_their_lease_or_history() 
         .fetch_one(&mut db)
         .await
         .unwrap();
-    assert_eq!(version, 6);
+    assert_eq!(version, 7);
 }
 
 #[tokio::test]
@@ -950,12 +806,8 @@ async fn projections_are_read_only_preserve_notes_and_archive_links() {
         f.service.sync().await.unwrap();
         let board = std::fs::read_to_string(&board_path).unwrap();
         assert!(!board.contains("manual state edit"));
-        assert!(board.contains("- [/]"));
-        assert!(board.contains("kanban-plugin: board"));
+        assert!(board.contains("tasknotesKanban"));
         assert_eq!(board.contains("[["), format == "obsidian");
-        if format == "markdown" {
-            assert!(board.contains("](Plans/"));
-        }
         assert!(
             std::fs::read_to_string(&job_path)
                 .unwrap()
@@ -1103,7 +955,7 @@ async fn dashboard_stays_project_only_as_jobs_grow() {
             "Job count must not change {format} Dashboard"
         );
         assert!(dashboard.contains("## demo"));
-        for entry in ["meta", "Board", "Tasks"] {
+        for entry in ["meta", "Board"] {
             assert!(dashboard.contains(&format!("Projects/demo/{entry}")));
         }
         assert!(!dashboard.contains("Feature"));
@@ -1227,7 +1079,113 @@ async fn job_frontmatter_omits_paths_titles_names_and_embedded_tasks() {
 }
 
 #[tokio::test]
-async fn obsidian_alias_separators_are_not_table_escaped_in_kanban_cards() {
+async fn job_tasks_reference_notes_and_sync_removes_legacy_checkboxes() {
+    for format in ["markdown", "obsidian"] {
+        let f = Fixture::new(format).await;
+        f.task("Tagged task").await;
+        for archived in [false, true] {
+            if archived {
+                for command in ["job.cancel", "job.archive"] {
+                    f.service
+                        .execute(
+                            json!({"command":command,"job":f.job}),
+                            WriteOptions::default(),
+                        )
+                        .await
+                        .unwrap();
+                }
+            }
+            let state = f.service.store().snapshot().await.unwrap();
+            let path = f
+                .service
+                .config()
+                .output_dir()
+                .join(&state.jobs[0].document_path);
+            // Simulate a Job generated by an older taskcli installation.
+            let old = std::fs::read_to_string(&path)
+                .unwrap()
+                .replace("- [[", "- [ ] #task [[")
+                .replace("- [260", "- [ ] #task [260");
+            std::fs::write(&path, old).unwrap();
+            f.service.sync().await.unwrap();
+            let document = std::fs::read_to_string(&path).unwrap();
+            let tasks: Vec<_> = document
+                .lines()
+                .filter(|line| line.starts_with("- ["))
+                .collect();
+            assert_eq!(tasks.len(), 1);
+            assert!(!tasks[0].contains("#task"));
+            assert!(!tasks[0].contains("#agent/task"));
+            assert!(tasks[0].contains("Tasks/"));
+        }
+    }
+}
+
+#[tokio::test]
+async fn job_task_references_display_plan_filenames_after_rename_and_archive() {
+    for format in ["markdown", "obsidian"] {
+        let f = Fixture::new(format).await;
+        let task = f.task("迁移语言配置").await;
+        let claim = f.claim(&task, "filename-label").await;
+        f.plan(&task).await;
+        for step in 0..3 {
+            if step == 1 {
+                f.service
+                    .execute(
+                        json!({"command":"task.update","task":task,"name":"更新语言配置"}),
+                        owner(&claim),
+                    )
+                    .await
+                    .unwrap();
+            } else if step == 2 {
+                f.service
+                    .execute(
+                        json!({"command":"task.release","task":task,"reason":"Archive fixture"}),
+                        owner(&claim),
+                    )
+                    .await
+                    .unwrap();
+                for command in ["job.cancel", "job.archive"] {
+                    f.service
+                        .execute(json!({"command":command,"job":f.job}), owner(&claim))
+                        .await
+                        .unwrap();
+                }
+            }
+            let state = f.service.store().snapshot().await.unwrap();
+            let plan = &state.plans[0];
+            let filename = std::path::Path::new(&plan.path)
+                .file_stem()
+                .unwrap()
+                .to_str()
+                .unwrap();
+            let document = std::fs::read_to_string(
+                f.service
+                    .config()
+                    .output_dir()
+                    .join(&state.jobs[0].document_path),
+            )
+            .unwrap();
+            let expected = if format == "obsidian" {
+                format!(
+                    "[[Tasks ☃/{}|{filename}]]",
+                    plan.path.trim_end_matches(".md")
+                )
+            } else {
+                format!("[{filename}](")
+            };
+            assert!(
+                document.contains(&expected),
+                "{format}, step {step}: {document}"
+            );
+            assert!(!document.contains("|Plan]]"));
+            assert!(!document.contains("![Plan]("));
+        }
+    }
+}
+
+#[tokio::test]
+async fn obsidian_alias_separators_are_not_table_escaped_in_task_links() {
     let f = Fixture::new("obsidian").await;
     let task = f.task("Linked task").await;
     f.claim(&task, "links").await;
@@ -1237,12 +1195,9 @@ async fn obsidian_alias_separators_are_not_table_escaped_in_kanban_cards() {
     let dashboard = std::fs::read_to_string(output.join("Dashboard.md")).unwrap();
     assert!(dashboard.contains("|Kanban board]]"));
     assert!(!dashboard.contains("\\|Kanban board]]"));
-    let board = std::fs::read_to_string(
-        output.join(format!("Projects/{}/Board.md", state.projects[0].key)),
-    )
-    .unwrap();
-    assert!(board.contains("|Plan]]"));
-    assert!(!board.contains("\\|Plan]]"));
+    let job = std::fs::read_to_string(output.join(&state.jobs[0].document_path)).unwrap();
+    assert!(job.contains("|260905-0001-Linked task]]"));
+    assert!(!job.contains("\\|260905-0001-Linked task]]"));
 }
 
 #[tokio::test]
@@ -1258,12 +1213,12 @@ async fn special_obsidian_titles_keep_entities_outside_wikilink_aliases() {
         f.service
             .config()
             .output_dir()
-            .join(format!("Projects/{}/Board.md", state.projects[0].key)),
+            .join(&state.jobs[0].document_path),
     )
     .unwrap();
     assert!(
         board.contains("Render Unicode \u{2603} link &amp; tag injection")
-            && board.contains("|Plan]]"),
+            && board.contains("|Open]]"),
         "{board}"
     );
     assert!(!board.contains("[[injection]]"));
@@ -1926,7 +1881,7 @@ async fn numbered_filenames_use_creation_day_and_project_scoped_daily_sequences(
     f.claim(&task, "next-day").await;
     assert_eq!(
         f.plan(&task).await["path"],
-        "Projects/demo/Plans/260905-0001-First task.md"
+        "Projects/demo/Tasks/260905-0001-First task.md"
     );
     let next = f
         .service
@@ -1946,7 +1901,7 @@ async fn numbered_filenames_use_creation_day_and_project_scoped_daily_sequences(
     f.claim(&next_task, "another").await;
     assert_eq!(
         f.plan(&next_task).await["path"],
-        "Projects/demo/Plans/260906-0001-Next task.md"
+        "Projects/demo/Tasks/260906-0001-Next task.md"
     );
     let other_project = f.service.execute(
         json!({"command":"project.register", "name":"other", "root":f.dir.path().join("other")}),
@@ -2156,7 +2111,7 @@ async fn jobs_layout_migrates_v4_active_and_archived_documents() {
         assert!(!root.join("Projects/demo/Jobs/Active").exists());
         assert!(!root.join("Projects/demo/Jobs/Archive").exists());
         let board = std::fs::read_to_string(root.join("Projects/demo/Board.md")).unwrap();
-        assert!(board.contains("Jobs/260905-0001-Feature"));
+        assert!(board.contains("tasknotesKanban"));
         assert!(!board.contains("Jobs/Active/"));
         service.sync().await.unwrap();
         assert_eq!(service.store().snapshot().await.unwrap().jobs, after.jobs);
@@ -2185,6 +2140,7 @@ async fn numbered_filenames_migrate_v3_and_recover_after_a_destination_conflict(
     std::fs::remove_file(root.join(&state.plans[0].path)).unwrap();
     std::fs::create_dir_all(root.join(old_job).parent().unwrap()).unwrap();
     std::fs::write(root.join(old_job), job_body).unwrap();
+    std::fs::create_dir_all(root.join(old_plan).parent().unwrap()).unwrap();
     std::fs::write(
         root.join(old_plan),
         "---\ncustom: retained\n---\nKeep authored plan.",
@@ -2220,7 +2176,7 @@ async fn numbered_filenames_migrate_v3_and_recover_after_a_destination_conflict(
         .execute(&mut db)
         .await
         .unwrap();
-    let destination = root.join("Projects/demo/Plans/260905-0001-Keep plan.md");
+    let destination = root.join("Projects/demo/Tasks/260905-0001-Keep plan.md");
     std::fs::write(&destination, "Personal note").unwrap();
     let now = f.clock.clone();
     let store = Store::open_with_clock(
@@ -2251,7 +2207,7 @@ async fn numbered_filenames_migrate_v3_and_recover_after_a_destination_conflict(
     let migrated = service.store().snapshot().await.unwrap();
     assert_eq!(
         migrated.plans[0].path,
-        "Projects/demo/Plans/260905-0001-Keep plan.md"
+        "Projects/demo/Tasks/260905-0001-Keep plan.md"
     );
     assert_eq!(migrated.plans[0].id, state.plans[0].id);
     assert_eq!(migrated.plans[0].version, state.plans[0].version);
@@ -2266,9 +2222,11 @@ async fn numbered_filenames_migrate_v3_and_recover_after_a_destination_conflict(
             .contains("Keep notes")
     );
     assert!(
-        std::fs::read_to_string(root.join("Projects/demo/Board.md"))
-            .unwrap()
-            .contains("260905-0001-Keep%20plan.md")
+        std::fs::read_to_string(
+            root.join(&service.store().snapshot().await.unwrap().jobs[0].document_path)
+        )
+        .unwrap()
+        .contains("260905-0001-Keep%20plan.md")
     );
     assert!(!root.join(old_job).exists());
     assert!(!root.join(old_plan).exists());
@@ -2319,11 +2277,11 @@ async fn readable_names_only_gain_suffixes_on_collision() {
     f.claim(&b, "b").await;
     assert_eq!(
         f.plan(&a).await["path"],
-        "Projects/demo/Plans/260905-0001-实现功能.md"
+        "Projects/demo/Tasks/260905-0001-实现功能.md"
     );
     assert_eq!(
         f.plan(&b).await["path"],
-        "Projects/demo/Plans/260905-0002-实现功能-2.md"
+        "Projects/demo/Tasks/260905-0002-实现功能-2.md"
     );
 }
 
@@ -2349,8 +2307,9 @@ async fn plan_revisions_replace_one_file_and_keep_lifecycle_properties() {
     let path = first["absolute_path"].as_str().unwrap();
     let contents = std::fs::read_to_string(path).unwrap();
     assert!(contents.starts_with("---\n"));
-    assert!(contents.contains("agent/plan"));
-    assert!(contents.contains("version: 2"));
+    assert!(contents.contains("agent/task"));
+    assert!(!contents.lines().any(|line| line.starts_with("version:")));
+    assert!(contents.contains("revision:"));
     assert!(contents.ends_with("# Revised\nAcceptance."));
     assert!(!contents.contains("Implement and verify"));
     assert_eq!(
@@ -2369,14 +2328,20 @@ async fn plan_revisions_replace_one_file_and_keep_lifecycle_properties() {
         .await
         .unwrap();
     let contents = std::fs::read_to_string(path).unwrap();
-    assert!(
-        contents.contains("started_at: \"2026-09-05T00:00:10Z\""),
-        "{contents}"
-    );
-    assert!(
-        contents.contains("completed_at: \"2026-09-05T00:00:20Z\""),
-        "{contents}"
-    );
+    for (field, seconds) in [
+        ("started_at", 1_788_566_410),
+        ("completed_at", 1_788_566_420),
+    ] {
+        let instant = time::OffsetDateTime::from_unix_timestamp(seconds).unwrap();
+        let expected = instant
+            .to_offset(time::UtcOffset::local_offset_at(instant).unwrap())
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap();
+        assert!(
+            contents.contains(&format!("{field}: {expected:?}")),
+            "{contents}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -2395,15 +2360,12 @@ async fn metadata_and_status_checklists_include_completed_jobs_until_archived() 
             root.join(format!("Projects/{}/Board.md", state.projects[0].key)),
         )
         .unwrap();
-        assert!(
-            board.split_once("## DONE\n").unwrap().1.contains("- [x]"),
-            "{board}"
-        );
-        for (path, tag) in [
-            ("meta.md", "agent/project"),
-            ("Board.md", "agent/board"),
-            ("Tasks.md", "agent/tasks"),
-        ] {
+        assert!(board.contains("DONE"));
+        let task_path = root.join(&state.plans[0].path);
+        let task_doc = std::fs::read_to_string(&task_path).unwrap();
+        assert!(task_doc.contains("status: \"DONE\""));
+        assert!(task_doc.contains("archived: false"));
+        for (path, tag) in [("meta.md", "agent/project"), ("Board.md", "agent/board")] {
             let body = std::fs::read_to_string(
                 root.join(format!("Projects/{}/{path}", state.projects[0].key)),
             )
@@ -2445,8 +2407,8 @@ async fn metadata_and_status_checklists_include_completed_jobs_until_archived() 
             assert!(fm.contains(key), "{fm}");
         }
         assert!(!body.contains(&f.job));
-        assert!(body.contains("- [x] Short task"), "{body}");
-        assert!(body.contains(if format == "obsidian" { "[[" } else { "![" }));
+        assert!(body.contains("260905-0001-Short task"), "{body}");
+        assert!(body.contains(if format == "obsidian" { "[[" } else { "[" }));
         f.service
             .execute(
                 json!({"command":"job.archive","job":f.job}),
@@ -2461,11 +2423,9 @@ async fn metadata_and_status_checklists_include_completed_jobs_until_archived() 
                 .contains("agent/archived/job")
         );
         assert!(
-            !std::fs::read_to_string(
-                root.join(format!("Projects/{}/Board.md", state.projects[0].key))
-            )
-            .unwrap()
-            .contains("Short task")
+            std::fs::read_to_string(&task_path)
+                .unwrap()
+                .contains("archived: true")
         );
     }
 }
@@ -2603,7 +2563,7 @@ async fn legacy_layout_migrates_without_losing_notes_or_latest_plan() {
     assert_eq!(migrated.plans.len(), 1);
     assert_eq!(
         migrated.plans[0].path,
-        "Projects/demo/Plans/260905-0001-Read logs.md"
+        "Projects/demo/Tasks/260905-0001-Read logs.md"
     );
     assert!(
         std::fs::read_to_string(root.join(&migrated.plans[0].path))
@@ -2656,7 +2616,7 @@ async fn short_names_can_be_improved_after_completion_without_new_plan_versions(
     assert_eq!(state.plans[0].version, old.plans[0].version);
     assert_eq!(
         state.plans[0].path,
-        "Projects/demo/Plans/260905-0001-实现功能.md"
+        "Projects/demo/Tasks/260905-0001-实现功能.md"
     );
     assert_eq!(
         state.jobs[0].document_path,
@@ -2670,7 +2630,7 @@ async fn short_names_can_be_improved_after_completion_without_new_plan_versions(
             .contains("Implement and verify")
     );
     assert!(
-        std::fs::read_to_string(root.join("Projects/demo/Board.md"))
+        std::fs::read_to_string(root.join(&state.jobs[0].document_path))
             .unwrap()
             .contains("实现功能")
     );
@@ -2695,7 +2655,7 @@ async fn plans_merge_authored_properties_and_reject_metadata_only_execution() {
         .split_once("\n---\n")
         .unwrap();
     assert!(properties.contains("custom/plan"));
-    assert!(properties.contains("agent/plan"));
+    assert!(properties.contains("agent/task"));
     assert!(properties.contains("Alice"));
     std::fs::write(path, format!("---\n{properties}\n---\n\n")).unwrap();
     assert!(
@@ -2753,7 +2713,7 @@ async fn a_renamed_plan_never_overwrites_an_unmanaged_note() {
         .service
         .config()
         .output_dir()
-        .join("Projects/demo/Plans/260905-0001-Personal.md");
+        .join("Projects/demo/Tasks/260905-0001-Personal.md");
     std::fs::write(&destination, "# Personal note\nKeep this.").unwrap();
     let result = f
         .service

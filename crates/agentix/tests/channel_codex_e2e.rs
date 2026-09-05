@@ -459,7 +459,10 @@ async fn assert_task_projection(service: &agentix_task::Service, reason: &str) {
     )
     .unwrap();
     assert_eq!(state.tasks[0].status, agentix_task::TaskStatus::WaitingUser);
-    assert!(body.contains(&format!("- [?] {}", state.tasks[0].name)) && body.contains(reason));
+    assert!(body.contains("Tasks/") && body.contains(reason));
+    let note = service.plan(&state.tasks[0].id).await.unwrap();
+    assert_eq!(note["properties"]["id"], state.tasks[0].id);
+    assert_eq!(note["properties"]["status"], "WAITING_USER");
 }
 
 async fn join_stack(tasks: StackTasks) {

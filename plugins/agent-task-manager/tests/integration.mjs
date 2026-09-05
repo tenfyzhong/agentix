@@ -159,7 +159,12 @@ for (const [host, format] of [
             join(f.root, "Tasks \u{2603}", job.document_path),
             "utf8",
         );
-        assert.ok(body.includes(`- [x] ${task.name}`));
+        assert.ok(body.includes(task.name));
+        assert.ok(body.includes("Tasks/"));
+        const note = await f.run(["plan", "show", task.id]);
+        assert.equal(note.properties.status, "DONE");
+        assert.equal(note.properties.id, task.id);
+        assert.ok(note.path.includes("/Tasks/"));
         assert.equal(body.includes("[["), format === "obsidian");
         assert.equal((await f.run(["doctor"])).healthy, true);
     });

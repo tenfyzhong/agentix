@@ -55,5 +55,5 @@ CREATE TABLE IF NOT EXISTS document_deletions (
     id TEXT PRIMARY KEY,
     data TEXT NOT NULL CHECK (json_valid(data))
 );
-PRAGMA user_version = 6;
+PRAGMA user_version = 7;
 PRAGMA application_id = 0x4158544b;

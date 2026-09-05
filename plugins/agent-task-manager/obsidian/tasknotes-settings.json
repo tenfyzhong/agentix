@@ -1,0 +1,85 @@
+{
+  "taskIdentificationMethod": "tag",
+  "taskTag": "agent/task",
+  "openTaskAfterCreation": "none",
+  "customStatuses": [
+    {
+      "id": "agent-todo",
+      "value": "TODO",
+      "label": "Todo",
+      "color": "#526274",
+      "isCompleted": false,
+      "excludeFromCycle": false,
+      "order": 0,
+      "autoArchive": false,
+      "autoArchiveDelay": 5
+    },
+    {
+      "id": "agent-in-progress",
+      "value": "IN_PROGRESS",
+      "label": "In Progress",
+      "color": "#165dcc",
+      "isCompleted": false,
+      "excludeFromCycle": false,
+      "order": 1,
+      "autoArchive": false,
+      "autoArchiveDelay": 5
+    },
+    {
+      "id": "agent-blocked",
+      "value": "BLOCKED",
+      "label": "Blocked",
+      "color": "#9a5200",
+      "isCompleted": false,
+      "excludeFromCycle": false,
+      "order": 2,
+      "autoArchive": false,
+      "autoArchiveDelay": 5
+    },
+    {
+      "id": "agent-waiting-user",
+      "value": "WAITING_USER",
+      "label": "Waiting User",
+      "color": "#7836ad",
+      "isCompleted": false,
+      "excludeFromCycle": false,
+      "order": 3,
+      "autoArchive": false,
+      "autoArchiveDelay": 5
+    },
+    {
+      "id": "agent-done",
+      "value": "DONE",
+      "label": "Done",
+      "color": "#16703d",
+      "isCompleted": true,
+      "excludeFromCycle": false,
+      "order": 4,
+      "autoArchive": false,
+      "autoArchiveDelay": 5
+    },
+    {
+      "id": "agent-failed",
+      "value": "FAILED",
+      "label": "Failed",
+      "color": "#b42332",
+      "isCompleted": false,
+      "excludeFromCycle": false,
+      "order": 5,
+      "autoArchive": false,
+      "autoArchiveDelay": 5
+    },
+    {
+      "id": "agent-cancelled",
+      "value": "CANCELLED",
+      "label": "Cancelled",
+      "color": "#6b6273",
+      "isCompleted": false,
+      "excludeFromCycle": false,
+      "order": 6,
+      "autoArchive": false,
+      "autoArchiveDelay": 5
+    }
+  ],
+  "defaultTaskStatus": "TODO"
+}

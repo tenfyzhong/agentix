@@ -2,6 +2,12 @@ use std::collections::BTreeSet;
 
 use anyhow::{Context, Result};
 
+pub(crate) fn task_path(state: &crate::Snapshot, task: &crate::Task) -> Result<String> {
+    let project = &state.projects[state.project_index(&task.project_id)?];
+    let filename = numbered_name(&task.name, task.created_at, task.sequence)?;
+    Ok(format!("Projects/{}/Tasks/{filename}.md", project.key))
+}
+
 /// Allocate independently for each entity type/project (filtered by the caller).
 pub(crate) fn next_sequence(
     created_at: i64,

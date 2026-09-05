@@ -178,6 +178,12 @@ pub(crate) async fn persist(
         .iter()
         .filter(|t| !after.tasks.iter().any(|a| a.id == t.id))
     {
+        cleanup
+            .files
+            .insert(crate::naming::task_path(before, task)?);
+        if let Some(path) = previous.get(&format!("task:{}", task.id)) {
+            cleanup.files.insert(path.clone());
+        }
         sqlx::query("DELETE FROM task_dependencies WHERE task_id = ? OR dependency_id = ?")
             .bind(&task.id)
             .bind(&task.id)

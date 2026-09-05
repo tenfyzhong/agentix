@@ -24,7 +24,7 @@ The Skill defines working instructions, hooks adapt host events, and taskcli pro
 - **Project: a long-lived project.** Worktrees of the same Git repository share one Project. Non-Git work can use a stable directory.
 - **Job: an independently acceptable requirement.** New requirements for the same project get new Jobs instead of being appended indefinitely to a completed Job.
 - **Task: work that one agent can claim and deliver.** Each Task should have a clear result, scope, and verification method.
-- **Plan: the current Task's execution approach.** Write it after claiming the Task; publish changes through `plan revise` to update the same file and increment its version property.
+- **Plan: the current Task's execution approach.** Write it after claiming the Task; publish changes through `plan revise` to update the same file and advance the Task revision.
 
 A Job's `goal` records the overall objective and acceptance conditions. Tasks currently have no separate structured acceptance field. Put the detailed scope, test approach, and risks in the Plan; delivery notes can go in the Job's Notes section.
 
@@ -230,15 +230,15 @@ This distinction prevents a session restart from being mistaken for confirmation
 
 ## 8. Why Documents Need No Watcher
 
-SQLite is authoritative for task status, dependencies, revisions, ownership, and other metadata. Board, Dashboard, and Job task sections are logically read-only views generated from those facts. Kanban dragging and Tasks checkboxes do not feed status changes back into the system.
+SQLite is authoritative for task status, dependencies, revisions, ownership, and other metadata. Board, Dashboard, and Job task sections are logically read-only views generated from those facts. TaskNotes card edits and Kanban dragging do not feed status changes back into the system.
 
-Both output formats now generate an Obsidian Kanban-compatible `Board.md` and a sibling `Tasks.md` with Tasks-plugin queries. The board holds the generated checkbox cards; each query selects only that exact board and one status heading. Job/Plan checklists are excluded from these queries, so a Task is not counted twice. Link syntax remains format-specific: wikilinks for Obsidian and relative Markdown links for ordinary directories. Plugin rendering requires Obsidian with Kanban and Tasks enabled, but generating Markdown output does not require a vault or modify its settings.
+Both output formats generate `Board.md` with an embedded TaskNotes Base. It selects Task notes in the exact project folder by project ID and archived state. Each Task has one file under `Tasks/`, whose frontmatter records status and metadata and whose body contains the Plan. Jobs link these notes directly, so their checklists and authored Plan checklists do not duplicate task cards. Link syntax remains format-specific: wikilinks for Obsidian and relative Markdown links for ordinary directories. Rendering requires TaskNotes and Bases; generating Markdown does not modify vault settings.
 
 Obsidian with both plugins enabled is the recommended viewing environment; use `--format obsidian` when initializing against a vault. Plain Markdown mode remains available for CLI-only workflows and other editors. This recommendation changes neither SQLite ownership rules nor the requirement to route task-state changes through taskcli or Agentix.
 
-Some plugin editing controls are hidden, not all. Dragging cards, using card menus, or toggling Tasks checkboxes may change the projected Markdown until the next sync. Those edits cannot obtain a lease or change SQLite task state. This is a logical read-only boundary, not a complete UI or filesystem lock, and still needs no watcher.
+TaskNotes controls remain editable. Dragging cards or using card menus may change the projected Markdown until the next sync. Those edits cannot obtain a lease or change SQLite task state. This is a logical read-only boundary, not a complete UI or filesystem lock, and still needs no watcher.
 
-Plan bodies live in separate files. Projection preserves editable Goal/Notes sections, while an explicit `job update --goal` replaces the Goal. Agents must publish Plans through `plan create/revise`, not overwrite registered files directly.
+Plan bodies live in the Task notes, alongside frontmatter properties. Projection preserves editable Goal/Notes sections, while an explicit `job update --goal` replaces the Goal. Agents must publish Plans through `plan create/revise`, not overwrite registered files directly.
 
 - For Obsidian, agents use the separate Obsidian Skill to author bodies with `[[wikilinks]]`. If a temporary draft is needed, use a session-specific path and publish through taskcli with the lease.
 - For plain Markdown, use relative `[label](path.md)` links; the directory need not be an Obsidian vault.

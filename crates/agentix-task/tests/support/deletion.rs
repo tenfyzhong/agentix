@@ -60,7 +60,10 @@ async fn job_deletion_cascades_and_preserves_other_jobs() {
             assert!(root.join(&after.jobs[0].document_path).exists());
             let board = std::fs::read_to_string(root.join("Projects/demo/Board.md")).unwrap();
             assert!(!board.contains("Delete this plan"));
-            assert!(board.contains("Keep task"));
+            assert!(
+                root.join("Projects/demo/Tasks/260905-0002-Keep task.md")
+                    .exists()
+            );
             let events = f.service.store().events(None, 0, 1000).await.unwrap();
             assert!(
                 events
