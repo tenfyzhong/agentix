@@ -724,3 +724,29 @@ owner_open_ids = ["ou_owner"]
     assert_eq!(config.channel.kind, ImChannel::Feishu);
     assert_eq!(config.channel.feishu.unwrap().app_id, "cli_mock");
 }
+
+#[test]
+fn accepts_disabling_background_turn_notifications() {
+    let config = Config::from_toml(&credential_config(
+        "telegram",
+        "[channel.telegram]\ntoken = 'mock-token'\n[notifications]\nbackground_turns = false",
+    ))
+    .unwrap();
+    assert!(!config.notifications.background_turns);
+}
+
+#[test]
+fn background_turn_notifications_default_to_enabled() {
+    for extra in [
+        "",
+        "\n[notifications]",
+        "\n[notifications]\nbackground_turns = true",
+    ] {
+        let config = Config::from_toml(&credential_config(
+            "telegram",
+            &format!("[channel.telegram]\ntoken = 'mock-token'{extra}"),
+        ))
+        .unwrap();
+        assert!(config.notifications.background_turns);
+    }
+}

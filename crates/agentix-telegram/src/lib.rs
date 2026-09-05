@@ -1,12 +1,16 @@
 //! Telegram long-polling channel adapter.
 
+mod rate_limit;
+
+use rate_limit::RateLimiter;
+
 use std::collections::HashSet;
 use std::sync::{Arc, RwLock};
 
 pub use agentix_core::include_reply_context;
 use agentix_core::{
     ActionButton, ChannelAdapter, ChannelError, ChannelKind, CommandMenu, ConversationRef,
-    InboundEnvelope, MessageRef, OutboundView,
+    InboundEnvelope, MessageRef, OutboundView, ViewStatus,
 };
 use async_trait::async_trait;
 use telegram_markdown_v2::{UnsupportedTagsStrategy, convert_with_strategy};
@@ -128,6 +132,7 @@ pub struct TelegramAdapter {
     bot: Bot,
     policy: TelegramPolicy,
     owner_claim: Option<OwnerClaim>,
+    rate_limiter: Arc<RateLimiter>,
 }
 
 impl TelegramAdapter {
@@ -137,6 +142,7 @@ impl TelegramAdapter {
             bot: Bot::new(token.into()),
             policy: TelegramPolicy::new(owner_user_ids),
             owner_claim: None,
+            rate_limiter: Arc::new(RateLimiter::default()),
         }
     }
 
@@ -146,6 +152,7 @@ impl TelegramAdapter {
             bot,
             policy,
             owner_claim: None,
+            rate_limiter: Arc::new(RateLimiter::default()),
         }
     }
 
@@ -160,21 +167,43 @@ impl TelegramAdapter {
 
     /// Registers the supported commands and selects the commands menu button.
     pub async fn register_menu(&self) -> Result<(), ChannelError> {
-        self.bot
-            .set_my_commands(menu_commands())
+        self.rate_limiter
+            .send(
+                self.bot.set_my_commands(menu_commands()),
+                "setMyCommands",
+                None,
+            )
             .await
             .map_err(|error| ChannelError::Transport(error.to_string()))?;
-        self.bot
-            .set_chat_menu_button()
-            .menu_button(MenuButton::Commands)
+        self.rate_limiter
+            .send(
+                self.bot
+                    .set_chat_menu_button()
+                    .menu_button(MenuButton::Commands),
+                "setChatMenuButton",
+                None,
+            )
             .await
             .map_err(|error| ChannelError::Transport(error.to_string()))?;
         Ok(())
+    }
+    async fn initialize_bot(&self) -> Result<String, ChannelError> {
+        let me = self
+            .rate_limiter
+            .send(self.bot.get_me(), "getMe", None)
+            .await
+            .map_err(|error| ChannelError::Transport(error.to_string()))?;
+        self.register_menu().await?;
+        Ok(me.username().to_owned())
     }
 }
 
 #[async_trait]
 impl ChannelAdapter for TelegramAdapter {
+    fn streaming_update_interval(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(5)
+    }
+
     fn kind(&self) -> ChannelKind {
         ChannelKind::Telegram
     }
@@ -184,23 +213,13 @@ impl ChannelAdapter for TelegramAdapter {
         inbound: mpsc::Sender<InboundEnvelope>,
         shutdown: CancellationToken,
     ) -> Result<(), ChannelError> {
-        let me = self
-            .bot
-            .get_me()
-            .await
-            .map_err(|error| ChannelError::Transport(error.to_string()))?;
-        self.register_menu().await?;
-        let username = me.username().to_owned();
+        let username = self.initialize_bot().await?;
 
-        let message_policy = self.policy.clone();
-        let message_claim = self.owner_claim.clone();
-        let message_bot = self.bot.clone();
+        let message_adapter = self.clone();
         let message_inbound = inbound.clone();
         let message_username = username.clone();
         let message_handler = Update::filter_message().endpoint(move |message: Message| {
-            let policy = message_policy.clone();
-            let claim = message_claim.clone();
-            let bot = message_bot.clone();
+            let adapter = message_adapter.clone();
             let inbound = message_inbound.clone();
             let username = message_username.clone();
             async move {
@@ -212,9 +231,7 @@ impl ChannelAdapter for TelegramAdapter {
                 };
                 if let Some(code) = parse_claim_command(text) {
                     handle_owner_claim(
-                        claim.as_ref(),
-                        &policy,
-                        &bot,
+                        &adapter,
                         message.chat.id,
                         user.id.0,
                         code,
@@ -223,9 +240,12 @@ impl ChannelAdapter for TelegramAdapter {
                     .await;
                     return Ok(());
                 }
-                let Some(text) =
-                    policy.accept_text(user.id.0, message.chat.is_private(), text, &username)
-                else {
+                let Some(text) = adapter.policy.accept_text(
+                    user.id.0,
+                    message.chat.is_private(),
+                    text,
+                    &username,
+                ) else {
                     return Ok(());
                 };
                 let text = include_reply_context(&text, replied_text(&message));
@@ -242,14 +262,22 @@ impl ChannelAdapter for TelegramAdapter {
             }
         });
 
+        let callback_rate_limiter = self.rate_limiter.clone();
         let callback_policy = self.policy.clone();
         let callback_inbound = inbound;
         let callback_handler =
             Update::filter_callback_query().endpoint(move |bot: Bot, query: CallbackQuery| {
+                let rate_limiter = callback_rate_limiter.clone();
                 let policy = callback_policy.clone();
                 let inbound = callback_inbound.clone();
                 async move {
-                    bot.answer_callback_query(query.id.clone()).await?;
+                    rate_limiter
+                        .send(
+                            bot.answer_callback_query(query.id.clone()),
+                            "answerCallbackQuery",
+                            None,
+                        )
+                        .await?;
                     if !policy.is_owner(query.from.id.0) {
                         return Ok::<(), teloxide::RequestError>(());
                     }
@@ -298,16 +326,16 @@ impl ChannelAdapter for TelegramAdapter {
             .send_message(chat_id, render_text(view))
             .parse_mode(ParseMode::MarkdownV2)
             .disable_link_preview(true);
-        let message = if let Some(keyboard) = render_keyboard(&view.actions) {
-            request
-                .reply_markup(keyboard)
-                .await
-                .map_err(|error| ChannelError::Transport(error.to_string()))?
+        let request = if let Some(keyboard) = render_keyboard(&view.actions) {
+            request.reply_markup(keyboard)
         } else {
             request
-                .await
-                .map_err(|error| ChannelError::Transport(error.to_string()))?
         };
+        let message = self
+            .rate_limiter
+            .send(request, "sendMessage", Some(chat_id))
+            .await
+            .map_err(|error| ChannelError::Transport(error.to_string()))?;
         Ok(MessageRef::new(
             conversation.clone(),
             message.id.0.to_string(),
@@ -331,19 +359,16 @@ impl ChannelAdapter for TelegramAdapter {
             .edit_message_text(chat_id, message_id, render_text(view))
             .parse_mode(ParseMode::MarkdownV2)
             .disable_link_preview(true);
-        if let Some(keyboard) = render_keyboard(&view.actions) {
-            request
-                .reply_markup(keyboard)
-                .await
-                .map_err(|error| ChannelError::Transport(error.to_string()))?;
-        } else {
-            request
-                .reply_markup(InlineKeyboardMarkup::new(
-                    Vec::<Vec<InlineKeyboardButton>>::new(),
-                ))
-                .await
-                .map_err(|error| ChannelError::Transport(error.to_string()))?;
-        }
+        let keyboard = render_keyboard(&view.actions)
+            .unwrap_or_else(|| InlineKeyboardMarkup::new(Vec::<Vec<InlineKeyboardButton>>::new()));
+        self.rate_limiter
+            .send(
+                request.reply_markup(keyboard),
+                "editMessageText",
+                Some(chat_id),
+            )
+            .await
+            .map_err(|error| ChannelError::Transport(error.to_string()))?;
         Ok(())
     }
 
@@ -354,11 +379,16 @@ impl ChannelAdapter for TelegramAdapter {
             .parse::<i32>()
             .map(MessageId)
             .map_err(|error| ChannelError::InvalidPayload(error.to_string()))?;
-        self.bot
-            .edit_message_reply_markup(chat_id, message_id)
-            .reply_markup(InlineKeyboardMarkup::new(
-                Vec::<Vec<InlineKeyboardButton>>::new(),
-            ))
+        self.rate_limiter
+            .send(
+                self.bot
+                    .edit_message_reply_markup(chat_id, message_id)
+                    .reply_markup(InlineKeyboardMarkup::new(
+                        Vec::<Vec<InlineKeyboardButton>>::new(),
+                    )),
+                "editMessageReplyMarkup",
+                Some(chat_id),
+            )
             .await
             .map_err(|error| ChannelError::Transport(error.to_string()))?;
         Ok(())
@@ -382,11 +412,16 @@ impl ChannelAdapter for TelegramAdapter {
                 BotCommand::new(&command.name, description)
             })
             .collect::<Vec<_>>();
-        self.bot
-            .set_my_commands(commands)
-            .scope(BotCommandScope::Chat {
-                chat_id: chat_id.into(),
-            })
+        self.rate_limiter
+            .send(
+                self.bot
+                    .set_my_commands(commands)
+                    .scope(BotCommandScope::Chat {
+                        chat_id: chat_id.into(),
+                    }),
+                "setMyCommands",
+                Some(chat_id),
+            )
             .await
             .map_err(|error| ChannelError::Transport(error.to_string()))?;
         Ok(())
@@ -394,9 +429,7 @@ impl ChannelAdapter for TelegramAdapter {
 }
 
 async fn handle_owner_claim(
-    claim: Option<&OwnerClaim>,
-    policy: &TelegramPolicy,
-    bot: &Bot,
+    adapter: &TelegramAdapter,
     chat_id: ChatId,
     owner_user_id: u64,
     code: &str,
@@ -405,7 +438,7 @@ async fn handle_owner_claim(
     if !private_chat {
         return;
     }
-    let Some(claim) = claim else {
+    let Some(claim) = adapter.owner_claim.as_ref() else {
         return;
     };
     let Some(result) = claim.claim(code, owner_user_id).await else {
@@ -413,9 +446,9 @@ async fn handle_owner_claim(
     };
     match result {
         Ok(true) => {
-            policy.add_owner(owner_user_id);
+            adapter.policy.add_owner(owner_user_id);
             send_claim_response(
-                bot,
+                adapter,
                 chat_id,
                 "Owner claimed. This Telegram account can now use Agentix.",
             )
@@ -423,7 +456,7 @@ async fn handle_owner_claim(
         }
         Ok(false) => {
             send_claim_response(
-                bot,
+                adapter,
                 chat_id,
                 "The claim code is invalid or expired. Generate a new code in the local Agentix terminal.",
             )
@@ -432,7 +465,7 @@ async fn handle_owner_claim(
         Err(error) => {
             tracing::error!(%error, "failed to persist claimed Telegram owner");
             send_claim_response(
-                bot,
+                adapter,
                 chat_id,
                 "Owner claim failed. Check the Agentix server logs and try again.",
             )
@@ -454,8 +487,16 @@ fn parse_claim_command(input: &str) -> Option<&str> {
     words.next().is_none().then_some(code)
 }
 
-async fn send_claim_response(bot: &Bot, chat_id: ChatId, text: &str) {
-    if let Err(error) = bot.send_message(chat_id, text).await {
+async fn send_claim_response(adapter: &TelegramAdapter, chat_id: ChatId, text: &str) {
+    if let Err(error) = adapter
+        .rate_limiter
+        .send(
+            adapter.bot.send_message(chat_id, text),
+            "sendMessage",
+            Some(chat_id),
+        )
+        .await
+    {
         tracing::warn!(%error, "failed to send Telegram owner claim response");
     }
 }
@@ -513,7 +554,11 @@ pub fn attached_menu_commands() -> Vec<BotCommand> {
 
 #[must_use]
 pub fn render_text(view: &OutboundView) -> String {
-    let mut header = view.title.clone();
+    let mut header = if view.status == ViewStatus::Background {
+        format!("⚫ Background\n{}", view.title)
+    } else {
+        view.title.clone()
+    };
     if let Some(subtitle) = &view.subtitle {
         header.push('\n');
         header.push_str(subtitle);

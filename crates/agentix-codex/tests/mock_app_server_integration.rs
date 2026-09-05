@@ -1143,6 +1143,7 @@ async fn background_codex_turn_completion_notifies_im_with_attach_action() {
 
     engine.handle_inbound(inbound("/help")).await.unwrap();
     let before = channel.views().len();
+    server.wait_for_turn_reads("thr_background", 1).await;
     server
         .complete_turn(
             "thr_background",
@@ -1150,17 +1151,22 @@ async fn background_codex_turn_completion_notifies_im_with_attach_action() {
             "Background work completed.",
         )
         .await;
-    for _ in 0..3 {
-        engine
-            .handle_agent_event(recv_event(&mut events).await)
-            .await
-            .unwrap();
-    }
+    engine
+        .handle_agent_event(recv_background_event(&mut events).await)
+        .await
+        .unwrap();
 
     let views = channel.views();
     assert_eq!(views.len(), before + 1);
     let notification = views.last().unwrap();
     assert_eq!(notification.title, "Codex · Background work · thr_back");
+    assert!(
+        notification
+            .body
+            .contains("> finish outside the attached session")
+    );
+    assert!(notification.body.contains("> Background work completed."));
+    assert_eq!(notification.status, agentix_core::ViewStatus::Background);
     assert_eq!(notification.actions.len(), 1);
     assert_eq!(notification.actions[0].label, "Attach");
 
@@ -1180,6 +1186,301 @@ async fn background_codex_turn_completion_notifies_im_with_attach_action() {
             .iter()
             .any(|method| method == "thread/resume")
     );
+}
+
+#[tokio::test]
+async fn background_completion_with_an_active_writer_uses_only_reads() {
+    let server = MockCodexAppServer::start();
+    server
+        .add_thread(
+            MockThread::new("thr_writer", "External writer", "/work").with_turn(
+                MockTurn::in_progress_with_output("turn_writer", "external work", ""),
+            ),
+        )
+        .await;
+    server.set_active_writer("thr_writer").await;
+    let client = CodexClient::connect(server.endpoint()).await.unwrap();
+    let mut events = client.subscribe();
+    server.wait_for_turn_reads("thr_writer", 1).await;
+    server
+        .complete_turn("thr_writer", "turn_writer", "done")
+        .await;
+    assert_eq!(
+        recv_background_event(&mut events).await,
+        AgentEvent::TurnCompleted {
+            session_id: "thr_writer".into(),
+            turn_id: "turn_writer".into(),
+            status: TurnStatus::Completed,
+            error: None,
+        }
+    );
+    server.wait_for_turn_reads("thr_writer", 3).await;
+    assert!(
+        events.try_recv().is_err(),
+        "completion must only be emitted once"
+    );
+    assert!(
+        !server
+            .request_methods()
+            .await
+            .iter()
+            .any(|method| method == "thread/resume")
+    );
+}
+
+#[tokio::test]
+async fn background_polling_skips_history_and_reports_all_new_terminal_statuses() {
+    let server = MockCodexAppServer::start();
+    server.set_page_size(1).await;
+    let old = MockTurn::completed("turn_old", "old work", "old answer");
+    server
+        .add_thread(MockThread::new("thr_history", "History", "/work").with_turn(old.clone()))
+        .await;
+    let client = CodexClient::connect(server.endpoint()).await.unwrap();
+    let mut events = client.subscribe();
+    server.wait_for_turn_reads("thr_history", 2).await;
+    assert!(
+        events.try_recv().is_err(),
+        "historical completions must stay silent"
+    );
+    let mut failed = MockTurn::completed("turn_failed", "failed work", "");
+    failed.status = "failed".into();
+    failed.error = Some("upstream failed".into());
+    let mut interrupted = MockTurn::completed("turn_interrupted", "cancelled work", "");
+    interrupted.status = "interrupted".into();
+    server
+        .add_thread(
+            MockThread::new("thr_history", "History", "/work")
+                .with_turn(old)
+                .with_turn(failed)
+                .with_turn(interrupted)
+                .with_turn(MockTurn::completed("turn_done", "new work", "done")),
+        )
+        .await;
+    for (turn_id, status) in [
+        ("turn_failed", TurnStatus::Failed),
+        ("turn_interrupted", TurnStatus::Interrupted),
+        ("turn_done", TurnStatus::Completed),
+    ] {
+        assert_eq!(
+            recv_background_event(&mut events).await,
+            AgentEvent::TurnCompleted {
+                session_id: "thr_history".into(),
+                turn_id: turn_id.into(),
+                error: (status == TurnStatus::Failed).then(|| "upstream failed".into()),
+                status,
+            }
+        );
+    }
+}
+
+#[tokio::test]
+async fn background_polling_falls_back_to_reading_turns_without_resuming() {
+    let server = MockCodexAppServer::start();
+    server
+        .add_thread(
+            MockThread::new("thr_fallback", "Fallback", "/work").with_turn(
+                MockTurn::in_progress_with_output("turn_fallback", "work", ""),
+            ),
+        )
+        .await;
+    let client = CodexClient::connect(server.endpoint()).await.unwrap();
+    let mut events = client.subscribe();
+    server.wait_for_turn_reads("thr_fallback", 1).await;
+    server
+        .fail_next("thread/turns/list", -32601, "method unavailable")
+        .await;
+    server
+        .complete_turn("thr_fallback", "turn_fallback", "done")
+        .await;
+    assert!(matches!(
+        recv_background_event(&mut events).await,
+        AgentEvent::TurnCompleted {
+            status: TurnStatus::Completed,
+            ..
+        }
+    ));
+    assert!(
+        !server
+            .request_methods()
+            .await
+            .iter()
+            .any(|method| method == "thread/resume")
+    );
+}
+
+#[tokio::test]
+async fn background_polling_reports_a_turn_completed_before_first_discovery() {
+    let server = MockCodexAppServer::start();
+    let client = CodexClient::connect(server.endpoint()).await.unwrap();
+    let mut events = client.subscribe();
+    server.wait_for_request_count("thread/loaded/list", 1).await;
+    let mut turn = MockTurn::completed("turn_fast", "fast work", "done");
+    turn.completed_at = i64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs(),
+    )
+    .unwrap();
+    server
+        .add_thread(MockThread::new("thr_fast", "Fast work", "/work").with_turn(turn))
+        .await;
+    assert!(
+        matches!(recv_background_event(&mut events).await, AgentEvent::TurnCompleted {
+        turn_id, status: TurnStatus::Completed, ..
+    } if turn_id == "turn_fast")
+    );
+}
+
+#[tokio::test]
+async fn background_polling_does_not_replay_a_streamed_completion_after_detach() {
+    let server = MockCodexAppServer::start();
+    server
+        .add_thread(
+            MockThread::new("thr_streamed", "Streamed", "/work").with_turn(
+                MockTurn::in_progress_with_output("turn_streamed", "work", ""),
+            ),
+        )
+        .await;
+    let client = CodexClient::connect(server.endpoint()).await.unwrap();
+    let session = SessionId::new("thr_streamed");
+    let mut events = client.subscribe();
+    client.attach(&session).await.unwrap();
+    server.wait_for_turn_reads("thr_streamed", 1).await;
+    server
+        .complete_turn("thr_streamed", "turn_streamed", "done")
+        .await;
+    for _ in 0..3 {
+        recv_event(&mut events).await;
+    }
+    server
+        .add_thread(
+            MockThread::new("thr_streamed", "Streamed", "/work")
+                .with_turn(MockTurn::completed("turn_streamed", "work", "done"))
+                .with_turn(MockTurn::in_progress_with_output(
+                    "turn_second",
+                    "more work",
+                    "",
+                )),
+        )
+        .await;
+    server
+        .complete_turn("thr_streamed", "turn_second", "also done")
+        .await;
+    for _ in 0..3 {
+        recv_event(&mut events).await;
+    }
+    client.unsubscribe(&session).await.unwrap();
+    server.wait_for_turn_reads("thr_streamed", 3).await;
+    assert!(
+        events.try_recv().is_err(),
+        "streamed completions must not become background notices"
+    );
+    server
+        .add_thread(
+            MockThread::new("thr_streamed", "Streamed", "/work")
+                .with_turn(MockTurn::completed("turn_streamed", "work", "done"))
+                .with_turn(MockTurn::completed("turn_second", "more work", "also done"))
+                .with_turn(MockTurn::completed(
+                    "turn_third",
+                    "background work",
+                    "new result",
+                )),
+        )
+        .await;
+    assert!(matches!(recv_background_event(&mut events).await,
+        AgentEvent::TurnCompleted { turn_id, .. } if turn_id == "turn_third"));
+}
+
+async fn recv_background_event(
+    receiver: &mut tokio::sync::broadcast::Receiver<AgentEvent>,
+) -> AgentEvent {
+    tokio::time::timeout(Duration::from_secs(25), receiver.recv())
+        .await
+        .unwrap()
+        .unwrap()
+}
+
+#[tokio::test]
+async fn background_monitor_discovers_later_pages_and_retries_failed_reads() {
+    let server = MockCodexAppServer::start();
+    server.set_page_size(1).await;
+    let client = CodexClient::connect(server.endpoint()).await.unwrap();
+    let mut events = client.subscribe();
+    // The service has no attached sessions, and these sessions appear after it starts.
+    server.wait_for_request_count("thread/loaded/list", 1).await;
+    for id in ["thr_first", "thr_later"] {
+        server
+            .add_thread(MockThread::new(id, id, "/work").with_turn(
+                MockTurn::in_progress_with_output("turn_external", "external work", ""),
+            ))
+            .await;
+    }
+    server
+        .fail_next("thread/turns/list", -32000, "temporary read failure")
+        .await;
+    server.wait_for_turn_reads("thr_later", 1).await;
+    server.wait_for_turn_reads("thr_first", 1).await;
+    server
+        .complete_turn("thr_later", "turn_external", "done")
+        .await;
+    loop {
+        if let AgentEvent::TurnCompleted {
+            session_id, status, ..
+        } = recv_background_event(&mut events).await
+        {
+            assert_eq!(session_id, "thr_later");
+            assert_eq!(status, TurnStatus::Completed);
+            break;
+        }
+    }
+}
+
+#[tokio::test]
+async fn detached_codex_session_keeps_notifying_about_later_turns() {
+    let server = MockCodexAppServer::start();
+    server
+        .add_thread(MockThread::new("thr_detached", "Detached work", "/work"))
+        .await;
+    let client = Arc::new(CodexClient::connect(server.endpoint()).await.unwrap());
+    let channel = Arc::new(RecordingChannel::default());
+    let state = SqliteState::in_memory().await.unwrap();
+    let engine = Engine::new(client.clone(), state.clone(), vec![channel.clone()]);
+    let mut events = client.subscribe();
+    engine
+        .handle_inbound(inbound("/attach thr_detached"))
+        .await
+        .unwrap();
+    engine.handle_inbound(inbound("/detach")).await.unwrap();
+    let before = channel.views().len();
+    server.wait_for_turn_reads("thr_detached", 2).await;
+    server
+        .add_thread(
+            MockThread::new("thr_detached", "Detached work", "/work").with_turn(
+                MockTurn::in_progress_with_output("turn_later", "more work", ""),
+            ),
+        )
+        .await;
+    server
+        .complete_turn("thr_detached", "turn_later", "done")
+        .await;
+    engine
+        .handle_agent_event(recv_background_event(&mut events).await)
+        .await
+        .unwrap();
+    assert_eq!(channel.views().len(), before + 1);
+    assert!(
+        channel
+            .views()
+            .last()
+            .unwrap()
+            .subtitle
+            .as_ref()
+            .unwrap()
+            .contains("Background")
+    );
+    assert!(state.list_bindings().await.unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -1316,4 +1617,33 @@ impl ChannelAdapter for RecordingChannel {
     ) -> Result<(), ChannelError> {
         Ok(())
     }
+}
+
+#[tokio::test]
+async fn disabled_background_notifications_do_not_poll_sessions_or_turns() {
+    let server = MockCodexAppServer::start();
+    server
+        .add_thread(MockThread::new("thr_disabled", "Disabled", "/work"))
+        .await;
+    let client = CodexClient::connect_with_background_turn_notifications(
+        server.endpoint(),
+        std::path::Path::new("codex"),
+        std::path::Path::new("~"),
+        false,
+    )
+    .await
+    .unwrap();
+    tokio::time::sleep(Duration::from_secs(11)).await;
+    assert_eq!(server.request_methods().await, ["initialize"]);
+    // Explicit user requests remain usable while automatic background reads are disabled.
+    assert_eq!(
+        client.list_sessions(None, 20).await.unwrap().sessions.len(),
+        1
+    );
+    assert!(
+        !server
+            .request_methods()
+            .await
+            .contains(&"thread/turns/list".into())
+    );
 }

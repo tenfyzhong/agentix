@@ -11,8 +11,8 @@ use agentix_core::{
 };
 use async_trait::async_trait;
 use larksuite_oapi_sdk_rs::card::v2::{
-    Behavior, Body, Button, ButtonType, Card, CardDocument, Config, Element, Header, Markdown,
-    TemplateColor, Text,
+    BackgroundStyle, Behavior, Body, Button, ButtonType, Card, CardDocument, Column, ColumnSet,
+    Config, Element, Header, Markdown, TemplateColor, Text,
 };
 use larksuite_oapi_sdk_rs::channel::{
     Channel, ChannelPolicy, DmMode, NormalizedMessage, SendInput,
@@ -662,10 +662,16 @@ fn render_card_with_action_state(
     if let Some(subtitle) = &view.subtitle {
         header = header.subtitle(Text::plain(subtitle));
     }
-    let mut body = Body::new().element(Element::Markdown(Markdown::new(truncate_utf8(
-        &view.body,
-        CARD_BODY_LIMIT,
-    ))));
+    let content = Element::Markdown(Markdown::new(truncate_utf8(&view.body, CARD_BODY_LIMIT)));
+    let content = if view.status == ViewStatus::Background {
+        let mut quote = Column::new().element(content);
+        quote.background_style = Some(BackgroundStyle::Rgba("rgba(128,64,192,0.12)".into()));
+        quote.padding = Some("12px".into());
+        Element::ColumnSet(ColumnSet::new().column(quote))
+    } else {
+        content
+    };
+    let mut body = Body::new().element(content);
     for action in &view.actions {
         let button_type = match action.style {
             ActionStyle::Primary => ButtonType::Primary,
@@ -720,6 +726,7 @@ const fn template_color(status: ViewStatus) -> TemplateColor {
         ViewStatus::Success => TemplateColor::Green,
         ViewStatus::Error => TemplateColor::Red,
         ViewStatus::Muted => TemplateColor::Grey,
+        ViewStatus::Background => TemplateColor::Purple,
     }
 }
 

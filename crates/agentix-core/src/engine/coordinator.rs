@@ -88,13 +88,18 @@ impl SessionCoordinator {
     }
 }
 
+pub(super) struct BackgroundNotification {
+    pub(super) turn_id: String,
+    pub(super) recipients: HashSet<ConversationRef>,
+}
+
 pub(super) struct TurnCoordinator {
     pub(super) active: Mutex<HashMap<SessionId, String>>,
     pub(super) buffers: Mutex<HashMap<(SessionId, String), TurnBuffer>>,
     pub(super) views: Mutex<HashMap<(SessionId, String), MessageRef>>,
     pub(super) last_renders: Mutex<HashMap<(SessionId, String), Instant>>,
     pub(super) stop_actions: Mutex<HashMap<(SessionId, String), ActionButton>>,
-    pub(super) background_notifications: Mutex<HashSet<(ConversationRef, SessionId, String)>>,
+    pub(super) background_notifications: Mutex<HashMap<SessionId, BackgroundNotification>>,
 }
 
 impl Default for TurnCoordinator {
@@ -105,12 +110,48 @@ impl Default for TurnCoordinator {
             views: Mutex::new(HashMap::new()),
             last_renders: Mutex::new(HashMap::new()),
             stop_actions: Mutex::new(HashMap::new()),
-            background_notifications: Mutex::new(HashSet::new()),
+            background_notifications: Mutex::new(HashMap::new()),
         }
     }
 }
 
 impl TurnCoordinator {
+    pub(super) async fn background_notification_delivered(
+        &self,
+        conversation: &ConversationRef,
+        session: &SessionId,
+        turn: &str,
+    ) -> bool {
+        self.background_notifications
+            .lock()
+            .await
+            .get(session)
+            .is_some_and(|notice| {
+                notice.turn_id == turn && notice.recipients.contains(conversation)
+            })
+    }
+
+    pub(super) async fn record_background_notification(
+        &self,
+        conversation: &ConversationRef,
+        session: &SessionId,
+        turn: &str,
+    ) {
+        let mut notifications = self.background_notifications.lock().await;
+        let notice =
+            notifications
+                .entry(session.clone())
+                .or_insert_with(|| BackgroundNotification {
+                    turn_id: turn.to_owned(),
+                    recipients: HashSet::new(),
+                });
+        if notice.turn_id != turn {
+            turn.clone_into(&mut notice.turn_id);
+            notice.recipients.clear();
+        }
+        notice.recipients.insert(conversation.clone());
+    }
+
     pub(super) async fn is_active(&self, session: &SessionId) -> bool {
         self.active.lock().await.contains_key(session)
     }
@@ -127,13 +168,18 @@ impl TurnCoordinator {
         self.active.lock().await.remove(session)
     }
 
-    pub(super) async fn should_render(&self, key: &(SessionId, String), force: bool) -> bool {
+    pub(super) async fn should_render(
+        &self,
+        key: &(SessionId, String),
+        force: bool,
+        interval: Duration,
+    ) -> bool {
         let now = Instant::now();
         let mut renders = self.last_renders.lock().await;
         if !force
             && renders
                 .get(key)
-                .is_some_and(|last| now.duration_since(*last) < Duration::from_secs(1))
+                .is_some_and(|last| now.duration_since(*last) < interval)
         {
             return false;
         }
@@ -200,5 +246,68 @@ impl RmuxController {
     pub(super) fn default_directory(&self, agent: &dyn AgentAdapter) -> String {
         self.runtime(agent)
             .map_or_else(|| "~".into(), WorkspaceRuntimePort::default_directory)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TurnCoordinator;
+    use crate::{ChannelKind, ConversationRef, SessionId};
+
+    #[tokio::test]
+    async fn background_dedup_retains_one_turn_per_session_and_tracks_each_recipient() {
+        let turns = TurnCoordinator::default();
+        let first = ConversationRef::new(ChannelKind::Telegram, "first");
+        let second = ConversationRef::new(ChannelKind::Telegram, "second");
+        let session = SessionId::new("session");
+        let other = SessionId::new("other");
+        turns
+            .record_background_notification(&first, &other, "independent")
+            .await;
+        for index in 0..100 {
+            let turn = format!("turn_{index}");
+            assert!(
+                !turns
+                    .background_notification_delivered(&first, &session, &turn)
+                    .await
+            );
+            turns
+                .record_background_notification(&first, &session, &turn)
+                .await;
+            assert!(
+                turns
+                    .background_notification_delivered(&first, &session, &turn)
+                    .await
+            );
+            assert!(
+                !turns
+                    .background_notification_delivered(&second, &session, &turn)
+                    .await
+            );
+            turns
+                .record_background_notification(&second, &session, &turn)
+                .await;
+            assert!(
+                turns
+                    .background_notification_delivered(&first, &session, &turn)
+                    .await
+            );
+            assert!(
+                turns
+                    .background_notification_delivered(&second, &session, &turn)
+                    .await
+            );
+            assert_eq!(turns.background_notifications.lock().await.len(), 2);
+        }
+        assert!(
+            !turns
+                .background_notification_delivered(&first, &session, "turn_0")
+                .await
+        );
+        assert!(
+            turns
+                .background_notification_delivered(&first, &other, "independent")
+                .await
+        );
     }
 }

@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -19,6 +19,8 @@ pub struct MockTurn {
     pub status: String,
     pub user_text: String,
     pub agent_text: String,
+    pub error: Option<String>,
+    pub completed_at: i64,
 }
 
 impl MockTurn {
@@ -32,6 +34,8 @@ impl MockTurn {
             status: "completed".into(),
             user_text: user_text.into(),
             agent_text: agent_text.into(),
+            error: None,
+            completed_at: 1_001,
         }
     }
 
@@ -41,6 +45,8 @@ impl MockTurn {
             status: "inProgress".into(),
             user_text: user_text.into(),
             agent_text: String::new(),
+            error: None,
+            completed_at: 1_001,
         }
     }
 
@@ -54,6 +60,8 @@ impl MockTurn {
             status: "inProgress".into(),
             user_text: user_text.into(),
             agent_text: agent_text.into(),
+            error: None,
+            completed_at: 1_001,
         }
     }
 
@@ -75,7 +83,8 @@ impl MockTurn {
             "items": items,
             "status": self.status,
             "startedAt": 1_000,
-            "completedAt": (self.status != "inProgress").then_some(1_001),
+            "completedAt": (self.status != "inProgress").then_some(self.completed_at),
+            "error": self.error.as_ref().map(|message| json!({"message": message, "codexErrorInfo": null, "additionalDetails": null})),
             "durationMs": (self.status != "inProgress").then_some(1_000)
         })
     }
@@ -177,6 +186,8 @@ struct ServerState {
     threads: BTreeMap<String, MockThread>,
     queues: HashMap<String, Vec<QueuedSubmission>>,
     request_methods: Vec<String>,
+    active_writers: HashSet<String>,
+    turn_reads: HashMap<String, usize>,
     results: HashMap<String, Vec<Value>>,
     notifications: Vec<Value>,
     server_requests: Vec<Value>,
@@ -316,7 +327,7 @@ impl MockCodexAppServer {
     }
 
     pub async fn wait_for_request_count(&self, method: &str, expected: usize) {
-        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        tokio::time::timeout(std::time::Duration::from_secs(40), async {
             loop {
                 let count = self
                     .request_methods()
@@ -327,11 +338,43 @@ impl MockCodexAppServer {
                 if count >= expected {
                     return;
                 }
-                tokio::task::yield_now().await;
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             }
         })
         .await
         .unwrap_or_else(|_| panic!("timed out waiting for {expected} {method} requests"));
+    }
+
+    pub async fn set_active_writer(&self, thread_id: &str) {
+        self.shared
+            .state
+            .lock()
+            .await
+            .active_writers
+            .insert(thread_id.to_owned());
+    }
+
+    pub async fn wait_for_turn_reads(&self, thread_id: &str, expected: usize) {
+        tokio::time::timeout(std::time::Duration::from_secs(40), async {
+            loop {
+                if self
+                    .shared
+                    .state
+                    .lock()
+                    .await
+                    .turn_reads
+                    .get(thread_id)
+                    .copied()
+                    .unwrap_or(0)
+                    >= expected
+                {
+                    return;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("timed out waiting for {expected} turn reads of {thread_id}"));
     }
 
     pub async fn complete_turn(&self, thread_id: &str, turn_id: &str, answer: &str) {
@@ -571,6 +614,28 @@ impl Drop for MockCodexAppServer {
     }
 }
 
+fn update_subscriptions(
+    subscriptions: &mut HashSet<String>,
+    method: &str,
+    params: &Value,
+    result: &Value,
+) {
+    match method {
+        "thread/resume" | "thread/start" | "thread/fork" => {
+            if let Some(thread_id) = result["thread"]["id"].as_str() {
+                subscriptions.insert(thread_id.to_owned());
+            }
+        }
+        "thread/unsubscribe" => {
+            if let Some(thread_id) = params["threadId"].as_str() {
+                subscriptions.remove(thread_id);
+            }
+        }
+        _ => {}
+    }
+}
+
+#[allow(clippy::too_many_lines)]
 async fn serve_connection<S>(
     mut websocket: tokio_tungstenite::WebSocketStream<S>,
     server: SharedServer,
@@ -578,6 +643,7 @@ async fn serve_connection<S>(
     S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
 {
     let mut outbound = server.outbound.subscribe();
+    let mut subscriptions = HashSet::<String>::new();
     loop {
         tokio::select! {
             frame = websocket.next() => {
@@ -617,6 +683,9 @@ async fn serve_connection<S>(
                         break;
                     }
                     let (result, notifications) = handle_request(&server, method, &params).await;
+                    if let Ok(result) = &result {
+                        update_subscriptions(&mut subscriptions, method, &params, result);
+                    }
                     let response = match result {
                         Ok(result) => json!({"id": id, "result": result}),
                         Err((code, message)) => {
@@ -627,6 +696,11 @@ async fn serve_connection<S>(
                         break;
                     }
                     for notification in notifications {
+                        if let Some(thread_id) = notification["params"]["threadId"].as_str()
+                            && !subscriptions.contains(thread_id)
+                        {
+                            continue;
+                        }
                         if websocket
                             .send(Message::Text(notification.to_string().into()))
                             .await
@@ -652,6 +726,11 @@ async fn serve_connection<S>(
                             == Some("disconnect")
                         {
                             break;
+                        }
+                        if let Some(thread_id) = notification["params"]["threadId"].as_str()
+                            && !subscriptions.contains(thread_id)
+                        {
+                            continue;
                         }
                         if websocket
                             .send(Message::Text(notification.to_string().into()))
@@ -704,6 +783,17 @@ async fn handle_request(
             }))
         }),
         "thread/resume" => {
+            if let Some(thread_id) = params["threadId"].as_str()
+                && state.active_writers.contains(thread_id)
+            {
+                return (
+                    Err((
+                        -32600,
+                        format!("thread {thread_id} already has an active writer"),
+                    )),
+                    notifications,
+                );
+            }
             if params.get("excludeTurns").and_then(Value::as_bool) == Some(true) {
                 with_thread(&state, params, |thread| Ok(thread_context_response(thread)))
             } else {
@@ -742,20 +832,25 @@ async fn handle_request(
             with_thread(&state, params, |_| Ok(json!({"status": "unsubscribed"})))
         }
         "thread/compact/start" => with_thread(&state, params, |_| Ok(json!({}))),
-        "thread/turns/list" => with_thread(&state, params, |thread| {
-            let turns = thread
-                .turns
-                .iter()
-                .rev()
-                .map(MockTurn::as_json)
-                .collect::<Vec<_>>();
-            let (start, end, next_cursor) = page_bounds(params, turns.len(), state.page_size);
-            Ok(json!({
-                "data": &turns[start..end],
-                "nextCursor": next_cursor,
-                "backwardsCursor": null
-            }))
-        }),
+        "thread/turns/list" => {
+            if let Some(thread_id) = params["threadId"].as_str() {
+                *state.turn_reads.entry(thread_id.to_owned()).or_default() += 1;
+            }
+            with_thread(&state, params, |thread| {
+                let turns = thread
+                    .turns
+                    .iter()
+                    .rev()
+                    .map(MockTurn::as_json)
+                    .collect::<Vec<_>>();
+                let (start, end, next_cursor) = page_bounds(params, turns.len(), state.page_size);
+                Ok(json!({
+                    "data": &turns[start..end],
+                    "nextCursor": next_cursor,
+                    "backwardsCursor": null
+                }))
+            })
+        }
         "turn/start" => {
             let Some(thread_id) = string_param(params, "threadId") else {
                 return (invalid_params("threadId"), notifications);

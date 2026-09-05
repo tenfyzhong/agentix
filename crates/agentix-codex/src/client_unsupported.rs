@@ -37,6 +37,15 @@ impl CodexClient {
         Err(ClientError)
     }
 
+    pub async fn connect_with_background_turn_notifications(
+        _endpoint: CodexEndpoint,
+        _command: &Path,
+        _rmux_directory: &Path,
+        _background_turn_notifications: bool,
+    ) -> Result<Self, ClientError> {
+        Err(ClientError)
+    }
+
     pub async fn request(&self, _method: &str, _params: Value) -> Result<Value, ClientError> {
         Err(ClientError)
     }

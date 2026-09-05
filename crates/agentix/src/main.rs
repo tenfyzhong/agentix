@@ -193,7 +193,8 @@ fn print_json(value: &impl Serialize) -> Result<()> {
 }
 
 async fn serve(config: Config, config_path: &Path) -> Result<()> {
-    let BuiltAgent { adapter, codex } = build_agent(&config.agent).await?;
+    let BuiltAgent { adapter, codex } =
+        build_agent(&config.agent, config.notifications.background_turns).await?;
     let claims = Arc::new(ClaimRegistry::default());
     let channels = build_channels(&config, config_path, claims.clone())?;
     run_service_until_shutdown(
@@ -204,6 +205,7 @@ async fn serve(config: Config, config_path: &Path) -> Result<()> {
         config.server.endpoint,
         config_path.to_owned(),
         claims,
+        config.notifications.background_turns,
         Duration::from_secs(5),
         async {
             tokio::signal::ctrl_c()
@@ -223,6 +225,7 @@ async fn run_service_until_shutdown<F>(
     control_endpoint: String,
     config_path: PathBuf,
     claims: Arc<ClaimRegistry>,
+    background_turn_notifications: bool,
     channel_shutdown_grace: Duration,
     shutdown_signal: F,
 ) -> Result<()>
@@ -235,7 +238,10 @@ where
             .with_context(|| format!("failed to create state directory {}", parent.display()))?;
     }
     let state = SqliteState::open(&state_path).await?;
-    let engine = Arc::new(Engine::new(adapter.clone(), state, channels.clone()));
+    let engine = Arc::new(
+        Engine::new(adapter.clone(), state, channels.clone())
+            .with_background_turn_notifications(background_turn_notifications),
+    );
     let restored = engine.restore_bindings().await?;
     tracing::info!(restored, "restored durable conversation bindings");
 
@@ -395,10 +401,11 @@ async fn doctor(config: &Config) -> Result<()> {
             rmux_directory,
         } => {
             let endpoint = CodexEndpoint::parse(endpoint)?;
-            let client = CodexClient::connect_with_command_and_rmux_directory(
+            let client = CodexClient::connect_with_background_turn_notifications(
                 endpoint,
                 command,
                 rmux_directory,
+                false,
             )
             .await?;
             let page = client.list_sessions(None, 1).await?;
@@ -425,7 +432,10 @@ struct BuiltAgent {
     codex: Option<CodexClient>,
 }
 
-async fn build_agent(config: &AgentConfig) -> Result<BuiltAgent> {
+async fn build_agent(
+    config: &AgentConfig,
+    background_turn_notifications: bool,
+) -> Result<BuiltAgent> {
     match config {
         AgentConfig::Codex {
             endpoint,
@@ -433,10 +443,11 @@ async fn build_agent(config: &AgentConfig) -> Result<BuiltAgent> {
             rmux_directory,
         } => {
             let endpoint = CodexEndpoint::parse(endpoint)?;
-            let client = CodexClient::connect_with_command_and_rmux_directory(
+            let client = CodexClient::connect_with_background_turn_notifications(
                 endpoint,
                 command,
                 rmux_directory,
+                background_turn_notifications,
             )
             .await?;
             Ok(BuiltAgent {
@@ -966,6 +977,7 @@ mod tests {
                 format!("tcp://{}", unused_loopback_address()),
                 config_path.clone(),
                 Arc::new(super::ClaimRegistry::default()),
+                true,
                 std::time::Duration::from_secs(5),
                 {
                     let shutdown = shutdown.clone();
@@ -1084,6 +1096,7 @@ mod tests {
             format!("tcp://{}", unused_loopback_address()),
             directory.path().join("config.toml"),
             Arc::new(super::ClaimRegistry::default()),
+            true,
             std::time::Duration::from_millis(10),
             async { Ok(()) },
         )
