@@ -25,6 +25,7 @@ struct PlannedFailure {
     target: String,
     code: i64,
     message: String,
+    http_status: u16,
 }
 
 pub struct MockFeishuApi {
@@ -115,6 +116,16 @@ impl MockFeishuApi {
             target: target.into(),
             code,
             message: message.into(),
+            http_status: 200,
+        });
+    }
+
+    pub async fn rate_limit_next(&self, target: &str) {
+        self.failures.lock().await.push_back(PlannedFailure {
+            target: target.into(),
+            code: 99_991_400,
+            message: "Too Many Requests".into(),
+            http_status: 429,
         });
     }
 
@@ -176,6 +187,7 @@ async fn serve_request(
             .is_some_and(|failure| target.contains(&failure.target))
             .then(|| failures.pop_front().unwrap())
     };
+    let status = failure.as_ref().map_or(200, |failure| failure.http_status);
     let body = if let Some(failure) = failure {
         serde_json::json!({"code": failure.code, "msg": failure.message}).to_string()
     } else if target.starts_with("/callback/ws/endpoint") {
@@ -241,7 +253,7 @@ async fn serve_request(
         serde_json::json!({"code": 404, "msg": format!("unhandled mock target: {target}")})
             .to_string()
     };
-    write_response(&mut stream, &body).await;
+    write_response(&mut stream, &body, status).await;
 }
 
 fn request_message_id(target: &str) -> Option<&str> {
@@ -336,9 +348,9 @@ async fn read_request(stream: &mut TcpStream) -> CapturedRequest {
     }
 }
 
-async fn write_response(stream: &mut TcpStream, body: &str) {
+async fn write_response(stream: &mut TcpStream, body: &str, status: u16) {
     let response = format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{body}",
+        "HTTP/1.1 {status} Mock\r\nContent-Type: application/json\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{body}",
         body.len()
     );
     stream.write_all(response.as_bytes()).await.unwrap();

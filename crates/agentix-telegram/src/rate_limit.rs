@@ -19,8 +19,8 @@ struct State {
 }
 
 impl RateLimiter {
-    /// Serialize outbound requests so a 429 response freezes every send path,
-    /// including adapter clones, before another request can reach Telegram.
+    /// Pace and retry the request already admitted by the message center.
+    /// Shared deadlines survive cancellation of the current FIFO head.
     pub(crate) async fn send<R>(
         &self,
         request: R,
@@ -65,5 +65,100 @@ impl RateLimiter {
                 result => return result,
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::future::{Future, IntoFuture, Ready, poll_fn, ready};
+    use std::pin::Pin;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::task::Poll;
+
+    use agentix_core::MessageCenter;
+    use teloxide::payloads::LogOut;
+    use teloxide::requests::HasPayload;
+    use teloxide::types::{Seconds, True};
+
+    use super::*;
+
+    struct RetryOnce {
+        payload: LogOut,
+        attempts: Arc<AtomicUsize>,
+    }
+
+    impl HasPayload for RetryOnce {
+        type Payload = LogOut;
+
+        fn payload_ref(&self) -> &LogOut {
+            &self.payload
+        }
+
+        fn payload_mut(&mut self) -> &mut LogOut {
+            &mut self.payload
+        }
+    }
+
+    impl IntoFuture for RetryOnce {
+        type Output = Result<True, teloxide::RequestError>;
+        type IntoFuture = Ready<Self::Output>;
+
+        fn into_future(self) -> Self::IntoFuture {
+            self.send()
+        }
+    }
+
+    impl Request for RetryOnce {
+        type Err = teloxide::RequestError;
+        type Send = Ready<Result<True, Self::Err>>;
+        type SendRef = Self::Send;
+
+        fn send(self) -> Self::Send {
+            self.send_ref()
+        }
+
+        fn send_ref(&self) -> Self::SendRef {
+            ready(if self.attempts.fetch_add(1, Ordering::SeqCst) == 0 {
+                Err(teloxide::RequestError::RetryAfter(Seconds::from_seconds(1)))
+            } else {
+                Ok(True)
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn cancelling_head_retains_cooldown_without_detached_retries() {
+        let center = MessageCenter::default();
+        let limiter = RateLimiter::default();
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let request = || RetryOnce {
+            payload: LogOut::new(),
+            attempts: attempts.clone(),
+        };
+        let mut head = Box::pin(center.outbound(limiter.send(request(), "mock", None)));
+        // The mock response is ready in the same poll that increments attempts,
+        // so a pending poll after that increment has entered the cooldown wait.
+        while attempts.load(Ordering::SeqCst) == 0 {
+            assert_pending(&mut head).await;
+            tokio::task::yield_now().await;
+        }
+        drop(head);
+        let deadline = limiter.state.lock().await.blocked_until.unwrap();
+        assert!(deadline > Instant::now());
+        let mut next = Box::pin(center.outbound(limiter.send(request(), "mock", None)));
+        assert_pending(&mut next).await;
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+        assert_eq!(next.await.unwrap(), True);
+        assert!(Instant::now() >= deadline);
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    }
+
+    async fn assert_pending(future: &mut (impl Future + Unpin)) {
+        poll_fn(|cx| {
+            assert!(Pin::new(&mut *future).poll(cx).is_pending());
+            Poll::Ready(())
+        })
+        .await;
     }
 }

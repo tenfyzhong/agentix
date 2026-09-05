@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use agentix_core::{
     ActionStyle, ChannelAdapter, ChannelError, ChannelKind, CommandMenu, ConversationRef,
-    InboundEnvelope, MessageRef, OutboundView, ViewStatus, include_reply_context,
+    InboundEnvelope, MessageCenter, MessageRef, OutboundView, ViewStatus, include_reply_context,
 };
 use async_trait::async_trait;
 use larksuite_oapi_sdk_rs::card::v2::{
@@ -115,6 +115,8 @@ pub struct FeishuAdapter {
     owner_claim: Option<OwnerClaim>,
     views: Arc<Mutex<HashMap<String, OutboundView>>>,
     command_menu_messages: Arc<Mutex<HashMap<ConversationRef, MessageRef>>>,
+    messages: MessageCenter,
+    cooldown: Arc<Mutex<Option<tokio::time::Instant>>>,
 }
 
 impl FeishuAdapter {
@@ -146,6 +148,8 @@ impl FeishuAdapter {
             owner_claim: None,
             views: Arc::new(Mutex::new(HashMap::new())),
             command_menu_messages: Arc::new(Mutex::new(HashMap::new())),
+            messages: MessageCenter::default(),
+            cooldown: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -171,26 +175,24 @@ impl ChannelAdapter for FeishuAdapter {
         shutdown: CancellationToken,
     ) -> Result<(), ChannelError> {
         let message_inbound = inbound.clone();
-        let message_policy = self.policy.clone();
-        let message_claim = self.owner_claim.clone();
-        let message_client = self.client.clone();
+        let message_adapter = self.clone();
         let action_inbound = inbound;
         let action_policy = self.policy.clone();
+        let action_messages = self.messages.clone();
         let channel = Channel::builder(&self.client, EventDispatcher::new("", ""))
             .policy(self.policy.channel_policy(self.owner_claim.is_some()))
             .on_message(move |message| {
                 let inbound = message_inbound.clone();
-                let policy = message_policy.clone();
-                let claim = message_claim.clone();
-                let client = message_client.clone();
+                let adapter = message_adapter.clone();
                 async move {
-                    handle_message(message, inbound, policy, claim, client).await;
+                    handle_message(message, inbound, &adapter).await;
                     Ok(())
                 }
             })
             .on_card_action(move |action| {
                 let inbound = action_inbound.clone();
                 let policy = action_policy.clone();
+                let messages = action_messages.clone();
                 async move {
                     let Some(owner_id) = action.operator_open_id else {
                         return Ok(());
@@ -235,7 +237,7 @@ impl ChannelAdapter for FeishuAdapter {
                     } else {
                         InboundEnvelope::action(event_id, conversation, owner_id, token.unwrap())
                     };
-                    if inbound.send(envelope).await.is_err() {
+                    if messages.inbound(&inbound, envelope).await.is_err() {
                         tracing::warn!("Feishu inbound queue is closed");
                     }
                     Ok(())
@@ -265,7 +267,7 @@ impl ChannelAdapter for FeishuAdapter {
             ..SendInput::default()
         };
         let option = RequestOption::default();
-        let result = with_tenant_token_refresh(&self.client, || async {
+        let result = with_tenant_token_refresh(self, || async {
             self.client.channel_messaging().send(&input, &option).await
         })
         .await
@@ -288,7 +290,7 @@ impl ChannelAdapter for FeishuAdapter {
         ensure_feishu(conversation)?;
         let card = render_card(view)?;
         let option = RequestOption::default();
-        with_tenant_token_refresh(&self.client, || async {
+        with_tenant_token_refresh(self, || async {
             self.client
                 .channel_messaging()
                 .edit_card(&message.message_id, &card, &option)
@@ -312,7 +314,7 @@ impl ChannelAdapter for FeishuAdapter {
         };
         let card = render_card_with_disabled_actions(&view)?;
         let option = RequestOption::default();
-        with_tenant_token_refresh(&self.client, || async {
+        with_tenant_token_refresh(self, || async {
             self.client
                 .channel_messaging()
                 .edit_card(&message.message_id, &card, &option)
@@ -333,7 +335,7 @@ impl ChannelAdapter for FeishuAdapter {
         let mut messages = self.command_menu_messages.lock().await;
         if let Some(message) = messages.get(conversation) {
             let option = RequestOption::default();
-            with_tenant_token_refresh(&self.client, || async {
+            with_tenant_token_refresh(self, || async {
                 self.client
                     .channel_messaging()
                     .edit_card(&message.message_id, &card, &option)
@@ -351,7 +353,7 @@ impl ChannelAdapter for FeishuAdapter {
             ..SendInput::default()
         };
         let option = RequestOption::default();
-        let result = with_tenant_token_refresh(&self.client, || async {
+        let result = with_tenant_token_refresh(self, || async {
             self.client.channel_messaging().send(&input, &option).await
         })
         .await
@@ -367,9 +369,7 @@ impl ChannelAdapter for FeishuAdapter {
 async fn handle_message(
     message: NormalizedMessage,
     inbound: mpsc::Sender<InboundEnvelope>,
-    policy: FeishuPolicy,
-    claim: Option<OwnerClaim>,
-    client: LarkClient,
+    adapter: &FeishuAdapter,
 ) {
     let owner_id = message
         .sender
@@ -388,25 +388,19 @@ async fn handle_message(
             .map(|mention| mention.key.as_str()),
     );
     if let Some(code) = parse_claim_command(&text) {
-        handle_owner_claim(
-            claim.as_ref(),
-            &policy,
-            &client,
-            &message.chat_id,
-            &owner_id,
-            code,
-            private_chat,
-        )
-        .await;
+        handle_owner_claim(adapter, &message.chat_id, &owner_id, code, private_chat).await;
         return;
     }
-    if !policy.accept(&owner_id, private_chat, message.mentioned_bot) {
+    if !adapter
+        .policy
+        .accept(&owner_id, private_chat, message.mentioned_bot)
+    {
         return;
     }
     let text = if message.parent_id.is_empty() || text.trim_start().starts_with('/') {
         text
     } else {
-        match fetch_message_text(&client, &message.parent_id).await {
+        match fetch_message_text(adapter, &message.parent_id).await {
             Ok(quoted) => include_reply_context(&text, quoted.as_deref()),
             Err(error) => {
                 tracing::debug!(
@@ -419,13 +413,17 @@ async fn handle_message(
         }
     };
     if !text.is_empty()
-        && inbound
-            .send(InboundEnvelope::text(
-                message.message_id,
-                ConversationRef::new(ChannelKind::Feishu, message.chat_id),
-                owner_id,
-                text,
-            ))
+        && adapter
+            .messages
+            .inbound(
+                &inbound,
+                InboundEnvelope::text(
+                    message.message_id,
+                    ConversationRef::new(ChannelKind::Feishu, message.chat_id),
+                    owner_id,
+                    text,
+                ),
+            )
             .await
             .is_err()
     {
@@ -434,12 +432,13 @@ async fn handle_message(
 }
 
 async fn fetch_message_text(
-    client: &LarkClient,
+    adapter: &FeishuAdapter,
     message_id: &str,
 ) -> Result<Option<String>, String> {
     let option = RequestOption::default();
-    let response = with_tenant_token_refresh(client, || async {
-        client
+    let response = with_tenant_token_refresh(adapter, || async {
+        adapter
+            .client
             .im()
             .message
             .get(message_id, Some("open_id"), &option)
@@ -507,9 +506,7 @@ fn collect_visible_text(value: &serde_json::Value, parts: &mut Vec<String>) {
 }
 
 async fn handle_owner_claim(
-    claim: Option<&OwnerClaim>,
-    policy: &FeishuPolicy,
-    client: &LarkClient,
+    adapter: &FeishuAdapter,
     chat_id: &str,
     owner_open_id: &str,
     code: &str,
@@ -518,7 +515,7 @@ async fn handle_owner_claim(
     if !private_chat {
         return;
     }
-    let Some(claim) = claim else {
+    let Some(claim) = adapter.owner_claim.as_ref() else {
         return;
     };
     let Some(result) = claim.claim(code, owner_open_id).await else {
@@ -526,9 +523,9 @@ async fn handle_owner_claim(
     };
     match result {
         Ok(true) => {
-            policy.add_owner(owner_open_id.to_owned());
+            adapter.policy.add_owner(owner_open_id.to_owned());
             send_claim_response(
-                client,
+                adapter,
                 chat_id,
                 "Owner claimed. This Feishu account can now use Agentix.",
             )
@@ -536,7 +533,7 @@ async fn handle_owner_claim(
         }
         Ok(false) => {
             send_claim_response(
-                client,
+                adapter,
                 chat_id,
                 "The claim code is invalid or expired. Generate a new code in the local Agentix terminal.",
             )
@@ -545,7 +542,7 @@ async fn handle_owner_claim(
         Err(error) => {
             tracing::error!(%error, "failed to persist claimed Feishu owner");
             send_claim_response(
-                client,
+                adapter,
                 chat_id,
                 "Owner claim failed. Check the Agentix server logs and try again.",
             )
@@ -563,15 +560,19 @@ fn parse_claim_command(input: &str) -> Option<&str> {
     words.next().is_none().then_some(code)
 }
 
-async fn send_claim_response(client: &LarkClient, chat_id: &str, text: &str) {
+async fn send_claim_response(adapter: &FeishuAdapter, chat_id: &str, text: &str) {
     let input = SendInput {
         chat_id: Some(chat_id.to_owned()),
         text: Some(text.to_owned()),
         ..SendInput::default()
     };
     let option = RequestOption::default();
-    if let Err(error) = with_tenant_token_refresh(client, || async {
-        client.channel_messaging().send(&input, &option).await
+    if let Err(error) = with_tenant_token_refresh(adapter, || async {
+        adapter
+            .client
+            .channel_messaging()
+            .send(&input, &option)
+            .await
     })
     .await
     {
@@ -580,24 +581,48 @@ async fn send_claim_response(client: &LarkClient, chat_id: &str, text: &str) {
 }
 
 async fn with_tenant_token_refresh<T, F, Fut>(
-    client: &LarkClient,
+    adapter: &FeishuAdapter,
     mut operation: F,
 ) -> Result<T, LarkError>
 where
     F: FnMut() -> Fut,
     Fut: Future<Output = Result<T, LarkError>>,
 {
-    match operation().await {
-        Err(error) if is_invalid_tenant_access_token(&error) => {
-            tracing::debug!(
-                app_id = client.config().app_id(),
-                "refreshing an invalid Feishu tenant access token"
-            );
-            invalidate_tenant_access_token(client).await?;
-            operation().await
-        }
-        result => result,
-    }
+    adapter
+        .messages
+        .outbound(async {
+            let mut cooldown = adapter.cooldown.lock().await;
+            let mut retry_delay = Duration::from_secs(1);
+            let mut token_refreshed = false;
+            loop {
+                if let Some(deadline) = *cooldown {
+                    tokio::time::sleep_until(deadline).await;
+                }
+                match operation().await {
+                    Err(LarkError::RateLimited(error)) => {
+                        // SDK 0.3.11 drops Retry-After, so use capped backoff.
+                        // Keep the deadline shared even if this head is cancelled.
+                        *cooldown = Some(tokio::time::Instant::now() + retry_delay);
+                        tracing::warn!(
+                            %error,
+                            retry_after_seconds = retry_delay.as_secs(),
+                            "Feishu rate limit reached; pausing the outbound queue head"
+                        );
+                        retry_delay = (retry_delay * 2).min(Duration::from_mins(1));
+                    }
+                    Err(error) if !token_refreshed && is_invalid_tenant_access_token(&error) => {
+                        token_refreshed = true;
+                        tracing::debug!(
+                            app_id = adapter.client.config().app_id(),
+                            "refreshing an invalid Feishu tenant access token"
+                        );
+                        invalidate_tenant_access_token(&adapter.client).await?;
+                    }
+                    result => return result,
+                }
+            }
+        })
+        .await
 }
 
 fn is_invalid_tenant_access_token(error: &LarkError) -> bool {
@@ -737,4 +762,45 @@ fn truncate_utf8(text: &str, max_bytes: usize) -> String {
     let suffix = "…";
     let end = text.floor_char_boundary(max_bytes.saturating_sub(suffix.len()));
     format!("{}{}", &text[..end], suffix)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::future::{Future, poll_fn, ready};
+    use std::pin::Pin;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::task::Poll;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn cancelling_rate_limited_head_preserves_feishu_cooldown() {
+        let adapter = FeishuAdapter::new("unused-app", "unused-secret", ["owner"]).unwrap();
+        let attempts = AtomicUsize::new(0);
+        let mut head = Box::pin(with_tenant_token_refresh(&adapter, || {
+            attempts.fetch_add(1, Ordering::SeqCst);
+            ready(Err::<(), _>(LarkError::RateLimited("mock 429".into())))
+        }));
+        poll_fn(|cx| {
+            assert!(head.as_mut().poll(cx).is_pending());
+            Poll::Ready(())
+        })
+        .await;
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+        drop(head);
+        let deadline = adapter.cooldown.lock().await.unwrap();
+        let mut next = Box::pin(with_tenant_token_refresh(&adapter, || {
+            attempts.fetch_add(1, Ordering::SeqCst);
+            ready(Ok::<_, LarkError>(42))
+        }));
+        poll_fn(|cx| {
+            assert!(Pin::new(&mut next).poll(cx).is_pending());
+            Poll::Ready(())
+        })
+        .await;
+        assert_eq!(attempts.load(Ordering::SeqCst), 1);
+        assert_eq!(next.await.unwrap(), 42);
+        assert!(tokio::time::Instant::now() >= deadline);
+        assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    }
 }
