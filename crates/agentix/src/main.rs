@@ -1,4 +1,6 @@
 mod control;
+#[cfg(test)]
+mod proxy_tests;
 
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -6,14 +8,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use agentix::{
-    AgentConfig, Config, ImChannel, LogRotation, LoggingConfig, add_feishu_owner,
-    add_telegram_owner,
+    AgentConfig, Config, ImChannel, LogRotation, LoggingConfig, NetworkConfig, TelegramConfig,
+    add_feishu_owner, add_telegram_owner,
 };
 use agentix_codex::{CodexClient, CodexEndpoint};
 use agentix_core::{AgentAdapter, AgentError, ChannelAdapter, Engine, EngineError, SqliteState};
 use agentix_feishu::{FeishuAdapter, FeishuOwnerClaimer};
 use agentix_pi::{PiFlavor, PiRpcAdapter};
-use agentix_telegram::{TelegramAdapter, TelegramOwnerClaimer};
+use agentix_telegram::{TelegramAdapter, TelegramOwnerClaimer, TelegramPolicy};
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use clap::{Parser, Subcommand};
@@ -662,9 +664,9 @@ fn build_channels(
                 .telegram
                 .as_ref()
                 .expect("configuration was validated");
-            let mut adapter = TelegramAdapter::new(
-                telegram.token.clone(),
-                telegram.owner_user_ids.iter().copied(),
+            let mut adapter = TelegramAdapter::with_bot(
+                build_telegram_bot(telegram, &config.network)?,
+                TelegramPolicy::new(telegram.owner_user_ids.iter().copied()),
             );
             if telegram.owner_user_ids.is_empty() {
                 adapter = adapter.with_owner_claimer(Arc::new(MemoryTelegramOwnerClaimer {
@@ -695,6 +697,11 @@ fn build_channels(
         }
     };
     Ok(vec![channel])
+}
+
+fn build_telegram_bot(telegram: &TelegramConfig, network: &NetworkConfig) -> Result<teloxide::Bot> {
+    let client = network.http_client(teloxide::net::default_reqwest_settings())?;
+    Ok(teloxide::Bot::with_client(telegram.token.clone(), client))
 }
 
 fn doctor_pi(flavor: PiFlavor, command: &Path, session_dir: &Path) -> Result<()> {

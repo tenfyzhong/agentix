@@ -3,6 +3,11 @@
 # [server]
 # endpoint = "unix://~/.local/share/agentix/control.sock"
 
+# Global outbound proxy: covers all Telegram requests; the Feishu SDK does not use it.
+# Supported schemes: http, https, socks5, socks5h (proxy-side DNS).
+# [network]
+# proxy = "http://127.0.0.1:7890"
+
 [logging]
 # Used unless RUST_LOG is set.
 level = "info"

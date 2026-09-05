@@ -35,6 +35,7 @@ dependencies = [
  "futures-util",
  "larksuite-oapi-sdk-rs",
  "prost",
+ "reqwest",
  "serde",
  "serde_json",
  "teloxide",
@@ -48,6 +49,7 @@ dependencies = [
  "tracing",
  "tracing-appender",
  "tracing-subscriber",
+ "url",
  "uuid",
 ]
 

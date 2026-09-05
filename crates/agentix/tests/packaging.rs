@@ -12,6 +12,24 @@ fn repository_file(path: &str) -> String {
 }
 
 #[test]
+fn feishu_sdk_uses_a_published_registry_release() {
+    let lockfile: toml::Value = toml::from_str(&repository_file("Cargo.lock")).unwrap();
+    let sdk = lockfile["package"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|package| package["name"].as_str() == Some("larksuite-oapi-sdk-rs"))
+        .unwrap();
+
+    assert_eq!(
+        sdk.get("source").and_then(toml::Value::as_str),
+        Some("registry+https://github.com/rust-lang/crates.io-index"),
+        "the Feishu SDK must use the published crate without local or Git patches"
+    );
+    assert!(sdk.get("checksum").and_then(toml::Value::as_str).is_some());
+}
+
+#[test]
 fn release_workflow_builds_tag_aligned_native_archives() {
     let workflow = repository_file(".github/workflows/release.yml");
 

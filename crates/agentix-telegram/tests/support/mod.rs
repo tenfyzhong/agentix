@@ -138,7 +138,7 @@ async fn serve_request(
                 }
                 json!({"ok": true, "result": batch})
             }
-            "sendmessage" | "editmessagetext" => json!({
+            "sendmessage" | "editmessagetext" | "editmessagereplymarkup" => json!({
                 "ok": true,
                 "result": {
                     "message_id": 77,
