@@ -128,7 +128,15 @@ fn release_version_setter_updates_workspace_packages_from_the_tag() {
 #[test]
 fn homebrew_workflow_builds_a_bottle_and_updates_the_tap() {
     let workflow = repository_file(".github/workflows/homebrew.yml");
-    let formula = repository_file("packaging/homebrew/agentix.rb");
+
+    assert!(
+        !repository_root()
+            .join("packaging/homebrew/agentix.rb")
+            .exists(),
+        "the formula must be maintained exclusively in the Homebrew tap"
+    );
+    assert!(!workflow.contains("packaging/homebrew"));
+    assert!(workflow.contains("repository: tenfyzhong/homebrew-tap"));
 
     assert!(workflow.contains("workflow_call:"));
     assert!(workflow.contains("workflow_dispatch:"));
@@ -140,12 +148,72 @@ fn homebrew_workflow_builds_a_bottle_and_updates_the_tap() {
     assert!(workflow.contains("gh release upload"));
     assert!(workflow.contains("peter-evans/create-pull-request@v7"));
     assert!(workflow.contains(".github/scripts/release-version.sh"));
-    assert!(formula.contains(".github/scripts/set-release-version.sh"));
-    assert!(formula.contains("class Agentix < Formula"));
-    assert!(formula.contains("depends_on \"protobuf\" => :build"));
-    assert!(formula.contains("depends_on \"rust\" => :build"));
-    assert!(formula.contains("std_cargo_args(path: \"crates/agentix\")"));
-    assert!(formula.contains("assert_match version.to_s"));
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn homebrew_source_update_preserves_tap_customizations_and_removes_old_bottles() {
+    let workflow = repository_file(".github/workflows/homebrew.yml");
+    let ruby = workflow
+        .split("ruby <<'RUBY'\n")
+        .nth(1)
+        .unwrap()
+        .split("          RUBY")
+        .next()
+        .unwrap();
+    let temporary_tap = tempfile::tempdir().unwrap();
+    let formula_path = temporary_tap.path().join("agentix.rb");
+    let formula = concat!(
+        "class Agentix < Formula\n",
+        "  desc \"Customized in the tap\"\n",
+        "  url \"https://example.com/v1.0.0.tar.gz\"\n",
+        "  sha256 \"old-source-checksum\"\n",
+        "\n",
+        "  bottle do\n",
+        "    root_url \"https://example.com/v1.0.0\"\n",
+        "    sha256 cellar: :any_skip_relocation, arm64_sequoia: \"old-bottle-checksum\"\n",
+        "  end\n",
+        "\n",
+        "  depends_on \"custom-build-dependency\" => :build\n",
+        "  def install\n",
+        "    system \"bash\", \".github/scripts/set-release-version.sh\", version.to_s\n",
+        "  end\n",
+        "  service do\n",
+        "    run [opt_bin/\"agentix\", \"serve\"]\n",
+        "  end\n",
+        "end\n",
+    );
+    fs::write(&formula_path, formula).unwrap();
+    for _ in 0..2 {
+        let result = Command::new("ruby")
+            .args(["-e", ruby])
+            .env("FORMULA_PATH", &formula_path)
+            .env("SOURCE_URL", "https://example.com/v2.0.0.tar.gz")
+            .env("SOURCE_SHA256", "new-source-checksum")
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let updated = fs::read_to_string(&formula_path).unwrap();
+        assert!(!updated.contains("bottle do"));
+        assert!(!updated.contains("old-bottle-checksum"));
+        let expected = formula
+            .replace("v1.0.0.tar.gz", "v2.0.0.tar.gz")
+            .replace("old-source-checksum", "new-source-checksum")
+            .replace(
+                concat!(
+                    "  bottle do\n",
+                    "    root_url \"https://example.com/v1.0.0\"\n",
+                    "    sha256 cellar: :any_skip_relocation, arm64_sequoia: \"old-bottle-checksum\"\n",
+                    "  end\n\n",
+                ),
+                "",
+            );
+        assert_eq!(updated, expected);
+    }
 }
 
 #[test]
