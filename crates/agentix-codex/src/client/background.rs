@@ -4,7 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use agentix_core::{AgentEvent, SessionId, TurnStatus};
 use serde_json::{Value, json};
 
-use super::{ClientError, CodexClient};
+use super::{ClientError, CodexClient, is_thread_unmaterialized};
 use crate::protocol::{ServerMessage, decode_server_frame, parse_turn_status};
 
 /// Observe stored turn metadata without resuming a thread or acquiring its writer.
@@ -60,6 +60,9 @@ impl BackgroundTurns {
                             let _ = client.events.send(event);
                         }
                     }
+                }
+                Err(error) if is_thread_unmaterialized(&error) => {
+                    tracing::debug!(%error, session = %session, "failed to read background Codex turns");
                 }
                 Err(error) => {
                     tracing::warn!(%error, session = %session, "failed to read background Codex turns");

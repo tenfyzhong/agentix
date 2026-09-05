@@ -24,6 +24,7 @@ url.workspace = true
 [dev-dependencies]
 rmux-proto.workspace = true
 tempfile = "3.23"
+tracing-subscriber.workspace = true
 
 [lints]
 workspace = true
