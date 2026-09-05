@@ -18,7 +18,8 @@ use agentix_pi::{PiFlavor, PiRpcAdapter};
 use agentix_telegram::{TelegramAdapter, TelegramOwnerClaimer, TelegramPolicy};
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
+use clap_complete::Shell;
 use serde::Serialize;
 use serde_json::{Value, json};
 use tokio::sync::{Mutex, mpsc};
@@ -33,7 +34,7 @@ use uuid::Uuid;
 #[derive(Debug, Parser)]
 #[command(version, about = "Control local coding-agent sessions from IM")]
 struct Cli {
-    #[arg(short, long, value_name = "FILE", default_value_os_t = default_config_path())]
+    #[arg(short, long, value_name = "FILE", value_hint = clap::ValueHint::FilePath, default_value_os_t = default_config_path())]
     config: PathBuf,
     #[command(subcommand)]
     command: CliCommand,
@@ -49,6 +50,11 @@ enum CliCommand {
     Client {
         #[command(subcommand)]
         command: ClientCommand,
+    },
+    /// Print a shell completion script to stdout.
+    Completions {
+        #[arg(value_enum)]
+        shell: Shell,
     },
 }
 
@@ -80,12 +86,24 @@ async fn main() -> Result<()> {
         config: config_path,
         command,
     } = Cli::parse();
+    if let CliCommand::Completions { shell } = command {
+        clap_complete::generate(
+            shell,
+            &mut Cli::command(),
+            "agentix",
+            &mut std::io::stdout(),
+        );
+        return Ok(());
+    }
     let config = Config::load(&config_path)?;
     let _log_guard = init_logging(&config.logging)?;
     match command {
         CliCommand::Serve => serve(config, &config_path).await,
         CliCommand::Doctor => doctor(&config).await,
         CliCommand::Client { command } => client(&config.server.endpoint, command).await,
+        CliCommand::Completions { .. } => {
+            unreachable!("completions are generated before loading config")
+        }
     }
 }
 

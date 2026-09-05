@@ -1,0 +1,331 @@
+#compdef agentix
+
+autoload -U is-at-least
+
+_agentix() {
+    typeset -A opt_args
+    typeset -a _arguments_options
+    local ret=1
+
+    if is-at-least 5.2; then
+        _arguments_options=(-s -S -C)
+    else
+        _arguments_options=(-s -C)
+    fi
+
+    local context curcontext="$curcontext" state line
+    _arguments "${_arguments_options[@]}" : \
+'-c+[]:FILE:_files' \
+'--config=[]:FILE:_files' \
+'-h[Print help]' \
+'--help[Print help]' \
+'-V[Print version]' \
+'--version[Print version]' \
+":: :_agentix_commands" \
+"*::: :->agentix" \
+&& ret=0
+    case $state in
+    (agentix)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:agentix-command-$line[1]:"
+        case $line[1] in
+            (serve)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(doctor)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(client)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_agentix__subcmd__client_commands" \
+"*::: :->client" \
+&& ret=0
+
+    case $state in
+    (client)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:agentix-client-command-$line[1]:"
+        case $line[1] in
+            (claim)
+_arguments "${_arguments_options[@]}" : \
+'--ttl-minutes=[]:TTL_MINUTES:_default' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(sessions)
+_arguments "${_arguments_options[@]}" : \
+'--cursor=[]:CURSOR:_default' \
+'--limit=[]:LIMIT:_default' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(call)
+_arguments "${_arguments_options[@]}" : \
+'--params=[]:JSON:_default' \
+'-h[Print help]' \
+'--help[Print help]' \
+':method:_default' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_agentix__subcmd__client__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:agentix-client-help-command-$line[1]:"
+        case $line[1] in
+            (claim)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(sessions)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(call)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(completions)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+':shell:(bash elvish fish powershell zsh)' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_agentix__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:agentix-help-command-$line[1]:"
+        case $line[1] in
+            (serve)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(doctor)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(client)
+_arguments "${_arguments_options[@]}" : \
+":: :_agentix__subcmd__help__subcmd__client_commands" \
+"*::: :->client" \
+&& ret=0
+
+    case $state in
+    (client)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:agentix-help-client-command-$line[1]:"
+        case $line[1] in
+            (claim)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(sessions)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(call)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(completions)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+}
+
+(( $+functions[_agentix_commands] )) ||
+_agentix_commands() {
+    local commands; commands=(
+'serve:Run the Agentix bridge until interrupted' \
+'doctor:Validate configuration, credentials, and the selected agent transport' \
+'client:Use the running Agentix server for local diagnostics and setup' \
+'completions:Print a shell completion script to stdout' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'agentix commands' commands "$@"
+}
+(( $+functions[_agentix__subcmd__client_commands] )) ||
+_agentix__subcmd__client_commands() {
+    local commands; commands=(
+'claim:Generate a temporary in-memory owner claim code for the selected IM channel' \
+'sessions:List sessions available through the running Agentix server' \
+'call:Ask the server to send a raw JSON RPC request to Codex' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'agentix client commands' commands "$@"
+}
+(( $+functions[_agentix__subcmd__client__subcmd__call_commands] )) ||
+_agentix__subcmd__client__subcmd__call_commands() {
+    local commands; commands=()
+    _describe -t commands 'agentix client call commands' commands "$@"
+}
+(( $+functions[_agentix__subcmd__client__subcmd__claim_commands] )) ||
+_agentix__subcmd__client__subcmd__claim_commands() {
+    local commands; commands=()
+    _describe -t commands 'agentix client claim commands' commands "$@"
+}
+(( $+functions[_agentix__subcmd__client__subcmd__help_commands] )) ||
+_agentix__subcmd__client__subcmd__help_commands() {
+    local commands; commands=(
+'claim:Generate a temporary in-memory owner claim code for the selected IM channel' \
+'sessions:List sessions available through the running Agentix server' \
+'call:Ask the server to send a raw JSON RPC request to Codex' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'agentix client help commands' commands "$@"
+}
+(( $+functions[_agentix__subcmd__client__subcmd__help__subcmd__call_commands] )) ||
+_agentix__subcmd__client__subcmd__help__subcmd__call_commands() {
+    local commands; commands=()
+    _describe -t commands 'agentix client help call commands' commands "$@"
+}
+(( $+functions[_agentix__subcmd__client__subcmd__help__subcmd__claim_commands] )) ||
+_agentix__subcmd__client__subcmd__help__subcmd__claim_commands() {
+    local commands; commands=()
+    _describe -t commands 'agentix client help claim commands' commands "$@"
+}
+(( $+functions[_agentix__subcmd__client__subcmd__help__subcmd__help_commands] )) ||
+_agentix__subcmd__client__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'agentix client help help commands' commands "$@"
+}
+(( $+functions[_agentix__subcmd__client__subcmd__help__subcmd__sessions_commands] )) ||
+_agentix__subcmd__client__subcmd__help__subcmd__sessions_commands() {
+    local commands; commands=()
+    _describe -t commands 'agentix client help sessions commands' commands "$@"
+}
+(( $+functions[_agentix__subcmd__client__subcmd__sessions_commands] )) ||
+_agentix__subcmd__client__subcmd__sessions_commands() {
+    local commands; commands=()
+    _describe -t commands 'agentix client sessions commands' commands "$@"
+}
+(( $+functions[_agentix__subcmd__completions_commands] )) ||
+_agentix__subcmd__completions_commands() {
+    local commands; commands=()
+    _describe -t commands 'agentix completions commands' commands "$@"
+}
+(( $+functions[_agentix__subcmd__doctor_commands] )) ||
+_agentix__subcmd__doctor_commands() {
+    local commands; commands=()
+    _describe -t commands 'agentix doctor commands' commands "$@"
+}
+(( $+functions[_agentix__subcmd__help_commands] )) ||
+_agentix__subcmd__help_commands() {
+    local commands; commands=(
+'serve:Run the Agentix bridge until interrupted' \
+'doctor:Validate configuration, credentials, and the selected agent transport' \
+'client:Use the running Agentix server for local diagnostics and setup' \
+'completions:Print a shell completion script to stdout' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'agentix help commands' commands "$@"
+}
+(( $+functions[_agentix__subcmd__help__subcmd__client_commands] )) ||
+_agentix__subcmd__help__subcmd__client_commands() {
+    local commands; commands=(
+'claim:Generate a temporary in-memory owner claim code for the selected IM channel' \
+'sessions:List sessions available through the running Agentix server' \
+'call:Ask the server to send a raw JSON RPC request to Codex' \
+    )
+    _describe -t commands 'agentix help client commands' commands "$@"
+}
+(( $+functions[_agentix__subcmd__help__subcmd__client__subcmd__call_commands] )) ||
+_agentix__subcmd__help__subcmd__client__subcmd__call_commands() {
+    local commands; commands=()
+    _describe -t commands 'agentix help client call commands' commands "$@"
+}
+(( $+functions[_agentix__subcmd__help__subcmd__client__subcmd__claim_commands] )) ||
+_agentix__subcmd__help__subcmd__client__subcmd__claim_commands() {
+    local commands; commands=()
+    _describe -t commands 'agentix help client claim commands' commands "$@"
+}
+(( $+functions[_agentix__subcmd__help__subcmd__client__subcmd__sessions_commands] )) ||
+_agentix__subcmd__help__subcmd__client__subcmd__sessions_commands() {
+    local commands; commands=()
+    _describe -t commands 'agentix help client sessions commands' commands "$@"
+}
+(( $+functions[_agentix__subcmd__help__subcmd__completions_commands] )) ||
+_agentix__subcmd__help__subcmd__completions_commands() {
+    local commands; commands=()
+    _describe -t commands 'agentix help completions commands' commands "$@"
+}
+(( $+functions[_agentix__subcmd__help__subcmd__doctor_commands] )) ||
+_agentix__subcmd__help__subcmd__doctor_commands() {
+    local commands; commands=()
+    _describe -t commands 'agentix help doctor commands' commands "$@"
+}
+(( $+functions[_agentix__subcmd__help__subcmd__help_commands] )) ||
+_agentix__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'agentix help help commands' commands "$@"
+}
+(( $+functions[_agentix__subcmd__help__subcmd__serve_commands] )) ||
+_agentix__subcmd__help__subcmd__serve_commands() {
+    local commands; commands=()
+    _describe -t commands 'agentix help serve commands' commands "$@"
+}
+(( $+functions[_agentix__subcmd__serve_commands] )) ||
+_agentix__subcmd__serve_commands() {
+    local commands; commands=()
+    _describe -t commands 'agentix serve commands' commands "$@"
+}
+
+if [ "$funcstack[1]" = "_agentix" ]; then
+    _agentix "$@"
+else
+    compdef _agentix agentix
+fi

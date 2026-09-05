@@ -16,6 +16,7 @@ agentix-telegram = { path = "../agentix-telegram" }
 anyhow.workspace = true
 async-trait.workspace = true
 clap.workspace = true
+clap_complete.workspace = true
 dirs.workspace = true
 reqwest.workspace = true
 serde.workspace = true

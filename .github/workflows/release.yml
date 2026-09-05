@@ -131,6 +131,7 @@ jobs:
           mkdir -p dist/stage/plugins/agent-task-manager dist/stage/docs
           cp docs/task-board.md dist/stage/docs/
           git archive HEAD plugins/agent-task-manager | tar -x -C dist/stage
+          cp -R completions dist/stage/
           if [[ "${{ runner.os }}" == "Windows" ]]; then
             cp "target/$TARGET/release/agentix.exe" dist/stage/
             cp "target/$TARGET/release/taskcli.exe" dist/stage/
