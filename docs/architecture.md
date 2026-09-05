@@ -196,3 +196,7 @@ rmux integration is split at the workspace-runtime boundary: Codex adapter tests
 CI runs all platform-applicable tests on Linux, macOS, and Windows, including the TCP control suite on each platform. `agentix-codex` exposes a clear unsupported-transport result on Windows because Codex app-server integration currently requires WebSocket over a Unix-domain socket.
 
 Focused scripted UDS tests remain useful for malformed, missing, or version-specific response shapes. The stateful mock is used when correctness depends on a sequence of operations and the state created by earlier requests.
+
+## 11. Task coordination
+
+`agentix-task` owns an independent SQLite database, task leases, dependency validation, audit events, and read-only document projection. `taskcli` and the optional Engine task-board integration share this library. Task action buttons reuse the existing ActionRegistry scope and add task revisions and lease fencing; periodic runtime refresh consumes event cursors for bound-session notifications. Future Agent Team tooling owns shared Job context externally. See [Task board](task-board.md) for the full API and recovery boundaries.

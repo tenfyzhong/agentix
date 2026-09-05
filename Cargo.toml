@@ -6,6 +6,8 @@ members = [
   "crates/agentix-feishu",
   "crates/agentix-pi",
   "crates/agentix-telegram",
+  "crates/agentix-task",
+  "crates/taskcli",
 ]
 resolver = "3"
 
@@ -44,6 +46,7 @@ toml = "0.9"
 toml_edit = "0.25"
 url = "2.5"
 uuid = { version = "1.18", features = ["v4", "serde"] }
+sha2 = "0.10"
 walkdir = "2.5"
 
 

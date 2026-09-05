@@ -194,10 +194,17 @@ async fn serve(config: Config, config_path: &Path) -> Result<()> {
     let BuiltAgent { adapter, codex } = build_agent(&config.agent).await?;
     let claims = Arc::new(ClaimRegistry::default());
     let channels = build_channels(&config, config_path, claims.clone())?;
+    let task_board = if let Some(task_board) = &config.task_board {
+        let task_config = agentix_task::Config::load(&task_board.config)?;
+        Some(Arc::new(agentix_task::Service::open(task_config).await?))
+    } else {
+        None
+    };
     run_service_until_shutdown(
         adapter,
         codex,
         channels,
+        task_board,
         config.storage.path,
         config.server.endpoint,
         config_path.to_owned(),
@@ -217,6 +224,7 @@ async fn run_service_until_shutdown<F>(
     adapter: Arc<dyn AgentAdapter>,
     codex: Option<CodexClient>,
     channels: Vec<Arc<dyn ChannelAdapter>>,
+    task_board: Option<Arc<agentix_task::Service>>,
     state_path: PathBuf,
     control_endpoint: String,
     config_path: PathBuf,
@@ -233,7 +241,13 @@ where
             .with_context(|| format!("failed to create state directory {}", parent.display()))?;
     }
     let state = SqliteState::open(&state_path).await?;
-    let engine = Arc::new(Engine::new(adapter.clone(), state, channels.clone()));
+    let mut engine = Engine::new(adapter.clone(), state, channels.clone());
+    if let Some(task_board) = task_board {
+        engine = engine
+            .with_task_board(task_board)
+            .with_task_consumer(state_path.to_string_lossy().into_owned());
+    }
+    let engine = Arc::new(engine);
     let restored = engine.restore_bindings().await?;
     tracing::info!(restored, "restored durable conversation bindings");
 
@@ -323,6 +337,9 @@ async fn run_engine_loop(
             () = shutdown.cancelled() => break,
             _ = working_interval.tick() => {
                 engine.refresh_working_turns().await;
+                if let Err(error) = engine.refresh_task_board().await {
+                    tracing::warn!(%error, "task board refresh failed");
+                }
             }
             envelope = inbound.recv(), if inbound_open => {
                 let Some(envelope) = envelope else {
@@ -948,6 +965,7 @@ mod tests {
                 agent.clone(),
                 None,
                 vec![channel.clone()],
+                None,
                 state_path.clone(),
                 format!("tcp://{}", unused_loopback_address()),
                 config_path.clone(),
@@ -1009,6 +1027,7 @@ mod tests {
             Arc::new(LifecycleAgent::new()),
             None,
             vec![Arc::new(LifecycleChannel::stubborn())],
+            None,
             directory.path().join("agentix.sqlite3"),
             format!("tcp://{}", unused_loopback_address()),
             directory.path().join("config.toml"),

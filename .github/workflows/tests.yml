@@ -30,6 +30,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Test task host plugin
+        run: node --test plugins/agent-task-manager/tests/*.test.mjs
       - name: Install protobuf compiler on Linux
         if: runner.os == 'Linux'
         run: |
@@ -56,3 +61,6 @@ jobs:
       - name: Run Windows TCP control tests
         if: runner.os == 'Windows'
         run: cargo test -p agentix --bin agentix control::tests::tcp_control_server
+      - name: Run Windows task board tests
+        if: runner.os == 'Windows'
+        run: cargo test -p agentix-task -p taskcli

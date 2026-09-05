@@ -4,7 +4,7 @@ Thank you for helping improve Agentix. Contributions may include code, tests, do
 
 ## Development environment
 
-Agentix is a Rust workspace. Install the toolchain pinned in `rust-toolchain.toml`; it includes Rust 1.95, rustfmt, and Clippy. Linux CI also installs `protobuf-compiler`.
+Agentix is a Rust workspace. Install the toolchain pinned in `rust-toolchain.toml`; it includes Rust 1.95, rustfmt, and Clippy. Node.js 22+ runs the task plugin's built-in test suite. Linux CI also installs `protobuf-compiler`.
 
 Clone the repository and verify the workspace before making changes:
 
@@ -65,6 +65,7 @@ This is equivalent to:
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
+node --test plugins/agent-task-manager/tests/*.test.mjs
 ```
 
 The test suite is layered. Protocol and rendering tests cover pure mappings; adapter tests cover Telegram, Feishu, Pi, and Codex transports; and core tests exercise routing, persistence, actions, interactions, and lifecycle transitions. Full-stack tests pass mocked Telegram and Feishu events through the channel adapter, engine, and Codex client before verifying the completed response at the channel API.
@@ -75,7 +76,7 @@ GitHub Actions keeps formatting and Clippy in `ci.yml`. The `tests.yml` workflow
 
 ## Workspace architecture
 
-The main crates are `agentix-core`, `agentix-codex`, `agentix-pi`, `agentix-telegram`, `agentix-feishu`, and the `agentix` executable.
+The main crates are `agentix-core`, `agentix-codex`, `agentix-pi`, `agentix-telegram`, `agentix-feishu`, the independent `agentix-task` library, and the `agentix` / `taskcli` executables. See [task board design and usage](docs/task-board.md) for the task database and document projection boundary.
 
 The core exposes a small common agent interface plus optional queue, attached-session control, and workspace-runtime ports. A serialized runtime loop feeds IM and agent events into coordinator-owned session, turn, interaction, and rmux state. See the [architecture document](docs/architecture.md) for the state/effect and retry boundaries.
 

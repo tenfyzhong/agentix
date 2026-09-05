@@ -51,6 +51,14 @@ impl SqliteState {
     }
 
     async fn migrate(&self) -> Result<(), sqlx::Error> {
+        let application_id: i64 = sqlx::query_scalar("PRAGMA application_id")
+            .fetch_one(&self.pool)
+            .await?;
+        if application_id != 0 {
+            return Err(sqlx::Error::Protocol(
+                "Agentix runtime storage must not use another application's database".into(),
+            ));
+        }
         sqlx::query("PRAGMA journal_mode = WAL")
             .execute(&self.pool)
             .await?;

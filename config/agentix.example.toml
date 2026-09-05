@@ -55,3 +55,7 @@ owner_user_ids = []
 # Leave this empty or omit it on first setup. Run `agentix client claim` locally,
 # then send the printed `/claim <code>` in a private chat to fill it automatically.
 # owner_open_ids = []
+# [task_board]
+# Optional: uncomment this table and config to enable a task board.
+# Initialize taskcli before enabling this integration.
+# config = "~/.config/taskcli/config.toml"

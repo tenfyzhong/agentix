@@ -17,6 +17,14 @@ pub struct Config {
     pub channel: ChannelConfig,
     pub agent: AgentConfig,
     pub storage: StorageConfig,
+    #[serde(default)]
+    pub task_board: Option<TaskBoardConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TaskBoardConfig {
+    pub config: PathBuf,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -207,6 +215,9 @@ impl Config {
 
     fn expand_home_paths(&mut self) -> Result<()> {
         let home = dirs::home_dir();
+        if let Some(task_board) = &mut self.task_board {
+            task_board.config = expand_home_path(&task_board.config, home.as_deref())?;
+        }
         self.storage.path = expand_home_path(&self.storage.path, home.as_deref())?;
         self.logging.file.path = expand_home_path(&self.logging.file.path, home.as_deref())?;
         self.server.endpoint =

@@ -27,6 +27,7 @@ dependencies = [
  "agentix-core",
  "agentix-feishu",
  "agentix-pi",
+ "agentix-task",
  "agentix-telegram",
  "anyhow",
  "async-trait",
@@ -76,6 +77,7 @@ dependencies = [
 name = "agentix-core"
 version = "0.0.0-dev"
 dependencies = [
+ "agentix-task",
  "async-trait",
  "serde",
  "serde_json",
@@ -117,6 +119,23 @@ dependencies = [
  "tracing",
  "uuid",
  "walkdir",
+]
+
+[[package]]
+name = "agentix-task"
+version = "0.0.0-dev"
+dependencies = [
+ "anyhow",
+ "dirs",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "sqlx",
+ "tempfile",
+ "time",
+ "tokio",
+ "toml",
+ "uuid",
 ]
 
 [[package]]
@@ -3297,6 +3316,20 @@ name = "takecell"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "20f34339676cdcab560c9a82300c4c2581f68b9369aedf0fae86f2ff9565ff3e"
+
+[[package]]
+name = "taskcli"
+version = "0.0.0-dev"
+dependencies = [
+ "agentix-task",
+ "anyhow",
+ "clap",
+ "serde_json",
+ "tempfile",
+ "time",
+ "tokio",
+ "toml",
+]
 
 [[package]]
 name = "telegram-markdown-v2"

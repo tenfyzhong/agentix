@@ -1,6 +1,6 @@
 # Agentix
 
-Agentix connects the coding agents already running on your computer to Telegram or Feishu, so you can monitor and continue local sessions when you step away from the terminal or IDE. It is a local-first Rust bridge for Codex, Pi, and Oh My Pi. Claude Code is intentionally out of scope for this release.
+Agentix connects the coding agents already running on your computer to Telegram or Feishu, so you can monitor and continue local sessions when you step away from the terminal or IDE. It is a local-first Rust bridge for Codex, Pi, and Oh My Pi. Claude Code can use the standalone task plugin; its IM transport is outside this release.
 
 Each IM conversation maps explicitly and durably to an agent session. Messages include a readable session title, short session ID, and turn identifier so concurrent sessions remain unambiguous.
 
@@ -14,6 +14,8 @@ Each IM conversation maps explicitly and durably to an agent session. Messages i
 - Owner allowlists, one-time owner claiming, group mention requirements, event deduplication, and single-use actions
 - Durable bindings, restart recovery, process-exit notifications, and automatic Codex reattachment
 - Streamed in-place responses, background completion notifications, and reply context
+- Standalone `taskcli`: SQLite jobs, concurrent task claims, versioned plans, audit events, and read-only Obsidian/Markdown boards
+- Optional IM task controls and a shared Codex, Claude, Pi, and OMP plugin, with stable interfaces for future Agent Team orchestration
 
 ## Quick start
 
@@ -55,7 +57,7 @@ Install the Rust toolchain declared by `rust-toolchain.toml`, then run:
 make release
 ```
 
-The binary is written to `target/release/agentix` (`agentix.exe` on Windows).
+The binaries are written to `target/release/agentix` and `target/release/taskcli` (`.exe` on Windows).
 
 ### Configure
 
@@ -140,3 +142,20 @@ If the selected channel has no configured owner, keep `agentix serve` running, e
 - [Contributing](CONTRIBUTING.md)
 - [Product design](docs/product-design.md)
 - [Architecture](docs/architecture.md)
+- [Task board, standalone CLI, and agent plugin](docs/task-board.md)
+
+## Task board
+
+`taskcli` works independently of the IM bridge. Choose an existing output directory explicitly:
+
+```sh
+taskcli init --format markdown --root /absolute/path/to/documents --directory "Agent Tasks"
+# Or use an Obsidian vault root:
+taskcli init --format obsidian --root /absolute/path/to/vault --directory "Agent Tasks"
+taskcli project register
+taskcli job create --title "Deliver a feature" --goal "Acceptance checks"
+```
+
+One Git repository stays one Project across worktrees and time; each independent requirement gets its own Job. Different Jobs and their Tasks can run concurrently. Members claim individual Tasks with fenced leases; a future Team tool can attach its identifier and maintain shared context keyed by Job ID.
+
+Task state changes go through CLI commands or Agentix IM actions. Generated boards are logically read-only, use `[[wikilinks]]` in Obsidian or relative Markdown links elsewhere, and require no Kanban/Tasks plugin or file watcher. See the [task board guide](docs/task-board.md) for plans, claiming, plugin installation, recovery, and IM configuration.

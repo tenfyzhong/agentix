@@ -1,0 +1,11 @@
+schema_version = 1
+
+[storage]
+path = "~/.local/share/taskcli/tasks.sqlite3"
+
+[documents]
+# Explicitly choose "markdown" or "obsidian".
+format = "markdown"
+# Replace with an existing absolute directory. Obsidian requires a vault root.
+root = "/absolute/path/to/documents"
+directory = "Agent Tasks"

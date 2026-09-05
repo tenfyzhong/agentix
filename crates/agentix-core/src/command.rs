@@ -5,6 +5,9 @@ use crate::{GoalCommand, SessionCommand};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AgentCommand {
     Help,
+    Jobs(Option<String>),
+    Tasks(Option<String>),
+    Task(String),
     Sessions,
     Multiplexer,
     Attach(String),
@@ -57,6 +60,14 @@ pub fn parse_input(input: &str) -> Result<ParsedInput, InputParseError> {
         .map_or(raw_command, |(name, _)| name);
     let parsed = match command {
         "/help" => AgentCommand::Help,
+        "/jobs" => AgentCommand::Jobs(parts.next().map(str::to_owned)),
+        "/tasks" => AgentCommand::Tasks(parts.next().map(str::to_owned)),
+        "/task" => AgentCommand::Task(
+            parts
+                .next()
+                .ok_or(InputParseError::MissingArgument("/task <id>"))?
+                .to_owned(),
+        ),
         "/sessions" => AgentCommand::Sessions,
         "/rmux" => AgentCommand::Multiplexer,
         "/attach" => AgentCommand::Attach(

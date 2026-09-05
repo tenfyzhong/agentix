@@ -9,6 +9,9 @@ use tokio::time::Instant;
 use uuid::Uuid;
 
 mod coordinator;
+mod task_board;
+
+use task_board::{PendingTaskInput, TaskAction};
 
 use coordinator::{InteractionCoordinator, RmuxController, SessionCoordinator, TurnCoordinator};
 
@@ -68,6 +71,7 @@ impl TurnBuffer {
 
 #[derive(Debug, Clone)]
 enum UiAction {
+    Task(TaskAction),
     Attach(SessionId),
     Stop {
         session_id: SessionId,
@@ -105,6 +109,7 @@ impl UiAction {
             | Self::SelectInput { interaction, .. }
             | Self::BeginCustomInput(interaction) => &interaction.session_id == session_id,
             Self::Multiplexer(_) => false,
+            Self::Task(action) => &action.session_id == session_id,
         }
     }
 }
@@ -177,6 +182,10 @@ enum PendingSessionInput {
 }
 
 pub struct Engine {
+    task_board: Option<Arc<agentix_task::Service>>,
+    task_inputs: tokio::sync::Mutex<HashMap<ConversationRef, PendingTaskInput>>,
+    task_refresh: tokio::sync::Mutex<()>,
+    task_consumer: String,
     agent: Arc<dyn AgentAdapter>,
     state: SqliteState,
     channels: HashMap<ChannelKind, Arc<dyn ChannelAdapter>>,
@@ -195,6 +204,10 @@ impl Engine {
     ) -> Self {
         let rmux = RmuxController::new(agent.capabilities().workspace_runtime);
         Self {
+            task_board: None,
+            task_inputs: tokio::sync::Mutex::new(HashMap::new()),
+            task_refresh: tokio::sync::Mutex::new(()),
+            task_consumer: "default".into(),
             agent,
             state,
             channels: channels
@@ -487,6 +500,11 @@ impl Engine {
         text: &str,
     ) -> Result<(), EngineError> {
         let is_command = text.trim_start().starts_with('/');
+        if !is_command && let Some(pending) = self.task_inputs.lock().await.remove(conversation) {
+            return self
+                .finish_task_input(conversation, owner_id, pending, text)
+                .await;
+        }
         if !is_command
             && let Some(input) = self
                 .interactions
@@ -546,6 +564,12 @@ impl Engine {
         command: AgentCommand,
     ) -> Result<(), EngineError> {
         match command {
+            AgentCommand::Jobs(project) => {
+                self.show_task_jobs(conversation, project.as_deref())
+                    .await?;
+            }
+            AgentCommand::Tasks(filter) => self.show_tasks(conversation, filter.as_deref()).await?,
+            AgentCommand::Task(id) => self.show_task(conversation, owner_id, &id).await?,
             AgentCommand::Help => self.show_help(conversation).await?,
             AgentCommand::Sessions => self.show_sessions(conversation, owner_id).await?,
             AgentCommand::Multiplexer => {
@@ -560,6 +584,7 @@ impl Engine {
             AgentCommand::Stop => self.stop_current(conversation).await?,
             AgentCommand::Queue => self.show_queue(conversation).await?,
             AgentCommand::Cancel => {
+                self.task_inputs.lock().await.remove(conversation);
                 self.interactions
                     .session_inputs
                     .lock()
@@ -612,6 +637,11 @@ impl Engine {
 
     async fn show_help(&self, conversation: &ConversationRef) -> Result<(), EngineError> {
         let body = self.available_commands(conversation).await;
+        let body = if self.task_board.is_some() {
+            format!("{body}\n\n/jobs [project] · /tasks [job-or-project] · /task <id>")
+        } else {
+            body.to_owned()
+        };
         self.send_view(conversation, &OutboundView::text("Agentix commands", body))
             .await?;
         Ok(())
@@ -1926,9 +1956,11 @@ impl Engine {
                 return Ok(());
             }
             AgentEvent::SessionExited { session_id } => {
+                self.task_session_event("session.end", session_id).await;
                 return self.handle_session_exit(&SessionId::new(session_id)).await;
             }
             AgentEvent::SessionResumed { session_id } => {
+                self.task_session_event("session.start", session_id).await;
                 return self
                     .handle_session_resume(&SessionId::new(session_id))
                     .await;
@@ -2767,6 +2799,7 @@ impl Engine {
             tracing::warn!(%error, message = %message.message_id, "failed to disable consumed IM actions");
         }
         match action {
+            UiAction::Task(action) => self.run_task_action(conversation, owner_id, action).await?,
             UiAction::Attach(session) => self.attach(conversation, owner_id, session).await?,
             UiAction::Stop {
                 session_id,

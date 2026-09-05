@@ -11,7 +11,10 @@ class Agentix < Formula
   def install
     system "bash", ".github/scripts/set-release-version.sh", version.to_s
     system "cargo", "install", *std_cargo_args(path: "crates/agentix")
+    system "cargo", "install", *std_cargo_args(path: "crates/taskcli")
     pkgshare.install "config/agentix.example.toml"
+    pkgshare.install "config/taskcli.example.toml"
+    (pkgshare/"plugins").install "plugins/agent-task-manager"
   end
 
   service do
@@ -35,5 +38,6 @@ class Agentix < Formula
   test do
     assert_path_exists pkgshare/"agentix.example.toml"
     assert_match version.to_s, shell_output("#{bin}/agentix --version")
+    assert_match version.to_s, shell_output("#{bin}/taskcli --version")
   end
 end

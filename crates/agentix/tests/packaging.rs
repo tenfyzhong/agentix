@@ -44,6 +44,19 @@ fn workspace_uses_a_development_version_until_release_packaging() {
 }
 
 #[test]
+fn release_and_homebrew_include_standalone_taskcli_and_host_plugin() {
+    let workflow = repository_file(".github/workflows/release.yml");
+    assert!(workflow.contains("--package taskcli"));
+    assert!(workflow.contains("release/taskcli.exe"));
+    assert!(workflow.contains("release/taskcli\""));
+    assert!(workflow.contains("plugins/agent-task-manager"));
+    let formula = repository_file("packaging/homebrew/agentix.rb");
+    assert!(formula.contains("crates/taskcli"));
+    assert!(formula.contains("taskcli --version"));
+    assert!(formula.contains("plugins/agent-task-manager"));
+}
+
+#[test]
 fn release_version_setter_updates_workspace_packages_from_the_tag() {
     let temporary_repository = tempfile::tempdir().unwrap();
     let manifest = temporary_repository.path().join("Cargo.toml");

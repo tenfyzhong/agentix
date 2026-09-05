@@ -22,6 +22,7 @@ clippy:
 
 test:
 	$(CARGO) test --workspace --all-features
+	node --test plugins/agent-task-manager/tests/*.test.mjs
 
 clean:
 	$(CARGO) clean
