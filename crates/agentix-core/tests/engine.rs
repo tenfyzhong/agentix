@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use agentix_core::{
@@ -384,8 +385,10 @@ struct FakeChannel {
     sent: Arc<Mutex<Vec<(ConversationRef, OutboundView)>>>,
     updated: Arc<Mutex<Vec<(MessageRef, OutboundView)>>>,
     disabled_actions: Arc<Mutex<Vec<MessageRef>>>,
+    messages: Arc<Mutex<HashMap<MessageRef, OutboundView>>>,
     session_commands: Arc<Mutex<Vec<(ConversationRef, bool)>>>,
     fail_menu_updates: Arc<Mutex<bool>>,
+    reject_unchanged_updates: bool,
 }
 
 impl FakeChannel {
@@ -430,10 +433,12 @@ impl ChannelAdapter for FakeChannel {
             .lock()
             .unwrap()
             .push((conversation.clone(), view.clone()));
-        Ok(MessageRef::new(
-            conversation.clone(),
-            format!("m{}", self.sent().len()),
-        ))
+        let message = MessageRef::new(conversation.clone(), format!("m{}", self.sent().len()));
+        self.messages
+            .lock()
+            .unwrap()
+            .insert(message.clone(), view.clone());
+        Ok(message)
     }
 
     async fn update(
@@ -442,6 +447,14 @@ impl ChannelAdapter for FakeChannel {
         message: &MessageRef,
         view: &OutboundView,
     ) -> Result<(), ChannelError> {
+        if self.reject_unchanged_updates && self.messages.lock().unwrap().get(message) == Some(view)
+        {
+            return Err(ChannelError::Transport("message is not modified".into()));
+        }
+        self.messages
+            .lock()
+            .unwrap()
+            .insert(message.clone(), view.clone());
         self.updated
             .lock()
             .unwrap()
@@ -1451,6 +1464,225 @@ async fn attach_hydrates_the_latest_running_turn_with_a_stop_action() {
         .await
         .unwrap();
     assert_eq!(channel.updated().len(), 1);
+}
+
+fn visible_stop_messages(channel: &FakeChannel) -> Vec<MessageRef> {
+    channel
+        .messages
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(_, view)| view.actions.iter().any(|action| action.label == "Stop"))
+        .map(|(message, _)| message.clone())
+        .collect()
+}
+
+#[tokio::test]
+async fn attach_stop_button_moves_to_only_the_latest_attached_running_turn() {
+    for kind in [ChannelKind::Telegram, ChannelKind::Feishu] {
+        let agent = Arc::new(FakeAgent::with_history(vec![TurnSummary {
+            id: "turn_running".into(),
+            status: TurnStatus::InProgress,
+            user_text: Some("keep working".into()),
+            agent_text: Some("still running".into()),
+            tools: Vec::new(),
+            items: Vec::new(),
+        }]));
+        let channel = Arc::new(FakeChannel {
+            channel_kind: Some(kind),
+            reject_unchanged_updates: true,
+            streaming_interval: Some(std::time::Duration::ZERO),
+            ..FakeChannel::default()
+        });
+        let engine = Engine::new(
+            agent.clone(),
+            SqliteState::in_memory().await.unwrap(),
+            vec![channel.clone()],
+        );
+        let chat = ConversationRef::new(kind, "chat-a");
+        let other_chat = ConversationRef::new(kind, "chat-b");
+        let commands = [
+            (&chat, "/attach thr_a", true),
+            (&chat, "/history", true),
+            (&chat, "/attach thr_b", true),
+            (&chat, "/attach thr_a", true),
+            (&other_chat, "/attach thr_a", true),
+            (&other_chat, "/detach", false),
+            (&chat, "/attach thr_a", true),
+            (&chat, "/attach thr_b", false),
+        ];
+        for (index, (conversation, command, running)) in commands.into_iter().enumerate() {
+            if index == 7 {
+                agent.history_turns.lock().unwrap()[0].status = TurnStatus::Completed;
+            }
+            let old_token = visible_stop_messages(&channel).first().map(|message| {
+                (
+                    message.conversation.clone(),
+                    channel.messages.lock().unwrap()[message].actions[0]
+                        .token
+                        .clone(),
+                )
+            });
+            engine
+                .handle_inbound(InboundEnvelope::text(
+                    format!("command-{index}"),
+                    conversation.clone(),
+                    "owner",
+                    command,
+                ))
+                .await
+                .unwrap();
+            let visible = visible_stop_messages(&channel);
+            assert_eq!(visible.len(), usize::from(running), "{kind:?}: {command}");
+            if running {
+                assert_eq!(&visible[0].conversation, conversation);
+            }
+            if command != "/history"
+                && let Some((old_conversation, token)) = old_token
+            {
+                let result = engine
+                    .handle_inbound(InboundEnvelope::action(
+                        format!("stale-stop-{index}"),
+                        old_conversation,
+                        "owner",
+                        token,
+                    ))
+                    .await;
+                assert!(matches!(result, Err(EngineError::InvalidAction)));
+            }
+        }
+        engine
+            .handle_agent_event(AgentEvent::AgentMessageDelta {
+                session_id: "thr_b".into(),
+                turn_id: "turn_running".into(),
+                item_id: "late-item".into(),
+                delta: "late output".into(),
+            })
+            .await
+            .unwrap();
+        assert!(visible_stop_messages(&channel).is_empty());
+        assert!(!agent.calls().iter().any(|call| call.starts_with("stop:")));
+    }
+}
+
+#[tokio::test]
+async fn attach_stop_button_does_not_return_on_superseded_turn_updates() {
+    let agent = Arc::new(FakeAgent::with_history(vec![TurnSummary {
+        id: "turn_old".into(),
+        status: TurnStatus::InProgress,
+        user_text: Some("old prompt".into()),
+        agent_text: Some("old response".into()),
+        tools: Vec::new(),
+        items: Vec::new(),
+    }]));
+    let channel = Arc::new(FakeChannel {
+        streaming_interval: Some(std::time::Duration::ZERO),
+        ..FakeChannel::default()
+    });
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::TurnStarted {
+            session_id: "thr_a".into(),
+            turn_id: "turn_new".into(),
+        })
+        .await
+        .unwrap();
+    assert!(visible_stop_messages(&channel).is_empty());
+    for turn in ["turn_new", "turn_old"] {
+        engine
+            .handle_agent_event(AgentEvent::AgentMessageDelta {
+                session_id: "thr_a".into(),
+                turn_id: turn.into(),
+                item_id: format!("item-{turn}"),
+                delta: "more output".into(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(visible_stop_messages(&channel).len(), 1);
+    }
+    engine
+        .handle_agent_event(AgentEvent::TurnCompleted {
+            session_id: "thr_a".into(),
+            turn_id: "turn_old".into(),
+            status: TurnStatus::Completed,
+            error: None,
+        })
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound("chat-a", "follow up"))
+        .await
+        .unwrap();
+    assert!(
+        agent
+            .calls()
+            .contains(&"steer:thr_a:turn_new:follow up".into())
+    );
+    engine
+        .handle_agent_event(AgentEvent::TurnCompleted {
+            session_id: "thr_a".into(),
+            turn_id: "turn_new".into(),
+            status: TurnStatus::Completed,
+            error: None,
+        })
+        .await
+        .unwrap();
+    assert!(visible_stop_messages(&channel).is_empty());
+}
+
+#[tokio::test]
+async fn late_output_cannot_restore_stop_on_an_old_turn_after_the_latest_turn_finishes() {
+    let channel = Arc::new(FakeChannel {
+        streaming_interval: Some(std::time::Duration::ZERO),
+        ..FakeChannel::default()
+    });
+    let engine = Engine::new(
+        Arc::new(FakeAgent::new()),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound("chat-a", "start work"))
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::TurnStarted {
+            session_id: "thr_a".into(),
+            turn_id: "turn_latest".into(),
+        })
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::TurnCompleted {
+            session_id: "thr_a".into(),
+            turn_id: "turn_latest".into(),
+            status: TurnStatus::Completed,
+            error: None,
+        })
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::AgentMessageDelta {
+            session_id: "thr_a".into(),
+            turn_id: "turn_new".into(),
+            item_id: "late-item".into(),
+            delta: "late output".into(),
+        })
+        .await
+        .unwrap();
+    assert!(visible_stop_messages(&channel).is_empty());
 }
 
 #[tokio::test]
