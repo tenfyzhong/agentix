@@ -202,12 +202,25 @@ fn actual_obsidian_renders_seven_columns_and_navigates_plan_and_task_links() {
         "--title",
         "渲染 | 中文 [链接] & <标签> [[内部]] *bold*",
     ]);
+    let claim = f.cli(&[
+        "task",
+        "claim",
+        task["id"].as_str().unwrap(),
+        "--executor",
+        "agent:smoke",
+        "--session",
+        "smoke",
+    ]);
     let plan = f.cli(&[
         "plan",
         "create",
         task["id"].as_str().unwrap(),
         "--body",
         "---\ntitle: 渲染验收计划\ntags:\n  - para/inbox\n---\n\n# 渲染验收计划\n\n验证链接跳转。",
+        "--session",
+        "smoke",
+        "--lease-token",
+        claim["lease"]["token"].as_str().unwrap(),
     ]);
     let unplanned = f.cli(&[
         "task",
@@ -248,7 +261,7 @@ fn actual_obsidian_renders_seven_columns_and_navigates_plan_and_task_links() {
             .as_array()
             .unwrap()
             .iter()
-            .any(|cell| cell == "Open 渲染 | 中文 [链接] & <标签> [[内部]] *bold*"),
+            .any(|cell| cell == "Open 渲染 | 中文 [链接] & <标签> [[内部]] *bold* · PLANNING"),
         "{rendered}"
     );
     for (label, expected) in [

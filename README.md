@@ -158,7 +158,11 @@ taskcli job create --title "Deliver a feature" --goal "Acceptance checks"
 
 One Git repository stays one Project across worktrees and time; each independent requirement gets its own Job. Different Jobs and their Tasks can run concurrently. Members claim individual Tasks with fenced leases; a future Team tool can attach its identifier and maintain shared context keyed by Job ID.
 
+The workflow is `claim → Plan → start → execute/verify → done`. Claim reserves planning ownership before any Plan is written; start checks the Plan and dependencies without replacing the lease. Both phases appear in the existing `IN_PROGRESS` column, and hooks renew/recover planning leases too. Only the current lease holder can create or revise a Plan.
+
 Task state changes go through CLI commands or Agentix IM actions. Generated boards are logically read-only, use `[[wikilinks]]` in Obsidian or relative Markdown links elsewhere, and require no Kanban/Tasks plugin or file watcher. See the [task board guide](docs/task-board.md) for plans, claiming, plugin installation, recovery, and IM configuration.
+
+For the design rationale, read [task decomposition, Skill, and Hook mechanisms (中文)](docs/task-workflow-mechanisms.md), covering responsibility boundaries, ownership, concurrency, recovery, and future Agent Team integration.
 
 The [agent-task-manager plugin](plugins/agent-task-manager/README.md) bundles Codex/Claude lifecycle hooks and manifest-selected Pi/OMP extensions. Enable the package in the chosen host and review its hooks; no per-project hook configuration needs to be copied.
 

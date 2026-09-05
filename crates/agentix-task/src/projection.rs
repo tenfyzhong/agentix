@@ -44,33 +44,32 @@ impl Service {
         if matches!(command, "plan.create" | "plan.revise") {
             return self.write_plan(request, options).await;
         }
-        if command == "session.start" {
+        // Serialize Plan selection/validation with Plan writes until the start commits.
+        let lock = if command == "task.start" {
+            Some(self.lock_output().await?)
+        } else {
+            None
+        };
+        // Replays must remain valid even if the Plan file subsequently disappears.
+        if command == "task.start" && self.store.replay(&request, &options).await?.is_none() {
             let state = self.store.snapshot().await?;
-            let session = required(&request, "session")?;
-            for task in state
-                .tasks
-                .iter()
-                .filter(|t| t.system_block && t.last_session.as_deref() == Some(session))
-            {
-                self.plan(&task.id).await?;
-            }
-        }
-        if command == "task.claim" {
-            let state = self.store.snapshot().await?;
+            let mut preview = state.clone();
+            crate::mutations::apply(&mut preview, &request, &options, self.store.now())?;
             let task = &state.tasks[state.task_index(required(&request, "task")?)?];
             let plan = state
                 .plans
                 .iter()
                 .find(|p| Some(&p.id) == task.current_plan.as_ref())
-                .context("invalid: current Plan is required before claim")?;
+                .context("invalid: current Plan is required before start")?;
             let bytes = std::fs::read(self.safe_path(&plan.path)?)
                 .context("current Plan file is missing")?;
-            ensure!(!bytes.is_empty(), "invalid: current Plan is empty");
-            self.store
-                .update_plan_hash(&plan.id, &hash_bytes(&bytes))
-                .await?;
+            ensure!(
+                !std::str::from_utf8(&bytes)?.trim().is_empty(),
+                "invalid: current Plan is empty"
+            );
         }
         let mut outcome = self.store.execute(request, options).await?;
+        drop(lock);
         if let Err(error) = self.sync().await {
             outcome.projection_pending = Some(error.to_string());
         }
@@ -247,10 +246,11 @@ impl Service {
                     .position(|s| *s == task.status)
                     .context("unknown task state")?;
                 let (path, anchor) = task_target(&state, task)?;
-                columns[column].push(
-                    self.link(&board_path, &path, anchor.as_deref(), &task.title)
-                        .replace('|', "\\|"),
-                );
+                let mut cell = self.link(&board_path, &path, anchor.as_deref(), &task.title);
+                if let Some(phase) = task.phase {
+                    cell.push_str(&format!(" · {phase}"));
+                }
+                columns[column].push(cell.replace('|', "\\|"));
             }
             for row in 0..columns.iter().map(Vec::len).max().unwrap_or(0) {
                 board.push_str("| ");
@@ -316,6 +316,9 @@ impl Service {
                             task.status,
                             task.id
                         )),
+                    }
+                    if let Some(phase) = task.phase {
+                        doc.push_str(&format!("\nPhase: {phase}\n"));
                     }
                     if let Some(plan) = state
                         .plans

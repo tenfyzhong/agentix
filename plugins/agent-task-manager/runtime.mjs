@@ -179,6 +179,7 @@ export function registerExtension(
                 "register",
                 "revise",
                 "claim",
+                "start",
                 "done",
                 "cancel",
                 "retry",

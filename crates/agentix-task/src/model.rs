@@ -64,6 +64,22 @@ impl fmt::Display for TaskStatus {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum TaskPhase {
+    Planning,
+    Executing,
+}
+
+impl fmt::Display for TaskPhase {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Planning => "PLANNING",
+            Self::Executing => "EXECUTING",
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum JobStatus {
     Active,
     Completed,
@@ -114,6 +130,8 @@ pub struct Task {
     pub job_id: String,
     pub title: String,
     pub status: TaskStatus,
+    #[serde(default)]
+    pub phase: Option<TaskPhase>,
     pub revision: i64,
     pub position: i64,
     pub created_at: i64,

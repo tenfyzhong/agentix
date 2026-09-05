@@ -198,6 +198,7 @@ enum TaskCommand {
         dependency: String,
     },
     Claim(TaskId),
+    Start(TaskId),
     Heartbeat(TaskId),
     Release(Reason),
     Block(Reason),
@@ -649,6 +650,7 @@ async fn task(cli: &Cli, service: &Service, action: &TaskCommand) -> Result<Valu
             json!({"command":"task.claim","task":args.id,"executor":cli.executor.as_ref().context("claim requires --executor")?,"session":cli.session.as_ref().context("claim requires --session")?,"delegated_by":cli.delegated_by})
         }
         TaskCommand::Heartbeat(args) => json!({"command":"task.heartbeat","task":args.id}),
+        TaskCommand::Start(args) => json!({"command":"task.start","task":args.id}),
         TaskCommand::Done(args) => json!({"command":"task.done","task":args.id}),
         TaskCommand::Cancel(args) => json!({"command":"task.cancel","task":args.id}),
         TaskCommand::Retry(args) => json!({"command":"task.retry","task":args.id}),

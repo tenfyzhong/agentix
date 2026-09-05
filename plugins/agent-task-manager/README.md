@@ -41,16 +41,20 @@ An npm-installed copy uses `npm install --ignore-scripts` if dependencies need r
 
 ## Lifecycle behavior
 
+The shared Skill uses `claim → Plan → start → execute/verify → done`. Claim reserves PLANNING before the agent drafts a Plan; Plan publication requires the current lease. Start checks the Plan and dependencies and switches to EXECUTING with the same token. Pi/OMP automatically attach the lease and idempotency key to start as well as Plan writes. Codex/Claude shell calls supply them explicitly.
+
 | Trigger | Behavior |
 | --- | --- |
-| Codex/Claude `SessionStart` | Restore eligible Tasks and inject task context |
+| Codex/Claude `SessionStart` | Restore eligible Tasks to PLANNING with a new token and inject task context |
 | Codex/Claude `PreToolUse`, `PostToolUse`, `Stop` | Renew leases; `Stop` is not session exit or task completion |
 | Codex/Claude `SessionEnd` | Block active Tasks owned by the ending session |
-| Pi/OMP `session_start` | Restore eligible Tasks and start a one-minute heartbeat timer |
+| Pi/OMP `session_start` | Restore eligible Tasks to PLANNING and start a one-minute heartbeat timer |
 | Pi/OMP `before_agent_start` | Inject current task facts |
 | Pi/OMP `session_shutdown` | Cancel the timer and block active Tasks |
 
 Hook commands resolve `CLAUDE_PLUGIN_ROOT` or `PLUGIN_ROOT` inside Node, without shell-specific variable expansion. Paths containing spaces or Unicode remain one filesystem path. Pi/OMP register a structured `taskcli` tool that supplies session, executor, lease token, and idempotency identity.
+
+Renewal and expiry apply during both planning and execution. Recovery does not require a Plan yet and never calls start automatically: the agent must repair/review the current Plan and explicitly start before continuing execution. Hooks never create or revise Plans. Registered Plan files are published through taskcli, not overwritten directly by agents.
 
 The shared `SessionEnd` hook has a three-second timeout to respect Codex's shutdown limit; other command hooks allow 30 seconds. If shutdown times out or the process is killed, recovery falls back to the 15-minute lease expiry checked by subsequent task operations. Codex/Claude have no periodic timer, so long tool calls or idle gaps can also expire a lease. Hooks never force task completion.
 

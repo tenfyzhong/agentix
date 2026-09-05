@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use agentix_task::{JobStatus, Service, TaskStatus, WriteOptions};
+use agentix_task::{JobStatus, Service, TaskPhase, TaskStatus, WriteOptions};
 use serde_json::json;
 
 use super::{
@@ -150,9 +150,10 @@ impl Engine {
         let mut view = OutboundView::text(
             &task.title,
             format!(
-                "{}\nStatus: {}\nJob: {}\nRevision: {}\n{}",
+                "{}\nStatus: {}\nPhase: {}\nJob: {}\nRevision: {}\n{}",
                 task.id,
                 task.status,
+                task.phase.map_or_else(|| "—".into(), |p| p.to_string()),
                 job.title,
                 task.revision,
                 task.reason.as_deref().unwrap_or("")
@@ -166,6 +167,7 @@ impl Engine {
             let group = format!("task:{}:{}", task.id, uuid::Uuid::new_v4());
             for (label, command, target) in [
                 ("Claim", "task.claim", TaskStatus::InProgress),
+                ("Start", "task.start", TaskStatus::InProgress),
                 ("Block", "task.block", TaskStatus::Blocked),
                 ("Wait", "task.wait", TaskStatus::WaitingUser),
                 ("Done", "task.done", TaskStatus::Done),
@@ -179,7 +181,18 @@ impl Engine {
                     "task.reopen" => {
                         matches!(task.status, TaskStatus::Done | TaskStatus::Cancelled)
                     }
-                    "task.claim" => task.status.allows(target) && task.current_plan.is_some(),
+                    "task.start" => {
+                        lease.is_some()
+                            && task.phase == Some(TaskPhase::Planning)
+                            && task.current_plan.is_some()
+                            && task.dependencies.iter().all(|d| {
+                                state
+                                    .tasks
+                                    .iter()
+                                    .any(|t| t.id == *d && t.status == TaskStatus::Done)
+                            })
+                    }
+                    "task.done" => lease.is_some() && task.phase == Some(TaskPhase::Executing),
                     _ => task.status.allows(target),
                 };
                 if !allowed {

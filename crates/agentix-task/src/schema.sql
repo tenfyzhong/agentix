@@ -51,5 +51,5 @@ CREATE TABLE IF NOT EXISTS projection_state (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
-PRAGMA user_version = 1;
+PRAGMA user_version = 2;
 PRAGMA application_id = 0x4158544b;

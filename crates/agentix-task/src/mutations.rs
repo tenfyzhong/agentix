@@ -2,8 +2,8 @@ use anyhow::{Context, Result, bail, ensure};
 use serde_json::{Value, json};
 
 use crate::{
-    DEFAULT_LEASE_SECONDS, Job, JobStatus, Lease, Plan, Project, Snapshot, Task, TaskStatus,
-    WriteOptions, new_id,
+    DEFAULT_LEASE_SECONDS, Job, JobStatus, Lease, Plan, Project, Snapshot, Task, TaskPhase,
+    TaskStatus, WriteOptions, new_id,
 };
 
 pub(crate) fn required<'a>(value: &'a Value, key: &str) -> Result<&'a str> {
@@ -67,6 +67,7 @@ pub(crate) fn apply(
                 job_id: job.id.clone(),
                 title: required(request, "title")?.into(),
                 status: TaskStatus::Todo,
+                phase: None,
                 revision: 1,
                 position: i64::try_from(state.tasks.len())?,
                 created_at: now,
@@ -157,6 +158,7 @@ fn update_job(
             .filter(|t| t.job_id == job_id && !t.status.terminal())
         {
             task.status = TaskStatus::Cancelled;
+            task.phase = None;
             task.revision += 1;
             task.updated_at = now;
             task.system_block = false;
@@ -208,11 +210,12 @@ fn update_job(
     Ok(serde_json::to_value(job)?)
 }
 
-fn authorize(state: &Snapshot, task: &Task, options: &WriteOptions) -> Result<()> {
+fn authorize(state: &Snapshot, task: &Task, options: &WriteOptions, now: i64) -> Result<()> {
     if let Some(lease) = state.leases.iter().find(|l| l.task_id == task.id) {
         ensure!(
             options.lease_token.as_deref() == Some(lease.token.as_str())
-                && options.session_ref.as_deref() == Some(lease.session_ref.as_str()),
+                && options.session_ref.as_deref() == Some(lease.session_ref.as_str())
+                && lease.lease_expires_at > now,
             "conflict: active Task requires the current lease token and session"
         );
     } else {
@@ -241,10 +244,36 @@ fn update_task(
     );
     let command = required(request, "command")?;
     if command != "task.claim" {
-        authorize(state, &task, options)?;
+        authorize(state, &task, options, now)?;
+    }
+    if matches!(command, "plan.register" | "task.start" | "task.done") {
+        ensure!(
+            task.status == TaskStatus::InProgress
+                && state.leases.iter().any(|l| l.task_id == task.id),
+            "conflict: {command} requires an active Task lease"
+        );
     }
     match command {
         "task.claim" => claim(state, i, request, now)?,
+        "task.start" => {
+            ensure!(
+                task.phase == Some(TaskPhase::Planning),
+                "conflict: Task must be in PLANNING before start"
+            );
+            ensure!(
+                task.current_plan.is_some(),
+                "invalid: current Plan is required before start"
+            );
+            ensure!(
+                task.dependencies.iter().all(|d| state
+                    .tasks
+                    .iter()
+                    .any(|t| t.id == *d && t.status == TaskStatus::Done)),
+                "conflict: dependencies are incomplete"
+            );
+            state.tasks[i].phase = Some(TaskPhase::Executing);
+            state.tasks[i].started_at.get_or_insert(now);
+        }
         "task.heartbeat" => {
             let lease = state
                 .leases
@@ -331,12 +360,19 @@ fn update_task(
                 "conflict: a downstream Task has already started"
             );
             state.tasks[i].status = TaskStatus::Todo;
+            state.tasks[i].phase = None;
             state.tasks[i].reason = None;
             state.tasks[i].system_block = false;
             state.jobs[j].status = JobStatus::Active;
             state.jobs[j].completed_at = None;
         }
         "task.block" | "task.wait" | "task.done" | "task.fail" | "task.cancel" | "task.release" => {
+            if command == "task.done" {
+                ensure!(
+                    task.phase == Some(TaskPhase::Executing),
+                    "conflict: Task must be EXECUTING before done; call start first"
+                );
+            }
             let next = match command {
                 "task.done" => TaskStatus::Done,
                 "task.fail" => TaskStatus::Failed,
@@ -358,6 +394,7 @@ fn update_task(
                 None
             };
             state.tasks[i].status = next;
+            state.tasks[i].phase = None;
             state.tasks[i].reason = reason;
             state.tasks[i].system_block = false;
             state.leases.retain(|l| l.task_id != task.id);
@@ -376,17 +413,6 @@ fn claim(state: &mut Snapshot, i: usize, request: &Value, now: i64) -> Result<()
         task.status.allows(TaskStatus::InProgress),
         "conflict: Task cannot be claimed from {}",
         task.status
-    );
-    ensure!(
-        task.current_plan.is_some(),
-        "invalid: current Plan is required before claim"
-    );
-    ensure!(
-        task.dependencies.iter().all(|d| state
-            .tasks
-            .iter()
-            .any(|t| t.id == *d && t.status == TaskStatus::Done)),
-        "conflict: dependencies are incomplete"
     );
     let executor = required(request, "executor")?;
     let session = required(request, "session")?;
@@ -409,7 +435,7 @@ fn claim(state: &mut Snapshot, i: usize, request: &Value, now: i64) -> Result<()
     });
     let task = &mut state.tasks[i];
     task.status = TaskStatus::InProgress;
-    task.started_at.get_or_insert(now);
+    task.phase = Some(TaskPhase::Planning);
     task.system_block = false;
     task.reason = None;
     task.last_executor = Some(executor.into());
@@ -491,6 +517,7 @@ fn session(state: &mut Snapshot, request: &Value, now: i64) -> Result<Value> {
 pub(crate) fn system_block(state: &mut Snapshot, index: usize, reason: &str, now: i64) {
     let task = &mut state.tasks[index];
     task.status = TaskStatus::Blocked;
+    task.phase = None;
     task.reason = Some(reason.into());
     task.system_block = true;
     task.revision += 1;

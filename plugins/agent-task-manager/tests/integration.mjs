@@ -100,13 +100,6 @@ for (const [host, format] of [
             "--title",
             "Build $(not-a-shell) 中文",
         ]);
-        await x.invoke([
-            "plan",
-            "create",
-            task.id,
-            "--body",
-            "# Plan\nAcceptance checks.",
-        ]);
         const claim = await x.invoke([
             "task",
             "claim",
@@ -116,6 +109,14 @@ for (const [host, format] of [
         ]);
         assert.equal(claim.lease.session_ref, `session:${host}`);
         assert.equal(claim.lease.delegated_by, "team:test");
+        assert.equal(claim.phase, "PLANNING");
+        await x.invoke([
+            "plan",
+            "create",
+            task.id,
+            "--body",
+            "# Plan\nAcceptance checks.",
+        ]);
         const context = await x.handlers.get("before_agent_start")({}, x.ctx);
         assert.ok(context.message.content.includes(task.id));
         const revision = await x.invoke([
@@ -136,6 +137,11 @@ for (const [host, format] of [
             "WAITING_USER",
         );
         await x.invoke(["task", "claim", task.id]);
+        await assert.rejects(
+            x.invoke(["task", "done", task.id]),
+            /EXECUTING/,
+        );
+        await x.invoke(["task", "start", task.id]);
         await x.invoke(["task", "done", task.id]);
         const job = await f.run(["job", "show", f.job.id]);
         assert.equal(job.status, "COMPLETED");
@@ -160,13 +166,17 @@ test("tool retries preserve identity after claim, Plan revision and lease-releas
         "--title",
         "Idempotent",
     ]);
-    await x.invoke(["plan", "create", task.id, "--body", "# Plan"]);
     const claimArgs = ["task", "claim", task.id];
     const claim = await x.invoke(claimArgs, "claim-once");
     assert.deepEqual(await x.invoke(claimArgs, "claim-once"), claim);
+    await x.invoke(["plan", "create", task.id, "--body", "# Plan"]);
     const planArgs = ["plan", "revise", task.id, "--body", "# Retry safe"];
     const plan = await x.invoke(planArgs, "revise-once");
     assert.deepEqual(await x.invoke(planArgs, "revise-once"), plan);
+    const startArgs = ["task", "start", task.id];
+    const start = await x.invoke(startArgs, "start-once");
+    assert.deepEqual(await x.invoke(startArgs, "start-once"), start);
+    assert.equal(start.lease.token, claim.lease.token);
     const doneArgs = ["task", "done", task.id];
     const done = await x.invoke(doneArgs, "done-once");
     const before = await f.run(["event", "list", "--job", f.job.id]);
@@ -225,12 +235,13 @@ for (const host of ["codex", "claude"]) {
                 "--title",
                 "Hooks",
             ]);
-            await f.run(["plan", "create", task.id, "--body", "# Plan"]);
             const options = {
                 executor: "agent:hooks",
                 session: "host-session",
             };
             const claim = await f.run(["task", "claim", task.id], options);
+            // Hooks must renew and recover even an unfinished planning phase.
+            assert.equal(claim.phase, "PLANNING");
             const manifest = JSON.parse(
                 await readFile(join(root, "hooks/hooks.json"), "utf8"),
             );
@@ -267,18 +278,25 @@ for (const host of ["codex", "claude"]) {
                     );
             }
             const resumed = await f.run(["task", "show", task.id]);
+            assert.equal(resumed.phase, "PLANNING");
             assert.notEqual(resumed.lease.token, claim.lease.token);
             await assert.rejects(
-                f.run(["task", "done", task.id], {
+                f.run(["plan", "create", task.id, "--body", "# Stale Plan"], {
                     ...options,
                     token: claim.lease.token,
                 }),
                 /conflict/,
             );
-            await f.run(["task", "done", task.id], {
+            const resumedOptions = {
                 ...options,
                 token: resumed.lease.token,
-            });
+            };
+            await f.run(
+                ["plan", "create", task.id, "--body", "# Owned Plan"],
+                resumedOptions,
+            );
+            await f.run(["task", "start", task.id], resumedOptions);
+            await f.run(["task", "done", task.id], resumedOptions);
         });
     }
 }

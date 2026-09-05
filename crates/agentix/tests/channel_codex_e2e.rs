@@ -264,14 +264,23 @@ async fn task_board_fixture() -> (tempfile::TempDir, Arc<agentix_task::Service>,
         .unwrap()
         .result;
     let id = task["id"].as_str().unwrap().to_owned();
+    let claim = service.execute(json!({"command":"task.claim","task":id,"executor":"agent:codex","session":"thr_tasks"}),WriteOptions::default()).await.unwrap().result;
+    let options = WriteOptions {
+        session_ref: Some("thr_tasks".into()),
+        lease_token: claim["lease"]["token"].as_str().map(str::to_owned),
+        ..WriteOptions::default()
+    };
     service
         .execute(
             json!({"command":"plan.create","task":id,"body":"# Plan"}),
-            WriteOptions::default(),
+            options.clone(),
         )
         .await
         .unwrap();
-    service.execute(json!({"command":"task.claim","task":id,"executor":"agent:codex","session":"thr_tasks"}),WriteOptions::default()).await.unwrap();
+    service
+        .execute(json!({"command":"task.start","task":id}), options)
+        .await
+        .unwrap();
     (dir, service, id)
 }
 

@@ -538,19 +538,110 @@ async fn task_fixture() -> (tempfile::TempDir, Arc<agentix_task::Service>, Strin
     let id = task["id"].as_str().unwrap().to_owned();
     service
         .execute(
-            json!({"command":"plan.create","task":id,"body":"# Plan"}),
+            json!({"command":"task.claim","task":id,"executor":"agent:codex","session":"thr_a"}),
             WriteOptions::default(),
         )
         .await
         .unwrap();
     service
         .execute(
-            json!({"command":"task.claim","task":id,"executor":"agent:codex","session":"thr_a"}),
-            WriteOptions::default(),
+            json!({"command":"plan.create","task":id,"body":"# Plan"}),
+            task_write_options(&service, &id).await,
+        )
+        .await
+        .unwrap();
+    service
+        .execute(
+            json!({"command":"task.start","task":id}),
+            task_write_options(&service, &id).await,
         )
         .await
         .unwrap();
     (dir, service, id)
+}
+
+#[tokio::test]
+async fn task_buttons_follow_claim_plan_start_done_phases() {
+    use agentix_task::WriteOptions;
+    use serde_json::json;
+    let (_dir, service, existing) = task_fixture().await;
+    service
+        .execute(
+            json!({"command":"task.release","task":existing,"reason":"another task"}),
+            task_write_options(&service, &existing).await,
+        )
+        .await
+        .unwrap();
+    let job = service.store().snapshot().await.unwrap().jobs[0].id.clone();
+    let task = service
+        .execute(
+            json!({"command":"task.add","job":job,"title":"Unplanned"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap()
+        .result;
+    let id = task["id"].as_str().unwrap();
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        Arc::new(FakeAgent::new()),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    )
+    .with_task_board(service.clone());
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    let claim = task_button(&engine, &channel, id, "Claim").await;
+    engine
+        .handle_inbound(InboundEnvelope::action(
+            "claim-unplanned",
+            ConversationRef::new(ChannelKind::Telegram, "chat-a"),
+            "owner",
+            claim,
+        ))
+        .await
+        .unwrap();
+    let view = channel.sent().last().unwrap().1.clone();
+    assert!(view.body.contains("PLANNING"));
+    assert!(
+        !view
+            .actions
+            .iter()
+            .any(|a| matches!(a.label.as_str(), "Done" | "Start"))
+    );
+    service
+        .execute(
+            json!({"command":"plan.create","task":id,"body":"# Plan"}),
+            task_write_options(&service, id).await,
+        )
+        .await
+        .unwrap();
+    let start = task_button(&engine, &channel, id, "Start").await;
+    assert!(
+        !channel
+            .sent()
+            .last()
+            .unwrap()
+            .1
+            .actions
+            .iter()
+            .any(|a| a.label == "Done")
+    );
+    engine
+        .handle_inbound(InboundEnvelope::action(
+            "start-planned",
+            ConversationRef::new(ChannelKind::Telegram, "chat-a"),
+            "owner",
+            start,
+        ))
+        .await
+        .unwrap();
+    let view = channel.sent().last().unwrap().1.clone();
+    assert!(view.body.contains("EXECUTING"));
+    assert!(view.actions.iter().any(|a| a.label == "Done"));
+    assert!(!view.actions.iter().any(|a| a.label == "Start"));
 }
 
 #[tokio::test]
@@ -618,7 +709,7 @@ async fn task_board_commands_reasons_and_notifications_follow_bound_session() {
 }
 
 #[tokio::test]
-async fn task_plan_failure_does_not_interrupt_agent_session_lifecycle() {
+async fn missing_task_plan_resumes_planning_without_interrupting_session_lifecycle() {
     let (dir, service, _id) = task_fixture().await;
     let channel = Arc::new(FakeChannel::default());
     let engine = Engine::new(
@@ -650,8 +741,8 @@ async fn task_plan_failure_does_not_interrupt_agent_session_lifecycle() {
         .await
         .unwrap();
     assert_eq!(
-        service.store().snapshot().await.unwrap().tasks[0].status,
-        agentix_task::TaskStatus::Blocked
+        service.store().snapshot().await.unwrap().tasks[0].phase,
+        Some(agentix_task::TaskPhase::Planning)
     );
 }
 

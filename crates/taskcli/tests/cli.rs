@@ -58,11 +58,31 @@ impl Cli {
             .unwrap()
             .into()
     }
-    fn planned_task(&self, job: &str, title: &str) -> String {
+    fn task(&self, job: &str, title: &str) -> String {
         let task = self.ok(&["task", "add", "--job", job, "--title", title]);
         let id = task["id"].as_str().unwrap();
-        self.ok(&["plan", "create", id, "--body", "# Acceptance\nRun tests."]);
         id.into()
+    }
+    fn owned(&self, args: &[&str], claim: &Value) -> Value {
+        let mut args = args.to_vec();
+        args.extend([
+            "--session",
+            claim["lease"]["session_ref"].as_str().unwrap(),
+            "--lease-token",
+            claim["lease"]["token"].as_str().unwrap(),
+        ]);
+        self.ok(&args)
+    }
+    fn claim(&self, task: &str, session: &str) -> Value {
+        self.ok(&[
+            "task",
+            "claim",
+            task,
+            "--session",
+            session,
+            "--executor",
+            &format!("agent:{session}"),
+        ])
     }
     fn ok(&self, args: &[&str]) -> Value {
         let out = self.run(args);
@@ -77,6 +97,97 @@ impl Cli {
         assert_eq!(value["ok"], true);
         value["result"].clone()
     }
+}
+
+#[test]
+fn cli_claim_plan_start_done_requires_ownership_and_preserves_lease() {
+    let cli = Cli::new("markdown");
+    let job = cli.job("Owned planning");
+    let id = cli.task(&job, "Plan safely");
+    assert_eq!(
+        cli.run(&["plan", "create", &id, "--body", "# Plan"])
+            .status
+            .code(),
+        Some(1)
+    );
+    let claim = cli.ok(&[
+        "task",
+        "claim",
+        &id,
+        "--executor",
+        "agent:a",
+        "--session",
+        "a",
+    ]);
+    assert_eq!(claim["phase"], "PLANNING");
+    let token = claim["lease"]["token"].as_str().unwrap();
+    cli.ok(&[
+        "plan",
+        "create",
+        &id,
+        "--body",
+        "# Plan",
+        "--session",
+        "a",
+        "--lease-token",
+        token,
+    ]);
+    assert_eq!(
+        cli.run(&[
+            "task",
+            "done",
+            &id,
+            "--session",
+            "a",
+            "--lease-token",
+            token
+        ])
+        .status
+        .code(),
+        Some(1)
+    );
+    assert_eq!(
+        cli.run(&[
+            "task",
+            "start",
+            &id,
+            "--session",
+            "b",
+            "--lease-token",
+            token
+        ])
+        .status
+        .code(),
+        Some(1)
+    );
+    let args = [
+        "task",
+        "start",
+        &id,
+        "--session",
+        "a",
+        "--lease-token",
+        token,
+        "--idempotency-key",
+        "start-once",
+    ];
+    let started = cli.ok(&args);
+    assert_eq!(started["phase"], "EXECUTING");
+    assert_eq!(started["lease"]["token"], token);
+    assert_eq!(cli.ok(&args), started);
+    assert_eq!(
+        cli.ok(&["context", "--session", "a"])["task"]["phase"],
+        "EXECUTING"
+    );
+    cli.ok(&[
+        "task",
+        "done",
+        &id,
+        "--session",
+        "a",
+        "--lease-token",
+        token,
+    ]);
 }
 
 struct RunningCli(std::process::Child);
@@ -125,7 +236,7 @@ impl Drop for RunningCli {
 fn separate_cli_processes_racing_to_claim_have_exactly_one_winner() {
     let cli = Cli::new("markdown");
     let job = cli.job("Race");
-    let task = cli.planned_task(&job, "Exclusive");
+    let task = cli.task(&job, "Exclusive");
     let mut children: Vec<_> = (0..8)
         .map(|i| {
             RunningCli::start(
@@ -168,7 +279,7 @@ fn concurrent_cli_jobs_preserve_notes_and_all_projections() {
         let tasks: Vec<_> = jobs
             .iter()
             .enumerate()
-            .map(|(i, j)| cli.planned_task(j, &format!("Parallel {i}")))
+            .map(|(i, j)| cli.task(j, &format!("Parallel {i}")))
             .collect();
         let output = cli.dir.path().join("vault/Tasks 中文");
         let paths: Vec<_> = jobs
@@ -317,7 +428,7 @@ fn plugin_entrypoints_execute_the_compiled_taskcli() {
 fn cli_rejects_invalid_inputs_and_preserves_configuration_and_state() {
     let cli = Cli::new("markdown");
     let job = cli.job("Validation");
-    let task = cli.planned_task(&job, "Check inputs");
+    let task = cli.task(&job, "Check inputs");
     let before = cli.ok(&["task", "show", &task]);
     for args in [
         vec!["task", "update", &task, "--title", " "],
@@ -375,8 +486,8 @@ fn cli_rejects_invalid_inputs_and_preserves_configuration_and_state() {
 fn cli_dependency_edits_filters_plan_files_and_archive_round_trip() {
     let cli = Cli::new("markdown");
     let job = cli.job("First requirement");
-    let a = cli.planned_task(&job, "prerequisite");
-    let b = cli.planned_task(&job, "dependent");
+    let a = cli.task(&job, "prerequisite");
+    let b = cli.task(&job, "dependent");
     cli.ok(&["task", "depend", &b, &a]);
     assert_eq!(
         cli.ok(&["task", "list", "--ready"])
@@ -413,11 +524,17 @@ fn cli_dependency_edits_filters_plan_files_and_archive_round_trip() {
     ]);
     let plan = cli.dir.path().join("input-plan.md");
     std::fs::write(&plan, "# File plan\nPreserve exact body.\n").unwrap();
-    cli.ok(&["plan", "revise", &b, "--file", plan.to_str().unwrap()]);
+    let claim = cli.claim(&b, "editor");
+    cli.owned(&["plan", "create", &b, "--body", "# Initial"], &claim);
+    cli.owned(
+        &["plan", "revise", &b, "--file", plan.to_str().unwrap()],
+        &claim,
+    );
     assert_eq!(
         cli.ok(&["plan", "show", &b])["body"],
         "# File plan\nPreserve exact body.\n"
     );
+    cli.owned(&["task", "release", &b, "--reason", "cancel scope"], &claim);
     cli.ok(&["job", "cancel", &job]);
     assert!(
         cli.ok(&["task", "list", "--job", &job])
@@ -477,9 +594,29 @@ fn inline_plan_bodies_accept_yaml_frontmatter_and_preserve_it_verbatim() {
         "Plan with properties",
     ]);
     let id = task["id"].as_str().unwrap();
+    let claim = cli.ok(&[
+        "task",
+        "claim",
+        id,
+        "--session",
+        "frontmatter",
+        "--executor",
+        "agent:frontmatter",
+    ]);
+    let token = claim["lease"]["token"].as_str().unwrap();
     for (command, title) in [("create", "First"), ("revise", "Second")] {
         let body = format!("---\ntitle: {title}\n---\n\n# Plan\n");
-        cli.ok(&["plan", command, id, "--body", &body]);
+        cli.ok(&[
+            "plan",
+            command,
+            id,
+            "--body",
+            &body,
+            "--session",
+            "frontmatter",
+            "--lease-token",
+            token,
+        ]);
         assert_eq!(cli.ok(&["plan", "show", id])["body"], body);
     }
 }
@@ -510,7 +647,6 @@ fn standalone_json_workflow_in_both_document_formats() {
         let jid = job["id"].as_str().unwrap();
         let task = cli.ok(&["task", "add", "--job", jid, "--title", "Build"]);
         let tid = task["id"].as_str().unwrap();
-        cli.ok(&["plan", "create", tid, "--body", "# Build\nRun tests."]);
         let claim = cli.ok(&[
             "task",
             "claim",
@@ -523,6 +659,26 @@ fn standalone_json_workflow_in_both_document_formats() {
             "team:test",
         ]);
         let token = claim["lease"]["token"].as_str().unwrap();
+        cli.ok(&[
+            "plan",
+            "create",
+            tid,
+            "--body",
+            "# Build\nRun tests.",
+            "--session",
+            "session:test",
+            "--lease-token",
+            token,
+        ]);
+        cli.ok(&[
+            "task",
+            "start",
+            tid,
+            "--session",
+            "session:test",
+            "--lease-token",
+            token,
+        ]);
         let context = cli.ok(&["context", "--session", "session:test"]);
         assert_eq!(context["job_id"], jid);
         assert_eq!(context["documents"]["format"], format);

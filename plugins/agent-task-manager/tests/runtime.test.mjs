@@ -95,6 +95,16 @@ test("Pi and OMP tool reuses current lease, injects context and cancels heartbea
             (c) => c.args[1] === "done" && c.options.token === "lease_one",
         ),
     );
+    await tools[0].execute(
+        "start1",
+        { args: ["task", "start", "task_one"] },
+        undefined,
+        undefined,
+        ctx,
+    );
+    const start = calls.at(-1);
+    assert.equal(start.options.token, "lease_one");
+    assert.ok(start.options.idempotencyKey);
     await handlers.get("session_shutdown")({}, ctx);
     assert.equal(timers.size, 0);
     assert.ok(calls.some((c) => c.args[1] === "session-end"));

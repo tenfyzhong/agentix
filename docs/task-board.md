@@ -6,13 +6,15 @@
 
 A Project identifies a Git repository or stable directory. Git worktrees share their repository's common directory and reuse one Project. Jobs represent independently acceptable requirements, while Tasks are executable steps. New requirements after delivery create new Jobs; completed and cancelled Jobs can be manually archived by UTC year and month. There is no milestone layer or Job-level exclusive lock.
 
-Tasks use `TODO`, `IN_PROGRESS`, `BLOCKED`, `WAITING_USER`, `DONE`, `FAILED`, and `CANCELLED`. TODO can be claimed, blocked, put into WAITING_USER, or cancelled. IN_PROGRESS can finish, fail, block, wait, or cancel. BLOCKED and WAITING_USER can switch between each other, resume through claim, fail, or cancel. FAILED requires `retry`; DONE/CANCELLED require `reopen`. Reopening a prerequisite after a downstream Task started is rejected.
+Tasks use `TODO`, `IN_PROGRESS`, `BLOCKED`, `WAITING_USER`, `DONE`, `FAILED`, and `CANCELLED`. IN_PROGRESS has two phases: claim enters `PLANNING`; explicit start enters `EXECUTING`. Only EXECUTING can finish with done. Both phases can fail, block, wait, release, or cancel. TODO can be claimed, blocked, put into WAITING_USER, or cancelled. BLOCKED and WAITING_USER can switch between each other, return to PLANNING through claim, fail, or cancel. FAILED requires `retry`; DONE/CANCELLED require `reopen`. Outside IN_PROGRESS, `phase` is null. Reopening a prerequisite after a downstream Task started executing is rejected; planning alone does not freeze dependencies.
 
 Jobs aggregate to COMPLETED once at least one non-cancelled Task exists and all such Tasks are DONE. Cancelling every Task does not count as delivering the requirement. Completed Jobs reject additional Tasks. Reopen corrects a Task's result and returns its Job to ACTIVE; new scope belongs in a new Job. Active Jobs cannot be archived. Job cancellation requires its active Task leases to be released first.
 
-Each Task has at most one effective lease, and each executor/session pair has at most one Task. Claim atomically checks the Plan, dependencies, state, and ownership. Different Tasks and Jobs can execute concurrently. Dependencies must remain inside one Project and cannot form cycles or change after execution starts. Leases coordinate task facts, not working directories: code Tasks need their own branches/worktrees and dependencies for shared resources.
+Each Task has at most one effective lease, and each executor/session pair has at most one Task. Claim atomically checks state and ownership, reserving the Task before an agent drafts its Plan; it does not require a Plan or completed dependencies. Plan creation/revision requires the active session and lease token. Start checks ownership, a nonblank current Plan file, and DONE dependencies before switching to EXECUTING under the same lease. Plan writes and start validation share an output lock; state/lease checks run again in the database transaction. `started_at` records the first execution start, not claim time. Different Tasks and Jobs can plan or execute concurrently. Dependencies must remain inside one Project and cannot form cycles or change after execution starts. Leases coordinate task facts, not working directories: code Tasks need their own branches/worktrees and dependencies for shared resources.
 
 SQLite uses WAL, a ten-second busy timeout, short immediate write transactions, foreign keys, revision checks, and optional idempotency keys. Entity documents are stored as typed JSON rows with relational generated columns and indexes; dependency edges and events have their own tables. Mutations load the local task graph inside a write transaction to validate invariants and persist only changed entities. This first version targets local repositories and modest task graphs on one computer, not shared database files on network filesystems.
+
+Database schema v2 migrates existing v1 IN_PROGRESS Tasks to EXECUTING, preserving their leases and timestamps. Other Tasks have no phase. Back up SQLite and documents together before upgrading, and stop old writers first: all taskcli, Agentix, and plugin processes sharing the database must use the new workflow. Older binaries reject v2 when opening it. Configuration and JSON envelope `schema_version` remain 1; database `PRAGMA user_version` is separate.
 
 ## Configuration
 
@@ -46,11 +48,14 @@ taskcli job create --project prj_ID --title "New requirement" --goal "Acceptance
 taskcli task add --job job_ID --title "Implement and verify the storage layer"
 taskcli task add --job job_ID --title "Integrate the client"
 taskcli task depend task_CLIENT task_STORAGE
-taskcli plan create task_STORAGE --file /work/storage-plan.md
 taskcli task claim task_STORAGE --executor agent:member --session HOST_SESSION --json
+# After claim succeeds, draft the Plan and publish it with the returned token:
+taskcli plan create task_STORAGE --file /work/storage-plan.md --session HOST_SESSION --lease-token lease_TOKEN
+taskcli task start task_STORAGE --session HOST_SESSION --lease-token lease_TOKEN
+# Execute the Plan, verify acceptance, then call done with the same token.
 ```
 
-IDs use UUIDv7 with `prj_`, `job_`, `task_`, and `plan_` prefixes; full IDs or unambiguous prefixes are accepted. `project show` also accepts an unambiguous project name. Outside Git, pass `--project` explicitly. `task list --ready` discovers TODO work with completed dependencies; create its Plan before claim. Populate all initially required Tasks before finishing the first one so Job completion reflects the agreed scope.
+IDs use UUIDv7 with `prj_`, `job_`, `task_`, and `plan_` prefixes; full IDs or unambiguous prefixes are accepted. `project show` also accepts an unambiguous project name. Outside Git, pass `--project` explicitly. `task list --ready` discovers TODO work with completed dependencies; `task list --status TODO` also includes work that can be planned before dependencies finish. Claim before drafting either kind of Task. Populate all initially required Tasks before finishing the first one so Job completion reflects the agreed scope.
 
 Claim returns the Task and a `lease` containing its token. Subsequent writes to a leased Task must include the current session and token:
 
@@ -65,7 +70,7 @@ taskcli task retry task_ID
 taskcli task reopen task_ID
 ```
 
-A lease lasts 15 minutes. Renew at least once a minute during execution. Terminal, blocked, waiting, and release operations remove the lease. Abnormal exit hooks and expired leases create a system BLOCKED reason. Expiry is checked on CLI/library operations and Agentix refresh, without a standalone background daemon. Resuming the same session reacquires only system-blocked Tasks that have not been taken over; it issues new tokens. Manual blocks stay blocked. A missing Plan prevents automatic resume.
+A lease lasts 15 minutes. Renew at least once a minute during planning and execution. Terminal, blocked, waiting, and release operations remove the lease and clear the phase. Abnormal exit hooks and expired leases create a system BLOCKED reason. Expiry is checked on CLI/library operations and Agentix refresh, without a standalone background daemon. Resuming the same session reacquires only system-blocked Tasks that have not been taken over; it issues new tokens and returns to PLANNING. Manual blocks stay blocked. Missing Plans do not prevent planning recovery; repair/review the Plan and explicitly call start before continuing execution. Hooks never automatically start or finish work.
 
 Use `--expect-revision N` to protect an update based on an earlier read. Use `--idempotency-key KEY` to retry identical requests without duplicate entities/events; reuse with different arguments fails. Local CLI access is not a Team authorization boundary. Lease tokens fence stale executions, while operating-system access controls protect the local files.
 
@@ -94,13 +99,13 @@ Projects/<project-key>/
   Plans/<task-id>/v001.md
 ```
 
-Boards contain seven static state columns. They have no Kanban metadata or task checkboxes, and do not require community plugins. Obsidian links are vault-relative wikilinks (escaped correctly inside tables); plain Markdown links are source-relative URLs with encoded path segments. Task anchors use Obsidian block references or Markdown HTML anchors.
+Boards contain seven static state columns, with PLANNING/EXECUTING labels inside IN_PROGRESS. Job task sections and JSON context expose the phase too. They have no Kanban metadata or task checkboxes, and do not require community plugins. Obsidian links are vault-relative wikilinks (escaped correctly inside tables); plain Markdown links are source-relative URLs with encoded path segments. Task anchors use Obsidian block references or Markdown HTML anchors.
 
 Obsidian does not decode HTML entities in wikilink aliases. Titles containing reserved characters such as `|`, brackets, or HTML delimiters therefore appear as a stable `Open` wikilink followed by the safely escaped title; ordinary titles remain the link label. This preserves readable punctuation without injecting extra links or breaking the table.
 
 Generated regions are logically read-only, not filesystem-protected. Manual edits to status, title, dependencies, or ordering are overwritten by the next projection and never imported. There is no `watch` command. Goal/Notes markers preserve their editable bodies. Explicit `job update --goal` replaces a manually edited Goal; Notes remain untouched. Missing/duplicated editable markers fail synchronization instead of dropping content.
 
-Plan files contain authoritative Markdown bodies. `plan revise` creates a new version and preserves previous files. Manual edits refresh hashes during `sync`, `plan show`, and claim; incidental file history can be managed by Git. Agents editing Obsidian bodies must load the available Obsidian skill and use `[[wikilinks]]`; other directories use standard Markdown.
+Plan files contain authoritative Markdown bodies. Agents must claim first, then publish through `plan create` or `plan revise` with the current lease. Revision creates a new version and preserves previous files; do not directly overwrite registered Plans. Agents authoring Obsidian bodies must load the available Obsidian skill and use `[[wikilinks]]`; use a session-specific temporary draft when necessary and let taskcli publish the registered file after checking ownership. Other directories use standard Markdown. Raw filesystem writes cannot be lease-fenced: manual edits are detected by hash refresh during `sync` and `plan show`, not prevented by SQLite. Do not use those edits as a concurrent agent workflow.
 
 Database commits happen before generated-document updates. A filesystem failure returns success with `projection_pending` so callers do not recreate committed work. `taskcli sync` repairs the projection. Output file locks serialize independent CLI processes; temporary-file replacement protects each document. Archival writes the destination and updates managed links before removing the previous generated file. Back up the database and document tree together; editable bodies are not recoverable from SQLite alone.
 
@@ -144,7 +149,7 @@ After initializing taskcli, add to Agentix's configuration:
 config = "~/.config/taskcli/config.toml"
 ```
 
-`/jobs [project]`, `/tasks [job-or-project]`, and `/task <id>` browse tasks. Lists are capped at 50 entries; use a project/job filter or CLI for larger histories. An attached session can claim eligible Tasks or operate its own lease. Block/Wait/Fail request a reason; `/cancel` clears pending input. Buttons use existing owner/conversation, generation, and binding-epoch checks plus the Task revision. IM does not create Jobs/Tasks or edit Plan bodies.
+`/jobs [project]`, `/tasks [job-or-project]`, and `/task <id>` browse tasks. Lists are capped at 50 entries; use a project/job filter or CLI for larger histories. An attached session can claim an unplanned Task or operate its own lease. Start is offered in PLANNING when Plan metadata and dependencies are ready; the service verifies the file at execution time. Done is offered only in EXECUTING. Block/Wait/Fail request a reason; `/cancel` clears pending input. Buttons use existing owner/conversation, generation, and binding-epoch checks plus the Task revision. IM does not create Jobs/Tasks or edit Plan bodies.
 
 Agentix incrementally consumes SQLite events during its existing runtime tick. WAITING_USER, BLOCKED, FAILED, and Job completion notifications go only to the matching bound session's conversation. Events without a matching binding are skipped. Delivery retries on channel errors; a crash after send but before cursor persistence can duplicate a notification. CLI-only usage does not require Agentix to run.
 
@@ -154,8 +159,8 @@ Agentix incrementally consumes SQLite events during its existing runtime tick. W
 
 | Boundary | Automated coverage |
 | --- | --- |
-| State and ownership | All seven Task states against nine commands (63 cases), no partial writes on rejection, same-session claim limits, lease renewal/handoff, stale tokens, ownership/revision checks, dependency changes, archival |
-| Processes and storage | Eight competing CLI processes with exactly one claim winner; four concurrent Jobs in both formats; kill after SQLite commit but before projection, then replay without duplicate events and repair files |
+| State and ownership | Seven Task states with IN_PROGRESS split into two phases against ten commands (80 cases), no partial writes on rejection, claim-before-Plan, Plan/start ownership, missing/blank Plans, lease renewal/recovery/handoff, stale tokens, dependency changes, archival |
+| Processes and storage | Eight competing CLI processes with exactly one claim winner; four concurrent Jobs in both formats; start waits for Plan writes and rechecks lease expiry; v1 phase migration preserves leases/timestamps; kill after SQLite commit but before projection, then replay without duplicate events and repair files |
 | Document projection | Editable Notes survive concurrent writes; malformed markers and symlink escapes fail safely; unsupported schema versions are not downgraded; CLI rejects invalid inputs without changing state/configuration; YAML-frontmatter Plan bodies round-trip |
 | Host plugin | Actual Pi/OMP TypeScript entrypoints and lifecycle hooks invoke the compiled CLI; structured tool schema, plans, leases, both link formats, retry identity after lease release/lost responses, errors, aborts, identity fencing, and periodic heartbeat behavior |
 | IM orchestration | Session/revision/owner scoping, Wait/Fail reasons, cancellation, Job completion, notification paging, route isolation, retry after channel failure, durable delivery cursor after Engine reconstruction |
