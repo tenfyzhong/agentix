@@ -369,10 +369,8 @@ fn is_empty_rollout_metadata_error(error: &EngineError) -> bool {
 
 async fn doctor(config: &Config) -> Result<()> {
     config.validate()?;
-    let _ = config.telegram_token_with(|name| std::env::var(name).ok())?;
-    let _ = config.feishu_credentials_with(|name| std::env::var(name).ok())?;
     println!("ok: configuration and selected-channel owner policy");
-    println!("ok: selected channel credential environment variables are present");
+    println!("ok: selected channel credentials are configured");
 
     if let Some(parent) = config.storage.path.parent()
         && !parent.exists()
@@ -657,18 +655,6 @@ fn build_channels(
     config_path: &Path,
     claims: Arc<ClaimRegistry>,
 ) -> Result<Vec<Arc<dyn ChannelAdapter>>> {
-    build_channels_with(config, config_path, claims, |name| std::env::var(name).ok())
-}
-
-fn build_channels_with<F>(
-    config: &Config,
-    config_path: &Path,
-    claims: Arc<ClaimRegistry>,
-    mut read_environment: F,
-) -> Result<Vec<Arc<dyn ChannelAdapter>>>
-where
-    F: FnMut(&str) -> Option<String>,
-{
     let channel: Arc<dyn ChannelAdapter> = match config.channel.kind {
         ImChannel::Telegram => {
             let telegram = config
@@ -676,10 +662,10 @@ where
                 .telegram
                 .as_ref()
                 .expect("configuration was validated");
-            let token = config
-                .telegram_token_with(&mut read_environment)?
-                .expect("selected Telegram credentials exist");
-            let mut adapter = TelegramAdapter::new(token, telegram.owner_user_ids.iter().copied());
+            let mut adapter = TelegramAdapter::new(
+                telegram.token.clone(),
+                telegram.owner_user_ids.iter().copied(),
+            );
             if telegram.owner_user_ids.is_empty() {
                 adapter = adapter.with_owner_claimer(Arc::new(MemoryTelegramOwnerClaimer {
                     path: config_path.to_owned(),
@@ -694,11 +680,11 @@ where
                 .feishu
                 .as_ref()
                 .expect("configuration was validated");
-            let (app_id, app_secret) = config
-                .feishu_credentials_with(&mut read_environment)?
-                .expect("selected Feishu credentials exist");
-            let mut adapter =
-                FeishuAdapter::new(app_id, app_secret, feishu.owner_open_ids.clone())?;
+            let mut adapter = FeishuAdapter::new(
+                feishu.app_id.clone(),
+                feishu.app_secret.clone(),
+                feishu.owner_open_ids.clone(),
+            )?;
             if feishu.owner_open_ids.is_empty() {
                 adapter = adapter.with_owner_claimer(Arc::new(MemoryFeishuOwnerClaimer {
                     path: config_path.to_owned(),
@@ -1079,7 +1065,7 @@ mod tests {
 kind = "telegram"
 
 [channel.telegram]
-token_env = "TELEGRAM_TOKEN"
+token = "mock-token"
 owner_user_ids = []
 
 [agent]
@@ -1126,8 +1112,8 @@ path = "/tmp/agentix-test.sqlite3"
 kind = "feishu"
 
 [channel.feishu]
-app_id_env = "FEISHU_ID"
-app_secret_env = "FEISHU_SECRET"
+app_id = "cli_mock"
+app_secret = "mock-secret"
 owner_open_ids = []
 
 [agent]
@@ -1195,21 +1181,20 @@ kind = "codex"
 path = "/tmp/agentix-test.sqlite3"
 
 [channel.telegram]
-token_env = "TELEGRAM_TOKEN"
+token = "mock-token"
 owner_user_ids = [42]
 
 [channel.feishu]
-app_id_env = "FEISHU_ID"
-app_secret_env = "FEISHU_SECRET"
+app_id = "cli_mock"
+app_secret = "mock-secret"
 owner_open_ids = ["ou_owner"]
 "#
             ))
             .unwrap();
-            let channels = super::build_channels_with(
+            let channels = super::build_channels(
                 &config,
                 std::path::Path::new("/tmp/agentix-config.toml"),
                 std::sync::Arc::new(super::ClaimRegistry::default()),
-                |name| Some(name.into()),
             )
             .unwrap();
 

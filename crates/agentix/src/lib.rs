@@ -133,8 +133,8 @@ pub struct StorageConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TelegramConfig {
-    #[serde(default = "default_telegram_token_env")]
-    pub token_env: String,
+    #[serde(default)]
+    pub token: String,
     #[serde(default)]
     pub owner_user_ids: Vec<u64>,
 }
@@ -142,10 +142,10 @@ pub struct TelegramConfig {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FeishuConfig {
-    #[serde(default = "default_feishu_app_id_env")]
-    pub app_id_env: String,
-    #[serde(default = "default_feishu_app_secret_env")]
-    pub app_secret_env: String,
+    #[serde(default)]
+    pub app_id: String,
+    #[serde(default)]
+    pub app_secret: String,
     #[serde(default)]
     pub owner_open_ids: Vec<String>,
 }
@@ -167,15 +167,24 @@ impl Config {
     pub fn validate(&self) -> Result<()> {
         match self.channel.kind {
             ImChannel::Telegram => {
-                self.channel.telegram.as_ref().context(
+                let telegram = self.channel.telegram.as_ref().context(
                     "selected telegram channel requires [channel.telegram] configuration",
                 )?;
+                if telegram.token.trim().is_empty() {
+                    bail!("channel.telegram.token must not be missing or blank");
+                }
             }
             ImChannel::Feishu => {
-                self.channel
-                    .feishu
-                    .as_ref()
-                    .context("selected feishu channel requires [channel.feishu] configuration")?;
+                let feishu =
+                    self.channel.feishu.as_ref().context(
+                        "selected feishu channel requires [channel.feishu] configuration",
+                    )?;
+                if feishu.app_id.trim().is_empty() {
+                    bail!("channel.feishu.app_id must not be missing or blank");
+                }
+                if feishu.app_secret.trim().is_empty() {
+                    bail!("channel.feishu.app_secret must not be missing or blank");
+                }
             }
         }
         if self.storage.path.as_os_str().is_empty() {
@@ -227,39 +236,6 @@ impl Config {
         }
 
         Ok(())
-    }
-
-    pub fn telegram_token_with<F>(&self, mut read: F) -> Result<Option<String>>
-    where
-        F: FnMut(&str) -> Option<String>,
-    {
-        if self.channel.kind != ImChannel::Telegram {
-            return Ok(None);
-        }
-        self.channel
-            .telegram
-            .as_ref()
-            .map(|channel| required_env(&channel.token_env, &mut read))
-            .transpose()
-    }
-
-    pub fn feishu_credentials_with<F>(&self, mut read: F) -> Result<Option<(String, String)>>
-    where
-        F: FnMut(&str) -> Option<String>,
-    {
-        if self.channel.kind != ImChannel::Feishu {
-            return Ok(None);
-        }
-        self.channel
-            .feishu
-            .as_ref()
-            .map(|channel| {
-                Ok((
-                    required_env(&channel.app_id_env, &mut read)?,
-                    required_env(&channel.app_secret_env, &mut read)?,
-                ))
-            })
-            .transpose()
     }
 }
 
@@ -375,14 +351,6 @@ fn expand_home_in_unix_endpoint(endpoint: &str, home: Option<&Path>) -> Result<S
     Ok(format!("unix://{expanded}"))
 }
 
-fn required_env<F>(name: &str, read: &mut F) -> Result<String>
-where
-    F: FnMut(&str) -> Option<String>,
-{
-    let value = read(name).filter(|value| !value.is_empty());
-    value.with_context(|| format!("required environment variable {name} is missing or empty"))
-}
-
 #[cfg(unix)]
 fn default_server_endpoint() -> String {
     "unix://~/.local/share/agentix/control.sock".into()
@@ -411,18 +379,6 @@ fn default_pi_command() -> PathBuf {
 
 fn default_omp_command() -> PathBuf {
     "omp".into()
-}
-
-fn default_telegram_token_env() -> String {
-    "AGENTIX_TELEGRAM_TOKEN".into()
-}
-
-fn default_feishu_app_id_env() -> String {
-    "AGENTIX_FEISHU_APP_ID".into()
-}
-
-fn default_feishu_app_secret_env() -> String {
-    "AGENTIX_FEISHU_APP_SECRET".into()
 }
 
 fn default_log_level() -> String {

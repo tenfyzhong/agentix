@@ -42,15 +42,16 @@ path = "~/.local/share/agentix/state.sqlite3"
 kind = "telegram"
 
 [channel.telegram]
-token_env = "AGENTIX_TELEGRAM_TOKEN"
+# Fill in the actual bot token, not an environment variable name.
+token = ""
 # Leave this empty or omit it on first setup. Run `agentix client claim` locally,
 # then send the printed `/claim <code>` in a private chat to fill it automatically.
 owner_user_ids = []
 
 # To use Feishu, set `channel.kind = "feishu"` above and configure this section.
 # [channel.feishu]
-# app_id_env = "AGENTIX_FEISHU_APP_ID"
-# app_secret_env = "AGENTIX_FEISHU_APP_SECRET"
+# app_id = ""
+# app_secret = ""
 # Leave this empty or omit it on first setup. Run `agentix client claim` locally,
 # then send the printed `/claim <code>` in a private chat to fill it automatically.
 # owner_open_ids = []
