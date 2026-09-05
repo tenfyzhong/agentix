@@ -71,7 +71,7 @@ The test suite is layered. Protocol and rendering tests cover pure mappings; ada
 
 Codex uses a stateful mock app-server under `crates/agentix-codex/tests/support/`. It follows the Codex CLI 0.153.0 protocol subset used by Agentix, including session lifecycle, settings, approvals, input questions, pagination, failures, and reconnects. Telegram and Feishu use in-process API services, Pi uses a reusable fake RPC subprocess, and rmux tests exchange typed SDK packets with a Unix-socket mock daemon. These fixtures keep the suite deterministic and independent of live credentials, public networks, local session data, and running daemons.
 
-GitHub Actions keeps formatting and Clippy in `ci.yml`. The `tests.yml` workflow runs the full suite on Linux and macOS and checks the workspace plus the native TCP control suite on Windows. It runs for pull requests and pushes to `main`, and supports manual dispatch.
+GitHub Actions keeps formatting and Clippy in `ci.yml`. The `tests.yml` workflow runs the full suite on Linux and macOS and checks the workspace plus the native TCP control suite on Windows. Both workflows run for pull requests and pushes to `main`, except when every changed file is Markdown (`.md`). Changes that include any other file still run both workflows. The Tests workflow also supports manual dispatch regardless of the changed files.
 
 ## Workspace architecture
 

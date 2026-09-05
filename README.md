@@ -216,6 +216,8 @@ If the selected channel has no configured owner, keep `agentix serve` running, e
 
 ## Development
 
+GitHub Actions skips lint and test workflows for pull requests and pushes to `main` that only change Markdown (`.md`) files. Changes that include any other file still run both workflows. The Tests workflow can also be run manually regardless of the changed files.
+
 Run `make check` to check formatting, run Clippy, and execute the workspace tests. Channel shutdown deadline tests use Tokio's paused clock to verify the shared grace period and task cancellation independently of database and filesystem latency. Service lifecycle tests also exercise startup and shutdown with a temporary SQLite database.
 
 After changing CLI commands or options, run `make completions` and commit the
