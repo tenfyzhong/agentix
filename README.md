@@ -160,6 +160,8 @@ If the selected channel has no configured owner, keep `agentix serve` running, e
 
 Run `make check` to check formatting, run Clippy, and execute the workspace tests. Channel shutdown deadline tests use Tokio's paused clock to verify the shared grace period and task cancellation independently of database and filesystem latency. Service lifecycle tests also exercise startup and shutdown with a temporary SQLite database.
 
+CI uses Rust 1.95.0. Ensure `cargo`, `rustc`, `cargo-clippy`, and `rustfmt` all come from that toolchain rather than mixing Homebrew and rustup installations. The test suite checks the non-Unix Codex compatibility API on Unix hosts as well, so Windows-only API omissions are caught locally.
+
 ## Documentation
 
 - [Usage guide](docs/usage.md)

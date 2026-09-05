@@ -2996,7 +2996,7 @@ async fn stream_and_working_timer_share_the_channel_interval_but_completion_flus
         0,
         "timer must not bypass stream pacing"
     );
-    tokio::time::sleep(std::time::Duration::from_millis(4_000)).await;
+    tokio::time::sleep(std::time::Duration::from_secs(4)).await;
     assert_eq!(engine.refresh_working_turns().await, 1);
     assert!(
         channel
