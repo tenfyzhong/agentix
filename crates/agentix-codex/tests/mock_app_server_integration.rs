@@ -1354,18 +1354,49 @@ async fn background_polling_does_not_replay_a_streamed_completion_after_detach()
     for _ in 0..3 {
         recv_event(&mut events).await;
     }
+    server
+        .add_thread(
+            MockThread::new("thr_streamed", "Streamed", "/work")
+                .with_turn(MockTurn::completed("turn_streamed", "work", "done"))
+                .with_turn(MockTurn::in_progress_with_output(
+                    "turn_second",
+                    "more work",
+                    "",
+                )),
+        )
+        .await;
+    server
+        .complete_turn("thr_streamed", "turn_second", "also done")
+        .await;
+    for _ in 0..3 {
+        recv_event(&mut events).await;
+    }
     client.unsubscribe(&session).await.unwrap();
     server.wait_for_turn_reads("thr_streamed", 3).await;
     assert!(
         events.try_recv().is_err(),
-        "streamed completion must not become a background notice"
+        "streamed completions must not become background notices"
     );
+    server
+        .add_thread(
+            MockThread::new("thr_streamed", "Streamed", "/work")
+                .with_turn(MockTurn::completed("turn_streamed", "work", "done"))
+                .with_turn(MockTurn::completed("turn_second", "more work", "also done"))
+                .with_turn(MockTurn::completed(
+                    "turn_third",
+                    "background work",
+                    "new result",
+                )),
+        )
+        .await;
+    assert!(matches!(recv_background_event(&mut events).await,
+        AgentEvent::TurnCompleted { turn_id, .. } if turn_id == "turn_third"));
 }
 
 async fn recv_background_event(
     receiver: &mut tokio::sync::broadcast::Receiver<AgentEvent>,
 ) -> AgentEvent {
-    tokio::time::timeout(Duration::from_secs(8), receiver.recv())
+    tokio::time::timeout(Duration::from_secs(25), receiver.recv())
         .await
         .unwrap()
         .unwrap()
@@ -1586,4 +1617,33 @@ impl ChannelAdapter for RecordingChannel {
     ) -> Result<(), ChannelError> {
         Ok(())
     }
+}
+
+#[tokio::test]
+async fn disabled_background_notifications_do_not_poll_sessions_or_turns() {
+    let server = MockCodexAppServer::start();
+    server
+        .add_thread(MockThread::new("thr_disabled", "Disabled", "/work"))
+        .await;
+    let client = CodexClient::connect_with_background_turn_notifications(
+        server.endpoint(),
+        std::path::Path::new("codex"),
+        std::path::Path::new("~"),
+        false,
+    )
+    .await
+    .unwrap();
+    tokio::time::sleep(Duration::from_secs(11)).await;
+    assert_eq!(server.request_methods().await, ["initialize"]);
+    // Explicit user requests remain usable while automatic background reads are disabled.
+    assert_eq!(
+        client.list_sessions(None, 20).await.unwrap().sessions.len(),
+        1
+    );
+    assert!(
+        !server
+            .request_methods()
+            .await
+            .contains(&"thread/turns/list".into())
+    );
 }

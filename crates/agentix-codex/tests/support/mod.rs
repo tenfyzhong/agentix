@@ -327,7 +327,7 @@ impl MockCodexAppServer {
     }
 
     pub async fn wait_for_request_count(&self, method: &str, expected: usize) {
-        tokio::time::timeout(std::time::Duration::from_secs(6), async {
+        tokio::time::timeout(std::time::Duration::from_secs(40), async {
             loop {
                 let count = self
                     .request_methods()
@@ -338,7 +338,7 @@ impl MockCodexAppServer {
                 if count >= expected {
                     return;
                 }
-                tokio::task::yield_now().await;
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             }
         })
         .await
@@ -355,7 +355,7 @@ impl MockCodexAppServer {
     }
 
     pub async fn wait_for_turn_reads(&self, thread_id: &str, expected: usize) {
-        tokio::time::timeout(std::time::Duration::from_secs(8), async {
+        tokio::time::timeout(std::time::Duration::from_secs(40), async {
             loop {
                 if self
                     .shared
@@ -370,7 +370,7 @@ impl MockCodexAppServer {
                 {
                     return;
                 }
-                tokio::task::yield_now().await;
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             }
         })
         .await

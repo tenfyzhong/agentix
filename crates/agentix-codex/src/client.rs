@@ -53,7 +53,7 @@ static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
 const DAEMON_START_TIMEOUT: Duration = Duration::from_secs(10);
 const DAEMON_READY_TIMEOUT: Duration = Duration::from_secs(5);
 const DAEMON_READY_POLL_INTERVAL: Duration = Duration::from_millis(100);
-const RUNNING_SESSION_POLL_INTERVAL: Duration = Duration::from_secs(2);
+const RUNNING_SESSION_POLL_INTERVAL: Duration = Duration::from_secs(10);
 const MULTIPLEXER_SESSION_START_TIMEOUT: Duration = Duration::from_secs(10);
 const MULTIPLEXER_SESSION_POLL_INTERVAL: Duration = Duration::from_millis(200);
 const PENDING_RESUME_TIMEOUT: Duration = Duration::from_secs(3);
@@ -107,7 +107,8 @@ pub struct CodexClient {
     events: broadcast::Sender<AgentEvent>,
     connection: Arc<ConnectionState>,
     subscriptions: Arc<Mutex<HashSet<SessionId>>>,
-    completed_turns: Arc<Mutex<HashSet<(SessionId, String)>>>,
+    completed_turns: Arc<Mutex<HashMap<SessionId, String>>>,
+    background_turn_notifications: bool,
     process_sessions: Arc<Mutex<HashSet<SessionId>>>,
     exited_process_sessions: Arc<Mutex<HashSet<SessionId>>>,
     pending_resumes: Arc<Mutex<HashSet<SessionId>>>,
@@ -133,6 +134,16 @@ impl CodexClient {
         command: &Path,
         rmux_directory: &Path,
     ) -> Result<Self, ClientError> {
+        Self::connect_with_background_turn_notifications(endpoint, command, rmux_directory, true)
+            .await
+    }
+
+    pub async fn connect_with_background_turn_notifications(
+        endpoint: CodexEndpoint,
+        command: &Path,
+        rmux_directory: &Path,
+        background_turn_notifications: bool,
+    ) -> Result<Self, ClientError> {
         let process_discovery = CodexProcessDiscovery::for_endpoint(&endpoint);
         let rmux = RmuxManager::new(command, endpoint.socket_path(), rmux_directory);
         let websocket = connect_managed_socket(&endpoint, command).await?;
@@ -140,7 +151,7 @@ impl CodexClient {
         let writer = Arc::new(Mutex::new(writer));
         let pending = Arc::new(Mutex::new(HashMap::new()));
         let subscriptions = Arc::new(Mutex::new(HashSet::new()));
-        let completed_turns = Arc::new(Mutex::new(HashSet::new()));
+        let completed_turns = Arc::new(Mutex::new(HashMap::new()));
         let process_sessions = Arc::new(Mutex::new(HashSet::new()));
         let exited_process_sessions = Arc::new(Mutex::new(HashSet::new()));
         let pending_resumes = Arc::new(Mutex::new(HashSet::new()));
@@ -170,6 +181,7 @@ impl CodexClient {
             connection,
             subscriptions,
             completed_turns,
+            background_turn_notifications,
             process_sessions,
             exited_process_sessions,
             pending_resumes,
@@ -1261,6 +1273,12 @@ async fn monitor_running_sessions(client: CodexClient) {
     loop {
         tokio::time::sleep(RUNNING_SESSION_POLL_INTERVAL).await;
         let watched = client.process_sessions.lock().await.clone();
+        if !client.background_turn_notifications
+            && watched.is_empty()
+            && client.pending_resumes.lock().await.is_empty()
+        {
+            continue;
+        }
         let running = match discover_running_sessions(&client).await {
             Ok(running) => running,
             Err(error) => {
@@ -1300,7 +1318,9 @@ async fn monitor_running_sessions(client: CodexClient) {
                 tracing::warn!(%error, session = %session, "failed to release exited Codex session");
             }
         }
-        background.poll(&client, &running).await;
+        if client.background_turn_notifications {
+            background.poll(&client, &running).await;
+        }
     }
 }
 
@@ -1817,7 +1837,7 @@ async fn read_loop(
     writer: Arc<Mutex<Writer>>,
     pending: Arc<Mutex<PendingMap>>,
     subscriptions: Arc<Mutex<HashSet<SessionId>>>,
-    completed_turns: Arc<Mutex<HashSet<(SessionId, String)>>>,
+    completed_turns: Arc<Mutex<HashMap<SessionId, String>>>,
     token_usage: Arc<Mutex<HashMap<SessionId, Value>>>,
     events: broadcast::Sender<AgentEvent>,
     endpoint: CodexEndpoint,
@@ -1862,7 +1882,7 @@ async fn read_loop(
                                 completed_turns
                                     .lock()
                                     .await
-                                    .insert((SessionId::new(session_id), turn_id.clone()));
+                                    .insert(SessionId::new(session_id), turn_id.clone());
                             }
                             let _ = events.send(event);
                         }
@@ -2164,6 +2184,60 @@ mod tests {
 
     use super::CodexClient;
     use crate::CodexEndpoint;
+
+    #[test]
+    fn session_poll_interval_is_ten_seconds() {
+        assert_eq!(
+            super::RUNNING_SESSION_POLL_INTERVAL,
+            Duration::from_secs(10)
+        );
+    }
+
+    #[tokio::test]
+    async fn streamed_completions_retain_only_one_turn_per_session() {
+        let directory = tempdir().unwrap();
+        let socket = directory.path().join("codex.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut websocket = tokio_tungstenite::accept_async(stream).await.unwrap();
+            initialize(&mut websocket).await;
+            let ready = next_json(&mut websocket).await;
+            send_result(&mut websocket, &ready["id"], json!({})).await;
+            for index in 0..100 {
+                websocket.send(Message::Text(json!({
+                    "method": "turn/completed",
+                    "params": {
+                        "threadId": "thr_many",
+                        "turn": {"id": format!("turn_{index}"), "status": "completed", "items": []}
+                    }
+                }).to_string().into())).await.unwrap();
+            }
+            // Keep the socket open until the client has consumed every event.
+            let _ = next_json(&mut websocket).await;
+        });
+        let client = CodexClient::connect(CodexEndpoint::from_socket_path(&socket).unwrap())
+            .await
+            .unwrap();
+        let mut events = client.subscribe();
+        client.request("mock/ready", json!({})).await.unwrap();
+        for _ in 0..100 {
+            let event = tokio::time::timeout(Duration::from_secs(2), events.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            assert!(matches!(event, AgentEvent::TurnCompleted { .. }));
+        }
+        let completed = client.completed_turns.lock().await;
+        assert_eq!(completed.len(), 1);
+        assert_eq!(
+            completed
+                .get(&SessionId::new("thr_many"))
+                .map(String::as_str),
+            Some("turn_99")
+        );
+        server.abort();
+    }
 
     #[tokio::test]
     async fn first_turn_resumes_a_provisionally_attached_empty_session() {

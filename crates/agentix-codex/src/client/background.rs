@@ -41,12 +41,22 @@ impl BackgroundTurns {
                         self.latest_completed.remove(&session);
                     }
                     let subscribed = client.subscriptions.lock().await.contains(&session);
+                    if subscribed {
+                        continue;
+                    }
                     let mut completed = client.completed_turns.lock().await;
-                    for event in events {
-                        if let AgentEvent::TurnCompleted { turn_id, .. } = &event
-                            && completed.insert((session.clone(), turn_id.clone()))
-                            && !subscribed
-                        {
+                    // A live subscription may have delivered several of these turns
+                    // since the last poll. Skip through its latest completed turn.
+                    let already_delivered = events.iter().rposition(|event| {
+                        matches!(event, AgentEvent::TurnCompleted { turn_id, .. }
+                            if completed.get(&session) == Some(turn_id))
+                    });
+                    for event in events
+                        .into_iter()
+                        .skip(already_delivered.map_or(0, |index| index + 1))
+                    {
+                        if let AgentEvent::TurnCompleted { turn_id, .. } = &event {
+                            completed.insert(session.clone(), turn_id.clone());
                             let _ = client.events.send(event);
                         }
                     }

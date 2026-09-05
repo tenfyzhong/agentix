@@ -2074,11 +2074,9 @@ impl Engine {
             .await?;
         self.turns.remove_active(session_id).await;
         if delivery == DeliveryClass::Draining {
-            self.turns.background_notifications.lock().await.insert((
-                conversation.clone(),
-                session_id.clone(),
-                turn_id,
-            ));
+            self.turns
+                .record_background_notification(conversation, session_id, &turn_id)
+                .await;
             self.sessions.finish_draining(session_id).await;
             self.agent.unsubscribe(session_id).await?;
         }
@@ -2112,7 +2110,9 @@ impl Engine {
         let recipients = recipients
             .into_iter()
             .filter(|(conversation, _)| {
-                !delivered.contains(&(conversation.clone(), session_id.clone(), turn_id.to_owned()))
+                !delivered.get(session_id).is_some_and(|notice| {
+                    notice.turn_id == turn_id && notice.recipients.contains(conversation)
+                })
             })
             .collect::<Vec<_>>();
         drop(delivered);
@@ -2124,13 +2124,10 @@ impl Engine {
         self.cache_session_summary(session_id).await;
         let session_label = self.session_label(session_id).await;
         for (conversation, owner_id) in recipients {
-            let notification_key = (conversation.clone(), session_id.clone(), turn_id.to_owned());
             if self
                 .turns
-                .background_notifications
-                .lock()
+                .background_notification_delivered(&conversation, session_id, turn_id)
                 .await
-                .contains(&notification_key)
             {
                 continue;
             }
@@ -2153,10 +2150,8 @@ impl Engine {
             )
             .await?;
             self.turns
-                .background_notifications
-                .lock()
-                .await
-                .insert(notification_key);
+                .record_background_notification(&conversation, session_id, turn_id)
+                .await;
         }
         Ok(())
     }
