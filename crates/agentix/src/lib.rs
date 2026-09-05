@@ -1,5 +1,9 @@
 //! Agentix configuration and runtime assembly.
 
+mod network;
+
+pub use network::NetworkConfig;
+
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -10,6 +14,8 @@ use toml_edit::{Array, DocumentMut, Item, Table, Value};
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    #[serde(default)]
+    pub network: NetworkConfig,
     #[serde(default)]
     pub server: ServerConfig,
     #[serde(default)]
@@ -165,6 +171,7 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<()> {
+        self.network.validate()?;
         match self.channel.kind {
             ImChannel::Telegram => {
                 let telegram = self.channel.telegram.as_ref().context(

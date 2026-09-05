@@ -8,6 +8,7 @@ Each IM conversation maps explicitly and durably to an agent session. Messages i
 
 - Native Codex app-server integration plus isolated Pi and Oh My Pi RPC transports
 - Telegram long polling and Feishu long-connection support with interactive actions
+- A global HTTP/HTTPS/SOCKS5 proxy configured in TOML, including for Homebrew services
 - Running-session discovery, attachment, history, prompts, queues, steering, stopping, approvals, and user-input round trips
 - Codex controls for models, reasoning, Fast mode, plans, goals, reviews, diffs, forks, compaction, skills, and MCP servers
 - Interactive rmux workspace browsing and safe Codex session creation from IM
@@ -111,6 +112,15 @@ app_secret = "your-feishu-app-secret"
 ```
 
 Credentials are read directly from this file, including when running as a Homebrew service. On macOS/Linux, restrict access with `chmod 600 ~/.config/agentix/config.toml`.
+
+To configure the global outbound proxy, add a separate top-level table:
+
+```toml
+[network]
+proxy = "http://127.0.0.1:7890"
+```
+
+Use your proxy's actual address and port. HTTP, HTTPS, SOCKS5, and SOCKS5h proxies are supported. The setting covers all Telegram requests and works without shell proxy variables. The Feishu SDK does not use this setting and retains its existing network behavior. After changing it, restart a running Homebrew service with `brew services restart tenfyzhong/tap/agentix`.
 
 See [Configuration and operations](docs/development-and-operations.md) for backend details, Feishu permissions, logging, service management, and diagnostics.
 
