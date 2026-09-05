@@ -113,7 +113,9 @@ taskcli sync
 
 The shared package is `plugins/agent-task-manager`, also included in release archives and Homebrew's `share/agentix/plugins`. It has Codex/Claude manifests, a shared Skill, command hooks, and Pi/OMP TypeScript entrypoints. Node.js 22 or newer is required for command hooks. Put `taskcli` on PATH or set `TASKCLI_BIN`; set `TASKCLI_CONFIG` when using a non-default config.
 
-For local Codex plugin development, use the host's plugin installation flow with this package directory. The manifest exposes `skills/`, and Codex discovers `hooks/hooks.json`. Claude can load it with `claude --plugin-dir /absolute/path/to/agent-task-manager`. Review/enable hooks in the host as required. The supplied hook command uses POSIX shell parameter expansion; Windows installations need a compatible hook shell.
+For local Codex plugin development, use the host's plugin installation flow with this package directory. The manifest exposes `skills/`, and Codex discovers `hooks/hooks.json`. Claude can load it with `claude --plugin-dir /absolute/path/to/agent-task-manager`. These hosts share the default hook file without duplicate manifest declarations. Review/enable hooks in the host as required; Codex requires reviewing and trusting plugin hooks through `/hooks`. The command resolves plugin-root environment variables inside Node rather than using shell-specific expansion.
+
+The package explicitly includes its manifests, hooks, extensions, runtime, skills, and activation guide in npm distributions. Pi and OMP each select their own entrypoint through `package.json`; installing the complete package does not require copying hooks into project settings. See the [plugin activation and lifecycle guide](../plugins/agent-task-manager/README.md).
 
 For Pi/OMP, install the local package with their package/plugin manager or load `extensions/pi.ts` / `extensions/omp.ts`. A manually copied package needs its dependency installed:
 
@@ -126,6 +128,8 @@ omp -e /absolute/path/to/agent-task-manager/extensions/omp.ts
 Installing the package also exposes its shared Skill. When loading only an extension entrypoint, configure the sibling `skills/` directory in the host's skill paths as well. Obsidian editing requires the user's separate Obsidian skill package; taskcli's generated structure is deterministic and does not launch an Agent itself.
 
 SessionStart restores eligible Tasks and supplies task context. SessionEnd blocks active work. Stop means a turn ended and only renews the lease. Tool hooks renew at tool boundaries; no hook daemon is spawned. A Codex/Claude operation or idle gap longer than 15 minutes can expire a lease. Pi/OMP extensions renew every minute while the session is open, inject current task facts before the agent runs, and expose a structured taskcli tool with session, executor, current lease token, and request idempotency key. A stale-token rejection requires inspecting and reacquiring work, never forcing a completion.
+
+The shared SessionEnd hook allows three seconds, respecting Codex's shutdown timeout limit. If a busy database or interrupted process prevents shutdown cleanup, the next task operation reaps the expired lease. Other command hooks allow 30 seconds.
 
 Within one Pi/OMP extension instance, the most recent 512 write requests retain their original injected lease token for idempotent retries, including after a successful write releases the lease or its response is lost. This token cache is not persisted across host restarts. Retrying beyond that window must preserve the original CLI request explicitly; do not assume a newly discovered lease will replay the old request.
 

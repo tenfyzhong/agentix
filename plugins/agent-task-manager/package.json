@@ -4,6 +4,16 @@
   "description": "Shared taskcli workflow for Codex, Claude, Pi, and OMP",
   "type": "module",
   "license": "MIT",
+  "keywords": ["pi-package"],
+  "files": [
+    ".codex-plugin/",
+    ".claude-plugin/",
+    "extensions/",
+    "hooks/",
+    "skills/",
+    "runtime.mjs",
+    "README.md"
+  ],
   "dependencies": {
     "@sinclair/typebox": "^0.34.0"
   },

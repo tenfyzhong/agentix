@@ -1,11 +1,12 @@
 {
+  "description": "Task session recovery, context injection, heartbeat and shutdown for Codex and Claude Code.",
   "hooks": {
     "SessionStart": [
       {
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT:-${PLUGIN_ROOT}}/hooks/run.mjs\"",
+            "command": "node -e \"import(require('node:url').pathToFileURL(require('node:path').join(process.env.CLAUDE_PLUGIN_ROOT||process.env.PLUGIN_ROOT,'hooks/run.mjs')).href)\"",
             "timeout": 30
           }
         ]
@@ -16,8 +17,8 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT:-${PLUGIN_ROOT}}/hooks/run.mjs\"",
-            "timeout": 30
+            "command": "node -e \"import(require('node:url').pathToFileURL(require('node:path').join(process.env.CLAUDE_PLUGIN_ROOT||process.env.PLUGIN_ROOT,'hooks/run.mjs')).href)\"",
+            "timeout": 3
           }
         ]
       }
@@ -27,7 +28,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT:-${PLUGIN_ROOT}}/hooks/run.mjs\"",
+            "command": "node -e \"import(require('node:url').pathToFileURL(require('node:path').join(process.env.CLAUDE_PLUGIN_ROOT||process.env.PLUGIN_ROOT,'hooks/run.mjs')).href)\"",
             "timeout": 30
           }
         ]
@@ -38,7 +39,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT:-${PLUGIN_ROOT}}/hooks/run.mjs\"",
+            "command": "node -e \"import(require('node:url').pathToFileURL(require('node:path').join(process.env.CLAUDE_PLUGIN_ROOT||process.env.PLUGIN_ROOT,'hooks/run.mjs')).href)\"",
             "timeout": 30
           }
         ]
@@ -49,7 +50,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PLUGIN_ROOT:-${PLUGIN_ROOT}}/hooks/run.mjs\"",
+            "command": "node -e \"import(require('node:url').pathToFileURL(require('node:path').join(process.env.CLAUDE_PLUGIN_ROOT||process.env.PLUGIN_ROOT,'hooks/run.mjs')).href)\"",
             "timeout": 30
           }
         ]

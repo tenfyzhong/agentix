@@ -160,4 +160,6 @@ One Git repository stays one Project across worktrees and time; each independent
 
 Task state changes go through CLI commands or Agentix IM actions. Generated boards are logically read-only, use `[[wikilinks]]` in Obsidian or relative Markdown links elsewhere, and require no Kanban/Tasks plugin or file watcher. See the [task board guide](docs/task-board.md) for plans, claiming, plugin installation, recovery, and IM configuration.
 
+The [agent-task-manager plugin](plugins/agent-task-manager/README.md) bundles Codex/Claude lifecycle hooks and manifest-selected Pi/OMP extensions. Enable the package in the chosen host and review its hooks; no per-project hook configuration needs to be copied.
+
 `make check` covers concurrent CLI processes, recovery after a committed write is interrupted, the Task state/command matrix, real plugin-to-CLI calls, and task actions through both IM adapters. It requires Node.js 24+ and npm in addition to Rust. An opt-in desktop test checks actual Obsidian rendering and link navigation; see [validation and remaining live-system checks](docs/task-board.md#validation).

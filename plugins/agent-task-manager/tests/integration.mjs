@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { spawn } from "node:child_process";
-import { mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
+import { cp, mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { runTaskcli } from "../runtime.mjs";
 
 // Cargo supplies its freshly compiled executable: these tests must never fall
@@ -58,7 +59,11 @@ async function fixture(t, format = "markdown") {
 async function extension(t, f, host) {
     const handlers = new Map();
     let tool;
-    const { default: install } = await import(`../extensions/${host}.ts`);
+    const pkg = JSON.parse(await readFile("package.json", "utf8"));
+    assert.equal(pkg[host].extensions.length, 1);
+    const { default: install } = await import(
+        pathToFileURL(resolve(pkg[host].extensions[0]))
+    );
     install({
         on: (name, handler) => handlers.set(name, handler),
         registerTool: (value) => {
@@ -173,17 +178,19 @@ test("tool retries preserve identity after claim, Plan revision and lease-releas
     );
 });
 
-async function hookProcess(event, command) {
+async function hookProcess(event, command, host, root, shell) {
     const args =
-        command && process.platform !== "win32"
-            ? ["/bin/sh", ["-c", command]]
-            : [process.execPath, [resolve("hooks/run.mjs")]];
+        process.platform === "win32"
+            ? ["cmd.exe", ["/d", "/s", "/c", `"${command}"`]]
+            : [shell, ["-c", command]];
+    const env = { ...process.env };
+    delete env.CLAUDE_PLUGIN_ROOT;
+    delete env.PLUGIN_ROOT;
+    env[host === "claude" ? "CLAUDE_PLUGIN_ROOT" : "PLUGIN_ROOT"] = root;
     const child = spawn(args[0], args[1], {
-        env: {
-            ...process.env,
-            CLAUDE_PLUGIN_ROOT: resolve("."),
-            PLUGIN_ROOT: resolve("."),
-        },
+        env,
+        cwd: event.cwd,
+        windowsVerbatimArguments: process.platform === "win32",
         stdio: ["pipe", "pipe", "pipe"],
     });
     const out = [],
@@ -199,57 +206,82 @@ async function hookProcess(event, command) {
     return JSON.parse(Buffer.concat(out).toString());
 }
 
-test("manifest command hooks cross the process boundary and restore fenced leases", async (t) => {
-    const f = await fixture(t);
-    const task = await f.run([
-        "task",
-        "add",
-        "--job",
-        f.job.id,
-        "--title",
-        "Hooks",
-    ]);
-    await f.run(["plan", "create", task.id, "--body", "# Plan"]);
-    const options = { executor: "agent:hooks", session: "host-session" };
-    const claim = await f.run(["task", "claim", task.id], options);
-    const manifest = JSON.parse(await readFile("hooks/hooks.json", "utf8"));
-    for (const name of [
-        "SessionStart",
-        "PreToolUse",
-        "PostToolUse",
-        "Stop",
-        "SessionEnd",
-        "SessionStart",
-    ]) {
-        const command = manifest.hooks[name][0].hooks[0].command;
-        const output = await hookProcess(
-            { hook_event_name: name, session_id: options.session, cwd: f.dir },
-            command,
-        );
-        const current = await f.run(["task", "show", task.id]);
-        assert.equal(
-            current.status,
-            name === "SessionEnd" ? "BLOCKED" : "IN_PROGRESS",
-        );
-        if (name === "SessionStart")
-            assert.ok(
-                output.hookSpecificOutput.additionalContext.includes(task.id),
+for (const host of ["codex", "claude"]) {
+    for (const shell of new Set(
+        ["/bin/sh", process.env.TASKCLI_TEST_HOOK_SHELL].filter(Boolean),
+    )) {
+        test(`${host} bundled hooks run through ${process.platform === "win32" ? "cmd.exe" : shell} and restore fenced leases`, async (t) => {
+            const f = await fixture(t);
+            const root = join(f.dir, "installed plugin 中文");
+            await mkdir(root);
+            for (const path of ["hooks", "runtime.mjs"]) {
+                await cp(resolve(path), join(root, path), { recursive: true });
+            }
+            const task = await f.run([
+                "task",
+                "add",
+                "--job",
+                f.job.id,
+                "--title",
+                "Hooks",
+            ]);
+            await f.run(["plan", "create", task.id, "--body", "# Plan"]);
+            const options = {
+                executor: "agent:hooks",
+                session: "host-session",
+            };
+            const claim = await f.run(["task", "claim", task.id], options);
+            const manifest = JSON.parse(
+                await readFile(join(root, "hooks/hooks.json"), "utf8"),
             );
+            for (const name of [
+                "SessionStart",
+                "PreToolUse",
+                "PostToolUse",
+                "Stop",
+                "SessionEnd",
+                "SessionStart",
+            ]) {
+                const command = manifest.hooks[name][0].hooks[0].command;
+                const output = await hookProcess(
+                    {
+                        hook_event_name: name,
+                        session_id: options.session,
+                        cwd: f.dir,
+                    },
+                    command,
+                    host,
+                    root,
+                    shell,
+                );
+                const current = await f.run(["task", "show", task.id]);
+                assert.equal(
+                    current.status,
+                    name === "SessionEnd" ? "BLOCKED" : "IN_PROGRESS",
+                );
+                if (name === "SessionStart")
+                    assert.ok(
+                        output.hookSpecificOutput.additionalContext.includes(
+                            task.id,
+                        ),
+                    );
+            }
+            const resumed = await f.run(["task", "show", task.id]);
+            assert.notEqual(resumed.lease.token, claim.lease.token);
+            await assert.rejects(
+                f.run(["task", "done", task.id], {
+                    ...options,
+                    token: claim.lease.token,
+                }),
+                /conflict/,
+            );
+            await f.run(["task", "done", task.id], {
+                ...options,
+                token: resumed.lease.token,
+            });
+        });
     }
-    const resumed = await f.run(["task", "show", task.id]);
-    assert.notEqual(resumed.lease.token, claim.lease.token);
-    await assert.rejects(
-        f.run(["task", "done", task.id], {
-            ...options,
-            token: claim.lease.token,
-        }),
-        /conflict/,
-    );
-    await f.run(["task", "done", task.id], {
-        ...options,
-        token: resumed.lease.token,
-    });
-});
+}
 
 test("real CLI errors, aborts and identity overrides are not reported as success", async (t) => {
     const f = await fixture(t);
