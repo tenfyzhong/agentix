@@ -78,6 +78,47 @@ make release
 
 The binary is written to `target/release/agentix` (`agentix.exe` on Windows).
 
+### Shell completions
+
+Generate completions for the installed CLI with `agentix completions bash`,
+`agentix completions zsh`, or `agentix completions fish`. This command does not
+require a configuration file or a running server.
+
+For bash, add this line to `~/.bashrc` (or `~/.bash_profile` on macOS):
+
+```bash
+source <(agentix completions bash)
+```
+
+For zsh, save the completion file:
+
+```zsh
+mkdir -p ~/.zsh/completions
+agentix completions zsh > ~/.zsh/completions/_agentix
+```
+
+Add the following to `~/.zshrc`, placing the `fpath` line before any existing
+`compinit` call. If your shell framework already calls `compinit`, use that call
+instead of adding another one:
+
+```zsh
+fpath=(~/.zsh/completions $fpath)
+autoload -Uz compinit
+compinit
+```
+
+For fish:
+
+```fish
+mkdir -p ~/.config/fish/completions
+agentix completions fish > ~/.config/fish/completions/agentix.fish
+```
+
+Restart your shell after installation. Regenerate saved files after upgrading
+Agentix. Source checkouts and release archives also include ready-to-use files
+in `completions/`: `agentix.bash`, `_agentix`, and `agentix.fish`. You can source
+the bash file or copy the zsh/fish file to the directories above.
+
 ### Configure
 
 Create the default configuration file.
@@ -166,6 +207,9 @@ If the selected channel has no configured owner, keep `agentix serve` running, e
 ## Development
 
 Run `make check` to check formatting, run Clippy, and execute the workspace tests. Channel shutdown deadline tests use Tokio's paused clock to verify the shared grace period and task cancellation independently of database and filesystem latency. Service lifecycle tests also exercise startup and shutdown with a temporary SQLite database.
+
+After changing CLI commands or options, run `make completions` and commit the
+updated files. Tests verify that the checked-in completions match the CLI.
 
 CI uses Rust 1.95.0. Ensure `cargo`, `rustc`, `cargo-clippy`, and `rustfmt` all come from that toolchain rather than mixing Homebrew and rustup installations. The test suite checks the non-Unix Codex compatibility API on Unix hosts as well, so Windows-only API omissions are caught locally.
 
