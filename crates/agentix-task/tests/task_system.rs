@@ -810,7 +810,7 @@ async fn projections_are_read_only_preserve_notes_and_archive_links() {
         let board = std::fs::read_to_string(&board_path).unwrap();
         assert!(!board.contains("manual state edit"));
         assert!(board.contains("tasknotesKanban"));
-        assert_eq!(board.contains("[["), format == "obsidian");
+        assert!(!board.contains("|Project]]") && !board.contains("[Project]("));
         assert!(
             std::fs::read_to_string(&job_path)
                 .unwrap()
@@ -958,9 +958,14 @@ async fn dashboard_stays_project_only_as_jobs_grow() {
             "Job count must not change {format} Dashboard"
         );
         assert!(dashboard.contains("## demo"));
-        for entry in ["meta", "Board"] {
-            assert!(dashboard.contains(&format!("Projects/demo/{entry}")));
-        }
+        assert!(dashboard.contains("Projects/demo/Board"));
+        assert!(!dashboard.contains("Kanban board"));
+        assert!(dashboard.contains(if format == "obsidian" {
+            "|Board]]"
+        } else {
+            "[Board]("
+        }));
+        assert!(!dashboard.contains("Projects/demo/meta"));
         assert!(!dashboard.contains("Feature"));
         assert!(!dashboard.contains("Jobs/"));
         for job in f.service.store().snapshot().await.unwrap().jobs {
@@ -1196,8 +1201,8 @@ async fn obsidian_alias_separators_are_not_table_escaped_in_task_links() {
     let state = f.service.store().snapshot().await.unwrap();
     let output = f.service.config().output_dir();
     let dashboard = std::fs::read_to_string(output.join("Dashboard.md")).unwrap();
-    assert!(dashboard.contains("|Kanban board]]"));
-    assert!(!dashboard.contains("\\|Kanban board]]"));
+    assert!(dashboard.contains("|Board]]"));
+    assert!(!dashboard.contains("\\|Board]]"));
     let job = std::fs::read_to_string(output.join(&state.jobs[0].document_path)).unwrap();
     assert!(job.contains("|260905-0001-Linked task]]"));
     assert!(!job.contains("\\|260905-0001-Linked task]]"));
@@ -1699,11 +1704,9 @@ async fn dependency_projection_has_no_trailing_whitespace() {
         if format == "markdown" {
             assert!(body.contains(&format!("<a id=\"{}\"></a>", first.replace('_', "-"))));
         }
-        let dependencies = body
-            .lines()
-            .find(|line| line.trim_start().starts_with("Dependencies:"))
-            .unwrap();
-        assert_eq!(dependencies, dependencies.trim_end());
+        assert!(body.contains(&format!("{first} --> {second}")));
+        assert!(!body.contains("Dependencies:"));
+        assert!(body.lines().all(|line| line == line.trim_end()));
     }
 }
 
@@ -2368,29 +2371,25 @@ async fn metadata_and_status_checklists_include_completed_jobs_until_archived() 
         let task_doc = std::fs::read_to_string(&task_path).unwrap();
         assert!(task_doc.contains("status: \"DONE\""));
         assert!(task_doc.contains("archived: false"));
-        for (path, tag) in [("meta.md", "agent/project"), ("Board.md", "agent/board")] {
-            let body = std::fs::read_to_string(
-                root.join(format!("Projects/{}/{path}", state.projects[0].key)),
-            )
-            .unwrap();
-            let fm = body
-                .strip_prefix("---\n")
-                .unwrap()
-                .split_once("\n---\n")
-                .unwrap()
-                .0;
-            assert!(fm.contains(tag));
-            assert!(fm.contains("id:"));
-            assert!(fm.contains("created_at:"));
-            if path == "meta.md" {
-                assert!(fm.contains("sync_status:"));
-                let properties: Value = serde_yaml::from_str(fm).unwrap();
-                assert_eq!(properties["sync_status"], "synced");
-                assert!(properties["sync_sequence"].is_number());
-                assert!(fm.contains("root:"));
-                assert!(fm.contains("remote:"));
-            }
+        let fm = board
+            .strip_prefix("---\n")
+            .unwrap()
+            .split_once("\n---\n")
+            .unwrap()
+            .0;
+        for field in [
+            "agent/project",
+            "agent/board",
+            "id:",
+            "created_at:",
+            "root:",
+            "remote:",
+        ] {
+            assert!(fm.contains(field));
         }
+        let properties: Value = serde_yaml::from_str(fm).unwrap();
+        assert_eq!(properties["sync_status"], "synced");
+        assert!(properties["sync_sequence"].is_number());
         let path = root.join(&state.jobs[0].document_path);
         let body = std::fs::read_to_string(&path).unwrap();
         let (fm, body) = body

@@ -17,6 +17,59 @@ fn graph(document: &str) -> &str {
 }
 
 #[tokio::test]
+async fn job_sync_removes_legacy_dependency_prose_and_preserves_authored_notes() {
+    for format in ["obsidian", "markdown"] {
+        let f = Fixture::new(format).await;
+        let prerequisite = f.task("Prerequisite").await;
+        let dependent = f.task("Dependent").await;
+        f.service
+            .execute(
+                json!({"command":"task.depend","task":dependent,"dependency":prerequisite}),
+                WriteOptions::default(),
+            )
+            .await
+            .unwrap();
+        let state = f.service.store().snapshot().await.unwrap();
+        let path = f
+            .service
+            .config()
+            .output_dir()
+            .join(&state.jobs[0].document_path);
+        let document = job_document(&f).await;
+        std::fs::write(
+            &path,
+            document
+                .replace(
+                    "\n## Notes",
+                    "\n  Dependencies: Legacy prerequisite\n\n## Notes",
+                )
+                .replace(
+                    "<!-- taskcli:notes:start -->",
+                    "<!-- taskcli:notes:start -->\nDependencies: Keep this authored note.",
+                ),
+        )
+        .unwrap();
+        f.service.sync().await.unwrap();
+        let updated = job_document(&f).await;
+        let tasks_section = updated
+            .split_once("\n## Tasks\n")
+            .unwrap()
+            .1
+            .split_once("\n## Notes\n")
+            .unwrap()
+            .0;
+        assert!(!tasks_section.contains("Dependencies:"));
+        assert!(graph(&updated).contains(&format!("{prerequisite} --> {dependent}")));
+        assert!(tasks_section.contains("260905-0001-Prerequisite"));
+        assert!(tasks_section.contains("260905-0002-Dependent"));
+        assert!(updated.contains("Dependencies: Keep this authored note."));
+        assert!(updated.contains("Ship it"));
+        f.service.sync().await.unwrap();
+        assert_eq!(job_document(&f).await, updated);
+    }
+}
+
+#[tokio::test]
 async fn job_graph_tracks_nodes_dependencies_and_renames() {
     for format in ["obsidian", "markdown"] {
         let f = Fixture::new(format).await;

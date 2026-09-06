@@ -38,7 +38,6 @@ The reusable [tasknotes-settings.json](tasknotes-settings.json) contains this se
 11-Agents/
   Dashboard.md
   Projects/<project>/
-    meta.md
     Board.md
     Jobs/
       YYMMDD-seq-<job-name>.md
@@ -48,8 +47,7 @@ The reusable [tasknotes-settings.json](tasknotes-settings.json) contains this se
 ```
 
 - **Dashboard** lists projects and view links, without Job details.
-- **meta.md** records repository identity, paths, project state, and sync status.
-- **Board.md** embeds a Bases view of type `tasknotesKanban`, grouped by status.
+- **Board.md** records repository identity, paths, project state, and sync status, and embeds a Bases view of type `tasknotesKanban`, grouped by status. It is the project note, with the Project ID and both `agent/project` and `agent/board` tags. Dashboard and task project links point here; there is no separate Project link on Board. Sync removes the old generated `meta.md` after publishing Board.
 - **Job → Tasks** directly links the task notes, using their filenames as labels.
 - **Tasks/** contains one note for every Task, including tasks without a published plan.
 
@@ -78,7 +76,7 @@ tags:
   - task
 archived: false
 projects:
-  - "[[11-Agents/Projects/example/meta]]"
+  - "[[11-Agents/Projects/example/Board]]"
 job: "[[11-Agents/Projects/example/Jobs/260905-0001-Login]]"
 created_at: 2026-09-05T08:00:00+08:00
 updated_at: 2026-09-05T08:01:00+08:00

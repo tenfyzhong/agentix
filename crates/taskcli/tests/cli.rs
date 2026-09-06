@@ -688,7 +688,8 @@ fn cli_creates_and_repairs_plugin_views_without_installing_obsidian_plugins() {
                     .to_string_lossy()
                     .contains("Visible card"))
         );
-        assert_eq!(board.contains("[["), format == "obsidian");
+        assert!(!board.contains("|Project]]") && !board.contains("[Project]("));
+        assert!(!directory.join("meta.md").exists());
         assert!(!board.contains("Task list"));
         let before = cli.ok(&["task", "show", &task]);
         std::fs::write(directory.join("Board.md"), "# Old table or manual edit\n").unwrap();

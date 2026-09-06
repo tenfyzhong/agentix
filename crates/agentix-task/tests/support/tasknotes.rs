@@ -27,6 +27,149 @@ fn base(document: &str) -> Value {
 }
 
 #[tokio::test]
+async fn board_contains_project_metadata_and_is_the_only_project_link_target() {
+    for format in ["obsidian", "markdown"] {
+        let f = Fixture::new(format).await;
+        let task = f.task("Linked task").await;
+        let root = f.service.config().output_dir();
+        let board_path = root.join("Projects/demo/Board.md");
+        let board = std::fs::read_to_string(&board_path).unwrap();
+        let props = properties(&board);
+        let state = f.service.store().snapshot().await.unwrap();
+        let project = &state.projects[0];
+        assert_eq!(props["id"], project.id);
+        assert_eq!(props["name"], project.name);
+        assert_eq!(props["root"], json!(project.root));
+        assert_eq!(props["remote"], json!(project.remote));
+        assert_eq!(props["revision"], project.revision);
+        assert_eq!(props["status"], "ACTIVE");
+        assert!(props["archived_at"].is_null());
+        assert_eq!(props["sync_status"], "synced");
+        assert_eq!(
+            props["sync_sequence"],
+            f.service.store().latest_sequence().await.unwrap()
+        );
+        assert_eq!(props["tags"], json!(["agent/project", "agent/board"]));
+        assert!(!root.join("Projects/demo/meta.md").exists());
+        assert!(!board.contains("|Project]]") && !board.contains("[Project]("));
+        assert_eq!(base(&board)["views"][0]["type"], "tasknotesKanban");
+        let dashboard = std::fs::read_to_string(root.join("Dashboard.md")).unwrap();
+        assert!(!dashboard.contains("/meta"));
+        assert_eq!(dashboard.matches("Projects/demo/Board").count(), 1);
+        let task_path = root.join("Projects/demo/Tasks/260905-0001-Linked task.md");
+        assert_eq!(
+            properties(&std::fs::read_to_string(task_path).unwrap())["projects"],
+            json!(["[[Tasks ☃/Projects/demo/Board]]"])
+        );
+        f.service
+            .execute(
+                json!({"command":"task.cancel","task":task,"reason":"Closed"}),
+                WriteOptions::default(),
+            )
+            .await
+            .unwrap();
+        f.service
+            .execute(
+                json!({"command":"job.cancel","job":f.job}),
+                WriteOptions::default(),
+            )
+            .await
+            .unwrap();
+        f.service
+            .execute(
+                json!({"command":"project.archive","project":f.project}),
+                WriteOptions::default(),
+            )
+            .await
+            .unwrap();
+        let archived = properties(&std::fs::read_to_string(&board_path).unwrap());
+        assert_eq!(archived["status"], "ARCHIVED");
+        assert!(archived["archived_at"].is_string());
+        assert!(
+            !std::fs::read_to_string(root.join("Dashboard.md"))
+                .unwrap()
+                .contains("Projects/demo/Board")
+        );
+        f.service
+            .execute(
+                json!({"command":"project.unarchive","project":f.project}),
+                WriteOptions::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            properties(&std::fs::read_to_string(board_path).unwrap())["status"],
+            "ACTIVE"
+        );
+    }
+}
+
+#[tokio::test]
+async fn legacy_project_meta_is_deleted_only_after_board_publication_and_retry_is_safe() {
+    for format in ["obsidian", "markdown"] {
+        let f = Fixture::new(format).await;
+        let root = f.service.config().output_dir();
+        let relative = "Projects/demo/meta.md";
+        let meta = root.join(relative);
+        std::fs::write(
+            &meta,
+            "---\ntaskcli-generated: true\n---\n\n# Legacy project metadata\n",
+        )
+        .unwrap();
+        let mut documents = f
+            .service
+            .store()
+            .metadata("documents")
+            .await
+            .unwrap()
+            .unwrap();
+        documents[format!("meta:{}", f.project)] = json!(relative);
+        f.service
+            .store()
+            .set_metadata("documents", &documents)
+            .await
+            .unwrap();
+        let board = root.join("Projects/demo/Board.md");
+        std::fs::remove_file(&board).unwrap();
+        std::fs::create_dir(&board).unwrap();
+        assert!(f.service.sync().await.is_err());
+        assert!(
+            meta.exists(),
+            "retain legacy metadata when Board cannot be written"
+        );
+        std::fs::remove_dir(&board).unwrap();
+        f.service.sync().await.unwrap();
+        assert!(!meta.exists());
+        assert_eq!(
+            properties(&std::fs::read_to_string(&board).unwrap())["id"],
+            f.project
+        );
+        assert!(
+            f.service
+                .store()
+                .metadata("documents")
+                .await
+                .unwrap()
+                .unwrap()
+                .get(format!("meta:{}", f.project))
+                .is_none()
+        );
+        // Recover if the old file was removed before path bookkeeping was saved.
+        f.service
+            .store()
+            .set_metadata("documents", &documents)
+            .await
+            .unwrap();
+        f.service.sync().await.unwrap();
+        assert!(!meta.exists());
+        assert_eq!(
+            properties(&std::fs::read_to_string(board).unwrap())["id"],
+            f.project
+        );
+    }
+}
+
+#[tokio::test]
 async fn task_dependencies_are_projected_before_planning_and_follow_cli_changes() {
     for format in ["obsidian", "markdown"] {
         let f = Fixture::new(format).await;
@@ -416,9 +559,9 @@ async fn renaming_an_unplanned_task_moves_its_note_and_updates_its_display_title
 }
 
 #[tokio::test]
-async fn task_state_changes_do_not_rewrite_unchanged_live_base_documents() {
+async fn sync_does_not_rewrite_unchanged_live_base_documents() {
     let f = Fixture::new("obsidian").await;
-    let id = f.task("Stable board").await;
+    f.task("Stable board").await;
     let board = f
         .service
         .config()
@@ -431,7 +574,7 @@ async fn task_state_changes_do_not_rewrite_unchanged_live_base_documents() {
         .unwrap()
         .set_times(std::fs::FileTimes::new().set_modified(modified))
         .unwrap();
-    f.claim(&id, "stable-view").await;
+    f.service.sync().await.unwrap();
     assert_eq!(
         std::fs::metadata(&board).unwrap().modified().unwrap(),
         modified,
@@ -550,11 +693,7 @@ async fn sync_removes_managed_task_lists_and_their_navigation_links() {
             .count(),
         1
     );
-    for path in [
-        "Dashboard.md",
-        "Projects/demo/meta.md",
-        "Projects/demo/Board.md",
-    ] {
+    for path in ["Dashboard.md", "Projects/demo/Board.md"] {
         let doc = std::fs::read_to_string(root.join(path)).unwrap();
         assert!(!doc.contains("/Tasks|"));
         assert!(!doc.contains("Task list"));

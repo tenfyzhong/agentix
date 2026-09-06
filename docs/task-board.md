@@ -102,7 +102,6 @@ Timestamp fields are Unix seconds in UTC; creation date filters include both spe
 ```text
 Dashboard.md
 Projects/<project-name>/
-  meta.md
   Board.md
   Jobs/YYMMDD-seq-<job-name>.md
   Jobs/Archived/YYMMDD-seq-<job-name>.md
@@ -111,28 +110,27 @@ Projects/<project-name>/
 
 Unarchived Jobs live directly under `Jobs/`; only explicitly archived Jobs move into `Jobs/Archived/`. Archiving and restoring a Job preserve its filename. Migration removes empty legacy `Jobs/Active/` and `Jobs/Archive/YYYY/MM/` directories after publishing the replacement documents and links.
 
-The Dashboard lists unarchived projects with links to their metadata and Board. It contains no Job lists or details, so adding Jobs does not increase its length.
+The Dashboard lists unarchived projects with links labeled `Board` to their Board documents. It contains no Job lists or details, so adding Jobs does not increase its length.
 
 Names preserve Unicode and spaces. IDs stay in YAML frontmatter, not filenames. Only collisions add `-2`, `-3`, etc.; comparison is case insensitive. `job create --name` and `task add --name` accept a concise summary separately from the full `--title`. Names default to a portable, at most 48-character title. Agents should summarize the work when choosing `--name`, rather than rely on truncation. `job update --name` and `task update --name` also work on completed work and update generated links without adding Plan versions.
 
 Job and Task Plan filenames begin with `YYMMDD-seq-`, for example `260905-0001-Implement login.md`. The date is the Job or Task creation date in UTC, even if its Plan is created later. Sequence numbers start at 1 each day, independently for Jobs and Tasks in each project (Tasks across Jobs share the project counter), and use at least four digits. Allocation is transactional; archived or cancelled work keeps its number. Renaming and Plan revisions preserve the prefix, and display names remain concise. The `sequence` property is stored with Job and Task metadata and the Task’s Plan frontmatter.
 
-Every generated document has YAML frontmatter containing an ID, creation time, and a type tag. Job properties include IDs, sequence, status, revision, and creation/update/start/completion/cancellation/archive times. They omit `document_path`, `title`, `name`, and embedded `task`/`tasks` fields; the Job heading and Task note links remain in the document body. Task properties include `revision` and lifecycle times, without a `version` field. Task timestamps are ISO 8601 in the computer’s local time zone, with the offset for each timestamp; other document timestamps remain UTC. CLI JSON timestamps remain Unix seconds. Project `meta.md` records the repository root, Git remote, revision, archive state, `sync_status`, and `sync_sequence`. There is no separate Sync Status note.
+Every generated document has YAML frontmatter containing an ID, creation time, and a type tag. Job properties include IDs, sequence, status, revision, and creation/update/start/completion/cancellation/archive times. They omit `document_path`, `title`, `name`, and embedded `task`/`tasks` fields; the Job heading and Task note links remain in the document body. Task properties include `revision` and lifecycle times, without a `version` field. Task timestamps are ISO 8601 in the computer’s local time zone, with the offset for each timestamp; other document timestamps remain UTC. CLI JSON timestamps remain Unix seconds. Project `Board.md` records the repository root, Git remote, revision, archive state, `sync_status`, and `sync_sequence`. Board is the project note and also embeds its task view. Its ID is the Project ID. Sync migrates generated `meta.md` information into Board, updates Dashboard and task project links to Board, and deletes the old managed meta file after publishing the replacement documents. Board has no separate Project link.
 
 | Document | Tags |
 | --- | --- |
-| Project meta | `agent/project` |
 | Job | `agent/job` |
 | Archived Job | `agent/archived/job` |
 | Task (including its Plan) | `agent/task`, `task` |
-| Board | `agent/board` |
+| Project Board | `agent/project`, `agent/board` |
 | Dashboard | `agent/dashboard` |
 
 Each Task has one TaskNotes-compatible note in `Tasks/`, created even before a Plan is published. Notes carry `task` for TaskNotes identification and `agent/task` for Agentix board filtering. Sync adds missing tags to existing notes and preserves custom tags. Its frontmatter contains the Task ID, optional Plan ID, state, phase, revision, local dates, project link, Job link, and `dependencies`: a list of prerequisite Task IDs, or `[]`. Register all known initial Tasks and dependencies before implementation. When taking up a Task, claim it and publish its freely structured Plan into that same note. `plan revise` updates it in place and advances the Task revision. The document exposes only `revision`; the internal Plan publication counter remains part of CLI metadata. Authored properties are merged with managed metadata. Dependency fields are generated from SQLite, refreshed by sync, and cannot be overridden by authored Plan properties; `task start` requires all prerequisites to be DONE.
 
 Job task sections directly link Task notes, displaying their filenames without `.md`. Obsidian uses wikilinks; Markdown uses ordinary relative links. Board embeds a TaskNotes Base over the project's task notes, rather than duplicating checkbox entries. Completed and cancelled work remains visible until its Job or Project is archived. Goal, Notes, names, and Plan prose are preserved as authored.
 
-Each nonempty Job task section also includes a generated Mermaid dependency graph. Every Task in the Job appears, including independent Tasks; arrows point from prerequisite to dependent Task. Direct prerequisites from other Jobs appear once with their Job name, without expanding those Jobs' full dependency graphs. Task additions, renames, and dependency changes refresh the graph automatically; `taskcli sync` adds it to existing Job documents. The graph is read-only and uses the same database dependencies as the Task notes. Task links below it remain available in both document formats.
+Each nonempty Job task section also includes a generated Mermaid dependency graph. Every Task in the Job appears, including independent Tasks; arrows point from prerequisite to dependent Task. Direct prerequisites from other Jobs appear once with their Job name, without expanding those Jobs' full dependency graphs. Task additions, renames, and dependency changes refresh the graph automatically; `taskcli sync` adds it to existing Job documents. The graph is read-only and uses the same database dependencies as the Task notes. Task links below it remain available in both document formats. Dependencies are displayed in the graph, without a duplicate `Dependencies:` list under each Task; sync removes those generated lists from existing Jobs while preserving authored Goal and Notes content.
 
 Graph nodes show `Task name · STATUS` using the seven `TaskStatus` values: `TODO`, `IN_PROGRESS`, `BLOCKED`, `WAITING_USER`, `DONE`, `FAILED`, and `CANCELLED`. Their light background colors match the bundled [TaskNotes status configuration](../plugins/agent-task-manager/obsidian/tasknotes-settings.json), with dark text for contrast; only `DONE` means successful completion. Planning and executing are phases within `IN_PROGRESS`, not additional statuses. Status changes through taskcli refresh the graph, including cross-Job prerequisite nodes.
 
@@ -219,7 +217,7 @@ The vault is not a complete database export:
 | Ownership leases | Tokens and expiration times are not exported |
 | Audit history and request idempotency | Event log, request fingerprints, and saved results remain in SQLite |
 | Internal Plan publication state | Publication counters, hashes, and pending unpublished bodies are not fully exported; document `revision` does not replace the internal publication counter |
-| Synchronization and cleanup state | Managed-path bookkeeping, pending deletions, and sequence counters that prevent reuse of deleted filenames remain in SQLite; `meta.md` only exposes sync status and sequence |
+| Synchronization and cleanup state | Managed-path bookkeeping, pending deletions, and sequence counters that prevent reuse of deleted filenames remain in SQLite; `Board.md` exposes sync status and sequence |
 
 There is currently no vault import or database rebuild command. `sync` projects the database into documents; it does not reconstruct database records from existing frontmatter. Notes could support a future partial reconstruction of current work after validation, but cannot reproduce missing history, ownership, or retry records. Restored work would need fresh claims rather than recovered lease tokens.
 

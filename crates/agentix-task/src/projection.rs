@@ -252,29 +252,14 @@ impl Service {
         dashboard.push_str(&Self::header("Task dashboard"));
         for project in &state.projects {
             let board_path = format!("Projects/{}/Board.md", project.key);
-            let meta_path = format!("Projects/{}/meta.md", project.key);
             if project.archived_at.is_none() {
                 dashboard.push_str(&format!(
-                    "\n## {}\n\n{} · {}\n",
+                    "\n## {}\n\n{}\n",
                     escape(&project.name),
-                    self.link("Dashboard.md", &meta_path, None, "Project"),
-                    self.link("Dashboard.md", &board_path, None, "Kanban board")
+                    self.link("Dashboard.md", &board_path, None, "Board")
                 ));
             }
-            let mut meta = frontmatter(
-                json!({"id":project.id, "name":project.name, "created_at":timestamp(project.created_at), "revision":project.revision, "root":project.root, "remote":project.remote, "archived_at":optional_timestamp(project.archived_at), "status":if project.archived_at.is_some() {"ARCHIVED"} else {"ACTIVE"}, "sync_status":"synced", "sync_sequence":sequence, "tags":["agent/project"]}),
-            );
-            meta.push_str(&Self::header(&project.name));
-            meta.push_str(&format!(
-                "\n{}\n",
-                self.link(&meta_path, &board_path, None, "Kanban board")
-            ));
-            files.insert(meta_path.clone(), meta);
-            paths.insert(format!("meta:{}", project.id), meta_path.clone());
-            files.insert(
-                board_path.clone(),
-                self.tasknotes_board(project, &board_path, &meta_path)?,
-            );
+            files.insert(board_path.clone(), self.tasknotes_board(project, sequence)?);
             paths.insert(format!("board:{}", project.id), board_path.clone());
             for job in state.jobs.iter().filter(|j| j.project_id == project.id) {
                 let key = format!("job:{}", job.id);
@@ -338,20 +323,6 @@ impl Service {
                     }
                     if let Some(reason) = &task.reason {
                         doc.push_str(&format!("\n  {}: {}\n", "Reason", escape(reason)));
-                    }
-                    if !task.dependencies.is_empty() {
-                        let mut links = Vec::new();
-                        for dependency in &task.dependencies {
-                            let t = &state.tasks[state.task_index(dependency)?];
-                            let (path, anchor) = task_target(&state, t)?;
-                            links.push(self.link(
-                                &job.document_path,
-                                &path,
-                                anchor.as_deref(),
-                                &t.name,
-                            ));
-                        }
-                        doc.push_str(&format!("\n  {}: {}\n", "Dependencies", links.join(" ")));
                     }
                 }
                 doc.push_str(&format!("\n## {}\n\n<!-- taskcli:notes:start -->\n{notes}\n<!-- taskcli:notes:end -->\n", "Notes"));
@@ -510,12 +481,7 @@ impl Service {
         "> GENERATED — DO NOT EDIT task fields. Use taskcli or an Agent."
     }
 
-    fn tasknotes_board(
-        &self,
-        project: &crate::Project,
-        path: &str,
-        project_path: &str,
-    ) -> Result<String> {
+    fn tasknotes_board(&self, project: &crate::Project, sequence: i64) -> Result<String> {
         let title = format!("{} — Task board", project.name);
         let folder = self
             .config
@@ -539,12 +505,11 @@ impl Service {
             "views": [view]
         });
         let mut doc = frontmatter(
-            json!({"id":format!("board:{}",project.id),"created_at":timestamp(project.created_at),"title":title,"tags":["agent/board"]}),
+            json!({"id":project.id,"name":project.name,"created_at":timestamp(project.created_at),"title":title,"revision":project.revision,"root":project.root,"remote":project.remote,"archived_at":optional_timestamp(project.archived_at),"status":if project.archived_at.is_some() {"ARCHIVED"} else {"ACTIVE"},"sync_status":"synced","sync_sequence":sequence,"tags":["agent/project","agent/board"]}),
         );
         doc.push_str(&Self::header(&title));
         doc.push_str(&format!(
-            "\n{}\n\n```base\n{}\n```\n",
-            self.link(path, project_path, None, "Project"),
+            "\n```base\n{}\n```\n",
             serde_yaml::to_string(&base)?.trim_end()
         ));
         Ok(doc)
@@ -593,7 +558,7 @@ impl Service {
             "created_at":local_timestamp(task.created_at)?,"updated_at":local_timestamp(task.updated_at)?,
             "started_at":optional_local_timestamp(task.started_at)?,"completed_at":optional_local_timestamp(task.completed_at)?,
             "dateCreated":local_timestamp(task.created_at)?,"dateModified":local_timestamp(task.updated_at)?,"completedDate":optional_local_timestamp(task.completed_at)?,
-            "projects":[wiki(&format!("Projects/{}/meta.md",project.key))],"job":wiki(&job.document_path)
+            "projects":[wiki(&format!("Projects/{}/Board.md",project.key))],"job":wiki(&job.document_path)
         });
         authored.as_object_mut().unwrap().remove("version");
         if authored["title"].is_null() || authored["title"] == authored["name"] {
@@ -872,9 +837,6 @@ fn encode(text: &str) -> String {
         }
     }
     result
-}
-fn task_target(state: &Snapshot, task: &Task) -> Result<(String, Option<String>)> {
-    Ok((crate::naming::task_path(state, task)?, None))
 }
 fn section(body: &str, name: &str) -> Result<Option<String>> {
     if body.is_empty() {

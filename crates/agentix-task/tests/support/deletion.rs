@@ -340,7 +340,7 @@ async fn project_deletion_removes_its_entire_output_directory_only() {
         std::fs::read_to_string(repository_file).unwrap(),
         "Keep repository"
     );
-    assert!(root.join("Projects/other/meta.md").exists());
+    assert!(root.join("Projects/other/Board.md").exists());
     let state = f.service.store().snapshot().await.unwrap();
     assert_eq!(state.projects.len(), 1);
     assert_eq!(state.jobs.len(), 1);
@@ -384,7 +384,7 @@ async fn pending_project_cleanup_reserves_its_directory_until_sync() {
         f.service
             .config()
             .output_dir()
-            .join("Projects/demo/meta.md")
+            .join("Projects/demo/Board.md")
             .exists()
     );
 }
