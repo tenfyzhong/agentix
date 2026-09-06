@@ -70,10 +70,6 @@ function skillContext(context) {
     };
 }
 
-function inboxContinuation(result) {
-    return `A Project Inbox requirement has been claimed for this session. Use the agent-task-manager skill, inspect taskcli context, and continue Job ${result.job.id} from its existing Tasks and Plan. Decompose only missing work. After completion, check the Project Inbox again. Respect the current host mode and any user interruption.\nInbox facts: ${JSON.stringify({ id: result.entry.id, job_id: result.job.id })}`;
-}
-
 function cancellationContext(context) {
     const entries = (context?.inbox_cancellations || []).filter(
         (entry) => !context.job_id || entry.job_id === context.job_id,
@@ -104,14 +100,6 @@ export async function runHook(event, runner = runTaskcli) {
                 additionalContext: `Task session: ${event.session_id}. Use the agent-task-manager skill for tracked work.\n${JSON.stringify(skillContext(context.result))}`,
             },
         };
-    }
-    if (event.hook_event_name === "Stop" && event.permission_mode !== "plan") {
-        const next = await runner(["hook", "stop"], {
-            ...options,
-            executor: `agent:${event.turn_id ? "codex" : "claude"}`,
-        });
-        if (next.result.claimed)
-            return { decision: "block", reason: inboxContinuation(next.result) };
     }
     if (["PreToolUse", "PostToolUse"].includes(event.hook_event_name)) {
         const context = await runner(["context"], options);
@@ -149,44 +137,6 @@ export function registerExtension(
     });
     const stateFor = (ctx) =>
         active?.options.session === optionsFor(ctx).session ? active : undefined;
-    const continueInbox = async (state, ctx) => {
-        if (
-            !state || state.aborted || state.interrupted || state.ended ||
-            !state.normalEnd || state.checking || ctx.hasPendingMessages?.()
-        ) return;
-        state.checking = true;
-        state.normalEnd = false;
-        const turn = state.turn;
-        try {
-            const next = await runner(["hook", "stop"], state.options);
-            if (
-                active !== state || state.interrupted || state.ended ||
-                state.turn !== turn || ctx.hasPendingMessages?.()
-            ) {
-                if (next.result.claimed && next.result.entry.lease) {
-                    await runner(["inbox", "release", next.result.entry.id], {
-                        ...state.options,
-                        token: next.result.entry.lease.token,
-                    });
-                }
-                return;
-            }
-            const delivery = next.result.claimed
-                ? `${next.result.entry.id}:${next.result.entry.lease?.token || next.result.entry.revision}`
-                : undefined;
-            if (delivery && !state.delivered.has(delivery)) {
-                api.sendMessage(
-                    { customType: "taskcli-inbox", content: inboxContinuation(next.result), display: true },
-                    { triggerTurn: true, deliverAs: "followUp" },
-                );
-                state.delivered.add(delivery);
-            }
-        } catch (error) {
-            ctx.ui?.notify?.(`Inbox continuation failed: ${error.message}`, "warning");
-        } finally {
-            state.checking = false;
-        }
-    };
     const pause = (state) => {
         if (state.timer !== undefined) timers.clearInterval(state.timer);
         state.timer = undefined;
@@ -249,7 +199,7 @@ export function registerExtension(
                 await release(active, "session-end");
             else if (active.cleanup) await active.cleanup;
         }
-        const state = { options, delivered: new Set() };
+        const state = { options };
         active = state;
         await runner(["hook", "session-start"], state.options);
         if (active === state) renew(state, ctx);
@@ -264,8 +214,6 @@ export function registerExtension(
         const state = stateFor(ctx);
         if (state) {
             state.aborted = false;
-            state.normalEnd = false;
-            state.turn = (state.turn || 0) + 1;
         }
     });
     api.on("agent_end", async (event, ctx) => {
@@ -273,9 +221,7 @@ export function registerExtension(
         if (!state) return;
         const lastAssistant = event.messages?.findLast(message => message.role === "assistant");
         state.aborted = lastAssistant?.stopReason === "aborted" && event.willContinue !== true;
-        state.normalEnd = lastAssistant?.stopReason === "stop" && event.willContinue !== true;
         if (host === "omp" && state.aborted) await release(state, "interrupt");
-        else if (host === "omp") await continueInbox(state, ctx);
     });
     if (host === "pi") {
         // agent_end can precede auto-retry/compaction/follow-ups. Only release
@@ -283,7 +229,6 @@ export function registerExtension(
         api.on("agent_settled", async (_event, ctx) => {
             const state = stateFor(ctx);
             if (state?.aborted && ctx.isIdle()) await release(state, "interrupt");
-            else if (ctx.isIdle()) await continueInbox(state, ctx);
         });
     }
     api.on("before_agent_start", async (_event, ctx) => {

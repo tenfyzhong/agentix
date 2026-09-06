@@ -30,7 +30,7 @@ A Job's `goal` records the overall objective and acceptance conditions. Tasks cu
 
 ### Human Inbox intake
 
-The Project `Inbox.md` is a queue of human requirements. Agents first finish existing active Jobs, then atomically claim one entry and create its formal Job. The Inbox lease protects initial intake; the agent inspects the returned Job before decomposing so recovery reuses existing Tasks. Register the whole Task DAG before completing its first Task. On completion, inspect the queue again.
+The Project `Inbox.md` is a queue of human requirements. Agents finish the current user request, including running commands, verification, and result preparation, return the result, and wait for human input. Only an explicit request to take the next Job authorizes `inbox claim-next`, once for one entry. Submission, completion, idle events, and status questions do not authorize intake. New intake waits for existing active Jobs; recovery can resume the selected entry’s own Job but still waits for other active Jobs and outstanding Task leases. The agent adopts the returned Job and inspects its Tasks before decomposing so recovery reuses existing work. Register the whole Task DAG before completing its first Task. After delivery, wait for another explicit request instead of continuing through the queue.
 
 Cancellation or deletion of an unfinished entry revokes its leases and cancels remaining work while preserving delivered outcomes and documents. Context and heartbeat results tell the agent to stop. Interruption or lease expiry returns unfinished entries to TODO; the next claim resumes the same Job. See [Project inbox](task-board.md#project-inbox) for the document format and recovery rules.
 
@@ -155,7 +155,7 @@ Codex explicitly loads [hooks/hooks.json](../plugins/agent-task-manager/hooks/ho
 | SessionStart | `taskcli hook session-start`, then `taskcli context` | Attempt to resume eligible Tasks; return the actual session ID, task facts, and a Skill reminder as additional context |
 | PreToolUse | `taskcli hook heartbeat`, then `taskcli context` | Renew active leases and surface Inbox cancellation facts |
 | PostToolUse | `taskcli hook heartbeat`, then `taskcli context` | Renew active leases and surface Inbox cancellation facts |
-| Stop | `taskcli hook heartbeat`, then `taskcli hook stop` | Renew and claim queued Inbox work when the Project has no active Jobs; request continuation on a claim, respecting plan-only mode |
+| Stop | `taskcli hook heartbeat` | Renew leases without taking Inbox work or requesting continuation; the legacy `hook stop` command is a compatibility no-op |
 | Codex Interrupt | `taskcli hook interrupt` | Mark active Tasks as system BLOCKED with reason `session interrupted`; release leases and preserve Plans |
 | Claude PostToolUseFailure | `taskcli hook interrupt` only when `is_interrupt` is boolean `true` | Release interrupted work; ordinary failures neither renew nor release ownership |
 | SessionEnd | `taskcli hook session-end` | Mark the session's in-progress Tasks as system BLOCKED and release their leases |
@@ -175,8 +175,8 @@ Both [pi.ts](../plugins/agent-task-manager/extensions/pi.ts) and [omp.ts](../plu
 | session_start | Resume eligible Tasks and start a once-per-minute heartbeat; on a session switch, attempt to release the previous session's task ownership through session-end |
 | before_agent_start | Wait for pending cleanup, restart paused heartbeat, and inject current facts; never claim implicitly |
 | agent_start | Reset the previous aborted-result marker |
-| Pi agent_end + agent_settled | Release interrupted work at idle settle; after successful final responses, claim Inbox work and enqueue one follow-up, excluding pending continuations |
-| OMP agent_end | Release aborted work when `willContinue` is false; successful final responses may claim Inbox work and enqueue one follow-up |
+| Pi agent_end + agent_settled | Release interrupted work at idle settle; successful final responses leave Inbox entries pending for explicit user input |
+| OMP agent_end | Release aborted work when `willContinue` is false; successful final responses leave Inbox entries pending for explicit user input |
 | session_shutdown | Stop the timer, cancel in-flight renewal, and run session-end |
 | taskcli tool | Accept an array of argument strings, invoke the actual taskcli process, and return JSON results or errors |
 

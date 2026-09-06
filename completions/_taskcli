@@ -2000,7 +2000,7 @@ _taskcli__subcmd__help__subcmd__help_commands() {
 (( $+functions[_taskcli__subcmd__help__subcmd__hook_commands] )) ||
 _taskcli__subcmd__help__subcmd__hook_commands() {
     local commands; commands=(
-'stop:Claim an Inbox requirement when this session'\''s Project is ready to continue' \
+'stop:Acknowledge turn completion without claiming Inbox work' \
 'session-start:Recover the session'\''s Tasks blocked by interruption or lease expiry into planning' \
 'session-end:Record session shutdown and release its active Task leases' \
 'interrupt:Release an interrupted session'\''s Task leases while preserving its Plans' \
@@ -2328,7 +2328,7 @@ _taskcli__subcmd__help__subcmd__task__subcmd__wait_commands() {
 (( $+functions[_taskcli__subcmd__hook_commands] )) ||
 _taskcli__subcmd__hook_commands() {
     local commands; commands=(
-'stop:Claim an Inbox requirement when this session'\''s Project is ready to continue' \
+'stop:Acknowledge turn completion without claiming Inbox work' \
 'session-start:Recover the session'\''s Tasks blocked by interruption or lease expiry into planning' \
 'session-end:Record session shutdown and release its active Task leases' \
 'interrupt:Release an interrupted session'\''s Task leases while preserving its Plans' \
@@ -2345,7 +2345,7 @@ _taskcli__subcmd__hook__subcmd__heartbeat_commands() {
 (( $+functions[_taskcli__subcmd__hook__subcmd__help_commands] )) ||
 _taskcli__subcmd__hook__subcmd__help_commands() {
     local commands; commands=(
-'stop:Claim an Inbox requirement when this session'\''s Project is ready to continue' \
+'stop:Acknowledge turn completion without claiming Inbox work' \
 'session-start:Recover the session'\''s Tasks blocked by interruption or lease expiry into planning' \
 'session-end:Record session shutdown and release its active Task leases' \
 'interrupt:Release an interrupted session'\''s Task leases while preserving its Plans' \

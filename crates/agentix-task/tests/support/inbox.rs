@@ -117,6 +117,76 @@ async fn claim(f: &Fixture, session: &str) -> Value {
 }
 
 #[tokio::test]
+async fn inbox_metadata_stays_on_the_header_with_status_in_a_comment() {
+    for format in ["markdown", "obsidian"] {
+        let f = fixture(format).await;
+        let content = "Request\nDetails with **Markdown**.\n- [ ] Acceptance";
+        let entry = add(&f, content).await;
+        let id = entry["id"].as_str().unwrap();
+        let source = std::fs::read_to_string(path(&f)).unwrap();
+        assert!(source.contains(&format!(
+            "- [ ] Request <!-- taskcli:entry:{id} --> <!-- taskcli:entry-state TODO -->\n  Details with **Markdown**.\n  - [ ] Acceptance\n\n"
+        )));
+        assert!(!source.contains("\n  <!-- taskcli:entry-state"));
+        f.service.sync().await.unwrap();
+        assert_eq!(std::fs::read_to_string(path(&f)).unwrap(), source);
+        assert_eq!(entries(&f).await[0]["content"], content);
+
+        let claimed = claim(&f, "one").await;
+        assert_eq!(claimed["claimed"], true);
+        let source = std::fs::read_to_string(path(&f)).unwrap();
+        let header = source
+            .lines()
+            .find(|line| line.starts_with("- [ ] Request"))
+            .unwrap();
+        assert!(header.contains("<!-- taskcli:entry-state IN_PROGRESS --> · "));
+        assert!(header.contains(if format == "obsidian" { "[[" } else { "](" }));
+        assert!(header.ends_with(" · agent:one"));
+        assert!(!source.contains("\n  <!-- taskcli:entry-state"));
+        f.service.sync().await.unwrap();
+        assert_eq!(std::fs::read_to_string(path(&f)).unwrap(), source);
+        assert_eq!(entries(&f).await[0]["content"], content);
+
+        f.service
+            .execute(
+                json!({"command":"inbox.cancel","inbox":id}),
+                WriteOptions::default(),
+            )
+            .await
+            .unwrap();
+        let source = std::fs::read_to_string(path(&f)).unwrap();
+        assert!(source.contains(&format!(
+            "- [-] Request <!-- taskcli:entry:{id} --> <!-- taskcli:entry-state CANCELLED --> · "
+        )));
+        assert!(!source.contains("agent:one"));
+    }
+}
+
+#[tokio::test]
+async fn inbox_legacy_receipt_migrates_without_changing_identity_or_content() {
+    let f = fixture("markdown").await;
+    let initial = std::fs::read_to_string(path(&f)).unwrap();
+    let id = "inbox_01a07760d6a673f2a863e0f105eb9783";
+    let legacy = format!(
+        "- [ ] Request <!-- taskcli:entry:{id} -->\n  Details.\n  <!-- taskcli:entry-state --> TODO\n\n"
+    );
+    std::fs::write(path(&f), initial.replace(END, &format!("{legacy}{END}"))).unwrap();
+    f.service.sync().await.unwrap();
+    let rows = entries(&f).await;
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["id"], id);
+    assert_eq!(rows[0]["content"], "Request\nDetails.");
+    assert_eq!(rows[0]["status"], "TODO");
+    let source = std::fs::read_to_string(path(&f)).unwrap();
+    assert!(source.contains(&format!(
+        "- [ ] Request <!-- taskcli:entry:{id} --> <!-- taskcli:entry-state TODO -->\n  Details.\n\n"
+    )));
+    f.service.sync().await.unwrap();
+    assert_eq!(entries(&f).await, rows);
+    assert_eq!(std::fs::read_to_string(path(&f)).unwrap(), source);
+}
+
+#[tokio::test]
 async fn inbox_import_preserves_markdown_and_ignores_nested_and_fenced_checklists() {
     for format in ["markdown", "obsidian"] {
         let f = fixture(format).await;
@@ -310,7 +380,10 @@ async fn inbox_completion_checks_the_box_and_idempotent_append_keeps_one_entry()
     assert!(
         std::fs::read_to_string(path(&f))
             .unwrap()
-            .contains("- [x] Ship")
+            .contains(&format!(
+                "- [x] Ship <!-- taskcli:entry:{} --> <!-- taskcli:entry-state DONE --> · ",
+                first.result["id"].as_str().unwrap()
+            ))
     );
 }
 

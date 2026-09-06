@@ -4,25 +4,18 @@ import { registerExtension, runHook } from "../runtime.mjs";
 
 const claimed = { claimed: true, entry: { id: "inbox_one", job_id: "job_one", revision: 2 }, job: { id: "job_one" } };
 
-test("Stop hooks continue a claimed Inbox Job and respect empty queues and plan mode", async () => {
+test("Stop hooks leave queued Inbox work for an explicit user request", async () => {
     for (const host of ["codex", "claude"]) {
         const calls = [];
-        let next = claimed;
         const runner = async (args, options) => {
             calls.push({ args, options });
-            return { result: args[1] === "stop" ? next : {} };
+            return { result: args[1] === "stop" ? claimed : {} };
         };
         const event = { hook_event_name: "Stop", session_id: "session", cwd: "/work", ...(host === "codex" ? { turn_id: "turn" } : {}) };
-        const output = await runHook(event, runner);
-        assert.equal(output.decision, "block");
-        assert.match(output.reason, /job_one/);
-        assert.equal(calls.at(-1).options.executor, `agent:${host}`);
-        next = { claimed: false, reason: "active_jobs" };
-        assert.deepEqual(await runHook({ ...event, stop_hook_active: true }, runner), {});
-        next = claimed;
-        const before = calls.filter(c => c.args[1] === "stop").length;
-        assert.deepEqual(await runHook({ ...event, permission_mode: "plan" }, runner), {});
-        assert.equal(calls.filter(c => c.args[1] === "stop").length, before);
+        for (const extra of [{}, { stop_hook_active: true }, { permission_mode: "plan" }]) {
+            assert.deepEqual(await runHook({ ...event, ...extra }, runner), {});
+        }
+        assert.deepEqual(calls.map(call => call.args), Array(3).fill(["hook", "heartbeat"]));
     }
 });
 
@@ -36,80 +29,28 @@ test("tool hooks surface human cancellation without restarting an interrupted tu
 });
 
 for (const host of ["pi", "omp"]) {
-    test(`${host} releases intake if a new turn starts while the claim is pending`, async () => {
+    test(`${host} completion, idle events and heartbeats never take queued Inbox work`, async () => {
         const handlers = new Map(), messages = [], calls = [];
-        let resolveClaim, started;
-        const waiting = new Promise(resolve => { started = resolve; });
-        registerExtension({ on: (name, fn) => handlers.set(name, fn), registerTool() {}, sendMessage: message => messages.push(message) }, host,
-            async args => {
-                calls.push(args);
-                if (args[1] === "stop") {
-                    started();
-                    return new Promise(resolve => { resolveClaim = resolve; });
-                }
-                return { result: {} };
-            }, { setInterval: () => 1, clearInterval() {} });
-        const ctx = { cwd: "/work", isIdle: () => true, sessionManager: { getSessionId: () => "session" } };
-        await handlers.get("session_start")({}, ctx);
-        await handlers.get("agent_start")({}, ctx);
-        const end = handlers.get("agent_end")({ messages: [{ role: "assistant", stopReason: "stop" }] }, ctx);
-        const pending = host === "pi" ? end.then(() => handlers.get("agent_settled")({}, ctx)) : end;
-        await waiting;
-        await handlers.get("agent_start")({}, ctx);
-        resolveClaim({ result: { ...claimed, entry: { ...claimed.entry, lease: { token: "new_lease" } } } });
-        await pending;
-        assert.equal(messages.length, 0);
-        assert.ok(calls.some(args => args[0] === "inbox" && args[1] === "release"));
-        await handlers.get("session_shutdown")({}, ctx);
-    });
-
-    test(`${host} a new Inbox lease can continue a previously delivered entry`, async () => {
-        const handlers = new Map(), messages = [];
-        let revision = 2;
-        registerExtension({ on: (name, fn) => handlers.set(name, fn), registerTool() {}, sendMessage: message => messages.push(message) }, host,
-            async args => ({ result: args[1] === "stop" ? { ...claimed, entry: { ...claimed.entry, revision } } : {} }),
-            { setInterval: () => 1, clearInterval() {} });
-        const ctx = { cwd: "/work", isIdle: () => true, sessionManager: { getSessionId: () => "session" } };
-        await handlers.get("session_start")({}, ctx);
-        for (revision of [2, 4]) {
-            await handlers.get("agent_start")({}, ctx);
-            await handlers.get("agent_end")({ messages: [{ role: "assistant", stopReason: "stop" }] }, ctx);
-            if (host === "pi") await handlers.get("agent_settled")({}, ctx);
-        }
-        assert.equal(messages.length, 2);
-        await handlers.get("session_shutdown")({}, ctx);
-    });
-    test(`${host} only continues after a successful terminal settle and deduplicates delivery`, async () => {
-        const handlers = new Map(), messages = [], calls = [];
+        let heartbeat;
         const api = { on: (name, fn) => handlers.set(name, fn), registerTool() {}, sendMessage: (...args) => messages.push(args) };
         const ctx = { cwd: "/work", isIdle: () => true, hasPendingMessages: () => false, sessionManager: { getSessionId: () => "session" } };
         registerExtension(api, host, async args => {
             calls.push(args);
             return { result: args[1] === "stop" ? claimed : {} };
-        }, { setInterval: () => 1, clearInterval() {} });
+        }, { setInterval: fn => { heartbeat = fn; return 1; }, clearInterval() {} });
         const emit = (name, event = {}) => handlers.get(name)(event, ctx);
         await emit("session_start");
-        await emit("agent_start");
-        await emit("agent_end", { messages: [{ role: "assistant", stopReason: "stop" }] });
-        if (host === "pi") {
-            assert.equal(messages.length, 0);
-            await emit("agent_settled");
+        for (const stopReason of ["stop", "stop", "error", "aborted"]) {
+            await emit("before_agent_start");
+            await emit("agent_start");
+            await emit("agent_end", { messages: [{ role: "assistant", stopReason }] });
+            if (host === "pi") await emit("agent_settled");
+            await heartbeat();
         }
-        assert.equal(messages.length, 1);
-        assert.equal(messages[0][1].triggerTurn, true);
-        assert.equal(messages[0][1].deliverAs, "followUp");
-        assert.match(messages[0][0].content, /job_one/);
-        await emit(host === "pi" ? "agent_settled" : "agent_end", { messages: [{ role: "assistant", stopReason: "stop" }] });
-        assert.equal(messages.length, 1);
-        await emit("agent_start");
-        const before = calls.filter(c => c[1] === "stop").length;
-        await emit("agent_end", { messages: [{ role: "assistant", stopReason: "aborted" }], willContinue: true });
-        if (host === "pi") await emit("agent_settled");
-        assert.equal(calls.filter(c => c[1] === "stop").length, before);
-        await emit("agent_end", { messages: [{ role: "assistant", stopReason: "aborted" }] });
-        if (host === "pi") await emit("agent_settled");
-        assert.equal(messages.length, 1);
         await emit("session_shutdown");
+        assert.deepEqual(messages, []);
+        assert.ok(!calls.some(args => args[1] === "stop" || args[1] === "claim-next"));
+        assert.ok(calls.some(args => args[1] === "interrupt"));
     });
 
     test(`${host} Inbox release receives its own lease and preserves retry credentials`, async () => {

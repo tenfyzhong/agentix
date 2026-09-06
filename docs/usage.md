@@ -48,7 +48,7 @@ Preserve the current filter and column order.
 - [ ] Cover Unicode values
 ```
 
-The entire message becomes one `TODO` entry at the end of the Project Inbox. The reply links to its details. Agents take queued requirements after existing Project Jobs finish, then decompose and execute them through the normal task workflow. Submission also works with a read-only attachment and does not start an agent turn.
+The entire message becomes one `TODO` entry at the end of the Project Inbox. The reply links to its details. After reviewing the agent’s current result, explicitly ask it to take the next Job from the Inbox. Each request takes one eligible entry through the normal task workflow; completion returns control to you and does not start another Job. Submission also works with a read-only attachment and does not start an agent turn.
 
 You can also edit the Project's `Inbox.md`: use `- [-]` to cancel, or delete an unfinished entry to withdraw it. See [Project inbox](task-board.md#project-inbox) for leases, recovery, and cancellation rules. `/cancel` still cancels pending IM input; it does not cancel an Inbox entry.
 

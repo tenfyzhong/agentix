@@ -797,7 +797,7 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_see
 complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from stop session-start session-end interrupt heartbeat help" -l idempotency-key -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from stop session-start session-end interrupt heartbeat help" -l json
 complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from stop session-start session-end interrupt heartbeat help" -s h -l help -d 'Print help'
-complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from stop session-start session-end interrupt heartbeat help" -f -a "stop" -d 'Claim an Inbox requirement when this session\'s Project is ready to continue'
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from stop session-start session-end interrupt heartbeat help" -f -a "stop" -d 'Acknowledge turn completion without claiming Inbox work'
 complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from stop session-start session-end interrupt heartbeat help" -f -a "session-start" -d 'Recover the session\'s Tasks blocked by interruption or lease expiry into planning'
 complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from stop session-start session-end interrupt heartbeat help" -f -a "session-end" -d 'Record session shutdown and release its active Task leases'
 complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from stop session-start session-end interrupt heartbeat help" -f -a "interrupt" -d 'Release an interrupted session\'s Task leases while preserving its Plans'
@@ -858,7 +858,7 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_su
 complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from heartbeat" -l idempotency-key -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from heartbeat" -l json
 complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from heartbeat" -s h -l help -d 'Print help'
-complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from help" -f -a "stop" -d 'Claim an Inbox requirement when this session\'s Project is ready to continue'
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from help" -f -a "stop" -d 'Acknowledge turn completion without claiming Inbox work'
 complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from help" -f -a "session-start" -d 'Recover the session\'s Tasks blocked by interruption or lease expiry into planning'
 complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from help" -f -a "session-end" -d 'Record session shutdown and release its active Task leases'
 complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from help" -f -a "interrupt" -d 'Release an interrupted session\'s Task leases while preserving its Plans'
@@ -920,7 +920,7 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_su
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from plan" -f -a "revise" -d 'Replace the Plan body in the same Task note while holding its lease'
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from plan" -f -a "show" -d 'Show the current Plan\'s metadata and absolute file path for a Task'
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from event" -f -a "list" -d 'List events after a sequence cursor, optionally filtered by Job and limited in count'
-complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from hook" -f -a "stop" -d 'Claim an Inbox requirement when this session\'s Project is ready to continue'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from hook" -f -a "stop" -d 'Acknowledge turn completion without claiming Inbox work'
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from hook" -f -a "session-start" -d 'Recover the session\'s Tasks blocked by interruption or lease expiry into planning'
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from hook" -f -a "session-end" -d 'Record session shutdown and release its active Task leases'
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from hook" -f -a "interrupt" -d 'Release an interrupted session\'s Task leases while preserving its Plans'

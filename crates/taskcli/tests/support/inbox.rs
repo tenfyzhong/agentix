@@ -169,7 +169,7 @@ fn inbox_cli_processes_racing_to_claim_have_one_winner() {
 }
 
 #[test]
-fn inbox_stop_requires_prior_session_work_and_does_not_loop() {
+fn inbox_stop_never_claims_and_explicit_intake_still_works() {
     let cli = Cli::new("markdown");
     let project = project(&cli);
     cli.ok(&[
@@ -204,8 +204,33 @@ fn inbox_stop_requires_prior_session_work_and_does_not_loop() {
         "agent:codex",
     ]);
     cli.ok(&["job", "cancel", job["id"].as_str().unwrap()]);
-    assert_eq!(cli.ok(&stop)["claimed"], true);
-    assert_eq!(cli.ok(&stop)["claimed"], false);
+    let before = cli.ok(&["inbox", "list", "--project", &project]);
+    for _ in 0..2 {
+        let stopped = cli.ok(&stop);
+        assert_eq!(stopped["claimed"], false);
+        assert_eq!(stopped["reason"], "manual_intake_required");
+    }
+    assert_eq!(cli.ok(&["inbox", "list", "--project", &project]), before);
+    assert_eq!(
+        cli.ok(&["job", "list", "--project", &project])
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        cli.ok(&[
+            "inbox",
+            "claim-next",
+            "--project",
+            &project,
+            "--session",
+            "worker",
+            "--executor",
+            "agent:codex"
+        ])["claimed"],
+        true
+    );
     let job_id = cli.ok(&["context", "--session", "worker"])["job_id"]
         .as_str()
         .unwrap()

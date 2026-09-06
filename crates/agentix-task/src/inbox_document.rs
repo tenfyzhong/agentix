@@ -8,7 +8,8 @@ use crate::{InboxEntry, InboxStatus, Project, Service, Snapshot, WriteOptions, n
 
 const END: &str = "<!-- taskcli:inbox:end -->";
 const ID: &str = " <!-- taskcli:entry:";
-const RECEIPT: &str = "  <!-- taskcli:entry-state -->";
+const LEGACY_RECEIPT: &str = "  <!-- taskcli:entry-state -->";
+const STATE: &str = " <!-- taskcli:entry-state ";
 
 struct ParsedEntry {
     id: Option<String>,
@@ -20,6 +21,18 @@ struct ParsedEntry {
 
 fn start(project: &str) -> String {
     format!("<!-- taskcli:inbox:start project={project} -->")
+}
+
+fn strip_inline_receipt(header: &str) -> Result<&str> {
+    if let Some((header, receipt)) = header.split_once(STATE) {
+        ensure!(
+            receipt.contains(" -->"),
+            "invalid: Inbox entry state marker"
+        );
+        Ok(header)
+    } else {
+        Ok(header)
+    }
 }
 
 fn parse(source: &str, project: &str) -> Result<Vec<ParsedEntry>> {
@@ -68,7 +81,7 @@ fn parse(source: &str, project: &str) -> Result<Vec<ParsedEntry>> {
                 && &line[4..6] == "] ",
             "invalid: Inbox checkbox"
         );
-        let header = line[6..].trim_end_matches(['\r', '\n']);
+        let header = strip_inline_receipt(line[6..].trim_end_matches(['\r', '\n']))?;
         let (title, id) = if let Some((title, suffix)) = header.rsplit_once(ID) {
             let id = suffix
                 .strip_suffix(" -->")
@@ -95,7 +108,7 @@ fn parse(source: &str, project: &str) -> Result<Vec<ParsedEntry>> {
             if !next.trim().is_empty() && !next.starts_with("  ") && !next.starts_with('\t') {
                 break;
             }
-            if !next.starts_with(RECEIPT) {
+            if !next.starts_with(LEGACY_RECEIPT) {
                 content.push('\n');
                 content.push_str(
                     next.strip_prefix("  ")
@@ -157,7 +170,7 @@ impl Service {
                 path.display()
             );
             let template = format!(
-                "---\nproject_id: {}\ntags:\n  - agent/inbox\n---\n\n# Inbox\n\nAppend a top-level `- [ ] Request` below. Indent details under it.\nUse `- [-]` to cancel. Removing an unfinished entry withdraws it.\nKeep entry IDs and document markers intact. Status and Job links are managed by taskcli.\n\n{}\n\n{END}\n",
+                "---\nproject_id: {}\ntags:\n  - agent/inbox\n---\n\n# Inbox\n\nAdd `- [ ] Request` below; indent details. Cancel with `- [-]`.\n\n{}\n\n{END}\n",
                 project.id,
                 start(&project.id)
             );
@@ -256,18 +269,11 @@ impl Service {
             _ => ' ',
         };
         let mut output = format!(
-            "- [{check}] {}{ID}{} -->\n",
+            "- [{check}] {}{ID}{} -->{STATE}{} -->",
             lines.next().unwrap_or_default(),
-            entry.id
+            entry.id,
+            entry.status
         );
-        for line in lines {
-            if !line.is_empty() {
-                output.push_str("  ");
-                output.push_str(line);
-            }
-            output.push('\n');
-        }
-        output.push_str(&format!("{RECEIPT} {}", entry.status));
         if let Some(job) = entry
             .job_id
             .as_ref()
@@ -284,7 +290,15 @@ impl Service {
         if let Some(lease) = &entry.lease {
             output.push_str(&format!(" · {}", lease.executor_ref));
         }
-        output.push_str("\n\n");
+        output.push('\n');
+        for line in lines {
+            if !line.is_empty() {
+                output.push_str("  ");
+                output.push_str(line);
+            }
+            output.push('\n');
+        }
+        output.push('\n');
         output
     }
 }

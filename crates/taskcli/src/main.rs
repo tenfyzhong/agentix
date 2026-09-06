@@ -332,7 +332,7 @@ enum EventCommand {
 }
 #[derive(Subcommand)]
 enum HookCommand {
-    /// Claim an Inbox requirement when this session's Project is ready to continue.
+    /// Acknowledge turn completion without claiming Inbox work.
     Stop,
     /// Recover the session's Tasks blocked by interruption or lease expiry into planning.
     SessionStart,
@@ -907,7 +907,12 @@ async fn hook(cli: &Cli, service: &Service, action: &HookCommand) -> Result<Valu
         .or_else(|| event["session_id"].as_str())
         .context("hook requires session_id on stdin or --session")?;
     let command = match action {
-        HookCommand::Stop => return inbox_stop(cli, service, session).await,
+        // Keep the legacy entrypoint safe for installed plugins that still call it.
+        HookCommand::Stop => {
+            return Ok(response(
+                json!({"claimed":false,"reason":"manual_intake_required"}),
+            ));
+        }
         HookCommand::SessionStart => "session.start",
         HookCommand::SessionEnd => "session.end",
         HookCommand::Interrupt => "session.interrupt",
@@ -934,47 +939,6 @@ async fn inbox(cli: &Cli, service: &Service, action: &InboxCommand) -> Result<Va
         }
     };
     mutate(cli, service, request).await
-}
-
-async fn inbox_stop(cli: &Cli, service: &Service, session: &str) -> Result<Value> {
-    let state = service.store().snapshot().await?;
-    let project = if let Some(id) = &cli.project {
-        Some(state.projects[state.project_index(id)?].clone())
-    } else {
-        let cwd = std::env::current_dir()?;
-        service
-            .project_for_session(Some(&cwd), Some(session))
-            .await?
-    };
-    let Some(project) = project else {
-        return Ok(response(json!({"claimed":false,"reason":"no_project"})));
-    };
-    let participated = state
-        .jobs
-        .iter()
-        .any(|j| j.project_id == project.id && j.session_id.as_deref() == Some(session))
-        || state
-            .tasks
-            .iter()
-            .any(|t| t.project_id == project.id && t.last_session.as_deref() == Some(session))
-        || state
-            .inboxes
-            .iter()
-            .any(|e| e.project_id == project.id && e.last_session.as_deref() == Some(session));
-    if !participated || project.archived_at.is_some() {
-        return Ok(response(json!({"claimed":false,"reason":"not_eligible"})));
-    }
-    let mut options = cli.options();
-    options.session_ref = Some(session.into());
-    let outcome = service
-        .execute(
-            json!({"command":"inbox.claim-next","project":project.id}),
-            options,
-        )
-        .await?;
-    Ok(
-        json!({"schema_version":1,"ok":true,"result":outcome.result,"sequence":outcome.sequence,"projection_pending":outcome.projection_pending}),
-    )
 }
 
 fn date(value: &str) -> Result<i64> {
