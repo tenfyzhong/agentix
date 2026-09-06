@@ -88,6 +88,7 @@ jobs:
         run: |
           brew uninstall --force "$FORMULA" || true
           brew install --build-bottle "$TAP_NAME/$FORMULA"
+          brew test "$TAP_NAME/$FORMULA"
           brew bottle --json --no-rebuild --root-url "$BOTTLE_ROOT_URL" "$TAP_NAME/$FORMULA"
       - name: Normalize Homebrew bottle asset name
         run: |
