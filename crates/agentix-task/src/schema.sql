@@ -61,5 +61,5 @@ CREATE TABLE IF NOT EXISTS inbox_entries (
     project_id TEXT GENERATED ALWAYS AS (json_extract(data, '$.project_id')) STORED REFERENCES projects(id)
 );
 CREATE INDEX IF NOT EXISTS inbox_by_project ON inbox_entries(project_id);
-PRAGMA user_version = 8;
+PRAGMA user_version = 9;
 PRAGMA application_id = 0x4158544b;

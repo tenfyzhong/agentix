@@ -376,6 +376,26 @@ async fn inbox_completion_checks_the_box_and_idempotent_append_keeps_one_entry()
         .execute(json!({"command":"task.done","task":t["id"]}), owner(&owned))
         .await
         .unwrap();
+    assert_eq!(entries(&f).await[0]["status"], "IN_PROGRESS");
+    assert!(entries(&f).await[0]["lease"].is_null());
+    assert_eq!(claim(&f, "other").await["claimed"], false);
+    f.service.execute(json!({"command":"job.reject","job":claimed["job"]["id"],"reason":"Needs another review"}), WriteOptions::default()).await.unwrap();
+    assert_eq!(entries(&f).await[0]["status"], "TODO");
+    f.service
+        .execute(
+            json!({"command":"job.submit","job":claimed["job"]["id"]}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(entries(&f).await[0]["status"], "IN_PROGRESS");
+    f.service
+        .execute(
+            json!({"command":"job.approve","job":claimed["job"]["id"]}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
     assert_eq!(entries(&f).await[0]["status"], "DONE");
     assert!(
         std::fs::read_to_string(path(&f))

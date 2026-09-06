@@ -38,6 +38,63 @@ impl Service {
         &self.store
     }
 
+    /// Authoritative identities and status properties for the Obsidian bridge.
+    /// Paths are relative to the vault; no ownership credentials are exported.
+    pub async fn obsidian_snapshot(&self) -> Result<Value> {
+        ensure!(
+            self.config.documents.format == DocumentFormat::Obsidian,
+            "Obsidian snapshot requires documents.format = obsidian"
+        );
+        let state = self.store.snapshot().await?;
+        let mut notes = Vec::new();
+        let path = |relative: &str| -> Result<String> {
+            self.safe_path(relative)?;
+            Ok(self
+                .config
+                .documents
+                .directory
+                .join(relative)
+                .to_string_lossy()
+                .replace('\\', "/")
+                .trim_start_matches("./")
+                .to_owned())
+        };
+        for task in &state.tasks {
+            let document = self.task_document(&state, task, None, "")?;
+            let (generated, _) = split_properties(&document)?;
+            let mut properties = serde_json::Map::new();
+            for key in [
+                "status",
+                "revision",
+                "phase",
+                "dependencies",
+                "started_at",
+                "completed_at",
+                "updated_at",
+                "completedDate",
+                "dateModified",
+            ] {
+                properties.insert(key.into(), generated[key].clone());
+            }
+            notes.push(
+                json!({"kind":"task","id":task.id,"project_id":task.project_id,
+                "path":path(&crate::naming::task_path(&state, task)?)?,
+                "status":task.status,"revision":task.revision,"properties":properties}),
+            );
+        }
+        for job in &state.jobs {
+            notes.push(json!({"kind":"job","id":job.id,"project_id":job.project_id,
+                "path":path(&job.document_path)?,"status":job.status,"revision":job.revision,
+                "properties":{"status":job.status,"revision":job.revision,
+                    "review_reason":job.review_reason,"completed_at":optional_timestamp(job.completed_at),
+                    "cancelled_at":optional_timestamp(job.cancelled_at),
+                    "updated_at":timestamp(job.updated_at),
+                    "completedDate":optional_local_timestamp(job.completed_at)?,
+                    "dateModified":local_timestamp(job.updated_at)?}}));
+        }
+        Ok(json!({"documents":self.config.documents,"notes":notes}))
+    }
+
     pub async fn execute(&self, request: Value, options: WriteOptions) -> Result<Outcome> {
         self.store.reap_expired().await?;
         let command = required(&request, "command")?;
@@ -320,24 +377,18 @@ impl Service {
                 } else {
                     goal
                 };
-                let mut properties = serde_json::to_value(job)?;
-                for field in [
-                    "created_at",
-                    "updated_at",
-                    "started_at",
-                    "completed_at",
-                    "cancelled_at",
-                    "archived_at",
-                ] {
-                    properties[field] = properties[field].as_i64().map_or(Value::Null, timestamp);
-                }
-                properties["tags"] = if job.archived_at.is_some() {
-                    json!(["agent/archived/job"])
-                } else {
-                    json!(["agent/job"])
-                };
-                for field in ["goal", "prompt", "document_path", "title", "name"] {
+                let mut properties = split_properties(&existing)?.0;
+                properties.as_object_mut().unwrap().extend(
+                    self.job_properties(job, project)?
+                        .as_object()
+                        .unwrap()
+                        .clone(),
+                );
+                for field in ["goal", "prompt", "document_path", "name"] {
                     properties.as_object_mut().unwrap().remove(field);
+                }
+                if self.config.documents.format == DocumentFormat::Markdown {
+                    properties.as_object_mut().unwrap().remove("title");
                 }
                 let mut doc = frontmatter(properties);
                 doc.push_str(&Self::header(&job.name));
@@ -547,7 +598,7 @@ impl Service {
     }
 
     fn notice() -> &'static str {
-        "> GENERATED — DO NOT EDIT task fields. Use taskcli or an Agent."
+        "> GENERATED — Use taskcli for managed fields; Obsidian status edits require Taskcli Sync."
     }
 
     fn dashboard(&self, state: &Snapshot, created: i64) -> Result<(String, String)> {
@@ -609,34 +660,41 @@ impl Service {
         Ok(("Dashboard.md".into(), doc))
     }
 
+    fn job_properties(&self, job: &crate::Job, project: &crate::Project) -> Result<Value> {
+        let mut properties = serde_json::to_value(job)?;
+        for field in [
+            "created_at",
+            "updated_at",
+            "started_at",
+            "completed_at",
+            "cancelled_at",
+            "archived_at",
+        ] {
+            properties[field] = properties[field].as_i64().map_or(Value::Null, timestamp);
+        }
+        properties["tags"] = if job.archived_at.is_some() {
+            json!(["agent/archived/job"])
+        } else {
+            json!(["agent/job"])
+        };
+        if self.config.documents.format == DocumentFormat::Obsidian {
+            properties["title"] = json!(job.name);
+            properties["archived"] =
+                json!(job.archived_at.is_some() || project.archived_at.is_some());
+            properties["dateCreated"] = local_timestamp(job.created_at)?;
+            properties["dateModified"] = local_timestamp(job.updated_at)?;
+            properties["completedDate"] = optional_local_timestamp(job.completed_at)?;
+        }
+        Ok(properties)
+    }
+
     fn tasknotes_board(
         &self,
         project: &crate::Project,
         sequence: i64,
         updated_at: i64,
     ) -> Result<String> {
-        let title = format!("{} — Task board", project.name);
-        let folder = self
-            .config
-            .documents
-            .directory
-            .join(format!("Projects/{}/Tasks", project.key));
-        let folder = folder.to_string_lossy().replace('\\', "/");
-        let folder = folder.trim_start_matches("./");
-        let mut view = json!({
-            "type": "tasknotesKanban",
-            "name": "Task board",
-            "groupBy": {"property":"status", "direction":"ASC"},
-            "order": ["status"],
-            "sort": [{"column":"file.name", "direction":"ASC"}]
-        });
-        view["columnOrder"] = json!({"status":TaskStatus::ALL});
-        view["hideEmptyColumns"] = json!(false);
-        view["columnWidth"] = json!(300);
-        let base = json!({
-            "filters": {"and": [format!("file.folder == {}", json!(folder)), "file.hasTag(\"agent/task\")", format!("project_id == {}", json!(project.id)), "archived != true"]},
-            "views": [view]
-        });
+        let title = format!("{} — Board", project.name);
         let mut doc = frontmatter(
             json!({"id":project.id,"name":project.name,"created_at":timestamp(project.created_at),"updated_at":timestamp(updated_at),"title":title,"revision":project.revision,"root":project.root,"remote":project.remote,"archived_at":optional_timestamp(project.archived_at),"status":if project.archived_at.is_some() {"ARCHIVED"} else {"ACTIVE"},"sync_status":"synced","sync_sequence":sequence,"tags":["agent/project","agent/board"]}),
         );
@@ -650,10 +708,32 @@ impl Service {
                 "Inbox"
             )
         ));
-        doc.push_str(&format!(
-            "\n```base\n{}\n```\n",
-            serde_yaml::to_string(&base)?.trim_end()
-        ));
+        for (kind, folder, statuses) in [
+            ("Job", "Jobs", json!(crate::JobStatus::ALL)),
+            ("Task", "Tasks", json!(TaskStatus::ALL)),
+        ] {
+            let folder = self
+                .config
+                .documents
+                .directory
+                .join(format!("Projects/{}/{folder}", project.key));
+            let folder = folder.to_string_lossy().replace('\\', "/");
+            let folder = folder.trim_start_matches("./");
+            let base = json!({
+                "filters": {"and": [format!("file.folder == {}", json!(folder)), format!("file.hasTag(\"agent/{}\")", kind.to_lowercase()), format!("project_id == {}", json!(project.id)), "archived != true"]},
+                "views": [{
+                    "type": "tasknotesKanban", "name": format!("{kind} board"),
+                    "groupBy": {"property": "status", "direction": "ASC"},
+                    "order": ["status"], "sort": [{"column": "file.name", "direction": "ASC"}],
+                    "columnOrder": {"status": statuses}, "pinnedColumns": statuses,
+                    "hideEmptyColumns": true, "columnWidth": 300
+                }]
+            });
+            doc.push_str(&format!(
+                "\n## {kind} board\n\n```base\n{}\n```\n",
+                serde_yaml::to_string(&base)?.trim_end()
+            ));
+        }
         Ok(doc)
     }
 

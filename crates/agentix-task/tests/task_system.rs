@@ -25,6 +25,9 @@ mod dashboard;
 #[path = "support/inbox.rs"]
 mod inbox;
 
+#[path = "support/job_review.rs"]
+mod job_review;
+
 struct Fixture {
     dir: TempDir,
     service: Service,
@@ -34,6 +37,15 @@ struct Fixture {
 }
 
 impl Fixture {
+    async fn approve(&self) {
+        self.service
+            .execute(
+                json!({"command":"job.approve","job":self.job}),
+                WriteOptions::default(),
+            )
+            .await
+            .unwrap();
+    }
     fn dashboard_file(&self) -> &'static str {
         match self.service.config().documents.format {
             agentix_task::DocumentFormat::Obsidian => "Dashboard.base",
@@ -618,7 +630,7 @@ async fn legacy_executing_tasks_migrate_without_losing_their_lease_or_history() 
         .fetch_one(&mut db)
         .await
         .unwrap();
-    assert_eq!(version, 8);
+    assert_eq!(version, 9);
 }
 
 #[tokio::test]
@@ -742,7 +754,7 @@ async fn stale_lease_cannot_heartbeat_or_complete_after_reclaim() {
         f.service.store().snapshot().await.unwrap().jobs[0]
             .status
             .to_string(),
-        "COMPLETED"
+        "PENDING_REVIEW"
     );
 }
 
@@ -965,6 +977,7 @@ async fn projections_are_read_only_preserve_notes_and_archive_links() {
             .execute(json!({"command":"task.done","task":id}), owner(&claim))
             .await
             .unwrap();
+        f.approve().await;
         f.service
             .execute(
                 json!({"command":"job.archive","job":f.job}),
@@ -1147,7 +1160,7 @@ async fn job_type_tags_switch_exclusively_on_archive_and_restore() {
 }
 
 #[tokio::test]
-async fn job_frontmatter_omits_paths_titles_names_and_embedded_tasks() {
+async fn job_frontmatter_omits_internal_fields_and_keeps_obsidian_display_title() {
     for format in ["markdown", "obsidian"] {
         let f = Fixture::new(format).await;
         f.task("Visible task").await;
@@ -1171,7 +1184,13 @@ async fn job_frontmatter_omits_paths_titles_names_and_embedded_tasks() {
             let (_, rest) = doc.split_once("---\n").unwrap();
             let (yaml, body) = rest.split_once("---\n").unwrap();
             let properties: Value = serde_yaml::from_str(yaml).unwrap();
-            for field in ["document_path", "task", "tasks", "title", "name"] {
+            if format == "obsidian" {
+                assert_eq!(properties["title"], job.name);
+                assert_eq!(properties["archived"], archived);
+            } else {
+                assert!(properties.get("title").is_none());
+            }
+            for field in ["document_path", "task", "tasks", "name"] {
                 assert!(
                     properties.get(field).is_none(),
                     "{field} must be absent in {format} Job properties"
@@ -1777,6 +1796,7 @@ async fn archive_repair_preserves_notes_after_old_file_was_removed() {
         .await
         .unwrap()
         .unwrap();
+    f.approve().await;
     f.service
         .execute(
             json!({"command":"job.archive","job":f.job}),
@@ -1920,7 +1940,7 @@ async fn dependencies_can_cross_jobs_but_cannot_change_after_execution_starts() 
             .unwrap()
             .jobs
             .iter()
-            .all(|j| j.status == agentix_task::JobStatus::Completed)
+            .all(|j| j.status == agentix_task::JobStatus::PendingReview)
     );
 }
 
@@ -2526,6 +2546,7 @@ async fn metadata_and_status_checklists_include_completed_jobs_until_archived() 
         assert!(!body.contains(&f.job));
         assert!(body.contains("260905-0001-Short task"), "{body}");
         assert!(body.contains(if format == "obsidian" { "[[" } else { "[" }));
+        f.approve().await;
         f.service
             .execute(
                 json!({"command":"job.archive","job":f.job}),

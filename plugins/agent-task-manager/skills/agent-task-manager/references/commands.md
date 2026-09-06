@@ -11,13 +11,14 @@ taskcli inbox release inbox_ID --session HOST_SESSION --lease-token INBOX_LEASE_
 taskcli inbox cancel inbox_ID --json
 ```
 
-`add` appends one complete Markdown body. `list` and `sync` import human submissions, cancellation marks (`- [-]`), and withdrawals. `claim-next` returns `claimed`, an `entry` with its separate lease, and the existing or newly created `job`; an empty or ineligible queue returns `claimed: false` and a reason. Use that Job with the normal Task workflow. `context` exposes the owned Inbox entry even before its first Task exists. `hook stop` is a compatibility no-op that returns `claimed: false` with reason `manual_intake_required`. Lifecycle hooks never claim or enqueue Inbox work. After completing the claimed Job, return the result and wait for the next explicit user request. Normal Job completion automatically checks off its Inbox entry. Cancelling or deleting an unfinished entry preserves history and prevents old lease holders from continuing.
+`add` appends one complete Markdown body. `list` and `sync` import human submissions, cancellation marks (`- [-]`), and withdrawals. `claim-next` returns `claimed`, an `entry` with its separate lease, and the existing or newly created `job`; an empty or ineligible queue returns `claimed: false` and a reason. Use that Job with the normal Task workflow. `context` exposes the owned Inbox entry even before its first Task exists. `hook stop` is a compatibility no-op that returns `claimed: false` with reason `manual_intake_required`. Lifecycle hooks never claim or enqueue Inbox work. After completing the claimed Job, return the result and wait for the next explicit user request. Job approval checks off its Inbox entry; PENDING_REVIEW leaves it IN_PROGRESS without a lease. Rejection returns it to TODO for resumption of the same Job. Cancelling or deleting an unfinished entry preserves history and prevents old lease holders from continuing.
 
 Configuration defaults to `~/.config/taskcli/config.toml`; `TASKCLI_CONFIG` or `--config` selects another file. Run `taskcli <command> --help` for arguments. `--json` always has `schema_version`, `ok`, and `result` or `error`. Exit codes: 0 success, 1 business/runtime failure, 2 argument error.
 
 ```sh
 taskcli project register --json
 taskcli job list --active --json
+taskcli job list --pending-review --json
 taskcli job create --project prj_ID --title 'Requirement' --goal 'Acceptance checks' --prompt 'Original user request' --executor agent:HOST --session HOST_SESSION --json
 taskcli task add --job job_ID --title 'Deliver the interface with passing unit tests' --name 'Build interface' --executor agent:HOST --session HOST_SESSION --json
 taskcli task add --job job_ID --title 'Integrate the interface with passing end-to-end checks' --name 'Integrate interface' --executor agent:HOST --session HOST_SESSION --json
@@ -67,3 +68,15 @@ For explicitly requested permanent removal, use `taskcli job delete JOB_ID` or `
 
 
 Host interruption releases the lease and preserves the Plan. Pi/OMP stop their heartbeat timer until new work begins. Starting a new prompt restarts heartbeat but does not claim the Task: inspect context, claim again, review the Plan, and explicitly start. Claude’s interrupted-tool-failure hook only handles events carrying `is_interrupt: true`; cancelling a turn may emit no such event. After stopping the agent, `taskcli hook interrupt --session HOST_SESSION` explicitly releases its active Tasks, and `taskcli hook session-end --session HOST_SESSION` records session shutdown. Do not send cleanup for a session still working. Force-kills and missed hooks retain the lease-expiry fallback.
+
+Review commands (approval requires completed verification):
+
+```sh
+taskcli job reject job_ID --reason 'Acceptance check failed' --expect-revision 7 --json
+taskcli job submit job_ID --json
+taskcli job approve job_ID --expect-revision 9 --json
+taskcli obsidian snapshot --json
+taskcli obsidian setup --json
+```
+
+`submit`, `approve`, and `reject` support expected revisions and idempotency keys. Submit requires ACTIVE and ready Tasks; approve/reject require PENDING_REVIEW. Reject preserves all Task outcomes and records `review_reason`. Approval alone sets Job completion time. All status changes remain subject to CLI guards when initiated by Taskcli Sync in Obsidian.

@@ -71,3 +71,14 @@ The normal suite needs no live account, model, host installation, or desktop. To
 Host installer discovery/trust, real model behavior, host events on actual terminal interruption/exit, live IM credentials/permissions, and a live external rmux daemon require environment acceptance. A mock event test establishes what the adapter does when the event arrives; it cannot establish that every host version emits it. Force-kill and missed-hook recovery retain the lease-expiry fallback. Multi-machine or network-filesystem coordination is outside the supported concurrency model.
 
 CI runs the full workspace suite on Linux/macOS. Windows checks the workspace and runs native TCP control plus task library/CLI/plugin tests. Timestamp tests verify the system-local offset on all platforms. Unix additionally tests process `TZ` overrides; Windows switches the runner system time zone through Tokyo (UTC+09:00), SA Pacific (UTC-05:00), and UTC, with explicit expected offsets and restoration in `finally`. Native Obsidian rendering is opt-in and is not run in CI. When adding a feature, extend the boundary tests and this map; do not describe an unexecuted live check as covered by its mock.
+
+### Job verification and Obsidian status editing
+
+| Behavior | Reusable tests |
+| --- | --- |
+| Automatic review readiness, rejection and resubmission, approval timestamps/events, Inbox gating, schema 8 migration | [Job review tests](../crates/agentix-task/tests/support/job_review.rs), [Inbox tests](../crates/agentix-task/tests/support/inbox.rs), [CLI review tests](../crates/taskcli/tests/support/job_review.rs) |
+| Snapshot identities, paths and lease omission | [Snapshot CLI tests](../crates/taskcli/tests/support/obsidian_sync.rs) |
+| Debouncing, ownership conflicts, revision fencing, timeout confirmation, rollback, newer edits, projection echoes and unload | [Sync engine tests](../plugins/agent-task-manager/tests/obsidian-sync.test.mjs), [real CLI integration](../plugins/agent-task-manager/tests/integration.mjs) |
+| Dual Boards, scoped filters, pinned columns, Job properties and pastel status presets | [TaskNotes projection tests](../crates/agentix-task/tests/support/tasknotes.rs), [setup tests](../crates/taskcli/tests/obsidian_setup.rs) |
+| Embedded plugin installation, preserved settings, backups, malformed configuration and symlink rejection | [setup tests](../crates/taskcli/tests/obsidian_setup.rs), [package tests](../plugins/agent-task-manager/tests/package.test.mjs) |
+| Desktop rendering and saved frontmatter edits with a temporary plugin instance and isolated database | [opt-in Obsidian smoke test](../crates/taskcli/tests/obsidian_smoke.rs) |

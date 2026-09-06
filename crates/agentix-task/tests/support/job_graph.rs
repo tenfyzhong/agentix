@@ -292,6 +292,7 @@ async fn job_graph_refreshes_status_and_links_after_rename_and_archive() {
             )
             .await
             .unwrap();
+        f.approve().await;
         f.service
             .execute(
                 json!({"command":"job.archive","job":f.job}),

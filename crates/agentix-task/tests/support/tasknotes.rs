@@ -91,17 +91,17 @@ async fn agent_session_legacy_jobs_deserialize_and_sync_with_unknown_identity() 
     assert_eq!(props.get("session_id"), Some(&Value::Null));
 }
 
+fn named_base(document: &str, name: &str) -> Value {
+    document
+        .split("```base\n")
+        .skip(1)
+        .map(|block| serde_yaml::from_str::<Value>(block.split_once("\n```").unwrap().0).unwrap())
+        .find(|base| base["views"][0]["name"] == name)
+        .expect("named embedded TaskNotes Base")
+}
+
 fn base(document: &str) -> Value {
-    serde_yaml::from_str(
-        document
-            .split_once("```base\n")
-            .expect("embedded TaskNotes Base")
-            .1
-            .split_once("\n```")
-            .unwrap()
-            .0,
-    )
-    .unwrap()
+    named_base(document, "Task board")
 }
 
 #[tokio::test]
@@ -425,7 +425,11 @@ async fn tasknotes_views_use_scoped_frontmatter_and_preserve_every_status() {
         board["views"][0]["columnOrder"]["status"],
         json!(task_status_names())
     );
-    assert_eq!(board["views"][0]["hideEmptyColumns"], false);
+    assert_eq!(board["views"][0]["hideEmptyColumns"], true);
+    assert_eq!(
+        board["views"][0]["pinnedColumns"],
+        json!(task_status_names())
+    );
     let state = f.service.store().snapshot().await.unwrap();
     for task in &state.tasks {
         let filename = format!("260905-{:04}-{}.md", task.sequence, task.name);
@@ -781,4 +785,46 @@ async fn sync_removes_managed_task_lists_and_their_navigation_links() {
         assert!(!doc.contains("Task list"));
         assert!(!doc.contains("Tasks.md"));
     }
+}
+
+#[tokio::test]
+async fn job_board_has_four_pinned_columns_and_job_display_properties() {
+    let f = Fixture::new("obsidian").await;
+    let root = f.service.config().output_dir();
+    let board = std::fs::read_to_string(root.join("Projects/demo/Board.md")).unwrap();
+    assert_eq!(board.matches("```base\n").count(), 2);
+    assert!(board.find("name: Job board").unwrap() < board.find("name: Task board").unwrap());
+    let base = named_base(&board, "Job board");
+    let statuses = json!(["ACTIVE", "PENDING_REVIEW", "COMPLETED", "CANCELLED"]);
+    assert_eq!(base["views"][0]["type"], "tasknotesKanban");
+    assert_eq!(base["views"][0]["pinnedColumns"], statuses);
+    assert_eq!(base["views"][0]["columnOrder"]["status"], statuses);
+    assert_eq!(base["views"][0]["hideEmptyColumns"], true);
+    assert_eq!(base["views"][0]["columnWidth"], 300);
+    assert_eq!(
+        base["filters"]["and"],
+        json!([
+            "file.folder == \"Tasks ☃/Projects/demo/Jobs\"",
+            "file.hasTag(\"agent/job\")",
+            format!("project_id == {:?}", f.project),
+            "archived != true"
+        ])
+    );
+    let state = f.service.store().snapshot().await.unwrap();
+    let job = &state.jobs[0];
+    let path = root.join(&job.document_path);
+    let document = std::fs::read_to_string(&path).unwrap();
+    let props = properties(&document);
+    assert_eq!(props["title"], job.name);
+    assert_eq!(props["archived"], false);
+    assert!(props["dateCreated"].is_string());
+    assert!(props["dateModified"].is_string());
+    assert!(props["completedDate"].is_null());
+    assert!(!props["tags"].as_array().unwrap().contains(&json!("task")));
+    std::fs::write(&path, document.replacen("---\n", "---\ncustom: kept\n", 1)).unwrap();
+    f.service.sync().await.unwrap();
+    assert_eq!(
+        properties(&std::fs::read_to_string(path).unwrap())["custom"],
+        "kept"
+    );
 }

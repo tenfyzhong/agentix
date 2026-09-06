@@ -132,3 +132,9 @@ These tests do not install the plugin in a user's host or invoke a live model. N
 ## Obsidian setup
 
 See the [TaskNotes setup guide](obsidian/README.md) for task identification, seven English statuses, migration, and usage. [tasknotes-settings.json](obsidian/tasknotes-settings.json) supplies the settings subset; merge it with existing vault settings. TaskNotes provides status colors. The plugin does not automatically change vault appearance.
+
+## Obsidian status editing and Job review
+
+Run `taskcli obsidian setup` to install TaskNotes and the bundled desktop Taskcli Sync plugin. Board contains a pastel Job status board above the Task board. Saved status edits are submitted through taskcli; rejected changes are restored with a notification. See [Obsidian setup and supported edits](obsidian/README.md#status-edits).
+
+Finishing all non-cancelled Tasks submits their Job to PENDING_REVIEW. Verification passes with `job approve`, or fails with `job reject --reason` to return the Job to ACTIVE while preserving Task outcomes. Use `job submit` to resubmit ready work explicitly. Update all taskcli and Agentix database writers together for schema 9.

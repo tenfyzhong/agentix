@@ -9,6 +9,12 @@ mod projections;
 #[path = "support/inbox.rs"]
 mod inbox;
 
+#[path = "support/job_review.rs"]
+mod job_review;
+
+#[path = "support/obsidian_sync.rs"]
+mod obsidian_sync;
+
 struct Cli {
     dir: TempDir,
 }
@@ -784,7 +790,8 @@ fn standalone_json_workflow_in_both_document_formats() {
             "--lease-token",
             token,
         ]);
-        assert_eq!(cli.ok(&["job", "show", jid])["status"], "COMPLETED");
+        assert_eq!(cli.ok(&["job", "show", jid])["status"], "PENDING_REVIEW");
+        cli.ok(&["job", "approve", jid]);
         cli.ok(&["job", "archive", jid]);
         assert_eq!(
             cli.ok(&["job", "list", "--archived"])

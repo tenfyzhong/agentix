@@ -245,9 +245,11 @@ fn claim_next(
         return Ok(json!({"claimed":false,"reason":"empty"}));
     };
     let linked = state.inboxes[i].job_id.as_deref();
-    if state.jobs.iter().any(|j| {
-        j.project_id == project && j.status == JobStatus::Active && Some(j.id.as_str()) != linked
-    }) {
+    if state
+        .jobs
+        .iter()
+        .any(|j| j.project_id == project && !j.status.terminal() && Some(j.id.as_str()) != linked)
+    {
         return Ok(json!({"claimed":false,"reason":"active_jobs"}));
     }
     if linked.is_some_and(|job| {
@@ -340,7 +342,7 @@ fn cancel(state: &mut Snapshot, i: usize, deleted: bool, now: i64) {
             if let Some(job) = state
                 .jobs
                 .iter_mut()
-                .find(|j| &j.id == job_id && j.status == JobStatus::Active)
+                .find(|j| &j.id == job_id && !j.status.terminal())
             {
                 job.status = JobStatus::Cancelled;
                 job.cancelled_at = Some(now);
@@ -373,10 +375,20 @@ pub(crate) fn refresh(state: &mut Snapshot, now: i64) {
             || job.is_some_and(|j| j.status == JobStatus::Cancelled)
         {
             cancel(state, i, false, now);
-        } else if entry
-            .lease
-            .as_ref()
-            .is_some_and(|l| l.lease_expires_at <= now)
+        } else if job.is_some_and(|j| j.status == JobStatus::PendingReview) {
+            let entry = &mut state.inboxes[i];
+            if entry.lease.is_some() || entry.status != InboxStatus::InProgress {
+                entry.lease = None;
+                entry.status = InboxStatus::InProgress;
+                changed(entry, now);
+            }
+        } else if (job.is_some_and(|j| j.status == JobStatus::Active)
+            && entry.status == InboxStatus::InProgress
+            && entry.lease.is_none())
+            || entry
+                .lease
+                .as_ref()
+                .is_some_and(|l| l.lease_expires_at <= now)
         {
             release(state, i, now);
         }

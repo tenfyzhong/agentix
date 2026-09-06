@@ -9,7 +9,11 @@ const PRESET: &str =
     include_str!("../../../plugins/agent-task-manager/obsidian/tasknotes-settings.json");
 const FILES: [&str; 3] = ["manifest.json", "main.js", "styles.css"];
 
-pub async fn setup(config: &Config, plugin_dir: Option<&Path>) -> Result<Value> {
+pub async fn setup(
+    config: &Config,
+    config_path: &Path,
+    plugin_dir: Option<&Path>,
+) -> Result<Value> {
     ensure!(
         config.documents.format == DocumentFormat::Obsidian,
         "Obsidian setup requires documents.format = obsidian; run taskcli init first"
@@ -17,6 +21,7 @@ pub async fn setup(config: &Config, plugin_dir: Option<&Path>) -> Result<Value> 
     let root = config.documents.root.canonicalize()?.join(".obsidian");
     check_path(&root, "")?;
     let mut changes = Vec::new();
+    sync_plugin(&root, config_path, &mut changes)?;
     let (settings, settings_before) = read_json(&root, "plugins/tasknotes/data.json", json!({}))?;
     changes.push(change(
         "plugins/tasknotes/data.json",
@@ -25,6 +30,7 @@ pub async fn setup(config: &Config, plugin_dir: Option<&Path>) -> Result<Value> 
     )?);
     let (mut community, community_before) = read_json(&root, "community-plugins.json", json!([]))?;
     enable_array(&mut community, "tasknotes")?;
+    enable_array(&mut community, "taskcli-sync")?;
     changes.push(change(
         "community-plugins.json",
         community_before,
@@ -84,8 +90,40 @@ pub async fn setup(config: &Config, plugin_dir: Option<&Path>) -> Result<Value> 
     let modified = !changes.is_empty();
     let backup = apply(&root, &changes)?;
     Ok(
-        json!({"vault":config.documents.root,"version":version,"installed":install,"changed":modified,"backup":backup,"restart_required":true,"next_step":"Open or restart Obsidian. If Restricted mode is on, turn it off in Settings > Community plugins to load TaskNotes."}),
+        json!({"vault":config.documents.root,"version":version,"installed":install,"sync_plugin":"taskcli-sync","changed":modified,"backup":backup,"restart_required":true,"next_step":"Open or restart Obsidian. If Restricted mode is on, turn it off in Settings > Community plugins to load TaskNotes and Taskcli Sync."}),
     )
+}
+
+fn sync_plugin(root: &Path, config_path: &Path, changes: &mut Vec<Change>) -> Result<()> {
+    for (name, source) in [
+        (
+            "main.js",
+            include_str!("../../../plugins/agent-task-manager/obsidian/taskcli-sync/main.js"),
+        ),
+        (
+            "manifest.json",
+            include_str!("../../../plugins/agent-task-manager/obsidian/taskcli-sync/manifest.json"),
+        ),
+    ] {
+        changes.push(Change::new(
+            root,
+            &format!("plugins/taskcli-sync/{name}"),
+            source.as_bytes().to_vec(),
+        )?);
+    }
+    let relative = "plugins/taskcli-sync/data.json";
+    let (mut settings, before) = read_json(root, relative, json!({}))?;
+    let object = settings
+        .as_object_mut()
+        .context("Taskcli Sync settings must be a JSON object")?;
+    object
+        .entry("cliPath")
+        .or_insert(json!(std::env::current_exe()?.canonicalize()?));
+    object
+        .entry("configPath")
+        .or_insert(json!(config_path.canonicalize()?));
+    changes.push(change(relative, before, &settings)?);
+    Ok(())
 }
 
 fn merge_settings(mut settings: Value) -> Result<Value> {

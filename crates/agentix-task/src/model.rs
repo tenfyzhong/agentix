@@ -82,14 +82,30 @@ impl fmt::Display for TaskPhase {
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum JobStatus {
     Active,
+    PendingReview,
     Completed,
     Cancelled,
+}
+
+impl JobStatus {
+    pub const ALL: [Self; 4] = [
+        Self::Active,
+        Self::PendingReview,
+        Self::Completed,
+        Self::Cancelled,
+    ];
+
+    #[must_use]
+    pub const fn terminal(self) -> bool {
+        matches!(self, Self::Completed | Self::Cancelled)
+    }
 }
 
 impl fmt::Display for JobStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Self::Active => "ACTIVE",
+            Self::PendingReview => "PENDING_REVIEW",
             Self::Completed => "COMPLETED",
             Self::Cancelled => "CANCELLED",
         })
@@ -126,6 +142,8 @@ pub struct Job {
     #[serde(default)]
     pub session_id: Option<String>,
     pub status: JobStatus,
+    #[serde(default)]
+    pub review_reason: Option<String>,
     pub revision: i64,
     pub created_at: i64,
     pub updated_at: i64,

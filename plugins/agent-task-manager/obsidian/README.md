@@ -4,9 +4,9 @@ Each taskcli Task is a Markdown note in its project's `Tasks/` directory. TaskNo
 
 ## Enable the views
 
-After configuring taskcli with `init --format obsidian`, close the vault in Obsidian and run `taskcli obsidian setup`. This installs TaskNotes, enables it and Bases in the vault configuration, and merges the settings described below. Reopen Obsidian and disable Restricted mode if needed. Existing compatible installations are retained; `--plugin-dir /path/to/release` supports offline installation. Changed files are backed up under `.obsidian/taskcli-backups/`. See [automatic setup](https://github.com/tenfyzhong/agentix/blob/main/docs/task-board.md#obsidian-plugin-setup) for details.
+After configuring taskcli with `init --format obsidian`, close the vault in Obsidian and run `taskcli obsidian setup`. This installs TaskNotes and the embedded Taskcli Sync desktop plugin, enables both and Bases in the vault configuration, and merges the settings described below. Reopen Obsidian and disable Restricted mode if needed. Existing compatible installations are retained; `--plugin-dir /path/to/release` supports offline installation. Changed files are backed up under `.obsidian/taskcli-backups/`. See [automatic setup](https://github.com/tenfyzhong/agentix/blob/main/docs/task-board.md#obsidian-plugin-setup) for details.
 
-**TaskNotes** (`tasknotes`) is the only community plugin required for the generated task notes and boards. Also enable **Bases**, which is built into Obsidian. This integration was checked with TaskNotes 4.12.5.
+**TaskNotes** (`tasknotes`) renders the generated notes and boards. **Taskcli Sync** (`taskcli-sync`) submits status edits to taskcli. Also enable **Bases**, which is built into Obsidian. This integration was checked with TaskNotes 4.12.5.
 
 In **Settings → TaskNotes → General**, select tag-based task identification and set the task tag to `task`. This identifies the `tags` property of a task note; Job links and checkboxes inside a plan do not create extra task cards. Task notes carry both `task` for TaskNotes identification and `agent/task` for Agentix board filtering, so ordinary `task` notes can coexist in the same vault. Run `taskcli sync` with the updated CLI to add the tag to existing generated notes before changing this vault-wide setting. Custom tags are preserved.
 
@@ -14,7 +14,7 @@ Keep the default field mappings for `title`, `status`, `projects`, `dateCreated`
 
 See [TaskNotes core concepts](https://tasknotes.dev/obsidian/core-concepts/) for the note model and field mapping.
 
-## Configure the seven statuses
+## Configure Task and Job statuses
 
 In **Settings → TaskNotes → Task Properties**, add the following status values. Values must match the generated frontmatter exactly. Labels can be customized; the supplied labels are English.
 
@@ -27,10 +27,13 @@ In **Settings → TaskNotes → Task Properties**, add the following status valu
 | DONE | Done | `#bbf7d0` | Yes |
 | FAILED | Failed | `#fecaca` | No |
 | CANCELLED | Cancelled | `#e2d7e7` | No |
+| ACTIVE | Active | `#bfdbfe` | No |
+| PENDING_REVIEW | Pending Review | `#fed7aa` | No |
+| COMPLETED | Completed | `#bbf7d0` | Yes |
 
-These light status colors are shared with Mermaid node backgrounds. Mermaid labels use dark `#1f2937` text for contrast. Apply the same seven color values to existing TaskNotes settings when updating from an older palette.
+These light status colors are shared with Mermaid node backgrounds. Mermaid labels use dark `#1f2937` text for contrast. Apply these color values to existing TaskNotes settings when updating from an older palette.
 
-Disable automatic archival for these statuses. Failed and Cancelled are terminal taskcli states, but are not successful completion. They have separate board columns. Replace unused default statuses with these seven and set the default status to `TODO`. Preserve definitions that other notes actually use; TaskNotes will show those additional status columns too. The project board explicitly orders taskcli values and keeps empty columns visible.
+Disable automatic archival for these statuses. Failed and Cancelled are terminal taskcli states, but are not successful completion. They have separate board columns. Replace unused default statuses with these values and set the default status to `TODO`. Preserve definitions that other notes use. Job-only statuses are excluded from the Task status cycle. Each board pins its own status columns and uses `hideEmptyColumns: true`, keeping those columns visible while hiding unrelated empty columns.
 
 The reusable [tasknotes-settings.json](tasknotes-settings.json) contains this settings subset. Merge it with existing settings; do not replace the entire TaskNotes configuration. taskcli does not install plugins or change vault-wide settings during sync.
 
@@ -49,11 +52,11 @@ The reusable [tasknotes-settings.json](tasknotes-settings.json) contains this se
 ```
 
 - **Dashboard.base** is a compact native table of active projects: Name (click to open Board), Status, and Updated (recent project activity). It uses read-only formula columns and hides archived projects. Sync safely replaces the old generated Dashboard.md; Markdown output uses a portable table instead.
-- **Board.md** records repository identity, paths, project state, and sync status, and embeds a Bases view of type `tasknotesKanban`, grouped by status. It is the project note, with the Project ID and both `agent/project` and `agent/board` tags. Dashboard and task project links point here; there is no separate Project link on Board. Sync removes the old generated `meta.md` after publishing Board.
+- **Board.md** records repository identity, paths, project state, and sync status, and embeds two Bases views of type `tasknotesKanban`, grouped by status: Job board above Task board. It is the project note, with the Project ID and both `agent/project` and `agent/board` tags. Dashboard and task project links point here; there is no separate Project link on Board. Sync removes the old generated `meta.md` after publishing Board.
 - **Job → Tasks** directly links the task notes, using their filenames as labels.
 - **Tasks/** contains one note for every Task, including tasks without a published plan.
 
-Open Board in Reading view or Live Preview. The generated Bases filters select the exact project's `Tasks/` folder, its project ID, the `agent/task` tag, and `archived != true`. Completed tasks remain visible until their Job or Project is archived. No generated checkbox lists are used as the view's data source.
+Open Board in Reading view or Live Preview. Each Base filters the exact project's `Jobs/` or `Tasks/` folder, project ID, corresponding `agent/job` or `agent/task` tag, and `archived != true`. Jobs expose `title`, `dateCreated`, `dateModified`, and `completedDate` for TaskNotes rendering without carrying the `task` tag. Both views sort by filename and use 300px columns. Completed tasks remain visible until their Job or Project is archived. No generated checkbox lists are used as the view's data source.
 
 ## Task properties and plan body
 
@@ -117,7 +120,28 @@ Job archival keeps task notes in `Tasks/`, sets `archived: true`, and adds TaskN
 
 ## State changes and styling
 
-TaskNotes can edit note properties and drag cards between columns. Those actions do not acquire a taskcli lease or change its database. Use taskcli or an agent for managed status changes; sync restores managed frontmatter. Authored body content and custom properties are preserved. This integration does not lock TaskNotes controls.
+With Taskcli Sync enabled, saved frontmatter `status` edits and TaskNotes status dragging call taskcli. Configure the executable and config file in **Settings → Taskcli Sync**, then click **Connect**. Initial setup fills absolute paths and preserves user settings on later runs. The plugin is desktop-only and requires Obsidian 1.10.1 or later.
+
+### Status edits
+
+| Entity | Requested status | CLI operation |
+| --- | --- | --- |
+| Task | BLOCKED / WAITING_USER / FAILED / CANCELLED | block / wait / fail / cancel, subject to normal state and lease guards |
+| Task | TODO from FAILED | retry |
+| Task | TODO from DONE or CANCELLED | reopen |
+| Task | IN_PROGRESS or DONE | Rejected; use the owning agent's claim, Plan, start/done workflow |
+| Job | ACTIVE → PENDING_REVIEW | submit, when all non-cancelled Tasks are DONE and at least one exists |
+| Job | PENDING_REVIEW → COMPLETED | approve after verification |
+| Job | PENDING_REVIEW → ACTIVE | reject; Task states are preserved |
+| Job | CANCELLED | cancel from an eligible unfinished Job |
+
+Commands requiring a reason receive `Status changed in Obsidian: OLD -> NEW`. All other transitions are rejected. The plugin never claims Tasks or reads lease tokens. Task edits against an active agent lease fail safely.
+
+Changes debounce for 300 ms per note and execute one at a time with expected revision and a unique idempotency key. Only registered paths with matching identities are eligible; copied notes are ignored. A stale revision refreshes the authoritative state. On failure, status and managed dates are restored without replacing authored bodies or custom properties, and a Notice explains the error. Newer queued edits are protected from older rollback and projection echoes.
+
+A 30-second process timeout is followed by a fresh snapshot because the database may already have committed. A `projection_pending` response means success: the plugin retries `sync` once and reports any remaining document failure without undoing the acknowledged state. If the CLI cannot be reached, the last confirmed state is shown with an explicit uncertainty notice; reconnect to reconcile it. Startup restores offline drift without replaying it as new commands.
+
+`taskcli obsidian snapshot --json` supplies authoritative IDs, note paths, statuses, revisions, managed display properties, and document configuration. It does not expose leases. The configured vault root must match the open vault. Commands use a subprocess argument array, without a shell. Plugin unload cancels queued work and terminates its subprocesses.
 
 TaskNotes supplies status colors from its settings.
 

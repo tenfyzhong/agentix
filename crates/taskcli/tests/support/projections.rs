@@ -157,6 +157,7 @@ fn cli_project_archive_restores_dashboard_and_task_visibility_in_both_formats() 
         let root = cli.dir.path().join("vault/Tasks ☃");
         let board = root.join("Projects/Demo/Board.md");
         let note = Path::new(plan["absolute_path"].as_str().unwrap());
+        cli.ok(&["job", "approve", &job]);
         cli.ok(&["project", "archive", &project]);
         assert_eq!(properties(&board)["status"], "ARCHIVED");
         assert_eq!(properties(note)["archived"], true);
@@ -244,6 +245,7 @@ fn cli_dependency_graph_and_task_notes_follow_cross_job_changes() {
         cli.owned(&["task", "start", &a], &claim);
         cli.owned(&["task", "done", &a], &claim);
         cli.ok(&["task", "update", &a, "--name", "Approved design"]);
+        cli.ok(&["job", "approve", &upstream]);
         cli.ok(&["job", "archive", &upstream]);
         let text = fs::read_to_string(&path).unwrap();
         assert!(text.contains("Approved design (Job: Upstream) · DONE"));
@@ -280,6 +282,9 @@ fn cli_projects_every_status_to_mermaid_and_tasknotes_with_matching_colors() {
         let job = cli.job("Every state");
         for setting in settings["customStatuses"].as_array().unwrap() {
             let status = setting["value"].as_str().unwrap();
+            if ["ACTIVE", "PENDING_REVIEW", "COMPLETED"].contains(&status) {
+                continue;
+            }
             let task = cli.task(&job, status);
             let claim = cli.claim(&task, status);
             let plan = cli.owned(

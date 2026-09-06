@@ -36,9 +36,8 @@ pub(crate) fn apply(
         "project.delete" | "job.delete" => crate::deletion::apply(state, request, options),
         "project.archive" | "project.unarchive" => archive_project(state, request, options, now),
         "job.create" => create_job(state, request, options, now),
-        "job.update" | "job.cancel" | "job.archive" | "job.unarchive" => {
-            update_job(state, request, options, now)
-        }
+        "job.update" | "job.cancel" | "job.archive" | "job.unarchive" | "job.submit"
+        | "job.approve" | "job.reject" => update_job(state, request, options, now),
         "task.add" => add_task(state, request, options, now),
         "session.start" | "session.end" | "session.interrupt" | "session.heartbeat" => {
             session(state, request, now)
@@ -99,6 +98,7 @@ pub(crate) fn create_job(
         agent: crate::model::agent_name(&options.actor_ref).map(str::to_owned),
         session_id: options.session_ref.clone(),
         status: JobStatus::Active,
+        review_reason: None,
         revision: 1,
         created_at: now,
         updated_at: now,
@@ -223,7 +223,7 @@ fn archive_project(
             !state
                 .jobs
                 .iter()
-                .any(|j| j.project_id == project.id && j.status == JobStatus::Active),
+                .any(|j| j.project_id == project.id && !j.status.terminal()),
             "conflict: complete or cancel all Jobs before archiving Project"
         );
     }
@@ -248,9 +248,12 @@ fn update_job(
         "conflict: Project is archived"
     );
     let command = required(request, "command")?;
+    if matches!(command, "job.submit" | "job.approve" | "job.reject") {
+        return review_job(state, i, request, now);
+    }
     if command == "job.cancel" {
         ensure!(
-            state.jobs[i].status == JobStatus::Active,
+            !state.jobs[i].status.terminal(),
             "conflict: Job is not active"
         );
         let job_id = state.jobs[i].id.clone();
@@ -325,7 +328,7 @@ fn update_job(
         }
         "job.archive" => {
             ensure!(
-                job.status != JobStatus::Active,
+                job.status.terminal(),
                 "conflict: complete or cancel Job before archiving"
             );
             ensure!(job.archived_at.is_none(), "conflict: Job already archived");
@@ -373,6 +376,7 @@ fn update_task(
     let i = state.task_index(required(request, "task")?)?;
     let task = state.tasks[i].clone();
     let j = state.job_index(&task.job_id)?;
+    let was_ready = job_ready(state, &task.job_id);
     check_revision(task.revision, options)?;
     ensure!(
         state.projects[state.project_index(&task.project_id)?]
@@ -568,7 +572,7 @@ fn update_task(
     }
     state.tasks[i].revision += 1;
     state.tasks[i].updated_at = now;
-    aggregate_job(state, j, now);
+    aggregate_job(state, j, was_ready, now);
     state.task_result(&task.id)
 }
 
@@ -626,19 +630,55 @@ fn depends_on(state: &Snapshot, source: &str, target: &str) -> bool {
     false
 }
 
-fn aggregate_job(state: &mut Snapshot, index: usize, now: i64) {
-    let job = &mut state.jobs[index];
-    let tasks: Vec<_> = state
+fn job_ready(state: &Snapshot, job_id: &str) -> bool {
+    let mut tasks = state
         .tasks
         .iter()
-        .filter(|t| t.job_id == job.id && t.status != TaskStatus::Cancelled)
-        .collect();
-    if job.status == JobStatus::Active
-        && !tasks.is_empty()
-        && tasks.iter().all(|t| t.status == TaskStatus::Done)
-    {
-        job.status = JobStatus::Completed;
-        job.completed_at = Some(now);
+        .filter(|t| t.job_id == job_id && t.status != TaskStatus::Cancelled)
+        .peekable();
+    tasks.peek().is_some() && tasks.all(|t| t.status == TaskStatus::Done)
+}
+
+fn review_job(state: &mut Snapshot, index: usize, request: &Value, now: i64) -> Result<Value> {
+    let command = required(request, "command")?;
+    let expected = if command == "job.submit" {
+        JobStatus::Active
+    } else {
+        JobStatus::PendingReview
+    };
+    ensure!(
+        state.jobs[index].archived_at.is_none() && state.jobs[index].status == expected,
+        "conflict: {command} requires an unarchived {expected} Job"
+    );
+    let reason = if command == "job.reject" {
+        Some(required(request, "reason")?.to_owned())
+    } else {
+        ensure!(
+            job_ready(state, &state.jobs[index].id),
+            "conflict: all non-cancelled Tasks must be DONE and at least one must exist"
+        );
+        None
+    };
+    let job = &mut state.jobs[index];
+    job.status = match command {
+        "job.submit" => JobStatus::PendingReview,
+        "job.approve" => JobStatus::Completed,
+        _ => JobStatus::Active,
+    };
+    job.completed_at = (job.status == JobStatus::Completed).then_some(now);
+    job.review_reason = reason;
+    job.revision += 1;
+    job.updated_at = now;
+    Ok(serde_json::to_value(job)?)
+}
+
+fn aggregate_job(state: &mut Snapshot, index: usize, was_ready: bool, now: i64) {
+    let ready = job_ready(state, &state.jobs[index].id);
+    let job = &mut state.jobs[index];
+    if job.status == JobStatus::Active && !was_ready && ready {
+        job.status = JobStatus::PendingReview;
+        job.completed_at = None;
+        job.review_reason = None;
     }
     job.revision += 1;
     job.updated_at = now;

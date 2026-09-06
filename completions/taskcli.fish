@@ -169,19 +169,31 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand init" -l expect-revision
 complete -c taskcli -n "__fish_taskcli_using_subcommand init" -l idempotency-key -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand init" -l json
 complete -c taskcli -n "__fish_taskcli_using_subcommand init" -s h -l help -d 'Print help'
-complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from setup help" -l config -r -F
-complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from setup help" -l project -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from setup help" -l actor -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from setup help" -l executor -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from setup help" -l session -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from setup help" -l delegated-by -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from setup help" -l lease-token -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from setup help" -l expect-revision -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from setup help" -l idempotency-key -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from setup help" -l json
-complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from setup help" -s h -l help -d 'Print help'
-complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from setup help" -f -a "setup" -d 'Install `TaskNotes` and configure its task statuses and Bases. Close Obsidian first'
-complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from setup help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from snapshot setup help" -l config -r -F
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from snapshot setup help" -l project -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from snapshot setup help" -l actor -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from snapshot setup help" -l executor -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from snapshot setup help" -l session -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from snapshot setup help" -l delegated-by -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from snapshot setup help" -l lease-token -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from snapshot setup help" -l expect-revision -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from snapshot setup help" -l idempotency-key -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from snapshot setup help" -l json
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from snapshot setup help" -s h -l help -d 'Print help'
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from snapshot setup help" -f -a "snapshot" -d 'Query registered notes and authoritative status properties without lease credentials'
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from snapshot setup help" -f -a "setup" -d 'Install `TaskNotes` and configure its task statuses and Bases. Close Obsidian first'
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from snapshot setup help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from snapshot" -l config -r -F
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from snapshot" -l project -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from snapshot" -l actor -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from snapshot" -l executor -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from snapshot" -l session -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from snapshot" -l delegated-by -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from snapshot" -l lease-token -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from snapshot" -l expect-revision -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from snapshot" -l idempotency-key -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from snapshot" -l json
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from snapshot" -s h -l help -d 'Print help'
 complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from setup" -l plugin-dir -d 'Use a local `TaskNotes` release directory instead of downloading the bundled version' -r -f -a "(__fish_complete_directories)"
 complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from setup" -l config -r -F
 complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from setup" -l project -r
@@ -194,6 +206,7 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_see
 complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from setup" -l idempotency-key -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from setup" -l json
 complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from setup" -s h -l help -d 'Print help'
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from help" -f -a "snapshot" -d 'Query registered notes and authoritative status properties without lease credentials'
 complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from help" -f -a "setup" -d 'Install `TaskNotes` and configure its task statuses and Bases. Close Obsidian first'
 complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
 complete -c taskcli -n "__fish_taskcli_using_subcommand doctor" -l config -r -F
@@ -312,26 +325,63 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen
 complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from help" -f -a "archive" -d 'Archive a Project after all of its Jobs are closed'
 complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from help" -f -a "unarchive" -d 'Restore an archived Project to the active project views'
 complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -l config -r -F
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -l project -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -l actor -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -l executor -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -l session -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -l delegated-by -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -l lease-token -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -l expect-revision -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -l idempotency-key -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -l json
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -s h -l help -d 'Print help'
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -f -a "delete" -d 'Delete the Job, its Tasks, and their Plan documents'
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -f -a "create" -d 'Create a Job with a title and acceptance goal in the selected Project'
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -f -a "update" -d 'Change a Job\'s display name, title, acceptance goal, or original prompt'
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -f -a "list" -d 'List Jobs, optionally filtered by Project, status, or date'
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -f -a "show" -d 'Show a Job\'s goal, status, and lifecycle metadata'
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -f -a "cancel" -d 'Cancel a Job and its unfinished Tasks after their leases have been released'
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -f -a "archive" -d 'Archive a closed Job and move its document to the archive'
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -f -a "unarchive" -d 'Restore an archived Job document without changing its completion status'
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from submit approve reject delete create update list show cancel archive unarchive help" -l config -r -F
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from submit approve reject delete create update list show cancel archive unarchive help" -l project -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from submit approve reject delete create update list show cancel archive unarchive help" -l actor -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from submit approve reject delete create update list show cancel archive unarchive help" -l executor -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from submit approve reject delete create update list show cancel archive unarchive help" -l session -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from submit approve reject delete create update list show cancel archive unarchive help" -l delegated-by -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from submit approve reject delete create update list show cancel archive unarchive help" -l lease-token -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from submit approve reject delete create update list show cancel archive unarchive help" -l expect-revision -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from submit approve reject delete create update list show cancel archive unarchive help" -l idempotency-key -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from submit approve reject delete create update list show cancel archive unarchive help" -l json
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from submit approve reject delete create update list show cancel archive unarchive help" -s h -l help -d 'Print help'
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from submit approve reject delete create update list show cancel archive unarchive help" -f -a "submit" -d 'Submit an ACTIVE Job for review once all non-cancelled Tasks are DONE'
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from submit approve reject delete create update list show cancel archive unarchive help" -f -a "approve" -d 'Record human acceptance of a Job awaiting review'
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from submit approve reject delete create update list show cancel archive unarchive help" -f -a "reject" -d 'Return a Job awaiting review to ACTIVE, preserving its Tasks'
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from submit approve reject delete create update list show cancel archive unarchive help" -f -a "delete" -d 'Delete the Job, its Tasks, and their Plan documents'
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from submit approve reject delete create update list show cancel archive unarchive help" -f -a "create" -d 'Create a Job with a title and acceptance goal in the selected Project'
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from submit approve reject delete create update list show cancel archive unarchive help" -f -a "update" -d 'Change a Job\'s display name, title, acceptance goal, or original prompt'
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from submit approve reject delete create update list show cancel archive unarchive help" -f -a "list" -d 'List Jobs, optionally filtered by Project, status, or date'
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from submit approve reject delete create update list show cancel archive unarchive help" -f -a "show" -d 'Show a Job\'s goal, status, and lifecycle metadata'
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from submit approve reject delete create update list show cancel archive unarchive help" -f -a "cancel" -d 'Cancel a Job and its unfinished Tasks after their leases have been released'
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from submit approve reject delete create update list show cancel archive unarchive help" -f -a "archive" -d 'Archive a closed Job and move its document to the archive'
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from submit approve reject delete create update list show cancel archive unarchive help" -f -a "unarchive" -d 'Restore an archived Job document without changing its completion status'
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from submit approve reject delete create update list show cancel archive unarchive help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from submit" -l config -r -F
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from submit" -l project -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from submit" -l actor -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from submit" -l executor -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from submit" -l session -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from submit" -l delegated-by -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from submit" -l lease-token -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from submit" -l expect-revision -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from submit" -l idempotency-key -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from submit" -l json
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from submit" -s h -l help -d 'Print help'
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from approve" -l config -r -F
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from approve" -l project -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from approve" -l actor -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from approve" -l executor -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from approve" -l session -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from approve" -l delegated-by -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from approve" -l lease-token -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from approve" -l expect-revision -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from approve" -l idempotency-key -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from approve" -l json
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from approve" -s h -l help -d 'Print help'
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from reject" -l reason -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from reject" -l config -r -F
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from reject" -l project -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from reject" -l actor -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from reject" -l executor -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from reject" -l session -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from reject" -l delegated-by -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from reject" -l lease-token -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from reject" -l expect-revision -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from reject" -l idempotency-key -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from reject" -l json
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from reject" -s h -l help -d 'Print help'
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from delete" -l config -r -F
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from delete" -l project -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from delete" -l actor -r
@@ -386,6 +436,7 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_sub
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from list" -l expect-revision -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from list" -l idempotency-key -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from list" -l active
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from list" -l pending-review
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from list" -l completed
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from list" -l archived
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from list" -l json
@@ -434,6 +485,9 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_sub
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from unarchive" -l idempotency-key -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from unarchive" -l json
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from unarchive" -s h -l help -d 'Print help'
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from help" -f -a "submit" -d 'Submit an ACTIVE Job for review once all non-cancelled Tasks are DONE'
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from help" -f -a "approve" -d 'Record human acceptance of a Job awaiting review'
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from help" -f -a "reject" -d 'Return a Job awaiting review to ACTIVE, preserving its Tasks'
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from help" -f -a "delete" -d 'Delete the Job, its Tasks, and their Plan documents'
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from help" -f -a "create" -d 'Create a Job with a title and acceptance goal in the selected Project'
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from help" -f -a "update" -d 'Change a Job\'s display name, title, acceptance goal, or original prompt'
@@ -886,6 +940,7 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_su
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from inbox" -f -a "claim-next" -d 'Atomically claim the next eligible requirement and create or resume its Job'
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from inbox" -f -a "release" -d 'Release an owned Inbox lease so another agent can resume its existing Job'
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from inbox" -f -a "cancel" -d 'Cancel a requirement and its unfinished work, preserving history'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from obsidian" -f -a "snapshot" -d 'Query registered notes and authoritative status properties without lease credentials'
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from obsidian" -f -a "setup" -d 'Install `TaskNotes` and configure its task statuses and Bases. Close Obsidian first'
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from project" -f -a "delete" -d 'Delete the Project, its work, and its entire generated document directory'
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from project" -f -a "register" -d 'Register a Project using its root directory and Git identity when available'
@@ -893,6 +948,9 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_su
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from project" -f -a "show" -d 'Show a Project\'s identity, root directory, and archival state'
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from project" -f -a "archive" -d 'Archive a Project after all of its Jobs are closed'
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from project" -f -a "unarchive" -d 'Restore an archived Project to the active project views'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from job" -f -a "submit" -d 'Submit an ACTIVE Job for review once all non-cancelled Tasks are DONE'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from job" -f -a "approve" -d 'Record human acceptance of a Job awaiting review'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from job" -f -a "reject" -d 'Return a Job awaiting review to ACTIVE, preserving its Tasks'
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from job" -f -a "delete" -d 'Delete the Job, its Tasks, and their Plan documents'
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from job" -f -a "create" -d 'Create a Job with a title and acceptance goal in the selected Project'
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from job" -f -a "update" -d 'Change a Job\'s display name, title, acceptance goal, or original prompt'

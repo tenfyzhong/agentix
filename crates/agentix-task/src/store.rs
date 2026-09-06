@@ -71,7 +71,7 @@ impl Store {
             .fetch_one(&mut *tx)
             .await?;
         ensure!(
-            version <= 8,
+            version <= 9,
             "unsupported task database schema version {version}"
         );
         sqlx::raw_sql(include_str!("schema.sql"))
@@ -613,13 +613,17 @@ async fn persist(
             continue;
         }
         upsert(conn, "jobs", &job.id, job).await?;
-        let event_type = if job.status == crate::JobStatus::Completed
-            && before
-                .jobs
-                .iter()
-                .any(|j| j.id == job.id && j.status != job.status)
+        let event_type = if before
+            .jobs
+            .iter()
+            .any(|j| j.id == job.id && j.status != job.status)
         {
-            "job.completed"
+            match job.status {
+                crate::JobStatus::Completed => "job.completed",
+                crate::JobStatus::PendingReview => "job.pending_review",
+                crate::JobStatus::Active if command == "job.reject" => "job.rejected",
+                _ => command,
+            }
         } else {
             command
         };

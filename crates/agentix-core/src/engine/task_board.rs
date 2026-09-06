@@ -379,7 +379,12 @@ impl Engine {
         for event in events {
             if matches!(
                 event.event_type.as_str(),
-                "task.waiting_user" | "task.blocked" | "task.failed" | "job.completed"
+                "task.waiting_user"
+                    | "task.blocked"
+                    | "task.failed"
+                    | "job.completed"
+                    | "job.pending_review"
+                    | "job.rejected"
             ) && let Some(session) = event.session_ref.as_deref()
                 && let Some(conversation) = self
                     .sessions
@@ -390,7 +395,10 @@ impl Engine {
                     "{}\n{}\n{}",
                     event.payload["title"].as_str().unwrap_or(""),
                     event.event_type,
-                    event.payload["reason"].as_str().unwrap_or("")
+                    event.payload["reason"]
+                        .as_str()
+                        .or_else(|| event.payload["review_reason"].as_str())
+                        .unwrap_or("")
                 );
                 self.send_view(&conversation, &OutboundView::text("Task update", body))
                     .await?;

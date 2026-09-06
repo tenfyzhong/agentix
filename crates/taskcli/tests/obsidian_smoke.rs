@@ -8,6 +8,8 @@ use std::{
 
 use serde_json::{Value, json};
 
+static DESKTOP_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 fn obsidian(vault: &str, expression: &str) -> Value {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
@@ -149,7 +151,7 @@ impl Drop for DesktopFixture {
     fn drop(&mut self) {
         // Do not panic a second time if the app was closed during a failed test.
         let expression = format!(
-            "(() => {{ app.workspace.getLeafById({})?.detach(); for (const leaf of ['markdown','bases'].flatMap(type=>app.workspace.getLeavesOfType(type))) {{ if (leaf.view.file?.path.startsWith({})) leaf.detach(); }} const original = app.workspace.getLeafById({}); if (original) app.workspace.setActiveLeaf(original, {{focus:true}}); return true; }})()",
+            "(async () => {{ await app.plugins.unloadPlugin(\"taskcli-sync-smoke\"); delete app.plugins.manifests[\"taskcli-sync-smoke\"]; delete window.taskcliSyncSmoke; if (window.taskcliSmokeStatuses) {{app.plugins.plugins.tasknotes.statusManager.updateStatuses(window.taskcliSmokeStatuses); delete window.taskcliSmokeStatuses;}} app.workspace.getLeafById({})?.detach(); for (const leaf of ['markdown','bases'].flatMap(type=>app.workspace.getLeavesOfType(type))) {{ if (leaf.view.file?.path.startsWith({})) leaf.detach(); }} const original = app.workspace.getLeafById({}); if (original) app.workspace.setActiveLeaf(original, {{focus:true}}); return true; }})()",
             self.leaf,
             json!(format!("{}/", self.relative)),
             self.original_leaf
@@ -161,6 +163,9 @@ impl Drop for DesktopFixture {
 #[test]
 #[ignore = "requires TASKCLI_OBSIDIAN_VAULT and enabled TaskNotes/Bases plugins in an open desktop vault"]
 fn tasknotes_renders_both_formats_and_resolves_task_note_links() {
+    let _guard = DESKTOP_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let vault =
         std::env::var("TASKCLI_OBSIDIAN_VAULT").expect("choose the open test vault explicitly");
     assert_eq!(
@@ -178,6 +183,18 @@ fn tasknotes_renders_both_formats_and_resolves_task_note_links() {
     );
     for format in ["obsidian", "markdown"] {
         exercise_plugin_views(&vault, format, true);
+        exercise_plugin_views(&vault, format, false);
+    }
+}
+
+#[test]
+#[ignore = "requires an open TASKCLI_OBSIDIAN_VAULT with TaskNotes/Bases enabled"]
+fn taskcli_sync_and_dual_boards_in_desktop() {
+    let _guard = DESKTOP_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let vault = std::env::var("TASKCLI_OBSIDIAN_VAULT").expect("choose the test vault");
+    for format in ["obsidian", "markdown"] {
         exercise_plugin_views(&vault, format, false);
     }
 }
@@ -309,6 +326,16 @@ fn exercise_plugin_views(vault: &str, format: &str, dashboard_only: bool) {
         output,
         metadata: tempfile::tempdir().unwrap(),
     };
+    obsidian(
+        vault,
+        &format!(
+            "(() => {{const manager=app.plugins.plugins.tasknotes.statusManager; window.taskcliSmokeStatuses=manager.getAllStatuses(); const preset={}; manager.updateStatuses([...window.taskcliSmokeStatuses.filter(s=>!preset.some(p=>p.value===s.value)),...preset]); return true;}})()",
+            serde_json::from_str::<Value>(include_str!(
+                "../../../plugins/agent-task-manager/obsidian/tasknotes-settings.json"
+            ))
+            .unwrap()["customStatuses"]
+        ),
+    );
     f.cli(&[
         "init",
         "--format",
@@ -387,11 +414,15 @@ fn exercise_plugin_views(vault: &str, format: &str, dashboard_only: bool) {
         f.leaf
     );
     let rendered = wait_for(&f.vault, &expression, |v| {
-        v["cards"].as_array().is_some_and(|a| a.len() == 2)
+        v["cards"].as_array().is_some_and(|a| a.len() == 3)
     });
     assert_eq!(
         rendered["columns"],
         json!([
+            "ACTIVE",
+            "PENDING_REVIEW",
+            "COMPLETED",
+            "CANCELLED",
             "TODO",
             "IN_PROGRESS",
             "BLOCKED",
@@ -420,6 +451,9 @@ fn exercise_plugin_views(vault: &str, format: &str, dashboard_only: bool) {
         v.as_array().is_some_and(|a| a.len() == 2)
     });
     assert!(resolved.as_array().unwrap().contains(&json!(path)));
+    if format == "obsidian" {
+        exercise_status_bridge(&f, &task, &job, &path, &job_path);
+    }
     let task_info = obsidian(
         &f.vault,
         &format!(
@@ -436,6 +470,146 @@ fn exercise_plugin_views(vault: &str, format: &str, dashboard_only: bool) {
         f.leaf
     );
     wait_for(&f.vault, &body, |v| v == true);
+    if format == "obsidian" {
+        std::fs::write(
+            f.output.path().join("State machines.md"),
+            include_str!("../../../docs/task-state-machines.md"),
+        )
+        .unwrap();
+        let path = format!("{}/State machines.md", f.relative);
+        f.open(&path, "markdown");
+        wait_for(
+            &f.vault,
+            &format!(
+                "app.workspace.getLeafById({}).view.contentEl.querySelectorAll('.markdown-preview-view .mermaid > svg').length",
+                f.leaf
+            ),
+            |v| v == 2,
+        );
+    }
     // Keep the TempDir alive through all app reads; Drop restores views first.
     assert!(f.output.path().exists());
+}
+
+#[allow(clippy::too_many_lines)] // Keep the desktop mutation, rollback and database assertions together.
+fn exercise_status_bridge(
+    f: &DesktopFixture,
+    task: &Value,
+    job: &Value,
+    task_path: &str,
+    job_path: &str,
+) {
+    let plugin_dir = f.output.path().join("test-plugin");
+    std::fs::create_dir_all(&plugin_dir).unwrap();
+    std::fs::write(
+        plugin_dir.join("main.js"),
+        include_str!("../../../plugins/agent-task-manager/obsidian/taskcli-sync/main.js"),
+    )
+    .unwrap();
+    let mut manifest: Value = serde_json::from_str(include_str!(
+        "../../../plugins/agent-task-manager/obsidian/taskcli-sync/manifest.json"
+    ))
+    .unwrap();
+    manifest["id"] = json!("taskcli-sync-smoke");
+    manifest["dir"] = json!(format!("{}/test-plugin", f.relative));
+    let settings = json!({"cliPath":env!("CARGO_BIN_EXE_taskcli"),"configPath":f.metadata.path().join("config.toml")});
+    std::fs::write(plugin_dir.join("data.json"), settings.to_string()).unwrap();
+    obsidian(
+        &f.vault,
+        &format!(
+            "(async () => {{ app.plugins.manifests['taskcli-sync-smoke']={manifest}; await app.plugins.loadPlugin('taskcli-sync-smoke'); window.taskcliSyncSmoke=app.plugins.plugins['taskcli-sync-smoke']; return !!window.taskcliSyncSmoke; }})()"
+        ),
+    );
+    wait_for(&f.vault, "!!window.taskcliSyncSmoke?.engine?.ready", |v| {
+        v == true
+    });
+    obsidian(
+        &f.vault,
+        "(() => { const io=window.taskcliSyncSmoke.engine.io; const notice=io.notice; window.taskcliSmokeNotices=[]; io.notice=m=>{window.taskcliSmokeNotices.push(m); notice(m);}; return true;})()",
+    );
+    // The owning agent lease must reject a UI cancellation and restore dates/body.
+    obsidian(
+        &f.vault,
+        &format!(
+            "app.fileManager.processFrontMatter(app.vault.getAbstractFileByPath({}), fm=>{{fm.status='CANCELLED';fm.completedDate='2099-01-01';fm.smokeCustom='kept';}})",
+            json!(task_path)
+        ),
+    );
+    wait_for(&f.vault, "window.taskcliSmokeNotices.length", |v| {
+        v.as_u64().unwrap_or(0) >= 1
+    });
+    let props = wait_for(
+        &f.vault,
+        &format!(
+            "app.metadataCache.getFileCache(app.vault.getAbstractFileByPath({}))?.frontmatter",
+            json!(task_path)
+        ),
+        |v| v["status"] == "IN_PROGRESS" && v["completedDate"].is_null(),
+    );
+    assert_eq!(props["smokeCustom"], "kept");
+    assert_eq!(
+        f.cli(&["task", "show", task["id"].as_str().unwrap()])["status"],
+        "IN_PROGRESS"
+    );
+    // Job cancellation is also rejected while its Task has an active lease.
+    obsidian(
+        &f.vault,
+        &format!(
+            "app.fileManager.processFrontMatter(app.vault.getAbstractFileByPath({}), fm=>{{fm.status='CANCELLED';}})",
+            json!(job_path)
+        ),
+    );
+    wait_for(&f.vault, "window.taskcliSmokeNotices.length", |v| {
+        v.as_u64().unwrap_or(0) >= 2
+    });
+    wait_for(
+        &f.vault,
+        &format!(
+            "app.metadataCache.getFileCache(app.vault.getAbstractFileByPath({}))?.frontmatter?.status",
+            json!(job_path)
+        ),
+        |v| v == "ACTIVE",
+    );
+    assert_eq!(
+        f.cli(&["job", "show", job["id"].as_str().unwrap()])["status"],
+        "ACTIVE"
+    );
+    // Unleased Task edits must go through the real executable and persist.
+    let tasks = f.cli(&["task", "list", "--job", job["id"].as_str().unwrap()]);
+    let unleased = tasks
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["id"] != task["id"])
+        .unwrap();
+    let snapshot = f.cli(&["obsidian", "snapshot"]);
+    let path = snapshot["notes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["id"] == unleased["id"])
+        .unwrap()["path"]
+        .clone();
+    obsidian(
+        &f.vault,
+        &format!(
+            "app.fileManager.processFrontMatter(app.vault.getAbstractFileByPath({path}), fm=>{{fm.status='BLOCKED';}})"
+        ),
+    );
+    wait_for(
+        &f.vault,
+        &format!(
+            "app.metadataCache.getFileCache(app.vault.getAbstractFileByPath({path}))?.frontmatter?.revision > {}",
+            unleased["revision"]
+        ),
+        |v| v == true,
+    );
+    assert_eq!(
+        f.cli(&["task", "show", unleased["id"].as_str().unwrap()])["status"],
+        "BLOCKED"
+    );
+    obsidian(
+        &f.vault,
+        "(async () => {await app.plugins.unloadPlugin(\"taskcli-sync-smoke\"); delete app.plugins.manifests[\"taskcli-sync-smoke\"]; delete window.taskcliSyncSmoke; return true;})()",
+    );
 }

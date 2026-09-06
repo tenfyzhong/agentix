@@ -959,7 +959,7 @@ async fn task_wait_fail_and_job_completion_notify_only_the_bound_session() {
     for (button, event_type, status) in [
         ("Wait", "task.waiting_user", "WAITING_USER"),
         ("Fail", "task.failed", "FAILED"),
-        ("Done", "job.completed", "DONE"),
+        ("Done", "job.pending_review", "DONE"),
     ] {
         let (_dir, service, id) = task_fixture().await;
         let channel = Arc::new(FakeChannel::default());

@@ -270,7 +270,23 @@ _arguments "${_arguments_options[@]}" : \
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:taskcli-obsidian-command-$line[1]:"
         case $line[1] in
-            (setup)
+            (snapshot)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(setup)
 _arguments "${_arguments_options[@]}" : \
 '--plugin-dir=[Use a local \`TaskNotes\` release directory instead of downloading the bundled version]:PLUGIN_DIR:_files -/' \
 '--config=[]:CONFIG:_files' \
@@ -299,7 +315,11 @@ _arguments "${_arguments_options[@]}" : \
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:taskcli-obsidian-help-command-$line[1]:"
         case $line[1] in
-            (setup)
+            (snapshot)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(setup)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -546,7 +566,59 @@ _arguments "${_arguments_options[@]}" : \
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:taskcli-job-command-$line[1]:"
         case $line[1] in
-            (delete)
+            (submit)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(approve)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(reject)
+_arguments "${_arguments_options[@]}" : \
+'--reason=[]:REASON:_default' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(delete)
 _arguments "${_arguments_options[@]}" : \
 '--config=[]:CONFIG:_files' \
 '--project=[]:PROJECT:_default' \
@@ -618,7 +690,8 @@ _arguments "${_arguments_options[@]}" : \
 '--lease-token=[]:LEASE_TOKEN:_default' \
 '--expect-revision=[]:EXPECT_REVISION:_default' \
 '--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
-'(--completed --archived)--active[]' \
+'(--completed --archived --pending-review)--active[]' \
+'(--completed --archived)--pending-review[]' \
 '(--archived)--completed[]' \
 '--archived[]' \
 '--json[]' \
@@ -706,7 +779,19 @@ _arguments "${_arguments_options[@]}" : \
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:taskcli-job-help-command-$line[1]:"
         case $line[1] in
-            (delete)
+            (submit)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(approve)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(reject)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(delete)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -1592,7 +1677,11 @@ _arguments "${_arguments_options[@]}" : \
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:taskcli-help-obsidian-command-$line[1]:"
         case $line[1] in
-            (setup)
+            (snapshot)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(setup)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -1660,7 +1749,19 @@ _arguments "${_arguments_options[@]}" : \
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:taskcli-help-job-command-$line[1]:"
         case $line[1] in
-            (delete)
+            (submit)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(approve)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(reject)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(delete)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -2085,6 +2186,9 @@ _taskcli__subcmd__help__subcmd__init_commands() {
 (( $+functions[_taskcli__subcmd__help__subcmd__job_commands] )) ||
 _taskcli__subcmd__help__subcmd__job_commands() {
     local commands; commands=(
+'submit:Submit an ACTIVE Job for review once all non-cancelled Tasks are DONE' \
+'approve:Record human acceptance of a Job awaiting review' \
+'reject:Return a Job awaiting review to ACTIVE, preserving its Tasks' \
 'delete:Delete the Job, its Tasks, and their Plan documents' \
 'create:Create a Job with a title and acceptance goal in the selected Project' \
 'update:Change a Job'\''s display name, title, acceptance goal, or original prompt' \
@@ -2095,6 +2199,11 @@ _taskcli__subcmd__help__subcmd__job_commands() {
 'unarchive:Restore an archived Job document without changing its completion status' \
     )
     _describe -t commands 'taskcli help job commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__job__subcmd__approve_commands] )) ||
+_taskcli__subcmd__help__subcmd__job__subcmd__approve_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help job approve commands' commands "$@"
 }
 (( $+functions[_taskcli__subcmd__help__subcmd__job__subcmd__archive_commands] )) ||
 _taskcli__subcmd__help__subcmd__job__subcmd__archive_commands() {
@@ -2121,10 +2230,20 @@ _taskcli__subcmd__help__subcmd__job__subcmd__list_commands() {
     local commands; commands=()
     _describe -t commands 'taskcli help job list commands' commands "$@"
 }
+(( $+functions[_taskcli__subcmd__help__subcmd__job__subcmd__reject_commands] )) ||
+_taskcli__subcmd__help__subcmd__job__subcmd__reject_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help job reject commands' commands "$@"
+}
 (( $+functions[_taskcli__subcmd__help__subcmd__job__subcmd__show_commands] )) ||
 _taskcli__subcmd__help__subcmd__job__subcmd__show_commands() {
     local commands; commands=()
     _describe -t commands 'taskcli help job show commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__job__subcmd__submit_commands] )) ||
+_taskcli__subcmd__help__subcmd__job__subcmd__submit_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help job submit commands' commands "$@"
 }
 (( $+functions[_taskcli__subcmd__help__subcmd__job__subcmd__unarchive_commands] )) ||
 _taskcli__subcmd__help__subcmd__job__subcmd__unarchive_commands() {
@@ -2139,6 +2258,7 @@ _taskcli__subcmd__help__subcmd__job__subcmd__update_commands() {
 (( $+functions[_taskcli__subcmd__help__subcmd__obsidian_commands] )) ||
 _taskcli__subcmd__help__subcmd__obsidian_commands() {
     local commands; commands=(
+'snapshot:Query registered notes and authoritative status properties without lease credentials' \
 'setup:Install \`TaskNotes\` and configure its task statuses and Bases. Close Obsidian first' \
     )
     _describe -t commands 'taskcli help obsidian commands' commands "$@"
@@ -2147,6 +2267,11 @@ _taskcli__subcmd__help__subcmd__obsidian_commands() {
 _taskcli__subcmd__help__subcmd__obsidian__subcmd__setup_commands() {
     local commands; commands=()
     _describe -t commands 'taskcli help obsidian setup commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__obsidian__subcmd__snapshot_commands] )) ||
+_taskcli__subcmd__help__subcmd__obsidian__subcmd__snapshot_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help obsidian snapshot commands' commands "$@"
 }
 (( $+functions[_taskcli__subcmd__help__subcmd__plan_commands] )) ||
 _taskcli__subcmd__help__subcmd__plan_commands() {
@@ -2505,6 +2630,9 @@ _taskcli__subcmd__init_commands() {
 (( $+functions[_taskcli__subcmd__job_commands] )) ||
 _taskcli__subcmd__job_commands() {
     local commands; commands=(
+'submit:Submit an ACTIVE Job for review once all non-cancelled Tasks are DONE' \
+'approve:Record human acceptance of a Job awaiting review' \
+'reject:Return a Job awaiting review to ACTIVE, preserving its Tasks' \
 'delete:Delete the Job, its Tasks, and their Plan documents' \
 'create:Create a Job with a title and acceptance goal in the selected Project' \
 'update:Change a Job'\''s display name, title, acceptance goal, or original prompt' \
@@ -2516,6 +2644,11 @@ _taskcli__subcmd__job_commands() {
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'taskcli job commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__job__subcmd__approve_commands] )) ||
+_taskcli__subcmd__job__subcmd__approve_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli job approve commands' commands "$@"
 }
 (( $+functions[_taskcli__subcmd__job__subcmd__archive_commands] )) ||
 _taskcli__subcmd__job__subcmd__archive_commands() {
@@ -2540,6 +2673,9 @@ _taskcli__subcmd__job__subcmd__delete_commands() {
 (( $+functions[_taskcli__subcmd__job__subcmd__help_commands] )) ||
 _taskcli__subcmd__job__subcmd__help_commands() {
     local commands; commands=(
+'submit:Submit an ACTIVE Job for review once all non-cancelled Tasks are DONE' \
+'approve:Record human acceptance of a Job awaiting review' \
+'reject:Return a Job awaiting review to ACTIVE, preserving its Tasks' \
 'delete:Delete the Job, its Tasks, and their Plan documents' \
 'create:Create a Job with a title and acceptance goal in the selected Project' \
 'update:Change a Job'\''s display name, title, acceptance goal, or original prompt' \
@@ -2551,6 +2687,11 @@ _taskcli__subcmd__job__subcmd__help_commands() {
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'taskcli job help commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__job__subcmd__help__subcmd__approve_commands] )) ||
+_taskcli__subcmd__job__subcmd__help__subcmd__approve_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli job help approve commands' commands "$@"
 }
 (( $+functions[_taskcli__subcmd__job__subcmd__help__subcmd__archive_commands] )) ||
 _taskcli__subcmd__job__subcmd__help__subcmd__archive_commands() {
@@ -2582,10 +2723,20 @@ _taskcli__subcmd__job__subcmd__help__subcmd__list_commands() {
     local commands; commands=()
     _describe -t commands 'taskcli job help list commands' commands "$@"
 }
+(( $+functions[_taskcli__subcmd__job__subcmd__help__subcmd__reject_commands] )) ||
+_taskcli__subcmd__job__subcmd__help__subcmd__reject_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli job help reject commands' commands "$@"
+}
 (( $+functions[_taskcli__subcmd__job__subcmd__help__subcmd__show_commands] )) ||
 _taskcli__subcmd__job__subcmd__help__subcmd__show_commands() {
     local commands; commands=()
     _describe -t commands 'taskcli job help show commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__job__subcmd__help__subcmd__submit_commands] )) ||
+_taskcli__subcmd__job__subcmd__help__subcmd__submit_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli job help submit commands' commands "$@"
 }
 (( $+functions[_taskcli__subcmd__job__subcmd__help__subcmd__unarchive_commands] )) ||
 _taskcli__subcmd__job__subcmd__help__subcmd__unarchive_commands() {
@@ -2602,10 +2753,20 @@ _taskcli__subcmd__job__subcmd__list_commands() {
     local commands; commands=()
     _describe -t commands 'taskcli job list commands' commands "$@"
 }
+(( $+functions[_taskcli__subcmd__job__subcmd__reject_commands] )) ||
+_taskcli__subcmd__job__subcmd__reject_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli job reject commands' commands "$@"
+}
 (( $+functions[_taskcli__subcmd__job__subcmd__show_commands] )) ||
 _taskcli__subcmd__job__subcmd__show_commands() {
     local commands; commands=()
     _describe -t commands 'taskcli job show commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__job__subcmd__submit_commands] )) ||
+_taskcli__subcmd__job__subcmd__submit_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli job submit commands' commands "$@"
 }
 (( $+functions[_taskcli__subcmd__job__subcmd__unarchive_commands] )) ||
 _taskcli__subcmd__job__subcmd__unarchive_commands() {
@@ -2620,6 +2781,7 @@ _taskcli__subcmd__job__subcmd__update_commands() {
 (( $+functions[_taskcli__subcmd__obsidian_commands] )) ||
 _taskcli__subcmd__obsidian_commands() {
     local commands; commands=(
+'snapshot:Query registered notes and authoritative status properties without lease credentials' \
 'setup:Install \`TaskNotes\` and configure its task statuses and Bases. Close Obsidian first' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
@@ -2628,6 +2790,7 @@ _taskcli__subcmd__obsidian_commands() {
 (( $+functions[_taskcli__subcmd__obsidian__subcmd__help_commands] )) ||
 _taskcli__subcmd__obsidian__subcmd__help_commands() {
     local commands; commands=(
+'snapshot:Query registered notes and authoritative status properties without lease credentials' \
 'setup:Install \`TaskNotes\` and configure its task statuses and Bases. Close Obsidian first' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
@@ -2643,10 +2806,20 @@ _taskcli__subcmd__obsidian__subcmd__help__subcmd__setup_commands() {
     local commands; commands=()
     _describe -t commands 'taskcli obsidian help setup commands' commands "$@"
 }
+(( $+functions[_taskcli__subcmd__obsidian__subcmd__help__subcmd__snapshot_commands] )) ||
+_taskcli__subcmd__obsidian__subcmd__help__subcmd__snapshot_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli obsidian help snapshot commands' commands "$@"
+}
 (( $+functions[_taskcli__subcmd__obsidian__subcmd__setup_commands] )) ||
 _taskcli__subcmd__obsidian__subcmd__setup_commands() {
     local commands; commands=()
     _describe -t commands 'taskcli obsidian setup commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__obsidian__subcmd__snapshot_commands] )) ||
+_taskcli__subcmd__obsidian__subcmd__snapshot_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli obsidian snapshot commands' commands "$@"
 }
 (( $+functions[_taskcli__subcmd__plan_commands] )) ||
 _taskcli__subcmd__plan_commands() {

@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { runHook, runTaskcli } from "../runtime.mjs";
+import { loadPlugin, copy } from "./support/obsidian-plugin.mjs";
 
 // Cargo supplies its freshly compiled executable: these tests must never fall
 // back to a developer's installed taskcli or normal task database.
@@ -55,6 +56,63 @@ async function fixture(t, format = "markdown") {
     ]);
     return { dir, root, project, job, run, cleanup };
 }
+
+test("Obsidian bridge uses real CLI revisions, lease guards and manual Job review", async (t) => {
+    const f = await fixture(t, "obsidian");
+    const task = await f.run(["task", "add", "--job", f.job.id, "--title", "Bridge"]);
+    const { SyncEngine, runCli } = loadPlugin();
+    const execute = (args) => runCli({ cliPath: process.env.TASKCLI_BIN, configPath: process.env.TASKCLI_CONFIG, vaultPath: f.root }, args);
+    const snapshot = async () => (await execute(["obsidian", "snapshot"])).result;
+    const files = new Map();
+    const notices = [];
+    for (const row of (await snapshot()).notes) {
+        files.set(row.path, { ...copy(row.properties), id: row.id, task_id: row.kind === "task" ? row.id : undefined, revision: row.revision, custom: "preserved" });
+    }
+    const engine = new SyncEngine({
+        snapshot, execute, notice: (message) => notices.push(message),
+        read: async (path) => copy(files.get(path)),
+        patch: async (path, expected, properties) => {
+            const file = files.get(path);
+            if (file.id !== expected.id || file.status !== expected.status || file.revision !== expected.revision) return false;
+            Object.assign(file, copy(properties));
+            return true;
+        },
+    });
+    t.after(() => engine.dispose());
+    await engine.initialize();
+    const edit = async (id, status) => {
+        const row = (await snapshot()).notes.find((note) => note.id === id);
+        Object.assign(files.get(row.path), copy(row.properties), { revision: row.revision, status });
+        engine.observe(row.path, files.get(row.path));
+        await engine.flush();
+        return files.get(row.path);
+    };
+    await edit(task.id, "BLOCKED");
+    assert.equal((await f.run(["task", "show", task.id])).status, "BLOCKED");
+    const claim = (await execute(["task", "claim", task.id, "--executor", "agent:test", "--session", "bridge-owner"])).result;
+    await engine.initialize();
+    const rejected = await edit(task.id, "CANCELLED");
+    assert.equal(rejected.status, "IN_PROGRESS");
+    assert.equal(rejected.custom, "preserved");
+    assert.equal(notices.length, 1);
+    const owner = ["--session", "bridge-owner", "--lease-token", claim.lease.token];
+    await execute(["plan", "create", task.id, "--body", "Verify bridge", ...owner]);
+    await execute(["task", "start", task.id, ...owner]);
+    await execute(["task", "done", task.id, ...owner]);
+    await engine.initialize();
+    assert.equal((await f.run(["job", "show", f.job.id])).status, "PENDING_REVIEW");
+    await edit(f.job.id, "ACTIVE");
+    assert.equal((await f.run(["job", "show", f.job.id])).status, "ACTIVE");
+    assert.equal((await f.run(["task", "show", task.id])).status, "DONE");
+    await edit(f.job.id, "PENDING_REVIEW");
+    const approved = await edit(f.job.id, "COMPLETED");
+    assert.equal(approved.status, "COMPLETED");
+    assert.ok(approved.completedDate);
+    const job = await f.run(["job", "show", f.job.id]);
+    assert.ok(job.completed_at);
+    assert.match(await readFile(join(f.root, "Tasks \u{2603}", job.document_path), "utf8"), /status: "COMPLETED"/);
+    assert.equal(notices.length, 1);
+});
 
 function taskLanguage(t, language) {
     const previous = process.env.AGENT_TASK_LANG;
@@ -157,7 +215,8 @@ for (const [host, format] of [
         await x.invoke(["task", "start", task.id]);
         await x.invoke(["task", "done", task.id]);
         const job = await f.run(["job", "show", f.job.id]);
-        assert.equal(job.status, "COMPLETED");
+        assert.equal(job.status, "PENDING_REVIEW");
+        await f.run(["job", "approve", job.id]);
         const body = await readFile(
             join(f.root, "Tasks \u{2603}", job.document_path),
             "utf8",
@@ -216,6 +275,7 @@ for (const host of ["codex", "claude"]) {
         await f.run(["plan", "create", previous.id, "--body", "# Deliver"], leased);
         await f.run(["task", "start", previous.id], leased);
         await f.run(["task", "done", previous.id], leased);
+        await f.run(["job", "approve", f.job.id]);
         const entry = await f.run(["inbox", "add", "--project", f.project.id, "--content", "Await user review"]);
         const queue = await f.run(["inbox", "list", "--project", f.project.id]);
         for (let i = 0; i < 2; i++) {
@@ -248,6 +308,7 @@ for (const host of ["pi", "omp"]) {
             if (host === "pi") await x.handlers.get("agent_settled")({}, x.ctx);
         }
         await finish(f.job.id);
+        await f.run(["job", "approve", f.job.id]);
         const first = await f.run(["inbox", "add", "--project", f.project.id, "--content", "First request"]);
         const second = await f.run(["inbox", "add", "--project", f.project.id, "--content", "Second request"]);
         for (const entry of [first, second]) {
@@ -263,7 +324,11 @@ for (const host of ["pi", "omp"]) {
             assert.equal(claimed.entry.id, entry.id);
             current = await f.run(["context"], { session: x.ctx.sessionManager.getSessionId() });
             assert.equal(current.inbox.id, entry.id);
-            if (entry.id === first.id) await finish(current.job_id);
+            if (entry.id === first.id) {
+                await finish(current.job_id);
+                assert.equal((await f.run(["job", "show", current.job_id])).status, "PENDING_REVIEW");
+                await f.run(["job", "approve", current.job_id]);
+            }
             else await f.run(["inbox", "cancel", entry.id]);
         }
         const heartbeat = await f.run(["hook", "heartbeat"], { session: x.ctx.sessionManager.getSessionId() });

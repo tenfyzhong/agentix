@@ -109,6 +109,8 @@ enum Command {
 
 #[derive(Subcommand)]
 enum ObsidianCommand {
+    /// Query registered notes and authoritative status properties without lease credentials.
+    Snapshot,
     /// Install `TaskNotes` and configure its task statuses and Bases. Close Obsidian first.
     Setup {
         /// Use a local `TaskNotes` release directory instead of downloading the bundled version.
@@ -178,9 +180,12 @@ enum InboxCommand {
 }
 
 #[derive(Args)]
+#[allow(clippy::struct_excessive_bools)] // Independent clap filter flags with explicit conflicts.
 struct JobList {
-    #[arg(long,conflicts_with_all=["completed","archived"])]
+    #[arg(long,conflicts_with_all=["completed","archived","pending_review"])]
     active: bool,
+    #[arg(long, conflicts_with_all = ["completed", "archived"])]
+    pending_review: bool,
     #[arg(long, conflicts_with = "archived")]
     completed: bool,
     #[arg(long)]
@@ -194,6 +199,12 @@ struct JobList {
 }
 #[derive(Subcommand)]
 enum JobCommand {
+    /// Submit an ACTIVE Job for review once all non-cancelled Tasks are DONE.
+    Submit { id: String },
+    /// Record human acceptance of a Job awaiting review.
+    Approve { id: String },
+    /// Return a Job awaiting review to ACTIVE, preserving its Tasks.
+    Reject(Reason),
     /// Delete the Job, its Tasks, and their Plan documents.
     Delete { id: String },
     /// Create a Job with a title and acceptance goal in the selected Project.
@@ -451,7 +462,7 @@ async fn run(cli: &Cli) -> Result<Value> {
     {
         let config = Config::load(&cli.config_path()?)?;
         return Ok(response(
-            obsidian::setup(&config, plugin_dir.as_deref()).await?,
+            obsidian::setup(&config, &cli.config_path()?, plugin_dir.as_deref()).await?,
         ));
     }
     let service = Service::open(Config::load(&cli.config_path()?)?).await?;
@@ -500,6 +511,9 @@ async fn run(cli: &Cli) -> Result<Value> {
             context(cli, &service, task.as_deref(), job.as_deref()).await
         }
         Command::Hook { action } => hook(cli, &service, action).await,
+        Command::Obsidian {
+            action: ObsidianCommand::Snapshot,
+        } => Ok(response(service.obsidian_snapshot().await?)),
         Command::Init(_) | Command::Completions { .. } | Command::Obsidian { .. } => unreachable!(),
     }
 }
@@ -633,6 +647,20 @@ async fn resolve_project(cli: &Cli, service: &Service) -> Result<String> {
 
 async fn job(cli: &Cli, service: &Service, action: &JobCommand) -> Result<Value> {
     match action {
+        JobCommand::Submit { id } => {
+            mutate(cli, service, json!({"command":"job.submit","job":id})).await
+        }
+        JobCommand::Approve { id } => {
+            mutate(cli, service, json!({"command":"job.approve","job":id})).await
+        }
+        JobCommand::Reject(args) => {
+            mutate(
+                cli,
+                service,
+                json!({"command":"job.reject","job":args.id,"reason":args.reason}),
+            )
+            .await
+        }
         JobCommand::Delete { id } => {
             mutate(cli, service, json!({"command":"job.delete","job":id})).await
         }
@@ -672,42 +700,7 @@ async fn job(cli: &Cli, service: &Service, action: &JobCommand) -> Result<Value>
             }
             mutate(cli, service, request).await
         }
-        JobCommand::List(filters) => {
-            let state = service.store().snapshot().await?;
-            let pid = cli
-                .project
-                .as_ref()
-                .map(|p| state.project_index(p).map(|i| state.projects[i].id.clone()))
-                .transpose()?;
-            let from = filters.created_from.as_ref().map(|s| date(s)).transpose()?;
-            let to = filters.created_to.as_ref().map(|s| date(s)).transpose()?;
-            if let Some(period) = &filters.period {
-                ensure!(
-                    period.len() == 7 && date(&format!("{period}-01")).is_ok(),
-                    "period must be YYYY-MM"
-                );
-            }
-            let jobs: Vec<_> = state
-                .jobs
-                .into_iter()
-                .filter(|j| pid.as_ref().is_none_or(|p| *p == j.project_id))
-                .filter(|j| {
-                    !filters.active || (j.status == JobStatus::Active && j.archived_at.is_none())
-                })
-                .filter(|j| !filters.completed || j.status == JobStatus::Completed)
-                .filter(|j| !filters.archived || j.archived_at.is_some())
-                .filter(|j| {
-                    from.is_none_or(|v| j.created_at >= v)
-                        && to.is_none_or(|v| j.created_at < v + 86400)
-                })
-                .filter(|j| {
-                    filters.period.as_ref().is_none_or(|p| {
-                        j.archived_at.is_some_and(|t| format_date(t).starts_with(p))
-                    })
-                })
-                .collect();
-            Ok(response(json!(jobs)))
-        }
+        JobCommand::List(filters) => list_jobs(cli, service, filters).await,
         JobCommand::Show { id } => {
             let state = service.store().snapshot().await?;
             Ok(response(json!(state.jobs[state.job_index(id)?])))
@@ -722,6 +715,45 @@ async fn job(cli: &Cli, service: &Service, action: &JobCommand) -> Result<Value>
             mutate(cli, service, json!({"command":"job.unarchive","job":id})).await
         }
     }
+}
+
+async fn list_jobs(cli: &Cli, service: &Service, filters: &JobList) -> Result<Value> {
+    let state = service.store().snapshot().await?;
+    let pid = cli
+        .project
+        .as_ref()
+        .map(|p| state.project_index(p).map(|i| state.projects[i].id.clone()))
+        .transpose()?;
+    let from = filters.created_from.as_ref().map(|s| date(s)).transpose()?;
+    let to = filters.created_to.as_ref().map(|s| date(s)).transpose()?;
+    if let Some(period) = &filters.period {
+        ensure!(
+            period.len() == 7 && date(&format!("{period}-01")).is_ok(),
+            "period must be YYYY-MM"
+        );
+    }
+    let jobs: Vec<_> = state
+        .jobs
+        .into_iter()
+        .filter(|j| pid.as_ref().is_none_or(|p| *p == j.project_id))
+        .filter(|j| !filters.active || (j.status == JobStatus::Active && j.archived_at.is_none()))
+        .filter(|j| !filters.completed || j.status == JobStatus::Completed)
+        .filter(|j| {
+            !filters.pending_review
+                || (j.status == JobStatus::PendingReview && j.archived_at.is_none())
+        })
+        .filter(|j| !filters.archived || j.archived_at.is_some())
+        .filter(|j| {
+            from.is_none_or(|v| j.created_at >= v) && to.is_none_or(|v| j.created_at < v + 86400)
+        })
+        .filter(|j| {
+            filters
+                .period
+                .as_ref()
+                .is_none_or(|p| j.archived_at.is_some_and(|t| format_date(t).starts_with(p)))
+        })
+        .collect();
+    Ok(response(json!(jobs)))
 }
 
 async fn task(cli: &Cli, service: &Service, action: &TaskCommand) -> Result<Value> {
