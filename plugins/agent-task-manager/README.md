@@ -53,16 +53,15 @@ pi install git:github.com/tenfyzhong/agentix
 
 Pi manages the Git checkout and installs npm dependencies automatically. The repository-root `package.json` selects the plugin's Pi extension and shared skills; its npm workspace installs the plugin's runtime dependencies. Restart or reload Pi after installation. See [Pi package installation](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/packages.md#install-and-manage).
 
-### OMP: marketplace
+### OMP: install
 
-Add the GitHub repository as an OMP marketplace, then install the plugin:
+Install the extension package directly from GitHub:
 
 ```sh
-omp plugin marketplace add tenfyzhong/agentix
-omp plugin install agent-task-manager@agentix
+omp install github:tenfyzhong/agentix
 ```
 
-OMP uses the repository's `.claude-plugin/marketplace.json` catalog and manages the installed plugin. Restart OMP after installation. See the [OMP plugin commands](https://github.com/can1357/oh-my-pi/blob/main/packages/coding-agent/src/cli/plugin-cli.ts) and [package loader](https://github.com/can1357/oh-my-pi/blob/main/docs/skills/authoring-extensions.md#packagejson-manifest).
+OMP uses the `github:owner/repo` source format for direct Git installs. The repository-root `package.json` selects the OMP extension through `omp.extensions` and the shared skills through `omp.skills`; package dependencies supply the runtime requirements. Restart OMP after installation. See the [OMP install command](https://github.com/can1357/oh-my-pi/blob/main/packages/coding-agent/src/commands/install.ts), [Git source formats](https://github.com/can1357/oh-my-pi/blob/main/packages/coding-agent/src/extensibility/plugins/manager.ts), and [extension package manifest](https://github.com/can1357/oh-my-pi/blob/main/docs/skills/authoring-extensions.md#packagejson-manifest).
 
 An npm-installed copy uses `npm install --ignore-scripts` if dependencies need reinstalling: npm does not ship `package-lock.json`. Source and release copies include the lockfile and can use `npm ci`. The separate Obsidian skill is still required when an agent edits Obsidian Plan/Notes bodies.
 

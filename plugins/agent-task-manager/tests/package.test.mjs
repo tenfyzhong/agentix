@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { cp, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { join, posix } from "node:path";
@@ -10,15 +10,18 @@ const root = new URL("../", import.meta.url);
 const readJson = async (path) =>
     JSON.parse(await readFile(new URL(path, root), "utf8"));
 
-test("Pi Git installs discover the plugin and install its runtime dependencies", async () => {
+test("Pi and OMP remote packages discover their adapters and install runtime dependencies", async () => {
     const repository = new URL("../../", root);
     const pkg = await readJson("../../package.json");
     const plugin = await readJson("package.json");
-    for (const kind of ["extensions", "skills"]) {
-        assert.deepEqual(
-            pkg.pi[kind],
-            plugin.pi[kind].map(path => `./plugins/agent-task-manager/${path.replace(/^\.\//, "")}`),
-        );
+    for (const host of ["pi", "omp"]) {
+        assert.ok(pkg[host], `root package must declare ${host} resources`);
+        for (const kind of ["extensions", "skills"]) {
+            assert.deepEqual(
+                pkg[host][kind],
+                plugin[host][kind].map(path => `./plugins/agent-task-manager/${path.replace(/^\.\//, "")}`),
+            );
+        }
     }
 
     const directory = await mkdtemp(`${tmpdir()}/agentix-pi-install-`);
@@ -30,25 +33,52 @@ test("Pi Git installs discover the plugin and install its runtime dependencies",
                 filter: source => !/[\\/](node_modules|tests)([\\/]|$)/.test(source),
             });
         }
-        execFileSync(
+        const runNpm = (command, cwd) => execFileSync(
             process.platform === "win32" ? "cmd.exe" : "/bin/sh",
             process.platform === "win32"
-                ? ["/d", "/s", "/c", "npm ci --ignore-scripts --offline --no-audit --no-fund"]
-                : ["-c", "npm ci --ignore-scripts --offline --no-audit --no-fund"],
-            { cwd: directory, encoding: "utf8", timeout: 30000 },
+                ? ["/d", "/s", "/c", command]
+                : ["-c", command],
+            { cwd, encoding: "utf8", timeout: 30000 },
         );
-        const { default: install } = await import(
-            pathToFileURL(join(directory, pkg.pi.extensions[0]))
-        );
-        const events = [], tools = [];
-        install({
-            on: event => events.push(event),
-            registerTool: tool => tools.push(tool.name),
-        });
-        assert.ok(events.includes("agent_settled"), "load the Pi lifecycle adapter");
-        assert.deepEqual(tools, ["taskcli"]);
-        for (const path of pkg.pi.skills) {
-            await readFile(`${directory}/${path}/agent-task-manager/SKILL.md`, "utf8");
+        // OMP installs the repository as a dependency, where root workspaces
+        // alone do not install the nested extension's runtime dependencies.
+        const [archive] = JSON.parse(runNpm("npm pack --ignore-scripts --offline --json", directory));
+        const consumer = `${directory}/consumer`;
+        await mkdir(consumer);
+        const lock = await readJson("../../package-lock.json");
+        // Use the already cached lockfile tarballs, without registry metadata.
+        // Overrides do not add dependencies missing from the installed package.
+        const overrides = Object.fromEntries(Object.keys(plugin.dependencies).map(name => [
+            name, lock.packages[`node_modules/${name}`].resolved,
+        ]));
+        await writeFile(`${consumer}/package.json`, `${JSON.stringify({ private: true, overrides }, null, 2)}\n`);
+        await cp(`${directory}/${archive.filename}`, `${consumer}/package.tgz`);
+        runNpm("npm install ./package.tgz --ignore-scripts --offline --no-audit --no-fund", consumer);
+        for (const host of ["omp", "pi"]) {
+            if (host === "pi") {
+                runNpm("npm ci --ignore-scripts --offline --no-audit --no-fund", directory);
+            }
+            const installedRoot = host === "pi" ? directory : `${consumer}/node_modules/${pkg.name}`;
+            let entrypoint = join(installedRoot, pkg[host].extensions[0]);
+            if (host === "omp") {
+                // These adapters contain plain JavaScript. Node cannot load
+                // .ts under node_modules; .mjs keeps dependency resolution intact.
+                await cp(entrypoint, `${entrypoint}.mjs`);
+                entrypoint += ".mjs";
+            }
+            const { default: install } = await import(
+                pathToFileURL(entrypoint)
+            );
+            const events = [], tools = [];
+            install({
+                on: event => events.push(event),
+                registerTool: tool => tools.push(tool.name),
+            });
+            assert.equal(events.includes("agent_settled"), host === "pi", `load the ${host} lifecycle adapter`);
+            assert.deepEqual(tools, ["taskcli"]);
+            for (const path of pkg[host].skills) {
+                await readFile(`${installedRoot}/${path}/agent-task-manager/SKILL.md`, "utf8");
+            }
         }
     } finally {
         await rm(directory, { recursive: true, force: true });

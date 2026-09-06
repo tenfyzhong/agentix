@@ -10,7 +10,7 @@ Agentix connects local Codex, Pi, and Oh My Pi sessions to Telegram or Feishu. A
 - Create Codex sessions from chat with optional rmux integration.
 - Coordinate work with standalone `taskcli` and browse project, Job, and Task boards in IM or Obsidian.
 
-Install the Agent Task Manager plugin from GitHub using the [host-specific installation guide](plugins/agent-task-manager/README.md#prerequisites-and-activation). Codex, Claude Code, and OMP use the `agentix` marketplace; Pi installs the repository as a package. The root npm workspace installs the plugin's runtime dependencies for Pi.
+Install Agent Task Manager from GitHub using the [host-specific installation guide](plugins/agent-task-manager/README.md#prerequisites-and-activation). Codex and Claude Code use the `agentix` marketplace; Pi and OMP install the repository as an extension package with their own entrypoints and shared runtime dependencies.
 
 ## Install
 
