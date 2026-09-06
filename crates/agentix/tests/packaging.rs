@@ -447,36 +447,52 @@ fn homebrew_source_update_preserves_tap_customizations_and_removes_old_bottles()
         "  end\n",
         "end\n",
     );
-    fs::write(&formula_path, formula).unwrap();
-    for _ in 0..2 {
-        let result = Command::new("ruby")
-            .args(["-e", ruby])
-            .env("FORMULA_PATH", &formula_path)
-            .env("SOURCE_URL", "https://example.com/v2.0.0.tar.gz")
-            .env("SOURCE_SHA256", "new-source-checksum")
-            .output()
-            .unwrap();
-        assert!(
-            result.status.success(),
-            "{}",
-            String::from_utf8_lossy(&result.stderr)
-        );
-        let updated = fs::read_to_string(&formula_path).unwrap();
-        assert!(!updated.contains("bottle do"));
-        assert!(!updated.contains("old-bottle-checksum"));
-        let expected = formula
-            .replace("v1.0.0.tar.gz", "v2.0.0.tar.gz")
-            .replace("old-source-checksum", "new-source-checksum")
-            .replace(
-                concat!(
-                    "  bottle do\n",
-                    "    root_url \"https://example.com/v1.0.0\"\n",
-                    "    sha256 cellar: :any_skip_relocation, arm64_sequoia: \"old-bottle-checksum\"\n",
-                    "  end\n\n",
-                ),
-                "",
-            );
-        assert_eq!(updated, expected);
+    for revision in ["", "  revision 1\n", "  revision 12\n"] {
+        for source_url in [
+            "https://example.com/v1.0.0.tar.gz",
+            "https://example.com/v2.0.0.tar.gz",
+        ] {
+            let formula = formula.replacen("  sha256", &format!("{revision}  sha256"), 1);
+            fs::write(&formula_path, &formula).unwrap();
+            for _ in 0..2 {
+                let result = Command::new("ruby")
+                    .args(["-e", ruby])
+                    .env("FORMULA_PATH", &formula_path)
+                    .env("SOURCE_URL", source_url)
+                    .env("SOURCE_SHA256", "new-source-checksum")
+                    .output()
+                    .unwrap();
+                assert!(
+                    result.status.success(),
+                    "{}",
+                    String::from_utf8_lossy(&result.stderr)
+                );
+                let updated = fs::read_to_string(&formula_path).unwrap();
+                assert!(!updated.contains("bottle do"));
+                assert!(!updated.contains("old-bottle-checksum"));
+                let expected = formula
+                    .replace("https://example.com/v1.0.0.tar.gz", source_url)
+                    .replace("old-source-checksum", "new-source-checksum")
+                    .replace(
+                        concat!(
+                            "  bottle do\n",
+                            "    root_url \"https://example.com/v1.0.0\"\n",
+                            "    sha256 cellar: :any_skip_relocation, arm64_sequoia: \"old-bottle-checksum\"\n",
+                            "  end\n\n",
+                        ),
+                        "",
+                    );
+                let expected = if source_url == "https://example.com/v1.0.0.tar.gz" {
+                    expected
+                } else {
+                    expected.replace(revision, "")
+                };
+                assert_eq!(
+                    updated, expected,
+                    "source URL: {source_url}, revision: {revision:?}"
+                );
+            }
+        }
     }
 }
 

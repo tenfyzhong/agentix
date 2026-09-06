@@ -153,6 +153,8 @@ Each tool's archive includes its own binary, example configuration, and shell co
 
 The Homebrew formula is maintained exclusively in [`tenfyzhong/homebrew-tap`](https://github.com/tenfyzhong/homebrew-tap/blob/main/Formula/agentix.rb); edit dependencies, installation steps, and service settings there. Do not add a formula template to this repository. The formula applies its source tag version to the Cargo metadata before its locked source build. The workflow checks out the tap, updates the existing formula's source URL and checksum, and removes stale bottle metadata while preserving the tap's other settings. It then builds an arm64 macOS bottle, uploads it to the release, adds its metadata, and opens or updates a PR in the tap. Automatic and manually dispatched publishing both require a `HOMEBREW_TAP_TOKEN` with permission to create branches and pull requests.
 
+When the source URL changes for a new tag, the Homebrew workflow also removes the formula's old `revision` so the new upstream version starts at revision zero. Re-running the same tag preserves its revision while rebuilding the bottle.
+
 Before tagging a release:
 
 1. Run formatting, Clippy, all tests, and documentation tests.
