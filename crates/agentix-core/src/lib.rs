@@ -27,7 +27,7 @@ pub use channel::{
     InboundEnvelope, InboundPayload, MessageRef, OutboundView, ViewStatus, include_reply_context,
 };
 pub use command::{AgentCommand, InputParseError, ParsedInput, parse_input};
-pub use engine::{Engine, EngineError};
+pub use engine::{Engine, EngineError, RestoredBindings};
 pub use message_center::MessageCenter;
 pub use model::{ChannelKind, ConversationRef, SessionId};
 pub use render::{HistoryWatermark, RenderKey, chunk_text};

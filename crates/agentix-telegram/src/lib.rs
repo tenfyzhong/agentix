@@ -215,11 +215,16 @@ impl TelegramAdapter {
         Ok(())
     }
     async fn initialize_bot(&self) -> Result<String, ChannelError> {
+        let started = std::time::Instant::now();
         let me = self
             .request(self.bot.get_me(), "getMe", None)
             .await
             .map_err(|error| ChannelError::Transport(error.to_string()))?;
         self.register_menu().await?;
+        tracing::info!(
+            elapsed_ms = started.elapsed().as_millis(),
+            "Telegram initialization completed; starting update polling"
+        );
         Ok(me.username().to_owned())
     }
 }

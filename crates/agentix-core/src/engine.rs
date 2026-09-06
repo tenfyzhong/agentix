@@ -182,6 +182,37 @@ enum PendingSessionInput {
     Rename(SessionId),
 }
 
+/// IM updates prepared during durable state restoration.
+/// Deliver these after starting the service to keep IM latency off the startup path.
+pub struct RestoredBindings {
+    bindings: Vec<RestoredBinding>,
+    turns: Vec<RestoredTurn>,
+}
+
+struct RestoredBinding {
+    conversation: ConversationRef,
+    session: SessionId,
+    attached: bool,
+    epoch: u64,
+}
+
+struct RestoredTurn {
+    conversation: ConversationRef,
+    session: SessionId,
+    turn: String,
+    epoch: u64,
+}
+
+impl RestoredBindings {
+    #[must_use]
+    pub fn restored_count(&self) -> usize {
+        self.bindings
+            .iter()
+            .filter(|binding| binding.attached)
+            .count()
+    }
+}
+
 pub struct Engine {
     task_board: Option<Arc<agentix_task::Service>>,
     task_inputs: tokio::sync::Mutex<HashMap<ConversationRef, PendingTaskInput>>,
@@ -233,15 +264,30 @@ impl Engine {
 
     /// Restores durable conversation bindings and their upstream subscriptions.
     pub async fn restore_bindings(&self) -> Result<usize, EngineError> {
+        let updates = self.restore_bindings_deferred().await?;
+        let restored = updates.restored_count();
+        self.notify_restored_bindings(updates).await?;
+        Ok(restored)
+    }
+
+    /// Restore bindings and turn state without making any IM requests.
+    pub async fn restore_bindings_deferred(&self) -> Result<RestoredBindings, EngineError> {
         let persisted = self.state.list_bindings().await?;
-        let mut restored = 0;
+        let mut updates = RestoredBindings {
+            bindings: Vec::new(),
+            turns: Vec::new(),
+        };
         for (conversation, session) in &persisted {
             if !self.channels.contains_key(&conversation.channel) {
                 continue;
             }
-            if self.restore_binding(conversation, session).await? {
-                restored += 1;
-            }
+            let attached = self.restore_binding(conversation, session).await?;
+            updates.bindings.push(RestoredBinding {
+                conversation: conversation.clone(),
+                session: session.clone(),
+                attached,
+                epoch: self.sessions.epoch(conversation).await,
+            });
         }
         for stored in self.state.list_turn_views().await? {
             if !self
@@ -297,16 +343,14 @@ impl Engine {
                 .lock()
                 .await
                 .insert(key, stored.message.clone());
-            self.render_turn(
-                &stored.message.conversation,
-                &stored.session_id,
-                &stored.turn_id,
-                DeliveryClass::Live,
-                true,
-            )
-            .await?;
+            updates.turns.push(RestoredTurn {
+                epoch: self.sessions.epoch(&stored.message.conversation).await,
+                conversation: stored.message.conversation,
+                session: stored.session_id,
+                turn: stored.turn_id,
+            });
         }
-        Ok(restored)
+        Ok(updates)
     }
 
     async fn restore_binding(
@@ -316,68 +360,103 @@ impl Engine {
     ) -> Result<bool, EngineError> {
         match self.agent.attach(session).await {
             Ok(()) => {
-                self.cache_session_summary(session).await;
-                let session_label = self.session_label(session).await;
                 let epoch = self.state.binding_epoch(conversation).await?;
                 self.sessions
                     .attach_at_epoch(conversation.clone(), session.clone(), false, epoch)
                     .await;
-                self.update_command_menu_best_effort(conversation, true)
-                    .await;
-                if let Err(error) = self
-                    .send_view(
-                        conversation,
-                        &OutboundView {
-                            title: "Agentix serve".into(),
-                            subtitle: Some("Online · Reattached".into()),
-                            body: format!(
-                                "Agentix serve is online. Reattached to {} session {}.",
-                                self.agent.display_name(),
-                                session_label
-                            ),
-                            status: ViewStatus::Success,
-                            actions: Vec::new(),
-                        },
-                    )
-                    .await
-                {
-                    tracing::warn!(%error, ?conversation, "failed to notify a restored conversation");
-                }
                 Ok(true)
             }
             Err(AgentError::Rejected(reason)) => {
-                let session_label = self.session_label(session).await;
-                tracing::warn!(
-                    %reason,
-                    ?conversation,
-                    %session,
-                    "saved agent session is no longer attachable"
-                );
+                tracing::warn!(%reason, ?conversation, %session, "saved agent session is no longer attachable");
                 self.state.detach(conversation).await?;
-                self.update_command_menu_best_effort(conversation, false)
-                    .await;
-                if let Err(error) = self.send_view(
-                    conversation,
-                    &OutboundView {
-                        title: "Agentix serve".into(),
-                        subtitle: Some("Online · Detached".into()),
-                        body: format!(
-                            "Agentix serve is online. Saved {} session {} is no longer running, so this IM conversation remains detached.",
-                            self.agent.display_name(),
-                            session_label
-                        ),
-                        status: ViewStatus::Warning,
-                        actions: Vec::new(),
-                    },
-                )
-                .await
-                {
-                    tracing::warn!(%error, ?conversation, "failed to notify a stale restored conversation");
-                }
                 Ok(false)
             }
             Err(error) => Err(error.into()),
         }
+    }
+
+    /// Present restored bindings and turns. The caller owns cancellation and shutdown.
+    pub async fn notify_restored_bindings(
+        &self,
+        updates: RestoredBindings,
+    ) -> Result<(), EngineError> {
+        for binding in updates.bindings {
+            let RestoredBinding {
+                conversation,
+                session,
+                attached,
+                epoch,
+            } = binding;
+            if self.sessions.epoch(&conversation).await != epoch {
+                continue;
+            }
+            if attached {
+                self.cache_session_summary(&session).await;
+            }
+            let session_label = self.session_label(&session).await;
+            if self.sessions.epoch(&conversation).await != epoch {
+                continue;
+            }
+            self.update_command_menu_best_effort(&conversation, attached)
+                .await;
+            if self.sessions.epoch(&conversation).await != epoch {
+                // A slow old request may have overwritten the newer binding's menu.
+                let attached_now = self.sessions.current(&conversation).await.is_some();
+                self.update_command_menu_best_effort(&conversation, attached_now)
+                    .await;
+                continue;
+            }
+            let view = if attached {
+                OutboundView {
+                    title: "Agentix serve".into(),
+                    subtitle: Some("Online · Reattached".into()),
+                    body: format!(
+                        "Agentix serve is online. Reattached to {} session {}.",
+                        self.agent.display_name(),
+                        session_label
+                    ),
+                    status: ViewStatus::Success,
+                    actions: Vec::new(),
+                }
+            } else {
+                OutboundView {
+                    title: "Agentix serve".into(),
+                    subtitle: Some("Online · Detached".into()),
+                    body: format!(
+                        "Agentix serve is online. Saved {} session {} is no longer running, so this IM conversation remains detached.",
+                        self.agent.display_name(),
+                        session_label
+                    ),
+                    status: ViewStatus::Warning,
+                    actions: Vec::new(),
+                }
+            };
+            if let Err(error) = self.send_view(&conversation, &view).await {
+                tracing::warn!(%error, ?conversation, "failed to notify a restored conversation");
+            }
+        }
+        for RestoredTurn {
+            conversation,
+            session,
+            turn,
+            epoch,
+        } in updates.turns
+        {
+            if self.sessions.epoch(&conversation).await != epoch
+                || self.sessions.current(&conversation).await.as_ref() != Some(&session)
+                || !self
+                    .turns
+                    .buffers
+                    .lock()
+                    .await
+                    .contains_key(&(session.clone(), turn.clone()))
+            {
+                continue;
+            }
+            self.render_turn(&conversation, &session, &turn, DeliveryClass::Live, true)
+                .await?;
+        }
+        Ok(())
     }
 
     /// Checkpoints durable bindings and presents every bound IM conversation as detached.
@@ -2641,7 +2720,10 @@ impl Engine {
         }
         let (mut view, is_running, snapshot) = {
             let buffers = self.turns.buffers.lock().await;
-            let buffer = buffers.get(&key).expect("turn buffer must exist");
+            let Some(buffer) = buffers.get(&key) else {
+                // A deferred startup refresh can race with removal of a finished turn.
+                return Ok(());
+            };
             (
                 live_turn_view(
                     self.agent.display_name(),
