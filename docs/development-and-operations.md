@@ -112,7 +112,7 @@ Agentix requires a mention in groups. The Feishu SDK acknowledges card actions w
 
 Create a bot token and set `channel.telegram.token` to its value. Add numeric owner user IDs directly or initialize the first owner through the claim flow above. In group chats, privacy mode and bot permissions must still allow mentioned messages to reach the bot. Agentix ignores unmentioned group text.
 
-At channel startup, Agentix registers the detached `sessions`, `rmux`, `cancel`, and `help` menu with Telegram and selects the commands menu button for private chats. After attachment it registers the extended session-command menu, including clickable `/model` and `/reasoning` selectors; `/thinking` is not exposed. Menu registration is refreshed on every restart, so BotFather command configuration is not required. `/attach` is intentionally omitted from the menu because it requires a session ID; use the title buttons from `/sessions` instead.
+At channel startup, Agentix registers Telegram's primary commands in the order `/sessions`, `/dashboard`, `/cancel`, `/rmux`, `/help`, omitting `/dashboard` when task boards are not configured. It selects the commands menu button for private chats. After attachment, contextual commands follow in alphabetical order, including `/board` and `/jobs` when task boards are enabled, and clickable `/model` and `/reasoning` selectors for Codex; `/thinking` is not exposed. Menu registration is refreshed on every restart, so BotFather command configuration is not required. `/attach` is intentionally omitted from the menu because it requires a session ID; use the title buttons from `/sessions` instead.
 
 ## Service operation
 
