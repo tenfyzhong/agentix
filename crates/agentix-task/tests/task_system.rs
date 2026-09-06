@@ -2911,3 +2911,92 @@ async fn im_markdown_rejects_notes_that_escape_the_document_root() {
             .contains("escapes")
     );
 }
+
+#[tokio::test]
+async fn crlf_frontmatter_preserves_properties_and_body_during_publication_and_sync() {
+    for format in ["markdown", "obsidian"] {
+        let f = Fixture::new(format).await;
+        let task = f.task("Windows note").await;
+        let claim = f.claim(&task, "windows").await;
+        let body = "# Plan\r\n\r\nKeep authored line endings.\r\n";
+        let created = f.service.execute(json!({"command":"plan.create","task":task,"body":format!("---\r\nowner: Alice\r\n---\r\n\r\n{body}")}), owner(&claim)).await.unwrap();
+        assert!(created.projection_pending.is_none());
+        let plan = f.service.plan(&task).await.unwrap();
+        assert_eq!(plan["properties"]["owner"], "Alice");
+        assert_eq!(plan["body"], body);
+        let path = plan["absolute_path"].as_str().unwrap();
+        // A Windows editor rewrites generated metadata as CRLF too.
+        let text = std::fs::read_to_string(path)
+            .unwrap()
+            .replace("\r\n", "\n")
+            .replace('\n', "\r\n");
+        std::fs::write(path, text).unwrap();
+        f.service.sync().await.unwrap();
+        let plan = f.service.plan(&task).await.unwrap();
+        assert_eq!(plan["properties"]["owner"], "Alice");
+        assert_eq!(plan["body"], body);
+        assert_eq!(
+            std::fs::read_to_string(path)
+                .unwrap()
+                .lines()
+                .filter(|line| *line == "---")
+                .count(),
+            2
+        );
+    }
+}
+
+#[tokio::test]
+async fn crlf_metadata_only_plan_cannot_start() {
+    let f = Fixture::new("markdown").await;
+    let task = f.task("Metadata only").await;
+    let claim = f.claim(&task, "metadata").await;
+    let plan = f.plan(&task).await;
+    for ending in ["\r\n", ""] {
+        std::fs::write(
+            plan["absolute_path"].as_str().unwrap(),
+            format!("---\r\nowner: Alice\r\n---{ending}"),
+        )
+        .unwrap();
+        let result = f
+            .service
+            .execute(json!({"command":"task.start","task":task}), owner(&claim))
+            .await;
+        assert!(result.is_err(), "metadata is not an executable Plan body");
+    }
+}
+
+#[tokio::test]
+async fn quoted_authored_frontmatter_keys_round_trip_through_publication_and_sync() {
+    for format in ["markdown", "obsidian"] {
+        let f = Fixture::new(format).await;
+        let task = f.task("Quoted keys").await;
+        let claim = f.claim(&task, "keys").await;
+        let custom = json!({"review: notes":"pending", "# comment":"value", "true":"string key", " spaced ": ["one", "two"], "line\nbreak":"multiline key", "quote\"key": {"nested":"value"}});
+        let body = format!(
+            "---\n{}---\n\n# Plan\n",
+            serde_yaml::to_string(&custom).unwrap()
+        );
+        let result = f
+            .service
+            .execute(
+                json!({"command":"plan.create","task":task,"body":body}),
+                owner(&claim),
+            )
+            .await
+            .unwrap();
+        assert!(result.projection_pending.is_none(), "{result:?}");
+        for _ in 0..2 {
+            let plan = f
+                .service
+                .plan(&task)
+                .await
+                .expect("published YAML must be parseable");
+            for (key, value) in custom.as_object().unwrap() {
+                assert_eq!(&plan["properties"][key], value, "{key}");
+            }
+            assert_eq!(plan["body"], "# Plan\n");
+            f.service.sync().await.unwrap();
+        }
+    }
+}

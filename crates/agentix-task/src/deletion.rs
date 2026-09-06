@@ -16,6 +16,8 @@ use crate::{
 pub(crate) struct Cleanup {
     pub id: String,
     pub files: BTreeSet<String>,
+    #[serde(default)]
+    pub candidates: BTreeMap<String, BTreeSet<String>>,
     pub directories: BTreeSet<String>,
 }
 
@@ -157,6 +159,7 @@ pub(crate) async fn persist(
     let mut cleanup = Cleanup {
         id: new_id("cleanup"),
         files: BTreeSet::new(),
+        candidates: BTreeMap::new(),
         directories: BTreeSet::new(),
     };
     for plan in before
@@ -164,7 +167,11 @@ pub(crate) async fn persist(
         .iter()
         .filter(|p| !after.plans.iter().any(|a| a.id == p.id))
     {
-        cleanup.files.insert(plan.path.clone());
+        cleanup
+            .candidates
+            .entry(plan.path.clone())
+            .or_default()
+            .extend([plan.id.clone(), plan.task_id.clone()]);
         if let Some(path) = previous.get(&format!("plan:{}", plan.id)) {
             cleanup.files.insert(path.clone());
         }
@@ -179,8 +186,10 @@ pub(crate) async fn persist(
         .filter(|t| !after.tasks.iter().any(|a| a.id == t.id))
     {
         cleanup
-            .files
-            .insert(crate::naming::task_path(before, task)?);
+            .candidates
+            .entry(crate::naming::task_path(before, task)?)
+            .or_default()
+            .insert(task.id.clone());
         if let Some(path) = previous.get(&format!("task:{}", task.id)) {
             cleanup.files.insert(path.clone());
         }
@@ -213,7 +222,11 @@ pub(crate) async fn persist(
         .await?;
     }
     for job in jobs {
-        cleanup.files.insert(job.document_path.clone());
+        cleanup
+            .candidates
+            .entry(job.document_path.clone())
+            .or_default()
+            .insert(job.id.clone());
         if let Some(path) = previous.get(&format!("job:{}", job.id)) {
             cleanup.files.insert(path.clone());
         }

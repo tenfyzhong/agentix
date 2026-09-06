@@ -426,18 +426,25 @@ impl CodexClient {
         {
             return Ok(false);
         }
-        let provisional = match self
-            .request_after_reconnect("thread/resume", thread_resume_params(session_id))
-            .await
-        {
-            Ok(_) => false,
-            Err(error) if is_rollout_initializing(&error) => true,
-            Err(error) => return Err(error),
+        let observed = self.observed.lock().await.contains_key(session_id);
+        let provisional = if observed {
+            false
+        } else {
+            match self
+                .request_after_reconnect("thread/resume", thread_resume_params(session_id))
+                .await
+            {
+                Ok(_) => false,
+                Err(error) if is_rollout_initializing(&error) => true,
+                Err(error) => return Err(error),
+            }
         };
         if !self.exited_process_sessions.lock().await.remove(session_id) {
             return Ok(false);
         }
-        self.subscriptions.lock().await.insert(session_id.clone());
+        if !observed {
+            self.subscriptions.lock().await.insert(session_id.clone());
+        }
         if provisional {
             self.pending_resumes.lock().await.insert(session_id.clone());
         } else {
@@ -1339,9 +1346,10 @@ async fn monitor_running_sessions(client: CodexClient) {
             let _ = client.events.send(AgentEvent::SessionExited {
                 session_id: session.to_string(),
             });
-            if let Err(error) = client
-                .request("thread/unsubscribe", json!({"threadId": session.as_str()}))
-                .await
+            if !client.observed.lock().await.contains_key(&session)
+                && let Err(error) = client
+                    .request("thread/unsubscribe", json!({"threadId": session.as_str()}))
+                    .await
             {
                 tracing::warn!(%error, session = %session, "failed to release exited Codex session");
             }
@@ -1585,6 +1593,13 @@ impl AgentAdapter for CodexClient {
                     .lock()
                     .await
                     .insert(session_id.clone(), latest);
+                self.exited_process_sessions.lock().await.remove(session_id);
+                if self.process_discovery.is_some() {
+                    self.process_sessions
+                        .lock()
+                        .await
+                        .insert(session_id.clone());
+                }
                 return Ok(());
             }
             Err(error) => return Err(agent_error(error)),
@@ -1604,12 +1619,12 @@ impl AgentAdapter for CodexClient {
     }
 
     async fn unsubscribe(&self, session_id: &SessionId) -> Result<(), AgentError> {
+        self.process_sessions.lock().await.remove(session_id);
+        self.exited_process_sessions.lock().await.remove(session_id);
         if self.observed.lock().await.remove(session_id).is_some() {
             return Ok(());
         }
         self.subscriptions.lock().await.remove(session_id);
-        self.process_sessions.lock().await.remove(session_id);
-        self.exited_process_sessions.lock().await.remove(session_id);
         self.pending_resumes.lock().await.remove(session_id);
         self.request(
             "thread/unsubscribe",
@@ -2499,3 +2514,6 @@ mod tests {
             .unwrap();
     }
 }
+
+#[cfg(all(test, unix))]
+mod lifecycle_tests;

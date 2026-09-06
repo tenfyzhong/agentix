@@ -361,3 +361,35 @@ test("Codex Interrupt releases the session instead of renewing it", async () => 
     assert.deepEqual(calls, [{ args: ["hook", "interrupt"], options: { cwd: "/work", session: "interrupted" } }]);
     assert.deepEqual(result, {});
 });
+
+for (const host of ["pi", "omp"]) {
+    test(`${host} resolves task prefixes before injecting ownership and preserves retry tokens`, async () => {
+        let tool, ambiguous = false;
+        const calls = [];
+        const runner = async (args, options) => {
+            calls.push({ args, options: { ...options } });
+            if (args[0] === "context") return { ok: true, result: { task_id: "task_owned", lease: { token: "lease_owned" } } };
+            if (args[1] === "show") {
+                if (ambiguous) throw new Error("ambiguous identifier");
+                return { ok: true, result: { id: "task_owned" } };
+            }
+            return { ok: true, result: {} };
+        };
+        registerExtension({ on() {}, registerTool(value) { tool = value; } }, host, runner);
+        const ctx = { cwd: "/work", sessionManager: { getSessionId: () => "owner" } };
+        for (const args of [["task", "start", "task_own"], ["plan", "revise", "task_own", "--body", "# Revised"]]) {
+            const id = args[1];
+            await tool.execute(id, { args }, undefined, undefined, ctx);
+            assert.equal(calls.at(-1).options.token, "lease_owned");
+            assert.deepEqual(calls.at(-1).args, args, "keep the original arguments for idempotency");
+            ambiguous = true;
+            await tool.execute(id, { args }, undefined, undefined, ctx);
+            assert.equal(calls.at(-1).options.token, "lease_owned", "retry must reuse its original credentials without re-resolving");
+            await assert.rejects(tool.execute(`${id}-new`, { args }, undefined, undefined, ctx), /ambiguous/);
+            ambiguous = false;
+        }
+        assert.ok(calls.some(call => JSON.stringify(call.args) === JSON.stringify(["task", "show", "task_own"])));
+        await tool.execute("other", { args: ["task", "start", "task_other"] }, undefined, undefined, ctx);
+        assert.equal(calls.at(-1).options.token, undefined);
+    });
+}

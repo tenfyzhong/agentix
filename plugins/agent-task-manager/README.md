@@ -75,7 +75,7 @@ Generated Markdown documents use readable names, YAML frontmatter and type tags;
 
 ## Lifecycle behavior
 
-The shared Skill uses `claim → Plan → start → execute/verify → done`. Claim reserves PLANNING before the agent drafts a Plan; Plan publication requires the current lease. Start checks the Plan and dependencies and switches to EXECUTING with the same token. Pi/OMP automatically attach the lease to owned Task/Plan writes and an idempotency key to metadata mutations, including Job/Project deletion. Retrying the same delete call returns its committed result without deleting twice or adding duplicate events. Codex/Claude shell calls supply them explicitly.
+The shared Skill uses `claim → Plan → start → execute/verify → done`. Claim reserves PLANNING before the agent drafts a Plan; Plan publication requires the current lease. Start checks the Plan and dependencies and switches to EXECUTING with the same token. Pi/OMP resolve unambiguous Task prefixes and automatically attach the lease to owned Task/Plan writes and an idempotency key to metadata mutations, including Job/Project deletion. Retrying the same delete call returns its committed result without deleting twice or adding duplicate events. Codex/Claude shell calls supply them explicitly.
 
 | Trigger | Behavior |
 | --- | --- |

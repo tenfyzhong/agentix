@@ -284,6 +284,11 @@ impl MockCodexAppServer {
             .insert(method.into(), count);
     }
 
+    #[allow(dead_code)] // Used by library lifecycle tests sharing this mock.
+    pub async fn remove_thread(&self, id: &str) {
+        self.shared.state.lock().await.threads.remove(id);
+    }
+
     pub async fn thread(&self, id: &str) -> Option<MockThread> {
         self.shared.state.lock().await.threads.get(id).cloned()
     }

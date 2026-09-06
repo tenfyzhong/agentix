@@ -423,3 +423,101 @@ async fn deletion_does_not_follow_directory_symlinks_within_the_output() {
     assert!(!project.exists());
     assert!(innocent.exists());
 }
+
+#[tokio::test]
+async fn deleting_after_projection_conflicts_preserves_unowned_destinations() {
+    for format in ["markdown", "obsidian"] {
+        for kind in ["new-job", "job", "task", "plan"] {
+            let f = Fixture::new(format).await;
+            let root = f.service.config().output_dir();
+            let task = f.task("Original").await;
+            if kind == "plan" {
+                let claim = f.start(&task, "delete-conflict").await;
+                f.service
+                    .execute(json!({"command":"task.done","task":task}), owner(&claim))
+                    .await
+                    .unwrap();
+            }
+            let before = f.service.store().snapshot().await.unwrap();
+            let relative = match kind {
+                "new-job" => "Projects/demo/Jobs/260905-0002-Collision.md".to_owned(),
+                "job" => "Projects/demo/Jobs/260905-0001-Collision.md".to_owned(),
+                _ => "Projects/demo/Tasks/260905-0001-Collision.md".to_owned(),
+            };
+            let path = root.join(relative);
+            // Even another generated entity's document is not ours to delete.
+            let innocent = "---\ntaskcli-generated: true\nid: unrelated\n---\n\nKeep this note.\n";
+            std::fs::write(&path, innocent).unwrap();
+            let request = match kind {
+                "new-job" => {
+                    json!({"command":"job.create","project":f.project,"title":"Collision"})
+                }
+                "job" => json!({"command":"job.update","job":f.job,"name":"Collision"}),
+                _ => json!({"command":"task.update","task":task,"name":"Collision"}),
+            };
+            let changed = f
+                .service
+                .execute(request, WriteOptions::default())
+                .await
+                .unwrap();
+            assert!(changed.projection_pending.is_some(), "{kind}");
+            let job = if kind == "new-job" {
+                changed.result["id"].as_str().unwrap()
+            } else {
+                &f.job
+            };
+            let deleted = f
+                .service
+                .execute(
+                    json!({"command":"job.delete","job":job}),
+                    WriteOptions::default(),
+                )
+                .await
+                .unwrap();
+            assert!(deleted.projection_pending.is_none(), "{deleted:?}");
+            assert_eq!(
+                std::fs::read_to_string(&path).ok().as_deref(),
+                Some(innocent),
+                "{kind}"
+            );
+            f.service.sync().await.unwrap();
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), innocent);
+            if kind != "new-job" {
+                assert!(!root.join(&before.jobs[0].document_path).exists());
+                assert!(
+                    !root
+                        .join("Projects/demo/Tasks/260905-0001-Original.md")
+                        .exists()
+                );
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn deletion_removes_owned_documents_published_before_registration() {
+    let f = Fixture::new("markdown").await;
+    let task = f.task("Original").await;
+    let root = f.service.config().output_dir();
+    let original = root.join("Projects/demo/Tasks/260905-0001-Original.md");
+    let destination = root.join("Projects/demo/Tasks/260905-0001-Renamed.md");
+    // Model a crash after atomic file publication but before recording the paths.
+    f.service
+        .store()
+        .execute(
+            json!({"command":"task.update","task":task,"name":"Renamed"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    std::fs::copy(&original, &destination).unwrap();
+    f.service
+        .execute(
+            json!({"command":"job.delete","job":f.job}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    assert!(!original.exists());
+    assert!(!destination.exists());
+}

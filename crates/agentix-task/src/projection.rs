@@ -442,10 +442,40 @@ impl Service {
 
     async fn cleanup_deleted_documents(&self) -> Result<()> {
         for deletion in self.store.pending_deletions().await? {
-            for relative in deletion.files.iter().chain(&deletion.directories) {
+            for relative in deletion
+                .files
+                .iter()
+                .chain(deletion.candidates.keys())
+                .chain(&deletion.directories)
+            {
                 self.deletion_path(relative)?;
             }
-            for relative in &deletion.files {
+            let mut files = deletion.files.clone();
+            // A database destination may never have been published. Only reclaim
+            // unregistered files when their generated identity proves ownership.
+            for (relative, identities) in &deletion.candidates {
+                if files.contains(relative) {
+                    continue;
+                }
+                let path = self.deletion_path(relative)?;
+                let body = match std::fs::read_to_string(&path) {
+                    Ok(body) => body,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                    Err(error) => {
+                        return Err(error)
+                            .with_context(|| format!("inspect document {}", path.display()));
+                    }
+                };
+                if let Ok((properties, _)) = split_properties(&body)
+                    && properties["taskcli-generated"] == true
+                    && properties["id"]
+                        .as_str()
+                        .is_some_and(|id| identities.contains(id))
+                {
+                    files.insert(relative.clone());
+                }
+            }
+            for relative in &files {
                 let path = self.deletion_path(relative)?;
                 match std::fs::remove_file(&path) {
                     Ok(()) => (),
@@ -779,6 +809,15 @@ fn frontmatter(mut properties: Value) -> String {
     properties["taskcli-generated"] = json!(true);
     let mut result = String::from("---\n");
     for (key, value) in properties.as_object().unwrap() {
+        let key = if key
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'-'))
+            && matches!(serde_yaml::from_str::<Value>(key), Ok(Value::String(_)))
+        {
+            key.clone()
+        } else {
+            serde_json::to_string(key).expect("property keys are serializable strings")
+        };
         result.push_str(&format!("{key}: {value}\n"));
     }
     result.push_str("---\n\n");
@@ -786,10 +825,20 @@ fn frontmatter(mut properties: Value) -> String {
 }
 
 fn split_properties(body: &str) -> Result<(Value, &str)> {
-    if let Some((properties, content)) = body
-        .strip_prefix("---\n")
-        .and_then(|s| s.split_once("\n---\n"))
-    {
+    let remainder = body
+        .strip_prefix("---\r\n")
+        .or_else(|| body.strip_prefix("---\n"));
+    let frontmatter = remainder.and_then(|remainder| {
+        let mut offset = 0;
+        for line in remainder.split_inclusive('\n') {
+            if line.trim_end_matches(['\r', '\n']) == "---" {
+                return Some((&remainder[..offset], &remainder[offset + line.len()..]));
+            }
+            offset += line.len();
+        }
+        None
+    });
+    if let Some((properties, content)) = frontmatter {
         let properties: Value =
             serde_yaml::from_str(properties).context("invalid Plan frontmatter")?;
         ensure!(
@@ -802,7 +851,10 @@ fn split_properties(body: &str) -> Result<(Value, &str)> {
             } else {
                 properties
             },
-            content.strip_prefix('\n').unwrap_or(content),
+            content
+                .strip_prefix("\r\n")
+                .or_else(|| content.strip_prefix('\n'))
+                .unwrap_or(content),
         ))
     } else {
         Ok((json!({}), body))

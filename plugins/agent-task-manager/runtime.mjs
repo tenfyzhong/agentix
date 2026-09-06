@@ -228,17 +228,22 @@ export function registerExtension(
         async execute(toolCallId, params, signal, _onUpdate, ctx) {
             const options = { ...optionsFor(ctx), signal };
             const context = await runner(["context"], options);
-            if (
-                params.args[0] === "task" &&
-                params.args[1] !== "claim" &&
-                params.args[2] === context.result.task_id
-            )
-                options.token = context.result.lease?.token;
-            if (
-                params.args[0] === "plan" &&
-                params.args[2] === context.result.task_id
-            )
-                options.token = context.result.lease?.token;
+            const currentToken = async () => {
+                const [kind, command, identifier] = params.args;
+                const current = context.result.task_id;
+                if (
+                    !(kind === "plan" || (kind === "task" && command !== "claim")) ||
+                    !identifier ||
+                    !current ||
+                    !current.startsWith(identifier)
+                )
+                    return undefined;
+                if (identifier !== current) {
+                    const resolved = await runner(["task", "show", identifier], options);
+                    if (resolved.result.id !== current) return undefined;
+                }
+                return context.result.lease?.token;
+            };
             const writes = new Set([
                 "add",
                 "create",
@@ -266,6 +271,7 @@ export function registerExtension(
                 !params.args.some((a) => a.startsWith("--idempotency-key"))
             )
                 options.idempotencyKey = `${host}:${options.session}:${toolCallId}`;
+            let scopedKey;
             if (writes.has(params.args[1])) {
                 const explicit = params.args.findIndex(
                     (arg) =>
@@ -278,17 +284,16 @@ export function registerExtension(
                         ? params.args[explicit].split("=").slice(1).join("=") ||
                           params.args[explicit + 1]
                         : undefined);
-                if (key) {
-                    const scopedKey = JSON.stringify([options.session, key]);
-                    if (requestTokens.has(scopedKey))
-                        options.token = requestTokens.get(scopedKey);
-                    else {
-                        requestTokens.set(scopedKey, options.token);
-                        if (requestTokens.size > 512)
-                            requestTokens.delete(
-                                requestTokens.keys().next().value,
-                            );
-                    }
+                if (key) scopedKey = JSON.stringify([options.session, key]);
+            }
+            if (scopedKey && requestTokens.has(scopedKey)) {
+                options.token = requestTokens.get(scopedKey);
+            } else {
+                options.token = await currentToken();
+                if (scopedKey) {
+                    requestTokens.set(scopedKey, options.token);
+                    if (requestTokens.size > 512)
+                        requestTokens.delete(requestTokens.keys().next().value);
                 }
             }
             const result = await runner(params.args, options);

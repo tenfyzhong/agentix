@@ -23,7 +23,7 @@ While `agentix serve` is running, Agentix checks running Codex sessions for comp
 
 Before a Codex session's first user message, background history reads may report that the thread is not materialized yet. Agentix logs this expected condition at debug level and keeps polling; other background read errors remain warnings.
 
-Attaching a session restores its latest turn with a Stop button when that turn is running and writable. If another Codex process owns the session's writer, Agentix connects read-only, restores the latest saved content, and checks for updates every ten seconds. The menu keeps history and navigation commands; sending prompts and changing the session require the original Codex process. Session lists infer external-session activity from the latest saved turn when live status is unavailable. Other attachment failures show their reason and a fresh Retry attach action.
+Attaching a session restores its latest turn with a Stop button when that turn is running and writable. If another Codex process owns the session's writer, Agentix connects read-only, restores the latest saved content, and checks for updates every ten seconds. With process discovery enabled, read-only attachments also report process exit and reappearance; reappearance preserves read-only access without acquiring the writer. Detaching stops their lifecycle monitoring. The menu keeps history and navigation commands; sending prompts and changing the session require the original Codex process. Session lists infer external-session activity from the latest saved turn when live status is unavailable. Other attachment failures show their reason and a fresh Retry attach action.
 
 Only the current attached session's writable active turn message has Stop; switching sessions, moving the attachment to another conversation, detaching, or finishing the turn removes it from the previous message. Copies shown by `/history` never include Stop.
 
@@ -225,6 +225,8 @@ For a source build that is not on `PATH`, replace `agentix` with `target/release
 If the selected channel has no configured owner, keep `agentix serve` running, execute `agentix client claim` in another local terminal, and send the printed `/claim <code>` command to the bot in a private chat.
 
 ## IM task boards
+
+Task document cleanup preserves unrelated files at destinations where projection failed. Authored Plan frontmatter supports LF and CRLF delimiters and quoted YAML keys. Pi/OMP lease injection accepts full Task IDs and unambiguous Task prefixes.
 
 Add the following to `~/.config/agentix/config.toml`, then restart Agentix to browse work in Telegram or Feishu:
 

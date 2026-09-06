@@ -468,3 +468,20 @@ for (const host of ["pi", "omp"]) {
         });
     }
 }
+
+for (const host of ["pi", "omp"]) {
+    test(`${host} resolves real task prefixes for lease-authorized operations`, async (t) => {
+        const f = await fixture(t);
+        const x = await extension(t, f, host);
+        const task = await x.invoke(["task", "add", "--job", f.job.id, "--title", "Prefix ownership"]);
+        await x.invoke(["task", "claim", task.id]);
+        const prefix = task.id.slice(0, -1);
+        await x.invoke(["plan", "create", prefix, "--body", "# Prefix plan"]);
+        await x.invoke(["plan", "revise", prefix, "--body", "# Revised prefix plan"]);
+        await x.invoke(["task", "start", prefix]);
+        const done = await x.invoke(["task", "done", prefix], "prefix-done");
+        assert.equal(done.status, "DONE");
+        assert.deepEqual(await x.invoke(["task", "done", prefix], "prefix-done"), done);
+        assert.equal((await f.run(["plan", "show", task.id])).body, "# Revised prefix plan");
+    });
+}
