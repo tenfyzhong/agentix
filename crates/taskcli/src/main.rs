@@ -13,6 +13,8 @@ use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::Shell;
 use serde_json::{Value, json};
 
+mod obsidian;
+
 #[derive(Parser)]
 #[command(
     version,
@@ -50,38 +52,63 @@ enum Command {
         #[arg(value_enum)]
         shell: Shell,
     },
+    /// Create configuration, initialize `SQLite` storage, and generate task documents.
     Init(Init),
+    /// Install and configure Obsidian task views in the configured vault.
+    Obsidian {
+        #[command(subcommand)]
+        action: ObsidianCommand,
+    },
+    /// Check for missing Plan files and documents that are behind the event log.
     Doctor,
+    /// Regenerate task documents from the current database state.
     Sync,
+    /// Register, inspect, archive, or delete Projects shared across worktrees.
     Project {
         #[command(subcommand)]
         action: ProjectCommand,
     },
+    /// Manage Jobs that group Tasks for an independently deliverable requirement.
     Job {
         #[command(subcommand)]
         action: JobCommand,
     },
+    /// Manage Task dependencies, ownership leases, and execution status.
     Task {
         #[command(subcommand)]
         action: TaskCommand,
     },
+    /// Publish, revise, or inspect the execution Plan in a Task note.
     Plan {
         #[command(subcommand)]
         action: PlanCommand,
     },
+    /// Inspect the ordered audit log of task coordination events.
     Event {
         #[command(subcommand)]
         action: EventCommand,
     },
+    /// Show Task, Job, lease, Plan, and document context for a session or explicit IDs.
     Context {
         #[arg(long)]
         task: Option<String>,
         #[arg(long)]
         job: Option<String>,
     },
+    /// Handle agent session lifecycle events and maintain Task leases.
     Hook {
         #[command(subcommand)]
         action: HookCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum ObsidianCommand {
+    /// Install `TaskNotes` and configure its task statuses and Bases. Close Obsidian first.
+    Setup {
+        /// Use a local `TaskNotes` release directory instead of downloading the bundled version.
+        #[arg(long, value_hint = clap::ValueHint::DirPath)]
+        plugin_dir: Option<PathBuf>,
     },
 }
 
@@ -105,28 +132,25 @@ enum Format {
 #[derive(Subcommand)]
 enum ProjectCommand {
     /// Delete the Project, its work, and its entire generated document directory.
-    Delete {
-        id: String,
-    },
+    Delete { id: String },
+    /// Register a Project using its root directory and Git identity when available.
     Register {
         #[arg(long)]
         name: Option<String>,
         #[arg(long, value_hint = clap::ValueHint::DirPath)]
         root: Option<PathBuf>,
     },
+    /// List unarchived Projects, or archived Projects with --archived.
     List {
         #[arg(long)]
         archived: bool,
     },
-    Show {
-        id: String,
-    },
-    Archive {
-        id: String,
-    },
-    Unarchive {
-        id: String,
-    },
+    /// Show a Project's identity, root directory, and archival state.
+    Show { id: String },
+    /// Archive a Project after all of its Jobs are closed.
+    Archive { id: String },
+    /// Restore an archived Project to the active project views.
+    Unarchive { id: String },
 }
 
 #[derive(Args)]
@@ -147,9 +171,8 @@ struct JobList {
 #[derive(Subcommand)]
 enum JobCommand {
     /// Delete the Job, its Tasks, and their Plan documents.
-    Delete {
-        id: String,
-    },
+    Delete { id: String },
+    /// Create a Job with a title and acceptance goal in the selected Project.
     Create {
         #[arg(long)]
         name: Option<String>,
@@ -158,6 +181,7 @@ enum JobCommand {
         #[arg(long, default_value = "")]
         goal: String,
     },
+    /// Change a Job's display name, title, or acceptance goal.
     Update {
         id: String,
         #[arg(long)]
@@ -167,19 +191,16 @@ enum JobCommand {
         #[arg(long)]
         goal: Option<String>,
     },
+    /// List Jobs, optionally filtered by Project, status, or date.
     List(JobList),
-    Show {
-        id: String,
-    },
-    Cancel {
-        id: String,
-    },
-    Archive {
-        id: String,
-    },
-    Unarchive {
-        id: String,
-    },
+    /// Show a Job's goal, status, and lifecycle metadata.
+    Show { id: String },
+    /// Cancel a Job and its unfinished Tasks after their leases have been released.
+    Cancel { id: String },
+    /// Archive a closed Job and move its document to the archive.
+    Archive { id: String },
+    /// Restore an archived Job document without changing its completion status.
+    Unarchive { id: String },
 }
 
 #[derive(Args)]
@@ -194,6 +215,7 @@ struct TaskId {
 }
 #[derive(Subcommand)]
 enum TaskCommand {
+    /// Add a Task to a Job and create its note without publishing a Plan.
     Add {
         #[arg(long)]
         name: Option<String>,
@@ -202,6 +224,7 @@ enum TaskCommand {
         #[arg(long)]
         title: String,
     },
+    /// Change a Task's display name, title, or board position.
     Update {
         id: String,
         #[arg(long)]
@@ -211,6 +234,7 @@ enum TaskCommand {
         #[arg(long)]
         position: Option<i64>,
     },
+    /// List Tasks, optionally filtered by Job, Project, status, or readiness.
     List {
         #[arg(long)]
         job: Option<String>,
@@ -219,25 +243,33 @@ enum TaskCommand {
         #[arg(long)]
         status: Option<String>,
     },
+    /// Show a Task's status, dependencies, Plan reference, and current lease.
     Show(TaskId),
-    Depend {
-        id: String,
-        dependency: String,
-    },
-    Undepend {
-        id: String,
-        dependency: String,
-    },
+    /// Add a prerequisite Task in the same Project before execution has started.
+    Depend { id: String, dependency: String },
+    /// Remove a prerequisite Task before execution has started.
+    Undepend { id: String, dependency: String },
+    /// Acquire a planning lease using --executor and --session.
     Claim(TaskId),
+    /// Begin execution with the current lease, a published Plan, and DONE prerequisites.
     Start(TaskId),
+    /// Renew a Task lease using its owning session and lease token.
     Heartbeat(TaskId),
+    /// Release ownership and mark the Task BLOCKED with a handoff reason.
     Release(Reason),
+    /// Mark a Task BLOCKED with a reason and release its lease.
     Block(Reason),
+    /// Mark a Task `WAITING_USER` with a reason and release its lease.
     Wait(Reason),
+    /// Mark a Task FAILED with a reason and release its lease.
     Fail(Reason),
+    /// Mark an EXECUTING Task DONE and release its lease.
     Done(TaskId),
+    /// Cancel a Task and release its lease.
     Cancel(TaskId),
+    /// Return a FAILED Task to TODO so it can be claimed again.
     Retry(TaskId),
+    /// Return a DONE or CANCELLED Task to TODO so it can be claimed again.
     Reopen(TaskId),
 }
 #[derive(Args)]
@@ -255,12 +287,16 @@ struct PlanBody {
 }
 #[derive(Subcommand)]
 enum PlanCommand {
+    /// Publish a Plan from --body or --file while holding the Task lease.
     Create(PlanBody),
+    /// Replace the Plan body in the same Task note while holding its lease.
     Revise(PlanBody),
+    /// Show the current Plan's metadata and absolute file path for a Task.
     Show { task: String },
 }
 #[derive(Subcommand)]
 enum EventCommand {
+    /// List events after a sequence cursor, optionally filtered by Job and limited in count.
     List {
         #[arg(long)]
         job: Option<String>,
@@ -272,9 +308,13 @@ enum EventCommand {
 }
 #[derive(Subcommand)]
 enum HookCommand {
+    /// Recover the session's Tasks blocked by interruption or lease expiry into planning.
     SessionStart,
+    /// Record session shutdown and release its active Task leases.
     SessionEnd,
+    /// Release an interrupted session's Task leases while preserving its Plans.
     Interrupt,
+    /// Renew all active Task leases owned by the session.
     Heartbeat,
 }
 
@@ -373,6 +413,15 @@ async fn run(cli: &Cli) -> Result<Value> {
     if let Command::Init(init) = &cli.command {
         return initialize(cli, init).await;
     }
+    if let Command::Obsidian {
+        action: ObsidianCommand::Setup { plugin_dir },
+    } = &cli.command
+    {
+        let config = Config::load(&cli.config_path()?)?;
+        return Ok(response(
+            obsidian::setup(&config, plugin_dir.as_deref()).await?,
+        ));
+    }
     let service = Service::open(Config::load(&cli.config_path()?)?).await?;
     service.store().reap_expired().await?;
     match &cli.command {
@@ -418,7 +467,7 @@ async fn run(cli: &Cli) -> Result<Value> {
             context(cli, &service, task.as_deref(), job.as_deref()).await
         }
         Command::Hook { action } => hook(cli, &service, action).await,
-        Command::Init(_) | Command::Completions { .. } => unreachable!(),
+        Command::Init(_) | Command::Completions { .. } | Command::Obsidian { .. } => unreachable!(),
     }
 }
 
@@ -848,4 +897,37 @@ fn format_date(timestamp: i64) -> String {
     time::OffsetDateTime::from_unix_timestamp(timestamp)
         .map(|d| format!("{}-{:02}-{:02}", d.year(), u8::from(d.month()), d.day()))
         .unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_subcommand_has_a_description_in_short_and_long_help() {
+        fn check(command: &mut clap::Command, path: &str, missing: &mut Vec<String>) {
+            let about = command.get_about().map(ToString::to_string);
+            if let Some(about) = about.filter(|text| !text.trim().is_empty()) {
+                assert!(
+                    command.render_help().to_string().contains(&about),
+                    "{path}: description missing from short help"
+                );
+                assert!(
+                    command.render_long_help().to_string().contains(&about),
+                    "{path}: description missing from long help"
+                );
+            } else {
+                missing.push(path.to_owned());
+            }
+            for child in command.get_subcommands_mut() {
+                if child.get_name() != "help" {
+                    check(child, &format!("{path} {}", child.get_name()), missing);
+                }
+            }
+        }
+
+        let mut missing = Vec::new();
+        check(&mut Cli::command(), "taskcli", &mut missing);
+        assert!(missing.is_empty(), "missing descriptions: {missing:#?}");
+    }
 }

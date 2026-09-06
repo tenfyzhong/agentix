@@ -37,16 +37,17 @@ complete -c taskcli -n "__fish_taskcli_needs_command" -l json
 complete -c taskcli -n "__fish_taskcli_needs_command" -s h -l help -d 'Print help'
 complete -c taskcli -n "__fish_taskcli_needs_command" -s V -l version -d 'Print version'
 complete -c taskcli -n "__fish_taskcli_needs_command" -f -a "completions" -d 'Print a shell completion script without loading task configuration'
-complete -c taskcli -n "__fish_taskcli_needs_command" -f -a "init"
-complete -c taskcli -n "__fish_taskcli_needs_command" -f -a "doctor"
-complete -c taskcli -n "__fish_taskcli_needs_command" -f -a "sync"
-complete -c taskcli -n "__fish_taskcli_needs_command" -f -a "project"
-complete -c taskcli -n "__fish_taskcli_needs_command" -f -a "job"
-complete -c taskcli -n "__fish_taskcli_needs_command" -f -a "task"
-complete -c taskcli -n "__fish_taskcli_needs_command" -f -a "plan"
-complete -c taskcli -n "__fish_taskcli_needs_command" -f -a "event"
-complete -c taskcli -n "__fish_taskcli_needs_command" -f -a "context"
-complete -c taskcli -n "__fish_taskcli_needs_command" -f -a "hook"
+complete -c taskcli -n "__fish_taskcli_needs_command" -f -a "init" -d 'Create configuration, initialize `SQLite` storage, and generate task documents'
+complete -c taskcli -n "__fish_taskcli_needs_command" -f -a "obsidian" -d 'Install and configure Obsidian task views in the configured vault'
+complete -c taskcli -n "__fish_taskcli_needs_command" -f -a "doctor" -d 'Check for missing Plan files and documents that are behind the event log'
+complete -c taskcli -n "__fish_taskcli_needs_command" -f -a "sync" -d 'Regenerate task documents from the current database state'
+complete -c taskcli -n "__fish_taskcli_needs_command" -f -a "project" -d 'Register, inspect, archive, or delete Projects shared across worktrees'
+complete -c taskcli -n "__fish_taskcli_needs_command" -f -a "job" -d 'Manage Jobs that group Tasks for an independently deliverable requirement'
+complete -c taskcli -n "__fish_taskcli_needs_command" -f -a "task" -d 'Manage Task dependencies, ownership leases, and execution status'
+complete -c taskcli -n "__fish_taskcli_needs_command" -f -a "plan" -d 'Publish, revise, or inspect the execution Plan in a Task note'
+complete -c taskcli -n "__fish_taskcli_needs_command" -f -a "event" -d 'Inspect the ordered audit log of task coordination events'
+complete -c taskcli -n "__fish_taskcli_needs_command" -f -a "context" -d 'Show Task, Job, lease, Plan, and document context for a session or explicit IDs'
+complete -c taskcli -n "__fish_taskcli_needs_command" -f -a "hook" -d 'Handle agent session lifecycle events and maintain Task leases'
 complete -c taskcli -n "__fish_taskcli_needs_command" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
 complete -c taskcli -n "__fish_taskcli_using_subcommand completions" -l config -r -F
 complete -c taskcli -n "__fish_taskcli_using_subcommand completions" -l project -r
@@ -75,6 +76,33 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand init" -l expect-revision
 complete -c taskcli -n "__fish_taskcli_using_subcommand init" -l idempotency-key -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand init" -l json
 complete -c taskcli -n "__fish_taskcli_using_subcommand init" -s h -l help -d 'Print help'
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from setup help" -l config -r -F
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from setup help" -l project -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from setup help" -l actor -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from setup help" -l executor -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from setup help" -l session -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from setup help" -l delegated-by -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from setup help" -l lease-token -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from setup help" -l expect-revision -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from setup help" -l idempotency-key -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from setup help" -l json
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from setup help" -s h -l help -d 'Print help'
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from setup help" -f -a "setup" -d 'Install `TaskNotes` and configure its task statuses and Bases. Close Obsidian first'
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from setup help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from setup" -l plugin-dir -d 'Use a local `TaskNotes` release directory instead of downloading the bundled version' -r -f -a "(__fish_complete_directories)"
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from setup" -l config -r -F
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from setup" -l project -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from setup" -l actor -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from setup" -l executor -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from setup" -l session -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from setup" -l delegated-by -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from setup" -l lease-token -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from setup" -l expect-revision -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from setup" -l idempotency-key -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from setup" -l json
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from setup" -s h -l help -d 'Print help'
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from help" -f -a "setup" -d 'Install `TaskNotes` and configure its task statuses and Bases. Close Obsidian first'
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
 complete -c taskcli -n "__fish_taskcli_using_subcommand doctor" -l config -r -F
 complete -c taskcli -n "__fish_taskcli_using_subcommand doctor" -l project -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand doctor" -l actor -r
@@ -109,11 +137,11 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand project; and not __fish_
 complete -c taskcli -n "__fish_taskcli_using_subcommand project; and not __fish_seen_subcommand_from delete register list show archive unarchive help" -l json
 complete -c taskcli -n "__fish_taskcli_using_subcommand project; and not __fish_seen_subcommand_from delete register list show archive unarchive help" -s h -l help -d 'Print help'
 complete -c taskcli -n "__fish_taskcli_using_subcommand project; and not __fish_seen_subcommand_from delete register list show archive unarchive help" -f -a "delete" -d 'Delete the Project, its work, and its entire generated document directory'
-complete -c taskcli -n "__fish_taskcli_using_subcommand project; and not __fish_seen_subcommand_from delete register list show archive unarchive help" -f -a "register"
-complete -c taskcli -n "__fish_taskcli_using_subcommand project; and not __fish_seen_subcommand_from delete register list show archive unarchive help" -f -a "list"
-complete -c taskcli -n "__fish_taskcli_using_subcommand project; and not __fish_seen_subcommand_from delete register list show archive unarchive help" -f -a "show"
-complete -c taskcli -n "__fish_taskcli_using_subcommand project; and not __fish_seen_subcommand_from delete register list show archive unarchive help" -f -a "archive"
-complete -c taskcli -n "__fish_taskcli_using_subcommand project; and not __fish_seen_subcommand_from delete register list show archive unarchive help" -f -a "unarchive"
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and not __fish_seen_subcommand_from delete register list show archive unarchive help" -f -a "register" -d 'Register a Project using its root directory and Git identity when available'
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and not __fish_seen_subcommand_from delete register list show archive unarchive help" -f -a "list" -d 'List unarchived Projects, or archived Projects with --archived'
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and not __fish_seen_subcommand_from delete register list show archive unarchive help" -f -a "show" -d 'Show a Project\'s identity, root directory, and archival state'
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and not __fish_seen_subcommand_from delete register list show archive unarchive help" -f -a "archive" -d 'Archive a Project after all of its Jobs are closed'
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and not __fish_seen_subcommand_from delete register list show archive unarchive help" -f -a "unarchive" -d 'Restore an archived Project to the active project views'
 complete -c taskcli -n "__fish_taskcli_using_subcommand project; and not __fish_seen_subcommand_from delete register list show archive unarchive help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
 complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from delete" -l config -r -F
 complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from delete" -l project -r
@@ -185,11 +213,11 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen
 complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from unarchive" -l json
 complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from unarchive" -s h -l help -d 'Print help'
 complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from help" -f -a "delete" -d 'Delete the Project, its work, and its entire generated document directory'
-complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from help" -f -a "register"
-complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from help" -f -a "list"
-complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from help" -f -a "show"
-complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from help" -f -a "archive"
-complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from help" -f -a "unarchive"
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from help" -f -a "register" -d 'Register a Project using its root directory and Git identity when available'
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from help" -f -a "list" -d 'List unarchived Projects, or archived Projects with --archived'
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from help" -f -a "show" -d 'Show a Project\'s identity, root directory, and archival state'
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from help" -f -a "archive" -d 'Archive a Project after all of its Jobs are closed'
+complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from help" -f -a "unarchive" -d 'Restore an archived Project to the active project views'
 complete -c taskcli -n "__fish_taskcli_using_subcommand project; and __fish_seen_subcommand_from help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -l config -r -F
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -l project -r
@@ -203,13 +231,13 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -l json
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -s h -l help -d 'Print help'
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -f -a "delete" -d 'Delete the Job, its Tasks, and their Plan documents'
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -f -a "create"
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -f -a "update"
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -f -a "list"
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -f -a "show"
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -f -a "cancel"
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -f -a "archive"
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -f -a "unarchive"
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -f -a "create" -d 'Create a Job with a title and acceptance goal in the selected Project'
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -f -a "update" -d 'Change a Job\'s display name, title, or acceptance goal'
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -f -a "list" -d 'List Jobs, optionally filtered by Project, status, or date'
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -f -a "show" -d 'Show a Job\'s goal, status, and lifecycle metadata'
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -f -a "cancel" -d 'Cancel a Job and its unfinished Tasks after their leases have been released'
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -f -a "archive" -d 'Archive a closed Job and move its document to the archive'
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -f -a "unarchive" -d 'Restore an archived Job document without changing its completion status'
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from delete" -l config -r -F
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from delete" -l project -r
@@ -312,13 +340,13 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_sub
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from unarchive" -l json
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from unarchive" -s h -l help -d 'Print help'
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from help" -f -a "delete" -d 'Delete the Job, its Tasks, and their Plan documents'
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from help" -f -a "create"
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from help" -f -a "update"
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from help" -f -a "list"
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from help" -f -a "show"
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from help" -f -a "cancel"
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from help" -f -a "archive"
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from help" -f -a "unarchive"
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from help" -f -a "create" -d 'Create a Job with a title and acceptance goal in the selected Project'
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from help" -f -a "update" -d 'Change a Job\'s display name, title, or acceptance goal'
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from help" -f -a "list" -d 'List Jobs, optionally filtered by Project, status, or date'
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from help" -f -a "show" -d 'Show a Job\'s goal, status, and lifecycle metadata'
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from help" -f -a "cancel" -d 'Cancel a Job and its unfinished Tasks after their leases have been released'
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from help" -f -a "archive" -d 'Archive a closed Job and move its document to the archive'
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from help" -f -a "unarchive" -d 'Restore an archived Job document without changing its completion status'
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
 complete -c taskcli -n "__fish_taskcli_using_subcommand task; and not __fish_seen_subcommand_from add update list show depend undepend claim start heartbeat release block wait fail done cancel retry reopen help" -l config -r -F
 complete -c taskcli -n "__fish_taskcli_using_subcommand task; and not __fish_seen_subcommand_from add update list show depend undepend claim start heartbeat release block wait fail done cancel retry reopen help" -l project -r
@@ -331,23 +359,23 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand task; and not __fish_see
 complete -c taskcli -n "__fish_taskcli_using_subcommand task; and not __fish_seen_subcommand_from add update list show depend undepend claim start heartbeat release block wait fail done cancel retry reopen help" -l idempotency-key -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand task; and not __fish_seen_subcommand_from add update list show depend undepend claim start heartbeat release block wait fail done cancel retry reopen help" -l json
 complete -c taskcli -n "__fish_taskcli_using_subcommand task; and not __fish_seen_subcommand_from add update list show depend undepend claim start heartbeat release block wait fail done cancel retry reopen help" -s h -l help -d 'Print help'
-complete -c taskcli -n "__fish_taskcli_using_subcommand task; and not __fish_seen_subcommand_from add update list show depend undepend claim start heartbeat release block wait fail done cancel retry reopen help" -f -a "add"
-complete -c taskcli -n "__fish_taskcli_using_subcommand task; and not __fish_seen_subcommand_from add update list show depend undepend claim start heartbeat release block wait fail done cancel retry reopen help" -f -a "update"
-complete -c taskcli -n "__fish_taskcli_using_subcommand task; and not __fish_seen_subcommand_from add update list show depend undepend claim start heartbeat release block wait fail done cancel retry reopen help" -f -a "list"
-complete -c taskcli -n "__fish_taskcli_using_subcommand task; and not __fish_seen_subcommand_from add update list show depend undepend claim start heartbeat release block wait fail done cancel retry reopen help" -f -a "show"
-complete -c taskcli -n "__fish_taskcli_using_subcommand task; and not __fish_seen_subcommand_from add update list show depend undepend claim start heartbeat release block wait fail done cancel retry reopen help" -f -a "depend"
-complete -c taskcli -n "__fish_taskcli_using_subcommand task; and not __fish_seen_subcommand_from add update list show depend undepend claim start heartbeat release block wait fail done cancel retry reopen help" -f -a "undepend"
-complete -c taskcli -n "__fish_taskcli_using_subcommand task; and not __fish_seen_subcommand_from add update list show depend undepend claim start heartbeat release block wait fail done cancel retry reopen help" -f -a "claim"
-complete -c taskcli -n "__fish_taskcli_using_subcommand task; and not __fish_seen_subcommand_from add update list show depend undepend claim start heartbeat release block wait fail done cancel retry reopen help" -f -a "start"
-complete -c taskcli -n "__fish_taskcli_using_subcommand task; and not __fish_seen_subcommand_from add update list show depend undepend claim start heartbeat release block wait fail done cancel retry reopen help" -f -a "heartbeat"
-complete -c taskcli -n "__fish_taskcli_using_subcommand task; and not __fish_seen_subcommand_from add update list show depend undepend claim start heartbeat release block wait fail done cancel retry reopen help" -f -a "release"
-complete -c taskcli -n "__fish_taskcli_using_subcommand task; and not __fish_seen_subcommand_from add update list show depend undepend claim start heartbeat release block wait fail done cancel retry reopen help" -f -a "block"
-complete -c taskcli -n "__fish_taskcli_using_subcommand task; and not __fish_seen_subcommand_from add update list show depend undepend claim start heartbeat release block wait fail done cancel retry reopen help" -f -a "wait"
-complete -c taskcli -n "__fish_taskcli_using_subcommand task; and not __fish_seen_subcommand_from add update list show depend undepend claim start heartbeat release block wait fail done cancel retry reopen help" -f -a "fail"
-complete -c taskcli -n "__fish_taskcli_using_subcommand task; and not __fish_seen_subcommand_from add update list show depend undepend claim start heartbeat release block wait fail done cancel retry reopen help" -f -a "done"
-complete -c taskcli -n "__fish_taskcli_using_subcommand task; and not __fish_seen_subcommand_from add update list show depend undepend claim start heartbeat release block wait fail done cancel retry reopen help" -f -a "cancel"
-complete -c taskcli -n "__fish_taskcli_using_subcommand task; and not __fish_seen_subcommand_from add update list show depend undepend claim start heartbeat release block wait fail done cancel retry reopen help" -f -a "retry"
-complete -c taskcli -n "__fish_taskcli_using_subcommand task; and not __fish_seen_subcommand_from add update list show depend undepend claim start heartbeat release block wait fail done cancel retry reopen help" -f -a "reopen"
+complete -c taskcli -n "__fish_taskcli_using_subcommand task; and not __fish_seen_subcommand_from add update list show depend undepend claim start heartbeat release block wait fail done cancel retry reopen help" -f -a "add" -d 'Add a Task to a Job and create its note without publishing a Plan'
+complete -c taskcli -n "__fish_taskcli_using_subcommand task; and not __fish_seen_subcommand_from add update list show depend undepend claim start heartbeat release block wait fail done cancel retry reopen help" -f -a "update" -d 'Change a Task\'s display name, title, or board position'
+complete -c taskcli -n "__fish_taskcli_using_subcommand task; and not __fish_seen_subcommand_from add update list show depend undepend claim start heartbeat release block wait fail done cancel retry reopen help" -f -a "list" -d 'List Tasks, optionally filtered by Job, Project, status, or readiness'
+complete -c taskcli -n "__fish_taskcli_using_subcommand task; and not __fish_seen_subcommand_from add update list show depend undepend claim start heartbeat release block wait fail done cancel retry reopen help" -f -a "show" -d 'Show a Task\'s status, dependencies, Plan reference, and current lease'
+complete -c taskcli -n "__fish_taskcli_using_subcommand task; and not __fish_seen_subcommand_from add update list show depend undepend claim start heartbeat release block wait fail done cancel retry reopen help" -f -a "depend" -d 'Add a prerequisite Task in the same Project before execution has started'
+complete -c taskcli -n "__fish_taskcli_using_subcommand task; and not __fish_seen_subcommand_from add update list show depend undepend claim start heartbeat release block wait fail done cancel retry reopen help" -f -a "undepend" -d 'Remove a prerequisite Task before execution has started'
+complete -c taskcli -n "__fish_taskcli_using_subcommand task; and not __fish_seen_subcommand_from add update list show depend undepend claim start heartbeat release block wait fail done cancel retry reopen help" -f -a "claim" -d 'Acquire a planning lease using --executor and --session'
+complete -c taskcli -n "__fish_taskcli_using_subcommand task; and not __fish_seen_subcommand_from add update list show depend undepend claim start heartbeat release block wait fail done cancel retry reopen help" -f -a "start" -d 'Begin execution with the current lease, a published Plan, and DONE prerequisites'
+complete -c taskcli -n "__fish_taskcli_using_subcommand task; and not __fish_seen_subcommand_from add update list show depend undepend claim start heartbeat release block wait fail done cancel retry reopen help" -f -a "heartbeat" -d 'Renew a Task lease using its owning session and lease token'
+complete -c taskcli -n "__fish_taskcli_using_subcommand task; and not __fish_seen_subcommand_from add update list show depend undepend claim start heartbeat release block wait fail done cancel retry reopen help" -f -a "release" -d 'Release ownership and mark the Task BLOCKED with a handoff reason'
+complete -c taskcli -n "__fish_taskcli_using_subcommand task; and not __fish_seen_subcommand_from add update list show depend undepend claim start heartbeat release block wait fail done cancel retry reopen help" -f -a "block" -d 'Mark a Task BLOCKED with a reason and release its lease'
+complete -c taskcli -n "__fish_taskcli_using_subcommand task; and not __fish_seen_subcommand_from add update list show depend undepend claim start heartbeat release block wait fail done cancel retry reopen help" -f -a "wait" -d 'Mark a Task `WAITING_USER` with a reason and release its lease'
+complete -c taskcli -n "__fish_taskcli_using_subcommand task; and not __fish_seen_subcommand_from add update list show depend undepend claim start heartbeat release block wait fail done cancel retry reopen help" -f -a "fail" -d 'Mark a Task FAILED with a reason and release its lease'
+complete -c taskcli -n "__fish_taskcli_using_subcommand task; and not __fish_seen_subcommand_from add update list show depend undepend claim start heartbeat release block wait fail done cancel retry reopen help" -f -a "done" -d 'Mark an EXECUTING Task DONE and release its lease'
+complete -c taskcli -n "__fish_taskcli_using_subcommand task; and not __fish_seen_subcommand_from add update list show depend undepend claim start heartbeat release block wait fail done cancel retry reopen help" -f -a "cancel" -d 'Cancel a Task and release its lease'
+complete -c taskcli -n "__fish_taskcli_using_subcommand task; and not __fish_seen_subcommand_from add update list show depend undepend claim start heartbeat release block wait fail done cancel retry reopen help" -f -a "retry" -d 'Return a FAILED Task to TODO so it can be claimed again'
+complete -c taskcli -n "__fish_taskcli_using_subcommand task; and not __fish_seen_subcommand_from add update list show depend undepend claim start heartbeat release block wait fail done cancel retry reopen help" -f -a "reopen" -d 'Return a DONE or CANCELLED Task to TODO so it can be claimed again'
 complete -c taskcli -n "__fish_taskcli_using_subcommand task; and not __fish_seen_subcommand_from add update list show depend undepend claim start heartbeat release block wait fail done cancel retry reopen help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
 complete -c taskcli -n "__fish_taskcli_using_subcommand task; and __fish_seen_subcommand_from add" -l name -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand task; and __fish_seen_subcommand_from add" -l job -r
@@ -549,23 +577,23 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand task; and __fish_seen_su
 complete -c taskcli -n "__fish_taskcli_using_subcommand task; and __fish_seen_subcommand_from reopen" -l idempotency-key -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand task; and __fish_seen_subcommand_from reopen" -l json
 complete -c taskcli -n "__fish_taskcli_using_subcommand task; and __fish_seen_subcommand_from reopen" -s h -l help -d 'Print help'
-complete -c taskcli -n "__fish_taskcli_using_subcommand task; and __fish_seen_subcommand_from help" -f -a "add"
-complete -c taskcli -n "__fish_taskcli_using_subcommand task; and __fish_seen_subcommand_from help" -f -a "update"
-complete -c taskcli -n "__fish_taskcli_using_subcommand task; and __fish_seen_subcommand_from help" -f -a "list"
-complete -c taskcli -n "__fish_taskcli_using_subcommand task; and __fish_seen_subcommand_from help" -f -a "show"
-complete -c taskcli -n "__fish_taskcli_using_subcommand task; and __fish_seen_subcommand_from help" -f -a "depend"
-complete -c taskcli -n "__fish_taskcli_using_subcommand task; and __fish_seen_subcommand_from help" -f -a "undepend"
-complete -c taskcli -n "__fish_taskcli_using_subcommand task; and __fish_seen_subcommand_from help" -f -a "claim"
-complete -c taskcli -n "__fish_taskcli_using_subcommand task; and __fish_seen_subcommand_from help" -f -a "start"
-complete -c taskcli -n "__fish_taskcli_using_subcommand task; and __fish_seen_subcommand_from help" -f -a "heartbeat"
-complete -c taskcli -n "__fish_taskcli_using_subcommand task; and __fish_seen_subcommand_from help" -f -a "release"
-complete -c taskcli -n "__fish_taskcli_using_subcommand task; and __fish_seen_subcommand_from help" -f -a "block"
-complete -c taskcli -n "__fish_taskcli_using_subcommand task; and __fish_seen_subcommand_from help" -f -a "wait"
-complete -c taskcli -n "__fish_taskcli_using_subcommand task; and __fish_seen_subcommand_from help" -f -a "fail"
-complete -c taskcli -n "__fish_taskcli_using_subcommand task; and __fish_seen_subcommand_from help" -f -a "done"
-complete -c taskcli -n "__fish_taskcli_using_subcommand task; and __fish_seen_subcommand_from help" -f -a "cancel"
-complete -c taskcli -n "__fish_taskcli_using_subcommand task; and __fish_seen_subcommand_from help" -f -a "retry"
-complete -c taskcli -n "__fish_taskcli_using_subcommand task; and __fish_seen_subcommand_from help" -f -a "reopen"
+complete -c taskcli -n "__fish_taskcli_using_subcommand task; and __fish_seen_subcommand_from help" -f -a "add" -d 'Add a Task to a Job and create its note without publishing a Plan'
+complete -c taskcli -n "__fish_taskcli_using_subcommand task; and __fish_seen_subcommand_from help" -f -a "update" -d 'Change a Task\'s display name, title, or board position'
+complete -c taskcli -n "__fish_taskcli_using_subcommand task; and __fish_seen_subcommand_from help" -f -a "list" -d 'List Tasks, optionally filtered by Job, Project, status, or readiness'
+complete -c taskcli -n "__fish_taskcli_using_subcommand task; and __fish_seen_subcommand_from help" -f -a "show" -d 'Show a Task\'s status, dependencies, Plan reference, and current lease'
+complete -c taskcli -n "__fish_taskcli_using_subcommand task; and __fish_seen_subcommand_from help" -f -a "depend" -d 'Add a prerequisite Task in the same Project before execution has started'
+complete -c taskcli -n "__fish_taskcli_using_subcommand task; and __fish_seen_subcommand_from help" -f -a "undepend" -d 'Remove a prerequisite Task before execution has started'
+complete -c taskcli -n "__fish_taskcli_using_subcommand task; and __fish_seen_subcommand_from help" -f -a "claim" -d 'Acquire a planning lease using --executor and --session'
+complete -c taskcli -n "__fish_taskcli_using_subcommand task; and __fish_seen_subcommand_from help" -f -a "start" -d 'Begin execution with the current lease, a published Plan, and DONE prerequisites'
+complete -c taskcli -n "__fish_taskcli_using_subcommand task; and __fish_seen_subcommand_from help" -f -a "heartbeat" -d 'Renew a Task lease using its owning session and lease token'
+complete -c taskcli -n "__fish_taskcli_using_subcommand task; and __fish_seen_subcommand_from help" -f -a "release" -d 'Release ownership and mark the Task BLOCKED with a handoff reason'
+complete -c taskcli -n "__fish_taskcli_using_subcommand task; and __fish_seen_subcommand_from help" -f -a "block" -d 'Mark a Task BLOCKED with a reason and release its lease'
+complete -c taskcli -n "__fish_taskcli_using_subcommand task; and __fish_seen_subcommand_from help" -f -a "wait" -d 'Mark a Task `WAITING_USER` with a reason and release its lease'
+complete -c taskcli -n "__fish_taskcli_using_subcommand task; and __fish_seen_subcommand_from help" -f -a "fail" -d 'Mark a Task FAILED with a reason and release its lease'
+complete -c taskcli -n "__fish_taskcli_using_subcommand task; and __fish_seen_subcommand_from help" -f -a "done" -d 'Mark an EXECUTING Task DONE and release its lease'
+complete -c taskcli -n "__fish_taskcli_using_subcommand task; and __fish_seen_subcommand_from help" -f -a "cancel" -d 'Cancel a Task and release its lease'
+complete -c taskcli -n "__fish_taskcli_using_subcommand task; and __fish_seen_subcommand_from help" -f -a "retry" -d 'Return a FAILED Task to TODO so it can be claimed again'
+complete -c taskcli -n "__fish_taskcli_using_subcommand task; and __fish_seen_subcommand_from help" -f -a "reopen" -d 'Return a DONE or CANCELLED Task to TODO so it can be claimed again'
 complete -c taskcli -n "__fish_taskcli_using_subcommand task; and __fish_seen_subcommand_from help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
 complete -c taskcli -n "__fish_taskcli_using_subcommand plan; and not __fish_seen_subcommand_from create revise show help" -l config -r -F
 complete -c taskcli -n "__fish_taskcli_using_subcommand plan; and not __fish_seen_subcommand_from create revise show help" -l project -r
@@ -578,9 +606,9 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand plan; and not __fish_see
 complete -c taskcli -n "__fish_taskcli_using_subcommand plan; and not __fish_seen_subcommand_from create revise show help" -l idempotency-key -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand plan; and not __fish_seen_subcommand_from create revise show help" -l json
 complete -c taskcli -n "__fish_taskcli_using_subcommand plan; and not __fish_seen_subcommand_from create revise show help" -s h -l help -d 'Print help'
-complete -c taskcli -n "__fish_taskcli_using_subcommand plan; and not __fish_seen_subcommand_from create revise show help" -f -a "create"
-complete -c taskcli -n "__fish_taskcli_using_subcommand plan; and not __fish_seen_subcommand_from create revise show help" -f -a "revise"
-complete -c taskcli -n "__fish_taskcli_using_subcommand plan; and not __fish_seen_subcommand_from create revise show help" -f -a "show"
+complete -c taskcli -n "__fish_taskcli_using_subcommand plan; and not __fish_seen_subcommand_from create revise show help" -f -a "create" -d 'Publish a Plan from --body or --file while holding the Task lease'
+complete -c taskcli -n "__fish_taskcli_using_subcommand plan; and not __fish_seen_subcommand_from create revise show help" -f -a "revise" -d 'Replace the Plan body in the same Task note while holding its lease'
+complete -c taskcli -n "__fish_taskcli_using_subcommand plan; and not __fish_seen_subcommand_from create revise show help" -f -a "show" -d 'Show the current Plan\'s metadata and absolute file path for a Task'
 complete -c taskcli -n "__fish_taskcli_using_subcommand plan; and not __fish_seen_subcommand_from create revise show help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
 complete -c taskcli -n "__fish_taskcli_using_subcommand plan; and __fish_seen_subcommand_from create" -l body -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand plan; and __fish_seen_subcommand_from create" -l file -r -F
@@ -619,9 +647,9 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand plan; and __fish_seen_su
 complete -c taskcli -n "__fish_taskcli_using_subcommand plan; and __fish_seen_subcommand_from show" -l idempotency-key -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand plan; and __fish_seen_subcommand_from show" -l json
 complete -c taskcli -n "__fish_taskcli_using_subcommand plan; and __fish_seen_subcommand_from show" -s h -l help -d 'Print help'
-complete -c taskcli -n "__fish_taskcli_using_subcommand plan; and __fish_seen_subcommand_from help" -f -a "create"
-complete -c taskcli -n "__fish_taskcli_using_subcommand plan; and __fish_seen_subcommand_from help" -f -a "revise"
-complete -c taskcli -n "__fish_taskcli_using_subcommand plan; and __fish_seen_subcommand_from help" -f -a "show"
+complete -c taskcli -n "__fish_taskcli_using_subcommand plan; and __fish_seen_subcommand_from help" -f -a "create" -d 'Publish a Plan from --body or --file while holding the Task lease'
+complete -c taskcli -n "__fish_taskcli_using_subcommand plan; and __fish_seen_subcommand_from help" -f -a "revise" -d 'Replace the Plan body in the same Task note while holding its lease'
+complete -c taskcli -n "__fish_taskcli_using_subcommand plan; and __fish_seen_subcommand_from help" -f -a "show" -d 'Show the current Plan\'s metadata and absolute file path for a Task'
 complete -c taskcli -n "__fish_taskcli_using_subcommand plan; and __fish_seen_subcommand_from help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
 complete -c taskcli -n "__fish_taskcli_using_subcommand event; and not __fish_seen_subcommand_from list help" -l config -r -F
 complete -c taskcli -n "__fish_taskcli_using_subcommand event; and not __fish_seen_subcommand_from list help" -l project -r
@@ -634,7 +662,7 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand event; and not __fish_se
 complete -c taskcli -n "__fish_taskcli_using_subcommand event; and not __fish_seen_subcommand_from list help" -l idempotency-key -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand event; and not __fish_seen_subcommand_from list help" -l json
 complete -c taskcli -n "__fish_taskcli_using_subcommand event; and not __fish_seen_subcommand_from list help" -s h -l help -d 'Print help'
-complete -c taskcli -n "__fish_taskcli_using_subcommand event; and not __fish_seen_subcommand_from list help" -f -a "list"
+complete -c taskcli -n "__fish_taskcli_using_subcommand event; and not __fish_seen_subcommand_from list help" -f -a "list" -d 'List events after a sequence cursor, optionally filtered by Job and limited in count'
 complete -c taskcli -n "__fish_taskcli_using_subcommand event; and not __fish_seen_subcommand_from list help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
 complete -c taskcli -n "__fish_taskcli_using_subcommand event; and __fish_seen_subcommand_from list" -l job -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand event; and __fish_seen_subcommand_from list" -l after -r
@@ -650,7 +678,7 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand event; and __fish_seen_s
 complete -c taskcli -n "__fish_taskcli_using_subcommand event; and __fish_seen_subcommand_from list" -l idempotency-key -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand event; and __fish_seen_subcommand_from list" -l json
 complete -c taskcli -n "__fish_taskcli_using_subcommand event; and __fish_seen_subcommand_from list" -s h -l help -d 'Print help'
-complete -c taskcli -n "__fish_taskcli_using_subcommand event; and __fish_seen_subcommand_from help" -f -a "list"
+complete -c taskcli -n "__fish_taskcli_using_subcommand event; and __fish_seen_subcommand_from help" -f -a "list" -d 'List events after a sequence cursor, optionally filtered by Job and limited in count'
 complete -c taskcli -n "__fish_taskcli_using_subcommand event; and __fish_seen_subcommand_from help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
 complete -c taskcli -n "__fish_taskcli_using_subcommand context" -l task -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand context" -l job -r
@@ -676,10 +704,10 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_see
 complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from session-start session-end interrupt heartbeat help" -l idempotency-key -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from session-start session-end interrupt heartbeat help" -l json
 complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from session-start session-end interrupt heartbeat help" -s h -l help -d 'Print help'
-complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from session-start session-end interrupt heartbeat help" -f -a "session-start"
-complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from session-start session-end interrupt heartbeat help" -f -a "session-end"
-complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from session-start session-end interrupt heartbeat help" -f -a "interrupt"
-complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from session-start session-end interrupt heartbeat help" -f -a "heartbeat"
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from session-start session-end interrupt heartbeat help" -f -a "session-start" -d 'Recover the session\'s Tasks blocked by interruption or lease expiry into planning'
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from session-start session-end interrupt heartbeat help" -f -a "session-end" -d 'Record session shutdown and release its active Task leases'
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from session-start session-end interrupt heartbeat help" -f -a "interrupt" -d 'Release an interrupted session\'s Task leases while preserving its Plans'
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from session-start session-end interrupt heartbeat help" -f -a "heartbeat" -d 'Renew all active Task leases owned by the session'
 complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from session-start session-end interrupt heartbeat help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
 complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from session-start" -l config -r -F
 complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from session-start" -l project -r
@@ -725,59 +753,61 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_su
 complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from heartbeat" -l idempotency-key -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from heartbeat" -l json
 complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from heartbeat" -s h -l help -d 'Print help'
-complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from help" -f -a "session-start"
-complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from help" -f -a "session-end"
-complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from help" -f -a "interrupt"
-complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from help" -f -a "heartbeat"
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from help" -f -a "session-start" -d 'Recover the session\'s Tasks blocked by interruption or lease expiry into planning'
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from help" -f -a "session-end" -d 'Record session shutdown and release its active Task leases'
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from help" -f -a "interrupt" -d 'Release an interrupted session\'s Task leases while preserving its Plans'
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from help" -f -a "heartbeat" -d 'Renew all active Task leases owned by the session'
 complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
-complete -c taskcli -n "__fish_taskcli_using_subcommand help; and not __fish_seen_subcommand_from completions init doctor sync project job task plan event context hook help" -f -a "completions" -d 'Print a shell completion script without loading task configuration'
-complete -c taskcli -n "__fish_taskcli_using_subcommand help; and not __fish_seen_subcommand_from completions init doctor sync project job task plan event context hook help" -f -a "init"
-complete -c taskcli -n "__fish_taskcli_using_subcommand help; and not __fish_seen_subcommand_from completions init doctor sync project job task plan event context hook help" -f -a "doctor"
-complete -c taskcli -n "__fish_taskcli_using_subcommand help; and not __fish_seen_subcommand_from completions init doctor sync project job task plan event context hook help" -f -a "sync"
-complete -c taskcli -n "__fish_taskcli_using_subcommand help; and not __fish_seen_subcommand_from completions init doctor sync project job task plan event context hook help" -f -a "project"
-complete -c taskcli -n "__fish_taskcli_using_subcommand help; and not __fish_seen_subcommand_from completions init doctor sync project job task plan event context hook help" -f -a "job"
-complete -c taskcli -n "__fish_taskcli_using_subcommand help; and not __fish_seen_subcommand_from completions init doctor sync project job task plan event context hook help" -f -a "task"
-complete -c taskcli -n "__fish_taskcli_using_subcommand help; and not __fish_seen_subcommand_from completions init doctor sync project job task plan event context hook help" -f -a "plan"
-complete -c taskcli -n "__fish_taskcli_using_subcommand help; and not __fish_seen_subcommand_from completions init doctor sync project job task plan event context hook help" -f -a "event"
-complete -c taskcli -n "__fish_taskcli_using_subcommand help; and not __fish_seen_subcommand_from completions init doctor sync project job task plan event context hook help" -f -a "context"
-complete -c taskcli -n "__fish_taskcli_using_subcommand help; and not __fish_seen_subcommand_from completions init doctor sync project job task plan event context hook help" -f -a "hook"
-complete -c taskcli -n "__fish_taskcli_using_subcommand help; and not __fish_seen_subcommand_from completions init doctor sync project job task plan event context hook help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and not __fish_seen_subcommand_from completions init obsidian doctor sync project job task plan event context hook help" -f -a "completions" -d 'Print a shell completion script without loading task configuration'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and not __fish_seen_subcommand_from completions init obsidian doctor sync project job task plan event context hook help" -f -a "init" -d 'Create configuration, initialize `SQLite` storage, and generate task documents'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and not __fish_seen_subcommand_from completions init obsidian doctor sync project job task plan event context hook help" -f -a "obsidian" -d 'Install and configure Obsidian task views in the configured vault'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and not __fish_seen_subcommand_from completions init obsidian doctor sync project job task plan event context hook help" -f -a "doctor" -d 'Check for missing Plan files and documents that are behind the event log'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and not __fish_seen_subcommand_from completions init obsidian doctor sync project job task plan event context hook help" -f -a "sync" -d 'Regenerate task documents from the current database state'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and not __fish_seen_subcommand_from completions init obsidian doctor sync project job task plan event context hook help" -f -a "project" -d 'Register, inspect, archive, or delete Projects shared across worktrees'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and not __fish_seen_subcommand_from completions init obsidian doctor sync project job task plan event context hook help" -f -a "job" -d 'Manage Jobs that group Tasks for an independently deliverable requirement'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and not __fish_seen_subcommand_from completions init obsidian doctor sync project job task plan event context hook help" -f -a "task" -d 'Manage Task dependencies, ownership leases, and execution status'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and not __fish_seen_subcommand_from completions init obsidian doctor sync project job task plan event context hook help" -f -a "plan" -d 'Publish, revise, or inspect the execution Plan in a Task note'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and not __fish_seen_subcommand_from completions init obsidian doctor sync project job task plan event context hook help" -f -a "event" -d 'Inspect the ordered audit log of task coordination events'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and not __fish_seen_subcommand_from completions init obsidian doctor sync project job task plan event context hook help" -f -a "context" -d 'Show Task, Job, lease, Plan, and document context for a session or explicit IDs'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and not __fish_seen_subcommand_from completions init obsidian doctor sync project job task plan event context hook help" -f -a "hook" -d 'Handle agent session lifecycle events and maintain Task leases'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and not __fish_seen_subcommand_from completions init obsidian doctor sync project job task plan event context hook help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from obsidian" -f -a "setup" -d 'Install `TaskNotes` and configure its task statuses and Bases. Close Obsidian first'
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from project" -f -a "delete" -d 'Delete the Project, its work, and its entire generated document directory'
-complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from project" -f -a "register"
-complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from project" -f -a "list"
-complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from project" -f -a "show"
-complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from project" -f -a "archive"
-complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from project" -f -a "unarchive"
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from project" -f -a "register" -d 'Register a Project using its root directory and Git identity when available'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from project" -f -a "list" -d 'List unarchived Projects, or archived Projects with --archived'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from project" -f -a "show" -d 'Show a Project\'s identity, root directory, and archival state'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from project" -f -a "archive" -d 'Archive a Project after all of its Jobs are closed'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from project" -f -a "unarchive" -d 'Restore an archived Project to the active project views'
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from job" -f -a "delete" -d 'Delete the Job, its Tasks, and their Plan documents'
-complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from job" -f -a "create"
-complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from job" -f -a "update"
-complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from job" -f -a "list"
-complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from job" -f -a "show"
-complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from job" -f -a "cancel"
-complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from job" -f -a "archive"
-complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from job" -f -a "unarchive"
-complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from task" -f -a "add"
-complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from task" -f -a "update"
-complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from task" -f -a "list"
-complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from task" -f -a "show"
-complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from task" -f -a "depend"
-complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from task" -f -a "undepend"
-complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from task" -f -a "claim"
-complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from task" -f -a "start"
-complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from task" -f -a "heartbeat"
-complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from task" -f -a "release"
-complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from task" -f -a "block"
-complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from task" -f -a "wait"
-complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from task" -f -a "fail"
-complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from task" -f -a "done"
-complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from task" -f -a "cancel"
-complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from task" -f -a "retry"
-complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from task" -f -a "reopen"
-complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from plan" -f -a "create"
-complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from plan" -f -a "revise"
-complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from plan" -f -a "show"
-complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from event" -f -a "list"
-complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from hook" -f -a "session-start"
-complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from hook" -f -a "session-end"
-complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from hook" -f -a "interrupt"
-complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from hook" -f -a "heartbeat"
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from job" -f -a "create" -d 'Create a Job with a title and acceptance goal in the selected Project'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from job" -f -a "update" -d 'Change a Job\'s display name, title, or acceptance goal'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from job" -f -a "list" -d 'List Jobs, optionally filtered by Project, status, or date'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from job" -f -a "show" -d 'Show a Job\'s goal, status, and lifecycle metadata'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from job" -f -a "cancel" -d 'Cancel a Job and its unfinished Tasks after their leases have been released'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from job" -f -a "archive" -d 'Archive a closed Job and move its document to the archive'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from job" -f -a "unarchive" -d 'Restore an archived Job document without changing its completion status'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from task" -f -a "add" -d 'Add a Task to a Job and create its note without publishing a Plan'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from task" -f -a "update" -d 'Change a Task\'s display name, title, or board position'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from task" -f -a "list" -d 'List Tasks, optionally filtered by Job, Project, status, or readiness'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from task" -f -a "show" -d 'Show a Task\'s status, dependencies, Plan reference, and current lease'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from task" -f -a "depend" -d 'Add a prerequisite Task in the same Project before execution has started'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from task" -f -a "undepend" -d 'Remove a prerequisite Task before execution has started'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from task" -f -a "claim" -d 'Acquire a planning lease using --executor and --session'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from task" -f -a "start" -d 'Begin execution with the current lease, a published Plan, and DONE prerequisites'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from task" -f -a "heartbeat" -d 'Renew a Task lease using its owning session and lease token'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from task" -f -a "release" -d 'Release ownership and mark the Task BLOCKED with a handoff reason'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from task" -f -a "block" -d 'Mark a Task BLOCKED with a reason and release its lease'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from task" -f -a "wait" -d 'Mark a Task `WAITING_USER` with a reason and release its lease'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from task" -f -a "fail" -d 'Mark a Task FAILED with a reason and release its lease'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from task" -f -a "done" -d 'Mark an EXECUTING Task DONE and release its lease'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from task" -f -a "cancel" -d 'Cancel a Task and release its lease'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from task" -f -a "retry" -d 'Return a FAILED Task to TODO so it can be claimed again'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from task" -f -a "reopen" -d 'Return a DONE or CANCELLED Task to TODO so it can be claimed again'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from plan" -f -a "create" -d 'Publish a Plan from --body or --file while holding the Task lease'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from plan" -f -a "revise" -d 'Replace the Plan body in the same Task note while holding its lease'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from plan" -f -a "show" -d 'Show the current Plan\'s metadata and absolute file path for a Task'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from event" -f -a "list" -d 'List events after a sequence cursor, optionally filtered by Job and limited in count'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from hook" -f -a "session-start" -d 'Recover the session\'s Tasks blocked by interruption or lease expiry into planning'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from hook" -f -a "session-end" -d 'Record session shutdown and release its active Task leases'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from hook" -f -a "interrupt" -d 'Release an interrupted session\'s Task leases while preserving its Plans'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from hook" -f -a "heartbeat" -d 'Renew all active Task leases owned by the session'

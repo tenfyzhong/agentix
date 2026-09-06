@@ -4,6 +4,8 @@ Each taskcli Task is a Markdown note in its project's `Tasks/` directory. TaskNo
 
 ## Enable the views
 
+After configuring taskcli with `init --format obsidian`, close the vault in Obsidian and run `taskcli obsidian setup`. This installs TaskNotes, enables it and Bases in the vault configuration, and merges the settings described below. Reopen Obsidian and disable Restricted mode if needed. Existing compatible installations are retained; `--plugin-dir /path/to/release` supports offline installation. Changed files are backed up under `.obsidian/taskcli-backups/`. See [automatic setup](https://github.com/tenfyzhong/agentix/blob/main/docs/task-board.md#obsidian-plugin-setup) for details.
+
 **TaskNotes** (`tasknotes`) is the only community plugin required for the generated task notes and boards. Also enable **Bases**, which is built into Obsidian. This integration was checked with TaskNotes 4.12.5.
 
 In **Settings → TaskNotes → General**, select tag-based task identification and set the task tag to `task`. This identifies the `tags` property of a task note; Job links and checkboxes inside a plan do not create extra task cards. Task notes carry both `task` for TaskNotes identification and `agent/task` for Agentix board filtering, so ordinary `task` notes can coexist in the same vault. Run `taskcli sync` with the updated CLI to add the tag to existing generated notes before changing this vault-wide setting. Custom tags are preserved.

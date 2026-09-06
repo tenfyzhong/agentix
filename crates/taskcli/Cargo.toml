@@ -11,13 +11,14 @@ agentix-task = { path = "../agentix-task" }
 anyhow.workspace = true
 clap.workspace = true
 clap_complete.workspace = true
+reqwest.workspace = true
 serde_json.workspace = true
+tempfile.workspace = true
 tokio.workspace = true
 toml.workspace = true
 time = { workspace = true, features = ["formatting", "parsing"] }
 
 [dev-dependencies]
-tempfile.workspace = true
 serde_yaml.workspace = true
 
 [lints]

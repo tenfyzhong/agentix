@@ -90,4 +90,8 @@ To create Codex sessions from chat, install optional rmux and use `/rmux`; see [
 
 With [task boards configured](docs/guide.md#im-task-boards), use `/dashboard` to browse projects, or `/board` and `/jobs` to view the attached session's work. Task and Job details link to each other.
 
+For Obsidian task views, configure taskcli for your vault, close Obsidian, and run [`taskcli obsidian setup`](docs/task-board.md#obsidian-plugin-setup) to install and configure TaskNotes.
+
+Run `taskcli --help` to browse commands and `taskcli <command> --help` to see each group's subcommands and descriptions. For a specific operation, use nested help such as `taskcli task claim --help` or `taskcli plan create --help`.
+
 See the [detailed guide](docs/guide.md) for installation alternatives, shell completions, session behavior, task boards, and links to the command reference and development documentation.

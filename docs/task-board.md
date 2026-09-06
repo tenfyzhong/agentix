@@ -156,6 +156,28 @@ When upgrading, rename the host environment variable to `AGENT_TASK_LANG`, remov
 
 ### Obsidian plugin setup
 
+After `taskcli init --format obsidian`, close the vault in Obsidian and run:
+
+```sh
+taskcli obsidian setup
+# Use a different taskcli configuration:
+taskcli --config /path/to/taskcli.toml obsidian setup --json
+```
+
+The command uses `documents.root` from the selected configuration. It installs the tested TaskNotes 4.12.5 release from its official GitHub repository when the plugin is missing, enables TaskNotes and Bases in the vault configuration, and merges task identification, required field mappings, the seven task statuses, and the default `TODO` status. It preserves unrelated settings, custom status values, and other plugins. An existing compatible TaskNotes 4.x installation (4.12.5 or newer) is retained without a download. No task database is opened or modified.
+
+Restart or reopen Obsidian afterward. If Restricted mode is enabled, turn it off in **Settings → Community plugins** to allow TaskNotes to load; this app-local permission is not changed by writing vault settings. Obsidian and other tools must not edit the same configuration during setup.
+
+For offline installation or an explicit plugin replacement, download `manifest.json`, `main.js`, and `styles.css` from a compatible [official TaskNotes release](https://github.com/callumalpass/tasknotes/releases) into one directory:
+
+```sh
+taskcli obsidian setup --plugin-dir /path/to/tasknotes-release
+```
+
+Changed existing files are backed up under `.obsidian/taskcli-backups/setup-*/`, retaining their relative paths. The result reports the backup directory, installed version, and whether anything changed. Repeating setup with unchanged settings creates no further backups. Invalid settings or plugin bundles and symlinked configuration paths are rejected before publication; write failures attempt to restore the previous files and report any rollback errors. To restore a backup, close Obsidian and copy the saved files back to the corresponding paths under `.obsidian/`.
+
+For manual setup, use the following settings.
+
 Enable [TaskNotes](https://tasknotes.dev/obsidian/core-concepts/) and Obsidian's Bases core plugin. Set TaskNotes' identification tag to `task`, retain its default field mapping, and configure the seven exact status values: `TODO`, `IN_PROGRESS`, `BLOCKED`, `WAITING_USER`, `DONE`, `FAILED`, and `CANCELLED`. Only DONE is successful completion; disable automatic archival for these statuses. See the [TaskNotes setup guide](../plugins/agent-task-manager/obsidian/README.md) for labels, colors, settings, and examples.
 
 `Board.md` embeds a `tasknotesKanban` Base grouped by status, with an explicit seven-column order and empty columns visible. The Board filters by the exact Task folder, project ID, `agent/task` tag, and `archived != true`. TaskNotes reads task frontmatter, so Job links and authored checklists do not create duplicate cards. Open Board in Reading view or Live Preview; the old Kanban plugins and Tasks queries are no longer used.

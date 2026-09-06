@@ -43,6 +43,7 @@ Cargo's `plugin_entrypoints_execute_the_compiled_taskcli` test runs [integration
 | Configured Telegram startup dashboard menu, exact primary order, alphabetical secondary commands and contextual labels | [application menu tests](../crates/agentix/src/main.rs), [Telegram API/menu tests](../crates/agentix-telegram/tests/telegram.rs), [Engine menu tests](../crates/agentix-core/tests/support/task_board.rs) |
 | Telegram/Feishu task actions and reason replies through transport → Engine → SQLite → documents → channel notification | [channel_codex_e2e.rs](../crates/agentix/tests/channel_codex_e2e.rs), with local channel API services |
 | Actual Dashboard columns/dates, archive filtering, native link navigation, TaskNotes Kanban columns/cards and task note recognition | [obsidian_smoke.rs](../crates/taskcli/tests/obsidian_smoke.rs), opt-in desktop test |
+| TaskNotes installation, settings/status merging, plugin enablement, backups, repeat runs, malformed bundles/configuration, path protection, download errors and rollback | [obsidian_setup.rs](../crates/taskcli/tests/obsidian_setup.rs), [installer tests](../crates/taskcli/src/obsidian.rs); local release fixtures and HTTP server |
 
 The projection CLI tests cross argument parsing, a new process per command, SQLite persistence, and generated files. Library tests provide deterministic clocks and filesystem failure injection. Host integration tests run real taskcli processes behind a minimal event API harness; controlled timer tests cover scheduling races without waiting a real minute.
 

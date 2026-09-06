@@ -3352,6 +3352,7 @@ dependencies = [
  "anyhow",
  "clap",
  "clap_complete",
+ "reqwest",
  "serde_json",
  "serde_yaml",
  "tempfile",

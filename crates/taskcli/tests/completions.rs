@@ -54,6 +54,8 @@ fn completions_skip_configuration_and_task_state_and_match_checked_in_files() {
             );
             for command in [
                 "init",
+                "obsidian",
+                "setup",
                 "doctor",
                 "sync",
                 "project",
@@ -72,7 +74,14 @@ fn completions_skip_configuration_and_task_state_and_match_checked_in_files() {
             ] {
                 assert!(script.contains(command), "{shell}: missing {command}");
             }
-            for option in ["config", "lease-token", "idempotency-key", "ready", "file"] {
+            for option in [
+                "config",
+                "lease-token",
+                "idempotency-key",
+                "ready",
+                "file",
+                "plugin-dir",
+            ] {
                 assert!(script.contains(option), "{shell}: missing {option}");
             }
             assert_eq!(

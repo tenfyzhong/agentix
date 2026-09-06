@@ -75,6 +75,75 @@ _arguments "${_arguments_options[@]}" : \
 '--help[Print help]' \
 && ret=0
 ;;
+(obsidian)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_taskcli__subcmd__obsidian_commands" \
+"*::: :->obsidian" \
+&& ret=0
+
+    case $state in
+    (obsidian)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskcli-obsidian-command-$line[1]:"
+        case $line[1] in
+            (setup)
+_arguments "${_arguments_options[@]}" : \
+'--plugin-dir=[Use a local \`TaskNotes\` release directory instead of downloading the bundled version]:PLUGIN_DIR:_files -/' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_taskcli__subcmd__obsidian__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskcli-obsidian-help-command-$line[1]:"
+        case $line[1] in
+            (setup)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
 (doctor)
 _arguments "${_arguments_options[@]}" : \
 '--config=[]:CONFIG:_files' \
@@ -1278,6 +1347,26 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
+(obsidian)
+_arguments "${_arguments_options[@]}" : \
+":: :_taskcli__subcmd__help__subcmd__obsidian_commands" \
+"*::: :->obsidian" \
+&& ret=0
+
+    case $state in
+    (obsidian)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskcli-help-obsidian-command-$line[1]:"
+        case $line[1] in
+            (setup)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
 (doctor)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
@@ -1559,16 +1648,17 @@ esac
 _taskcli_commands() {
     local commands; commands=(
 'completions:Print a shell completion script without loading task configuration' \
-'init:' \
-'doctor:' \
-'sync:' \
-'project:' \
-'job:' \
-'task:' \
-'plan:' \
-'event:' \
-'context:' \
-'hook:' \
+'init:Create configuration, initialize \`SQLite\` storage, and generate task documents' \
+'obsidian:Install and configure Obsidian task views in the configured vault' \
+'doctor:Check for missing Plan files and documents that are behind the event log' \
+'sync:Regenerate task documents from the current database state' \
+'project:Register, inspect, archive, or delete Projects shared across worktrees' \
+'job:Manage Jobs that group Tasks for an independently deliverable requirement' \
+'task:Manage Task dependencies, ownership leases, and execution status' \
+'plan:Publish, revise, or inspect the execution Plan in a Task note' \
+'event:Inspect the ordered audit log of task coordination events' \
+'context:Show Task, Job, lease, Plan, and document context for a session or explicit IDs' \
+'hook:Handle agent session lifecycle events and maintain Task leases' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'taskcli commands' commands "$@"
@@ -1591,7 +1681,7 @@ _taskcli__subcmd__doctor_commands() {
 (( $+functions[_taskcli__subcmd__event_commands] )) ||
 _taskcli__subcmd__event_commands() {
     local commands; commands=(
-'list:' \
+'list:List events after a sequence cursor, optionally filtered by Job and limited in count' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'taskcli event commands' commands "$@"
@@ -1599,7 +1689,7 @@ _taskcli__subcmd__event_commands() {
 (( $+functions[_taskcli__subcmd__event__subcmd__help_commands] )) ||
 _taskcli__subcmd__event__subcmd__help_commands() {
     local commands; commands=(
-'list:' \
+'list:List events after a sequence cursor, optionally filtered by Job and limited in count' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'taskcli event help commands' commands "$@"
@@ -1623,16 +1713,17 @@ _taskcli__subcmd__event__subcmd__list_commands() {
 _taskcli__subcmd__help_commands() {
     local commands; commands=(
 'completions:Print a shell completion script without loading task configuration' \
-'init:' \
-'doctor:' \
-'sync:' \
-'project:' \
-'job:' \
-'task:' \
-'plan:' \
-'event:' \
-'context:' \
-'hook:' \
+'init:Create configuration, initialize \`SQLite\` storage, and generate task documents' \
+'obsidian:Install and configure Obsidian task views in the configured vault' \
+'doctor:Check for missing Plan files and documents that are behind the event log' \
+'sync:Regenerate task documents from the current database state' \
+'project:Register, inspect, archive, or delete Projects shared across worktrees' \
+'job:Manage Jobs that group Tasks for an independently deliverable requirement' \
+'task:Manage Task dependencies, ownership leases, and execution status' \
+'plan:Publish, revise, or inspect the execution Plan in a Task note' \
+'event:Inspect the ordered audit log of task coordination events' \
+'context:Show Task, Job, lease, Plan, and document context for a session or explicit IDs' \
+'hook:Handle agent session lifecycle events and maintain Task leases' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'taskcli help commands' commands "$@"
@@ -1655,7 +1746,7 @@ _taskcli__subcmd__help__subcmd__doctor_commands() {
 (( $+functions[_taskcli__subcmd__help__subcmd__event_commands] )) ||
 _taskcli__subcmd__help__subcmd__event_commands() {
     local commands; commands=(
-'list:' \
+'list:List events after a sequence cursor, optionally filtered by Job and limited in count' \
     )
     _describe -t commands 'taskcli help event commands' commands "$@"
 }
@@ -1672,10 +1763,10 @@ _taskcli__subcmd__help__subcmd__help_commands() {
 (( $+functions[_taskcli__subcmd__help__subcmd__hook_commands] )) ||
 _taskcli__subcmd__help__subcmd__hook_commands() {
     local commands; commands=(
-'session-start:' \
-'session-end:' \
-'interrupt:' \
-'heartbeat:' \
+'session-start:Recover the session'\''s Tasks blocked by interruption or lease expiry into planning' \
+'session-end:Record session shutdown and release its active Task leases' \
+'interrupt:Release an interrupted session'\''s Task leases while preserving its Plans' \
+'heartbeat:Renew all active Task leases owned by the session' \
     )
     _describe -t commands 'taskcli help hook commands' commands "$@"
 }
@@ -1708,13 +1799,13 @@ _taskcli__subcmd__help__subcmd__init_commands() {
 _taskcli__subcmd__help__subcmd__job_commands() {
     local commands; commands=(
 'delete:Delete the Job, its Tasks, and their Plan documents' \
-'create:' \
-'update:' \
-'list:' \
-'show:' \
-'cancel:' \
-'archive:' \
-'unarchive:' \
+'create:Create a Job with a title and acceptance goal in the selected Project' \
+'update:Change a Job'\''s display name, title, or acceptance goal' \
+'list:List Jobs, optionally filtered by Project, status, or date' \
+'show:Show a Job'\''s goal, status, and lifecycle metadata' \
+'cancel:Cancel a Job and its unfinished Tasks after their leases have been released' \
+'archive:Archive a closed Job and move its document to the archive' \
+'unarchive:Restore an archived Job document without changing its completion status' \
     )
     _describe -t commands 'taskcli help job commands' commands "$@"
 }
@@ -1758,12 +1849,24 @@ _taskcli__subcmd__help__subcmd__job__subcmd__update_commands() {
     local commands; commands=()
     _describe -t commands 'taskcli help job update commands' commands "$@"
 }
+(( $+functions[_taskcli__subcmd__help__subcmd__obsidian_commands] )) ||
+_taskcli__subcmd__help__subcmd__obsidian_commands() {
+    local commands; commands=(
+'setup:Install \`TaskNotes\` and configure its task statuses and Bases. Close Obsidian first' \
+    )
+    _describe -t commands 'taskcli help obsidian commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__obsidian__subcmd__setup_commands] )) ||
+_taskcli__subcmd__help__subcmd__obsidian__subcmd__setup_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help obsidian setup commands' commands "$@"
+}
 (( $+functions[_taskcli__subcmd__help__subcmd__plan_commands] )) ||
 _taskcli__subcmd__help__subcmd__plan_commands() {
     local commands; commands=(
-'create:' \
-'revise:' \
-'show:' \
+'create:Publish a Plan from --body or --file while holding the Task lease' \
+'revise:Replace the Plan body in the same Task note while holding its lease' \
+'show:Show the current Plan'\''s metadata and absolute file path for a Task' \
     )
     _describe -t commands 'taskcli help plan commands' commands "$@"
 }
@@ -1786,11 +1889,11 @@ _taskcli__subcmd__help__subcmd__plan__subcmd__show_commands() {
 _taskcli__subcmd__help__subcmd__project_commands() {
     local commands; commands=(
 'delete:Delete the Project, its work, and its entire generated document directory' \
-'register:' \
-'list:' \
-'show:' \
-'archive:' \
-'unarchive:' \
+'register:Register a Project using its root directory and Git identity when available' \
+'list:List unarchived Projects, or archived Projects with --archived' \
+'show:Show a Project'\''s identity, root directory, and archival state' \
+'archive:Archive a Project after all of its Jobs are closed' \
+'unarchive:Restore an archived Project to the active project views' \
     )
     _describe -t commands 'taskcli help project commands' commands "$@"
 }
@@ -1832,23 +1935,23 @@ _taskcli__subcmd__help__subcmd__sync_commands() {
 (( $+functions[_taskcli__subcmd__help__subcmd__task_commands] )) ||
 _taskcli__subcmd__help__subcmd__task_commands() {
     local commands; commands=(
-'add:' \
-'update:' \
-'list:' \
-'show:' \
-'depend:' \
-'undepend:' \
-'claim:' \
-'start:' \
-'heartbeat:' \
-'release:' \
-'block:' \
-'wait:' \
-'fail:' \
-'done:' \
-'cancel:' \
-'retry:' \
-'reopen:' \
+'add:Add a Task to a Job and create its note without publishing a Plan' \
+'update:Change a Task'\''s display name, title, or board position' \
+'list:List Tasks, optionally filtered by Job, Project, status, or readiness' \
+'show:Show a Task'\''s status, dependencies, Plan reference, and current lease' \
+'depend:Add a prerequisite Task in the same Project before execution has started' \
+'undepend:Remove a prerequisite Task before execution has started' \
+'claim:Acquire a planning lease using --executor and --session' \
+'start:Begin execution with the current lease, a published Plan, and DONE prerequisites' \
+'heartbeat:Renew a Task lease using its owning session and lease token' \
+'release:Release ownership and mark the Task BLOCKED with a handoff reason' \
+'block:Mark a Task BLOCKED with a reason and release its lease' \
+'wait:Mark a Task \`WAITING_USER\` with a reason and release its lease' \
+'fail:Mark a Task FAILED with a reason and release its lease' \
+'done:Mark an EXECUTING Task DONE and release its lease' \
+'cancel:Cancel a Task and release its lease' \
+'retry:Return a FAILED Task to TODO so it can be claimed again' \
+'reopen:Return a DONE or CANCELLED Task to TODO so it can be claimed again' \
     )
     _describe -t commands 'taskcli help task commands' commands "$@"
 }
@@ -1940,10 +2043,10 @@ _taskcli__subcmd__help__subcmd__task__subcmd__wait_commands() {
 (( $+functions[_taskcli__subcmd__hook_commands] )) ||
 _taskcli__subcmd__hook_commands() {
     local commands; commands=(
-'session-start:' \
-'session-end:' \
-'interrupt:' \
-'heartbeat:' \
+'session-start:Recover the session'\''s Tasks blocked by interruption or lease expiry into planning' \
+'session-end:Record session shutdown and release its active Task leases' \
+'interrupt:Release an interrupted session'\''s Task leases while preserving its Plans' \
+'heartbeat:Renew all active Task leases owned by the session' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'taskcli hook commands' commands "$@"
@@ -1956,10 +2059,10 @@ _taskcli__subcmd__hook__subcmd__heartbeat_commands() {
 (( $+functions[_taskcli__subcmd__hook__subcmd__help_commands] )) ||
 _taskcli__subcmd__hook__subcmd__help_commands() {
     local commands; commands=(
-'session-start:' \
-'session-end:' \
-'interrupt:' \
-'heartbeat:' \
+'session-start:Recover the session'\''s Tasks blocked by interruption or lease expiry into planning' \
+'session-end:Record session shutdown and release its active Task leases' \
+'interrupt:Release an interrupted session'\''s Task leases while preserving its Plans' \
+'heartbeat:Renew all active Task leases owned by the session' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'taskcli hook help commands' commands "$@"
@@ -2013,13 +2116,13 @@ _taskcli__subcmd__init_commands() {
 _taskcli__subcmd__job_commands() {
     local commands; commands=(
 'delete:Delete the Job, its Tasks, and their Plan documents' \
-'create:' \
-'update:' \
-'list:' \
-'show:' \
-'cancel:' \
-'archive:' \
-'unarchive:' \
+'create:Create a Job with a title and acceptance goal in the selected Project' \
+'update:Change a Job'\''s display name, title, or acceptance goal' \
+'list:List Jobs, optionally filtered by Project, status, or date' \
+'show:Show a Job'\''s goal, status, and lifecycle metadata' \
+'cancel:Cancel a Job and its unfinished Tasks after their leases have been released' \
+'archive:Archive a closed Job and move its document to the archive' \
+'unarchive:Restore an archived Job document without changing its completion status' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'taskcli job commands' commands "$@"
@@ -2048,13 +2151,13 @@ _taskcli__subcmd__job__subcmd__delete_commands() {
 _taskcli__subcmd__job__subcmd__help_commands() {
     local commands; commands=(
 'delete:Delete the Job, its Tasks, and their Plan documents' \
-'create:' \
-'update:' \
-'list:' \
-'show:' \
-'cancel:' \
-'archive:' \
-'unarchive:' \
+'create:Create a Job with a title and acceptance goal in the selected Project' \
+'update:Change a Job'\''s display name, title, or acceptance goal' \
+'list:List Jobs, optionally filtered by Project, status, or date' \
+'show:Show a Job'\''s goal, status, and lifecycle metadata' \
+'cancel:Cancel a Job and its unfinished Tasks after their leases have been released' \
+'archive:Archive a closed Job and move its document to the archive' \
+'unarchive:Restore an archived Job document without changing its completion status' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'taskcli job help commands' commands "$@"
@@ -2124,12 +2227,43 @@ _taskcli__subcmd__job__subcmd__update_commands() {
     local commands; commands=()
     _describe -t commands 'taskcli job update commands' commands "$@"
 }
+(( $+functions[_taskcli__subcmd__obsidian_commands] )) ||
+_taskcli__subcmd__obsidian_commands() {
+    local commands; commands=(
+'setup:Install \`TaskNotes\` and configure its task statuses and Bases. Close Obsidian first' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'taskcli obsidian commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__obsidian__subcmd__help_commands] )) ||
+_taskcli__subcmd__obsidian__subcmd__help_commands() {
+    local commands; commands=(
+'setup:Install \`TaskNotes\` and configure its task statuses and Bases. Close Obsidian first' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'taskcli obsidian help commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__obsidian__subcmd__help__subcmd__help_commands] )) ||
+_taskcli__subcmd__obsidian__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli obsidian help help commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__obsidian__subcmd__help__subcmd__setup_commands] )) ||
+_taskcli__subcmd__obsidian__subcmd__help__subcmd__setup_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli obsidian help setup commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__obsidian__subcmd__setup_commands] )) ||
+_taskcli__subcmd__obsidian__subcmd__setup_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli obsidian setup commands' commands "$@"
+}
 (( $+functions[_taskcli__subcmd__plan_commands] )) ||
 _taskcli__subcmd__plan_commands() {
     local commands; commands=(
-'create:' \
-'revise:' \
-'show:' \
+'create:Publish a Plan from --body or --file while holding the Task lease' \
+'revise:Replace the Plan body in the same Task note while holding its lease' \
+'show:Show the current Plan'\''s metadata and absolute file path for a Task' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'taskcli plan commands' commands "$@"
@@ -2142,9 +2276,9 @@ _taskcli__subcmd__plan__subcmd__create_commands() {
 (( $+functions[_taskcli__subcmd__plan__subcmd__help_commands] )) ||
 _taskcli__subcmd__plan__subcmd__help_commands() {
     local commands; commands=(
-'create:' \
-'revise:' \
-'show:' \
+'create:Publish a Plan from --body or --file while holding the Task lease' \
+'revise:Replace the Plan body in the same Task note while holding its lease' \
+'show:Show the current Plan'\''s metadata and absolute file path for a Task' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'taskcli plan help commands' commands "$@"
@@ -2183,11 +2317,11 @@ _taskcli__subcmd__plan__subcmd__show_commands() {
 _taskcli__subcmd__project_commands() {
     local commands; commands=(
 'delete:Delete the Project, its work, and its entire generated document directory' \
-'register:' \
-'list:' \
-'show:' \
-'archive:' \
-'unarchive:' \
+'register:Register a Project using its root directory and Git identity when available' \
+'list:List unarchived Projects, or archived Projects with --archived' \
+'show:Show a Project'\''s identity, root directory, and archival state' \
+'archive:Archive a Project after all of its Jobs are closed' \
+'unarchive:Restore an archived Project to the active project views' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'taskcli project commands' commands "$@"
@@ -2206,11 +2340,11 @@ _taskcli__subcmd__project__subcmd__delete_commands() {
 _taskcli__subcmd__project__subcmd__help_commands() {
     local commands; commands=(
 'delete:Delete the Project, its work, and its entire generated document directory' \
-'register:' \
-'list:' \
-'show:' \
-'archive:' \
-'unarchive:' \
+'register:Register a Project using its root directory and Git identity when available' \
+'list:List unarchived Projects, or archived Projects with --archived' \
+'show:Show a Project'\''s identity, root directory, and archival state' \
+'archive:Archive a Project after all of its Jobs are closed' \
+'unarchive:Restore an archived Project to the active project views' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'taskcli project help commands' commands "$@"
@@ -2278,23 +2412,23 @@ _taskcli__subcmd__sync_commands() {
 (( $+functions[_taskcli__subcmd__task_commands] )) ||
 _taskcli__subcmd__task_commands() {
     local commands; commands=(
-'add:' \
-'update:' \
-'list:' \
-'show:' \
-'depend:' \
-'undepend:' \
-'claim:' \
-'start:' \
-'heartbeat:' \
-'release:' \
-'block:' \
-'wait:' \
-'fail:' \
-'done:' \
-'cancel:' \
-'retry:' \
-'reopen:' \
+'add:Add a Task to a Job and create its note without publishing a Plan' \
+'update:Change a Task'\''s display name, title, or board position' \
+'list:List Tasks, optionally filtered by Job, Project, status, or readiness' \
+'show:Show a Task'\''s status, dependencies, Plan reference, and current lease' \
+'depend:Add a prerequisite Task in the same Project before execution has started' \
+'undepend:Remove a prerequisite Task before execution has started' \
+'claim:Acquire a planning lease using --executor and --session' \
+'start:Begin execution with the current lease, a published Plan, and DONE prerequisites' \
+'heartbeat:Renew a Task lease using its owning session and lease token' \
+'release:Release ownership and mark the Task BLOCKED with a handoff reason' \
+'block:Mark a Task BLOCKED with a reason and release its lease' \
+'wait:Mark a Task \`WAITING_USER\` with a reason and release its lease' \
+'fail:Mark a Task FAILED with a reason and release its lease' \
+'done:Mark an EXECUTING Task DONE and release its lease' \
+'cancel:Cancel a Task and release its lease' \
+'retry:Return a FAILED Task to TODO so it can be claimed again' \
+'reopen:Return a DONE or CANCELLED Task to TODO so it can be claimed again' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'taskcli task commands' commands "$@"
@@ -2342,23 +2476,23 @@ _taskcli__subcmd__task__subcmd__heartbeat_commands() {
 (( $+functions[_taskcli__subcmd__task__subcmd__help_commands] )) ||
 _taskcli__subcmd__task__subcmd__help_commands() {
     local commands; commands=(
-'add:' \
-'update:' \
-'list:' \
-'show:' \
-'depend:' \
-'undepend:' \
-'claim:' \
-'start:' \
-'heartbeat:' \
-'release:' \
-'block:' \
-'wait:' \
-'fail:' \
-'done:' \
-'cancel:' \
-'retry:' \
-'reopen:' \
+'add:Add a Task to a Job and create its note without publishing a Plan' \
+'update:Change a Task'\''s display name, title, or board position' \
+'list:List Tasks, optionally filtered by Job, Project, status, or readiness' \
+'show:Show a Task'\''s status, dependencies, Plan reference, and current lease' \
+'depend:Add a prerequisite Task in the same Project before execution has started' \
+'undepend:Remove a prerequisite Task before execution has started' \
+'claim:Acquire a planning lease using --executor and --session' \
+'start:Begin execution with the current lease, a published Plan, and DONE prerequisites' \
+'heartbeat:Renew a Task lease using its owning session and lease token' \
+'release:Release ownership and mark the Task BLOCKED with a handoff reason' \
+'block:Mark a Task BLOCKED with a reason and release its lease' \
+'wait:Mark a Task \`WAITING_USER\` with a reason and release its lease' \
+'fail:Mark a Task FAILED with a reason and release its lease' \
+'done:Mark an EXECUTING Task DONE and release its lease' \
+'cancel:Cancel a Task and release its lease' \
+'retry:Return a FAILED Task to TODO so it can be claimed again' \
+'reopen:Return a DONE or CANCELLED Task to TODO so it can be claimed again' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'taskcli task help commands' commands "$@"
