@@ -3,6 +3,7 @@ use std::sync::Arc;
 use agentix_task::{JobStatus, Service, Snapshot, Task, TaskPhase, TaskStatus, WriteOptions};
 
 mod browse;
+mod inbox;
 pub(super) use browse::TaskBrowse;
 use serde_json::json;
 

@@ -1,12 +1,12 @@
 use std::{
     io::{IsTerminal, Read, Write},
-    path::{Path, PathBuf},
+    path::PathBuf,
     process::{Command as Process, ExitCode},
 };
 
 use agentix_task::{
     Config, DocumentConfig, DocumentFormat, JobStatus, Service, StorageConfig, WriteOptions,
-    expand_home,
+    expand_home, git_identity,
 };
 use anyhow::{Context, Result, bail, ensure};
 use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
@@ -47,6 +47,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Submit, inspect, claim, or cancel human requirements in a Project Inbox.
+    Inbox {
+        #[command(subcommand)]
+        action: InboxCommand,
+    },
     /// Print a shell completion script without loading task configuration.
     Completions {
         #[arg(value_enum)]
@@ -151,6 +156,25 @@ enum ProjectCommand {
     Archive { id: String },
     /// Restore an archived Project to the active project views.
     Unarchive { id: String },
+}
+
+#[derive(Subcommand)]
+enum InboxCommand {
+    /// Append one requirement, preserving its complete Markdown content.
+    Add {
+        #[arg(long)]
+        content: String,
+    },
+    /// Import human edits and show visible Inbox entries in document order.
+    List,
+    /// Import submissions, cancellations, and withdrawals and repair the document.
+    Sync,
+    /// Atomically claim the next eligible requirement and create or resume its Job.
+    ClaimNext,
+    /// Release an owned Inbox lease so another agent can resume its existing Job.
+    Release { id: String },
+    /// Cancel a requirement and its unfinished work, preserving history.
+    Cancel { id: String },
 }
 
 #[derive(Args)]
@@ -314,6 +338,8 @@ enum EventCommand {
 }
 #[derive(Subcommand)]
 enum HookCommand {
+    /// Acknowledge turn completion without claiming Inbox work.
+    Stop,
     /// Recover the session's Tasks blocked by interruption or lease expiry into planning.
     SessionStart,
     /// Record session shutdown and release its active Task leases.
@@ -431,6 +457,7 @@ async fn run(cli: &Cli) -> Result<Value> {
     let service = Service::open(Config::load(&cli.config_path()?)?).await?;
     service.store().reap_expired().await?;
     match &cli.command {
+        Command::Inbox { action } => inbox(cli, &service, action).await,
         Command::Doctor => {
             let state = service.store().snapshot().await?;
             let missing: Vec<_> = state
@@ -576,37 +603,6 @@ async fn project(cli: &Cli, service: &Service, action: &ProjectCommand) -> Resul
             let state = service.store().snapshot().await?;
             Ok(response(json!(state.projects[state.project_index(id)?])))
         }
-    }
-}
-
-fn git_identity(root: &Path) -> Result<(PathBuf, Option<String>)> {
-    let root = root.canonicalize()?;
-    let output = Process::new("git")
-        .arg("-C")
-        .arg(&root)
-        .args(["rev-parse", "--path-format=absolute", "--git-common-dir"])
-        .output();
-    if let Ok(output) = output
-        && output.status.success()
-    {
-        let common = PathBuf::from(String::from_utf8(output.stdout)?.trim());
-        let common = common.canonicalize()?;
-        let root = common
-            .parent()
-            .context("Git common directory has no parent")?
-            .to_owned();
-        let remote = Process::new("git")
-            .arg("-C")
-            .arg(&root)
-            .args(["remote", "get-url", "origin"])
-            .output()?;
-        let remote = remote
-            .status
-            .success()
-            .then(|| String::from_utf8_lossy(&remote.stdout).trim().to_owned());
-        Ok((root, remote))
-    } else {
-        Ok((root, None))
     }
 }
 
@@ -861,10 +857,43 @@ async fn context(
             .find(|l| cli.session.as_deref() == Some(l.session_ref.as_str()))
             .and_then(|l| state.tasks.iter().find(|t| t.id == l.task_id))
     };
+    let owned_inbox = state.inboxes.iter().find(|e| {
+        e.lease
+            .as_ref()
+            .is_some_and(|l| cli.session.as_deref() == Some(l.session_ref.as_str()))
+    });
     let job = job
         .map(|id| state.job_index(id).map(|i| &state.jobs[i]))
         .transpose()?
-        .or_else(|| task.and_then(|t| state.jobs.iter().find(|j| j.id == t.job_id)));
+        .or_else(|| task.and_then(|t| state.jobs.iter().find(|j| j.id == t.job_id)))
+        .or_else(|| {
+            owned_inbox.and_then(|e| state.jobs.iter().find(|j| Some(&j.id) == e.job_id.as_ref()))
+        });
+    let project = if let Some(job) = job {
+        Some(state.projects[state.project_index(&job.project_id)?].clone())
+    } else if let Some(id) = &cli.project {
+        Some(state.projects[state.project_index(id)?].clone())
+    } else {
+        let cwd = std::env::current_dir()?;
+        match service
+            .project_for_session(Some(&cwd), cli.session.as_deref())
+            .await?
+        {
+            Some(project) => Some(project),
+            None => {
+                service
+                    .project_for_session(None, cli.session.as_deref())
+                    .await?
+            }
+        }
+    };
+    let inbox_path = project
+        .as_ref()
+        .map(|p| service.inbox_path(p))
+        .transpose()?;
+    let cancellations = cli.session.as_deref().map_or_else(Vec::new, |session| {
+        state.cancelled_inboxes_for_session(session)
+    });
     let plan = task.and_then(|t| {
         state
             .plans
@@ -873,7 +902,7 @@ async fn context(
     });
     let lease = task.and_then(|t| state.leases.iter().find(|l| l.task_id == t.id));
     Ok(response(
-        json!({"project_id":job.map(|j|&j.project_id),"job_id":job.map(|j|&j.id),"task_id":task.map(|t|&t.id),"task":task,"lease":lease,"plan_path":plan.map(|p|service.config().output_dir().join(&p.path)),"documents":service.config().documents,"context_owner":"external_agent_team","editable_regions":["Goal","Notes","Plan body"]}),
+        json!({"project_id":project.map(|p|p.id),"job_id":job.map(|j|&j.id),"task_id":task.map(|t|&t.id),"task":task,"lease":lease,"plan_path":plan.map(|p|service.config().output_dir().join(&p.path)),"documents":service.config().documents,"context_owner":"external_agent_team","editable_regions":["Goal","Notes","Plan body"],"inbox":owned_inbox,"inbox_path":inbox_path,"inbox_cancellations":cancellations}),
     ))
 }
 
@@ -893,12 +922,38 @@ async fn hook(cli: &Cli, service: &Service, action: &HookCommand) -> Result<Valu
         .or_else(|| event["session_id"].as_str())
         .context("hook requires session_id on stdin or --session")?;
     let command = match action {
+        // Keep the legacy entrypoint safe for installed plugins that still call it.
+        HookCommand::Stop => {
+            return Ok(response(
+                json!({"claimed":false,"reason":"manual_intake_required"}),
+            ));
+        }
         HookCommand::SessionStart => "session.start",
         HookCommand::SessionEnd => "session.end",
         HookCommand::Interrupt => "session.interrupt",
         HookCommand::Heartbeat => "session.heartbeat",
     };
     mutate(cli, service, json!({"command":command,"session":session})).await
+}
+
+async fn inbox(cli: &Cli, service: &Service, action: &InboxCommand) -> Result<Value> {
+    let request = match action {
+        InboxCommand::Cancel { id } => json!({"command":"inbox.cancel","inbox":id}),
+        InboxCommand::Release { id } => json!({"command":"inbox.release","inbox":id}),
+        _ => {
+            let project = resolve_project(cli, service).await?;
+            match action {
+                InboxCommand::Add { content } => {
+                    json!({"command":"inbox.add","project":project,"content":content})
+                }
+                InboxCommand::List => json!({"command":"inbox.list","project":project}),
+                InboxCommand::Sync => json!({"command":"inbox.sync","project":project}),
+                InboxCommand::ClaimNext => json!({"command":"inbox.claim-next","project":project}),
+                _ => unreachable!(),
+            }
+        }
+    };
+    mutate(cli, service, request).await
 }
 
 fn date(value: &str) -> Result<i64> {

@@ -12,8 +12,8 @@ First decompose the requirement into a Task DAG, create or resolve every node’
 | Skill | Provide the agent with a workflow, command guidance, and document rules | Does not run continuously, acquire locks, execute tests, or enforce compliance |
 | Hook / Extension | Handle session events, inject task context, renew leases, and handle exits and resumption | Does not decompose work, generate Plans, or automatically call start or done |
 | taskcli / agentix-task | Validate state transitions, ownership, dependencies, revisions, and idempotency; persist changes | Does not judge business correctness or run acceptance commands from a Plan |
-| SQLite | Store Project, Job, Task, and Plan metadata, leases, and events | Does not store complete Plan bodies or isolate code workspaces |
-| Markdown / Obsidian files | Store Plan bodies and editable Goal/Notes sections; display generated boards | Are not an input source for task-state changes; no file watcher imports status edits |
+| SQLite | Store Project, Inbox, Job, Task, and Plan metadata, leases, and events | Does not store complete Plan bodies or isolate code workspaces |
+| Markdown / Obsidian files | Store Plans, Goal/Notes, and the human Project Inbox; display generated boards | Only Inbox entries and cancellations are imported; generated Task status edits remain read-only and there is no file watcher |
 
 The Skill defines working instructions, hooks adapt host events, and taskcli provides validated task operations. None replaces the others.
 
@@ -27,6 +27,12 @@ The Skill defines working instructions, hooks adapt host events, and taskcli pro
 - **Plan: the current Task's execution approach.** Write it after claiming the Task; publish changes through `plan revise` to update the same file and advance the Task revision.
 
 A Job's `goal` records the overall objective and acceptance conditions. Tasks currently have no separate structured acceptance field. Put the detailed scope, test approach, and risks in the Plan; delivery notes can go in the Job's Notes section.
+
+### Human Inbox intake
+
+The Project `Inbox.md` is a queue of human requirements. Agents finish the current user request, including running commands, verification, and result preparation, return the result, and wait for human input. Only an explicit request to take the next Job authorizes `inbox claim-next`, once for one entry. Submission, completion, idle events, and status questions do not authorize intake. New intake waits for existing active Jobs; recovery can resume the selected entry’s own Job but still waits for other active Jobs and outstanding Task leases. The agent adopts the returned Job and inspects its Tasks before decomposing so recovery reuses existing work. Register the whole Task DAG before completing its first Task. After delivery, wait for another explicit request instead of continuing through the queue.
+
+Cancellation or deletion of an unfinished entry revokes its leases and cancels remaining work while preserving delivered outcomes and documents. Context and heartbeat results tell the agent to stop. Interruption or lease expiry returns unfinished entries to TODO; the next claim resumes the same Job. See [Project inbox](task-board.md#project-inbox) for the document format and recovery rules.
 
 ### 2.2 Split by deliverables, not individual actions
 
@@ -147,16 +153,16 @@ Codex explicitly loads [hooks/hooks.json](../plugins/agent-task-manager/hooks/ho
 | Configured host event | Commands | Plugin behavior |
 | --- | --- | --- |
 | SessionStart | `taskcli hook session-start`, then `taskcli context` | Attempt to resume eligible Tasks; return the actual session ID, task facts, and a Skill reminder as additional context |
-| PreToolUse | `taskcli hook heartbeat` | Renew the session's active leases |
-| PostToolUse | `taskcli hook heartbeat` | Renew the session's active leases |
-| Stop | `taskcli hook heartbeat` | Renew only; ending a response turn is not Task completion or a session exit |
+| PreToolUse | `taskcli hook heartbeat`, then `taskcli context` | Renew active leases and surface Inbox cancellation facts |
+| PostToolUse | `taskcli hook heartbeat`, then `taskcli context` | Renew active leases and surface Inbox cancellation facts |
+| Stop | `taskcli hook heartbeat` | Renew leases without taking Inbox work or requesting continuation; the legacy `hook stop` command is a compatibility no-op |
 | Codex Interrupt | `taskcli hook interrupt` | Mark active Tasks as system BLOCKED with reason `session interrupted`; release leases and preserve Plans |
 | Claude PostToolUseFailure | `taskcli hook interrupt` only when `is_interrupt` is boolean `true` | Release interrupted work; ordinary failures neither renew nor release ownership |
 | SessionEnd | `taskcli hook session-end` | Mark the session's in-progress Tasks as system BLOCKED and release their leases |
 
 Command hooks do not stay running or start a heartbeat daemon. There is no periodic heartbeat without tool events; a single long tool call or an idle gap exceeding 15 minutes can still expire the lease. A PostToolUse heartbeat after expiry or interruption cannot revive the old lease; session resumption or a new claim is required. Stop means normal turn completion, not user interruption. Interrupt/SessionEnd cleanup requests a three-second hook timeout; other command hooks allow 30 seconds. The host may impose a shorter total shutdown budget. See the [lifecycle guide](../plugins/agent-task-manager/README.md#lifecycle-behavior) for event availability, host requirements, and explicit cleanup when no event arrives.
 
-PreToolUse currently only renews leases. It does not check whether the next tool will bypass taskcli to write a Plan, and it is not a general file-write interceptor. The entrypoint returns an error when a hook fails; how the host displays or handles that error depends on its runtime behavior. A failed hook must not be treated as a successful renewal.
+PreToolUse renews leases and supplies cancellation facts. It does not check whether the next tool will bypass taskcli to write a Plan, and it is not a general file-write interceptor. The entrypoint returns an error when a hook fails; how the host displays or handles that error depends on its runtime behavior. A failed hook must not be treated as a successful renewal.
 
 These descriptions cover the repository's configuration and implementation, not verified live loading in every host version. The host must load the plugin correctly and satisfy its hook-enablement and trust requirements. Installation entrypoints are documented in the plugin guide.
 
@@ -169,8 +175,8 @@ Both [pi.ts](../plugins/agent-task-manager/extensions/pi.ts) and [omp.ts](../plu
 | session_start | Resume eligible Tasks and start a once-per-minute heartbeat; on a session switch, attempt to release the previous session's task ownership through session-end |
 | before_agent_start | Wait for pending cleanup, restart paused heartbeat, and inject current facts; never claim implicitly |
 | agent_start | Reset the previous aborted-result marker |
-| Pi agent_end + agent_settled | Remember an aborted latest assistant response, then release only when the agent is idle at settle; automatic continuation retains ownership |
-| OMP agent_end | Release an aborted latest assistant response only when `willContinue` is not true |
+| Pi agent_end + agent_settled | Release interrupted work at idle settle; successful final responses leave Inbox entries pending for explicit user input |
+| OMP agent_end | Release aborted work when `willContinue` is false; successful final responses leave Inbox entries pending for explicit user input |
 | session_shutdown | Stop the timer, cancel in-flight renewal, and run session-end |
 | taskcli tool | Accept an array of argument strings, invoke the actual taskcli process, and return JSON results or errors |
 
@@ -192,15 +198,16 @@ Pi/OMP reports periodic heartbeat failures and retries on later ticks. Interrupt
 
 ### 5.3 Agentix IM integration
 
-taskcli does not depend on the IM bridge process. When Agentix task boards are enabled, IM can browse Tasks, and a bound session can use buttons to claim, start, or change state. Agentix validates these actions through the same Service and handles resumption or exit processing from session events.
+taskcli does not depend on the IM bridge process. Attached sessions can use `/inboxes` to browse the Project queue and `/inbox <content>` to append one requirement with durable message deduplication, including on read-only agent attachments. When Agentix task boards are enabled, IM can browse Tasks, and a bound session can use buttons to claim, start, or change state. Agentix validates these actions through the same Service and handles resumption or exit processing from session events.
 
 IM does not create Plans or replace the Skill. Its existing refresh loop also consumes task events and sends waiting-user, blocked, failed, or Job-completion notifications to the corresponding session. This is not a file watcher.
 
-## 6. Concurrency: Three Different Locks
+## 6. Concurrency and Ownership
 
 | Mechanism | Scope and duration | Purpose |
 | --- | --- | --- |
 | SQLite write transaction | A short database-level write lock from `BEGIN IMMEDIATE` through commit | Make state reads, validation, and lease writes atomic to prevent duplicate claims |
+| Inbox lease | Valid for 15 minutes, renewed with the session | Reserve one human requirement and recover its existing Job without duplicate intake |
 | Task lease | Valid for 15 minutes after claim, renewable through heartbeats | Maintain ownership during planning and execution and reject stale session/token writes |
 | Document output lock | Held during Plan publication, start's Plan validation and commit, and projection synchronization | Serialize shared document writes and prevent start from interleaving with managed Plan writes |
 

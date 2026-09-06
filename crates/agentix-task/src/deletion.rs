@@ -89,6 +89,7 @@ pub(crate) fn apply(
     state.tasks.retain(|t| !tasks.contains(&t.id));
     state.jobs.retain(|j| !jobs.contains(&j.id));
     if project_delete {
+        state.inboxes.retain(|entry| entry.project_id != id);
         state.projects.retain(|p| p.id != id);
         state
             .document_sequences

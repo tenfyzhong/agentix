@@ -24,6 +24,7 @@ struct FakeAgent {
     history_turns: Arc<Mutex<Vec<TurnSummary>>>,
     queued_prompts: Arc<Mutex<Vec<QueuedPrompt>>>,
     queue_supported: bool,
+    read_only: bool,
     sessions: Arc<Mutex<Vec<SessionSummary>>>,
     rejected_attachments: Arc<Mutex<Vec<SessionId>>>,
     start_failures: Arc<Mutex<usize>>,
@@ -52,6 +53,7 @@ impl FakeAgent {
             }])),
             queued_prompts: Arc::new(Mutex::new(Vec::new())),
             queue_supported: false,
+            read_only: false,
             sessions: Arc::new(Mutex::new(
                 [
                     ("thr_a", "Parser cleanup", "/work/parser"),
@@ -155,6 +157,10 @@ impl AgentAdapter for FakeAgent {
             sessions: self.sessions.lock().unwrap().clone(),
             next_cursor: None,
         })
+    }
+
+    async fn is_read_only(&self, _session: &SessionId) -> bool {
+        self.read_only
     }
 
     async fn read_history(
@@ -390,6 +396,7 @@ struct FakeChannel {
     menus: Arc<Mutex<Vec<CommandMenu>>>,
     fail_menu_updates: Arc<Mutex<bool>>,
     task_send_failures: Arc<Mutex<usize>>,
+    inbox_send_failures: Arc<Mutex<usize>>,
     reject_unchanged_updates: bool,
     next_menu_gate: Arc<
         Mutex<
@@ -439,6 +446,15 @@ impl ChannelAdapter for FakeChannel {
         conversation: &ConversationRef,
         view: &OutboundView,
     ) -> Result<MessageRef, ChannelError> {
+        if view.title == "Inbox submission" {
+            let mut failures = self.inbox_send_failures.lock().unwrap();
+            if *failures > 0 {
+                *failures -= 1;
+                return Err(ChannelError::Transport(
+                    "injected inbox delivery failure".into(),
+                ));
+            }
+        }
         if view.title == "Task update" {
             let mut failures = self.task_send_failures.lock().unwrap();
             if *failures > 0 {

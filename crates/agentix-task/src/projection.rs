@@ -44,12 +44,26 @@ impl Service {
         if matches!(command, "plan.create" | "plan.revise") {
             return self.write_plan(request, options).await;
         }
-        // Serialize Plan selection/validation with Plan writes until the start commits.
-        let lock = if command == "task.start" {
+        let state = self.store.snapshot().await?;
+        let projects = crate::inbox_document::request_projects(&state, &request);
+        let needs_inbox = command.starts_with("inbox.")
+            || state
+                .inboxes
+                .iter()
+                .any(|e| projects.contains(&e.project_id));
+        // Inbox work must observe human withdrawals before committing. Unrelated
+        // metadata retains its existing commit-before-projection recovery path.
+        let lock = if command == "task.start" || needs_inbox {
             Some(self.lock_output().await?)
         } else {
             None
         };
+        if needs_inbox
+            && !matches!(command, "project.delete" | "job.delete")
+            && self.store.replay(&request, &options).await?.is_none()
+        {
+            self.reconcile_inboxes_locked(Some(&projects)).await?;
+        }
         // Replays must remain valid even if the Plan file subsequently disappears.
         if command == "task.start" && self.store.replay(&request, &options).await?.is_none() {
             let state = self.store.snapshot().await?;
@@ -98,6 +112,7 @@ impl Service {
 
     pub async fn sync(&self) -> Result<()> {
         let _lock = self.lock_output().await?;
+        self.reconcile_inboxes_locked(None).await?;
         self.store.reap_expired().await?;
         self.render_locked().await
     }
@@ -124,6 +139,9 @@ impl Service {
             }
             return Ok(outcome);
         }
+        let state = self.store.snapshot().await?;
+        let projects = crate::inbox_document::request_projects(&state, &request);
+        self.reconcile_inboxes_locked(Some(&projects)).await?;
         let state = self.store.snapshot().await?;
         let task = &state.tasks[state.task_index(required(&request, "task")?)?];
         let command = required(&request, "command")?;
@@ -232,7 +250,7 @@ impl Service {
         ))
     }
 
-    fn safe_path(&self, relative: &str) -> Result<PathBuf> {
+    pub(crate) fn safe_path(&self, relative: &str) -> Result<PathBuf> {
         let relative = Path::new(relative);
         ensure!(
             relative
@@ -624,6 +642,15 @@ impl Service {
         );
         doc.push_str(&Self::header(&title));
         doc.push_str(&format!(
+            "\n{}\n",
+            self.link(
+                &format!("Projects/{}/Board.md", project.key),
+                &format!("Projects/{}/Inbox.md", project.key),
+                None,
+                "Inbox"
+            )
+        ));
+        doc.push_str(&format!(
             "\n```base\n{}\n```\n",
             serde_yaml::to_string(&base)?.trim_end()
         ));
@@ -717,7 +744,7 @@ impl Service {
         Ok(format!("- {}", self.link(from, &path, None, label)))
     }
 
-    fn link(&self, from: &str, to: &str, anchor: Option<&str>, label: &str) -> String {
+    pub(crate) fn link(&self, from: &str, to: &str, anchor: Option<&str>, label: &str) -> String {
         let escaped_label = escape(label);
         let needs_plain_label = escaped_label != label;
         let label = escaped_label;
@@ -1047,7 +1074,7 @@ fn section(body: &str, name: &str) -> Result<Option<String>> {
     ))
 }
 
-fn atomic_write(path: &Path, body: &str) -> Result<()> {
+pub(crate) fn atomic_write(path: &Path, body: &str) -> Result<()> {
     // Unchanged Base documents should keep their live Obsidian views mounted.
     if std::fs::read(path).is_ok_and(|existing| existing == body.as_bytes()) {
         return Ok(());

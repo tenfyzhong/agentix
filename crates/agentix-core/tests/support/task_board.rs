@@ -2,6 +2,9 @@ use super::*;
 use agentix_task::{Service, WriteOptions};
 use serde_json::{Value, json};
 
+#[path = "inbox.rs"]
+mod inbox;
+
 fn input(text: &str) -> InboundEnvelope {
     InboundEnvelope::text(
         uuid::Uuid::new_v4().to_string(),

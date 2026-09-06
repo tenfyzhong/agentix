@@ -62,8 +62,9 @@ for (const host of ["pi", "omp"]) {
         if (host === "pi") await f.emit("agent_settled");
         assert.equal(f.timers.size, 1);
         if (host === "pi") {
+            const count = f.calls.length;
             await f.emit("agent_end", f.aborted);
-            assert.equal(f.calls.at(-1).args[1], "session-start", "wait for settle");
+            assert.equal(f.calls.length, count, "wait for settle");
             await f.emit("agent_start");
             await f.emit("agent_end", { messages: [{ role: "assistant", stopReason: "stop" }] });
             await f.emit("agent_settled");

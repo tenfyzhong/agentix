@@ -90,7 +90,7 @@ Mention the bot in group chats. If another Codex process owns the session's writ
 
 To create Codex sessions from chat, install optional rmux and use `/rmux`; see [rmux workspaces](docs/usage.md#rmux-workspaces). Connecting to existing Codex sessions does not require rmux.
 
-With [task boards configured](docs/guide.md#im-task-boards), use `/dashboard` to browse projects, or `/board` and `/jobs` to view the attached session's work. Task and Job details link to each other.
+With [task boards configured](docs/guide.md#im-task-boards), use `/dashboard`, `/board`, and `/jobs` to browse work. Use `/inboxes` to view the current project's human queue and `/inbox <content>` to append a requirement; explicitly ask the agent to take the next Job after reviewing its current result. See [Project inbox](docs/task-board.md#project-inbox) for document submission and cancellation.
 
 For Obsidian task views, configure taskcli for your vault, close Obsidian, and run [`taskcli obsidian setup`](docs/task-board.md#obsidian-plugin-setup) to install and configure TaskNotes.
 

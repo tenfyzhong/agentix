@@ -8,6 +8,8 @@ pub enum AgentCommand {
     Dashboard,
     Board,
     Jobs,
+    Inboxes,
+    Inbox(String),
     Tasks(Option<String>),
     Task(String),
     Sessions,
@@ -65,6 +67,14 @@ pub fn parse_input(input: &str) -> Result<ParsedInput, InputParseError> {
         "/dashboard" => AgentCommand::Dashboard,
         "/board" => AgentCommand::Board,
         "/jobs" => AgentCommand::Jobs,
+        "/inboxes" => AgentCommand::Inboxes,
+        "/inbox" => {
+            let content = input[raw_command.len()..].trim();
+            if content.is_empty() {
+                return Err(InputParseError::MissingArgument("/inbox <content>"));
+            }
+            AgentCommand::Inbox(content.to_owned())
+        }
         "/tasks" => AgentCommand::Tasks(parts.next().map(str::to_owned)),
         "/task" => AgentCommand::Task(
             parts

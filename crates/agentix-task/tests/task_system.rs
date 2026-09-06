@@ -22,6 +22,9 @@ mod job_graph;
 #[path = "support/dashboard.rs"]
 mod dashboard;
 
+#[path = "support/inbox.rs"]
+mod inbox;
+
 struct Fixture {
     dir: TempDir,
     service: Service,
@@ -615,7 +618,7 @@ async fn legacy_executing_tasks_migrate_without_losing_their_lease_or_history() 
         .fetch_one(&mut db)
         .await
         .unwrap();
-    assert_eq!(version, 7);
+    assert_eq!(version, 8);
 }
 
 #[tokio::test]

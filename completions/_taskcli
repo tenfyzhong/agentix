@@ -38,7 +38,178 @@ _taskcli() {
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:taskcli-command-$line[1]:"
         case $line[1] in
-            (completions)
+            (inbox)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_taskcli__subcmd__inbox_commands" \
+"*::: :->inbox" \
+&& ret=0
+
+    case $state in
+    (inbox)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskcli-inbox-command-$line[1]:"
+        case $line[1] in
+            (add)
+_arguments "${_arguments_options[@]}" : \
+'--content=[]:CONTENT:_default' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(sync)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(claim-next)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(release)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(cancel)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_taskcli__subcmd__inbox__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskcli-inbox-help-command-$line[1]:"
+        case $line[1] in
+            (add)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(sync)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(claim-next)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(release)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(cancel)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(completions)
 _arguments "${_arguments_options[@]}" : \
 '--config=[]:CONFIG:_files' \
 '--project=[]:PROJECT:_default' \
@@ -1225,7 +1396,23 @@ _arguments "${_arguments_options[@]}" : \
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:taskcli-hook-command-$line[1]:"
         case $line[1] in
-            (session-start)
+            (stop)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(session-start)
 _arguments "${_arguments_options[@]}" : \
 '--config=[]:CONFIG:_files' \
 '--project=[]:PROJECT:_default' \
@@ -1301,7 +1488,11 @@ _arguments "${_arguments_options[@]}" : \
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:taskcli-hook-help-command-$line[1]:"
         case $line[1] in
-            (session-start)
+            (stop)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(session-start)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -1341,7 +1532,47 @@ _arguments "${_arguments_options[@]}" : \
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:taskcli-help-command-$line[1]:"
         case $line[1] in
-            (completions)
+            (inbox)
+_arguments "${_arguments_options[@]}" : \
+":: :_taskcli__subcmd__help__subcmd__inbox_commands" \
+"*::: :->inbox" \
+&& ret=0
+
+    case $state in
+    (inbox)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskcli-help-inbox-command-$line[1]:"
+        case $line[1] in
+            (add)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(sync)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(claim-next)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(release)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(cancel)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(completions)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -1613,7 +1844,11 @@ _arguments "${_arguments_options[@]}" : \
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:taskcli-help-hook-command-$line[1]:"
         case $line[1] in
-            (session-start)
+            (stop)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(session-start)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -1649,6 +1884,7 @@ esac
 (( $+functions[_taskcli_commands] )) ||
 _taskcli_commands() {
     local commands; commands=(
+'inbox:Submit, inspect, claim, or cancel human requirements in a Project Inbox' \
 'completions:Print a shell completion script without loading task configuration' \
 'init:Create configuration, initialize \`SQLite\` storage, and generate task documents' \
 'obsidian:Install and configure Obsidian task views in the configured vault' \
@@ -1714,6 +1950,7 @@ _taskcli__subcmd__event__subcmd__list_commands() {
 (( $+functions[_taskcli__subcmd__help_commands] )) ||
 _taskcli__subcmd__help_commands() {
     local commands; commands=(
+'inbox:Submit, inspect, claim, or cancel human requirements in a Project Inbox' \
 'completions:Print a shell completion script without loading task configuration' \
 'init:Create configuration, initialize \`SQLite\` storage, and generate task documents' \
 'obsidian:Install and configure Obsidian task views in the configured vault' \
@@ -1765,6 +2002,7 @@ _taskcli__subcmd__help__subcmd__help_commands() {
 (( $+functions[_taskcli__subcmd__help__subcmd__hook_commands] )) ||
 _taskcli__subcmd__help__subcmd__hook_commands() {
     local commands; commands=(
+'stop:Acknowledge turn completion without claiming Inbox work' \
 'session-start:Recover the session'\''s Tasks blocked by interruption or lease expiry into planning' \
 'session-end:Record session shutdown and release its active Task leases' \
 'interrupt:Release an interrupted session'\''s Task leases while preserving its Plans' \
@@ -1791,6 +2029,53 @@ _taskcli__subcmd__help__subcmd__hook__subcmd__session-end_commands() {
 _taskcli__subcmd__help__subcmd__hook__subcmd__session-start_commands() {
     local commands; commands=()
     _describe -t commands 'taskcli help hook session-start commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__hook__subcmd__stop_commands] )) ||
+_taskcli__subcmd__help__subcmd__hook__subcmd__stop_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help hook stop commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__inbox_commands] )) ||
+_taskcli__subcmd__help__subcmd__inbox_commands() {
+    local commands; commands=(
+'add:Append one requirement, preserving its complete Markdown content' \
+'list:Import human edits and show visible Inbox entries in document order' \
+'sync:Import submissions, cancellations, and withdrawals and repair the document' \
+'claim-next:Atomically claim the next eligible requirement and create or resume its Job' \
+'release:Release an owned Inbox lease so another agent can resume its existing Job' \
+'cancel:Cancel a requirement and its unfinished work, preserving history' \
+    )
+    _describe -t commands 'taskcli help inbox commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__inbox__subcmd__add_commands] )) ||
+_taskcli__subcmd__help__subcmd__inbox__subcmd__add_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help inbox add commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__inbox__subcmd__cancel_commands] )) ||
+_taskcli__subcmd__help__subcmd__inbox__subcmd__cancel_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help inbox cancel commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__inbox__subcmd__claim-next_commands] )) ||
+_taskcli__subcmd__help__subcmd__inbox__subcmd__claim-next_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help inbox claim-next commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__inbox__subcmd__list_commands] )) ||
+_taskcli__subcmd__help__subcmd__inbox__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help inbox list commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__inbox__subcmd__release_commands] )) ||
+_taskcli__subcmd__help__subcmd__inbox__subcmd__release_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help inbox release commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__inbox__subcmd__sync_commands] )) ||
+_taskcli__subcmd__help__subcmd__inbox__subcmd__sync_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help inbox sync commands' commands "$@"
 }
 (( $+functions[_taskcli__subcmd__help__subcmd__init_commands] )) ||
 _taskcli__subcmd__help__subcmd__init_commands() {
@@ -2045,6 +2330,7 @@ _taskcli__subcmd__help__subcmd__task__subcmd__wait_commands() {
 (( $+functions[_taskcli__subcmd__hook_commands] )) ||
 _taskcli__subcmd__hook_commands() {
     local commands; commands=(
+'stop:Acknowledge turn completion without claiming Inbox work' \
 'session-start:Recover the session'\''s Tasks blocked by interruption or lease expiry into planning' \
 'session-end:Record session shutdown and release its active Task leases' \
 'interrupt:Release an interrupted session'\''s Task leases while preserving its Plans' \
@@ -2061,6 +2347,7 @@ _taskcli__subcmd__hook__subcmd__heartbeat_commands() {
 (( $+functions[_taskcli__subcmd__hook__subcmd__help_commands] )) ||
 _taskcli__subcmd__hook__subcmd__help_commands() {
     local commands; commands=(
+'stop:Acknowledge turn completion without claiming Inbox work' \
 'session-start:Recover the session'\''s Tasks blocked by interruption or lease expiry into planning' \
 'session-end:Record session shutdown and release its active Task leases' \
 'interrupt:Release an interrupted session'\''s Task leases while preserving its Plans' \
@@ -2094,6 +2381,11 @@ _taskcli__subcmd__hook__subcmd__help__subcmd__session-start_commands() {
     local commands; commands=()
     _describe -t commands 'taskcli hook help session-start commands' commands "$@"
 }
+(( $+functions[_taskcli__subcmd__hook__subcmd__help__subcmd__stop_commands] )) ||
+_taskcli__subcmd__hook__subcmd__help__subcmd__stop_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli hook help stop commands' commands "$@"
+}
 (( $+functions[_taskcli__subcmd__hook__subcmd__interrupt_commands] )) ||
 _taskcli__subcmd__hook__subcmd__interrupt_commands() {
     local commands; commands=()
@@ -2108,6 +2400,102 @@ _taskcli__subcmd__hook__subcmd__session-end_commands() {
 _taskcli__subcmd__hook__subcmd__session-start_commands() {
     local commands; commands=()
     _describe -t commands 'taskcli hook session-start commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__hook__subcmd__stop_commands] )) ||
+_taskcli__subcmd__hook__subcmd__stop_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli hook stop commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__inbox_commands] )) ||
+_taskcli__subcmd__inbox_commands() {
+    local commands; commands=(
+'add:Append one requirement, preserving its complete Markdown content' \
+'list:Import human edits and show visible Inbox entries in document order' \
+'sync:Import submissions, cancellations, and withdrawals and repair the document' \
+'claim-next:Atomically claim the next eligible requirement and create or resume its Job' \
+'release:Release an owned Inbox lease so another agent can resume its existing Job' \
+'cancel:Cancel a requirement and its unfinished work, preserving history' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'taskcli inbox commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__inbox__subcmd__add_commands] )) ||
+_taskcli__subcmd__inbox__subcmd__add_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli inbox add commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__inbox__subcmd__cancel_commands] )) ||
+_taskcli__subcmd__inbox__subcmd__cancel_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli inbox cancel commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__inbox__subcmd__claim-next_commands] )) ||
+_taskcli__subcmd__inbox__subcmd__claim-next_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli inbox claim-next commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__inbox__subcmd__help_commands] )) ||
+_taskcli__subcmd__inbox__subcmd__help_commands() {
+    local commands; commands=(
+'add:Append one requirement, preserving its complete Markdown content' \
+'list:Import human edits and show visible Inbox entries in document order' \
+'sync:Import submissions, cancellations, and withdrawals and repair the document' \
+'claim-next:Atomically claim the next eligible requirement and create or resume its Job' \
+'release:Release an owned Inbox lease so another agent can resume its existing Job' \
+'cancel:Cancel a requirement and its unfinished work, preserving history' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'taskcli inbox help commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__inbox__subcmd__help__subcmd__add_commands] )) ||
+_taskcli__subcmd__inbox__subcmd__help__subcmd__add_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli inbox help add commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__inbox__subcmd__help__subcmd__cancel_commands] )) ||
+_taskcli__subcmd__inbox__subcmd__help__subcmd__cancel_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli inbox help cancel commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__inbox__subcmd__help__subcmd__claim-next_commands] )) ||
+_taskcli__subcmd__inbox__subcmd__help__subcmd__claim-next_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli inbox help claim-next commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__inbox__subcmd__help__subcmd__help_commands] )) ||
+_taskcli__subcmd__inbox__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli inbox help help commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__inbox__subcmd__help__subcmd__list_commands] )) ||
+_taskcli__subcmd__inbox__subcmd__help__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli inbox help list commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__inbox__subcmd__help__subcmd__release_commands] )) ||
+_taskcli__subcmd__inbox__subcmd__help__subcmd__release_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli inbox help release commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__inbox__subcmd__help__subcmd__sync_commands] )) ||
+_taskcli__subcmd__inbox__subcmd__help__subcmd__sync_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli inbox help sync commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__inbox__subcmd__list_commands] )) ||
+_taskcli__subcmd__inbox__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli inbox list commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__inbox__subcmd__release_commands] )) ||
+_taskcli__subcmd__inbox__subcmd__release_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli inbox release commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__inbox__subcmd__sync_commands] )) ||
+_taskcli__subcmd__inbox__subcmd__sync_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli inbox sync commands' commands "$@"
 }
 (( $+functions[_taskcli__subcmd__init_commands] )) ||
 _taskcli__subcmd__init_commands() {

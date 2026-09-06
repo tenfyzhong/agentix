@@ -5,7 +5,7 @@ import { cp, mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { runTaskcli } from "../runtime.mjs";
+import { runHook, runTaskcli } from "../runtime.mjs";
 
 // Cargo supplies its freshly compiled executable: these tests must never fall
 // back to a developer's installed taskcli or normal task database.
@@ -67,6 +67,7 @@ function taskLanguage(t, language) {
 
 async function extension(t, f, host) {
     const handlers = new Map();
+    const messages = [];
     let tool;
     const pkg = JSON.parse(await readFile("package.json", "utf8"));
     assert.equal(pkg[host].extensions.length, 1);
@@ -74,6 +75,7 @@ async function extension(t, f, host) {
         pathToFileURL(resolve(pkg[host].extensions[0]))
     );
     install({
+        sendMessage: (...args) => messages.push(args),
         on: (name, handler) => handlers.set(name, handler),
         registerTool: (value) => {
             tool = value;
@@ -92,7 +94,7 @@ async function extension(t, f, host) {
     const invoke = async (args, id = `call-${++calls}`) =>
         (await tool.execute(id, { args }, undefined, undefined, ctx)).details
             .result;
-    return { invoke, handlers, ctx };
+    return { invoke, handlers, ctx, messages };
 }
 
 for (const [host, format] of [
@@ -204,7 +206,71 @@ test("tool retries preserve identity after claim, Plan revision and lease-releas
     );
 });
 
+for (const host of ["codex", "claude"]) {
+    test(`${host} real Stop hooks leave pending entries unclaimed until manual intake`, async (t) => {
+        const f = await fixture(t);
+        const options = { session: `session:${host}`, executor: `agent:${host}`, cwd: f.dir };
+        const previous = await f.run(["task", "add", "--job", f.job.id, "--title", "Previous work"], options);
+        const owner = await f.run(["task", "claim", previous.id], options);
+        const leased = { ...options, token: owner.lease.token };
+        await f.run(["plan", "create", previous.id, "--body", "# Deliver"], leased);
+        await f.run(["task", "start", previous.id], leased);
+        await f.run(["task", "done", previous.id], leased);
+        const entry = await f.run(["inbox", "add", "--project", f.project.id, "--content", "Await user review"]);
+        const queue = await f.run(["inbox", "list", "--project", f.project.id]);
+        for (let i = 0; i < 2; i++) {
+            assert.deepEqual(await runHook({
+                hook_event_name: "Stop", session_id: options.session, cwd: f.dir,
+                ...(host === "codex" ? { turn_id: `turn-${i}` } : {}),
+            }), {});
+        }
+        assert.deepEqual(await f.run(["inbox", "list", "--project", f.project.id]), queue);
+        assert.equal((await f.run(["context"], options)).inbox, null);
+        const next = await f.run(["inbox", "claim-next", "--project", f.project.id], options);
+        assert.equal(next.entry.id, entry.id);
+        await f.run(["inbox", "cancel", entry.id]);
+    });
+}
+
 for (const host of ["pi", "omp"]) {
+    test(`${host} real Inbox Jobs require explicit intake after each completion`, async (t) => {
+        const f = await fixture(t);
+        const x = await extension(t, f, host);
+        async function finish(job) {
+            const task = await x.invoke(["task", "add", "--job", job, "--title", "Deliver"]);
+            await x.invoke(["task", "claim", task.id]);
+            await x.invoke(["plan", "create", task.id, "--body", "# Deliver and verify"]);
+            await x.invoke(["task", "start", task.id]);
+            await x.invoke(["task", "done", task.id]);
+        }
+        async function settle() {
+            await x.handlers.get("agent_end")({ messages: [{ role: "assistant", stopReason: "stop" }] }, x.ctx);
+            if (host === "pi") await x.handlers.get("agent_settled")({}, x.ctx);
+        }
+        await finish(f.job.id);
+        const first = await f.run(["inbox", "add", "--project", f.project.id, "--content", "First request"]);
+        const second = await f.run(["inbox", "add", "--project", f.project.id, "--content", "Second request"]);
+        for (const entry of [first, second]) {
+            await settle();
+            await settle();
+            let current = await f.run(["context"], { session: x.ctx.sessionManager.getSessionId() });
+            assert.equal(current.inbox, null);
+            assert.equal(x.messages.length, 0);
+            const queue = await f.run(["inbox", "list", "--project", f.project.id]);
+            assert.equal(queue.find(row => row.id === entry.id).status, "TODO");
+            assert.equal(queue.find(row => row.id === entry.id).job_id, null);
+            const claimed = await x.invoke(["inbox", "claim-next", "--project", f.project.id]);
+            assert.equal(claimed.entry.id, entry.id);
+            current = await f.run(["context"], { session: x.ctx.sessionManager.getSessionId() });
+            assert.equal(current.inbox.id, entry.id);
+            if (entry.id === first.id) await finish(current.job_id);
+            else await f.run(["inbox", "cancel", entry.id]);
+        }
+        const heartbeat = await f.run(["hook", "heartbeat"], { session: x.ctx.sessionManager.getSessionId() });
+        assert.ok(heartbeat.inbox_cancellations.some(entry => entry.id === second.id));
+        await settle();
+        assert.equal(x.messages.length, 0);
+    });
     for (const entity of ["job", "project"]) {
         test(`${host} ${entity} deletion replays its committed result without duplicate events`, async (t) => {
             const f = await fixture(t);

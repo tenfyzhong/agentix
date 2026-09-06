@@ -70,6 +70,14 @@ function skillContext(context) {
     };
 }
 
+function cancellationContext(context) {
+    const entries = (context?.inbox_cancellations || []).filter(
+        (entry) => !context.job_id || entry.job_id === context.job_id,
+    );
+    if (!entries.length) return undefined;
+    return `Human Inbox work has been cancelled. Stop work on these Jobs at the next safe boundary, preserve completed results, and do not retry stale writes or roll back changes automatically. Inspect taskcli context before selecting other work.\nCancellation facts: ${JSON.stringify(entries.map(entry => ({ id: entry.id, job_id: entry.job_id })))}`;
+}
+
 export async function runHook(event, runner = runTaskcli) {
     if (!event.session_id) throw new Error("Hook requires session_id");
     if (event.hook_event_name === "PostToolUseFailure" && event.is_interrupt !== true)
@@ -92,6 +100,17 @@ export async function runHook(event, runner = runTaskcli) {
                 additionalContext: `Task session: ${event.session_id}. Use the agent-task-manager skill for tracked work.\n${JSON.stringify(skillContext(context.result))}`,
             },
         };
+    }
+    if (["PreToolUse", "PostToolUse"].includes(event.hook_event_name)) {
+        const context = await runner(["context"], options);
+        const notice = cancellationContext(context.result);
+        if (notice)
+            return {
+                hookSpecificOutput: {
+                    hookEventName: event.hook_event_name,
+                    additionalContext: notice,
+                },
+            };
     }
     return {};
 }
@@ -131,10 +150,20 @@ export function registerExtension(
             const controller = new AbortController();
             state.heartbeat = controller;
             try {
-                await runner(["hook", "heartbeat"], {
+                const result = await runner(["hook", "heartbeat"], {
                     ...state.options,
                     signal: controller.signal,
                 });
+                if (active === state && !controller.signal.aborted) {
+                    const notice = cancellationContext(result.result);
+                    if (notice && notice !== state.cancellationNotice) {
+                        api.sendMessage(
+                            { customType: "taskcli-inbox-cancelled", content: notice, display: true },
+                            { triggerTurn: false, deliverAs: "steer" },
+                        );
+                        state.cancellationNotice = notice;
+                    }
+                }
             } catch (error) {
                 if (!controller.signal.aborted)
                     ctx.ui?.notify?.(`Task heartbeat failed: ${error.message}`, "warning");
@@ -183,7 +212,9 @@ export function registerExtension(
     });
     api.on("agent_start", async (_event, ctx) => {
         const state = stateFor(ctx);
-        if (state) state.aborted = false;
+        if (state) {
+            state.aborted = false;
+        }
     });
     api.on("agent_end", async (event, ctx) => {
         const state = stateFor(ctx);
@@ -230,6 +261,12 @@ export function registerExtension(
             const context = await runner(["context"], options);
             const currentToken = async () => {
                 const [kind, command, identifier] = params.args;
+                if (kind === "inbox" && command === "release") {
+                    const entry = context.result.inbox;
+                    // The CLI accepts prefixes; use only an exact owned identity
+                    // here so an ambiguous prefix cannot receive credentials.
+                    return identifier === entry?.id ? entry.lease?.token : undefined;
+                }
                 const current = context.result.task_id;
                 if (
                     !(kind === "plan" || (kind === "task" && command !== "claim")) ||
@@ -251,6 +288,7 @@ export function registerExtension(
                 "register",
                 "revise",
                 "claim",
+                "claim-next",
                 "start",
                 "done",
                 "cancel",

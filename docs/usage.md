@@ -36,6 +36,22 @@ When `[task_board].config` is configured, `/dashboard` lists projects with actio
 
 An attached session can claim a Task and use state actions; Block, Wait, and Fail request a reason, and `/cancel` clears that input. The agent publishes a Plan through taskcli before Start is allowed. Done is offered only during execution. IM does not create Jobs/Tasks or edit Plan bodies. See the [task board workflow](task-board.md#agentix-integration).
 
+### Human job submissions
+
+After attaching a session in a registered Project, use `/inboxes` to browse its human queue. Submit one requirement with `/inbox`:
+
+```text
+/inbox Add CSV export
+
+Preserve the current filter and column order.
+- [ ] Include a header row
+- [ ] Cover Unicode values
+```
+
+The entire message becomes one `TODO` entry at the end of the Project Inbox. The reply links to its details. After reviewing the agent’s current result, explicitly ask it to take the next Job from the Inbox. Each request takes one eligible entry through the normal task workflow; completion returns control to you and does not start another Job. Submission also works with a read-only attachment and does not start an agent turn.
+
+You can also edit the Project's `Inbox.md`: use `- [-]` to cancel, or delete an unfinished entry to withdraw it. See [Project inbox](task-board.md#project-inbox) for leases, recovery, and cancellation rules. `/cancel` still cancels pending IM input; it does not cancel an Inbox entry.
+
 ### Codex commands
 
 The following commands are available only while a Codex session is attached:

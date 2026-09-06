@@ -55,5 +55,11 @@ CREATE TABLE IF NOT EXISTS document_deletions (
     id TEXT PRIMARY KEY,
     data TEXT NOT NULL CHECK (json_valid(data))
 );
-PRAGMA user_version = 7;
+CREATE TABLE IF NOT EXISTS inbox_entries (
+    id TEXT PRIMARY KEY,
+    data TEXT NOT NULL CHECK (json_valid(data)),
+    project_id TEXT GENERATED ALWAYS AS (json_extract(data, '$.project_id')) STORED REFERENCES projects(id)
+);
+CREATE INDEX IF NOT EXISTS inbox_by_project ON inbox_entries(project_id);
+PRAGMA user_version = 8;
 PRAGMA application_id = 0x4158544b;

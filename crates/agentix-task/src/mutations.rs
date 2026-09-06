@@ -31,6 +31,7 @@ pub(crate) fn apply(
 ) -> Result<Value> {
     let command = required(request, "command")?;
     match command {
+        _ if command.starts_with("inbox.") => crate::inbox::apply(state, request, options, now),
         "project.register" => register_project(state, request, now),
         "project.delete" | "job.delete" => crate::deletion::apply(state, request, options),
         "project.archive" | "project.unarchive" => archive_project(state, request, options, now),
@@ -49,7 +50,7 @@ pub(crate) fn apply(
     }
 }
 
-fn create_job(
+pub(crate) fn create_job(
     state: &mut Snapshot,
     request: &Value,
     options: &WriteOptions,
@@ -646,6 +647,7 @@ fn aggregate_job(state: &mut Snapshot, index: usize, now: i64) {
 fn session(state: &mut Snapshot, request: &Value, now: i64) -> Result<Value> {
     let session = required(request, "session")?;
     let command = required(request, "command")?;
+    crate::inbox::session(state, session, command, now);
     let mut changed = Vec::new();
     for i in 0..state.tasks.len() {
         if state.tasks[i].last_session.as_deref() != Some(session) {
@@ -682,7 +684,12 @@ fn session(state: &mut Snapshot, request: &Value, now: i64) -> Result<Value> {
             }
         }
     }
-    Ok(json!({"session_ref":session,"tasks":changed}))
+    let cancellations: Vec<_> = state
+        .cancelled_inboxes_for_session(session)
+        .into_iter()
+        .map(|entry| json!({"id":entry.id,"job_id":entry.job_id}))
+        .collect();
+    Ok(json!({"session_ref":session,"tasks":changed,"inbox_cancellations":cancellations}))
 }
 
 pub(crate) fn system_block(state: &mut Snapshot, index: usize, reason: &str, now: i64) {
