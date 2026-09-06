@@ -13,6 +13,84 @@ fn properties(document: &str) -> Value {
     .unwrap()
 }
 
+#[tokio::test]
+async fn agent_session_frontmatter_follows_claims_and_survives_completion() {
+    for format in ["obsidian", "markdown"] {
+        let f = Fixture::new(format).await;
+        let task = f.task("Identity").await;
+        let path = f
+            .service
+            .config()
+            .output_dir()
+            .join("Projects/demo/Tasks/260905-0001-Identity.md");
+        let initial = properties(&std::fs::read_to_string(&path).unwrap());
+        assert_eq!(initial.get("agent"), Some(&Value::Null));
+        assert_eq!(initial.get("session_id"), Some(&Value::Null));
+        for host in ["codex", "claude", "pi", "omp"] {
+            let session = format!("{host}-session");
+            let claim = f.service.execute(
+                json!({"command":"task.claim","task":task,"executor":format!("agent:{host}:{session}"),"session":session}),
+                WriteOptions::default(),
+            ).await.unwrap().result;
+            f.service.execute(
+                json!({"command":if host == "codex" {"plan.create"} else {"plan.revise"},"task":task,"body":"---\nagent: forged\nsession_id: forged\ncustom: preserved\n---\n# Verify identity\n"}),
+                owner(&claim),
+            ).await.unwrap();
+            let props = properties(&std::fs::read_to_string(&path).unwrap());
+            assert_eq!(props["agent"], host);
+            assert_eq!(props["session_id"], session);
+            assert_eq!(props["custom"], "preserved");
+            if host == "omp" {
+                f.service
+                    .execute(json!({"command":"task.start","task":task}), owner(&claim))
+                    .await
+                    .unwrap();
+                f.service
+                    .execute(json!({"command":"task.done","task":task}), owner(&claim))
+                    .await
+                    .unwrap();
+            } else {
+                f.service
+                    .execute(
+                        json!({"command":"task.release","task":task,"reason":"Handoff"}),
+                        owner(&claim),
+                    )
+                    .await
+                    .unwrap();
+            }
+            f.service.sync().await.unwrap();
+            let props = properties(&std::fs::read_to_string(&path).unwrap());
+            assert_eq!(props["agent"], host);
+            assert_eq!(props["session_id"], session);
+        }
+    }
+}
+
+#[tokio::test]
+async fn agent_session_legacy_jobs_deserialize_and_sync_with_unknown_identity() {
+    let f = Fixture::new("obsidian").await;
+    let mut state = serde_json::to_value(f.service.store().snapshot().await.unwrap()).unwrap();
+    let job = state["jobs"][0].as_object_mut().unwrap();
+    job.remove("agent");
+    job.remove("session_id");
+    let restored: agentix_task::Snapshot = serde_json::from_value(state).unwrap();
+    let restored = serde_json::to_value(restored).unwrap();
+    assert_eq!(restored["jobs"][0].get("agent"), Some(&Value::Null));
+    assert_eq!(restored["jobs"][0].get("session_id"), Some(&Value::Null));
+    f.service.sync().await.unwrap();
+    let props = properties(
+        &std::fs::read_to_string(
+            f.service
+                .config()
+                .output_dir()
+                .join(restored["jobs"][0]["document_path"].as_str().unwrap()),
+        )
+        .unwrap(),
+    );
+    assert_eq!(props.get("agent"), Some(&Value::Null));
+    assert_eq!(props.get("session_id"), Some(&Value::Null));
+}
+
 fn base(document: &str) -> Value {
     serde_yaml::from_str(
         document

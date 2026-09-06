@@ -22,6 +22,66 @@ fn job_path(cli: &Cli, job: &str) -> std::path::PathBuf {
 }
 
 #[test]
+fn agent_session_creation_is_persisted_and_job_keeps_its_creator() {
+    for format in ["markdown", "obsidian"] {
+        let cli = Cli::new(format);
+        let seed = cli.job("Seed");
+        let project = cli.ok(&["job", "show", &seed])["project_id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        for host in ["codex", "claude", "pi", "omp"] {
+            let session = format!("{host}-session");
+            let executor = format!("agent:{host}:{session}");
+            let job = cli.ok(&[
+                "job",
+                "create",
+                "--project",
+                &project,
+                "--title",
+                host,
+                "--executor",
+                &executor,
+                "--session",
+                &session,
+            ]);
+            let job_id = job["id"].as_str().unwrap();
+            let job_file = job_path(&cli, job_id);
+            let task = cli.ok(&[
+                "task",
+                "add",
+                "--job",
+                job_id,
+                "--title",
+                host,
+                "--executor",
+                &executor,
+                "--session",
+                &session,
+            ]);
+            let task_id = task["id"].as_str().unwrap();
+            let task_file = fs::read_dir(cli.dir.path().join("vault/Tasks ☃/Projects/Demo/Tasks"))
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .find(|path| properties(path)["task_id"] == task_id)
+                .unwrap();
+            cli.ok(&["sync"]);
+            for path in [&job_file, &task_file] {
+                let props = properties(path);
+                assert_eq!(props["agent"], host);
+                assert_eq!(props["session_id"], session);
+            }
+            cli.claim(task_id, "codex");
+            assert_eq!(properties(&task_file)["session_id"], "codex");
+            cli.ok(&["hook", "session-end", "--session", "codex"]);
+            let props = properties(&job_file);
+            assert_eq!(props["agent"], host);
+            assert_eq!(props["session_id"], session);
+        }
+    }
+}
+
+#[test]
 fn dashboard_format_switch_preserves_conflicts_and_recovers_in_a_new_process() {
     let cli = Cli::new("markdown");
     cli.job("Migration");

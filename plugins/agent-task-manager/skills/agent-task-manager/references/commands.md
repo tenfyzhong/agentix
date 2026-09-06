@@ -5,13 +5,13 @@ Configuration defaults to `~/.config/taskcli/config.toml`; `TASKCLI_CONFIG` or `
 ```sh
 taskcli project register --json
 taskcli job list --active --json
-taskcli job create --project prj_ID --title 'Requirement' --goal 'Acceptance checks' --json
-taskcli task add --job job_ID --title 'Deliver the interface with passing unit tests' --name 'Build interface' --json
-taskcli task add --job job_ID --title 'Integrate the interface with passing end-to-end checks' --name 'Integrate interface' --json
+taskcli job create --project prj_ID --title 'Requirement' --goal 'Acceptance checks' --executor agent:HOST --session HOST_SESSION --json
+taskcli task add --job job_ID --title 'Deliver the interface with passing unit tests' --name 'Build interface' --executor agent:HOST --session HOST_SESSION --json
+taskcli task add --job job_ID --title 'Integrate the interface with passing end-to-end checks' --name 'Integrate interface' --executor agent:HOST --session HOST_SESSION --json
 taskcli task depend task_SECOND task_FIRST --json
 taskcli sync --json
 taskcli task list --job job_ID --ready --json
-taskcli task claim task_ID --executor agent:MEMBER --session HOST_SESSION --json
+taskcli task claim task_ID --executor agent:HOST:MEMBER --session HOST_SESSION --json
 taskcli plan create task_ID --file /absolute/path/to/plan.md --session HOST_SESSION --lease-token lease_TOKEN --json
 taskcli task start task_ID --session HOST_SESSION --lease-token lease_TOKEN --json
 taskcli task heartbeat task_ID --session HOST_SESSION --lease-token lease_TOKEN --json
@@ -24,6 +24,8 @@ taskcli plan revise task_ID --body '# Revised plan' --session HOST_SESSION --lea
 taskcli event list --job job_ID --after 0 --json
 taskcli sync --json
 ```
+
+Replace `HOST` with `codex`, `claude`, `pi`, or `omp`, and use the actual host session ID. Creation records the Job creator and initial Task provenance in managed `agent` and `session_id` frontmatter; claiming replaces the Task provenance with its latest owner.
 
 The examples include alternative state transitions: after retry/reopen/release, claim again before publishing a Plan or starting. The Pi/OMP taskcli tool accepts `{ "args": ["task", "start", "task_ID"] }` or `done`; its adapter supplies session, executor, current lease token, and write idempotency key. Full Task IDs and unambiguous Task prefixes support this automatic token attachment. The adapter resolves prefixes before checking ownership; ambiguous identifiers are rejected. Job/Project deletion through this tool also receives a write idempotency key, so retrying the same host call returns the original result. For shell calls, supply identity and any retry key explicitly. New claims return a new token, including after session resume. Start preserves that token.
 

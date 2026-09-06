@@ -119,6 +119,10 @@ pub struct Job {
     #[serde(default)]
     pub sequence: u64,
     pub goal: String,
+    #[serde(default)]
+    pub agent: Option<String>,
+    #[serde(default)]
+    pub session_id: Option<String>,
     pub status: JobStatus,
     pub revision: i64,
     pub created_at: i64,
@@ -292,4 +296,16 @@ pub struct TaskEvent {
 #[must_use]
 pub fn new_id(prefix: &str) -> String {
     format!("{prefix}_{}", uuid::Uuid::now_v7().simple())
+}
+
+pub(crate) fn agent_name(executor: &str) -> Option<&str> {
+    let name = executor
+        .strip_prefix("agent:")
+        .unwrap_or(executor)
+        .split(':')
+        .next()?;
+    match name {
+        "codex" | "claude" | "pi" | "omp" => Some(name),
+        _ => None,
+    }
 }

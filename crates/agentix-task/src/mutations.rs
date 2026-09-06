@@ -34,11 +34,11 @@ pub(crate) fn apply(
         "project.register" => register_project(state, request, now),
         "project.delete" | "job.delete" => crate::deletion::apply(state, request, options),
         "project.archive" | "project.unarchive" => archive_project(state, request, options, now),
-        "job.create" => create_job(state, request, now),
+        "job.create" => create_job(state, request, options, now),
         "job.update" | "job.cancel" | "job.archive" | "job.unarchive" => {
             update_job(state, request, options, now)
         }
-        "task.add" => add_task(state, request, now),
+        "task.add" => add_task(state, request, options, now),
         "session.start" | "session.end" | "session.interrupt" | "session.heartbeat" => {
             session(state, request, now)
         }
@@ -49,7 +49,12 @@ pub(crate) fn apply(
     }
 }
 
-fn create_job(state: &mut Snapshot, request: &Value, now: i64) -> Result<Value> {
+fn create_job(
+    state: &mut Snapshot,
+    request: &Value,
+    options: &WriteOptions,
+    now: i64,
+) -> Result<Value> {
     let project = &state.projects[state.project_index(required(request, "project")?)?];
     ensure!(
         project.archived_at.is_none(),
@@ -89,6 +94,8 @@ fn create_job(state: &mut Snapshot, request: &Value, now: i64) -> Result<Value> 
         project_id: project.id.clone(),
         title: required(request, "title")?.into(),
         goal: request["goal"].as_str().unwrap_or_default().into(),
+        agent: crate::model::agent_name(&options.actor_ref).map(str::to_owned),
+        session_id: options.session_ref.clone(),
         status: JobStatus::Active,
         revision: 1,
         created_at: now,
@@ -103,7 +110,12 @@ fn create_job(state: &mut Snapshot, request: &Value, now: i64) -> Result<Value> 
     Ok(result)
 }
 
-fn add_task(state: &mut Snapshot, request: &Value, now: i64) -> Result<Value> {
+fn add_task(
+    state: &mut Snapshot,
+    request: &Value,
+    options: &WriteOptions,
+    now: i64,
+) -> Result<Value> {
     let job = &state.jobs[state.job_index(required(request, "job")?)?];
     ensure!(
         state.projects[state.project_index(&job.project_id)?]
@@ -156,8 +168,9 @@ fn add_task(state: &mut Snapshot, request: &Value, now: i64) -> Result<Value> {
         reason: None,
         dependencies: Vec::new(),
         current_plan: None,
-        last_executor: None,
-        last_session: None,
+        last_executor: crate::model::agent_name(&options.actor_ref)
+            .map(|_| options.actor_ref.clone()),
+        last_session: options.session_ref.clone(),
         delegated_by: None,
         system_block: false,
     };
