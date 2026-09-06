@@ -406,12 +406,77 @@ fn homebrew_workflow_builds_a_bottle_and_updates_the_tap() {
     assert!(workflow.contains("workflow_dispatch:"));
     assert!(!workflow.contains("HOMEBREW_PUBLISH_ENABLED"));
     assert!(workflow.contains("HOMEBREW_TAP_TOKEN"));
-    assert!(workflow.contains("Formula/agentix.rb"));
+    assert!(workflow.contains("FORMULA: ${{ matrix.formula }}"));
+    assert!(workflow.contains("Formula/${{ matrix.formula }}.rb"));
+    assert!(workflow.contains(r#"'["agentix", "taskcli"]'"#));
+    assert!(workflow.contains("branch: automation/${{ matrix.formula }}-"));
+    assert!(workflow.contains("signoff: true"));
     assert!(workflow.contains("brew install --build-bottle"));
     assert!(workflow.contains("brew bottle --json --no-rebuild"));
     assert!(workflow.contains("gh release upload"));
     assert!(workflow.contains("peter-evans/create-pull-request@v7"));
     assert!(workflow.contains(".github/scripts/release-version.sh"));
+}
+
+#[test]
+#[cfg(unix)]
+fn homebrew_bottle_asset_names_match_the_selected_formula() {
+    let workflow = repository_file(".github/workflows/homebrew.yml");
+    let script = workflow
+        .split("      - name: Normalize Homebrew bottle asset name\n")
+        .nth(1)
+        .unwrap()
+        .split("        run: |\n")
+        .nth(1)
+        .unwrap()
+        .split("      - name:")
+        .next()
+        .unwrap();
+
+    for formula in ["agentix", "taskcli"] {
+        let directory = tempfile::tempdir().unwrap();
+        let original = format!("{formula}--0.2.0.arm64_sequoia.bottle.tar.gz");
+        let asset = format!("{formula}-0.2.0.arm64_sequoia.bottle.tar.gz");
+        fs::write(directory.path().join(&original), "bottle contents").unwrap();
+        fs::write(
+            directory.path().join("unrelated--1.0.bottle.tar.gz"),
+            "other",
+        )
+        .unwrap();
+        let output = Command::new("bash")
+            .args(["-eu", "-c", script])
+            .env("FORMULA", formula)
+            .current_dir(directory.path())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{formula}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            fs::read_to_string(directory.path().join(asset)).unwrap(),
+            "bottle contents"
+        );
+        assert!(!directory.path().join(original).exists());
+        assert!(
+            directory
+                .path()
+                .join("unrelated--1.0.bottle.tar.gz")
+                .exists()
+        );
+
+        let missing = Command::new("bash")
+            .args(["-eu", "-c", script])
+            .env("FORMULA", formula)
+            .current_dir(directory.path())
+            .output()
+            .unwrap();
+        assert!(
+            !missing.status.success(),
+            "missing bottle must fail before upload"
+        );
+    }
 }
 
 #[test]
