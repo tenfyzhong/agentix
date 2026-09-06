@@ -608,12 +608,14 @@ impl Service {
             Value::String(tag) => vec![json!(tag)],
             _ => Vec::new(),
         };
-        tags.retain(|tag| tag != "agent/plan" && tag != "task" && tag != "archived");
+        tags.retain(|tag| tag != "agent/plan" && tag != "archived");
         if authored["archived"] == true {
             tags.push(json!("archived"));
         }
-        if !tags.contains(&json!("agent/task")) {
-            tags.push(json!("agent/task"));
+        for tag in ["agent/task", "task"] {
+            if !tags.contains(&json!(tag)) {
+                tags.push(json!(tag));
+            }
         }
         authored["tags"] = json!(tags);
         let mut doc = frontmatter(authored);

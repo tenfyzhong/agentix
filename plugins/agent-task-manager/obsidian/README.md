@@ -6,7 +6,7 @@ Each taskcli Task is a Markdown note in its project's `Tasks/` directory. TaskNo
 
 **TaskNotes** (`tasknotes`) is the only community plugin required for the generated task notes and boards. Also enable **Bases**, which is built into Obsidian. This integration was checked with TaskNotes 4.12.5.
 
-In **Settings → TaskNotes → General**, select tag-based task identification and set the task tag to `agent/task`. This identifies the `tags` property of a task note; Job links and checkboxes inside a plan do not create extra task cards. If other notes use another identifying tag, migrate them deliberately before changing this vault-wide setting.
+In **Settings → TaskNotes → General**, select tag-based task identification and set the task tag to `task`. This identifies the `tags` property of a task note; Job links and checkboxes inside a plan do not create extra task cards. Task notes carry both `task` for TaskNotes identification and `agent/task` for Agentix board filtering, so ordinary `task` notes can coexist in the same vault. Run `taskcli sync` with the updated CLI to add the tag to existing generated notes before changing this vault-wide setting. Custom tags are preserved.
 
 Keep the default field mappings for `title`, `status`, `projects`, `dateCreated`, `dateModified`, and `completedDate`. Keep the archive tag mapping as `archived`. Set **Open task after creation** to **None** to keep newly created notes from opening automatically.
 
@@ -75,6 +75,7 @@ revision: 4
 sequence: 1
 tags:
   - agent/task
+  - task
 archived: false
 projects:
   - "[[11-Agents/Projects/example/meta]]"
@@ -120,7 +121,7 @@ TaskNotes can edit note properties and drag cards between columns. Those actions
 
 TaskNotes supplies status colors from its settings.
 
-If a board is empty, confirm TaskNotes and Bases are loaded, the note is in Reading view or Live Preview, the task tag is `agent/task`, and the task's folder and `project_id` match the Base filters. For unknown-status indicators, check exact status values. For missing completed work, check `archived` and run `taskcli doctor --json`.
+If a board is empty, confirm TaskNotes and Bases are loaded, the note is in Reading view or Live Preview, the task tag is `task`, and the task's folder and `project_id` match the Base filters. For unknown-status indicators, check exact status values. For missing completed work, check `archived` and run `taskcli doctor --json`.
 
 ## Backup and database recovery
 

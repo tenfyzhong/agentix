@@ -138,7 +138,7 @@ async fn tasks_exist_before_planning_and_jobs_reference_notes_directly() {
         assert_eq!(props["id"], id);
         assert_eq!(props["status"], "TODO");
         assert!(props.get("version").is_none());
-        assert_eq!(props["tags"], json!(["agent/task"]));
+        assert_eq!(props["tags"], json!(["agent/task", "task"]));
         assert_eq!(props["archived"], false);
         assert!(
             time::OffsetDateTime::parse(
@@ -272,7 +272,10 @@ async fn schema_six_plans_migrate_without_losing_authored_content() {
     assert_eq!(p["properties"]["id"], id);
     assert_eq!(p["properties"]["title"], "Kept title");
     assert_eq!(p["properties"]["custom"], "preserved");
-    assert_eq!(p["properties"]["tags"], json!(["research", "agent/task"]));
+    assert_eq!(
+        p["properties"]["tags"],
+        json!(["research", "agent/task", "task"])
+    );
     assert_eq!(
         p["body"],
         "# Original plan\n\n- [ ] Authored test checklist\n"
@@ -280,6 +283,48 @@ async fn schema_six_plans_migrate_without_losing_authored_content() {
     assert!(!root.join(old).exists());
     service.sync().await.unwrap();
     assert_eq!(service.plan(&id).await.unwrap()["body"], p["body"]);
+}
+
+#[tokio::test]
+async fn task_tags_are_restored_on_sync_and_preserve_authored_tags() {
+    for format in ["obsidian", "markdown"] {
+        let f = Fixture::new(format).await;
+        let id = f.task("Tagged task").await;
+        let claim = f.claim(&id, "writer").await;
+        f.service
+            .execute(
+                json!({"command":"plan.create","task":id,"body":"---\ntags: [research, agent/task]\n---\n\nKeep this plan.\n"}),
+                owner(&claim),
+            )
+            .await
+            .unwrap();
+        let note = f.service.plan(&id).await.unwrap();
+        let path = note["absolute_path"].as_str().unwrap();
+        // Simulate older notes and user edits, including a scalar tag.
+        for tags in [
+            "[research, agent/task]",
+            "task",
+            "[research, task, agent/plan]",
+        ] {
+            std::fs::write(path, format!("---\ntags: {tags}\n---\n\nKeep this plan.\n")).unwrap();
+            for _ in 0..2 {
+                f.service.sync().await.unwrap();
+                let document = std::fs::read_to_string(path).unwrap();
+                let props = properties(&document);
+                let actual = props["tags"].as_array().unwrap();
+                for tag in ["task", "agent/task"] {
+                    assert_eq!(actual.iter().filter(|value| **value == tag).count(), 1);
+                }
+                assert_eq!(
+                    actual.contains(&json!("research")),
+                    tags.contains("research")
+                );
+                assert!(!actual.contains(&json!("agent/plan")));
+                assert!(!actual.contains(&json!("archived")));
+                assert!(document.contains("Keep this plan."));
+            }
+        }
+    }
 }
 
 #[tokio::test]
@@ -323,6 +368,10 @@ async fn archive_and_delete_include_unplanned_task_notes() {
             .unwrap()
             .contains(&json!("archived"))
     );
+    let archived = properties(&std::fs::read_to_string(&path).unwrap());
+    for tag in ["task", "agent/task"] {
+        assert!(archived["tags"].as_array().unwrap().contains(&json!(tag)));
+    }
     f.service
         .execute(
             json!({"command":"job.unarchive","job":f.job}),

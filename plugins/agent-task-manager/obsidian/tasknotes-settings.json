@@ -1,6 +1,6 @@
 {
   "taskIdentificationMethod": "tag",
-  "taskTag": "agent/task",
+  "taskTag": "task",
   "openTaskAfterCreation": "none",
   "customStatuses": [
     {

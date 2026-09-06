@@ -111,7 +111,7 @@ Projects/<project-name>/
 
 Unarchived Jobs live directly under `Jobs/`; only explicitly archived Jobs move into `Jobs/Archived/`. Archiving and restoring a Job preserve its filename. Migration removes empty legacy `Jobs/Active/` and `Jobs/Archive/YYYY/MM/` directories after publishing the replacement documents and links.
 
-The Dashboard lists unarchived projects with links to their metadata, Board, and Tasks view. It contains no Job lists or details, so adding Jobs does not increase its length.
+The Dashboard lists unarchived projects with links to their metadata and Board. It contains no Job lists or details, so adding Jobs does not increase its length.
 
 Names preserve Unicode and spaces. IDs stay in YAML frontmatter, not filenames. Only collisions add `-2`, `-3`, etc.; comparison is case insensitive. `job create --name` and `task add --name` accept a concise summary separately from the full `--title`. Names default to a portable, at most 48-character title. Agents should summarize the work when choosing `--name`, rather than rely on truncation. `job update --name` and `task update --name` also work on completed work and update generated links without adding Plan versions.
 
@@ -124,12 +124,11 @@ Every generated document has YAML frontmatter containing an ID, creation time, a
 | Project meta | `agent/project` |
 | Job | `agent/job` |
 | Archived Job | `agent/archived/job` |
-| Plan | `agent/plan` |
-| Tasks view | `agent/tasks` |
+| Task (including its Plan) | `agent/task`, `task` |
 | Board | `agent/board` |
 | Dashboard | `agent/dashboard` |
 
-Each Task has one TaskNotes-compatible note in `Tasks/`, created even before a Plan is published. Its frontmatter contains the Task ID, optional Plan ID, state, phase, revision, local dates, project link, Job link, and `dependencies`: a list of prerequisite Task IDs, or `[]`. Register all known initial Tasks and dependencies before implementation. When taking up a Task, claim it and publish its freely structured Plan into that same note. `plan revise` updates it in place and advances the Task revision. The document exposes only `revision`; the internal Plan publication counter remains part of CLI metadata. Authored properties are merged with managed metadata. Dependency fields are generated from SQLite, refreshed by sync, and cannot be overridden by authored Plan properties; `task start` requires all prerequisites to be DONE.
+Each Task has one TaskNotes-compatible note in `Tasks/`, created even before a Plan is published. Notes carry `task` for TaskNotes identification and `agent/task` for Agentix board filtering. Sync adds missing tags to existing notes and preserves custom tags. Its frontmatter contains the Task ID, optional Plan ID, state, phase, revision, local dates, project link, Job link, and `dependencies`: a list of prerequisite Task IDs, or `[]`. Register all known initial Tasks and dependencies before implementation. When taking up a Task, claim it and publish its freely structured Plan into that same note. `plan revise` updates it in place and advances the Task revision. The document exposes only `revision`; the internal Plan publication counter remains part of CLI metadata. Authored properties are merged with managed metadata. Dependency fields are generated from SQLite, refreshed by sync, and cannot be overridden by authored Plan properties; `task start` requires all prerequisites to be DONE.
 
 Job task sections directly link Task notes, displaying their filenames without `.md`. Obsidian uses wikilinks; Markdown uses ordinary relative links. Board embeds a TaskNotes Base over the project's task notes, rather than duplicating checkbox entries. Completed and cancelled work remains visible until its Job or Project is archived. Goal, Notes, names, and Plan prose are preserved as authored.
 
@@ -159,7 +158,7 @@ When upgrading, rename the host environment variable to `AGENT_TASK_LANG`, remov
 
 ### Obsidian plugin setup
 
-Enable [TaskNotes](https://tasknotes.dev/obsidian/core-concepts/) and Obsidian's Bases core plugin. Set TaskNotes' identification tag to `agent/task`, retain its default field mapping, and configure the seven exact status values: `TODO`, `IN_PROGRESS`, `BLOCKED`, `WAITING_USER`, `DONE`, `FAILED`, and `CANCELLED`. Only DONE is successful completion; disable automatic archival for these statuses. See the [TaskNotes setup guide](../plugins/agent-task-manager/obsidian/README.md) for labels, colors, settings, and examples.
+Enable [TaskNotes](https://tasknotes.dev/obsidian/core-concepts/) and Obsidian's Bases core plugin. Set TaskNotes' identification tag to `task`, retain its default field mapping, and configure the seven exact status values: `TODO`, `IN_PROGRESS`, `BLOCKED`, `WAITING_USER`, `DONE`, `FAILED`, and `CANCELLED`. Only DONE is successful completion; disable automatic archival for these statuses. See the [TaskNotes setup guide](../plugins/agent-task-manager/obsidian/README.md) for labels, colors, settings, and examples.
 
 `Board.md` embeds a `tasknotesKanban` Base grouped by status, with an explicit seven-column order and empty columns visible. The Board filters by the exact Task folder, project ID, `agent/task` tag, and `archived != true`. TaskNotes reads task frontmatter, so Job links and authored checklists do not create duplicate cards. Open Board in Reading view or Live Preview; the old Kanban plugins and Tasks queries are no longer used.
 

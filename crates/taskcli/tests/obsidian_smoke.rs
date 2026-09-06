@@ -15,7 +15,9 @@ fn obsidian(vault: &str, expression: &str) -> Value {
             Command::new(std::env::var("OBSIDIAN_BIN").unwrap_or_else(|_| "obsidian".into()))
                 .arg(format!("vault={vault}"))
                 .arg("eval")
-                .arg(format!("code=JSON.stringify(({expression}) ?? null)"))
+                .arg(format!(
+                    "code=(async()=>JSON.stringify((await ({expression})) ?? null))()"
+                ))
                 .output()
                 .expect("Obsidian CLI must be available and the vault open");
         let stdout = String::from_utf8(output.stdout).unwrap();
@@ -150,10 +152,10 @@ fn tasknotes_renders_both_formats_and_resolves_task_note_links() {
     assert_eq!(
         obsidian(
             &vault,
-            "!!app.plugins.plugins.tasknotes && !!app.internalPlugins.getPluginById('bases')?.enabled && app.plugins.plugins.tasknotes.settings.taskTag === 'agent/task'"
+            "!!app.plugins.plugins.tasknotes && !!app.internalPlugins.getPluginById('bases')?.enabled && app.plugins.plugins.tasknotes.settings.taskTag === 'task'"
         ),
         true,
-        "Enable TaskNotes and Bases and configure the agent/task tag and seven statuses before running this test"
+        "Enable TaskNotes and Bases and configure the task tag and seven statuses before running this test"
     );
     for format in ["obsidian", "markdown"] {
         exercise_plugin_views(&vault, format);
@@ -299,7 +301,7 @@ fn exercise_plugin_views(vault: &str, format: &str) {
     let job_path = format!("{}/{}", f.relative, job["document_path"].as_str().unwrap());
     f.open(&job_path, "markdown");
     let links = format!(
-        "(() => {{const el=app.workspace.getLeafById({}).view.contentEl;return [...el.querySelectorAll('.internal-link[data-href]')].map(e=>app.metadataCache.getFirstLinkpathDest(e.getAttribute('data-href'),{})?.path).filter(p=>p?.includes('/Tasks/'));}})()",
+        "(() => {{const el=app.workspace.getLeafById({}).view.contentEl;return [...new Set([...el.querySelectorAll('a.internal-link, .tasknotes-inline-widget[data-task-path]')].map(e=>e.dataset.taskPath??app.metadataCache.getFirstLinkpathDest(decodeURIComponent(e.getAttribute('data-href')??e.getAttribute('href')??''),{})?.path).filter(p=>p?.includes('/Tasks/')))];}})()",
         f.leaf,
         json!(job_path)
     );
@@ -310,11 +312,12 @@ fn exercise_plugin_views(vault: &str, format: &str) {
     let task_info = obsidian(
         &f.vault,
         &format!(
-            "(async()=>{{const t=await app.plugins.plugins.tasknotes.cacheManager.getTaskInfo({});return {{id:t?.id,status:t?.status}};}})()",
+            "(async()=>{{const path={};const t=await app.plugins.plugins.tasknotes.cacheManager.getTaskInfo(path);const file=app.vault.getAbstractFileByPath(path);return {{path:t?.path,status:t?.status,id:app.metadataCache.getFileCache(file)?.frontmatter?.id}};}})()",
             json!(path)
         ),
     );
     assert_eq!(task_info["id"], task["id"]);
+    assert_eq!(task_info["path"], path);
     assert_eq!(task_info["status"], "IN_PROGRESS");
     f.open(&path, "markdown");
     let body = format!(
