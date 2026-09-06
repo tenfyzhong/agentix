@@ -32,6 +32,8 @@ pub struct Config {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TaskBoardConfig {
+    #[serde(default)]
+    pub enable: bool,
     pub config: PathBuf,
 }
 
@@ -181,6 +183,13 @@ pub struct FeishuConfig {
 }
 
 impl Config {
+    #[must_use]
+    pub fn enabled_task_board(&self) -> Option<&TaskBoardConfig> {
+        self.task_board
+            .as_ref()
+            .filter(|task_board| task_board.enable)
+    }
+
     pub fn from_toml(input: &str) -> Result<Self> {
         let mut config: Self = toml::from_str(input).context("configuration TOML is invalid")?;
         config.expand_home_paths()?;

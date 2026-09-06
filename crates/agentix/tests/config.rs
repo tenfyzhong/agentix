@@ -23,7 +23,21 @@ fn task_board_configuration_is_optional_and_expands_home() {
         "{base}\n[task_board]\nconfig='~/.config/taskcli/config.toml'\n"
     ))
     .unwrap();
-    assert!(config.task_board.unwrap().config.is_absolute());
+    let task_board = config.task_board.unwrap();
+    assert!(!task_board.enable);
+    assert!(task_board.config.is_absolute());
+}
+
+#[test]
+fn accepts_explicit_task_board_enable_switch() {
+    let base = credential_config("telegram", "[channel.telegram]\ntoken='token'");
+    for enable in [false, true] {
+        let config = Config::from_toml(&format!(
+            "{base}\n[task_board]\nenable={enable}\nconfig='~/.config/taskcli/config.toml'\n"
+        ))
+        .unwrap();
+        assert_eq!(config.task_board.unwrap().enable, enable);
+    }
 }
 
 #[test]

@@ -76,7 +76,7 @@ Configure `kind = "oh-my-pi"`, the `omp` executable, and its JSONL session root.
 
 ## Optional task coordination
 
-Initialize taskcli separately, then set `[task_board].config` to its configuration path to enable IM task browsing and controls. The task database and document tree are independent of Agentix binding storage. Install the host plugin separately for CLI-session lease hooks; running Agentix is not required for standalone taskcli use. See the [task board guide](task-board.md) for configuration, document migration, backup, and session cleanup.
+Initialize taskcli separately, then set `[task_board].config` to its configuration path and `task_board.enable = true` to enable IM task browsing and controls. The enable switch defaults to `false`; while disabled, Agentix does not load the taskcli configuration, start the task board, or add its commands to IM menus and help. The task database and document tree are independent of Agentix binding storage. Install the host plugin separately for CLI-session lease hooks; running Agentix is not required for standalone taskcli use. See the [task board guide](task-board.md) for configuration, document migration, backup, and session cleanup.
 
 ## Owner claim setup
 
@@ -112,7 +112,7 @@ Agentix requires a mention in groups. The Feishu SDK acknowledges card actions w
 
 Create a bot token and set `channel.telegram.token` to its value. Add numeric owner user IDs directly or initialize the first owner through the claim flow above. In group chats, privacy mode and bot permissions must still allow mentioned messages to reach the bot. Agentix ignores unmentioned group text.
 
-At channel startup, Agentix registers Telegram's primary commands in the order `/sessions`, `/dashboard`, `/cancel`, `/rmux`, `/help`, omitting `/dashboard` when task boards are not configured. It selects the commands menu button for private chats. After attachment, contextual commands follow in alphabetical order, including `/board` and `/jobs` when task boards are enabled, and clickable `/model` and `/reasoning` selectors for Codex; `/thinking` is not exposed. Menu registration is refreshed on every restart, so BotFather command configuration is not required. `/attach` is intentionally omitted from the menu because it requires a session ID; use the title buttons from `/sessions` instead.
+At channel startup, Agentix registers Telegram's primary commands in the order `/sessions`, `/dashboard`, `/cancel`, `/rmux`, `/help`, omitting `/dashboard` when `task_board.enable` is false or omitted. It selects the commands menu button for private chats. After attachment, contextual commands follow in alphabetical order, including `/board` and `/jobs` when task boards are enabled, and clickable `/model` and `/reasoning` selectors for Codex; `/thinking` is not exposed. Menu registration is refreshed on every restart, so BotFather command configuration is not required. `/attach` is intentionally omitted from the menu because it requires a session ID; use the title buttons from `/sessions` instead.
 
 ## Service operation
 
