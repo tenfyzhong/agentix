@@ -65,7 +65,7 @@ taskcli task start task_STORAGE --session HOST_SESSION --lease-token lease_TOKEN
 # Execute the Plan, verify acceptance, then call done with the same token.
 ```
 
-IDs use UUIDv7 with `prj_`, `job_`, `task_`, and `plan_` prefixes; full IDs or unambiguous prefixes are accepted. `project show` also accepts an unambiguous project name. Outside Git, pass `--project` explicitly. `task list --ready` discovers TODO work with completed dependencies; `task list --status TODO` also includes work that can be planned before dependencies finish. Claim before drafting either kind of Task. Populate all initially required Tasks before finishing the first one so Job completion reflects the agreed scope.
+IDs use UUIDv7 with `prj_`, `job_`, `task_`, and `plan_` prefixes; full IDs or unambiguous prefixes are accepted. `project show` also accepts an unambiguous project name. Outside Git, pass `--project` explicitly. `task list --ready` discovers TODO work with completed dependencies; `task list --status TODO` also includes work that can be planned before dependencies finish. Claim before drafting either kind of Task. Register all known initial Tasks and dependency edges before implementation, verify their generated notes, and prepare each detailed Plan when taking up its Task so Job completion reflects the agreed scope.
 
 Claim returns the Task and a `lease` containing its token. Subsequent writes to a leased Task must include the current session and token:
 
@@ -129,9 +129,15 @@ Every generated document has YAML frontmatter containing an ID, creation time, a
 | Board | `agent/board` |
 | Dashboard | `agent/dashboard` |
 
-Each Task has one TaskNotes-compatible note in `Tasks/`, created even before a Plan is published. Its frontmatter contains the Task ID, optional Plan ID, state, phase, revision, local dates, project link, and Job link. The body contains the freely structured Plan. `plan revise` updates it in place and advances the Task revision. The document exposes only `revision`; the internal Plan publication counter remains part of CLI metadata. Authored properties are merged with managed metadata.
+Each Task has one TaskNotes-compatible note in `Tasks/`, created even before a Plan is published. Its frontmatter contains the Task ID, optional Plan ID, state, phase, revision, local dates, project link, Job link, and `dependencies`: a list of prerequisite Task IDs, or `[]`. Register all known initial Tasks and dependencies before implementation. When taking up a Task, claim it and publish its freely structured Plan into that same note. `plan revise` updates it in place and advances the Task revision. The document exposes only `revision`; the internal Plan publication counter remains part of CLI metadata. Authored properties are merged with managed metadata. Dependency fields are generated from SQLite, refreshed by sync, and cannot be overridden by authored Plan properties; `task start` requires all prerequisites to be DONE.
 
 Job task sections directly link Task notes, displaying their filenames without `.md`. Obsidian uses wikilinks; Markdown uses ordinary relative links. Board embeds a TaskNotes Base over the project's task notes, rather than duplicating checkbox entries. Completed and cancelled work remains visible until its Job or Project is archived. Goal, Notes, names, and Plan prose are preserved as authored.
+
+Each nonempty Job task section also includes a generated Mermaid dependency graph. Every Task in the Job appears, including independent Tasks; arrows point from prerequisite to dependent Task. Direct prerequisites from other Jobs appear once with their Job name, without expanding those Jobs' full dependency graphs. Task additions, renames, and dependency changes refresh the graph automatically; `taskcli sync` adds it to existing Job documents. The graph is read-only and uses the same database dependencies as the Task notes. Task links below it remain available in both document formats.
+
+Graph nodes show `Task name · STATUS` using the seven `TaskStatus` values: `TODO`, `IN_PROGRESS`, `BLOCKED`, `WAITING_USER`, `DONE`, `FAILED`, and `CANCELLED`. Their light background colors match the bundled [TaskNotes status configuration](../plugins/agent-task-manager/obsidian/tasknotes-settings.json), with dark text for contrast; only `DONE` means successful completion. Planning and executing are phases within `IN_PROGRESS`, not additional statuses. Status changes through taskcli refresh the graph, including cross-Job prerequisite nodes.
+
+Clicking a node's label opens its Task note. Obsidian output uses an HTML internal link inside the node with a vault-relative file path, supporting normal navigation and hover previews without changing Mermaid security settings. Markdown output uses a relative file link. Renames and Job archival regenerate the target paths. Mermaid viewers that disable interactive links can still use the ordinary Task links below the graph. Nodes display database state at the last projection or sync; they do not embed editable TaskNotes widgets or read customized vault colors.
 
 ### Task language
 
@@ -208,7 +214,8 @@ The vault is not a complete database export:
 | Current project and Job identity, hierarchy, lifecycle, and revision | Metadata, Job properties, filenames, links, and prose; not a serialized copy of every database field |
 | Current Task identity, status, phase, revision, sequence, and lifecycle dates | Task frontmatter |
 | Plan body, custom properties, Goal, and Notes | Authored note content; SQLite does not retain a complete copy after publication |
-| Task dependencies and reasons | Displayed in Job prose; no structured Task frontmatter export or import contract |
+| Task dependencies | Prerequisite Task IDs in Task frontmatter `dependencies`, with navigable links in Job prose; no import contract |
+| Task reasons | Displayed in Job prose; not exported in Task frontmatter |
 | Task ordering and execution bookkeeping | Position, last executor/session, delegation, and system-block flag are not fully exported |
 | Ownership leases | Tokens and expiration times are not exported |
 | Audit history and request idempotency | Event log, request fingerprints, and saved results remain in SQLite |

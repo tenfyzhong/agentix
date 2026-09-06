@@ -324,6 +324,7 @@ impl Service {
                 let mut doc = frontmatter(properties);
                 doc.push_str(&Self::header(&job.name));
                 doc.push_str(&format!("\n## {}\n\n<!-- taskcli:goal:start -->\n{}\n<!-- taskcli:goal:end -->\n\n## {}\n", "Goal", goal, "Tasks"));
+                doc.push_str(&job_dependency_graph(self, &state, &job.id)?);
                 for task in state.tasks.iter().filter(|t| t.job_id == job.id) {
                     if self.config.documents.format == DocumentFormat::Markdown {
                         doc.push_str(&format!("\n<a id=\"{}\"></a>\n", task.id.replace('_', "-")));
@@ -587,7 +588,7 @@ impl Service {
         };
         let generated = json!({
             "id":task.id,"task_id":task.id,"plan_id":task.current_plan,"job_id":task.job_id,"project_id":task.project_id,
-            "sequence":task.sequence,"revision":task.revision,
+            "sequence":task.sequence,"revision":task.revision,"dependencies":task.dependencies,
             "status":task.status,"phase":task.phase,"archived":job.archived_at.is_some() || project.archived_at.is_some(),
             "created_at":local_timestamp(task.created_at)?,"updated_at":local_timestamp(task.updated_at)?,
             "started_at":optional_local_timestamp(task.started_at)?,"completed_at":optional_local_timestamp(task.completed_at)?,
@@ -663,18 +664,7 @@ impl Service {
                 }
             }
             DocumentFormat::Markdown => {
-                let from: Vec<_> = from.split('/').collect();
-                let to: Vec<_> = to.split('/').collect();
-                let from = &from[..from.len() - 1];
-                let common = from.iter().zip(&to).take_while(|(a, b)| a == b).count();
-                let mut path = "../".repeat(from.len() - common);
-                path.push_str(
-                    &to[common..]
-                        .iter()
-                        .map(|s| encode(s))
-                        .collect::<Vec<_>>()
-                        .join("/"),
-                );
+                let mut path = relative_url(from, to);
                 if let Some(anchor) = anchor {
                     path.push('#');
                     path.push_str(&encode(anchor));
@@ -749,6 +739,116 @@ fn split_properties(body: &str) -> Result<(Value, &str)> {
     } else {
         Ok((json!({}), body))
     }
+}
+
+fn job_dependency_graph(service: &Service, state: &Snapshot, job_id: &str) -> Result<String> {
+    let tasks = state
+        .tasks
+        .iter()
+        .filter(|task| task.job_id == job_id)
+        .collect::<Vec<_>>();
+    if tasks.is_empty() {
+        return Ok(String::new());
+    }
+    let mut nodes = BTreeSet::new();
+    for task in &tasks {
+        nodes.insert(task.id.as_str());
+        nodes.extend(task.dependencies.iter().map(String::as_str));
+    }
+    let mut diagram = String::from(
+        "\nArrows point from prerequisites to dependent tasks.\n\n```mermaid\nflowchart TD\n",
+    );
+    for id in nodes {
+        let task = &state.tasks[state.task_index(id)?];
+        let label = if task.job_id == job_id {
+            task.name.clone()
+        } else {
+            let job = &state.jobs[state.job_index(&task.job_id)?];
+            format!("{} (Job: {})", task.name, job.name)
+        };
+        let label = format!("{} · {}", mermaid_label(&label), task.status);
+        let path = crate::naming::task_path(state, task)?;
+        match service.config.documents.format {
+            DocumentFormat::Obsidian => {
+                // Obsidian strips custom URI schemes from Mermaid SVG links.
+                // HTML internal links keep the file target separate from the status label.
+                let file = service
+                    .config
+                    .documents
+                    .directory
+                    .join(&path)
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                let target = escape(file.trim_start_matches("./"))
+                    .replace('\'', "&#39;")
+                    .replace('"', "&quot;");
+                diagram.push_str(&format!(
+                    "    {id}[\"<a class='internal-link' data-href='{target}' href='{target}' style='color:#1f2937'>{label}</a>\"]:::status_{}\n",
+                    task.status,
+                ));
+            }
+            DocumentFormat::Markdown => {
+                let url = relative_url(&state.jobs[state.job_index(job_id)?].document_path, &path);
+                diagram.push_str(&format!("    {id}[\"{label}\"]:::status_{}\n", task.status));
+                diagram.push_str(&format!("    click {id} href \"{url}\" \"Open task\"\n"));
+            }
+        }
+    }
+    for task in tasks {
+        for prerequisite in &task.dependencies {
+            diagram.push_str(&format!("    {prerequisite} --> {}\n", task.id));
+        }
+    }
+    for status in TaskStatus::ALL {
+        let color = task_status_color(status);
+        diagram.push_str(&format!(
+            "    classDef status_{status} fill:{color},stroke:{color},color:#1f2937\n"
+        ));
+    }
+    diagram.push_str("```\n");
+    Ok(diagram)
+}
+
+fn task_status_color(status: TaskStatus) -> &'static str {
+    match status {
+        TaskStatus::Todo => "#cbd5e1",
+        TaskStatus::InProgress => "#bfdbfe",
+        TaskStatus::Blocked => "#fed7aa",
+        TaskStatus::WaitingUser => "#ddd6fe",
+        TaskStatus::Done => "#bbf7d0",
+        TaskStatus::Failed => "#fecaca",
+        TaskStatus::Cancelled => "#e2d7e7",
+    }
+}
+
+fn relative_url(from: &str, to: &str) -> String {
+    let from: Vec<_> = from.split('/').collect();
+    let to: Vec<_> = to.split('/').collect();
+    let from = &from[..from.len() - 1];
+    let common = from.iter().zip(&to).take_while(|(a, b)| a == b).count();
+    let mut path = "../".repeat(from.len() - common);
+    path.push_str(
+        &to[common..]
+            .iter()
+            .map(|s| encode(s))
+            .collect::<Vec<_>>()
+            .join("/"),
+    );
+    path
+}
+
+fn mermaid_label(text: &str) -> String {
+    let mut label = String::new();
+    for character in text.chars() {
+        match character {
+            '"' | '&' | '<' | '>' | '#' | '`' | '[' | ']' | '\\' => {
+                label.push_str(&format!("#{};", u32::from(character)));
+            }
+            c if c.is_control() => label.push(' '),
+            c => label.push(c),
+        }
+    }
+    label
 }
 
 fn escape(text: &str) -> String {

@@ -776,11 +776,15 @@ async fn handle_request(
             }))
         }
         "thread/read" => with_thread(&state, params, |thread| {
-            Ok(json!({
+            let mut response = json!({
                 "thread": thread.as_json(
                     params.get("includeTurns").and_then(Value::as_bool).unwrap_or(false)
                 )
-            }))
+            });
+            if state.active_writers.contains(&thread.id) {
+                response["thread"]["status"] = json!({"type":"notLoaded"});
+            }
+            Ok(response)
         }),
         "thread/resume" => {
             if let Some(thread_id) = params["threadId"].as_str()

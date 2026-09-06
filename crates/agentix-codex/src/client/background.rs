@@ -41,7 +41,7 @@ impl BackgroundTurns {
                         self.latest_completed.remove(&session);
                     }
                     let subscribed = client.subscriptions.lock().await.contains(&session);
-                    if subscribed {
+                    if subscribed || client.observed.lock().await.contains_key(&session) {
                         continue;
                     }
                     let mut completed = client.completed_turns.lock().await;

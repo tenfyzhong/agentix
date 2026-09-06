@@ -27,6 +27,106 @@ fn base(document: &str) -> Value {
 }
 
 #[tokio::test]
+async fn task_dependencies_are_projected_before_planning_and_follow_cli_changes() {
+    for format in ["obsidian", "markdown"] {
+        let f = Fixture::new(format).await;
+        let first = f.task("First prerequisite").await;
+        let second = f.task("Second prerequisite").await;
+        let task = f.task("Dependent").await;
+        let path = f
+            .service
+            .config()
+            .output_dir()
+            .join("Projects/demo/Tasks/260905-0003-Dependent.md");
+        let read = || properties(&std::fs::read_to_string(&path).unwrap());
+        assert_eq!(read()["dependencies"], json!([]));
+        for dependency in [&first, &second] {
+            f.service
+                .execute(
+                    json!({"command":"task.depend","task":task,"dependency":dependency}),
+                    WriteOptions::default(),
+                )
+                .await
+                .unwrap();
+        }
+        assert_eq!(read()["dependencies"], json!([first, second]));
+        assert!(f.service.store().snapshot().await.unwrap().plans.is_empty());
+        assert!(read()["plan_id"].is_null());
+        for dependency in [&first, &second] {
+            f.service
+                .execute(
+                    json!({"command":"task.undepend","task":task,"dependency":dependency}),
+                    WriteOptions::default(),
+                )
+                .await
+                .unwrap();
+            let expected = if dependency == &first {
+                json!([second])
+            } else {
+                json!([])
+            };
+            assert_eq!(read()["dependencies"], expected);
+        }
+    }
+}
+
+#[tokio::test]
+async fn task_dependency_properties_are_managed_and_cannot_bypass_start() {
+    for format in ["obsidian", "markdown"] {
+        let f = Fixture::new(format).await;
+        let dependency = f.task("Prerequisite").await;
+        let task = f.task("Dependent").await;
+        f.service
+            .execute(
+                json!({"command":"task.depend","task":task,"dependency":dependency}),
+                WriteOptions::default(),
+            )
+            .await
+            .unwrap();
+        let claim = f.claim(&task, "planner").await;
+        f.service
+            .execute(
+                json!({"command":"plan.create","task":task,"body":"---\ndependencies: []\n---\n\nKeep this plan.\n"}),
+                owner(&claim),
+            )
+            .await
+            .unwrap();
+        let note = f.service.plan(&task).await.unwrap();
+        assert_eq!(note["properties"]["dependencies"], json!([dependency]));
+        let path = note["absolute_path"].as_str().unwrap();
+        std::fs::write(path, "---\ndependencies: []\n---\n\nKeep this plan.\n").unwrap();
+        assert!(
+            f.service
+                .execute(json!({"command":"task.start","task":task}), owner(&claim))
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("dependencies")
+        );
+        f.service.sync().await.unwrap();
+        let note = f.service.plan(&task).await.unwrap();
+        assert_eq!(note["properties"]["dependencies"], json!([dependency]));
+        assert_eq!(note["body"], "Keep this plan.\n");
+        let upstream = f.start(&dependency, "upstream").await;
+        f.service
+            .execute(
+                json!({"command":"task.done","task":dependency}),
+                owner(&upstream),
+            )
+            .await
+            .unwrap();
+        f.service
+            .execute(json!({"command":"task.start","task":task}), owner(&claim))
+            .await
+            .unwrap();
+        assert_eq!(
+            f.service.plan(&task).await.unwrap()["properties"]["dependencies"],
+            json!([dependency])
+        );
+    }
+}
+
+#[tokio::test]
 async fn tasks_exist_before_planning_and_jobs_reference_notes_directly() {
     for format in ["obsidian", "markdown"] {
         let f = Fixture::new(format).await;

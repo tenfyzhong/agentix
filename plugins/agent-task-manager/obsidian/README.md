@@ -18,13 +18,15 @@ In **Settings → TaskNotes → Task Properties**, add the following status valu
 
 | Value | Label | Color | Completed |
 | --- | --- | --- | --- |
-| TODO | Todo | `#526274` | No |
-| IN_PROGRESS | In Progress | `#165dcc` | No |
-| BLOCKED | Blocked | `#9a5200` | No |
-| WAITING_USER | Waiting User | `#7836ad` | No |
-| DONE | Done | `#16703d` | Yes |
-| FAILED | Failed | `#b42332` | No |
-| CANCELLED | Cancelled | `#6b6273` | No |
+| TODO | Todo | `#cbd5e1` | No |
+| IN_PROGRESS | In Progress | `#bfdbfe` | No |
+| BLOCKED | Blocked | `#fed7aa` | No |
+| WAITING_USER | Waiting User | `#ddd6fe` | No |
+| DONE | Done | `#bbf7d0` | Yes |
+| FAILED | Failed | `#fecaca` | No |
+| CANCELLED | Cancelled | `#e2d7e7` | No |
+
+These light status colors are shared with Mermaid node backgrounds. Mermaid labels use dark `#1f2937` text for contrast. Apply the same seven color values to existing TaskNotes settings when updating from an older palette.
 
 Disable automatic archival for these statuses. Failed and Cancelled are terminal taskcli states, but are not successful completion. They have separate board columns. Replace unused default statuses with these seven and set the default status to `TODO`. Preserve definitions that other notes actually use; TaskNotes will show those additional status columns too. The project board explicitly orders taskcli values and keeps empty columns visible.
 
@@ -67,6 +69,8 @@ job_id: job_example
 title: Implement login
 status: IN_PROGRESS
 phase: EXECUTING
+dependencies:
+  - task_prerequisite
 revision: 4
 sequence: 1
 tags:
@@ -87,7 +91,11 @@ completedDate: null
 
 The note's ID identifies the Task. `plan_id` identifies its published plan, and is null until the first plan is published. `revision` is the only revision field in the document and advances with taskcli changes, including Plan publication. The legacy `version` property is removed during sync. Lifecycle timestamps use the computer’s local time zone, with an explicit UTC offset appropriate to each instant. TaskNotes uses the corresponding camelCase date properties.
 
-Organize the body freely around the needs of the task; headings and content are chosen by the agent. Preserve research notes, examples, and checklists that help execute the task. `AGENT_TASK_LANG` controls the language of agent-authored names and prose; it does not translate plugin status values.
+`dependencies` lists prerequisite Task IDs, or is `[]` when there are none. Create the known Tasks and register their dependencies with `task depend TASK PREREQUISITE` before implementation; taskcli creates their files and manages the frontmatter. Existing notes gain this property on sync. Dependency edits must go through taskcli, and `task start` requires every prerequisite to be DONE in the database.
+
+Job task sections include a generated Mermaid graph with arrows from prerequisites to dependent Tasks. Independent Tasks remain visible, and direct prerequisites from other Jobs include their Job name. Each node shows the Task name and exact status, using the seven colors in the configuration above. Click its label to open the Task note through an Obsidian internal link, or hover to preview it. The graph refreshes with taskcli status changes or sync, and task renames refresh its links. These nodes are read-only status displays, not editable TaskNotes widgets; custom vault colors do not change their palette. Ordinary task links remain below the graph for viewers that disable Mermaid links.
+
+When taking up a Task, claim it and publish its Plan into the same note. Other Tasks can remain as metadata notes until their Plans are needed. Organize the body freely around the needs of the task; headings and content are chosen by the agent. Preserve research notes, examples, and checklists that help execute the task. `AGENT_TASK_LANG` controls the language of agent-authored names and prose; it does not translate plugin status values.
 
 Agents continue using `claim → plan create/revise → start → done`. The `plan` commands publish the body of the same Task note; they do not create another directory or a version file. Merely creating a Task note does not satisfy the requirement to publish a plan before starting execution.
 

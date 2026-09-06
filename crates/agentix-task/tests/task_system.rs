@@ -13,6 +13,9 @@ mod deletion;
 #[path = "support/tasknotes.rs"]
 mod tasknotes;
 
+#[path = "support/job_graph.rs"]
+mod job_graph;
+
 struct Fixture {
     dir: TempDir,
     service: Service,

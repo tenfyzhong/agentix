@@ -2,7 +2,7 @@
 
 This document explains how the task-management components work together: who breaks down requirements, who decides when work starts or finishes, who maintains session state, and which operations are protected when multiple agents work concurrently. For command arguments and installation instructions, see the [task board guide](task-board.md) and [plugin guide](../plugins/agent-task-manager/README.md).
 
-The main workflow is `claim → write Plan → start → execute and verify → done`. This is not an automatic scheduler: the agent makes decisions using the Skill, hooks respond to host events, and taskcli validates and persists task state.
+First decompose the requirement into a Task DAG, create or resolve every node’s Task ID, and configure each edge A → B with `task depend B_ID A_ID`. Verify the stored dependencies against the DAG before implementation. Each Task already has a note with managed frontmatter at this point. When taking up a Task, follow `claim → publish Plan in its note → start → execute and verify → done`. The agent makes decisions using the Skill, hooks respond to host events, and taskcli validates and persists task state.
 
 ## 1. Responsibilities
 
@@ -49,11 +49,13 @@ Check the following when decomposing work:
 2. Are its inputs clear, and does it depend on another Task's output?
 3. Can it be completed in an independent worktree? If Tasks must change the same interface or configuration, should they first agree on a contract, declare dependencies, or assign an integration Task?
 4. Does each behavioral Task include its own TDD cycle: a failing test, the smallest implementation, and passing validation?
-5. Is all known initial scope registered before the first Task finishes? Otherwise, the system may consider the Job delivered too early.
+5. Are all known initial Tasks and their dependency edges registered, with generated Task notes available, before implementation starts? This makes the scope visible and prevents premature Job completion. Prepare each detailed Plan when taking up that Task, after claiming it.
 
 Do not split "write the failing test" and "implement the behavior" into independently executable Tasks that can bypass one another. Additional cross-module acceptance checks can be a downstream Task, but they do not replace each behavioral Task's own tests.
 
 Manage dependencies with `task depend` and `task undepend`. They must stay within one Project, may cross Jobs, and must not form cycles. Dependencies cannot change after execution first starts; claim alone does not set the first execution timestamp.
+
+Each Task note exports the prerequisite Task IDs in `dependencies`, including an explicit empty list when none exist. These properties come from SQLite and are restored by sync; Plan frontmatter cannot override them. `task start` checks the database and requires every prerequisite to be DONE. Use the completed outputs when preparing the dependent Task's Plan.
 
 ### 2.3 Who decomposes work, and how duplication is avoided
 

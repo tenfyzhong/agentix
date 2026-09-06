@@ -689,6 +689,11 @@ impl Engine {
     }
 
     async fn available_commands(&self, conversation: &ConversationRef) -> &'static str {
+        if let Some(session) = self.sessions.current(conversation).await
+            && self.agent.is_read_only(&session).await
+        {
+            return "/sessions · /rmux · /current · /history · /detach · /help · /cancel\n\nThis session is connected read-only.";
+        }
         let attached = self
             .sessions
             .bindings
@@ -1291,7 +1296,7 @@ impl Engine {
     async fn attach(
         &self,
         conversation: &ConversationRef,
-        _owner_id: &str,
+        owner_id: &str,
         session_id: SessionId,
     ) -> Result<(), EngineError> {
         let already_attached = self
@@ -1313,9 +1318,29 @@ impl Engine {
             .await?;
             return Ok(());
         }
-        self.agent.attach(&session_id).await?;
+        if let Err(error) = self.agent.attach(&session_id).await {
+            return self
+                .show_attach_failure(conversation, owner_id, &session_id, &error)
+                .await;
+        }
         self.cache_session_summary(&session_id).await;
-        let history = self.agent.read_history(&session_id, None, 1).await?;
+        let history = match self.agent.read_history(&session_id, None, 1).await {
+            Ok(history) => history,
+            Err(error) => {
+                if self
+                    .sessions
+                    .bound_conversation(&session_id)
+                    .await
+                    .is_none()
+                    && let Err(cleanup) = self.agent.unsubscribe(&session_id).await
+                {
+                    tracing::warn!(%cleanup, session = %session_id, "failed to release incomplete attachment");
+                }
+                return self
+                    .show_attach_failure(conversation, owner_id, &session_id, &error)
+                    .await;
+            }
+        };
         self.remember_history_cursors(conversation, &history).await;
         let old = self
             .sessions
@@ -1338,6 +1363,44 @@ impl Engine {
             HistoryPresentation::Attached,
         )
         .await?;
+        Ok(())
+    }
+
+    async fn show_attach_failure(
+        &self,
+        conversation: &ConversationRef,
+        owner_id: &str,
+        session: &SessionId,
+        error: &AgentError,
+    ) -> Result<(), EngineError> {
+        tracing::warn!(%error, %session, "failed to attach IM session");
+        let mut retry = self.attach_action(conversation, owner_id, session).await;
+        retry.label = "Retry attach".into();
+        self.send_view(
+            conversation,
+            &OutboundView {
+                title: format!("{} · Attach failed", self.agent.display_name()),
+                subtitle: Some(session.to_string()),
+                body: format!("{error}\n\nRetry below or use /sessions to choose another session."),
+                status: ViewStatus::Error,
+                actions: vec![retry],
+            },
+        )
+        .await?;
+        Ok(())
+    }
+
+    async fn show_read_only_notice(
+        &self,
+        conversation: &ConversationRef,
+    ) -> Result<(), EngineError> {
+        self.send_view(conversation, &OutboundView {
+            title: format!("{} · Read-only session", self.agent.display_name()),
+            subtitle: None,
+            body: "This session is connected read-only because another Codex process owns it. Use /history to read its latest content, or the original Codex session to send messages and make changes.".into(),
+            status: ViewStatus::Info,
+            actions: Vec::new(),
+        }).await?;
         Ok(())
     }
 
@@ -1402,7 +1465,12 @@ impl Engine {
             presentation,
         )
         .into_iter();
-        if let Some(overview) = views.next() {
+        if let Some(mut overview) = views.next() {
+            if matches!(presentation, HistoryPresentation::Attached)
+                && self.agent.is_read_only(session_id).await
+            {
+                overview.body.push_str("\n\nConnected read-only: another Codex process owns this session. Latest content is checked every 10 seconds; sending messages, stopping turns, and changing settings require the original Codex session.");
+            }
             self.send_view(conversation, &overview).await?;
         }
         let running_turn_id = match presentation {
@@ -1539,6 +1607,9 @@ impl Engine {
         };
         if matches!(command, SessionCommand::Exit) {
             return self.detach(conversation).await;
+        }
+        if self.agent.is_read_only(&session).await {
+            return self.show_read_only_notice(conversation).await;
         }
         if matches!(command, SessionCommand::Rename(None)) {
             self.interactions.session_inputs.lock().await.insert(
@@ -1788,17 +1859,27 @@ impl Engine {
             .channels
             .get(&conversation.channel)
             .ok_or(EngineError::MissingChannel(conversation.channel))?;
-        channel
-            .set_command_menu(
-                conversation,
-                &command_menu(attached && self.agent.capabilities().session_control),
-            )
-            .await?;
+        let mut menu = command_menu(attached && self.agent.capabilities().session_control);
+        if attached
+            && let Some(session) = self.sessions.current(conversation).await
+            && self.agent.is_read_only(&session).await
+        {
+            menu.commands.retain(|command| {
+                matches!(
+                    command.name.as_str(),
+                    "sessions" | "rmux" | "current" | "history" | "detach" | "cancel" | "help"
+                )
+            });
+        }
+        channel.set_command_menu(conversation, &menu).await?;
         Ok(())
     }
 
     async fn stop_current(&self, conversation: &ConversationRef) -> Result<(), EngineError> {
         let session = self.current_session(conversation).await?;
+        if self.agent.is_read_only(&session).await {
+            return self.show_read_only_notice(conversation).await;
+        }
         let turn = self
             .turns
             .active_turn(&session)
@@ -1814,6 +1895,9 @@ impl Engine {
         prompt: &str,
     ) -> Result<(), EngineError> {
         let session = self.current_session(conversation).await?;
+        if self.agent.is_read_only(&session).await {
+            return self.show_read_only_notice(conversation).await;
+        }
         let active = self.turns.active_turn(&session).await;
         if let Some(turn) = active {
             if let Some(queue) = self.agent.queued_prompts() {
@@ -1886,6 +1970,9 @@ impl Engine {
 
     async fn show_queue(&self, conversation: &ConversationRef) -> Result<(), EngineError> {
         let session = self.current_session(conversation).await?;
+        if self.agent.is_read_only(&session).await {
+            return self.show_read_only_notice(conversation).await;
+        }
         let session_label = self.session_label(&session).await;
         let Some(queue) = self.agent.queued_prompts() else {
             self.send_view(
@@ -2514,6 +2601,7 @@ impl Engine {
         };
         let existing = self.turns.views.lock().await.get(&key).cloned();
         let can_stop = is_running
+            && !self.agent.is_read_only(session_id).await
             && delivery == DeliveryClass::Live
             && self.sessions.current(conversation).await.as_ref() == Some(session_id)
             && {
