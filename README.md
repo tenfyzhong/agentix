@@ -224,6 +224,29 @@ For a source build that is not on `PATH`, replace `agentix` with `target/release
 
 If the selected channel has no configured owner, keep `agentix serve` running, execute `agentix client claim` in another local terminal, and send the printed `/claim <code>` command to the bot in a private chat.
 
+## IM task boards
+
+Add the following to `~/.config/agentix/config.toml`, then restart Agentix to browse work in Telegram or Feishu:
+
+```toml
+[task_board]
+config = "~/.config/taskcli/config.toml"
+```
+
+The referenced taskcli configuration and database must already exist. Without this section, board commands report `Task board is not configured.`
+
+| Command | View |
+| --- | --- |
+| `/dashboard` | Project dashboard; click a project to open its task board |
+| `/board` | The attached session's task board; click a task for its Markdown details |
+| `/jobs` | All Jobs associated with the attached session; click a Job for its Markdown details |
+
+`/dashboard` is registered in Telegram’s default menu at startup when the task board is configured. Top-level commands appear in the order `/sessions`, `/dashboard`, `/cancel`, `/rmux`, `/help`; contextual commands follow in alphabetical order. `/board` and `/jobs` are contextual secondary commands added after attach and removed on detach. Both follow the current attachment, including Jobs containing tasks whose lease or last recorded session matches it. Sibling tasks show overall Job progress; blocked and completed work remains visible after lease release. Archived projects and Jobs are excluded from lists.
+
+Job details display the authored Goal and Notes, plus buttons for associated tasks. Task details display the authored Task note body, status and planning/execution phase, with a **Job** button to open the parent Job. Existing Task action buttons remain available where ownership permits. Lists and long Markdown details have **Previous**/**Next** buttons; code fences remain balanced across detail pages. Project boards include a **Dashboard** button, and Job details link to their **Project board**.
+
+Browsing reads current task data without changing task state or Plan hashes. Navigation buttons are scoped to the conversation, owner, and current attachment; reopen the command after switching sessions. The earlier `/projects` and `/sessionboard` commands are replaced by `/dashboard` and `/board`. Legacy `/tasks [job-or-project]` and `/task <id>` remain direct shortcuts. See the [task board guide](docs/task-board.md#agentix-integration) for setup and task actions.
+
 ## Development
 
 Run `make check` to check formatting, run Clippy, and execute the workspace tests. Channel shutdown deadline tests use Tokio's paused clock to verify the shared grace period and task cancellation independently of database and filesystem latency. Service lifecycle tests also exercise startup and shutdown with a temporary SQLite database.

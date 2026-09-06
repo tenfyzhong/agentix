@@ -703,6 +703,17 @@ async fn handle_control_request(
     }
 }
 
+fn telegram_menu_commands(task_board_enabled: bool) -> Vec<teloxide::types::BotCommand> {
+    let mut commands = agentix_telegram::menu_commands();
+    if task_board_enabled {
+        commands.insert(
+            1,
+            teloxide::types::BotCommand::new("dashboard", "Browse projects and task boards"),
+        );
+    }
+    commands
+}
+
 fn build_channels(
     config: &Config,
     config_path: &Path,
@@ -718,7 +729,8 @@ fn build_channels(
             let mut adapter = TelegramAdapter::with_bot(
                 build_telegram_bot(telegram, &config.network)?,
                 TelegramPolicy::new(telegram.owner_user_ids.iter().copied()),
-            );
+            )
+            .with_menu_commands(telegram_menu_commands(config.task_board.is_some()));
             if telegram.owner_user_ids.is_empty() {
                 adapter = adapter.with_owner_claimer(Arc::new(MemoryTelegramOwnerClaimer {
                     path: config_path.to_owned(),
@@ -1323,6 +1335,30 @@ owner_open_ids = ["ou_owner"]
             );
             assert_eq!(channels.len(), 1);
             assert_eq!(channels[0].kind(), expected);
+        }
+    }
+    #[test]
+    fn telegram_default_menu_adds_dashboard_only_when_task_board_is_enabled() {
+        for enabled in [false, true] {
+            let commands = super::telegram_menu_commands(enabled);
+            let expected = if enabled {
+                vec!["sessions", "dashboard", "cancel", "rmux", "help"]
+            } else {
+                vec!["sessions", "cancel", "rmux", "help"]
+            };
+            assert_eq!(
+                commands
+                    .iter()
+                    .map(|c| c.command.as_str())
+                    .collect::<Vec<_>>(),
+                expected
+            );
+            assert_eq!(commands.iter().any(|c| c.command == "dashboard"), enabled);
+            assert!(
+                !commands
+                    .iter()
+                    .any(|c| matches!(c.command.as_str(), "board" | "jobs" | "tasks"))
+            );
         }
     }
 }

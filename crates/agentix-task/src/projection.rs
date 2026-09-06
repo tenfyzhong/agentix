@@ -210,6 +210,25 @@ impl Service {
         Ok(result)
     }
 
+    /// Read the authored Task body without changing its Plan hash or task state.
+    pub async fn task_markdown(&self, id: &str) -> Result<String> {
+        let state = self.store.snapshot().await?;
+        let task = &state.tasks[state.task_index(id)?];
+        let path = self.safe_path(&crate::naming::task_path(&state, task)?)?;
+        let document = std::fs::read_to_string(path)?;
+        Ok(split_properties(&document)?.1.to_owned())
+    }
+
+    /// Read authored Job sections, excluding generated local navigation and graphs.
+    pub async fn job_markdown(&self, id: &str) -> Result<String> {
+        let state = self.store.snapshot().await?;
+        let job = &state.jobs[state.job_index(id)?];
+        let document = std::fs::read_to_string(self.safe_path(&job.document_path)?)?;
+        let goal = section(&document, "goal")?.unwrap_or_else(|| job.goal.clone());
+        let notes = section(&document, "notes")?.unwrap_or_default();
+        Ok(format!("## Goal\n\n{goal}\n\n## Notes\n\n{notes}"))
+    }
+
     fn safe_path(&self, relative: &str) -> Result<PathBuf> {
         let relative = Path::new(relative);
         ensure!(

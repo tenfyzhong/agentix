@@ -5,7 +5,9 @@ use crate::{GoalCommand, SessionCommand};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AgentCommand {
     Help,
-    Jobs(Option<String>),
+    Dashboard,
+    Board,
+    Jobs,
     Tasks(Option<String>),
     Task(String),
     Sessions,
@@ -60,7 +62,9 @@ pub fn parse_input(input: &str) -> Result<ParsedInput, InputParseError> {
         .map_or(raw_command, |(name, _)| name);
     let parsed = match command {
         "/help" => AgentCommand::Help,
-        "/jobs" => AgentCommand::Jobs(parts.next().map(str::to_owned)),
+        "/dashboard" => AgentCommand::Dashboard,
+        "/board" => AgentCommand::Board,
+        "/jobs" => AgentCommand::Jobs,
         "/tasks" => AgentCommand::Tasks(parts.next().map(str::to_owned)),
         "/task" => AgentCommand::Task(
             parts

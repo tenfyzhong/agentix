@@ -11,7 +11,7 @@ use uuid::Uuid;
 mod coordinator;
 mod task_board;
 
-use task_board::{PendingTaskInput, TaskAction};
+use task_board::{PendingTaskInput, TaskAction, TaskBrowse};
 
 use coordinator::{InteractionCoordinator, RmuxController, SessionCoordinator, TurnCoordinator};
 
@@ -72,6 +72,7 @@ impl TurnBuffer {
 #[derive(Debug, Clone)]
 enum UiAction {
     Task(TaskAction),
+    TaskBrowse(TaskBrowse),
     Attach(SessionId),
     Stop {
         session_id: SessionId,
@@ -108,7 +109,7 @@ impl UiAction {
             | Self::BeginInput(interaction)
             | Self::SelectInput { interaction, .. }
             | Self::BeginCustomInput(interaction) => &interaction.session_id == session_id,
-            Self::Multiplexer(_) => false,
+            Self::Multiplexer(_) | Self::TaskBrowse(_) => false,
             Self::Task(action) => &action.session_id == session_id,
         }
     }
@@ -585,8 +586,28 @@ impl Engine {
         command: AgentCommand,
     ) -> Result<(), EngineError> {
         match command {
-            AgentCommand::Jobs(project) => {
-                self.show_task_jobs(conversation, project.as_deref())
+            AgentCommand::Dashboard => {
+                self.update_command_menu_best_effort(
+                    conversation,
+                    self.sessions.current(conversation).await.is_some(),
+                )
+                .await;
+                self.browse_tasks(conversation, owner_id, TaskBrowse::Dashboard(0))
+                    .await?;
+            }
+            AgentCommand::Board => {
+                self.browse_tasks(
+                    conversation,
+                    owner_id,
+                    TaskBrowse::Board {
+                        project: None,
+                        page: 0,
+                    },
+                )
+                .await?;
+            }
+            AgentCommand::Jobs => {
+                self.browse_tasks(conversation, owner_id, TaskBrowse::Jobs(0))
                     .await?;
             }
             AgentCommand::Tasks(filter) => self.show_tasks(conversation, filter.as_deref()).await?,
@@ -659,7 +680,13 @@ impl Engine {
     async fn show_help(&self, conversation: &ConversationRef) -> Result<(), EngineError> {
         let body = self.available_commands(conversation).await;
         let body = if self.task_board.is_some() {
-            format!("{body}\n\n/jobs [project] · /tasks [job-or-project] · /task <id>")
+            let mut body = format!(
+                "{body}\n\n/dashboard — Browse projects; click a project to open its board."
+            );
+            if self.sessions.current(conversation).await.is_some() {
+                body.push_str("\n/board — Current session's task board\n/jobs — Current session's jobs\nClick tasks and jobs to read their Markdown details.");
+            }
+            body
         } else {
             body.to_owned()
         };
@@ -1871,6 +1898,34 @@ impl Engine {
                 )
             });
         }
+        if self.task_board.is_some() {
+            menu.commands.push(ChannelCommand::new(
+                "dashboard",
+                "Browse projects and task boards",
+            ));
+            if attached {
+                menu.commands.extend([
+                    ChannelCommand::new("board", "Show this session's task board").contextual(),
+                    ChannelCommand::new("jobs", "Browse this session's jobs").contextual(),
+                ]);
+            }
+        }
+        let primary = ["sessions", "dashboard", "cancel", "rmux", "help"];
+        menu.commands.sort_by(|left, right| {
+            let rank = |command: &ChannelCommand| {
+                if command.contextual {
+                    primary.len()
+                } else {
+                    primary
+                        .iter()
+                        .position(|name| *name == command.name)
+                        .unwrap_or(primary.len())
+                }
+            };
+            rank(left)
+                .cmp(&rank(right))
+                .then_with(|| left.name.cmp(&right.name))
+        });
         channel.set_command_menu(conversation, &menu).await?;
         Ok(())
     }
@@ -3043,6 +3098,9 @@ impl Engine {
         }
         match action {
             UiAction::Task(action) => self.run_task_action(conversation, owner_id, action).await?,
+            UiAction::TaskBrowse(action) => {
+                self.browse_tasks(conversation, owner_id, action).await?;
+            }
             UiAction::Attach(session) => self.attach(conversation, owner_id, session).await?,
             UiAction::Stop {
                 session_id,

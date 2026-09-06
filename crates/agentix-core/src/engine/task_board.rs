@@ -1,6 +1,9 @@
 use std::sync::Arc;
 
-use agentix_task::{JobStatus, Service, TaskPhase, TaskStatus, WriteOptions};
+use agentix_task::{JobStatus, Service, Snapshot, Task, TaskPhase, TaskStatus, WriteOptions};
+
+mod browse;
+pub(super) use browse::TaskBrowse;
 use serde_json::json;
 
 use super::{
@@ -44,42 +47,6 @@ impl Engine {
         self.task_board
             .as_deref()
             .ok_or_else(|| error("Task board is not configured."))
-    }
-
-    pub(super) async fn show_task_jobs(
-        &self,
-        conversation: &ConversationRef,
-        project: Option<&str>,
-    ) -> Result<(), EngineError> {
-        let service = self.tasks_service()?;
-        let state = service.store().snapshot().await.map_err(error)?;
-        let project = project
-            .map(|p| state.project_index(p).map(|i| state.projects[i].id.clone()))
-            .transpose()
-            .map_err(error)?;
-        let body = state
-            .jobs
-            .iter()
-            .filter(|j| {
-                j.archived_at.is_none() && project.as_ref().is_none_or(|p| *p == j.project_id)
-            })
-            .take(50)
-            .map(|j| format!("{} · {}\n{}", j.id, j.status, j.title))
-            .collect::<Vec<_>>()
-            .join("\n\n");
-        self.send_view(
-            conversation,
-            &OutboundView::text(
-                "Jobs",
-                if body.is_empty() {
-                    "No matching jobs.".into()
-                } else {
-                    body
-                },
-            ),
-        )
-        .await?;
-        Ok(())
     }
 
     pub(super) async fn show_tasks(
@@ -138,6 +105,16 @@ impl Engine {
         owner_id: &str,
         id: &str,
     ) -> Result<(), EngineError> {
+        self.show_task_page(conversation, owner_id, id, 0).await
+    }
+
+    async fn show_task_page(
+        &self,
+        conversation: &ConversationRef,
+        owner_id: &str,
+        id: &str,
+        page: usize,
+    ) -> Result<(), EngineError> {
         let state = self
             .tasks_service()?
             .store()
@@ -146,19 +123,63 @@ impl Engine {
             .map_err(error)?;
         let task = &state.tasks[state.task_index(id).map_err(error)?];
         let job = &state.jobs[state.job_index(&task.job_id).map_err(error)?];
-        let lease = state.leases.iter().find(|l| l.task_id == task.id);
+        let markdown = self
+            .tasks_service()?
+            .task_markdown(id)
+            .await
+            .unwrap_or_else(|_| "Task document is unavailable.".into());
+        let pages = browse::markdown_pages(&markdown);
+        let page = page.min(pages.len() - 1);
         let mut view = OutboundView::text(
             &task.title,
             format!(
-                "{}\nStatus: {}\nPhase: {}\nJob: {}\nRevision: {}\n{}",
+                "**Task:** `{}`\n**Status:** {} · {}\n**Job:** {}\n**Revision:** {}\n\n{}\n\n{}",
                 task.id,
                 task.status,
                 task.phase.map_or_else(|| "—".into(), |p| p.to_string()),
-                job.title,
+                browse::escape(&job.title),
                 task.revision,
-                task.reason.as_deref().unwrap_or("")
+                task.reason
+                    .as_deref()
+                    .map(browse::escape)
+                    .unwrap_or_default(),
+                pages[page]
             ),
         );
+        self.add_browse_actions(
+            conversation,
+            owner_id,
+            &mut view,
+            TaskBrowse::Task {
+                id: id.into(),
+                page,
+            },
+            pages.len(),
+            vec![(
+                "Job".into(),
+                TaskBrowse::Job {
+                    id: task.job_id.clone(),
+                    page: 0,
+                },
+            )],
+        )
+        .await;
+        self.add_task_mutations(conversation, owner_id, &state, task, &mut view)
+            .await;
+        self.send_view(conversation, &view).await?;
+        Ok(())
+    }
+
+    async fn add_task_mutations(
+        &self,
+        conversation: &ConversationRef,
+        owner_id: &str,
+        state: &Snapshot,
+        task: &Task,
+        view: &mut OutboundView,
+    ) {
+        let job = &state.jobs[state.job_index(&task.job_id).expect("task Job")];
+        let lease = state.leases.iter().find(|l| l.task_id == task.id);
         if let Some(session_id) = self.sessions.current(conversation).await
             && job.status != JobStatus::Cancelled
             && job.archived_at.is_none()
@@ -218,8 +239,6 @@ impl Engine {
                 });
             }
         }
-        self.send_view(conversation, &view).await?;
-        Ok(())
     }
 
     pub(super) async fn run_task_action(

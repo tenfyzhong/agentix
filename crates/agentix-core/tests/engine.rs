@@ -387,6 +387,7 @@ struct FakeChannel {
     disabled_actions: Arc<Mutex<Vec<MessageRef>>>,
     messages: Arc<Mutex<HashMap<MessageRef, OutboundView>>>,
     session_commands: Arc<Mutex<Vec<(ConversationRef, bool)>>>,
+    menus: Arc<Mutex<Vec<CommandMenu>>>,
     fail_menu_updates: Arc<Mutex<bool>>,
     task_send_failures: Arc<Mutex<usize>>,
     reject_unchanged_updates: bool,
@@ -489,6 +490,7 @@ impl ChannelAdapter for FakeChannel {
         if *self.fail_menu_updates.lock().unwrap() {
             return Err(ChannelError::Transport("temporary menu failure".into()));
         }
+        self.menus.lock().unwrap().push(menu.clone());
         self.session_commands.lock().unwrap().push((
             conversation.clone(),
             menu.commands
@@ -784,7 +786,16 @@ async fn task_board_actions_reject_other_sessions_and_exited_session_buttons() {
         .handle_inbound(inbound("chat-b", &format!("/task {id}")))
         .await
         .unwrap();
-    assert!(channel.sent().last().unwrap().1.actions.is_empty());
+    assert!(
+        channel
+            .sent()
+            .last()
+            .unwrap()
+            .1
+            .actions
+            .iter()
+            .all(|a| a.label == "Job")
+    );
     engine
         .handle_inbound(inbound("chat-a", "/attach thr_a"))
         .await
@@ -3905,3 +3916,6 @@ async fn stream_and_working_timer_share_the_channel_interval_but_completion_flus
     assert_eq!(channel.updated().len(), before + 2);
     assert!(channel.updated().last().unwrap().1.actions.is_empty());
 }
+
+#[path = "support/task_board.rs"]
+mod task_board;

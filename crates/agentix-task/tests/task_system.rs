@@ -2848,3 +2848,66 @@ async fn a_renamed_plan_never_overwrites_an_unmanaged_note() {
             .contains("Implement and verify")
     );
 }
+
+#[tokio::test]
+async fn im_markdown_reads_authored_sections_without_mutating_state() {
+    for format in ["markdown", "obsidian"] {
+        let f = Fixture::new(format).await;
+        let task = f.task("Read details").await;
+        f.claim(&task, "reader").await;
+        let plan = f.plan(&task).await;
+        let task_path = std::path::Path::new(plan["absolute_path"].as_str().unwrap());
+        let task_doc = std::fs::read_to_string(task_path).unwrap();
+        std::fs::write(
+            task_path,
+            format!("{task_doc}\n## Notes\n\n**Handwritten** `details`\n"),
+        )
+        .unwrap();
+        let state = f.service.store().snapshot().await.unwrap();
+        let job_path = f
+            .service
+            .config()
+            .output_dir()
+            .join(&state.jobs[0].document_path);
+        let doc = std::fs::read_to_string(&job_path)
+            .unwrap()
+            .replace("Ship it", "**Authored goal**")
+            .replace(
+                "<!-- taskcli:notes:start -->",
+                "<!-- taskcli:notes:start -->\n- Keep this note",
+            );
+        std::fs::write(job_path, doc).unwrap();
+        let before = f.service.store().snapshot().await.unwrap();
+        let task_body = f.service.task_markdown(&task).await.unwrap();
+        assert!(task_body.contains("**Handwritten** `details`"));
+        assert!(!task_body.contains("taskcli-generated:"));
+        let job_body = f.service.job_markdown(&f.job).await.unwrap();
+        assert!(job_body.contains("**Authored goal**"));
+        assert!(job_body.contains("- Keep this note"));
+        assert!(!job_body.contains("<!-- taskcli:"));
+        assert!(!job_body.contains("```mermaid"));
+        assert_eq!(before, f.service.store().snapshot().await.unwrap());
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn im_markdown_rejects_notes_that_escape_the_document_root() {
+    let f = Fixture::new("markdown").await;
+    let task = f.task("Read details").await;
+    f.claim(&task, "reader").await;
+    let plan = f.plan(&task).await;
+    let path = std::path::Path::new(plan["absolute_path"].as_str().unwrap());
+    let outside = f.dir.path().join("outside.md");
+    std::fs::write(&outside, "Private data").unwrap();
+    std::fs::remove_file(path).unwrap();
+    std::os::unix::fs::symlink(&outside, path).unwrap();
+    assert!(
+        f.service
+            .task_markdown(&task)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("escapes")
+    );
+}
