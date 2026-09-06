@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { readFile } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { posix } from "node:path";
 
 const root = new URL("../", import.meta.url);
 const readJson = async (path) =>
@@ -135,8 +136,20 @@ test("npm package contains all host manifests, hooks and resources but no tests"
         "extensions/omp.ts",
         "skills/agent-task-manager/SKILL.md",
         "skills/agent-task-manager/references/commands.md",
+        "obsidian/README.md",
+        "obsidian/tasknotes-settings.json",
         "README.md",
     ])
         assert.ok(files.includes(path), `missing packaged file: ${path}`);
     assert.ok(!files.some((path) => path.startsWith("tests/")));
+    for (const path of files.filter(path => path.endsWith(".md"))) {
+        const prose = (await readFile(new URL(path, root), "utf8"))
+            .replace(/```[\s\S]*?```/g, "")
+            .replace(/`[^`\n]*`/g, "");
+        for (const [, target] of prose.matchAll(/\[[^\]]+\]\(([^\s)]+)\)/g)) {
+            if (/^[a-z]+:|^#/i.test(target)) continue;
+            const destination = posix.normalize(posix.join(posix.dirname(path), decodeURIComponent(target.split("#")[0])));
+            assert.ok(files.includes(destination), `${path}: link ${target} is missing from the installed package`);
+        }
+    }
 });

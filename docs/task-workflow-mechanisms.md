@@ -142,7 +142,7 @@ This document uses "hook layer" for both host integration mechanisms: Codex/Clau
 
 ### 5.1 Codex / Claude: command hooks
 
-The repository provides [hooks/hooks.json](../plugins/agent-task-manager/hooks/hooks.json). Its commands run the Node entrypoint [hooks/run.mjs](../plugins/agent-task-manager/hooks/run.mjs), which reads host event JSON from stdin and passes it to the shared runtime.
+Codex explicitly loads [hooks/hooks.json](../plugins/agent-task-manager/hooks/hooks.json) and [hooks/codex.json](../plugins/agent-task-manager/hooks/codex.json). Claude discovers the shared file by default and adds only [hooks/claude.json](../plugins/agent-task-manager/hooks/claude.json) through its manifest. Repeating the shared file in Claude’s manifest would load it twice. These commands run the Node entrypoint [hooks/run.mjs](../plugins/agent-task-manager/hooks/run.mjs), which reads host event JSON from stdin and passes it to the shared runtime.
 
 | Configured host event | Commands | Plugin behavior |
 | --- | --- | --- |
@@ -150,9 +150,11 @@ The repository provides [hooks/hooks.json](../plugins/agent-task-manager/hooks/h
 | PreToolUse | `taskcli hook heartbeat` | Renew the session's active leases |
 | PostToolUse | `taskcli hook heartbeat` | Renew the session's active leases |
 | Stop | `taskcli hook heartbeat` | Renew only; ending a response turn is not Task completion or a session exit |
+| Codex Interrupt | `taskcli hook interrupt` | Mark active Tasks as system BLOCKED with reason `session interrupted`; release leases and preserve Plans |
+| Claude PostToolUseFailure | `taskcli hook interrupt` only when `is_interrupt` is boolean `true` | Release interrupted work; ordinary failures neither renew nor release ownership |
 | SessionEnd | `taskcli hook session-end` | Mark the session's in-progress Tasks as system BLOCKED and release their leases |
 
-Command hooks do not stay running or start a heartbeat daemon. There is no periodic heartbeat without tool events; a single long tool call or an idle gap exceeding 15 minutes can still expire the lease. A PostToolUse heartbeat after expiry cannot revive the old lease; session resumption or a new claim is required.
+Command hooks do not stay running or start a heartbeat daemon. There is no periodic heartbeat without tool events; a single long tool call or an idle gap exceeding 15 minutes can still expire the lease. A PostToolUse heartbeat after expiry or interruption cannot revive the old lease; session resumption or a new claim is required. Stop means normal turn completion, not user interruption. Interrupt/SessionEnd cleanup requests a three-second hook timeout; other command hooks allow 30 seconds. The host may impose a shorter total shutdown budget. See the [lifecycle guide](../plugins/agent-task-manager/README.md#lifecycle-behavior) for event availability, host requirements, and explicit cleanup when no event arrives.
 
 PreToolUse currently only renews leases. It does not check whether the next tool will bypass taskcli to write a Plan, and it is not a general file-write interceptor. The entrypoint returns an error when a hook fails; how the host displays or handles that error depends on its runtime behavior. A failed hook must not be treated as a successful renewal.
 
@@ -165,8 +167,11 @@ Both [pi.ts](../plugins/agent-task-manager/extensions/pi.ts) and [omp.ts](../plu
 | Callback or tool | Plugin behavior |
 | --- | --- |
 | session_start | Resume eligible Tasks and start a once-per-minute heartbeat; on a session switch, attempt to release the previous session's task ownership through session-end |
-| before_agent_start | Query context and inject it as facts, not instructions |
-| session_shutdown | Stop the heartbeat timer and run session-end |
+| before_agent_start | Wait for pending cleanup, restart paused heartbeat, and inject current facts; never claim implicitly |
+| agent_start | Reset the previous aborted-result marker |
+| Pi agent_end + agent_settled | Remember an aborted latest assistant response, then release only when the agent is idle at settle; automatic continuation retains ownership |
+| OMP agent_end | Release an aborted latest assistant response only when `willContinue` is not true |
+| session_shutdown | Stop the timer, cancel in-flight renewal, and run session-end |
 | taskcli tool | Accept an array of argument strings, invoke the actual taskcli process, and return JSON results or errors |
 
 For example, the agent supplies:
@@ -177,13 +182,13 @@ For example, the agent supplies:
 }
 ```
 
-The extension supplies the session and executor from the actual host context and queries the current Task's lease. It automatically attaches the token when the full Task ID in the arguments matches the Task ID in context; do not assume short IDs trigger this behavior. Writes also receive an idempotency key derived from the host, session, and tool call ID.
+The extension supplies the session and executor from the actual host context and queries the current Task's lease. It automatically attaches the token when the full Task ID in the arguments matches the Task ID in context; do not assume short IDs trigger this behavior. Metadata mutations, including Job/Project delete, also receive an idempotency key derived from the host, session, and tool call ID. Retrying a committed delete returns its original result without duplicate events. Sync and lifecycle heartbeats are not metadata mutation calls with this automatic retry key.
 
 The tool invokes a subprocess with an argument array, without interpolating agent-provided content into a shell command. The argument array cannot override managed identity parameters. Ordinary Codex/Claude shell calls do not receive this automatic argument injection; the agent must provide the session and token explicitly.
 
 To retry committed writes whose responses were lost, the extension caches the originally injected tokens for its 512 most recent write requests in the current instance. This cache does not persist across host restarts. New requests must not arbitrarily reuse old idempotency keys.
 
-Pi/OMP reports periodic heartbeat failures and retries on later ticks. Lease expiry remains the fallback if the process exits, pauses for too long, or cannot schedule its timers.
+Pi/OMP reports periodic heartbeat failures and retries on later ticks. Interruption stops renewal before cleanup, and queued old timer callbacks cannot restart it. Cleanup errors propagate and keep renewal paused; repeated cleanup events can retry. Old-session shutdown and interruption callbacks cannot release the new session’s Tasks. Repeated session_start for the same session does not revoke an active executing lease. Lease expiry remains the fallback if the process exits, pauses for too long, or cannot schedule its timers.
 
 ### 5.3 Agentix IM integration
 
@@ -220,7 +225,7 @@ Two request-level protections complement these locks:
 Automatic resumption applies to system interruptions, not manual blocks:
 
 1. Claim enters PLANNING; heartbeats are required throughout planning too.
-2. SessionEnd marks the Task as system BLOCKED and releases its lease. A forcibly killed process may never get a chance to run the hook.
+2. SessionEnd or a detected interruption marks the Task as system BLOCKED and releases its lease, preserving its Plan. A forcibly killed process, idle client disconnect, or host without the matching event may skip cleanup. After stopping that session’s work, explicit `taskcli hook interrupt --session SESSION_ID` or `taskcli hook session-end --session SESSION_ID` can release its leases.
 3. Without a normal exit event, later CLI/library operations or Agentix refreshes check lease expiry and mark expired Tasks as system BLOCKED. No continuously running expiry scanner is required.
 4. SessionStart for the same session attempts to reclaim its previously system-blocked Tasks. Resumption fails if another executor has taken over, the Job has closed, or other claim constraints are not met.
 5. Successful resumption issues a new token and returns to PLANNING. It does not automatically resume execution, even if the previous phase was EXECUTING.
@@ -233,6 +238,8 @@ This distinction prevents a session restart from being mistaken for confirmation
 ## 8. Why Documents Need No Watcher
 
 SQLite is authoritative for task status, dependencies, revisions, ownership, and other metadata. Board, Dashboard, and Job task sections are logically read-only views generated from those facts. TaskNotes card edits and Kanban dragging do not feed status changes back into the system.
+
+Obsidian uses a native `Dashboard.base` table with clickable Name, Status, and Updated formula columns, filtered to active generated project Boards and sorted by recent activity. Markdown uses a compact `Dashboard.md` table. Board contains project metadata; there is no separate meta note or Project link on Board. Sync safely migrates registered legacy files after publishing replacements. Job task sections render dependency arrows, seven statuses, and task links in Mermaid, without repeating Dependencies prose.
 
 Both output formats generate `Board.md` with an embedded TaskNotes Base. It selects Task notes in the exact project folder by project ID and archived state. Each Task has one file under `Tasks/`, whose frontmatter records status and metadata and whose body contains the Plan. Jobs link these notes directly, so their checklists and authored Plan checklists do not duplicate task cards. Link syntax remains format-specific: wikilinks for Obsidian and relative Markdown links for ordinary directories. Rendering requires TaskNotes and Bases; generating Markdown does not modify vault settings.
 
@@ -271,4 +278,4 @@ A future layer could assign the coordinator responsibility for requirements and 
 | Concurrent claims, state transitions, and resumption tests | [task_system.rs](../crates/agentix-task/tests/task_system.rs), [CLI integration tests](../crates/taskcli/tests/cli.rs) |
 | Actual CLI and host-adapter entrypoint integration tests | [integration.mjs](../plugins/agent-task-manager/tests/integration.mjs) |
 
-Existing tests cover competing CLI processes, phase transitions, stale tokens, planning resumption without a Plan, Plan validation, idempotent retries, and hooks calling the actual CLI. Host-adapter tests use event and API harnesses; they do not establish that a real model always decomposes work correctly, reads the Skill, or verifies acceptance. Live host loading, trust settings, and Obsidian desktop rendering remain separate acceptance checks.
+Existing tests cover competing CLI processes, phase transitions, stale tokens, planning resumption without a Plan, Plan validation, idempotent retries, and hooks calling the actual CLI. Host-adapter tests use event and API harnesses; they do not establish that a real model always decomposes work correctly, reads the Skill, or verifies acceptance. The opt-in Obsidian desktop test checks Dashboard tables, project filtering and links, TaskNotes cards, and rendered note navigation in a foreground vault. Live host loading and trust remain separate acceptance checks. See the [coverage map](integration-coverage.md) for test entrypoints and boundaries.

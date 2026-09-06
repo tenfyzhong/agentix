@@ -30,6 +30,10 @@ These commands are available according to the conversation's current attachment 
 
 Unknown or malformed slash commands return a parsing error and the same state-aware command list shown by `/help`.
 
+### Optional task commands
+
+When `[task_board].config` is configured, `/jobs [project]`, `/tasks [job-or-project]`, and `/task <id>` browse tracked work. An attached session can claim a Task and use state actions; Block, Wait, and Fail request a reason, and `/cancel` clears that input. The agent publishes a Plan through taskcli before Start is allowed. Done is offered only during execution. IM does not create Jobs/Tasks or edit Plan bodies. See the [task board workflow](task-board.md#agentix-integration).
+
 ### Codex commands
 
 The following commands are available only while a Codex session is attached:

@@ -74,6 +74,10 @@ Configure the executable and session root, normally `~/.pi/agent/sessions`. The 
 
 Configure `kind = "oh-my-pi"`, the `omp` executable, and its JSONL session root. Agentix resumes each file with `--resume` and uses protocol-v1 JSONL framing for compatibility.
 
+## Optional task coordination
+
+Initialize taskcli separately, then set `[task_board].config` to its configuration path to enable IM task browsing and controls. The task database and document tree are independent of Agentix binding storage. Install the host plugin separately for CLI-session lease hooks; running Agentix is not required for standalone taskcli use. See the [task board guide](task-board.md) for configuration, document migration, backup, and session cleanup.
+
 ## Owner claim setup
 
 For first-time Telegram or Feishu setup, omit the selected channel's owner list or set it to `[]`:
@@ -161,6 +165,6 @@ Tracing timestamps use RFC 3339 in the computer's local time zone and include it
 - Feishu card body output is bounded before transport.
 - Pi/OMP session listing scans JSONL files recursively; very large stores should be indexed in a later release.
 - Codex's persistent queue API is experimental. External queue entries execute automatically, but Codex CLI 0.153.0 keeps Tab-submitted follow-ups in a private, in-process TUI queue and ignores `thread/queue/changed`. That local queue and the app-server queue used by Agentix do not synchronize or deduplicate through the official protocol. The TUI may not show an Agentix queue entry until its turn starts, and Agentix cannot list a Tab-queued TUI entry; `/queue` is authoritative only for the app-server queue. If both queues contain input when a turn ends, each owner may try to submit its next item, producing back-to-back turns with no shared ordering guarantee. Do not use both queues concurrently for the same session.
-- Claude Code support is deferred until a stable, authenticated control transport and approval protocol are selected.
+- Claude Code IM support is deferred until a stable, authenticated control transport and approval protocol are selected. Claude Code can already use the standalone task plugin.
 
 For the development workflow, test architecture, CI, and release process, see [Contributing to Agentix](../CONTRIBUTING.md).

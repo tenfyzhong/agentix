@@ -3,6 +3,9 @@ use std::process::{Command, Output};
 use serde_json::{Value, json};
 use tempfile::TempDir;
 
+#[path = "support/projections.rs"]
+mod projections;
+
 struct Cli {
     dir: TempDir,
 }

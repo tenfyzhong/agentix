@@ -79,6 +79,8 @@ The local control handler runs separately from the serialized engine loop and us
 | `agentix-telegram` | owner policy, mention handling, native command menu, long polling, message edit, callback acknowledgment |
 | `agentix-feishu` | owner policy, long connection, Card JSON 2.0 send/edit, dynamic command cards, reply-context lookup, card callbacks |
 | `agentix` | config, dependency assembly, lifecycle, local control transport, `serve`, `doctor`, and the diagnostic CLI client |
+| `agentix-task` | independent SQLite Projects/Jobs/Tasks/Plans, leases, dependencies, events, and document projection |
+| `taskcli` | standalone task commands and host-hook interface over `agentix-task` |
 
 ## 3. Canonical data flow
 
@@ -263,7 +265,7 @@ On graceful shutdown, the engine checkpoints SQLite, invalidates transient actio
 - Binding menu/notification failure: preserve the already committed binding and log the failed effect.
 - Turn IM send/edit failure: preserve the turn buffer so a later final update still has full content.
 - Lagged broadcast receiver: log the dropped count; completed history remains recoverable from the backend.
-- Missing bound session during restore: fail startup rather than silently misroute.
+- Rejected saved-session attachment during restore: remove the stale binding, retain detached controls, and report the failure; do not route messages to that session.
 
 ## 10. Test architecture
 
@@ -278,7 +280,7 @@ The workspace uses four complementary test layers:
 
 The Codex integration fixture is an in-process mock app-server under `crates/agentix-codex/tests/support/`. Its wire shapes follow the Codex CLI 0.153.0 generated schema for the subset consumed by Agentix. It owns mutable thread, turn, queue, model, reasoning, and goal state; records RPC results, notifications, server requests, and client responses; supports cursor pagination and deterministic RPC failure injection; emits lifecycle, queue, tool, approval, user-input, and externally resolved interaction events; and accepts replacement connections.
 
-The integration suite exercises all 21 client RPC methods used by Agentix. It verifies required protocol fields, session and turn lifecycle, history pagination and fallback, queued prompts, every attached-session command, command and file approvals, plan-style user input, status and tool events, reconnect/resubscribe, and complete Telegram/Feishu-to-engine-to-Codex round trips. Agentix control tests exercise Unix and TCP socket lifecycle, malformed and oversized requests, and process-level client requests without allowing the client to contact the mock Codex socket directly. Service tests cover durable reattachment across restarts, offline notification, retained bindings, control-listener orchestration, and the shared five-second shutdown deadline. CLI diagnostics verify runtime file logging, local timestamps, ANSI-free files, rotation, and bounded retention. The fixtures are hermetic: they do not depend on a developer's Codex installation, daemon state, session files, or network.
+The integration suite exercises the client RPC methods used by Agentix. It verifies required protocol fields, session and turn lifecycle, history pagination and fallback, queued prompts, every attached-session command, command and file approvals, plan-style user input, status and tool events, reconnect/resubscribe, and complete Telegram/Feishu-to-engine-to-Codex round trips. Agentix control tests exercise Unix and TCP socket lifecycle, malformed and oversized requests, and process-level client requests without allowing the client to contact the mock Codex socket directly. Service tests cover durable reattachment across restarts, offline notification, retained bindings, control-listener orchestration, and the shared five-second shutdown deadline. CLI diagnostics verify runtime file logging, local timestamps, ANSI-free files, rotation, and bounded retention. The fixtures are hermetic: they do not depend on a developer's Codex installation, daemon state, session files, or network.
 
 Core message-center tests verify FIFO admission across clones, independent inbound progress and backpressure, cancellation, and failure release. Adapter regressions verify that repeated 429 responses cannot let later operations overtake the head, that cancelled heads preserve cooldowns, and that Telegram inbound actions do not wait for rate-limited acknowledgements.
 
@@ -286,10 +288,10 @@ The Telegram fixture implements the Bot API methods used by the adapter and reco
 
 rmux integration is split at the workspace-runtime boundary: Codex adapter tests validate typed SDK inventory conversion and launch arguments, core tests validate navigation and mutations against a fake runtime port, and a mock Unix daemon decodes the real `rmux-proto` packets sent by the public `rmux-sdk` client for pane clearing, process respawn, session/window creation, and splitting. Connecting to a live rmux daemon is retained as an environment smoke test because the daemon is maintained outside this workspace.
 
-CI runs all platform-applicable tests on Linux, macOS, and Windows, including the TCP control suite on each platform. `agentix-codex` exposes a clear unsupported-transport result on Windows because Codex app-server integration currently requires WebSocket over a Unix-domain socket.
+CI runs the full workspace suite on Linux and macOS. Windows checks the whole workspace and runs the native TCP control tests plus the task library, taskcli, and plugin tests; it does not run the full workspace test suite. `agentix-codex` exposes a clear unsupported-transport result on Windows because Codex app-server integration currently requires WebSocket over a Unix-domain socket.
 
 Focused scripted UDS tests remain useful for malformed, missing, or version-specific response shapes. The stateful mock is used when correctness depends on a sequence of operations and the state created by earlier requests.
 
 ## 11. Task coordination
 
-`agentix-task` owns an independent SQLite database, task leases, dependency validation, audit events, and read-only document projection. `taskcli` and the optional Engine task-board integration share this library. Task action buttons reuse the existing ActionRegistry scope and add task revisions and lease fencing; periodic runtime refresh consumes event cursors for bound-session notifications. Future Agent Team tooling owns shared Job context externally. See [Task board](task-board.md) for the full API and recovery boundaries.
+`agentix-task` owns an independent SQLite database, task leases, dependency validation, audit events, and read-only document projection. `taskcli` and the optional Engine task-board integration share this library. Task action buttons reuse the existing ActionRegistry scope and add task revisions and lease fencing; periodic runtime refresh consumes event cursors for bound-session notifications. Future Agent Team tooling owns shared Job context externally. Obsidian projects are listed in a native `Dashboard.base` table; Markdown output uses `Dashboard.md`. `Board.md` is the project note and embeds its TaskNotes Kanban view; Job documents display dependencies and seven Task states in clickable Mermaid graphs. Projections remain logically read-only and never import task-state edits. See [Task board](task-board.md) for the full API and recovery boundaries, and the [integration coverage map](integration-coverage.md) for executable checks.

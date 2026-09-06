@@ -95,6 +95,99 @@ async fn dashboard_activity_comes_from_work_and_markdown_uses_a_compact_table() 
 }
 
 #[tokio::test]
+async fn dashboard_orders_projects_by_work_activity_then_name_and_filters_archives() {
+    let f = Fixture::new("markdown").await;
+    let other_root = tempfile::TempDir::new().unwrap();
+    let other = f
+        .service
+        .execute(
+            json!({"command":"project.register","name":"Alpha","root":other_root.path()}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap()
+        .result["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let path = f.service.config().output_dir().join("Dashboard.md");
+    let rows = || {
+        std::fs::read_to_string(&path)
+            .unwrap()
+            .lines()
+            .filter(|line| line.starts_with("| ["))
+            .map(str::to_owned)
+            .collect::<Vec<_>>()
+    };
+    assert!(rows()[0].contains("[Alpha]"), "ties sort by name");
+    f.clock.fetch_add(60, Ordering::SeqCst);
+    f.task("Recent work").await;
+    assert!(rows()[0].contains("[demo]"), "latest work sorts first");
+    f.clock.fetch_add(60, Ordering::SeqCst);
+    f.service
+        .execute(
+            json!({"command":"project.archive","project":other}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(rows().len(), 1);
+    f.service
+        .execute(
+            json!({"command":"project.unarchive","project":other}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(rows().len(), 2);
+    assert!(
+        rows()[0].contains("[demo]"),
+        "unarchive restores visibility without inventing work activity"
+    );
+    let other_job = f
+        .service
+        .execute(
+            json!({"command":"job.create","project":other,"title":"New work"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap()
+        .result["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(rows()[0].contains("[Alpha]"));
+    f.clock.fetch_add(60, Ordering::SeqCst);
+    f.service
+        .execute(
+            json!({"command":"job.update","job":f.job,"goal":"New acceptance"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        rows()[0].contains("[demo]"),
+        "job updates also count as activity"
+    );
+    f.service
+        .execute(
+            json!({"command":"job.delete","job":other_job}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(rows().len(), 2, "deleting work retains its project");
+    f.service
+        .execute(
+            json!({"command":"project.delete","project":other}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(rows().len(), 1);
+}
+
+#[tokio::test]
 async fn dashboard_migration_protects_collisions_and_recovers_after_partial_publication() {
     let f = Fixture::new("markdown").await;
     let root = f.service.config().output_dir();

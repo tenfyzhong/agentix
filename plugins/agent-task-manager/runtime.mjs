@@ -257,6 +257,7 @@ export function registerExtension(
                 "release",
                 "archive",
                 "unarchive",
+                "delete",
                 "depend",
                 "undepend",
             ]);

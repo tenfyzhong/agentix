@@ -53,7 +53,7 @@ async function fixture(t, format = "markdown") {
         "--title",
         "Integration",
     ]);
-    return { dir, root, job, run, cleanup };
+    return { dir, root, project, job, run, cleanup };
 }
 
 function taskLanguage(t, language) {
@@ -204,6 +204,28 @@ test("tool retries preserve identity after claim, Plan revision and lease-releas
     );
 });
 
+for (const host of ["pi", "omp"]) {
+    for (const entity of ["job", "project"]) {
+        test(`${host} ${entity} deletion replays its committed result without duplicate events`, async (t) => {
+            const f = await fixture(t);
+            const x = await extension(t, f, host);
+            const task = await x.invoke(["task", "add", "--job", f.job.id, "--title", "Delete safely"]);
+            await x.invoke(["task", "claim", task.id]);
+            const args = [entity, "delete", f[entity].id];
+            await assert.rejects(x.invoke(args, "delete-once"), /release active Task leases/);
+            await x.handlers.get("session_shutdown")({}, x.ctx);
+            const deleted = await x.invoke(args, "delete-once");
+            assert.equal(deleted.deleted, true);
+            const events = await f.run(["event", "list"]);
+            assert.deepEqual(await x.invoke(args, "delete-once"), deleted);
+            assert.deepEqual(await f.run(["event", "list"]), events);
+            await assert.rejects(x.invoke([entity, "delete", "missing"], "delete-once"), /idempotency|different/);
+            await assert.rejects(f.run(["task", "show", task.id]), /not_found/);
+            assert.equal((await f.run(["doctor"])).healthy, true);
+        });
+    }
+}
+
 async function hookProcess(event, command, host, root, shell) {
     const args =
         process.platform === "win32"
@@ -276,6 +298,18 @@ for (const host of ["codex", "claude"]) {
                 }
             }
             const interruptEvent = host === "codex" ? "Interrupt" : "PostToolUseFailure";
+            if (host === "claude") {
+                const events = await f.run(["event", "list"]);
+                for (const is_interrupt of [undefined, false, "true"]) {
+                    await hookProcess(
+                        { hook_event_name: interruptEvent, is_interrupt, session_id: options.session, cwd: f.dir },
+                        hooks[interruptEvent][0].hooks[0].command,
+                        host, root, shell,
+                    );
+                    assert.deepEqual(await f.run(["task", "show", task.id]), claim);
+                    assert.deepEqual(await f.run(["event", "list"]), events);
+                }
+            }
             let expectedStatus = "IN_PROGRESS";
             for (const name of [
                 "SessionStart",
@@ -371,6 +405,39 @@ test("real CLI errors, aborts and identity overrides are not reported as success
 });
 
 for (const host of ["pi", "omp"]) {
+    test(`${host} normal continuations and stale session callbacks preserve the current lease`, async (t) => {
+        const f = await fixture(t);
+        const x = await extension(t, f, host);
+        const task = await x.invoke(["task", "add", "--job", f.job.id, "--title", "Continue work"]);
+        const claim = await x.invoke(["task", "claim", task.id]);
+        await x.invoke(["plan", "create", task.id, "--body", "# Continue"]);
+        await x.invoke(["task", "start", task.id]);
+        await x.handlers.get("session_start")({}, x.ctx);
+        for (const event of [
+            { messages: [{ role: "assistant", stopReason: "stop" }] },
+            { messages: [{ role: "assistant", stopReason: "aborted" }], willContinue: true },
+            { messages: [{ role: "assistant", stopReason: "aborted" }, { role: "assistant", stopReason: "stop" }] },
+        ]) {
+            await x.handlers.get("agent_end")(event, x.ctx);
+            if (host === "pi") await x.handlers.get("agent_settled")({}, x.ctx);
+            const current = await f.run(["task", "show", task.id]);
+            assert.equal(current.phase, "EXECUTING");
+            assert.equal(current.lease.token, claim.lease.token);
+        }
+        const nextCtx = { ...x.ctx, sessionManager: { getSessionId: () => `next:${host}` } };
+        await x.handlers.get("session_start")({}, nextCtx);
+        f.cleanup.push(() => x.handlers.get("session_shutdown")({}, nextCtx));
+        assert.equal((await f.run(["task", "show", task.id])).reason, "session ended");
+        const other = await f.run(["task", "add", "--job", f.job.id, "--title", "New session"]);
+        const next = await f.run(["task", "claim", other.id], { executor: `agent:${host}:next:${host}`, session: `next:${host}` });
+        await x.handlers.get("agent_end")({ messages: [{ role: "assistant", stopReason: "aborted" }] }, x.ctx);
+        if (host === "pi") await x.handlers.get("agent_settled")({}, x.ctx);
+        await x.handlers.get("session_shutdown")({}, x.ctx);
+        assert.deepEqual(await f.run(["task", "show", other.id]), next);
+        await x.handlers.get("session_shutdown")({}, nextCtx);
+        assert.equal((await f.run(["task", "show", other.id])).lease, null);
+    });
+
     for (const executing of [false, true]) {
         test(`${host} releases ${executing ? "executing" : "planning"} work on interruption and shutdown`, async (t) => {
             const f = await fixture(t);

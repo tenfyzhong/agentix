@@ -25,7 +25,7 @@ taskcli event list --job job_ID --after 0 --json
 taskcli sync --json
 ```
 
-The examples include alternative state transitions: after retry/reopen/release, claim again before publishing a Plan or starting. The Pi/OMP taskcli tool accepts `{ "args": ["task", "start", "task_ID"] }` or `done`; its adapter supplies session, executor, current lease token, and write idempotency key. Use full Task IDs for this automatic token attachment. For shell calls, supply them explicitly. New claims return a new token, including after session resume. Start preserves that token.
+The examples include alternative state transitions: after retry/reopen/release, claim again before publishing a Plan or starting. The Pi/OMP taskcli tool accepts `{ "args": ["task", "start", "task_ID"] }` or `done`; its adapter supplies session, executor, current lease token, and write idempotency key. Use full Task IDs for this automatic token attachment. Job/Project deletion through this tool also receives a write idempotency key, so retrying the same host call returns the original result. For shell calls, supply identity and any retry key explicitly. New claims return a new token, including after session resume. Start preserves that token.
 
 Register the known task graph before implementation. In the example, replace `task_FIRST` and `task_SECOND` with the IDs returned by the two adds; `task depend task_SECOND task_FIRST` makes the second Task wait for the first. Each add creates a note immediately. Dependency commands update its managed `dependencies` frontmatter list; no Plan is published during this decomposition step.
 

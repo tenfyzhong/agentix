@@ -71,7 +71,7 @@ node --test plugins/agent-task-manager/tests/*.test.mjs
 
 `make check` installs the locked plugin dependencies automatically. When running Cargo directly, run the npm command above first: the taskcli integration suite imports the actual Pi/OMP TypeScript entrypoints. Node is required; these checks never silently skip missing dependencies.
 
-The optional desktop Obsidian smoke test is ignored by default and requires an explicitly selected open test vault. It creates and removes only its own temporary files and tab. See [task board validation](docs/task-board.md#validation) for the command and the boundaries that still require live-system acceptance.
+The optional desktop Obsidian smoke test is ignored by default and requires an explicitly selected open test vault. It creates and removes only its own temporary files and tab. Bring the selected vault window to the foreground before running it. See [task board validation](docs/task-board.md#validation) for the command and the [integration coverage map](docs/integration-coverage.md) for automated boundaries and separate live-system acceptance.
 
 The test suite is layered. Protocol and rendering tests cover pure mappings; adapter tests cover Telegram, Feishu, Pi, and Codex transports; and core tests exercise routing, persistence, actions, interactions, and lifecycle transitions. Full-stack tests pass mocked Telegram and Feishu events through the channel adapter, engine, and Codex client before verifying the completed response at the channel API.
 

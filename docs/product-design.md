@@ -8,7 +8,8 @@ The first release supports:
 
 | Area | Included | Deferred |
 | --- | --- | --- |
-| Agents | Codex, Pi, Oh My Pi | Claude Code |
+| IM agent backends | Codex, Pi, Oh My Pi | Claude Code transport |
+| Standalone task coordination | taskcli and the Codex, Claude Code, Pi, and OMP plugin | automatic team scheduling |
 | IM channels | Telegram, Feishu | Slack, Discord, others |
 | Session operations | discover, attach, current, detach, history, create, fork, compact | archive/delete |
 | Turn operations | start, persistent Codex follow-up queue, steer, stream, stop, model and reasoning settings | sandbox configuration |
@@ -16,7 +17,7 @@ The first release supports:
 
 ## 2. Core user model
 
-An Agentix instance selects one agent backend and may enable one or both IM channels. The same backend can have many concurrent sessions.
+An Agentix instance selects one agent backend and exactly one IM channel. Running Telegram and Feishu together requires separate configuration/state instances. The same backend can have many concurrent sessions.
 
 The core invariant is deliberately strict:
 
@@ -92,7 +93,7 @@ When a turn finishes outside the currently attached session, Agentix identifies 
 - Tokens are bound to conversation, owner, and one in-memory action.
 - After an approval decision succeeds, the original IM view removes every decision button and shows the selected option.
 - Structured input renders one question at a time with buttons for declared options and an `Other…` path for free text. After the last answer, Agentix submits the complete question-ID map and replaces the controls with a summary.
-- A request resolved by another app-server client removes its IM actions and pending free-text mode, then displays `Resolved outside Telegram`; the notification does not reveal the external decision or answers.
+- A request resolved by another app-server client removes its IM actions and pending free-text mode, then marks it as resolved externally; the notification does not reveal the external decision or answers.
 - Any backend disconnect invalidates old buttons and pending reply modes.
 - Choosing `Other…` enters a reply mode for the current conversation; `/cancel` returns to that question's choices.
 - Feishu callbacks are acknowledged by the SDK before the action is processed.

@@ -242,3 +242,5 @@ CI uses Rust 1.95.0. Ensure `cargo`, `rustc`, `cargo-clippy`, and `rustfmt` all 
 - [Product design](docs/product-design.md)
 - [Internal architecture and message flow diagrams](docs/architecture.md): service components, duplex FIFO queues, and rate-limit retry ordering
 - [Task board, standalone CLI, and agent plugin](docs/task-board.md)
+- [Task workflow responsibilities and lifecycle](docs/task-workflow-mechanisms.md)
+- [Integration coverage and live acceptance boundaries](docs/integration-coverage.md)
