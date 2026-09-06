@@ -54,11 +54,11 @@ The format is mandatory. The root must be an existing absolute directory, and Ob
 ```sh
 taskcli project register                       # Run in the Git worktree
 taskcli project register --root /work/docs --name Docs
-taskcli job create --project prj_ID --title "New requirement" --goal "Acceptance checks"
-taskcli task add --job job_ID --title "Implement and verify the storage layer"
-taskcli task add --job job_ID --title "Integrate the client"
+taskcli job create --project prj_ID --title "New requirement" --goal "Acceptance checks" --executor agent:HOST --session HOST_SESSION
+taskcli task add --job job_ID --title "Implement and verify the storage layer" --executor agent:HOST --session HOST_SESSION
+taskcli task add --job job_ID --title "Integrate the client" --executor agent:HOST --session HOST_SESSION
 taskcli task depend task_CLIENT task_STORAGE
-taskcli task claim task_STORAGE --executor agent:member --session HOST_SESSION --json
+taskcli task claim task_STORAGE --executor agent:HOST:member --session HOST_SESSION --json
 # After claim succeeds, draft the Plan and publish it with the returned token:
 taskcli plan create task_STORAGE --file /work/storage-plan.md --session HOST_SESSION --lease-token lease_TOKEN
 taskcli task start task_STORAGE --session HOST_SESSION --lease-token lease_TOKEN
@@ -117,6 +117,8 @@ Names preserve Unicode and spaces. IDs stay in YAML frontmatter, not filenames. 
 Job and Task Plan filenames begin with `YYMMDD-seq-`, for example `260905-0001-Implement login.md`. The date is the Job or Task creation date in UTC, even if its Plan is created later. Sequence numbers start at 1 each day, independently for Jobs and Tasks in each project (Tasks across Jobs share the project counter), and use at least four digits. Allocation is transactional; archived or cancelled work keeps its number. Renaming and Plan revisions preserve the prefix, and display names remain concise. The `sequence` property is stored with Job and Task metadata and the Task’s Plan frontmatter.
 
 Generated Markdown documents have YAML frontmatter containing an ID, creation time, and a type tag. `Dashboard.base` contains native Base YAML with a generated-file comment instead of Markdown frontmatter. Job properties include IDs, sequence, status, revision, and creation/update/start/completion/cancellation/archive times. They omit `document_path`, `title`, `name`, and embedded `task`/`tasks` fields; the Job heading and Task note links remain in the document body. Task properties include `revision` and lifecycle times, without a `version` field. Task timestamps are ISO 8601 in the computer’s local time zone, with the offset for each timestamp; other document timestamps remain UTC. CLI JSON timestamps remain Unix seconds. Project `Board.md` also provides `updated_at`, derived from the latest project creation/archive or Job/Task update timestamp; syncing alone does not advance it. It records the repository root, Git remote, revision, archive state, `sync_status`, and `sync_sequence`. Board is the project note and also embeds its task view. Its ID is the Project ID. Sync migrates generated `meta.md` information into Board, updates Dashboard and task project links to Board, and deletes the old managed meta file after publishing the replacement documents. Board has no separate Project link.
+
+Job and Task frontmatter includes managed `agent` and `session_id` properties. Jobs retain their creator's identity; Tasks initially record their creator and switch to the most recent claimant when claimed. Releasing, completing, or archiving work preserves these values. Pass `--executor agent:HOST --session HOST_SESSION` on `job create` and `task add`, as well as `task claim`; `HOST` is `codex`, `claude`, `pi`, or `omp`. Plain host names and `agent:HOST:SESSION` executor references are also recognized. Pi/OMP's structured tool supplies both flags automatically. Unknown agents and missing session IDs remain `null`; sync adds these fields to older notes using stored identity where available, without guessing a Job creator. Authored Plan properties cannot override these fields. Session IDs identify provenance and do not grant a lease.
 
 | Document | Tags |
 | --- | --- |
@@ -235,7 +237,8 @@ The vault is not a complete database export:
 | Plan body, custom properties, Goal, and Notes | Authored note content; SQLite does not retain a complete copy after publication |
 | Task dependencies | Prerequisite Task IDs in Task frontmatter `dependencies`, with navigable links in Job prose; no import contract |
 | Task reasons | Displayed in Job prose; not exported in Task frontmatter |
-| Task ordering and execution bookkeeping | Position, last executor/session, delegation, and system-block flag are not fully exported |
+| Agent and session provenance | Job creator and Task creator/latest claimant in managed `agent` and `session_id` frontmatter |
+| Task ordering and execution bookkeeping | Position, full executor reference, delegation, and system-block flag are not fully exported |
 | Ownership leases | Tokens and expiration times are not exported |
 | Audit history and request idempotency | Event log, request fingerprints, and saved results remain in SQLite |
 | Internal Plan publication state | Publication counters, hashes, and pending unpublished bodies are not fully exported; document `revision` does not replace the internal publication counter |

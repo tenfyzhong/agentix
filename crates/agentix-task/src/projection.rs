@@ -665,6 +665,7 @@ impl Service {
         let generated = json!({
             "id":task.id,"task_id":task.id,"plan_id":task.current_plan,"job_id":task.job_id,"project_id":task.project_id,
             "sequence":task.sequence,"revision":task.revision,"dependencies":task.dependencies,
+            "agent":task.last_executor.as_deref().and_then(crate::model::agent_name),"session_id":task.last_session,
             "status":task.status,"phase":task.phase,"archived":job.archived_at.is_some() || project.archived_at.is_some(),
             "created_at":local_timestamp(task.created_at)?,"updated_at":local_timestamp(task.updated_at)?,
             "started_at":optional_local_timestamp(task.started_at)?,"completed_at":optional_local_timestamp(task.completed_at)?,
