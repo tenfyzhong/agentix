@@ -25,6 +25,7 @@ test("Pi and OMP remote packages discover their adapters and install runtime dep
     }
 
     const directory = await mkdtemp(`${tmpdir()}/agentix-pi-install-`);
+    const npmCache = await mkdtemp(`${tmpdir()}/agentix-npm-cache-`);
     try {
         await mkdir(`${directory}/plugins/agent-task-manager`, { recursive: true });
         for (const path of ["package.json", "package-lock.json", "plugins/agent-task-manager"]) {
@@ -38,7 +39,12 @@ test("Pi and OMP remote packages discover their adapters and install runtime dep
             process.platform === "win32"
                 ? ["/d", "/s", "/c", command]
                 : ["-c", command],
-            { cwd, encoding: "utf8", timeout: 30000 },
+            {
+                cwd,
+                encoding: "utf8",
+                timeout: 30000,
+                env: { ...process.env, npm_config_cache: npmCache },
+            },
         );
         // OMP installs the repository as a dependency, where root workspaces
         // alone do not install the nested extension's runtime dependencies.
@@ -46,17 +52,17 @@ test("Pi and OMP remote packages discover their adapters and install runtime dep
         const consumer = `${directory}/consumer`;
         await mkdir(consumer);
         const lock = await readJson("../../package-lock.json");
-        // Use the already cached lockfile tarballs, without registry metadata.
+        // Use exact lockfile tarballs without resolving version ranges.
         // Overrides do not add dependencies missing from the installed package.
         const overrides = Object.fromEntries(Object.keys(plugin.dependencies).map(name => [
             name, lock.packages[`node_modules/${name}`].resolved,
         ]));
         await writeFile(`${consumer}/package.json`, `${JSON.stringify({ private: true, overrides }, null, 2)}\n`);
         await cp(`${directory}/${archive.filename}`, `${consumer}/package.tgz`);
-        runNpm("npm install ./package.tgz --ignore-scripts --offline --no-audit --no-fund", consumer);
+        runNpm("npm install ./package.tgz --ignore-scripts --prefer-offline --no-audit --no-fund", consumer);
         for (const host of ["omp", "pi"]) {
             if (host === "pi") {
-                runNpm("npm ci --ignore-scripts --offline --no-audit --no-fund", directory);
+                runNpm("npm ci --ignore-scripts --prefer-offline --no-audit --no-fund", directory);
             }
             const installedRoot = host === "pi" ? directory : `${consumer}/node_modules/${pkg.name}`;
             let entrypoint = join(installedRoot, pkg[host].extensions[0]);
@@ -82,6 +88,7 @@ test("Pi and OMP remote packages discover their adapters and install runtime dep
         }
     } finally {
         await rm(directory, { recursive: true, force: true });
+        await rm(npmCache, { recursive: true, force: true });
     }
 });
 

@@ -106,6 +106,8 @@ When updating an existing local marketplace installation, rebuild/install taskcl
 
 ## Validation
 
+The remote-package installation test starts with an isolated empty npm cache and downloads missing locked dependencies from the npm registry. It verifies both Pi checkout installs and OMP package-consumer installs without relying on the host's existing cache.
+
 From the repository root, run `make check` with Node.js 24+ and npm. Tests validate both marketplace entries, inspect host-specific hook discovery, import the manifest-selected Pi/OMP extensions, and verify the npm package file list. Cargo additionally exercises the configured commands with the compiled taskcli, one host root variable at a time, from an unrelated working directory and a plugin path containing spaces/Unicode. Linux/macOS CI exercises both sh and fish; Windows tests execute the configured command through `cmd.exe` rather than bypassing it.
 
 To additionally exercise a Unix hook shell such as fish:
