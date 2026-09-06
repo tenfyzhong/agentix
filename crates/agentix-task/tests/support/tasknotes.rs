@@ -53,9 +53,13 @@ async fn board_contains_project_metadata_and_is_the_only_project_link_target() {
         assert!(!root.join("Projects/demo/meta.md").exists());
         assert!(!board.contains("|Project]]") && !board.contains("[Project]("));
         assert_eq!(base(&board)["views"][0]["type"], "tasknotesKanban");
-        let dashboard = std::fs::read_to_string(root.join("Dashboard.md")).unwrap();
+        let dashboard = std::fs::read_to_string(root.join(f.dashboard_file())).unwrap();
         assert!(!dashboard.contains("/meta"));
-        assert_eq!(dashboard.matches("Projects/demo/Board").count(), 1);
+        if format == "markdown" {
+            assert_eq!(dashboard.matches("Projects/demo/Board").count(), 1);
+        } else {
+            assert!(dashboard.contains("link(file.path, note.name)"));
+        }
         let task_path = root.join("Projects/demo/Tasks/260905-0001-Linked task.md");
         assert_eq!(
             properties(&std::fs::read_to_string(task_path).unwrap())["projects"],
@@ -86,7 +90,7 @@ async fn board_contains_project_metadata_and_is_the_only_project_link_target() {
         assert_eq!(archived["status"], "ARCHIVED");
         assert!(archived["archived_at"].is_string());
         assert!(
-            !std::fs::read_to_string(root.join("Dashboard.md"))
+            !std::fs::read_to_string(root.join(f.dashboard_file()))
                 .unwrap()
                 .contains("Projects/demo/Board")
         );
@@ -693,7 +697,7 @@ async fn sync_removes_managed_task_lists_and_their_navigation_links() {
             .count(),
         1
     );
-    for path in ["Dashboard.md", "Projects/demo/Board.md"] {
+    for path in [f.dashboard_file(), "Projects/demo/Board.md"] {
         let doc = std::fs::read_to_string(root.join(path)).unwrap();
         assert!(!doc.contains("/Tasks|"));
         assert!(!doc.contains("Task list"));

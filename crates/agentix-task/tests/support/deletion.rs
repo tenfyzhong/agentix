@@ -347,9 +347,9 @@ async fn project_deletion_removes_its_entire_output_directory_only() {
     assert!(state.tasks.is_empty());
     assert!(state.plans.is_empty());
     assert!(
-        !std::fs::read_to_string(root.join("Dashboard.md"))
+        !std::fs::read_to_string(root.join(f.dashboard_file()))
             .unwrap()
-            .contains("## demo")
+            .contains("[demo](")
     );
 }
 

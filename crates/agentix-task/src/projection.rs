@@ -246,20 +246,13 @@ impl Service {
             .map(|p| p.created_at)
             .min()
             .unwrap_or(self.store.now());
-        let mut dashboard = frontmatter(
-            json!({"id":"dashboard", "created_at":timestamp(created), "tags":["agent/dashboard"]}),
-        );
-        dashboard.push_str(&Self::header("Task dashboard"));
+        let (dashboard_path, dashboard) = self.dashboard(&state, created)?;
         for project in &state.projects {
             let board_path = format!("Projects/{}/Board.md", project.key);
-            if project.archived_at.is_none() {
-                dashboard.push_str(&format!(
-                    "\n## {}\n\n{}\n",
-                    escape(&project.name),
-                    self.link("Dashboard.md", &board_path, None, "Board")
-                ));
-            }
-            files.insert(board_path.clone(), self.tasknotes_board(project, sequence)?);
+            files.insert(
+                board_path.clone(),
+                self.tasknotes_board(project, sequence, project_activity(&state, project))?,
+            );
             paths.insert(format!("board:{}", project.id), board_path.clone());
             for job in state.jobs.iter().filter(|j| j.project_id == project.id) {
                 let key = format!("job:{}", job.id);
@@ -366,18 +359,23 @@ impl Service {
                 paths.insert(format!("plan:{}", plan.id), path);
             }
         }
-        files.insert("Dashboard.md".into(), dashboard);
-        paths.insert("dashboard".into(), "Dashboard.md".into());
+        files.insert(dashboard_path.clone(), dashboard);
+        paths.insert("dashboard".into(), dashboard_path);
         // Check all new destinations before publishing any file. Existing managed
         // paths can be regenerated; new paths must not clobber unrelated notes.
         for (relative, contents) in &files {
             let path = self.safe_path(relative)?;
             if path.exists() && !previous.values().any(|old| old == relative) {
                 let existing = std::fs::read_to_string(&path)?;
-                let (old, _) = split_properties(&existing)?;
-                let (new, _) = split_properties(contents)?;
+                let owned = if relative == "Dashboard.base" {
+                    existing.starts_with("# taskcli-generated: dashboard\n")
+                } else {
+                    let (old, _) = split_properties(&existing)?;
+                    let (new, _) = split_properties(contents)?;
+                    old["taskcli-generated"] == true && old["id"] == new["id"]
+                };
                 ensure!(
-                    old["taskcli-generated"] == true && old["id"] == new["id"],
+                    owned,
                     "conflict: unmanaged document exists at {}",
                     path.display()
                 );
@@ -481,7 +479,71 @@ impl Service {
         "> GENERATED — DO NOT EDIT task fields. Use taskcli or an Agent."
     }
 
-    fn tasknotes_board(&self, project: &crate::Project, sequence: i64) -> Result<String> {
+    fn dashboard(&self, state: &Snapshot, created: i64) -> Result<(String, String)> {
+        if self.config.documents.format == DocumentFormat::Obsidian {
+            let folder = self.config.documents.directory.join("Projects");
+            let folder = folder.to_string_lossy().replace('\\', "/");
+            let folder = folder.trim_start_matches("./");
+            let base = json!({
+                "filters": {"and": [
+                    format!("file.inFolder({})", json!(folder)),
+                    "file.name == \"Board\"", "file.ext == \"md\"",
+                    "file.hasTag(\"agent/project\")",
+                    "note[\"taskcli-generated\"] == true", "note.status == \"ACTIVE\""
+                ]},
+                "formulas": {
+                    "name": "link(file.path, note.name)",
+                    "status": "note.status", "updated": "date(note.updated_at)"
+                },
+                "properties": {
+                    "formula.name": {"displayName":"Name"},
+                    "formula.status": {"displayName":"Status"},
+                    "formula.updated": {"displayName":"Updated"}
+                },
+                "views": [{
+                    "type":"table", "name":"Projects",
+                    "order":["formula.name", "formula.status", "formula.updated"],
+                    "sort":[{"column":"formula.updated","direction":"DESC"}, {"column":"formula.name","direction":"ASC"}]
+                }]
+            });
+            return Ok((
+                "Dashboard.base".into(),
+                format!(
+                    "# taskcli-generated: dashboard\n{}",
+                    serde_yaml::to_string(&base)?
+                ),
+            ));
+        }
+        let mut doc = frontmatter(
+            json!({"id":"dashboard", "created_at":timestamp(created), "tags":["agent/dashboard"]}),
+        );
+        doc.push_str(&Self::header("Task dashboard"));
+        doc.push_str("\n| Name | Status | Updated |\n| --- | --- | --- |\n");
+        let mut projects: Vec<_> = state
+            .projects
+            .iter()
+            .filter(|p| p.archived_at.is_none())
+            .collect();
+        projects.sort_by_key(|p| (std::cmp::Reverse(project_activity(state, p)), &p.name));
+        for project in projects {
+            let board = format!("Projects/{}/Board.md", project.key);
+            doc.push_str(&format!(
+                "| {} | ACTIVE | {} |\n",
+                self.link("Dashboard.md", &board, None, &project.name),
+                timestamp(project_activity(state, project))
+                    .as_str()
+                    .unwrap_or_default()
+            ));
+        }
+        Ok(("Dashboard.md".into(), doc))
+    }
+
+    fn tasknotes_board(
+        &self,
+        project: &crate::Project,
+        sequence: i64,
+        updated_at: i64,
+    ) -> Result<String> {
         let title = format!("{} — Task board", project.name);
         let folder = self
             .config
@@ -505,7 +567,7 @@ impl Service {
             "views": [view]
         });
         let mut doc = frontmatter(
-            json!({"id":project.id,"name":project.name,"created_at":timestamp(project.created_at),"title":title,"revision":project.revision,"root":project.root,"remote":project.remote,"archived_at":optional_timestamp(project.archived_at),"status":if project.archived_at.is_some() {"ARCHIVED"} else {"ACTIVE"},"sync_status":"synced","sync_sequence":sequence,"tags":["agent/project","agent/board"]}),
+            json!({"id":project.id,"name":project.name,"created_at":timestamp(project.created_at),"updated_at":timestamp(updated_at),"title":title,"revision":project.revision,"root":project.root,"remote":project.remote,"archived_at":optional_timestamp(project.archived_at),"status":if project.archived_at.is_some() {"ARCHIVED"} else {"ACTIVE"},"sync_status":"synced","sync_sequence":sequence,"tags":["agent/project","agent/board"]}),
         );
         doc.push_str(&Self::header(&title));
         doc.push_str(&format!(
@@ -668,6 +730,26 @@ fn timestamp(value: i64) -> Value {
                 .ok()
         })
         .map_or(Value::Null, Value::String)
+}
+
+// Project activity must not change merely because projections were synchronized.
+fn project_activity(state: &Snapshot, project: &crate::Project) -> i64 {
+    state
+        .jobs
+        .iter()
+        .filter(|job| job.project_id == project.id)
+        .map(|job| job.updated_at)
+        .chain(
+            state
+                .tasks
+                .iter()
+                .filter(|task| task.project_id == project.id)
+                .map(|task| task.updated_at),
+        )
+        .chain(project.archived_at)
+        .chain(std::iter::once(project.created_at))
+        .max()
+        .unwrap_or(project.created_at)
 }
 
 fn optional_timestamp(value: Option<i64>) -> Value {

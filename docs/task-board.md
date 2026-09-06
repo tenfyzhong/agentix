@@ -100,7 +100,7 @@ Timestamp fields are Unix seconds in UTC; creation date filters include both spe
 ## Read-only document projections
 
 ```text
-Dashboard.md
+Dashboard.base  # Obsidian; Dashboard.md in Markdown mode
 Projects/<project-name>/
   Board.md
   Jobs/YYMMDD-seq-<job-name>.md
@@ -110,13 +110,13 @@ Projects/<project-name>/
 
 Unarchived Jobs live directly under `Jobs/`; only explicitly archived Jobs move into `Jobs/Archived/`. Archiving and restoring a Job preserve its filename. Migration removes empty legacy `Jobs/Active/` and `Jobs/Archive/YYYY/MM/` directories after publishing the replacement documents and links.
 
-The Dashboard lists unarchived projects with links labeled `Board` to their Board documents. It contains no Job lists or details, so adding Jobs does not increase its length.
+In Obsidian mode, `Dashboard.base` is a compact native Bases table with Name, Status, and Updated columns, sorted by recent activity. Each project name links directly to its Board. Filters include only generated, active project Boards in the configured output directory; archived projects are hidden. Formula columns display database-derived values without making project state editable in the table. Markdown mode renders the same fields in `Dashboard.md` as a portable table. Neither view lists individual Jobs or Tasks. Sync publishes the replacement before removing the old registered Dashboard; an unrelated existing `Dashboard.base` is preserved and reported as a conflict. Switching formats migrates the Dashboard in either direction.
 
 Names preserve Unicode and spaces. IDs stay in YAML frontmatter, not filenames. Only collisions add `-2`, `-3`, etc.; comparison is case insensitive. `job create --name` and `task add --name` accept a concise summary separately from the full `--title`. Names default to a portable, at most 48-character title. Agents should summarize the work when choosing `--name`, rather than rely on truncation. `job update --name` and `task update --name` also work on completed work and update generated links without adding Plan versions.
 
 Job and Task Plan filenames begin with `YYMMDD-seq-`, for example `260905-0001-Implement login.md`. The date is the Job or Task creation date in UTC, even if its Plan is created later. Sequence numbers start at 1 each day, independently for Jobs and Tasks in each project (Tasks across Jobs share the project counter), and use at least four digits. Allocation is transactional; archived or cancelled work keeps its number. Renaming and Plan revisions preserve the prefix, and display names remain concise. The `sequence` property is stored with Job and Task metadata and the Task’s Plan frontmatter.
 
-Every generated document has YAML frontmatter containing an ID, creation time, and a type tag. Job properties include IDs, sequence, status, revision, and creation/update/start/completion/cancellation/archive times. They omit `document_path`, `title`, `name`, and embedded `task`/`tasks` fields; the Job heading and Task note links remain in the document body. Task properties include `revision` and lifecycle times, without a `version` field. Task timestamps are ISO 8601 in the computer’s local time zone, with the offset for each timestamp; other document timestamps remain UTC. CLI JSON timestamps remain Unix seconds. Project `Board.md` records the repository root, Git remote, revision, archive state, `sync_status`, and `sync_sequence`. Board is the project note and also embeds its task view. Its ID is the Project ID. Sync migrates generated `meta.md` information into Board, updates Dashboard and task project links to Board, and deletes the old managed meta file after publishing the replacement documents. Board has no separate Project link.
+Generated Markdown documents have YAML frontmatter containing an ID, creation time, and a type tag. `Dashboard.base` contains native Base YAML with a generated-file comment instead of Markdown frontmatter. Job properties include IDs, sequence, status, revision, and creation/update/start/completion/cancellation/archive times. They omit `document_path`, `title`, `name`, and embedded `task`/`tasks` fields; the Job heading and Task note links remain in the document body. Task properties include `revision` and lifecycle times, without a `version` field. Task timestamps are ISO 8601 in the computer’s local time zone, with the offset for each timestamp; other document timestamps remain UTC. CLI JSON timestamps remain Unix seconds. Project `Board.md` also provides `updated_at`, derived from the latest project creation/archive or Job/Task update timestamp; syncing alone does not advance it. It records the repository root, Git remote, revision, archive state, `sync_status`, and `sync_sequence`. Board is the project note and also embeds its task view. Its ID is the Project ID. Sync migrates generated `meta.md` information into Board, updates Dashboard and task project links to Board, and deletes the old managed meta file after publishing the replacement documents. Board has no separate Project link.
 
 | Document | Tags |
 | --- | --- |
@@ -124,7 +124,7 @@ Every generated document has YAML frontmatter containing an ID, creation time, a
 | Archived Job | `agent/archived/job` |
 | Task (including its Plan) | `agent/task`, `task` |
 | Project Board | `agent/project`, `agent/board` |
-| Dashboard | `agent/dashboard` |
+| Markdown Dashboard | `agent/dashboard` |
 
 Each Task has one TaskNotes-compatible note in `Tasks/`, created even before a Plan is published. Notes carry `task` for TaskNotes identification and `agent/task` for Agentix board filtering. Sync adds missing tags to existing notes and preserves custom tags. Its frontmatter contains the Task ID, optional Plan ID, state, phase, revision, local dates, project link, Job link, and `dependencies`: a list of prerequisite Task IDs, or `[]`. Register all known initial Tasks and dependencies before implementation. When taking up a Task, claim it and publish its freely structured Plan into that same note. `plan revise` updates it in place and advances the Task revision. The document exposes only `revision`; the internal Plan publication counter remains part of CLI metadata. Authored properties are merged with managed metadata. Dependency fields are generated from SQLite, refreshed by sync, and cannot be overridden by authored Plan properties; `task start` requires all prerequisites to be DONE.
 

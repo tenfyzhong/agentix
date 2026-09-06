@@ -16,6 +16,9 @@ mod tasknotes;
 #[path = "support/job_graph.rs"]
 mod job_graph;
 
+#[path = "support/dashboard.rs"]
+mod dashboard;
+
 struct Fixture {
     dir: TempDir,
     service: Service,
@@ -25,6 +28,13 @@ struct Fixture {
 }
 
 impl Fixture {
+    fn dashboard_file(&self) -> &'static str {
+        match self.service.config().documents.format {
+            agentix_task::DocumentFormat::Obsidian => "Dashboard.base",
+            agentix_task::DocumentFormat::Markdown => "Dashboard.md",
+        }
+    }
+
     async fn new(format: &str) -> Self {
         let dir = TempDir::new().unwrap();
         let root = dir.path().join("documents");
@@ -1042,7 +1052,7 @@ async fn dashboard_stays_project_only_as_jobs_grow() {
     for format in ["markdown", "obsidian"] {
         let f = Fixture::new(format).await;
         let output = f.service.config().output_dir();
-        let before = std::fs::read_to_string(output.join("Dashboard.md")).unwrap();
+        let before = std::fs::read_to_string(output.join(f.dashboard_file())).unwrap();
         for index in 0..20 {
             f.service
                 .store()
@@ -1055,19 +1065,18 @@ async fn dashboard_stays_project_only_as_jobs_grow() {
                 .unwrap();
         }
         f.service.sync().await.unwrap();
-        let dashboard = std::fs::read_to_string(output.join("Dashboard.md")).unwrap();
+        let dashboard = std::fs::read_to_string(output.join(f.dashboard_file())).unwrap();
         assert_eq!(
             dashboard, before,
             "Job count must not change {format} Dashboard"
         );
-        assert!(dashboard.contains("## demo"));
-        assert!(dashboard.contains("Projects/demo/Board"));
-        assert!(!dashboard.contains("Kanban board"));
-        assert!(dashboard.contains(if format == "obsidian" {
-            "|Board]]"
+        if format == "markdown" {
+            assert!(dashboard.contains("| [demo](Projects/demo/Board.md) | ACTIVE |"));
         } else {
-            "[Board]("
-        }));
+            assert!(dashboard.contains("link(file.path, note.name)"));
+            assert!(dashboard.contains("file.hasTag(\"agent/project\")"));
+        }
+        assert!(!dashboard.contains("Kanban board"));
         assert!(!dashboard.contains("Projects/demo/meta"));
         assert!(!dashboard.contains("Feature"));
         assert!(!dashboard.contains("Jobs/"));
@@ -1303,9 +1312,6 @@ async fn obsidian_alias_separators_are_not_table_escaped_in_task_links() {
     f.plan(&task).await;
     let state = f.service.store().snapshot().await.unwrap();
     let output = f.service.config().output_dir();
-    let dashboard = std::fs::read_to_string(output.join("Dashboard.md")).unwrap();
-    assert!(dashboard.contains("|Board]]"));
-    assert!(!dashboard.contains("\\|Board]]"));
     let job = std::fs::read_to_string(output.join(&state.jobs[0].document_path)).unwrap();
     assert!(job.contains("|260905-0001-Linked task]]"));
     assert!(!job.contains("\\|260905-0001-Linked task]]"));
@@ -1421,11 +1427,11 @@ async fn projection_failure_does_not_lose_committed_task_and_sync_repairs_it() {
     let f = Fixture::new("markdown").await;
     let output = f.service.config().output_dir();
     std::fs::rename(
-        output.join("Dashboard.md"),
+        output.join(f.dashboard_file()),
         f.dir.path().join("saved-dashboard.md"),
     )
     .unwrap();
-    std::fs::create_dir(output.join("Dashboard.md")).unwrap();
+    std::fs::create_dir(output.join(f.dashboard_file())).unwrap();
     let result = f
         .service
         .execute(
@@ -1436,9 +1442,9 @@ async fn projection_failure_does_not_lose_committed_task_and_sync_repairs_it() {
         .unwrap();
     assert!(result.projection_pending.is_some());
     assert_eq!(f.service.store().snapshot().await.unwrap().tasks.len(), 1);
-    std::fs::remove_dir(output.join("Dashboard.md")).unwrap();
+    std::fs::remove_dir(output.join(f.dashboard_file())).unwrap();
     f.service.sync().await.unwrap();
-    assert!(output.join("Dashboard.md").is_file());
+    assert!(output.join(f.dashboard_file()).is_file());
 }
 
 #[tokio::test]
@@ -1946,7 +1952,7 @@ async fn symlinks_cannot_redirect_document_output_or_managed_files_outside_the_r
     assert!(config.validate().is_err());
     let target = outside.join("Dashboard.md");
     std::fs::write(&target, "Outside content must survive").unwrap();
-    let board = f.service.config().output_dir().join("Dashboard.md");
+    let board = f.service.config().output_dir().join(f.dashboard_file());
     std::fs::rename(&board, f.dir.path().join("original-dashboard.md")).unwrap();
     std::os::unix::fs::symlink(&target, &board).unwrap();
     assert!(f.service.sync().await.is_err());
@@ -2559,8 +2565,8 @@ async fn project_archive_requires_closed_work_and_can_be_reversed() {
         .unwrap();
     assert!(archived.result["archived_at"].is_number());
     let dashboard =
-        std::fs::read_to_string(f.service.config().output_dir().join("Dashboard.md")).unwrap();
-    assert!(!dashboard.contains("## demo"));
+        std::fs::read_to_string(f.service.config().output_dir().join(f.dashboard_file())).unwrap();
+    assert!(!dashboard.contains("[demo]("));
     assert!(
         f.service
             .execute(
@@ -2578,8 +2584,8 @@ async fn project_archive_requires_closed_work_and_can_be_reversed() {
         .await
         .unwrap();
     let dashboard =
-        std::fs::read_to_string(f.service.config().output_dir().join("Dashboard.md")).unwrap();
-    assert!(dashboard.contains("## demo"));
+        std::fs::read_to_string(f.service.config().output_dir().join(f.dashboard_file())).unwrap();
+    assert!(dashboard.contains("[demo]("));
 }
 
 #[tokio::test]

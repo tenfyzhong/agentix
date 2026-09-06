@@ -11,20 +11,34 @@ use serde_json::{Value, json};
 fn obsidian(vault: &str, expression: &str) -> Value {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
-        let output =
+        let mut child =
             Command::new(std::env::var("OBSIDIAN_BIN").unwrap_or_else(|_| "obsidian".into()))
                 .arg(format!("vault={vault}"))
                 .arg("eval")
                 .arg(format!(
                     "code=(async()=>JSON.stringify((await ({expression})) ?? null))()"
                 ))
-                .output()
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
                 .expect("Obsidian CLI must be available and the vault open");
+        let attempt_deadline = Instant::now() + Duration::from_secs(2);
+        let timed_out = loop {
+            if child.try_wait().unwrap().is_some() {
+                break false;
+            }
+            if Instant::now() >= attempt_deadline {
+                child.kill().unwrap();
+                break true;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        };
+        let output = child.wait_with_output().unwrap();
         let stdout = String::from_utf8(output.stdout).unwrap();
-        assert!(output.status.success(), "{stdout}");
         if let Some(value) = stdout.lines().find_map(|line| line.strip_prefix("=> ")) {
             return serde_json::from_str(value).expect(&stdout);
         }
+        assert!(output.status.success() || timed_out, "{stdout}");
         // Desktop IPC can briefly omit a result while changing the active tab.
         assert!(
             Instant::now() < deadline,
@@ -123,7 +137,7 @@ impl DesktopFixture {
         obsidian_action(
             &self.vault,
             &format!(
-                "(async () => {{ await app.workspace.getLeafById({}).setViewState({}); return true; }})()",
+                "(async () => {{ const leaf = app.workspace.getLeafById({}); await leaf.setViewState({}); app.workspace.setActiveLeaf(leaf, {{focus:true}}); return true; }})()",
                 self.leaf,
                 json!({"type":view_type,"state":{"file":path,"mode":"preview"}})
             ),
@@ -135,7 +149,7 @@ impl Drop for DesktopFixture {
     fn drop(&mut self) {
         // Do not panic a second time if the app was closed during a failed test.
         let expression = format!(
-            "(() => {{ app.workspace.getLeafById({})?.detach(); for (const leaf of ['markdown'].flatMap(type=>app.workspace.getLeavesOfType(type))) {{ if (leaf.view.file?.path.startsWith({})) leaf.detach(); }} const original = app.workspace.getLeafById({}); if (original) app.workspace.setActiveLeaf(original, {{focus:true}}); return true; }})()",
+            "(() => {{ app.workspace.getLeafById({})?.detach(); for (const leaf of ['markdown','bases'].flatMap(type=>app.workspace.getLeavesOfType(type))) {{ if (leaf.view.file?.path.startsWith({})) leaf.detach(); }} const original = app.workspace.getLeafById({}); if (original) app.workspace.setActiveLeaf(original, {{focus:true}}); return true; }})()",
             self.leaf,
             json!(format!("{}/", self.relative)),
             self.original_leaf
@@ -150,6 +164,11 @@ fn tasknotes_renders_both_formats_and_resolves_task_note_links() {
     let vault =
         std::env::var("TASKCLI_OBSIDIAN_VAULT").expect("choose the open test vault explicitly");
     assert_eq!(
+        obsidian(&vault, "document.visibilityState"),
+        "visible",
+        "Bring the Obsidian vault window to the foreground before testing rendered views"
+    );
+    assert_eq!(
         obsidian(
             &vault,
             "!!app.plugins.plugins.tasknotes && !!app.internalPlugins.getPluginById('bases')?.enabled && app.plugins.plugins.tasknotes.settings.taskTag === 'task'"
@@ -158,12 +177,100 @@ fn tasknotes_renders_both_formats_and_resolves_task_note_links() {
         "Enable TaskNotes and Bases and configure the task tag and seven statuses before running this test"
     );
     for format in ["obsidian", "markdown"] {
-        exercise_plugin_views(&vault, format);
+        exercise_plugin_views(&vault, format, true);
+        exercise_plugin_views(&vault, format, false);
     }
 }
 
+fn exercise_dashboard(f: &mut DesktopFixture, project: &Value, format: &str) {
+    let dashboard = format!(
+        "{}/Dashboard.{}",
+        f.relative,
+        if format == "obsidian" { "base" } else { "md" }
+    );
+    let view_type = if format == "obsidian" {
+        "bases"
+    } else {
+        "markdown"
+    };
+    let board = format!(
+        "{}/Projects/{}/Board.md",
+        f.relative,
+        project["key"].as_str().unwrap()
+    );
+    f.open(&dashboard, view_type);
+    let expression = format!(
+        "(() => {{const root=app.workspace.getLeafById({}).view.contentEl; const el=root.querySelector('.markdown-preview-view') ?? root; return {{text:el.textContent,date:el.querySelector('input[type=datetime-local]')?.value,links:[...el.querySelectorAll('.internal-link')].map(a=>({{name:a.textContent,href:a.dataset.href}}))}};}})()",
+        f.leaf
+    );
+    let rendered = wait_for(&f.vault, &expression, |v| {
+        v["links"].as_array().is_some_and(|links| {
+            links
+                .iter()
+                .any(|link| link["name"] == "Rendering acceptance")
+        })
+    });
+    if format == "obsidian" {
+        assert!(
+            rendered["date"]
+                .as_str()
+                .is_some_and(|value| !value.is_empty()),
+            "missing activity date: {rendered}"
+        );
+    }
+    for header in ["Name", "Status", "Updated", "ACTIVE"] {
+        assert!(
+            rendered["text"].as_str().unwrap().contains(header),
+            "{rendered}"
+        );
+    }
+    assert_eq!(
+        rendered["links"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|link| link["href"].as_str().unwrap())
+            .collect::<std::collections::BTreeSet<_>>()
+            .len(),
+        1,
+        "Dashboard must exclude other projects in the vault: {rendered}"
+    );
+    let expression = format!(
+        "(() => {{const root=app.workspace.getLeafById({}).view.contentEl; return (root.querySelector('.markdown-preview-view') ?? root).textContent;}})()",
+        f.leaf
+    );
+    wait_for(&f.vault, &expression, |v| {
+        v.as_str()
+            .is_some_and(|text| text.contains("Rendering acceptance"))
+    });
+    f.cli(&["project", "archive", project["id"].as_str().unwrap()]);
+    wait_for(&f.vault, &expression, |v| {
+        v.as_str()
+            .is_some_and(|text| !text.contains("Rendering acceptance"))
+    });
+    f.cli(&["project", "unarchive", project["id"].as_str().unwrap()]);
+    wait_for(&f.vault, &expression, |v| {
+        v.as_str()
+            .is_some_and(|text| text.contains("Rendering acceptance"))
+    });
+    obsidian_action(
+        &f.vault,
+        &format!(
+            "(() => {{const link=app.workspace.getLeafById({}).view.contentEl.querySelector('.internal-link'); return app.workspace.openLinkText(link.dataset.href, {}, false);}})()",
+            f.leaf,
+            json!(dashboard)
+        ),
+    );
+    wait_for(
+        &f.vault,
+        "app.workspace.getMostRecentLeaf()?.view.file?.path",
+        |v| v == &board,
+    );
+    f.leaf = obsidian(&f.vault, "app.workspace.getMostRecentLeaf()?.id");
+}
+
 #[allow(clippy::too_many_lines)] // Keep the opt-in desktop scenario and cleanup visible together.
-fn exercise_plugin_views(vault: &str, format: &str) {
+fn exercise_plugin_views(vault: &str, format: &str, dashboard_only: bool) {
     let info = obsidian(
         vault,
         "({root:app.vault.adapter.basePath,leaf:app.workspace.getMostRecentLeaf()?.id})",
@@ -221,6 +328,10 @@ fn exercise_plugin_views(vault: &str, format: &str) {
         "--root",
         f.metadata.path().to_str().unwrap(),
     ]);
+    if dashboard_only {
+        exercise_dashboard(&mut f, &project, format);
+        return;
+    }
     let job = f.cli(&[
         "job",
         "create",
