@@ -391,6 +391,14 @@ struct FakeChannel {
     fail_menu_updates: Arc<Mutex<bool>>,
     task_send_failures: Arc<Mutex<usize>>,
     reject_unchanged_updates: bool,
+    next_menu_gate: Arc<
+        Mutex<
+            Option<(
+                tokio_util::sync::CancellationToken,
+                tokio_util::sync::CancellationToken,
+            )>,
+        >,
+    >,
 }
 
 impl FakeChannel {
@@ -487,6 +495,11 @@ impl ChannelAdapter for FakeChannel {
         conversation: &ConversationRef,
         menu: &CommandMenu,
     ) -> Result<(), ChannelError> {
+        let gate = self.next_menu_gate.lock().unwrap().take();
+        if let Some((entered, release)) = gate {
+            entered.cancel();
+            release.cancelled().await;
+        }
         if *self.fail_menu_updates.lock().unwrap() {
             return Err(ChannelError::Transport("temporary menu failure".into()));
         }
@@ -2978,6 +2991,114 @@ async fn restore_reopens_persisted_agent_subscriptions() {
         .await
         .unwrap();
     assert!(agent.calls().contains(&"start:thr_a:continue".to_string()));
+}
+
+#[tokio::test]
+async fn deferred_startup_notifications_skip_changed_bindings() {
+    for stale_session in ["thr_a", "thr_missing"] {
+        let agent = Arc::new(FakeAgent::rejecting_attachment("thr_missing"));
+        let channel = Arc::new(FakeChannel::default());
+        let state = SqliteState::in_memory().await.unwrap();
+        let conversation = ConversationRef::new(ChannelKind::Telegram, "chat-a");
+        state
+            .attach(&conversation, &SessionId::new(stale_session))
+            .await
+            .unwrap();
+        let engine = Engine::new(agent, state, vec![channel.clone()]);
+        let updates = engine.restore_bindings_deferred().await.unwrap();
+        assert!(channel.sent().is_empty());
+        assert!(channel.session_commands().is_empty());
+        // Even reattaching the same session invalidates the old startup notice.
+        if stale_session == "thr_a" {
+            engine
+                .handle_inbound(inbound("chat-a", "/detach"))
+                .await
+                .unwrap();
+        }
+        engine
+            .handle_inbound(inbound("chat-a", "/attach thr_a"))
+            .await
+            .unwrap();
+        let sent = channel.sent().len();
+        let menus = channel.session_commands().len();
+        engine.notify_restored_bindings(updates).await.unwrap();
+        assert_eq!(channel.sent().len(), sent, "sent a stale startup notice");
+        assert_eq!(
+            channel.session_commands().len(),
+            menus,
+            "replaced a newer menu"
+        );
+    }
+}
+
+#[tokio::test]
+async fn deferred_startup_notice_rechecks_binding_after_slow_menu() {
+    let channel = Arc::new(FakeChannel::default());
+    let state = SqliteState::in_memory().await.unwrap();
+    state
+        .attach(
+            &ConversationRef::new(ChannelKind::Telegram, "chat-a"),
+            &SessionId::new("thr_a"),
+        )
+        .await
+        .unwrap();
+    let engine = Arc::new(Engine::new(
+        Arc::new(FakeAgent::new()),
+        state,
+        vec![channel.clone()],
+    ));
+    let updates = engine.restore_bindings_deferred().await.unwrap();
+    let entered = tokio_util::sync::CancellationToken::new();
+    let release = tokio_util::sync::CancellationToken::new();
+    *channel.next_menu_gate.lock().unwrap() = Some((entered.clone(), release.clone()));
+    let notifications = tokio::spawn({
+        let engine = engine.clone();
+        async move { engine.notify_restored_bindings(updates).await }
+    });
+    entered.cancelled().await;
+    engine
+        .handle_inbound(inbound("chat-a", "/detach"))
+        .await
+        .unwrap();
+    release.cancel();
+    notifications.await.unwrap().unwrap();
+    assert!(!channel.session_commands().last().unwrap().1);
+    assert!(
+        !channel
+            .sent()
+            .iter()
+            .any(|(_, view)| view.title == "Agentix serve")
+    );
+}
+
+#[tokio::test]
+async fn deferred_startup_turn_updates_skip_detached_sessions() {
+    let state = SqliteState::in_memory().await.unwrap();
+    seed_feishu_turn(&state).await;
+    let channel = Arc::new(FakeChannel {
+        channel_kind: Some(ChannelKind::Feishu),
+        ..FakeChannel::default()
+    });
+    let engine = Engine::new(Arc::new(FakeAgent::new()), state, vec![channel.clone()]);
+    let updates = engine.restore_bindings_deferred().await.unwrap();
+    assert!(channel.updated().is_empty());
+    assert!(channel.sent().is_empty());
+    engine
+        .handle_inbound(InboundEnvelope::text(
+            "detach",
+            ConversationRef::new(ChannelKind::Feishu, "saved-chat"),
+            "owner-42",
+            "/detach",
+        ))
+        .await
+        .unwrap();
+    let rendered_count = channel.updated().len();
+    engine.notify_restored_bindings(updates).await.unwrap();
+    assert_eq!(
+        channel.updated().len(),
+        rendered_count,
+        "repainted a detached turn"
+    );
 }
 
 async fn seed_feishu_turn(state: &SqliteState) {

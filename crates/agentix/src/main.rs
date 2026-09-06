@@ -5,7 +5,7 @@ mod proxy_tests;
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use agentix::{
     AgentConfig, Config, ImChannel, LogRotation, LoggingConfig, NetworkConfig, TelegramConfig,
@@ -211,8 +211,15 @@ fn print_json(value: &impl Serialize) -> Result<()> {
 }
 
 async fn serve(config: Config, config_path: &Path) -> Result<()> {
+    let started = Instant::now();
     let BuiltAgent { adapter, codex } =
         build_agent(&config.agent, config.notifications.background_turns).await?;
+    tracing::info!(
+        phase = "agent_connection",
+        elapsed_ms = started.elapsed().as_millis(),
+        "startup phase completed"
+    );
+    let started = Instant::now();
     let claims = Arc::new(ClaimRegistry::default());
     let channels = build_channels(&config, config_path, claims.clone())?;
     let task_board = if let Some(task_board) = &config.task_board {
@@ -221,6 +228,11 @@ async fn serve(config: Config, config_path: &Path) -> Result<()> {
     } else {
         None
     };
+    tracing::info!(
+        phase = "channel_and_task_setup",
+        elapsed_ms = started.elapsed().as_millis(),
+        "startup phase completed"
+    );
     run_service_until_shutdown(
         adapter,
         codex,
@@ -258,12 +270,19 @@ async fn run_service_until_shutdown<F>(
 where
     F: Future<Output = Result<()>> + Send,
 {
+    let started = Instant::now();
     if let Some(parent) = state_path.parent() {
         tokio::fs::create_dir_all(parent)
             .await
             .with_context(|| format!("failed to create state directory {}", parent.display()))?;
     }
     let state = SqliteState::open(&state_path).await?;
+    tracing::info!(
+        phase = "state_storage",
+        elapsed_ms = started.elapsed().as_millis(),
+        "startup phase completed"
+    );
+    let restore_started = Instant::now();
     let mut engine = Engine::new(adapter.clone(), state, channels.clone())
         .with_background_turn_notifications(background_turn_notifications);
     if let Some(task_board) = task_board {
@@ -272,8 +291,13 @@ where
             .with_task_consumer(state_path.to_string_lossy().into_owned());
     }
     let engine = Arc::new(engine);
-    let restored = engine.restore_bindings().await?;
-    tracing::info!(restored, "restored durable conversation bindings");
+    let updates = engine.restore_bindings_deferred().await?;
+    tracing::info!(
+        restored = updates.restored_count(),
+        phase = "binding_restore",
+        elapsed_ms = restore_started.elapsed().as_millis(),
+        "restored durable conversation bindings"
+    );
 
     let shutdown = CancellationToken::new();
     let (control_tx, control_rx) = mpsc::channel(32);
@@ -309,7 +333,9 @@ where
         shutdown.clone(),
     ));
 
-    tracing::info!(endpoint = %advertised_control_endpoint, "Agentix is running");
+    let startup_task = spawn_startup_notifications(engine.clone(), updates);
+
+    tracing::info!(endpoint = %advertised_control_endpoint, elapsed_ms = started.elapsed().as_millis(), "Agentix is running");
     tokio::pin!(shutdown_signal);
     let control_failure = tokio::select! {
         signal = &mut shutdown_signal => {
@@ -323,6 +349,8 @@ where
         }),
     };
     shutdown.cancel();
+    startup_task.abort();
+    let _ = startup_task.await;
     let _ = engine_task.await;
     match engine.prepare_shutdown().await {
         Ok(notified) => tracing::info!(notified, "saved bindings and notified IM conversations"),
@@ -335,6 +363,25 @@ where
     }
     let _ = control_handler_task.await;
     control_failure.map_or(Ok(()), Err)
+}
+
+fn spawn_startup_notifications(
+    engine: Arc<Engine>,
+    updates: agentix_core::RestoredBindings,
+) -> tokio_util::task::AbortOnDropHandle<()> {
+    tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
+        let started = Instant::now();
+        match engine.notify_restored_bindings(updates).await {
+            Ok(()) => tracing::info!(
+                phase = "restored_im_updates",
+                elapsed_ms = started.elapsed().as_millis(),
+                "restored conversation presentation completed"
+            ),
+            Err(error) => {
+                tracing::warn!(%error, phase = "restored_im_updates", elapsed_ms = started.elapsed().as_millis(), "failed to present restored conversations");
+            }
+        }
+    }))
 }
 
 async fn wait_for_channel_shutdown(
@@ -842,6 +889,13 @@ mod tests {
             "Codex"
         }
 
+        fn capabilities(&self) -> agentix_core::AgentCapabilities {
+            agentix_core::AgentCapabilities {
+                session_control: true,
+                ..agentix_core::AgentCapabilities::default()
+            }
+        }
+
         async fn list_sessions(
             &self,
             _cursor: Option<String>,
@@ -924,9 +978,19 @@ mod tests {
         }
     }
 
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum StartupOperation {
+        Menu,
+        Notice,
+    }
+
     struct LifecycleChannel {
         views: StdMutex<Vec<OutboundView>>,
         stop_on_shutdown: bool,
+        started: CancellationToken,
+        blocked_operation: Option<StartupOperation>,
+        blocked: CancellationToken,
+        unblock: CancellationToken,
     }
 
     impl LifecycleChannel {
@@ -934,13 +998,24 @@ mod tests {
             Self {
                 views: StdMutex::new(Vec::new()),
                 stop_on_shutdown: true,
+                started: CancellationToken::new(),
+                blocked_operation: None,
+                blocked: CancellationToken::new(),
+                unblock: CancellationToken::new(),
             }
         }
 
         fn stubborn() -> Self {
             Self {
-                views: StdMutex::new(Vec::new()),
                 stop_on_shutdown: false,
+                ..Self::new()
+            }
+        }
+
+        async fn block_startup(&self, operation: StartupOperation) {
+            if self.blocked_operation == Some(operation) {
+                self.blocked.cancel();
+                self.unblock.cancelled().await;
             }
         }
     }
@@ -956,6 +1031,7 @@ mod tests {
             _inbound: tokio::sync::mpsc::Sender<agentix_core::InboundEnvelope>,
             shutdown: CancellationToken,
         ) -> Result<(), ChannelError> {
+            self.started.cancel();
             if self.stop_on_shutdown {
                 shutdown.cancelled().await;
             } else {
@@ -969,6 +1045,9 @@ mod tests {
             conversation: &ConversationRef,
             view: &OutboundView,
         ) -> Result<MessageRef, ChannelError> {
+            if view.subtitle.as_deref() == Some("Online · Reattached") {
+                self.block_startup(StartupOperation::Notice).await;
+            }
             self.views.lock().unwrap().push(view.clone());
             Ok(MessageRef::new(conversation.clone(), "message-test"))
         }
@@ -982,6 +1061,126 @@ mod tests {
             self.views.lock().unwrap().push(view.clone());
             Ok(())
         }
+
+        async fn set_command_menu(
+            &self,
+            _conversation: &ConversationRef,
+            menu: &agentix_core::CommandMenu,
+        ) -> Result<(), ChannelError> {
+            if menu.commands.iter().any(|command| command.contextual) {
+                self.block_startup(StartupOperation::Menu).await;
+            }
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn slow_startup_notifications_do_not_block_control_or_channels() {
+        for operation in [StartupOperation::Menu, StartupOperation::Notice] {
+            let (_directory, channel, endpoint, shutdown, service) =
+                start_with_blocked_notification(operation).await;
+            let ready = tokio::time::timeout(std::time::Duration::from_secs(1), async {
+                channel.started.cancelled().await;
+                loop {
+                    if let Ok(page) = super::control::request(
+                        &endpoint,
+                        &super::control::ControlRequest::Sessions {
+                            cursor: None,
+                            limit: 1,
+                        },
+                    )
+                    .await
+                    {
+                        assert_eq!(page["sessions"][0]["id"], "thr_saved");
+                        break;
+                    }
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await;
+            channel.unblock.cancel();
+            shutdown.cancel();
+            service.await.unwrap().unwrap();
+            assert!(ready.is_ok(), "startup IM work blocked service readiness");
+        }
+    }
+
+    #[tokio::test]
+    async fn shutdown_cancels_a_blocked_startup_notification() {
+        let (_directory, channel, _endpoint, shutdown, mut service) =
+            start_with_blocked_notification(StartupOperation::Notice).await;
+        shutdown.cancel();
+        let stopped = tokio::time::timeout(std::time::Duration::from_secs(1), &mut service).await;
+        if stopped.is_err() {
+            service.abort();
+            let _ = service.await;
+        }
+        stopped
+            .expect("shutdown waited on an online notification")
+            .unwrap()
+            .unwrap();
+        assert!(
+            !channel
+                .views
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|view| { view.subtitle.as_deref() == Some("Online · Reattached") })
+        );
+    }
+
+    async fn start_with_blocked_notification(
+        operation: StartupOperation,
+    ) -> (
+        tempfile::TempDir,
+        Arc<LifecycleChannel>,
+        String,
+        CancellationToken,
+        tokio::task::JoinHandle<anyhow::Result<()>>,
+    ) {
+        let directory = tempfile::tempdir().unwrap();
+        let state_path = directory.path().join("agentix.sqlite3");
+        let state = agentix_core::SqliteState::open(&state_path).await.unwrap();
+        state
+            .attach(
+                &ConversationRef::new(ChannelKind::Telegram, "chat-saved"),
+                &SessionId::new("thr_saved"),
+            )
+            .await
+            .unwrap();
+        drop(state);
+        let channel = Arc::new(LifecycleChannel {
+            blocked_operation: Some(operation),
+            ..LifecycleChannel::new()
+        });
+        let endpoint = format!("tcp://{}", unused_loopback_address());
+        let shutdown = CancellationToken::new();
+        let service = tokio::spawn(super::run_service_until_shutdown(
+            Arc::new(LifecycleAgent::new()),
+            None,
+            vec![channel.clone()],
+            None,
+            state_path,
+            endpoint.clone(),
+            directory.path().join("config.toml"),
+            Arc::new(super::ClaimRegistry::default()),
+            true,
+            std::time::Duration::from_millis(10),
+            {
+                let shutdown = shutdown.clone();
+                async move {
+                    shutdown.cancelled().await;
+                    Ok(())
+                }
+            },
+        ));
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            channel.blocked.cancelled(),
+        )
+        .await
+        .unwrap();
+        (directory, channel, endpoint, shutdown, service)
     }
 
     #[test]
