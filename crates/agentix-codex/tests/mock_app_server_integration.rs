@@ -1525,7 +1525,9 @@ async fn background_completion_with_an_active_writer_uses_only_reads() {
     server.set_active_writer("thr_writer").await;
     let client = CodexClient::connect(server.endpoint()).await.unwrap();
     let mut events = client.subscribe();
-    server.wait_for_turn_reads("thr_writer", 1).await;
+    // Discovery also reads full history for external-writer status. Wait for the
+    // separate metadata poll to establish its baseline before completing the turn.
+    server.wait_for_background_turn_reads("thr_writer", 1).await;
     server
         .complete_turn("thr_writer", "turn_writer", "done")
         .await;
@@ -1538,7 +1540,9 @@ async fn background_completion_with_an_active_writer_uses_only_reads() {
             error: None,
         }
     );
-    server.wait_for_turn_reads("thr_writer", 3).await;
+    // The fourth poll starts only after a post-completion poll has finished,
+    // so duplicate-event assertions do not race the client's response handling.
+    server.wait_for_background_turn_reads("thr_writer", 4).await;
     assert!(
         events.try_recv().is_err(),
         "completion must only be emitted once"
