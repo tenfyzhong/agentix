@@ -57,7 +57,7 @@ Place tests near the boundary they exercise:
 
 Do not make automated tests depend on live credentials, public network services, a developer's session data, or an already running daemon. Extend the relevant mock when a new external API method, event, error, or state transition is introduced. Keep mock payloads aligned with the upstream wire format used by Agentix.
 
-Run the complete quality gate with:
+Run the complete quality gate to check formatting, run Clippy, and execute the workspace tests:
 
 ```sh
 make check
@@ -83,7 +83,7 @@ Codex uses a stateful mock app-server under `crates/agentix-codex/tests/support/
 
 Channel shutdown deadline tests use Tokio's paused clock to verify the shared grace period and task cancellation independently of database and filesystem latency. Service lifecycle tests also exercise startup and shutdown with a temporary SQLite database. The test suite checks the non-Unix Codex compatibility API on Unix hosts as well, so Windows-only API omissions are caught locally.
 
-GitHub Actions keeps formatting and Clippy in `ci.yml`. The `tests.yml` workflow runs the full suite on Linux and macOS. On Windows, it checks the workspace and runs the native TCP control, task library, and taskcli suites. Task timestamp tests use `TZ` overrides on Unix; Windows CI switches the native system time zone to verify UTC+09:00, UTC-05:00, and UTC, then restores the original setting. The workflow runs for pull requests and pushes to `main`, and supports manual dispatch.
+GitHub Actions keeps formatting and Clippy in `ci.yml`. The `tests.yml` workflow runs the full suite on Linux and macOS. On Windows, it checks the workspace and runs the native TCP control, task library, and taskcli suites. Task timestamp tests use `TZ` overrides on Unix; Windows CI switches the native system time zone to verify UTC+09:00, UTC-05:00, and UTC, then restores the original setting. Both workflows run for pull requests and pushes to `main`, except when every changed file is Markdown (`.md`). Changes that include any other file still run both workflows. The Tests workflow also supports manual dispatch regardless of the changed files.
 
 ## Workspace architecture
 

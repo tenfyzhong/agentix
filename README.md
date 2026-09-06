@@ -11,7 +11,7 @@ brew tap tenfyzhong/tap
 brew install agentix
 ```
 
-For Codex, install the official standalone CLI (0.153.0 or newer). Agentix requires its managed app-server layout:
+For Codex, install the official standalone CLI (0.153.0 or newer). The Homebrew Codex package does not include the managed app-server layout Agentix requires:
 
 ```sh
 curl -fsSL https://chatgpt.com/codex/install.sh | sh
@@ -77,6 +77,8 @@ Send the printed `/claim <code>` command to the bot in a private chat. Skip this
 5. Send `/help` to see the commands available in the current session.
 
 Mention the bot in group chats. If another Codex process owns the session's writer, Agentix attaches read-only; send prompts through that original process.
+
+To create Codex sessions from chat, install optional rmux and use `/rmux`; see [rmux workspaces](docs/usage.md#rmux-workspaces). Connecting to existing Codex sessions does not require rmux.
 
 With [task boards configured](docs/guide.md#im-task-boards), use `/dashboard` to browse projects, or `/board` and `/jobs` to view the attached session's work. Task and Job details link to each other.
 

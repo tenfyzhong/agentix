@@ -3,6 +3,7 @@
 For a short installation and first-session walkthrough, start with the [README](../README.md). This guide covers installation alternatives, shell completions, configuration, session behavior, and optional task boards.
 
 - [Installation and setup](#installation-and-setup)
+- [Optional rmux dependency](#rmux-optional)
 - [Shell completions](#shell-completions)
 - [Configuration](#configure)
 - [Starting the service](#start)
@@ -69,6 +70,12 @@ make release
 ```
 
 The binaries are written to `target/release/agentix` and `target/release/taskcli` (`.exe` on Windows).
+
+### rmux (optional)
+
+Install rmux to create new Codex sessions directly from Telegram or Feishu. Send `/rmux` to the bot to browse workspaces and launch Codex in a session, window, or split. Agentix connects to the local rmux daemon and starts it when needed. rmux is optional for connecting to existing Codex sessions.
+
+See [rmux workspaces](usage.md#rmux-workspaces) for details.
 
 ### Shell completions
 
