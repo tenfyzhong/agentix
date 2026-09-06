@@ -84,6 +84,7 @@ async function extension(t, f, host) {
     const ctx = {
         cwd: f.dir,
         sessionManager: { getSessionId: () => `session:${host}` },
+        isIdle: () => true,
     };
     await handlers.get("session_start")({}, ctx);
     f.cleanup.push(() => handlers.get("session_shutdown")({}, ctx));
@@ -240,7 +241,7 @@ for (const host of ["codex", "claude"]) {
             const f = await fixture(t);
             const root = join(f.dir, "installed plugin \u{2603}");
             await mkdir(root);
-            for (const path of ["hooks", "runtime.mjs"]) {
+            for (const path of ["hooks", "runtime.mjs", `.${host}-plugin`]) {
                 await cp(resolve(path), join(root, path), { recursive: true });
             }
             const task = await f.run([
@@ -259,20 +260,40 @@ for (const host of ["codex", "claude"]) {
             // Hooks must renew and recover even an unfinished planning phase.
             assert.equal(claim.phase, "PLANNING");
             const manifest = JSON.parse(
-                await readFile(join(root, "hooks/hooks.json"), "utf8"),
+                await readFile(join(root, `.${host}-plugin/plugin.json`), "utf8"),
             );
+            const hooks = {};
+            // Claude merges its extra manifest hooks with default discovery;
+            // Codex's manifest replaces default discovery.
+            const hookPaths = host === "claude"
+                ? ["./hooks/hooks.json", manifest.hooks]
+                : manifest.hooks;
+            for (const path of hookPaths) {
+                const config = JSON.parse(await readFile(join(root, path), "utf8"));
+                for (const [name, groups] of Object.entries(config.hooks)) {
+                    assert.equal(hooks[name], undefined, `Duplicate ${name}`);
+                    hooks[name] = groups;
+                }
+            }
+            const interruptEvent = host === "codex" ? "Interrupt" : "PostToolUseFailure";
+            let expectedStatus = "IN_PROGRESS";
             for (const name of [
                 "SessionStart",
                 "PreToolUse",
                 "PostToolUse",
                 "Stop",
+                interruptEvent,
+                interruptEvent,
+                "PostToolUse",
+                "SessionStart",
                 "SessionEnd",
                 "SessionStart",
             ]) {
-                const command = manifest.hooks[name][0].hooks[0].command;
+                const command = hooks[name][0].hooks[0].command;
                 const output = await hookProcess(
                     {
                         hook_event_name: name,
+                        is_interrupt: name === "PostToolUseFailure",
                         session_id: options.session,
                         cwd: f.dir,
                     },
@@ -282,10 +303,11 @@ for (const host of ["codex", "claude"]) {
                     shell,
                 );
                 const current = await f.run(["task", "show", task.id]);
-                assert.equal(
-                    current.status,
-                    name === "SessionEnd" ? "BLOCKED" : "IN_PROGRESS",
-                );
+                if (name === "SessionEnd" || name === interruptEvent) expectedStatus = "BLOCKED";
+                if (name === "SessionStart") expectedStatus = "IN_PROGRESS";
+                assert.equal(current.status, expectedStatus);
+                if (expectedStatus === "BLOCKED") assert.equal(current.lease, null);
+                if (name === interruptEvent) assert.equal(current.reason, "session interrupted");
                 if (name === "SessionStart")
                     assert.equal(
                         JSON.parse(output.hookSpecificOutput.additionalContext.split("\n").at(-1)).task_language,
@@ -317,7 +339,18 @@ for (const host of ["codex", "claude"]) {
                 resumedOptions,
             );
             await f.run(["task", "start", task.id], resumedOptions);
-            await f.run(["task", "done", task.id], resumedOptions);
+            await hookProcess(
+                { hook_event_name: interruptEvent, is_interrupt: true, session_id: options.session, turn_id: "executing-turn", cwd: f.dir },
+                hooks[interruptEvent][0].hooks[0].command,
+                host,
+                root,
+                shell,
+            );
+            const interrupted = await f.run(["task", "show", task.id]);
+            assert.equal(interrupted.status, "BLOCKED");
+            assert.equal(interrupted.lease, null);
+            await assert.rejects(f.run(["task", "done", task.id], resumedOptions), /conflict/);
+            await f.run(["job", "delete", f.job.id]);
         });
     }
 }
@@ -336,3 +369,35 @@ test("real CLI errors, aborts and identity overrides are not reported as success
         /abort/i,
     );
 });
+
+for (const host of ["pi", "omp"]) {
+    for (const executing of [false, true]) {
+        test(`${host} releases ${executing ? "executing" : "planning"} work on interruption and shutdown`, async (t) => {
+            const f = await fixture(t);
+            const x = await extension(t, f, host);
+            const task = await x.invoke(["task", "add", "--job", f.job.id, "--title", "Interrupted"]);
+            const claim = await x.invoke(["task", "claim", task.id]);
+            await x.invoke(["plan", "create", task.id, "--body", "# Keep this plan"]);
+            if (executing) await x.invoke(["task", "start", task.id]);
+            await x.handlers.get("agent_end")({ messages: [{ role: "assistant", stopReason: "aborted" }] }, x.ctx);
+            if (host === "pi") await x.handlers.get("agent_settled")({}, x.ctx);
+            const blocked = await f.run(["task", "show", task.id]);
+            assert.equal(blocked.reason, "session interrupted");
+            assert.equal(blocked.lease, null);
+            assert.equal(blocked.current_plan, (await f.run(["plan", "show", task.id])).id);
+            await assert.rejects(f.run(["task", "heartbeat", task.id], {
+                session: claim.lease.session_ref, token: claim.lease.token,
+            }), /conflict/);
+            await x.handlers.get("before_agent_start")({}, x.ctx);
+            assert.equal((await f.run(["task", "show", task.id])).lease, null);
+            const next = await x.invoke(["task", "claim", task.id]);
+            assert.notEqual(next.lease.token, claim.lease.token);
+            if (executing) await x.invoke(["task", "start", task.id]);
+            await x.handlers.get("session_shutdown")({}, x.ctx);
+            const ended = await f.run(["task", "show", task.id]);
+            assert.equal(ended.reason, "session ended");
+            assert.equal(ended.lease, null);
+            await f.run(["job", "delete", f.job.id]);
+        });
+    }
+}

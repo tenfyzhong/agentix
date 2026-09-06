@@ -274,6 +274,7 @@ enum EventCommand {
 enum HookCommand {
     SessionStart,
     SessionEnd,
+    Interrupt,
     Heartbeat,
 }
 
@@ -830,6 +831,7 @@ async fn hook(cli: &Cli, service: &Service, action: &HookCommand) -> Result<Valu
     let command = match action {
         HookCommand::SessionStart => "session.start",
         HookCommand::SessionEnd => "session.end",
+        HookCommand::Interrupt => "session.interrupt",
         HookCommand::Heartbeat => "session.heartbeat",
     };
     mutate(cli, service, json!({"command":command,"session":session})).await

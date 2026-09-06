@@ -32,17 +32,26 @@ test("repository marketplaces resolve the same complete host plugin", async () =
     assert.equal(codex.plugins[0].category, "Productivity");
 });
 
-test("both command-hook hosts discover exactly one bundled lifecycle configuration", async () => {
+test("hosts discover shared hooks once and load only their own interruption events", async () => {
     for (const host of ["codex", "claude"]) {
         const manifest = await readJson(`.${host}-plugin/plugin.json`);
         assert.equal(manifest.name, "agent-task-manager");
-        assert.equal(
+        assert.deepEqual(
             manifest.hooks,
-            undefined,
-            "use the default hook file, without duplicate declarations",
+            host === "codex" ? ["./hooks/hooks.json", "./hooks/codex.json"] : "./hooks/claude.json",
+            "load shared hooks once and keep Codex events out of Claude config",
         );
         assert.equal(manifest.skills, "./skills/");
     }
+    const claude = await readJson("hooks/claude.json");
+    assert.deepEqual(Object.keys(claude.hooks), ["PostToolUseFailure"]);
+    assert.equal(claude.hooks.PostToolUseFailure[0].hooks[0].timeout, 3);
+    const codex = await readJson("hooks/codex.json");
+    assert.deepEqual(Object.keys(codex.hooks), ["Interrupt"]);
+    assert.equal(codex.hooks.Interrupt.length, 1);
+    assert.equal(codex.hooks.Interrupt[0].hooks.length, 1);
+    assert.equal(codex.hooks.Interrupt[0].hooks[0].timeout, 3);
+    assert.equal(codex.hooks.Interrupt[0].hooks[0].type, "command");
     const config = await readJson("hooks/hooks.json");
     assert.deepEqual(Object.keys(config.hooks).sort(), [
         "PostToolUse",
@@ -79,6 +88,9 @@ test("package manifests select one host-specific extension and the shared skill"
             registerTool: (tool) => tools.push(tool),
         });
         assert.deepEqual([...handlers.keys()].sort(), [
+            "agent_end",
+            ...(host === "pi" ? ["agent_settled"] : []),
+            "agent_start",
             "before_agent_start",
             "session_shutdown",
             "session_start",
@@ -115,6 +127,8 @@ test("npm package contains all host manifests, hooks and resources but no tests"
         ".claude-plugin/plugin.json",
         "package.json",
         "hooks/hooks.json",
+        "hooks/codex.json",
+        "hooks/claude.json",
         "hooks/run.mjs",
         "runtime.mjs",
         "extensions/pi.ts",

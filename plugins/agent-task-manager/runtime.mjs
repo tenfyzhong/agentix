@@ -72,12 +72,16 @@ function skillContext(context) {
 
 export async function runHook(event, runner = runTaskcli) {
     if (!event.session_id) throw new Error("Hook requires session_id");
+    if (event.hook_event_name === "PostToolUseFailure" && event.is_interrupt !== true)
+        return {};
     const operation =
         event.hook_event_name === "SessionStart"
             ? "session-start"
             : event.hook_event_name === "SessionEnd"
               ? "session-end"
-              : "heartbeat";
+              : ["Interrupt", "PostToolUseFailure"].includes(event.hook_event_name)
+                ? "interrupt"
+                : "heartbeat";
     const options = { cwd: event.cwd, session: event.session_id };
     await runner(["hook", operation], options);
     if (operation === "session-start") {
@@ -103,9 +107,7 @@ export function registerExtension(
         required: ["args"],
     },
 ) {
-    let timer;
-    let activeSession;
-    let refreshing = false;
+    let active;
     // Retries of one host call must retain the original authorization input,
     // even when the first attempt committed and released the current lease.
     const requestTokens = new Map();
@@ -114,42 +116,100 @@ export function registerExtension(
         session: ctx.sessionManager.getSessionId(),
         executor: `agent:${host}:${ctx.sessionManager.getSessionId()}`,
     });
-    const clear = () => {
-        if (timer !== undefined) timers.clearInterval(timer);
-        timer = undefined;
+    const stateFor = (ctx) =>
+        active?.options.session === optionsFor(ctx).session ? active : undefined;
+    const pause = (state) => {
+        if (state.timer !== undefined) timers.clearInterval(state.timer);
+        state.timer = undefined;
+        state.heartbeat?.abort();
     };
-    api.on("session_start", async (_event, ctx) => {
-        clear();
-        const options = optionsFor(ctx);
-        if (activeSession && activeSession !== options.session)
-            await runner(["hook", "session-end"], {
-                ...options,
-                session: activeSession,
-            });
-        activeSession = options.session;
-        await runner(["hook", "session-start"], options);
-        timer = timers.setInterval(async () => {
-            if (refreshing) return;
-            refreshing = true;
+    const renew = (state, ctx) => {
+        if (state.timer !== undefined) return;
+        const timer = timers.setInterval(async () => {
+            // A callback already queued before clearInterval must stay inert.
+            if (active !== state || state.timer !== timer || state.heartbeat) return;
+            const controller = new AbortController();
+            state.heartbeat = controller;
             try {
-                await runner(["hook", "heartbeat"], options);
+                await runner(["hook", "heartbeat"], {
+                    ...state.options,
+                    signal: controller.signal,
+                });
             } catch (error) {
-                ctx.ui?.notify?.(
-                    `Task heartbeat failed: ${error.message}`,
-                    "warning",
-                );
+                if (!controller.signal.aborted)
+                    ctx.ui?.notify?.(`Task heartbeat failed: ${error.message}`, "warning");
             } finally {
-                refreshing = false;
+                if (state.heartbeat === controller) state.heartbeat = undefined;
             }
         }, 60000);
+        state.timer = timer;
         timer?.unref?.();
+    };
+    const release = async (state, operation) => {
+        pause(state);
+        // Join concurrent cleanup, but allow SessionEnd after Interrupt and retries
+        // after errors. A failed cleanup must never silently restart renewal.
+        if (state.cleanup) await state.cleanup;
+        if (state.ended || (operation === "interrupt" && state.interrupted)) return;
+        const cleanup = runner(["hook", operation], state.options).then(() => {
+            if (operation === "session-end") state.ended = true;
+            else state.interrupted = true;
+        });
+        state.cleanup = cleanup;
+        try {
+            await cleanup;
+        } finally {
+            if (state.cleanup === cleanup) state.cleanup = undefined;
+        }
+    };
+    api.on("session_start", async (_event, ctx) => {
+        const options = optionsFor(ctx);
+        if (active) {
+            pause(active);
+            if (active.options.session !== options.session)
+                await release(active, "session-end");
+            else if (active.cleanup) await active.cleanup;
+        }
+        const state = { options };
+        active = state;
+        await runner(["hook", "session-start"], state.options);
+        if (active === state) renew(state, ctx);
     });
     api.on("session_shutdown", async (_event, ctx) => {
-        clear();
-        await runner(["hook", "session-end"], optionsFor(ctx));
-        activeSession = undefined;
+        const state = stateFor(ctx);
+        if (!state) return;
+        await release(state, "session-end");
+        if (active === state) active = undefined;
     });
+    api.on("agent_start", async (_event, ctx) => {
+        const state = stateFor(ctx);
+        if (state) state.aborted = false;
+    });
+    api.on("agent_end", async (event, ctx) => {
+        const state = stateFor(ctx);
+        if (!state) return;
+        const lastAssistant = event.messages?.findLast(message => message.role === "assistant");
+        state.aborted = lastAssistant?.stopReason === "aborted" && event.willContinue !== true;
+        if (host === "omp" && state.aborted) await release(state, "interrupt");
+    });
+    if (host === "pi") {
+        // agent_end can precede auto-retry/compaction/follow-ups. Only release
+        // when Pi reports a terminal settle, never during those continuations.
+        api.on("agent_settled", async (_event, ctx) => {
+            const state = stateFor(ctx);
+            if (state?.aborted && ctx.isIdle()) await release(state, "interrupt");
+        });
+    }
     api.on("before_agent_start", async (_event, ctx) => {
+        const state = stateFor(ctx);
+        if (state) {
+            if (state.cleanup) await state.cleanup;
+            if (active === state && !state.ended) {
+                state.aborted = false;
+                state.interrupted = false;
+                renew(state, ctx);
+            }
+        }
         const result = await runner(["context"], optionsFor(ctx));
         return {
             message: {

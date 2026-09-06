@@ -665,21 +665,22 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand context" -l expect-revis
 complete -c taskcli -n "__fish_taskcli_using_subcommand context" -l idempotency-key -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand context" -l json
 complete -c taskcli -n "__fish_taskcli_using_subcommand context" -s h -l help -d 'Print help'
-complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from session-start session-end heartbeat help" -l config -r -F
-complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from session-start session-end heartbeat help" -l project -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from session-start session-end heartbeat help" -l actor -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from session-start session-end heartbeat help" -l executor -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from session-start session-end heartbeat help" -l session -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from session-start session-end heartbeat help" -l delegated-by -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from session-start session-end heartbeat help" -l lease-token -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from session-start session-end heartbeat help" -l expect-revision -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from session-start session-end heartbeat help" -l idempotency-key -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from session-start session-end heartbeat help" -l json
-complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from session-start session-end heartbeat help" -s h -l help -d 'Print help'
-complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from session-start session-end heartbeat help" -f -a "session-start"
-complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from session-start session-end heartbeat help" -f -a "session-end"
-complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from session-start session-end heartbeat help" -f -a "heartbeat"
-complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from session-start session-end heartbeat help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from session-start session-end interrupt heartbeat help" -l config -r -F
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from session-start session-end interrupt heartbeat help" -l project -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from session-start session-end interrupt heartbeat help" -l actor -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from session-start session-end interrupt heartbeat help" -l executor -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from session-start session-end interrupt heartbeat help" -l session -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from session-start session-end interrupt heartbeat help" -l delegated-by -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from session-start session-end interrupt heartbeat help" -l lease-token -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from session-start session-end interrupt heartbeat help" -l expect-revision -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from session-start session-end interrupt heartbeat help" -l idempotency-key -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from session-start session-end interrupt heartbeat help" -l json
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from session-start session-end interrupt heartbeat help" -s h -l help -d 'Print help'
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from session-start session-end interrupt heartbeat help" -f -a "session-start"
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from session-start session-end interrupt heartbeat help" -f -a "session-end"
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from session-start session-end interrupt heartbeat help" -f -a "interrupt"
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from session-start session-end interrupt heartbeat help" -f -a "heartbeat"
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from session-start session-end interrupt heartbeat help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
 complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from session-start" -l config -r -F
 complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from session-start" -l project -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from session-start" -l actor -r
@@ -702,6 +703,17 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_su
 complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from session-end" -l idempotency-key -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from session-end" -l json
 complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from session-end" -s h -l help -d 'Print help'
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from interrupt" -l config -r -F
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from interrupt" -l project -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from interrupt" -l actor -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from interrupt" -l executor -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from interrupt" -l session -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from interrupt" -l delegated-by -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from interrupt" -l lease-token -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from interrupt" -l expect-revision -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from interrupt" -l idempotency-key -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from interrupt" -l json
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from interrupt" -s h -l help -d 'Print help'
 complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from heartbeat" -l config -r -F
 complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from heartbeat" -l project -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from heartbeat" -l actor -r
@@ -715,6 +727,7 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_su
 complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from heartbeat" -s h -l help -d 'Print help'
 complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from help" -f -a "session-start"
 complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from help" -f -a "session-end"
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from help" -f -a "interrupt"
 complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from help" -f -a "heartbeat"
 complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and not __fish_seen_subcommand_from completions init doctor sync project job task plan event context hook help" -f -a "completions" -d 'Print a shell completion script without loading task configuration'
@@ -766,4 +779,5 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_su
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from event" -f -a "list"
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from hook" -f -a "session-start"
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from hook" -f -a "session-end"
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from hook" -f -a "interrupt"
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from hook" -f -a "heartbeat"

@@ -6,6 +6,7 @@
   "repository": "https://github.com/tenfyzhong/agentix",
   "license": "MIT",
   "skills": "./skills/",
+  "hooks": ["./hooks/hooks.json", "./hooks/codex.json"],
   "interface": {
     "displayName": "Agent Task Manager",
     "shortDescription": "Track jobs, claim tasks, and preserve execution context.",

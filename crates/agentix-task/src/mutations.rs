@@ -39,7 +39,9 @@ pub(crate) fn apply(
             update_job(state, request, options, now)
         }
         "task.add" => add_task(state, request, now),
-        "session.start" | "session.end" | "session.heartbeat" => session(state, request, now),
+        "session.start" | "session.end" | "session.interrupt" | "session.heartbeat" => {
+            session(state, request, now)
+        }
         _ if command.starts_with("task.") || command == "plan.register" => {
             update_task(state, request, options, now)
         }
@@ -631,8 +633,15 @@ fn session(state: &mut Snapshot, request: &Value, now: i64) -> Result<Value> {
         if state.tasks[i].last_session.as_deref() != Some(session) {
             continue;
         }
-        if command == "session.end" && state.tasks[i].status == TaskStatus::InProgress {
-            system_block(state, i, "session ended", now);
+        if matches!(command, "session.end" | "session.interrupt")
+            && state.tasks[i].status == TaskStatus::InProgress
+        {
+            let reason = if command == "session.interrupt" {
+                "session interrupted"
+            } else {
+                "session ended"
+            };
+            system_block(state, i, reason, now);
             changed.push(state.tasks[i].id.clone());
         } else if command == "session.start"
             && state.tasks[i].system_block

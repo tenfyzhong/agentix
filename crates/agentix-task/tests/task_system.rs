@@ -379,6 +379,109 @@ async fn planning_is_allowed_before_dependencies_finish_but_execution_is_not() {
 }
 
 #[tokio::test]
+async fn interruption_releases_only_its_session_and_allows_reclaim_or_deletion() {
+    for executing in [false, true] {
+        let f = Fixture::new("markdown").await;
+        let task = f.task("Interrupted task").await;
+        let other = f.task("Other session").await;
+        let other_claim = f.claim(&other, "other").await;
+        let claim = if executing {
+            f.start(&task, "interrupted").await
+        } else {
+            f.claim(&task, "interrupted").await
+        };
+        let request = json!({"command":"session.interrupt","session":"interrupted"});
+        f.service
+            .execute(request.clone(), WriteOptions::default())
+            .await
+            .unwrap();
+        let state = f.service.store().snapshot().await.unwrap();
+        let blocked = state.task_result(&task).unwrap();
+        assert_eq!(blocked["status"], "BLOCKED");
+        assert_eq!(blocked["reason"], "session interrupted");
+        assert_eq!(blocked["system_block"], true);
+        assert!(blocked["lease"].is_null());
+        assert!(blocked["phase"].is_null());
+        assert_eq!(blocked["current_plan"], claim["current_plan"]);
+        assert_eq!(
+            state.task_result(&other).unwrap()["lease"],
+            other_claim["lease"]
+        );
+        if executing {
+            assert!(
+                f.service.plan(&task).await.unwrap()["body"]
+                    .as_str()
+                    .unwrap()
+                    .contains("Implement and verify.")
+            );
+        }
+        f.service
+            .execute(request.clone(), WriteOptions::default())
+            .await
+            .unwrap();
+        f.service
+            .execute(
+                json!({"command":"session.heartbeat","session":"interrupted"}),
+                WriteOptions::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            f.service
+                .store()
+                .snapshot()
+                .await
+                .unwrap()
+                .task_result(&task)
+                .unwrap(),
+            blocked
+        );
+        assert!(
+            f.service
+                .execute(
+                    json!({"command":"task.heartbeat","task":task}),
+                    owner(&claim)
+                )
+                .await
+                .is_err()
+        );
+        let reclaimed = f.claim(&task, "replacement").await;
+        assert_ne!(reclaimed["lease"]["token"], claim["lease"]["token"]);
+        // A late interrupt from the previous session must not revoke its successor.
+        f.service
+            .execute(request, WriteOptions::default())
+            .await
+            .unwrap();
+        assert_eq!(
+            f.service
+                .store()
+                .snapshot()
+                .await
+                .unwrap()
+                .task_result(&task)
+                .unwrap()["lease"],
+            reclaimed["lease"]
+        );
+        for session in ["replacement", "other"] {
+            f.service
+                .execute(
+                    json!({"command":"session.interrupt","session":session}),
+                    WriteOptions::default(),
+                )
+                .await
+                .unwrap();
+        }
+        f.service
+            .execute(
+                json!({"command":"job.delete","job":f.job}),
+                WriteOptions::default(),
+            )
+            .await
+            .unwrap();
+    }
+}
+
+#[tokio::test]
 async fn a_planning_lease_recovers_without_a_plan_and_fences_the_old_owner() {
     let f = Fixture::new("obsidian").await;
     let task = f.task("Interrupted planning").await;

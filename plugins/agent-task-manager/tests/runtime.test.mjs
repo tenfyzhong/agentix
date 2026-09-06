@@ -347,3 +347,17 @@ test("retry tokens are scoped by the exact session and idempotency key", async (
     await invoke("b:c");
     assert.deepEqual(tokens, ["token:a:b", "token:a"]);
 });
+
+
+test("Codex Interrupt releases the session instead of renewing it", async () => {
+    const calls = [];
+    const result = await runHook(
+        { hook_event_name: "Interrupt", session_id: "interrupted", turn_id: "turn_one", cwd: "/work" },
+        async (args, options) => {
+            calls.push({ args, options });
+            return { schema_version: 1, ok: true, result: {} };
+        },
+    );
+    assert.deepEqual(calls, [{ args: ["hook", "interrupt"], options: { cwd: "/work", session: "interrupted" } }]);
+    assert.deepEqual(result, {});
+});
