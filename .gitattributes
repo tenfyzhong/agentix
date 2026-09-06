@@ -1,0 +1,2 @@
+# Shell completion scripts must retain LF on every platform.
+completions/* text eol=lf
