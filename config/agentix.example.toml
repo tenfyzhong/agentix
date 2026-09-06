@@ -66,6 +66,8 @@ owner_user_ids = []
 # then send the printed `/claim <code>` in a private chat to fill it automatically.
 # owner_open_ids = []
 # [task_board]
-# Optional: uncomment this table and config to enable a task board.
+# Optional: uncomment this table and set enable = true to enable a task board.
+# Disabled by default, even when a config path is present.
 # Initialize taskcli before enabling this integration.
+# enable = false
 # config = "~/.config/taskcli/config.toml"

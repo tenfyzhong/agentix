@@ -32,7 +32,7 @@ Unknown or malformed slash commands return a parsing error and the same state-aw
 
 ### Optional task commands
 
-When `[task_board].config` is configured, `/dashboard` lists projects with actions to open their boards. After attachment, `/board` shows the current session's task board and `/jobs` lists its associated Jobs. Select a Task or Job to read its Markdown details; Job details link to associated Tasks, and Task details include a **Job** button. Legacy `/tasks [job-or-project]` and `/task <id>` remain typed shortcuts and are not added to command menus.
+When `task_board.enable = true` and `[task_board].config` points to a taskcli configuration, `/dashboard` lists projects with actions to open their boards. After attachment, `/board` shows the current session's task board and `/jobs` lists its associated Jobs. Select a Task or Job to read its Markdown details; Job details link to associated Tasks, and Task details include a **Job** button. `task_board.enable` defaults to `false`; when disabled, the task board is not started and its commands are omitted from IM menus and help. Legacy `/tasks [job-or-project]` and `/task <id>` remain typed shortcuts and are not added to command menus.
 
 An attached session can claim a Task and use state actions; Block, Wait, and Fail request a reason, and `/cancel` clears that input. The agent publishes a Plan through taskcli before Start is allowed. Done is offered only during execution. IM does not create Jobs/Tasks or edit Plan bodies. See the [task board workflow](task-board.md#agentix-integration).
 
