@@ -1,0 +1,13 @@
+{
+  "name": "agentix-plugins",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Agentix plugins installed directly from GitHub with Pi.",
+  "license": "MIT",
+  "keywords": ["pi-package"],
+  "workspaces": ["plugins/agent-task-manager"],
+  "pi": {
+    "extensions": ["./plugins/agent-task-manager/extensions/pi.ts"],
+    "skills": ["./plugins/agent-task-manager/skills"]
+  }
+}

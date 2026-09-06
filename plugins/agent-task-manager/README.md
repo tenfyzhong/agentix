@@ -22,7 +22,7 @@ Install Node.js 24+ and put `taskcli` on PATH, or set `TASKCLI_BIN` to its execu
 The repository provides the `agentix` marketplace in `.agents/plugins/marketplace.json`. Add the GitHub repository, then install the plugin:
 
 ```sh
-codex plugin marketplace add https://github.com/tenfyzhong/agentix.git
+codex plugin marketplace add tenfyzhong/agentix --ref main
 codex plugin add agent-task-manager@agentix
 codex plugin list
 ```
@@ -34,7 +34,7 @@ Start a new Codex thread after installation, then use `/hooks` to review and tru
 The repository also provides `.claude-plugin/marketplace.json` with the same marketplace and plugin names. Run these commands in your terminal:
 
 ```sh
-claude plugin marketplace add https://github.com/tenfyzhong/agentix.git
+claude plugin marketplace add tenfyzhong/agentix
 claude plugin install agent-task-manager@agentix
 claude plugin list
 ```
@@ -45,29 +45,24 @@ Both hosts fetch the marketplace catalogs from GitHub. Source checkouts contain 
 
 ### Pi: install
 
-Clone the GitHub repository, install the plugin's dependencies, then register its subdirectory with Pi:
+Install the package directly from GitHub:
 
 ```sh
-git clone https://github.com/tenfyzhong/agentix.git
-cd agentix
-npm ci --ignore-scripts --prefix ./plugins/agent-task-manager
-pi install ./plugins/agent-task-manager
+pi install git:github.com/tenfyzhong/agentix
 ```
 
-Keep the checkout at a stable location; Pi reads `pi.extensions` and `pi.skills` from `package.json`. Restart or reload Pi after installation. See [Pi package installation](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/packages.md#install-and-manage).
+Pi manages the Git checkout and installs npm dependencies automatically. The repository-root `package.json` selects the plugin's Pi extension and shared skills; its npm workspace installs the plugin's runtime dependencies. Restart or reload Pi after installation. See [Pi package installation](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/packages.md#install-and-manage).
 
-### OMP: install
+### OMP: marketplace
 
-Clone the GitHub repository and use OMP's `install` command for the plugin subdirectory. If you already cloned it for Pi, reuse that checkout and run the last two commands from its root:
+Add the GitHub repository as an OMP marketplace, then install the plugin:
 
 ```sh
-git clone https://github.com/tenfyzhong/agentix.git
-cd agentix
-npm ci --ignore-scripts --prefix ./plugins/agent-task-manager
-omp install ./plugins/agent-task-manager
+omp plugin marketplace add tenfyzhong/agentix
+omp plugin install agent-task-manager@agentix
 ```
 
-OMP links local packages and reads `omp.extensions` and `omp.skills`. Keep the package at a stable path and restart OMP after installation. See the [OMP install command](https://github.com/can1357/oh-my-pi/blob/main/packages/coding-agent/src/commands/install.ts) and [package loader](https://github.com/can1357/oh-my-pi/blob/main/docs/skills/authoring-extensions.md#packagejson-manifest). Use a version whose `omp install --help` lists local paths as supported targets.
+OMP uses the repository's `.claude-plugin/marketplace.json` catalog and manages the installed plugin. Restart OMP after installation. See the [OMP plugin commands](https://github.com/can1357/oh-my-pi/blob/main/packages/coding-agent/src/cli/plugin-cli.ts) and [package loader](https://github.com/can1357/oh-my-pi/blob/main/docs/skills/authoring-extensions.md#packagejson-manifest).
 
 An npm-installed copy uses `npm install --ignore-scripts` if dependencies need reinstalling: npm does not ship `package-lock.json`. Source and release copies include the lockfile and can use `npm ci`. The separate Obsidian skill is still required when an agent edits Obsidian Plan/Notes bodies.
 

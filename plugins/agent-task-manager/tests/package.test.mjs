@@ -1,13 +1,59 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { readFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
-import { posix } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { join, posix } from "node:path";
+import { tmpdir } from "node:os";
 
 const root = new URL("../", import.meta.url);
 const readJson = async (path) =>
     JSON.parse(await readFile(new URL(path, root), "utf8"));
+
+test("Pi Git installs discover the plugin and install its runtime dependencies", async () => {
+    const repository = new URL("../../", root);
+    const pkg = await readJson("../../package.json");
+    const plugin = await readJson("package.json");
+    for (const kind of ["extensions", "skills"]) {
+        assert.deepEqual(
+            pkg.pi[kind],
+            plugin.pi[kind].map(path => `./plugins/agent-task-manager/${path.replace(/^\.\//, "")}`),
+        );
+    }
+
+    const directory = await mkdtemp(`${tmpdir()}/agentix-pi-install-`);
+    try {
+        await mkdir(`${directory}/plugins/agent-task-manager`, { recursive: true });
+        for (const path of ["package.json", "package-lock.json", "plugins/agent-task-manager"]) {
+            await cp(new URL(path, repository), `${directory}/${path}`, {
+                recursive: true,
+                filter: source => !/[\\/](node_modules|tests)([\\/]|$)/.test(source),
+            });
+        }
+        execFileSync(
+            process.platform === "win32" ? "cmd.exe" : "/bin/sh",
+            process.platform === "win32"
+                ? ["/d", "/s", "/c", "npm ci --ignore-scripts --offline --no-audit --no-fund"]
+                : ["-c", "npm ci --ignore-scripts --offline --no-audit --no-fund"],
+            { cwd: directory, encoding: "utf8", timeout: 30000 },
+        );
+        const { default: install } = await import(
+            pathToFileURL(join(directory, pkg.pi.extensions[0]))
+        );
+        const events = [], tools = [];
+        install({
+            on: event => events.push(event),
+            registerTool: tool => tools.push(tool.name),
+        });
+        assert.ok(events.includes("agent_settled"), "load the Pi lifecycle adapter");
+        assert.deepEqual(tools, ["taskcli"]);
+        for (const path of pkg.pi.skills) {
+            await readFile(`${directory}/${path}/agent-task-manager/SKILL.md`, "utf8");
+        }
+    } finally {
+        await rm(directory, { recursive: true, force: true });
+    }
+});
 
 test("repository marketplaces resolve the same complete host plugin", async () => {
     const codex = await readJson("../../.agents/plugins/marketplace.json");
