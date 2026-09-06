@@ -994,11 +994,46 @@ fn initialization_ignores_language_environment_and_omits_language_configuration(
 }
 
 #[test]
+fn task_note_timestamps_follow_the_system_local_zone() {
+    let cli = Cli::new("markdown");
+    let job = cli.job("System local time projection");
+    let id = cli.task(&job, "System time zone");
+    let created = time::OffsetDateTime::from_unix_timestamp(
+        cli.ok(&["task", "show", &id])["created_at"]
+            .as_i64()
+            .unwrap(),
+    )
+    .unwrap();
+    let offset = time::UtcOffset::local_offset_at(created).unwrap();
+    // Windows CI changes the OS time zone and supplies an independent expected offset.
+    if let Ok(expected) = std::env::var("TASKCLI_TEST_EXPECTED_OFFSET_SECONDS") {
+        assert_eq!(offset.whole_seconds(), expected.parse::<i32>().unwrap());
+    }
+    assert_task_note_timestamps(&cli, &id, offset);
+    cli.ok(&["sync"]);
+    assert_task_note_timestamps(&cli, &id, offset);
+}
+
+// Windows resolves the native system time zone and does not use POSIX TZ overrides.
+#[cfg(unix)]
+#[test]
 fn task_note_timestamps_follow_the_process_local_zone() {
     let cli = Cli::new("markdown");
     let job = cli.job("Local time projection");
     let id = cli.task(&job, "Time zones");
-    let task = cli.ok(&["task", "show", &id]);
+    for (zone, hours) in [("Asia/Tokyo", 9), ("Etc/GMT+5", -5), ("UTC", 0)] {
+        let output = cli.command(&["sync"]).env("TZ", zone).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{zone}: {}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        assert_task_note_timestamps(&cli, &id, time::UtcOffset::from_hms(hours, 0, 0).unwrap());
+    }
+}
+
+fn assert_task_note_timestamps(cli: &Cli, id: &str, offset: time::UtcOffset) {
+    let task = cli.ok(&["task", "show", id]);
     let project = cli.ok(&["project", "list"])[0].clone();
     let folder = cli
         .dir
@@ -1012,27 +1047,18 @@ fn task_note_timestamps_follow_the_process_local_zone() {
         .unwrap()
         .unwrap()
         .path();
-    for (zone, hours) in [("Asia/Tokyo", 9), ("Etc/GMT+5", -5), ("UTC", 0)] {
-        let output = cli.command(&["sync"]).env("TZ", zone).output().unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stdout)
-        );
-        let doc = std::fs::read_to_string(&path).unwrap();
-        let created =
-            time::OffsetDateTime::from_unix_timestamp(task["created_at"].as_i64().unwrap())
-                .unwrap();
-        let expected = created
-            .to_offset(time::UtcOffset::from_hms(hours, 0, 0).unwrap())
-            .format(&time::format_description::well_known::Rfc3339)
-            .unwrap();
-        assert!(
-            doc.contains(&format!("created_at: {expected:?}")),
-            "{zone}: {doc}"
-        );
-        assert!(doc.contains(&format!("dateCreated: {expected:?}")));
-        assert!(doc.contains("completed_at: null"));
-        assert!(!doc.lines().any(|line| line.starts_with("version:")));
-    }
+    let doc = std::fs::read_to_string(path).unwrap();
+    let created =
+        time::OffsetDateTime::from_unix_timestamp(task["created_at"].as_i64().unwrap()).unwrap();
+    let expected = created
+        .to_offset(offset)
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    assert!(
+        doc.contains(&format!("created_at: {expected:?}")),
+        "{offset}: {doc}"
+    );
+    assert!(doc.contains(&format!("dateCreated: {expected:?}")));
+    assert!(doc.contains("completed_at: null"));
+    assert!(!doc.lines().any(|line| line.starts_with("version:")));
 }

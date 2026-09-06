@@ -68,3 +68,26 @@ jobs:
       - name: Run Windows task board tests
         if: runner.os == 'Windows'
         run: cargo test -p agentix-task -p taskcli
+      - name: Verify Windows system time zones
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $originalTimeZone = tzutil /g
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot read the system time zone' }
+          try {
+            foreach ($zone in @(
+              @{ Name = 'Tokyo Standard Time'; Offset = '32400' },
+              @{ Name = 'SA Pacific Standard Time'; Offset = '-18000' },
+              @{ Name = 'UTC'; Offset = '0' }
+            )) {
+              tzutil /s $zone.Name
+              if ($LASTEXITCODE -ne 0) { throw "Cannot set time zone $($zone.Name)" }
+              $env:TASKCLI_TEST_EXPECTED_OFFSET_SECONDS = $zone.Offset
+              cargo test -p taskcli --test cli task_note_timestamps_follow_the_system_local_zone -- --exact
+              if ($LASTEXITCODE -ne 0) { throw "Time zone test failed for $($zone.Name)" }
+            }
+          } finally {
+            Remove-Item Env:TASKCLI_TEST_EXPECTED_OFFSET_SECONDS -ErrorAction SilentlyContinue
+            tzutil /s $originalTimeZone
+            if ($LASTEXITCODE -ne 0) { throw 'Cannot restore the original time zone' }
+          }

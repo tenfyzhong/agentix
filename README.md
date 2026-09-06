@@ -257,7 +257,7 @@ After changing CLI commands or options, run `make completions` and commit the
 updated files for both CLIs. Tests verify that the checked-in completions match
 their CLI and that taskcli generation does not read configuration or create task state.
 
-CI uses Rust 1.95.0. Ensure `cargo`, `rustc`, `cargo-clippy`, and `rustfmt` all come from that toolchain rather than mixing Homebrew and rustup installations. The test suite checks the non-Unix Codex compatibility API on Unix hosts as well, so Windows-only API omissions are caught locally.
+CI uses Rust 1.95.0. Ensure `cargo`, `rustc`, `cargo-clippy`, and `rustfmt` all come from that toolchain rather than mixing Homebrew and rustup installations. The test suite checks the non-Unix Codex compatibility API on Unix hosts as well, so Windows-only API omissions are caught locally. Task timestamp tests use `TZ` overrides on Unix; Windows CI switches the native system time zone to verify UTC+09:00, UTC-05:00, and UTC, then restores the original setting.
 
 ## Documentation
 
