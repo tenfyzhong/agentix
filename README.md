@@ -9,7 +9,6 @@ Agentix connects local Codex, Pi, and Oh My Pi sessions to Telegram or Feishu. A
 - Restore session bindings after restarts and receive background completion notifications.
 - Create Codex sessions from chat with optional rmux integration.
 - Coordinate work with standalone `taskcli` and browse project, Job, and Task boards in IM or Obsidian.
-- Record `agent` (`codex`, `claude`, `pi`, or `omp`) and `session_id` in Task and Job frontmatter; see [task document metadata](docs/task-board.md#read-only-document-projections).
 
 ## Install
 
