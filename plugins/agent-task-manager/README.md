@@ -19,51 +19,49 @@ Install Node.js 24+ and put `taskcli` on PATH, or set `TASKCLI_BIN` to its execu
 
 ### Codex: marketplace
 
-The repository provides the `agentix` marketplace in `.agents/plugins/marketplace.json`. From a checkout containing that catalog, add the repository or worktree root, then install the plugin:
+The repository provides the `agentix` marketplace in `.agents/plugins/marketplace.json`. Add the GitHub repository, then install the plugin:
 
 ```sh
-codex plugin marketplace add /absolute/path/to/agentix
+codex plugin marketplace add tenfyzhong/agentix --ref main
 codex plugin add agent-task-manager@agentix
 codex plugin list
 ```
 
-Use the repository root, not `plugins/agent-task-manager`, as the marketplace path. Start a new Codex thread after installation, then use `/hooks` to review and trust the bundled hooks. Installation does not bypass hook trust. See [Codex marketplace commands](https://learn.chatgpt.com/docs/developer-commands#codex-plugin-marketplace) and [plugin commands](https://learn.chatgpt.com/docs/developer-commands#codex-plugin).
+Start a new Codex thread after installation, then use `/hooks` to review and trust the bundled hooks. Installation does not bypass hook trust. See [Codex marketplace commands](https://learn.chatgpt.com/docs/developer-commands#codex-plugin-marketplace) and [plugin commands](https://learn.chatgpt.com/docs/developer-commands#codex-plugin).
 
 ### Claude Code: marketplace
 
 The repository also provides `.claude-plugin/marketplace.json` with the same marketplace and plugin names. Run these commands in your terminal:
 
 ```sh
-claude plugin marketplace add /absolute/path/to/agentix
+claude plugin marketplace add tenfyzhong/agentix
 claude plugin install agent-task-manager@agentix
 claude plugin list
 ```
 
 Inside Claude Code, the equivalent commands start with `/plugin`. Reload plugins if the host requests it, and review the discovered hooks with `/hooks`. See [Claude Code marketplace installation](https://code.claude.com/docs/en/plugin-marketplaces#manage-marketplaces-from-the-cli).
 
-For either host, once these catalogs are published on the repository's default branch, you can replace the local marketplace path with `tenfyzhong/agentix`. Until then, use the checkout containing the catalogs. Source checkouts contain both catalogs; `taskcli-*` release archives provide the plugin directory, not a marketplace root. The `agentix-*` archives do not include the plugin. Both hosts load the shared `hooks/hooks.json`; Codex additionally loads `hooks/codex.json`, and Claude loads `hooks/claude.json`. No per-project hook files need to be copied.
+Both hosts fetch the marketplace catalogs from GitHub. Source checkouts contain both catalogs; `taskcli-*` release archives provide the plugin directory, not a marketplace root. The `agentix-*` archives do not include the plugin. Both hosts load the shared `hooks/hooks.json`; Codex additionally loads `hooks/codex.json`, and Claude loads `hooks/claude.json`. No per-project hook files need to be copied.
 
 ### Pi: install
 
-Use the complete plugin directory from a source checkout or extracted taskcli release archive. Install its dependencies, then register it with Pi:
+Install the package directly from GitHub:
 
 ```sh
-npm ci --ignore-scripts --prefix /absolute/path/to/agent-task-manager
-pi install /absolute/path/to/agent-task-manager
+pi install git:github.com/tenfyzhong/agentix
 ```
 
-The local package stays at that path; Pi reads `pi.extensions` and `pi.skills` from `package.json`. Restart or reload Pi after installation. See [Pi package installation](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/packages.md#install-and-manage).
+Pi manages the Git checkout and installs npm dependencies automatically. The repository-root `package.json` selects the plugin's Pi extension and shared skills; its npm workspace installs the plugin's runtime dependencies. Restart or reload Pi after installation. See [Pi package installation](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/packages.md#install-and-manage).
 
 ### OMP: install
 
-Use OMP's `install` command for the complete package:
+Install the extension package directly from GitHub:
 
 ```sh
-npm ci --ignore-scripts --prefix /absolute/path/to/agent-task-manager
-omp install /absolute/path/to/agent-task-manager
+omp install github:tenfyzhong/agentix
 ```
 
-OMP links local packages and reads `omp.extensions` and `omp.skills`. Keep the package at a stable path and restart OMP after installation. See the [OMP install command](https://github.com/can1357/oh-my-pi/blob/main/packages/coding-agent/src/commands/install.ts) and [package loader](https://github.com/can1357/oh-my-pi/blob/main/docs/skills/authoring-extensions.md#packagejson-manifest). Use a version whose `omp install --help` lists local paths as supported targets.
+OMP uses the `github:owner/repo` source format for direct Git installs. The repository-root `package.json` selects the OMP extension through `omp.extensions` and the shared skills through `omp.skills`; package dependencies supply the runtime requirements. Restart OMP after installation. See the [OMP install command](https://github.com/can1357/oh-my-pi/blob/main/packages/coding-agent/src/commands/install.ts), [Git source formats](https://github.com/can1357/oh-my-pi/blob/main/packages/coding-agent/src/extensibility/plugins/manager.ts), and [extension package manifest](https://github.com/can1357/oh-my-pi/blob/main/docs/skills/authoring-extensions.md#packagejson-manifest).
 
 An npm-installed copy uses `npm install --ignore-scripts` if dependencies need reinstalling: npm does not ship `package-lock.json`. Source and release copies include the lockfile and can use `npm ci`. The separate Obsidian skill is still required when an agent edits Obsidian Plan/Notes bodies.
 
@@ -107,6 +105,8 @@ Claude’s PostToolUseFailure adapter only acts on the boolean `is_interrupt: tr
 When updating an existing local marketplace installation, rebuild/install taskcli first, then refresh the plugin with `codex plugin add agent-task-manager@agentix`. Codex CLI 0.153.4 refreshes the installed local copy even when the plugin version is unchanged. Start a new thread and use `/hooks` to review and trust the changed hook configuration, including Interrupt. Source edits alone do not update an installed cache.
 
 ## Validation
+
+The remote-package installation test starts with an isolated empty npm cache and downloads missing locked dependencies from the npm registry. It verifies both Pi checkout installs and OMP package-consumer installs without relying on the host's existing cache.
 
 From the repository root, run `make check` with Node.js 24+ and npm. Tests validate both marketplace entries, inspect host-specific hook discovery, import the manifest-selected Pi/OMP extensions, and verify the npm package file list. Cargo additionally exercises the configured commands with the compiled taskcli, one host root variable at a time, from an unrelated working directory and a plugin path containing spaces/Unicode. Linux/macOS CI exercises both sh and fish; Windows tests execute the configured command through `cmd.exe` rather than bypassing it.
 
