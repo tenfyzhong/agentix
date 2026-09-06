@@ -397,6 +397,7 @@ _arguments "${_arguments_options[@]}" : \
 '--name=[]:NAME:_default' \
 '--title=[]:TITLE:_default' \
 '--goal=[]:GOAL:_default' \
+'--prompt=[Original user prompt, preserved verbatim in the Job document]:PROMPT:_default' \
 '--config=[]:CONFIG:_files' \
 '--project=[]:PROJECT:_default' \
 '--actor=[]:ACTOR:_default' \
@@ -416,6 +417,7 @@ _arguments "${_arguments_options[@]}" : \
 '--name=[]:NAME:_default' \
 '--title=[]:TITLE:_default' \
 '--goal=[]:GOAL:_default' \
+'--prompt=[Replace the original user prompt; an empty string clears it]:PROMPT:_default' \
 '--config=[]:CONFIG:_files' \
 '--project=[]:PROJECT:_default' \
 '--actor=[]:ACTOR:_default' \
@@ -1800,7 +1802,7 @@ _taskcli__subcmd__help__subcmd__job_commands() {
     local commands; commands=(
 'delete:Delete the Job, its Tasks, and their Plan documents' \
 'create:Create a Job with a title and acceptance goal in the selected Project' \
-'update:Change a Job'\''s display name, title, or acceptance goal' \
+'update:Change a Job'\''s display name, title, acceptance goal, or original prompt' \
 'list:List Jobs, optionally filtered by Project, status, or date' \
 'show:Show a Job'\''s goal, status, and lifecycle metadata' \
 'cancel:Cancel a Job and its unfinished Tasks after their leases have been released' \
@@ -2117,7 +2119,7 @@ _taskcli__subcmd__job_commands() {
     local commands; commands=(
 'delete:Delete the Job, its Tasks, and their Plan documents' \
 'create:Create a Job with a title and acceptance goal in the selected Project' \
-'update:Change a Job'\''s display name, title, or acceptance goal' \
+'update:Change a Job'\''s display name, title, acceptance goal, or original prompt' \
 'list:List Jobs, optionally filtered by Project, status, or date' \
 'show:Show a Job'\''s goal, status, and lifecycle metadata' \
 'cancel:Cancel a Job and its unfinished Tasks after their leases have been released' \
@@ -2152,7 +2154,7 @@ _taskcli__subcmd__job__subcmd__help_commands() {
     local commands; commands=(
 'delete:Delete the Job, its Tasks, and their Plan documents' \
 'create:Create a Job with a title and acceptance goal in the selected Project' \
-'update:Change a Job'\''s display name, title, or acceptance goal' \
+'update:Change a Job'\''s display name, title, acceptance goal, or original prompt' \
 'list:List Jobs, optionally filtered by Project, status, or date' \
 'show:Show a Job'\''s goal, status, and lifecycle metadata' \
 'cancel:Cancel a Job and its unfinished Tasks after their leases have been released' \

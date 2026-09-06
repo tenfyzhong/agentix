@@ -94,6 +94,7 @@ fn create_job(
         project_id: project.id.clone(),
         title: required(request, "title")?.into(),
         goal: request["goal"].as_str().unwrap_or_default().into(),
+        prompt: request["prompt"].as_str().unwrap_or_default().into(),
         agent: crate::model::agent_name(&options.actor_ref).map(str::to_owned),
         session_id: options.session_ref.clone(),
         status: JobStatus::Active,
@@ -296,7 +297,8 @@ fn update_job(
                 (job.status == JobStatus::Active
                     || (renamed.is_some()
                         && request.get("title").is_none()
-                        && request.get("goal").is_none()))
+                        && request.get("goal").is_none()
+                        && request.get("prompt").is_none()))
                     && job.archived_at.is_none(),
                 "conflict: Job is closed"
             );
@@ -312,6 +314,9 @@ fn update_job(
             }
             if request.get("title").is_some() {
                 job.title = required(request, "title")?.into();
+            }
+            if let Some(prompt) = request["prompt"].as_str() {
+                job.prompt = prompt.into();
             }
             if let Some(goal) = request["goal"].as_str() {
                 job.goal = goal.into();

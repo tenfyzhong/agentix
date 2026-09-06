@@ -2353,7 +2353,7 @@ _taskcli() {
             return 0
             ;;
         taskcli__subcmd__job__subcmd__create)
-            opts="-h --name --title --goal --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help"
+            opts="-h --name --title --goal --prompt --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -2368,6 +2368,10 @@ _taskcli() {
                     return 0
                     ;;
                 --goal)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --prompt)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
@@ -2822,7 +2826,7 @@ _taskcli() {
             return 0
             ;;
         taskcli__subcmd__job__subcmd__update)
-            opts="-h --name --title --goal --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help"
+            opts="-h --name --title --goal --prompt --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -2837,6 +2841,10 @@ _taskcli() {
                     return 0
                     ;;
                 --goal)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --prompt)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;

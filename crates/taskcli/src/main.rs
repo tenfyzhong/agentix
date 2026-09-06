@@ -180,8 +180,11 @@ enum JobCommand {
         title: String,
         #[arg(long, default_value = "")]
         goal: String,
+        /// Original user prompt, preserved verbatim in the Job document.
+        #[arg(long, default_value = "")]
+        prompt: String,
     },
-    /// Change a Job's display name, title, or acceptance goal.
+    /// Change a Job's display name, title, acceptance goal, or original prompt.
     Update {
         id: String,
         #[arg(long)]
@@ -190,6 +193,9 @@ enum JobCommand {
         title: Option<String>,
         #[arg(long)]
         goal: Option<String>,
+        /// Replace the original user prompt; an empty string clears it.
+        #[arg(long)]
+        prompt: Option<String>,
     },
     /// List Jobs, optionally filtered by Project, status, or date.
     List(JobList),
@@ -634,12 +640,17 @@ async fn job(cli: &Cli, service: &Service, action: &JobCommand) -> Result<Value>
         JobCommand::Delete { id } => {
             mutate(cli, service, json!({"command":"job.delete","job":id})).await
         }
-        JobCommand::Create { title, goal, name } => {
+        JobCommand::Create {
+            title,
+            goal,
+            name,
+            prompt,
+        } => {
             let project = resolve_project(cli, service).await?;
             mutate(
                 cli,
                 service,
-                json!({"command":"job.create","project":project,"title":title,"goal":goal,"name":name}),
+                json!({"command":"job.create","project":project,"title":title,"goal":goal,"name":name,"prompt":prompt}),
             )
             .await
         }
@@ -648,6 +659,7 @@ async fn job(cli: &Cli, service: &Service, action: &JobCommand) -> Result<Value>
             title,
             goal,
             name,
+            prompt,
         } => {
             let mut request = json!({"command":"job.update","job":id});
             if let Some(name) = name {
@@ -655,6 +667,9 @@ async fn job(cli: &Cli, service: &Service, action: &JobCommand) -> Result<Value>
             }
             if let Some(title) = title {
                 request["title"] = json!(title);
+            }
+            if let Some(prompt) = prompt {
+                request["prompt"] = json!(prompt);
             }
             if let Some(goal) = goal {
                 request["goal"] = json!(goal);

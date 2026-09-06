@@ -1062,3 +1062,30 @@ fn assert_task_note_timestamps(cli: &Cli, id: &str, offset: time::UtcOffset) {
     assert!(doc.contains("completed_at: null"));
     assert!(!doc.lines().any(|line| line.starts_with("version:")));
 }
+
+#[test]
+fn cli_creates_and_updates_job_prompt_verbatim() {
+    let cli = Cli::new("markdown");
+    let existing = cli.job("Existing");
+    let project = cli.ok(&["job", "show", &existing])["project_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let prompt = "  Please implement this.\n\nKeep the original wording.\n";
+    let job = cli.ok(&[
+        "job",
+        "create",
+        "--project",
+        &project,
+        "--title",
+        "Prompt",
+        "--prompt",
+        prompt,
+    ]);
+    assert_eq!(job["prompt"], prompt);
+    let id = job["id"].as_str().unwrap();
+    assert_eq!(cli.ok(&["job", "show", id])["prompt"], prompt);
+    let updated = cli.ok(&["job", "update", id, "--prompt", "Revised request"]);
+    assert_eq!(updated["prompt"], "Revised request");
+    assert_eq!(cli.ok(&["job", "update", id, "--prompt", ""])["prompt"], "");
+}

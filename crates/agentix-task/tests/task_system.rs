@@ -13,6 +13,9 @@ mod deletion;
 #[path = "support/tasknotes.rs"]
 mod tasknotes;
 
+#[path = "support/job_prompt.rs"]
+mod job_prompt;
+
 #[path = "support/job_graph.rs"]
 mod job_graph;
 

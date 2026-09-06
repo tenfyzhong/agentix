@@ -226,7 +226,10 @@ impl Service {
         let document = std::fs::read_to_string(self.safe_path(&job.document_path)?)?;
         let goal = section(&document, "goal")?.unwrap_or_else(|| job.goal.clone());
         let notes = section(&document, "notes")?.unwrap_or_default();
-        Ok(format!("## Goal\n\n{goal}\n\n## Notes\n\n{notes}"))
+        Ok(format!(
+            "{}## Goal\n\n{goal}\n\n## Notes\n\n{notes}",
+            prompt_markdown(&job.prompt)
+        ))
     }
 
     fn safe_path(&self, relative: &str) -> Result<PathBuf> {
@@ -315,11 +318,12 @@ impl Service {
                 } else {
                     json!(["agent/job"])
                 };
-                for field in ["goal", "document_path", "title", "name"] {
+                for field in ["goal", "prompt", "document_path", "title", "name"] {
                     properties.as_object_mut().unwrap().remove(field);
                 }
                 let mut doc = frontmatter(properties);
                 doc.push_str(&Self::header(&job.name));
+                doc.push_str(&prompt_markdown(&job.prompt));
                 doc.push_str(&format!("\n## {}\n\n<!-- taskcli:goal:start -->\n{}\n<!-- taskcli:goal:end -->\n\n## {}\n", "Goal", goal, "Tasks"));
                 doc.push_str(&job_dependency_graph(self, &state, &job.id)?);
                 for task in state.tasks.iter().filter(|t| t.job_id == job.id) {
@@ -992,22 +996,53 @@ fn encode(text: &str) -> String {
     }
     result
 }
+fn prompt_markdown(prompt: &str) -> String {
+    if prompt.is_empty() {
+        return String::new();
+    }
+    let mut body = String::from("\n## Prompt\n\n");
+    // An indented text block preserves Markdown source and cannot close a fence
+    // or introduce editable section markers from the user's original request.
+    for line in prompt.split('\n') {
+        if !line.is_empty() {
+            body.push_str("    ");
+            body.push_str(line);
+        }
+        body.push('\n');
+    }
+    body.push('\n');
+    body
+}
+
 fn section(body: &str, name: &str) -> Result<Option<String>> {
     if body.is_empty() {
         return Ok(None);
     }
     let start = format!("<!-- taskcli:{name}:start -->");
     let end = format!("<!-- taskcli:{name}:end -->");
+    // Only standalone markers delimit editable sections. Quoted or indented
+    // user text (including the original prompt) must not alter the document.
+    let positions = |marker: &str| {
+        let mut offset = 0;
+        body.split_inclusive('\n')
+            .filter_map(|line| {
+                let position = offset;
+                offset += line.len();
+                (line.trim_end_matches(['\r', '\n']) == marker).then_some(position)
+            })
+            .collect::<Vec<_>>()
+    };
+    let starts = positions(&start);
+    let ends = positions(&end);
     ensure!(
-        body.matches(&start).count() == 1 && body.matches(&end).count() == 1,
+        starts.len() == 1 && ends.len() == 1,
         "editable {name} markers missing or duplicated; restore markers before sync"
     );
-    let tail = body.split_once(&start).context("missing start marker")?.1;
+    let content_start = starts[0] + start.len();
+    ensure!(content_start <= ends[0], "reversed section markers");
     Ok(Some(
-        tail.split_once(&end)
-            .context("reversed section markers")?
-            .0
-            .trim_matches('\n')
+        body[content_start..ends[0]]
+            .trim_matches(['\r', '\n'])
             .to_owned(),
     ))
 }
