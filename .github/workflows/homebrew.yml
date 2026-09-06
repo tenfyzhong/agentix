@@ -7,6 +7,10 @@ on:
         description: Existing Git tag with a published GitHub Release
         required: true
         type: string
+      formula:
+        description: Formula to publish (all, agentix, or taskcli)
+        default: all
+        type: string
     secrets:
       HOMEBREW_TAP_TOKEN:
         required: true
@@ -16,6 +20,14 @@ on:
         description: Existing Git tag with a published GitHub Release
         required: true
         type: string
+      formula:
+        description: Formula to publish
+        default: all
+        type: choice
+        options:
+          - all
+          - agentix
+          - taskcli
 
 permissions:
   contents: write
@@ -26,10 +38,14 @@ concurrency:
 
 jobs:
   publish-homebrew:
+    strategy:
+      fail-fast: false
+      matrix:
+        formula: ${{ fromJSON(inputs.formula == 'agentix' && '["agentix"]' || inputs.formula == 'taskcli' && '["taskcli"]' || '["agentix", "taskcli"]') }}
     runs-on: macos-15
     env:
-      FORMULA: agentix
-      FORMULA_PATH: ${{ github.workspace }}/homebrew-tap/Formula/agentix.rb
+      FORMULA: ${{ matrix.formula }}
+      FORMULA_PATH: ${{ github.workspace }}/homebrew-tap/Formula/${{ matrix.formula }}.rb
       RELEASE_TAG: ${{ inputs.tag }}
       TAP_NAME: tenfyzhong/tap
     steps:
@@ -94,12 +110,12 @@ jobs:
           brew bottle --json --no-rebuild --root-url "$BOTTLE_ROOT_URL" "$TAP_NAME/$FORMULA"
       - name: Normalize Homebrew bottle asset name
         run: |
-          bottle="$(find . -maxdepth 1 -name 'agentix--*.bottle.tar.gz' -print -quit)"
+          bottle="$(find . -maxdepth 1 -name "$FORMULA--*.bottle.tar.gz" -print -quit)"
           if [[ -z "$bottle" ]]; then
             echo "Homebrew bottle archive is missing" >&2
             exit 1
           fi
-          mv "$bottle" "${bottle/agentix--/agentix-}"
+          mv "$bottle" "${bottle/$FORMULA--/$FORMULA-}"
       - name: Upload bottle to GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -119,9 +135,10 @@ jobs:
         with:
           path: homebrew-tap
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          branch: automation/agentix-${{ steps.release.outputs.version }}
+          branch: automation/${{ matrix.formula }}-${{ steps.release.outputs.version }}
           delete-branch: true
-          commit-message: "agentix ${{ inputs.tag }}"
-          title: "agentix ${{ inputs.tag }}"
+          signoff: true
+          commit-message: "${{ matrix.formula }} ${{ inputs.tag }}"
+          title: "${{ matrix.formula }} ${{ inputs.tag }}"
           body: |
-            Updates Agentix to `${{ inputs.tag }}` and adds the macOS arm64 bottle.
+            Updates ${{ matrix.formula }} to `${{ inputs.tag }}` and adds the macOS arm64 bottle.
