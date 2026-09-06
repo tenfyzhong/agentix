@@ -214,15 +214,6 @@ For a source build that is not on `PATH`, replace `agentix` with `target/release
 
 If the selected channel has no configured owner, keep `agentix serve` running, execute `agentix client claim` in another local terminal, and send the printed `/claim <code>` command to the bot in a private chat.
 
-## Development
-
-Run `make check` to check formatting, run Clippy, and execute the workspace tests. Channel shutdown deadline tests use Tokio's paused clock to verify the shared grace period and task cancellation independently of database and filesystem latency. Service lifecycle tests also exercise startup and shutdown with a temporary SQLite database.
-
-After changing CLI commands or options, run `make completions` and commit the
-updated files. Tests verify that the checked-in completions match the CLI.
-
-CI uses Rust 1.95.0. Ensure `cargo`, `rustc`, `cargo-clippy`, and `rustfmt` all come from that toolchain rather than mixing Homebrew and rustup installations. The test suite checks the non-Unix Codex compatibility API on Unix hosts as well, so Windows-only API omissions are caught locally.
-
 ## Documentation
 
 - [Usage guide](docs/usage.md)
