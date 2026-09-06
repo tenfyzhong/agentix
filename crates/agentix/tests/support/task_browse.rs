@@ -148,26 +148,7 @@ fn markdown_content(value: &Value) -> Option<String> {
 
 async fn browse_round_trip(telegram: bool) {
     let (_dir, service, id) = task_board_fixture().await;
-    let state = service.store().snapshot().await.unwrap();
-    service.execute(json!({"command":"plan.revise","task":id,"body":"## Plan\n\n**Bold plan** and `code`\n\n- Test navigation"}), agentix_task::WriteOptions {
-        session_ref:Some("thr_tasks".into()), lease_token:Some(state.leases[0].token.clone()),
-        ..agentix_task::WriteOptions::default()
-    }).await.unwrap();
-    let path = service
-        .config()
-        .output_dir()
-        .join(&state.jobs[0].document_path);
-    let document = std::fs::read_to_string(&path)
-        .unwrap()
-        .replace(
-            "<!-- taskcli:goal:start -->",
-            "<!-- taskcli:goal:start -->\n**Bold goal**",
-        )
-        .replace(
-            "<!-- taskcli:notes:start -->",
-            "<!-- taskcli:notes:start -->\n**Bold notes**",
-        );
-    std::fs::write(path, document).unwrap();
+    prepare_browse_documents(&service, &id).await;
     let before = service.store().snapshot().await.unwrap();
     let codex = MockCodexAppServer::start();
     codex
@@ -245,8 +226,63 @@ async fn browse_round_trip(telegram: bool) {
         before,
         "transport browsing must be read-only"
     );
+    inbox_round_trip(&browser, &service).await;
     shutdown.cancel();
     join_stack(stack).await;
+}
+
+async fn prepare_browse_documents(service: &agentix_task::Service, id: &str) {
+    let state = service.store().snapshot().await.unwrap();
+    service.execute(json!({"command":"plan.revise","task":id,"body":"## Plan\n\n**Bold plan** and `code`\n\n- Test navigation"}), agentix_task::WriteOptions {
+        session_ref:Some("thr_tasks".into()), lease_token:Some(state.leases[0].token.clone()),
+        ..agentix_task::WriteOptions::default()
+    }).await.unwrap();
+    let path = service
+        .config()
+        .output_dir()
+        .join(&state.jobs[0].document_path);
+    let document = std::fs::read_to_string(&path)
+        .unwrap()
+        .replace(
+            "<!-- taskcli:goal:start -->",
+            "<!-- taskcli:goal:start -->\n**Bold goal**",
+        )
+        .replace(
+            "<!-- taskcli:notes:start -->",
+            "<!-- taskcli:notes:start -->\n**Bold notes**",
+        );
+    std::fs::write(path, document).unwrap();
+}
+
+async fn inbox_round_trip(browser: &Browser, service: &agentix_task::Service) {
+    let content =
+        "Transport requirement\n\n**Inbox detail** and `code`\n\n- [ ] nested acceptance check";
+    let after = browser.requests().await.len();
+    browser.command(412, &format!("/inbox {content}")).await;
+    let receipt = browser.view(after, "View inbox entry").await;
+    let after = browser.requests().await.len();
+    browser
+        .click(413, &button_token(&receipt, "View inbox entry").unwrap())
+        .await;
+    let entry = wait_for_value(|| async {
+        browser
+            .requests()
+            .await
+            .into_iter()
+            .skip(after)
+            .filter_map(|body| serde_json::from_str::<Value>(&body).ok())
+            .find(|view| markdown_content(view).is_some_and(|body| body.contains("Inbox detail")))
+            .map(|view| view.to_string())
+    })
+    .await;
+    browser.assert_markdown(&serde_json::from_str(&entry).unwrap(), "Inbox detail");
+    let after = browser.requests().await.len();
+    browser.command(414, "/inboxes").await;
+    let inbox = browser.view(after, "Transport requirement").await;
+    assert!(markdown_content(&inbox).unwrap().contains("TODO"));
+    let state = service.store().snapshot().await.unwrap();
+    assert_eq!(state.inboxes.len(), 1);
+    assert_eq!(state.inboxes[0].content, content);
 }
 
 #[tokio::test]

@@ -192,12 +192,68 @@ pub struct Lease {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Snapshot {
     #[serde(default)]
+    pub inboxes: Vec<InboxEntry>,
+    #[serde(default)]
     pub document_sequences: std::collections::BTreeMap<String, u64>,
     pub projects: Vec<Project>,
     pub jobs: Vec<Job>,
     pub tasks: Vec<Task>,
     pub plans: Vec<Plan>,
     pub leases: Vec<Lease>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum InboxStatus {
+    Todo,
+    InProgress,
+    Done,
+    Cancelled,
+}
+
+impl fmt::Display for InboxStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Todo => "TODO",
+            Self::InProgress => "IN_PROGRESS",
+            Self::Done => "DONE",
+            Self::Cancelled => "CANCELLED",
+        })
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InboxLease {
+    pub executor_ref: String,
+    pub session_ref: String,
+    pub token: String,
+    pub lease_expires_at: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InboxEntry {
+    pub id: String,
+    pub project_id: String,
+    pub content: String,
+    pub position: i64,
+    pub status: InboxStatus,
+    pub job_id: Option<String>,
+    pub lease: Option<InboxLease>,
+    pub actor_ref: String,
+    pub last_session: Option<String>,
+    pub revision: i64,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub deleted: bool,
+    /// False until the entry has appeared in a successfully published document.
+    pub published: bool,
+}
+
+impl InboxEntry {
+    #[must_use]
+    pub fn title(&self) -> &str {
+        self.content.lines().next().unwrap_or_default()
+    }
 }
 
 impl Snapshot {

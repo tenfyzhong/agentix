@@ -1,5 +1,18 @@
 # Task CLI workflow
 
+Project Inbox commands:
+
+```sh
+taskcli inbox add --project prj_ID --content 'Requirement and acceptance details' --json
+taskcli inbox list --project prj_ID --json
+taskcli inbox sync --project prj_ID --json
+taskcli inbox claim-next --project prj_ID --executor agent:HOST --session HOST_SESSION --json
+taskcli inbox release inbox_ID --session HOST_SESSION --lease-token INBOX_LEASE_TOKEN --json
+taskcli inbox cancel inbox_ID --json
+```
+
+`add` appends one complete Markdown body. `list` and `sync` import human submissions, cancellation marks (`- [-]`), and withdrawals. `claim-next` returns `claimed`, an `entry` with its separate lease, and the existing or newly created `job`; an empty or ineligible queue returns `claimed: false` and a reason. Use that Job with the normal Task workflow. `context` exposes the owned Inbox entry even before its first Task exists. `hook stop` checks prior session participation before attempting intake. Normal Job completion automatically checks off its Inbox entry. Cancelling or deleting an unfinished entry preserves history and prevents old lease holders from continuing.
+
 Configuration defaults to `~/.config/taskcli/config.toml`; `TASKCLI_CONFIG` or `--config` selects another file. Run `taskcli <command> --help` for arguments. `--json` always has `schema_version`, `ok`, and `result` or `error`. Exit codes: 0 success, 1 business/runtime failure, 2 argument error.
 
 ```sh

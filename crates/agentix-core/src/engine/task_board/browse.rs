@@ -5,7 +5,7 @@ use super::{
     UiAction, error,
 };
 
-const PAGE_SIZE: usize = 6;
+pub(super) const PAGE_SIZE: usize = 6;
 const MARKDOWN_PAGE_BYTES: usize = 1200;
 
 #[derive(Debug, Clone)]
@@ -16,6 +16,14 @@ pub(crate) enum TaskBrowse {
         page: usize,
     },
     Jobs(usize),
+    Inboxes {
+        project: String,
+        page: usize,
+    },
+    Inbox {
+        id: String,
+        page: usize,
+    },
     Job {
         id: String,
         page: usize,
@@ -31,6 +39,8 @@ impl TaskBrowse {
         match self {
             Self::Dashboard(page)
             | Self::Jobs(page)
+            | Self::Inboxes { page, .. }
+            | Self::Inbox { page, .. }
             | Self::Board { page, .. }
             | Self::Job { page, .. }
             | Self::Task { page, .. } => *page,
@@ -42,6 +52,8 @@ impl TaskBrowse {
         match &mut target {
             Self::Dashboard(current)
             | Self::Jobs(current)
+            | Self::Inboxes { page: current, .. }
+            | Self::Inbox { page: current, .. }
             | Self::Board { page: current, .. }
             | Self::Job { page: current, .. }
             | Self::Task { page: current, .. } => *current = page,
@@ -51,6 +63,19 @@ impl TaskBrowse {
 }
 
 impl Engine {
+    pub(in crate::engine) async fn open_dashboard(
+        &self,
+        conversation: &ConversationRef,
+        owner: &str,
+    ) -> Result<(), EngineError> {
+        self.update_command_menu_best_effort(
+            conversation,
+            self.sessions.current(conversation).await.is_some(),
+        )
+        .await;
+        self.show_dashboard(conversation, owner, 0).await
+    }
+
     pub(in crate::engine) async fn browse_tasks(
         &self,
         conversation: &ConversationRef,
@@ -63,6 +88,10 @@ impl Engine {
                 self.show_board(conversation, owner, project, page).await
             }
             TaskBrowse::Jobs(page) => self.show_session_jobs(conversation, owner, page).await,
+            TaskBrowse::Inboxes { project, page } => {
+                self.show_inboxes(conversation, owner, &project, page).await
+            }
+            TaskBrowse::Inbox { id, page } => self.show_inbox(conversation, owner, &id, page).await,
             TaskBrowse::Job { id, page } => self.show_job(conversation, owner, &id, page).await,
             TaskBrowse::Task { id, page } => {
                 self.show_task_page(conversation, owner, &id, page).await
@@ -168,7 +197,7 @@ impl Engine {
         Ok(())
     }
 
-    async fn require_board_session(
+    pub(super) async fn require_board_session(
         &self,
         conversation: &ConversationRef,
     ) -> Result<Option<SessionId>, EngineError> {
@@ -469,7 +498,7 @@ fn status_order(status: TaskStatus) -> usize {
     }
 }
 
-fn page_count(count: usize) -> usize {
+pub(super) fn page_count(count: usize) -> usize {
     count.div_ceil(PAGE_SIZE).max(1)
 }
 

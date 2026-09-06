@@ -14,7 +14,56 @@ Each Task has at most one effective lease, and each executor/session pair has at
 
 SQLite uses WAL, a ten-second busy timeout, short immediate write transactions, foreign keys, revision checks, and optional idempotency keys. Entity documents are stored as typed JSON rows with relational generated columns and indexes; dependency edges and events have their own tables. Mutations load the local task graph inside a write transaction to validate invariants and persist only changed entities. This first version targets local repositories and modest task graphs on one computer, not shared database files on network filesystems.
 
-Database schema v7 moves Plan files into Task notes, retains durable deletion cleanup and document sequence counters, and migrates earlier databases to flat `Jobs/` and `Jobs/Archived/` directories, dated and numbered Job and Task Plan filenames, readable project names, project archival, lifecycle timestamps, and one current Plan per Task. Existing Jobs and Tasks receive daily sequence numbers in creation order (ID breaks timestamp ties), independently per project and entity type. The migration preserves IDs, leases, editable Goal/Notes, and the latest Plan body. Old Plan files are removed only after the replacement documents are written; empty old directories are removed too. Back up SQLite and documents together before upgrading all writers. Older binaries reject v7. Configuration and JSON envelope `schema_version` remain 1; database `PRAGMA user_version` is separate.
+Database schema v7 moves Plan files into Task notes, retains durable deletion cleanup and document sequence counters, and migrates earlier databases to flat `Jobs/` and `Jobs/Archived/` directories, dated and numbered Job and Task Plan filenames, readable project names, project archival, lifecycle timestamps, and one current Plan per Task. Existing Jobs and Tasks receive daily sequence numbers in creation order (ID breaks timestamp ties), independently per project and entity type. The migration preserves IDs, leases, editable Goal/Notes, and the latest Plan body. Old Plan files are removed only after the replacement documents are written; empty old directories are removed too. Back up SQLite and documents together before upgrading all writers. Binaries predating that migration reject v7. Configuration and JSON envelope `schema_version` remain 1; database `PRAGMA user_version` is separate.
+
+Schema v8 adds Project Inbox entries, their exclusive leases, deletion tombstones, and publication state without changing existing Job/Task identities or Plans. Upgrade all taskcli and Agentix writers together; older binaries reject v8. Existing Projects receive `Inbox.md` on synchronization.
+
+## Project inbox
+
+Each Project has `Projects/<project-name>/Inbox.md`, linked from its Board. Humans can append requirements in that document or through IM. Inside the generated Inbox region, one top-level checkbox is one requirement; indent its details underneath:
+
+```markdown
+- [ ] Add CSV export
+  Preserve filters and column order.
+  - [ ] Include a header row
+  - [ ] Cover Unicode values
+
+- [ ] Add an export history page
+```
+
+Nested checklists and fenced examples do not become separate entries. Synchronization adds stable `inbox_` IDs; keep these ID comments and the document's start/end markers intact. Identical titles are allowed. Edit an unclaimed entry's text or reorder whole entries, including their IDs and indented bodies. New IM submissions go at the end. Reserved `<!-- taskcli:` control markers cannot be submitted as content.
+
+| Inbox status | Meaning |
+| --- | --- |
+| `TODO` | Queued, or unfinished work released for recovery |
+| `IN_PROGRESS` | Exclusively claimed by a session; a formal Job is linked |
+| `DONE` | Its formal Job completed; rendered as `- [x]` |
+| `CANCELLED` | Withdrawn by the human or its formal Job cancelled; rendered as `- [-]` |
+
+The receipt beneath an entry displays status, Job link, and current executor. Changing a checkbox to `- [x]` does not complete a Job: completion still follows Task acceptance. Set it to `- [-]` to cancel. Deleting an unfinished entry withdraws it too. Cancellation revokes Inbox and associated Task leases, cancels unfinished Tasks and the active Job, and preserves completed/failed Task outcomes, Plans, Job documents, and audit history. Agents receive cancellation facts at subsequent context/tool/heartbeat boundaries and stop that work; filesystem edits already made are not rolled back. A stale lease cannot submit completion. Restoring an old document buffer cannot revive a cancelled or deleted entry; submit a new entry to request it again. Deleting a terminal entry only hides it from the queue.
+
+Deleting the entire Inbox file, an unreadable file, duplicate IDs, or malformed markers causes a synchronization error, never cancellation of every entry. Restore the document before retrying. The service imports saved edits at synchronization, claim, and relevant task/lifecycle boundaries; there is no filesystem watcher. Database commits and document publication recover separately: `projection_pending` means the request is saved and `taskcli sync` can repair the document. An append awaiting publication is not treated as a human deletion.
+
+Agents finish existing Project Jobs before taking new Inbox work. Every active Job counts, including unplanned Jobs and Jobs with blocked or waiting Tasks. `inbox claim-next` atomically reserves the next entry and creates its formal Job in one SQLite transaction. The agent then uses the existing decomposition, dependency, claim, Plan, start, verification, and completion workflow. A lease lasts 15 minutes and renews with the session heartbeat. Interruption, explicit release, or expiry returns unfinished Inbox work to `TODO`; the next claimant resumes the same Job and Tasks, without duplicating decomposition. Recovery also waits for other active Jobs and outstanding Task leases.
+
+```sh
+taskcli inbox add --content 'Add CSV export'
+taskcli inbox list --json
+taskcli inbox sync
+taskcli --executor agent:codex --session SESSION inbox claim-next --json
+taskcli --session SESSION --lease-token INBOX_LEASE inbox release inbox_ID
+taskcli inbox cancel inbox_ID
+```
+
+Use `--project PROJECT` outside Git. The Inbox lease is distinct from a Task lease. Use the full Inbox ID and its own token for release. `context --session SESSION --json` includes owned Inbox facts even before decomposition, plus cancellation facts. CLI `hook stop` is the end-of-turn fallback: it only intakes from a registered, active Project in which that session has participated. Codex/Claude Stop hooks request another turn when they claim work; Pi/OMP enqueue a follow-up after a successful final idle response. Codex/Claude plan mode skips intake. Pi/OMP skip interrupted, pending-continuation, and failed turns; continuation instructions preserve the current host mode. These hooks do not watch an idle queue or create Plans.
+
+### Submitting through IM
+
+With task boards configured, attach a session and use the secondary commands `/inboxes` and `/inbox <content>`. `/inboxes` lists the current Project's human entries, including all four statuses, in document order with six per page. Select an entry to read its Markdown and navigate to its formal Job. Deleted entries are excluded. `/jobs` continues to list the session's associated formal Jobs.
+
+One `/inbox` message appends one `TODO` entry, preserving newlines, internal spaces, and Markdown. Empty content displays usage. The reply includes the Project, entry ID, status, and navigation buttons. Submission uses the task service directly and also works on read-only agent attachments; it does not send a prompt or start an agent turn. Channel, conversation, and inbound message identity form a durable idempotency key, so delivery retries and restarts do not duplicate submissions.
+
+Project resolution uses the attached session's directory and Git common directory, including worktrees. Without an available directory, a unique recorded Project association is required. Missing or ambiguous associations must be resolved by attaching the correct session; IM does not register or guess Projects. Navigation remains scoped to the owner, conversation, and attachment epoch, so switching sessions invalidates old buttons.
 
 ## Shell completions
 
@@ -97,12 +146,13 @@ taskcli context --session HOST_SESSION --json
 
 Timestamp fields are Unix seconds in UTC; creation date filters include both specified calendar dates. JSON responses carry `schema_version: 1`, `ok`, and either `result` or `error`. Mutation responses also include `sequence` and `projection_pending`. Exit status is 0 on success, 1 on business/runtime failure, and 2 on argument errors. Event listing returns ordered events and `next_cursor`; the limit is 1–1000. Event payloads contain no Plan body.
 
-## Read-only document projections
+## Document projections
 
 ```text
 Dashboard.base  # Obsidian; Dashboard.md in Markdown mode
 Projects/<project-name>/
   Board.md
+  Inbox.md
   Jobs/YYMMDD-seq-<job-name>.md
   Jobs/Archived/YYMMDD-seq-<job-name>.md
   Tasks/YYMMDD-seq-<task-name>.md
@@ -126,6 +176,7 @@ Job and Task frontmatter includes managed `agent` and `session_id` properties. J
 | Archived Job | `agent/archived/job` |
 | Task (including its Plan) | `agent/task`, `task` |
 | Project Board | `agent/project`, `agent/board` |
+| Human Inbox | `agent/inbox` |
 | Markdown Dashboard | `agent/dashboard` |
 
 Each Task has one TaskNotes-compatible note in `Tasks/`, created even before a Plan is published. Notes carry `task` for TaskNotes identification and `agent/task` for Agentix board filtering. Sync adds missing tags to existing notes and preserves custom tags. Its frontmatter contains the Task ID, optional Plan ID, state, phase, revision, local dates, project link, Job link, and `dependencies`: a list of prerequisite Task IDs, or `[]`. Register all known initial Tasks and dependencies before implementation. When taking up a Task, claim it and publish its freely structured Plan into that same note. `plan revise` updates it in place and advances the Task revision. The document exposes only `revision`; the internal Plan publication counter remains part of CLI metadata. Authored properties are merged with managed metadata. LF and CRLF frontmatter delimiters are recognized, including a closing delimiter at end of file; authored body line endings are preserved. Quoted YAML keys round-trip safely. Frontmatter alone does not satisfy the nonempty Plan body required by `task start`. Dependency fields are generated from SQLite, refreshed by sync, and cannot be overridden by authored Plan properties; `task start` requires all prerequisites to be DONE.
@@ -211,6 +262,8 @@ Database removal and file-cleanup records commit in one transaction. File failur
 
 ### Read-only boundary
 
+`Inbox.md` is the explicit input exception: saved human entries, cancellation, and deletion are imported. The following read-only rules apply to generated Job/Task status and board views.
+
 Generated regions are logically read-only, not filesystem-protected. Manual edits to status, title, dependencies, or ordering are overwritten by the next projection and never imported. There is no `watch` command. Goal/Notes markers preserve their editable bodies. Explicit `job update --goal` replaces a manually edited Goal; Notes remain untouched. Missing/duplicated editable markers fail synchronization instead of dropping content.
 
 TaskNotes provides card actions, property editing, and board settings. The generated views are logically read-only, but these plugin controls are not locked: dragging cards or editing task properties can still change Markdown temporarily. They never claim, start, or complete a task in SQLite. Use an agent/taskcli for state changes and run `taskcli sync` to repair an accidental plugin edit. Strict UI-level prevention would require an additional integration; taskcli does not claim to provide it.
@@ -244,7 +297,7 @@ The vault is not a complete database export:
 | Internal Plan publication state | Publication counters, hashes, and pending unpublished bodies are not fully exported; document `revision` does not replace the internal publication counter |
 | Synchronization and cleanup state | Managed-path bookkeeping, pending deletions, and sequence counters that prevent reuse of deleted filenames remain in SQLite; `Board.md` exposes sync status and sequence |
 
-There is currently no vault import or database rebuild command. `sync` projects the database into documents; it does not reconstruct database records from existing frontmatter. Notes could support a future partial reconstruction of current work after validation, but cannot reproduce missing history, ownership, or retry records. Restored work would need fresh claims rather than recovered lease tokens.
+There is no general vault import or database rebuild command; Inbox import only handles the human queue. `sync` projects the database into documents; it does not reconstruct database records from existing frontmatter. Notes could support a future partial reconstruction of current work after validation, but cannot reproduce missing history, ownership, or retry records. Restored work would need fresh claims rather than recovered lease tokens.
 
 For a restorable backup:
 
@@ -275,7 +328,7 @@ omp install /absolute/path/to/agent-task-manager
 
 Run only the install command for your chosen host, then restart or reload it. Both hosts load the selected extension and the shared Skill from `package.json`; keep the local package at a stable path. Obsidian editing requires the user's separate Obsidian skill package; taskcli's generated structure is deterministic and does not launch an Agent itself.
 
-SessionStart restores eligible Tasks and supplies task context. SessionEnd blocks active work and releases leases. Codex Interrupt does the same with reason `session interrupted` for an interrupted active main-thread turn; it preserves the Plan, fences the old token, and allows deletion once all relevant leases are released. Subsequent heartbeats do not reacquire released leases. Stop means a turn ended and only renews the lease. Tool hooks renew at tool boundaries; no hook daemon is spawned. A Codex/Claude operation or idle gap longer than 15 minutes can expire a lease. Pi/OMP extensions renew every minute while active; detected interruption and shutdown stop the timer and cancel in-flight renewal before releasing leases. Pi waits for agent_settled after an aborted result; OMP uses agent_end and excludes willContinue. New work restarts heartbeat without implicitly reclaiming a Task. The extensions inject current task facts before the agent runs, and expose a structured taskcli tool with session, executor, current lease token, and request idempotency key. Full Task IDs and unambiguous Task prefixes receive the same lease injection; prefixes are resolved before matching the owned Task, and ambiguous prefixes are rejected. Retried writes keep their original injected credentials. A stale-token rejection requires inspecting and reacquiring work, never forcing a completion.
+SessionStart restores eligible Tasks and supplies task context. SessionEnd blocks active work and releases leases. Codex Interrupt does the same with reason `session interrupted` for an interrupted active main-thread turn; it preserves the Plan, fences the old token, and allows deletion once all relevant leases are released. Subsequent heartbeats do not reacquire released leases. Stop renews leases and checks the Project Inbox after existing Jobs finish; a successful claim requests a continuation using the existing task workflow. Tool hooks renew at tool boundaries; no hook daemon is spawned. A Codex/Claude operation or idle gap longer than 15 minutes can expire a lease. Pi/OMP extensions renew every minute while active; detected interruption and shutdown stop the timer and cancel in-flight renewal before releasing leases. Pi waits for agent_settled after an aborted result; OMP uses agent_end and excludes willContinue. New work restarts heartbeat without implicitly reclaiming a Task. The extensions inject current task facts before the agent runs, and expose a structured taskcli tool with session, executor, current lease token, and request idempotency key. Full Task IDs and unambiguous Task prefixes receive the same lease injection; prefixes are resolved before matching the owned Task, and ambiguous prefixes are rejected. Retried writes keep their original injected credentials. A stale-token rejection requires inspecting and reacquiring work, never forcing a completion.
 
 The shared SessionEnd hook, Codex Interrupt hook, and Claude PostToolUseFailure hook each request three seconds. Claude also has an overall session-exit budget, defaulting to 1.5 seconds; plugin hook timeouts do not raise it. Set `CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS=3000` when additional shutdown time is needed. If a busy database or interrupted process prevents shutdown cleanup, the next task operation reaps the expired lease. Other command hooks allow 30 seconds. Claude only releases on PostToolUseFailure when is_interrupt is the boolean true; ordinary tool errors do nothing. Claude has no general interrupt hook, and cancellation may emit no failure event. Use explicit cleanup after stopping work in that case. Pi/OMP aborts without an aborted assistant result also require shutdown or explicit cleanup. Disconnecting an idle Codex CLI from a persistent app-server does not guarantee Interrupt or immediate SessionEnd. After stopping the agent, `taskcli hook session-end --session SESSION_ID` explicitly releases its active leases; `taskcli hook interrupt --session SESSION_ID` records interruption instead. Update both taskcli and the installed plugin, then review the changed Codex hooks through `/hooks`; see the [lifecycle guide](../plugins/agent-task-manager/README.md#lifecycle-behavior).
 
@@ -292,7 +345,7 @@ After initializing taskcli, add to Agentix's configuration:
 config = "~/.config/taskcli/config.toml"
 ```
 
-The referenced configuration must exist; its SQLite database is created if missing. Select the same taskcli configuration as your task writers to browse their existing work. Restart Agentix after adding or changing `[task_board]`; taskcli being configured on its own does not enable the IM integration. With `[task_board]` enabled, Telegram registers `/dashboard` in its default command menu at startup, before any attachment. The top-level menu order is `/sessions`, `/dashboard`, `/cancel`, `/rmux`, `/help` (omit `/dashboard` when not configured). Contextual commands follow in alphabetical order. `/board` and `/jobs` appear in the chat menu only after attach; `/tasks` is not added to the menu.
+The referenced configuration must exist; its SQLite database is created if missing. Select the same taskcli configuration as your task writers to browse their existing work. Restart Agentix after adding or changing `[task_board]`; taskcli being configured on its own does not enable the IM integration. With `[task_board]` enabled, Telegram registers `/dashboard` in its default command menu at startup, before any attachment. The top-level menu order is `/sessions`, `/dashboard`, `/cancel`, `/rmux`, `/help` (omit `/dashboard` when not configured). Contextual commands follow in alphabetical order. `/board`, `/jobs`, `/inboxes`, and `/inbox` appear in the chat menu only after attach; `/tasks` is not added to the menu.
 
 `/dashboard` is the top-level IM dashboard. Each unarchived project has a button that opens its task board, grouped by status with full counts and clickable task entries. Project boards can be browsed without attaching a session.
 
@@ -302,7 +355,7 @@ Click a Job to read its authored Goal and Notes as Markdown, with buttons for it
 
 Project/Job/task lists have six entries per page with **Previous**/**Next** controls. Long detail bodies and Task reasons are also paged, preserving fenced code blocks across pages. Detail headers and button labels use at most 60 characters; full Task/Job titles longer than this are included in the paginated detail body. For Job details, pagination advances both the authored content and associated task buttons; further pages remain available until both are exhausted. Browsing is read-only and does not update Plan hashes. Callback tokens use the existing conversation/owner, generation and binding-epoch checks.
 
-`/projects` and `/sessionboard` are replaced by `/dashboard` and `/board`; `/board` and `/jobs` always use the current attachment. Legacy `/tasks [job-or-project]` and `/task <id>` remain direct shortcuts; the legacy task list is capped at 50 entries. An attached session can claim an unplanned Task or operate its own lease. Start is offered in PLANNING when Plan metadata and dependencies are ready; the service verifies the file at execution time. Done is offered only in EXECUTING. Block/Wait/Fail request a reason; `/cancel` clears pending input. Buttons use existing owner/conversation, generation, and binding-epoch checks plus the Task revision. IM does not create Jobs/Tasks or edit Plan bodies.
+`/projects` and `/sessionboard` are replaced by `/dashboard` and `/board`; `/board` and `/jobs` always use the current attachment. Legacy `/tasks [job-or-project]` and `/task <id>` remain direct shortcuts; the legacy task list is capped at 50 entries. An attached session can claim an unplanned Task or operate its own lease. Start is offered in PLANNING when Plan metadata and dependencies are ready; the service verifies the file at execution time. Done is offered only in EXECUTING. Block/Wait/Fail request a reason; `/cancel` clears pending input. Buttons use existing owner/conversation, generation, and binding-epoch checks plus the Task revision. IM can append human requirements to the Project Inbox; agents create the formal Job and Tasks on intake. IM does not edit Plan bodies.
 
 Agentix incrementally consumes SQLite events during its existing runtime tick. WAITING_USER, BLOCKED, FAILED, and Job completion notifications go only to the matching bound session's conversation. Events without a matching binding are skipped. Delivery retries on channel errors; a crash after send but before cursor persistence can duplicate a notification. CLI-only usage does not require Agentix to run.
 

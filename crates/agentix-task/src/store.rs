@@ -71,7 +71,7 @@ impl Store {
             .fetch_one(&mut *tx)
             .await?;
         ensure!(
-            version <= 7,
+            version <= 8,
             "unsupported task database schema version {version}"
         );
         sqlx::raw_sql(include_str!("schema.sql"))
@@ -165,6 +165,7 @@ impl Store {
         let before = load(&mut tx).await?;
         let mut state = before.clone();
         let result = mutations::apply(&mut state, &request, &options, self.now())?;
+        crate::inbox::refresh(&mut state, self.now());
         crate::deletion::check_pending_paths(&mut tx, &before, &state).await?;
         persist(&mut tx, &before, &state, &command, &options, self.now()).await?;
         let sequence = max_sequence(&mut tx).await?;
@@ -199,7 +200,8 @@ impl Store {
             let i = state.task_index(task)?;
             mutations::system_block(&mut state, i, "lease expired", self.now());
         }
-        if !expired.is_empty() {
+        crate::inbox::refresh(&mut state, self.now());
+        if before != state {
             persist(
                 &mut tx,
                 &before,
@@ -556,6 +558,7 @@ async fn load(conn: &mut SqliteConnection) -> Result<Snapshot> {
             .fetch_optional(&mut *conn)
             .await?;
     Ok(Snapshot {
+        inboxes: read_entities(conn, "inbox_entries").await?,
         document_sequences: sequences
             .map(|v| serde_json::from_str(&v))
             .transpose()?
@@ -706,6 +709,31 @@ async fn persist(
             sqlx::query("INSERT INTO task_dependencies(task_id,dependency_id) VALUES (?,?)")
                 .bind(&task.id)
                 .bind(dependency)
+                .execute(&mut *conn)
+                .await?;
+        }
+    }
+    for entry in &after.inboxes {
+        if before.inboxes.iter().find(|old| old.id == entry.id) == Some(entry) {
+            continue;
+        }
+        upsert(conn, "inbox_entries", &entry.id, entry).await?;
+        append_event(
+            conn,
+            TaskEvent {
+                project_id: Some(entry.project_id.clone()),
+                job_id: entry.job_id.clone(),
+                revision: entry.revision,
+                payload: serde_json::to_value(entry)?,
+                ..event(command, options, now)
+            },
+        )
+        .await?;
+    }
+    for entry in &before.inboxes {
+        if !after.inboxes.iter().any(|e| e.id == entry.id) {
+            sqlx::query("DELETE FROM inbox_entries WHERE id = ?")
+                .bind(&entry.id)
                 .execute(&mut *conn)
                 .await?;
         }

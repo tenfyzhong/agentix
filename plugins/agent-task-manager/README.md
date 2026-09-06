@@ -78,7 +78,8 @@ The shared Skill uses `claim → Plan → start → execute/verify → done`. Cl
 | Trigger | Behavior |
 | --- | --- |
 | Codex/Claude `SessionStart` | Restore eligible Tasks to PLANNING with a new token and inject task context |
-| Codex/Claude `PreToolUse`, `PostToolUse`, `Stop` | Renew leases; `Stop` is not session exit or task completion |
+| Codex/Claude `PreToolUse`, `PostToolUse` | Renew leases and surface human cancellation facts |
+| Codex/Claude `Stop` | Renew leases, then claim eligible Inbox work and request continuation |
 | Codex `Interrupt` | Block active Tasks owned by the interrupted session and release their leases |
 | Claude `PostToolUseFailure` with `is_interrupt: true` | Release that session’s active leases; ordinary tool failures do nothing |
 | Codex/Claude `SessionEnd` | Block active Tasks owned by the ending session and release their leases |
@@ -94,7 +95,7 @@ Renewal and expiry apply during both planning and execution. Recovery does not r
 
 The shared `SessionEnd`, Codex `Interrupt`, and Claude `PostToolUseFailure` hooks request a three-second timeout; other command hooks allow 30 seconds. If shutdown times out or the process is killed, recovery falls back to the 15-minute lease expiry checked by subsequent task operations. Claude additionally applies a session-exit budget (1.5 seconds by default in current versions); a timeout in plugin hooks does not raise that budget. If cleanup needs more time, launch Claude with `CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS=3000`. Codex/Claude have no periodic timer, so long tool calls or idle gaps can also expire a lease. Hooks never force task completion.
 
-Codex emits `Interrupt` when an active main-thread turn is interrupted. The Task becomes system-blocked with reason `session interrupted`, its Plan is preserved, and its old lease token cannot write. Later heartbeat/Stop hooks cannot reacquire that lease. To continue in the same thread, claim again, review the Plan, and start; a later SessionStart can also restore eligible Tasks to PLANNING. Released leases no longer prevent Job deletion, though dependency checks still apply.
+Codex emits `Interrupt` when an active main-thread turn is interrupted. The Task becomes system-blocked with reason `session interrupted`, its Plan is preserved, and its old lease token cannot write. Later heartbeats cannot revive that lease. A normal Stop can recover an eligible Inbox Job with a fresh Inbox lease; existing Tasks still require claim and start. To continue in the same thread, claim again, review the Plan, and start; a later SessionStart can also restore eligible Tasks to PLANNING. Released leases no longer prevent Job deletion, though dependency checks still apply.
 
 Exiting an idle CLI connected to a persistent app-server may only disconnect the client: it does not guarantee Interrupt or immediate SessionEnd. Force-killing the process can also skip hooks. After stopping the agent, explicit cleanup is available with `taskcli hook session-end --session SESSION_ID`; `taskcli hook interrupt --session SESSION_ID` applies the interrupted state. Otherwise expiry remains the fallback. See [Codex hook events](https://learn.chatgpt.com/docs/hooks).
 
@@ -103,6 +104,12 @@ Pi and OMP stop heartbeat timers on detected interruption before invoking cleanu
 Claude’s PostToolUseFailure adapter only acts on the boolean `is_interrupt: true`. It is best-effort coverage: Claude has no general Interrupt hook, Stop does not fire for user interruption, and cancelling a running tool does not necessarily emit PostToolUseFailure. Use SessionEnd for actual exit and `taskcli hook interrupt --session SESSION_ID` for explicit cleanup after stopping work when no event is emitted. See [Claude hook events and shutdown budgets](https://code.claude.com/docs/en/hooks), [Pi extension lifecycle](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/extensions.md), and [OMP extension events](https://github.com/can1357/oh-my-pi/blob/main/packages/coding-agent/src/extensibility/shared-events.ts). Force-kill, crashes, and older hosts missing these events still rely on expiry.
 
 When updating an existing local marketplace installation, rebuild/install taskcli first, then refresh the plugin with `codex plugin add agent-task-manager@agentix`. Codex CLI 0.153.4 refreshes the installed local copy even when the plugin version is unchanged. Start a new thread and use `/hooks` to review and trust the changed hook configuration, including Interrupt. Source edits alone do not update an installed cache.
+
+## Project Inbox continuation
+
+Humans submit requirements in each Project’s `Inbox.md` or through Agentix `/inbox <content>`; `/inboxes` browses the queue. After existing Project Jobs finish, the Skill checks for queued work. Codex/Claude Stop and Pi/OMP final idle events provide a fallback: atomically claim one entry, create or recover its Job, and request a follow-up through the normal decomposition and Task workflow. Codex/Claude plan mode skips intake. Pi/OMP require a successful final response with no interruption or pending continuation; the follow-up instructs the agent to respect its current mode. There is no idle queue daemon.
+
+Inbox leases are distinct from Task leases and renew with the session. Interruption, release, or expiry makes unfinished work available to resume the same Job. Human cancellation (`- [-]`) or deletion revokes leases, cancels unfinished work, and supplies cancellation facts at tool/heartbeat/context boundaries. Completed outcomes and documents remain. See the [Project Inbox guide](https://github.com/tenfyzhong/agentix/blob/main/docs/task-board.md#project-inbox) for the format, safety checks, and CLI commands.
 
 ## Validation
 

@@ -67,6 +67,7 @@ function taskLanguage(t, language) {
 
 async function extension(t, f, host) {
     const handlers = new Map();
+    const messages = [];
     let tool;
     const pkg = JSON.parse(await readFile("package.json", "utf8"));
     assert.equal(pkg[host].extensions.length, 1);
@@ -74,6 +75,7 @@ async function extension(t, f, host) {
         pathToFileURL(resolve(pkg[host].extensions[0]))
     );
     install({
+        sendMessage: (...args) => messages.push(args),
         on: (name, handler) => handlers.set(name, handler),
         registerTool: (value) => {
             tool = value;
@@ -92,7 +94,7 @@ async function extension(t, f, host) {
     const invoke = async (args, id = `call-${++calls}`) =>
         (await tool.execute(id, { args }, undefined, undefined, ctx)).details
             .result;
-    return { invoke, handlers, ctx };
+    return { invoke, handlers, ctx, messages };
 }
 
 for (const [host, format] of [
@@ -205,6 +207,38 @@ test("tool retries preserve identity after claim, Plan revision and lease-releas
 });
 
 for (const host of ["pi", "omp"]) {
+    test(`${host} real Inbox Jobs continue in order and retain cancellation facts`, async (t) => {
+        const f = await fixture(t);
+        const x = await extension(t, f, host);
+        async function finish(job) {
+            const task = await x.invoke(["task", "add", "--job", job, "--title", "Deliver"]);
+            await x.invoke(["task", "claim", task.id]);
+            await x.invoke(["plan", "create", task.id, "--body", "# Deliver and verify"]);
+            await x.invoke(["task", "start", task.id]);
+            await x.invoke(["task", "done", task.id]);
+        }
+        async function settle() {
+            await x.handlers.get("agent_end")({ messages: [{ role: "assistant", stopReason: "stop" }] }, x.ctx);
+            if (host === "pi") await x.handlers.get("agent_settled")({}, x.ctx);
+        }
+        await finish(f.job.id);
+        const first = await f.run(["inbox", "add", "--project", f.project.id, "--content", "First request"]);
+        const second = await f.run(["inbox", "add", "--project", f.project.id, "--content", "Second request"]);
+        await settle();
+        assert.equal(x.messages.length, 1);
+        let current = await f.run(["context"], { session: x.ctx.sessionManager.getSessionId() });
+        assert.equal(current.inbox.id, first.id);
+        await finish(current.job_id);
+        await settle();
+        assert.equal(x.messages.length, 2);
+        current = await f.run(["context"], { session: x.ctx.sessionManager.getSessionId() });
+        assert.equal(current.inbox.id, second.id);
+        await f.run(["inbox", "cancel", second.id]);
+        const heartbeat = await f.run(["hook", "heartbeat"], { session: x.ctx.sessionManager.getSessionId() });
+        assert.ok(heartbeat.inbox_cancellations.some(entry => entry.id === second.id));
+        await settle();
+        assert.equal(x.messages.length, 2);
+    });
     for (const entity of ["job", "project"]) {
         test(`${host} ${entity} deletion replays its committed result without duplicate events`, async (t) => {
             const f = await fixture(t);

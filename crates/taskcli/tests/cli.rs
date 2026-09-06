@@ -6,6 +6,9 @@ use tempfile::TempDir;
 #[path = "support/projections.rs"]
 mod projections;
 
+#[path = "support/inbox.rs"]
+mod inbox;
+
 struct Cli {
     dir: TempDir,
 }

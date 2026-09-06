@@ -35,6 +35,19 @@ This is a skill setting. Do not write language settings into taskcli configurati
 
 ## Execute and hand off
 
+### Project Inbox
+
+Humans submit requirements in the Project's `Inbox.md`, or through IM `/inbox <content>`. Each top-level checkbox is one submission. Inbox states are TODO, IN_PROGRESS, DONE, and CANCELLED; the associated Job retains its normal lifecycle. `context` provides `inbox_path`, an owned `inbox`, and `inbox_cancellations`.
+
+- Before ending tracked work, use `inbox claim-next --project PROJECT_ID` with your executor/session. Only take new submissions after every existing Job in that Project is completed or cancelled. BLOCKED and WAITING_USER Tasks still keep their Job active. The CLI atomically reserves one entry and creates its Job; use the returned Job instead of calling `job create` again.
+- If a hook already claimed an entry, inspect `context` and adopt its Job. Register missing Task nodes and dependencies, then use the normal claim → Plan → start → verify → done workflow. On recovery, inspect existing Tasks and outputs before decomposing; never duplicate the existing Job or Task graph.
+- Inbox ownership has its own lease, renewed by the same session heartbeat. `inbox release ENTRY_ID` requires the Inbox token, not a Task token. Use the full entry ID with the Pi/OMP structured tool. Interruption, release, or expiry returns unfinished entries to TODO so another agent can resume the same Job. An IN_PROGRESS entry cannot be taken by another agent.
+- Completion of the associated Job marks the entry DONE. Check again for the next entry until the queue is empty. Stop hooks are a fallback for omitted checks; they do not provide a persistent idle watcher or override the host's current mode.
+- A human can cancel with `- [-]` or withdraw by deleting an unfinished entry. Synchronization cancels its associated unfinished work and revokes leases. On cancellation facts or stale-token rejection, stop that Job at the next safe boundary, preserve completed results, and do not automatically roll back code, recreate the Job, or retry its writes. Running external commands may still need to finish.
+- Do not edit entry IDs or generated state/Job links. Manually checking a box does not complete work, and unchecking a cancelled entry does not restart it. Missing, unreadable, or malformed Inbox documents require repair; do not interpret them as mass cancellation.
+
+### Task ownership
+
 - Claim with `--executor agent:HOST:MEMBER` (using the actual host and a member/session suffix when needed), `--session`, and optional `--delegated-by team:<id>`. A Team member owns the lease directly. A claim conflict means another executor owns the Task; inspect status before selecting other work.
 - Both `plan create` and `plan revise` require the current session and lease token; never submit a Plan for an unclaimed Task. Supply them for `start` and other writes to a leased Task too. Use `--expect-revision` when updating previously read state. Keep the same idempotency key and arguments when retrying the same operation; never reuse it for changed intent.
 - Heartbeat leases at least once per minute during planning as well as execution. Pi/OMP extensions do this while the host is running. Codex/Claude hooks renew at tool boundaries; a single operation or inactive gap longer than 15 minutes can expire the lease. After expiry, stop task writes, inspect state, and reacquire only if available. Session recovery gets a new token and returns to PLANNING, even when an existing Plan is missing; repair/review the Plan and explicitly start before continuing execution. A completion must not be reported after a rejected stale write.

@@ -557,8 +557,13 @@ impl Engine {
             .insert(envelope.conversation.clone(), envelope.owner_id.clone());
         let result = match envelope.payload {
             InboundPayload::Text(text) => {
-                self.handle_text(&envelope.conversation, &envelope.owner_id, &text)
-                    .await
+                self.handle_text(
+                    &envelope.conversation,
+                    &envelope.owner_id,
+                    &text,
+                    &envelope.event_id,
+                )
+                .await
             }
             InboundPayload::Action { token, message } => {
                 self.handle_action(
@@ -599,6 +604,7 @@ impl Engine {
         conversation: &ConversationRef,
         owner_id: &str,
         text: &str,
+        event_id: &str,
     ) -> Result<(), EngineError> {
         let is_command = text.trim_start().starts_with('/');
         if !is_command && let Some(pending) = self.task_inputs.lock().await.remove(conversation) {
@@ -653,7 +659,8 @@ impl Engine {
         match input {
             ParsedInput::Prompt(prompt) => self.send_prompt(conversation, &prompt).await,
             ParsedInput::Command(command) => {
-                self.handle_command(conversation, owner_id, command).await
+                self.handle_command(conversation, owner_id, command, event_id)
+                    .await
             }
         }
     }
@@ -663,16 +670,18 @@ impl Engine {
         conversation: &ConversationRef,
         owner_id: &str,
         command: AgentCommand,
+        event_id: &str,
     ) -> Result<(), EngineError> {
         match command {
-            AgentCommand::Dashboard => {
-                self.update_command_menu_best_effort(
-                    conversation,
-                    self.sessions.current(conversation).await.is_some(),
-                )
-                .await;
-                self.browse_tasks(conversation, owner_id, TaskBrowse::Dashboard(0))
+            AgentCommand::Inboxes => {
+                self.show_current_inboxes(conversation, owner_id).await?;
+            }
+            AgentCommand::Inbox(content) => {
+                self.submit_inbox(conversation, owner_id, event_id, &content)
                     .await?;
+            }
+            AgentCommand::Dashboard => {
+                self.open_dashboard(conversation, owner_id).await?;
             }
             AgentCommand::Board => {
                 self.browse_tasks(
@@ -763,7 +772,7 @@ impl Engine {
                 "{body}\n\n/dashboard — Browse projects; click a project to open its board."
             );
             if self.sessions.current(conversation).await.is_some() {
-                body.push_str("\n/board — Current session's task board\n/jobs — Current session's jobs\nClick tasks and jobs to read their Markdown details.");
+                body.push_str("\n/board — Current session's task board\n/jobs — Current session's jobs\n/inboxes — Current project's human queue\n/inbox <content> — Append a human requirement\nClick tasks and jobs to read their Markdown details.");
             }
             body
         } else {
@@ -1986,6 +1995,9 @@ impl Engine {
                 menu.commands.extend([
                     ChannelCommand::new("board", "Show this session's task board").contextual(),
                     ChannelCommand::new("jobs", "Browse this session's jobs").contextual(),
+                    ChannelCommand::new("inboxes", "Browse this project's inbox").contextual(),
+                    ChannelCommand::new("inbox", "Append a requirement to this project's inbox")
+                        .contextual(),
                 ]);
             }
         }
