@@ -1,0 +1,85 @@
+{
+  "taskIdentificationMethod": "tag",
+  "taskTag": "task",
+  "openTaskAfterCreation": "none",
+  "customStatuses": [
+    {
+      "id": "agent-todo",
+      "value": "TODO",
+      "label": "Todo",
+      "color": "#cbd5e1",
+      "isCompleted": false,
+      "excludeFromCycle": false,
+      "order": 0,
+      "autoArchive": false,
+      "autoArchiveDelay": 5
+    },
+    {
+      "id": "agent-in-progress",
+      "value": "IN_PROGRESS",
+      "label": "In Progress",
+      "color": "#bfdbfe",
+      "isCompleted": false,
+      "excludeFromCycle": false,
+      "order": 1,
+      "autoArchive": false,
+      "autoArchiveDelay": 5
+    },
+    {
+      "id": "agent-blocked",
+      "value": "BLOCKED",
+      "label": "Blocked",
+      "color": "#fed7aa",
+      "isCompleted": false,
+      "excludeFromCycle": false,
+      "order": 2,
+      "autoArchive": false,
+      "autoArchiveDelay": 5
+    },
+    {
+      "id": "agent-waiting-user",
+      "value": "WAITING_USER",
+      "label": "Waiting User",
+      "color": "#ddd6fe",
+      "isCompleted": false,
+      "excludeFromCycle": false,
+      "order": 3,
+      "autoArchive": false,
+      "autoArchiveDelay": 5
+    },
+    {
+      "id": "agent-done",
+      "value": "DONE",
+      "label": "Done",
+      "color": "#bbf7d0",
+      "isCompleted": true,
+      "excludeFromCycle": false,
+      "order": 4,
+      "autoArchive": false,
+      "autoArchiveDelay": 5
+    },
+    {
+      "id": "agent-failed",
+      "value": "FAILED",
+      "label": "Failed",
+      "color": "#fecaca",
+      "isCompleted": false,
+      "excludeFromCycle": false,
+      "order": 5,
+      "autoArchive": false,
+      "autoArchiveDelay": 5
+    },
+    {
+      "id": "agent-cancelled",
+      "value": "CANCELLED",
+      "label": "Cancelled",
+      "color": "#e2d7e7",
+      "isCompleted": false,
+      "excludeFromCycle": false,
+      "order": 6,
+      "autoArchive": false,
+      "autoArchiveDelay": 5
+    }
+  ],
+  "defaultTaskStatus": "TODO"
+}

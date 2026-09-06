@@ -3,6 +3,25 @@ use agentix_core::{
     RenderKey, SessionCommand, SessionId, SqliteState, chunk_text, parse_input,
 };
 
+#[tokio::test]
+async fn runtime_state_rejects_a_task_database_without_adding_tables() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("tasks.sqlite3");
+    let tasks = agentix_task::Store::open(&path).await.unwrap();
+    assert!(SqliteState::open(&path).await.is_err());
+    assert!(tasks.snapshot().await.unwrap().tasks.is_empty());
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .connect_with(sqlx::sqlite::SqliteConnectOptions::new().filename(&path))
+        .await
+        .unwrap();
+    let count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_schema WHERE name = 'bindings'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(count, 0);
+}
+
 #[test]
 #[allow(clippy::too_many_lines)]
 fn commands_are_distinct_from_prompts() {
@@ -135,7 +154,7 @@ fn commands_are_distinct_from_prompts() {
 
 #[test]
 fn chunks_respect_utf8_boundaries_and_reassemble_exactly() {
-    let original = "Agentix 你好，世界。Codex streaming works.";
+    let original = "Agentix \u{2603} \u{1f680} streaming works.";
     let chunks = chunk_text(original, 13);
 
     assert!(chunks.iter().all(|chunk| chunk.len() <= 13));

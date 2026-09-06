@@ -1,4 +1,5 @@
 mod background;
+mod observed;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -93,6 +94,10 @@ pub enum ClientError {
     InvalidCursor,
     #[error("Codex session {0} has no rollout and cannot be attached")]
     NoRollout(SessionId),
+    #[error(
+        "This session is connected read-only because another Codex process owns it. Use the original Codex session to send messages or change it."
+    )]
+    ReadOnlySession,
     #[error("Codex process discovery failed: {0}")]
     ProcessDiscovery(String),
     #[error("Codex process discovery task failed: {0}")]
@@ -107,6 +112,7 @@ pub struct CodexClient {
     events: broadcast::Sender<AgentEvent>,
     connection: Arc<ConnectionState>,
     subscriptions: Arc<Mutex<HashSet<SessionId>>>,
+    observed: Arc<Mutex<HashMap<SessionId, Option<TurnSummary>>>>,
     completed_turns: Arc<Mutex<HashMap<SessionId, String>>>,
     background_turn_notifications: bool,
     process_sessions: Arc<Mutex<HashSet<SessionId>>>,
@@ -180,6 +186,7 @@ impl CodexClient {
             events,
             connection,
             subscriptions,
+            observed: Arc::new(Mutex::new(HashMap::new())),
             completed_turns,
             background_turn_notifications,
             process_sessions,
@@ -221,12 +228,7 @@ impl CodexClient {
             .into_iter()
             .filter(|session| selected.contains(&session.id))
             .collect::<Vec<_>>();
-        let mut direct_sessions = self.read_sessions(&missing_ids).await?;
-        for session in &mut direct_sessions {
-            if session.status == SessionStatus::NotLoaded {
-                session.status = SessionStatus::Unknown;
-            }
-        }
+        let direct_sessions = self.read_sessions(&missing_ids).await?;
         sessions.extend(direct_sessions);
         for session in &mut sessions {
             session.terminal = terminal_locations.get(&session.id).cloned();
@@ -295,7 +297,23 @@ impl CodexClient {
             if !thread_has_rollout(&thread) {
                 return Ok(None);
             }
-            parse_session_summary(&thread).map(Some)
+            let mut summary = parse_session_summary(&thread)?;
+            if summary.status == SessionStatus::NotLoaded {
+                match self.latest_stored_turn(id).await {
+                    Ok(Some(turn)) => {
+                        summary.status = match turn.status {
+                            agentix_core::TurnStatus::InProgress => SessionStatus::Active,
+                            agentix_core::TurnStatus::Completed
+                            | agentix_core::TurnStatus::Interrupted
+                            | agentix_core::TurnStatus::Failed => SessionStatus::Idle,
+                            agentix_core::TurnStatus::Unknown => SessionStatus::Unknown,
+                        };
+                    }
+                    Ok(None) => {}
+                    Err(error) => tracing::debug!(%error, session = %id, "failed to read external session status"),
+                }
+            }
+            Ok::<_, ClientError>(Some(summary))
         }))
         .await?;
         Ok(sessions.into_iter().flatten().collect())
@@ -408,18 +426,25 @@ impl CodexClient {
         {
             return Ok(false);
         }
-        let provisional = match self
-            .request_after_reconnect("thread/resume", thread_resume_params(session_id))
-            .await
-        {
-            Ok(_) => false,
-            Err(error) if is_rollout_initializing(&error) => true,
-            Err(error) => return Err(error),
+        let observed = self.observed.lock().await.contains_key(session_id);
+        let provisional = if observed {
+            false
+        } else {
+            match self
+                .request_after_reconnect("thread/resume", thread_resume_params(session_id))
+                .await
+            {
+                Ok(_) => false,
+                Err(error) if is_rollout_initializing(&error) => true,
+                Err(error) => return Err(error),
+            }
         };
         if !self.exited_process_sessions.lock().await.remove(session_id) {
             return Ok(false);
         }
-        self.subscriptions.lock().await.insert(session_id.clone());
+        if !observed {
+            self.subscriptions.lock().await.insert(session_id.clone());
+        }
         if provisional {
             self.pending_resumes.lock().await.insert(session_id.clone());
         } else {
@@ -432,6 +457,15 @@ impl CodexClient {
     }
 
     pub async fn request(&self, method: &str, params: Value) -> Result<Value, ClientError> {
+        if let Some(id) = params["threadId"].as_str()
+            && self.observed.lock().await.contains_key(&SessionId::new(id))
+            && !matches!(
+                method,
+                "thread/read" | "thread/turns/list" | "thread/items/list"
+            )
+        {
+            return Err(ClientError::ReadOnlySession);
+        }
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (sender, receiver) = oneshot::channel();
         self.pending.lock().await.insert(id, sender);
@@ -1272,6 +1306,7 @@ async fn monitor_running_sessions(client: CodexClient) {
     let mut background = background::BackgroundTurns::new();
     loop {
         tokio::time::sleep(RUNNING_SESSION_POLL_INTERVAL).await;
+        client.poll_observed_sessions().await;
         let watched = client.process_sessions.lock().await.clone();
         if !client.background_turn_notifications
             && watched.is_empty()
@@ -1311,9 +1346,10 @@ async fn monitor_running_sessions(client: CodexClient) {
             let _ = client.events.send(AgentEvent::SessionExited {
                 session_id: session.to_string(),
             });
-            if let Err(error) = client
-                .request("thread/unsubscribe", json!({"threadId": session.as_str()}))
-                .await
+            if !client.observed.lock().await.contains_key(&session)
+                && let Err(error) = client
+                    .request("thread/unsubscribe", json!({"threadId": session.as_str()}))
+                    .await
             {
                 tracing::warn!(%error, session = %session, "failed to release exited Codex session");
             }
@@ -1514,6 +1550,9 @@ impl AgentAdapter for CodexClient {
     }
 
     async fn attach(&self, session_id: &SessionId) -> Result<(), AgentError> {
+        if self.observed.lock().await.contains_key(session_id) {
+            return Ok(());
+        }
         let thread = self
             .read_thread(session_id, false)
             .await
@@ -1542,6 +1581,27 @@ impl AgentAdapter for CodexClient {
                 }
                 self.pending_resumes.lock().await.insert(session_id.clone());
             }
+            Err(ClientError::Rpc {
+                code: -32600,
+                message,
+            }) if message.contains("already has an active writer") => {
+                let latest = self
+                    .latest_stored_turn(session_id)
+                    .await
+                    .map_err(agent_error)?;
+                self.observed
+                    .lock()
+                    .await
+                    .insert(session_id.clone(), latest);
+                self.exited_process_sessions.lock().await.remove(session_id);
+                if self.process_discovery.is_some() {
+                    self.process_sessions
+                        .lock()
+                        .await
+                        .insert(session_id.clone());
+                }
+                return Ok(());
+            }
             Err(error) => return Err(agent_error(error)),
         }
         self.subscriptions.lock().await.insert(session_id.clone());
@@ -1554,10 +1614,17 @@ impl AgentAdapter for CodexClient {
         Ok(())
     }
 
+    async fn is_read_only(&self, session_id: &SessionId) -> bool {
+        self.observed.lock().await.contains_key(session_id)
+    }
+
     async fn unsubscribe(&self, session_id: &SessionId) -> Result<(), AgentError> {
-        self.subscriptions.lock().await.remove(session_id);
         self.process_sessions.lock().await.remove(session_id);
         self.exited_process_sessions.lock().await.remove(session_id);
+        if self.observed.lock().await.remove(session_id).is_some() {
+            return Ok(());
+        }
+        self.subscriptions.lock().await.remove(session_id);
         self.pending_resumes.lock().await.remove(session_id);
         self.request(
             "thread/unsubscribe",
@@ -1775,6 +1842,9 @@ impl SessionControlPort for CodexClient {
         session_id: &SessionId,
         command: SessionCommand,
     ) -> Result<SessionCommandResult, AgentError> {
+        if self.is_read_only(session_id).await {
+            return Err(agent_error(ClientError::ReadOnlySession));
+        }
         let result = match command {
             SessionCommand::Compact => self
                 .request(
@@ -2166,7 +2236,9 @@ fn agent_error(error: ClientError) -> AgentError {
     match error {
         ClientError::Connect(error) => AgentError::Unavailable(error.to_string()),
         ClientError::Rpc { code, message } => AgentError::Rejected(format!("{code}: {message}")),
-        ClientError::NoRollout(_) => AgentError::Rejected(error.to_string()),
+        ClientError::NoRollout(_) | ClientError::ReadOnlySession => {
+            AgentError::Rejected(error.to_string())
+        }
         other => AgentError::Protocol(other.to_string()),
     }
 }
@@ -2442,3 +2514,6 @@ mod tests {
             .unwrap();
     }
 }
+
+#[cfg(all(test, unix))]
+mod lifecycle_tests;

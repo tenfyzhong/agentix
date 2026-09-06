@@ -1,0 +1,16 @@
+{
+  "description": "Release leases for tool failures explicitly reported as interrupted by Claude Code.",
+  "hooks": {
+    "PostToolUseFailure": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node -e \"import(require('node:url').pathToFileURL(require('node:path').join(process.env.CLAUDE_PLUGIN_ROOT||process.env.PLUGIN_ROOT,'hooks/run.mjs')).href)\"",
+            "timeout": 3
+          }
+        ]
+      }
+    ]
+  }
+}

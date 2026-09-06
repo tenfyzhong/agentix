@@ -4,7 +4,7 @@ Thank you for helping improve Agentix. Contributions may include code, tests, do
 
 ## Development environment
 
-Agentix is a Rust workspace. Install the toolchain pinned in `rust-toolchain.toml`; it includes Rust 1.95, rustfmt, and Clippy. Linux CI also installs `protobuf-compiler`.
+Agentix is a Rust workspace. Install the toolchain pinned in `rust-toolchain.toml`; it includes Rust 1.95, rustfmt, and Clippy. Node.js 24+ and npm run the task plugin tests, including its TypeScript entrypoints against Cargo's freshly compiled `taskcli`. Linux CI also installs `protobuf-compiler`.
 
 CI uses Rust 1.95.0. Ensure `cargo`, `rustc`, `cargo-clippy`, and `rustfmt` all come from that toolchain rather than mixing Homebrew and rustup installations.
 
@@ -16,7 +16,7 @@ cd agentix
 make check
 ```
 
-Live Telegram, Feishu, Codex, Pi, or rmux credentials and services are not required for the normal test suite. Integration tests use local mock services and fake transports.
+Live Telegram, Feishu, Codex, Pi, or rmux credentials and services are not required for the normal test suite. Integration tests use local mock services and fake transports; task tests additionally run real CLI subprocesses with isolated databases and document directories.
 
 ## Branches and worktrees
 
@@ -43,8 +43,7 @@ Agentix uses test-driven development for features, bug fixes, refactors, and oth
 
 Documentation-only and configuration-only changes do not require a failing test first. Keep `README.md` and the documents under `docs/` synchronized with user-visible behavior and architecture changes.
 
-After changing CLI commands or options, run `make completions` and commit the
-updated files. Tests verify that the checked-in completions match the CLI.
+After changing CLI commands or options, run `make completions` and commit the updated files for both CLIs. Tests verify that the checked-in completions match their CLI and that taskcli generation does not read configuration or create task state. Checked-in shell completions retain LF line endings on every platform through `.gitattributes`.
 
 ## Tests and external dependencies
 
@@ -67,24 +66,28 @@ make check
 This is equivalent to:
 
 ```sh
+npm ci --ignore-scripts --prefix plugins/agent-task-manager
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
+node --test plugins/agent-task-manager/tests/*.test.mjs
 ```
+
+`make check` installs the locked plugin dependencies automatically. When running Cargo directly, run the npm command above first: the taskcli integration suite imports the actual Pi/OMP TypeScript entrypoints. Node is required; these checks never silently skip missing dependencies.
+
+The optional desktop Obsidian smoke test is ignored by default and requires an explicitly selected open test vault. It creates and removes only its own temporary files and tab. Bring the selected vault window to the foreground before running it. See [task board validation](docs/task-board.md#validation) for the command and the [integration coverage map](docs/integration-coverage.md) for automated boundaries and separate live-system acceptance.
 
 The test suite is layered. Protocol and rendering tests cover pure mappings; adapter tests cover Telegram, Feishu, Pi, and Codex transports; and core tests exercise routing, persistence, actions, interactions, and lifecycle transitions. Full-stack tests pass mocked Telegram and Feishu events through the channel adapter, engine, and Codex client before verifying the completed response at the channel API.
 
 Codex uses a stateful mock app-server under `crates/agentix-codex/tests/support/`. It follows the Codex CLI 0.153.0 protocol subset used by Agentix, including session lifecycle, settings, approvals, input questions, pagination, failures, and reconnects. Telegram and Feishu use in-process API services, Pi uses a reusable fake RPC subprocess, and rmux tests exchange typed SDK packets with a Unix-socket mock daemon. These fixtures keep the suite deterministic and independent of live credentials, public networks, local session data, and running daemons.
 
-GitHub Actions keeps formatting and Clippy in `ci.yml`. The `tests.yml` workflow runs the full suite on Linux and macOS and checks the workspace plus the native TCP control suite on Windows. Both workflows run for pull requests and pushes to `main`, except when every changed file is Markdown (`.md`). Changes that include any other file still run both workflows. The Tests workflow also supports manual dispatch regardless of the changed files.
+Channel shutdown deadline tests use Tokio's paused clock to verify the shared grace period and task cancellation independently of database and filesystem latency. Service lifecycle tests also exercise startup and shutdown with a temporary SQLite database. The test suite checks the non-Unix Codex compatibility API on Unix hosts as well, so Windows-only API omissions are caught locally.
 
-Channel shutdown deadline tests use Tokio's paused clock to verify the shared grace period and task cancellation independently of database and filesystem latency. Service lifecycle tests also exercise startup and shutdown with a temporary SQLite database.
-
-The test suite checks the non-Unix Codex compatibility API on Unix hosts as well, so Windows-only API omissions are caught locally.
+GitHub Actions keeps formatting and Clippy in `ci.yml`. The `tests.yml` workflow runs the full suite on Linux and macOS. On Windows, it checks the workspace and runs the native TCP control, task library, and taskcli suites. Task timestamp tests use `TZ` overrides on Unix; Windows CI switches the native system time zone to verify UTC+09:00, UTC-05:00, and UTC, then restores the original setting. Both workflows run for pull requests and pushes to `main`, except when every changed file is Markdown (`.md`). Changes that include any other file still run both workflows. The Tests workflow also supports manual dispatch regardless of the changed files.
 
 ## Workspace architecture
 
-The main crates are `agentix-core`, `agentix-codex`, `agentix-pi`, `agentix-telegram`, `agentix-feishu`, and the `agentix` executable.
+The main crates are `agentix-core`, `agentix-codex`, `agentix-pi`, `agentix-telegram`, `agentix-feishu`, the independent `agentix-task` library, and the `agentix` / `taskcli` executables. See [task board design and usage](docs/task-board.md) for the task database and document projection boundary.
 
 The core exposes a small common agent interface plus optional queue, attached-session control, and workspace-runtime ports. A serialized runtime loop feeds IM and agent events into coordinator-owned session, turn, interaction, and rmux state. See the [architecture document](docs/architecture.md) for the state/effect and retry boundaries.
 
@@ -98,7 +101,8 @@ Run `make` for a debug build, `make release` for a release build, or `make help`
 - Keep abstractions at transport boundaries so orchestration can be tested independently.
 - Preserve existing user changes and avoid unrelated rewrites.
 - Use consistent indentation and leave no trailing whitespace.
-- Write code comments and repository documentation in English.
+- Use English for repository documentation, code comments, identifiers, user-facing messages, and test descriptions and fixture labels.
+- Preserve Unicode test coverage with English labels and escaped Unicode symbols rather than non-English prose. Unicode punctuation and interface icons do not need to be ASCII.
 
 ## Commits
 
@@ -142,8 +146,10 @@ Pushing the tag starts the `Release` workflow, which:
 1. verifies that the tag points at the checked-out commit and contains a supported semantic version;
 2. applies that version to the workspace manifest and lockfile, then builds native binaries for macOS arm64, Linux x86_64/arm64, and Windows x86_64;
 3. verifies each binary's `--version` against the tag;
-4. publishes native archives, `SHA256SUMS`, and generated notes to the matching GitHub Release;
+4. publishes separate `agentix-<tag>-<target>` and `taskcli-<tag>-<target>` archives, a shared `SHA256SUMS`, and generated notes to the matching GitHub Release;
 5. invokes the Homebrew workflow after the GitHub Release is available.
+
+Each tool's archive includes its own binary, example configuration, and shell completions. Only the taskcli archive includes task documentation and the agent-task-manager plugin. All targets have `.tar.gz` archives; Windows additionally has `.zip` archives for both tools. Packaging tests execute the workflow's packaging and checksum steps against fixture binaries to verify archive contents and separation.
 
 The Homebrew formula is maintained exclusively in [`tenfyzhong/homebrew-tap`](https://github.com/tenfyzhong/homebrew-tap/blob/main/Formula/agentix.rb); edit dependencies, installation steps, and service settings there. Do not add a formula template to this repository. The formula applies its source tag version to the Cargo metadata before its locked source build. The workflow checks out the tap, updates the existing formula's source URL and checksum, and removes stale bottle metadata while preserving the tap's other settings. It then builds an arm64 macOS bottle, uploads it to the release, adds its metadata, and opens or updates a PR in the tap. Automatic and manually dispatched publishing both require a `HOMEBREW_TAP_TOKEN` with permission to create branches and pull requests.
 

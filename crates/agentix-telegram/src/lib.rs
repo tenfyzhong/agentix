@@ -24,8 +24,8 @@ use teloxide::types::{
 
 const BASE_MENU_COMMANDS: [(&str, &str); 4] = [
     ("sessions", "Browse running sessions"),
-    ("rmux", "Manage rmux workspaces"),
     ("cancel", "Cancel pending input"),
+    ("rmux", "Manage rmux workspaces"),
     ("help", "Show available commands"),
 ];
 const ATTACHED_COMMAND_MARKER: &str = "✌️ ";
@@ -135,6 +135,7 @@ pub struct TelegramAdapter {
     owner_claim: Option<OwnerClaim>,
     rate_limiter: Arc<RateLimiter>,
     messages: MessageCenter,
+    menu_commands: Vec<BotCommand>,
 }
 
 impl TelegramAdapter {
@@ -146,6 +147,7 @@ impl TelegramAdapter {
             owner_claim: None,
             rate_limiter: Arc::new(RateLimiter::default()),
             messages: MessageCenter::default(),
+            menu_commands: menu_commands(),
         }
     }
 
@@ -157,7 +159,15 @@ impl TelegramAdapter {
             owner_claim: None,
             rate_limiter: Arc::new(RateLimiter::default()),
             messages: MessageCenter::default(),
+            menu_commands: menu_commands(),
         }
+    }
+
+    /// Configure the default menu registered when polling starts.
+    #[must_use]
+    pub fn with_menu_commands(mut self, commands: Vec<BotCommand>) -> Self {
+        self.menu_commands = commands;
+        self
     }
 
     #[must_use]
@@ -187,7 +197,7 @@ impl TelegramAdapter {
     /// Registers the supported commands and selects the commands menu button.
     pub async fn register_menu(&self) -> Result<(), ChannelError> {
         self.request(
-            self.bot.set_my_commands(menu_commands()),
+            self.bot.set_my_commands(self.menu_commands.clone()),
             "setMyCommands",
             None,
         )
@@ -526,7 +536,7 @@ pub fn menu_commands() -> Vec<BotCommand> {
 
 #[must_use]
 pub fn attached_menu_commands() -> Vec<BotCommand> {
-    [
+    let mut commands: Vec<_> = [
         ("sessions", "Browse running sessions"),
         ("rmux", "Manage rmux workspaces"),
         ("current", "Show the attached session"),
@@ -564,7 +574,19 @@ pub fn attached_menu_commands() -> Vec<BotCommand> {
         };
         BotCommand::new(command, description)
     })
-    .collect()
+    .collect();
+    commands.sort_by(|left, right| {
+        let rank = |command: &BotCommand| {
+            BASE_MENU_COMMANDS
+                .iter()
+                .position(|(name, _)| *name == command.command)
+                .unwrap_or(BASE_MENU_COMMANDS.len())
+        };
+        rank(left)
+            .cmp(&rank(right))
+            .then_with(|| left.command.cmp(&right.command))
+    });
+    commands
 }
 
 #[must_use]

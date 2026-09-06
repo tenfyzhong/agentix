@@ -215,10 +215,17 @@ async fn serve(config: Config, config_path: &Path) -> Result<()> {
         build_agent(&config.agent, config.notifications.background_turns).await?;
     let claims = Arc::new(ClaimRegistry::default());
     let channels = build_channels(&config, config_path, claims.clone())?;
+    let task_board = if let Some(task_board) = &config.task_board {
+        let task_config = agentix_task::Config::load(&task_board.config)?;
+        Some(Arc::new(agentix_task::Service::open(task_config).await?))
+    } else {
+        None
+    };
     run_service_until_shutdown(
         adapter,
         codex,
         channels,
+        task_board,
         config.storage.path,
         config.server.endpoint,
         config_path.to_owned(),
@@ -239,6 +246,7 @@ async fn run_service_until_shutdown<F>(
     adapter: Arc<dyn AgentAdapter>,
     codex: Option<CodexClient>,
     channels: Vec<Arc<dyn ChannelAdapter>>,
+    task_board: Option<Arc<agentix_task::Service>>,
     state_path: PathBuf,
     control_endpoint: String,
     config_path: PathBuf,
@@ -256,10 +264,14 @@ where
             .with_context(|| format!("failed to create state directory {}", parent.display()))?;
     }
     let state = SqliteState::open(&state_path).await?;
-    let engine = Arc::new(
-        Engine::new(adapter.clone(), state, channels.clone())
-            .with_background_turn_notifications(background_turn_notifications),
-    );
+    let mut engine = Engine::new(adapter.clone(), state, channels.clone())
+        .with_background_turn_notifications(background_turn_notifications);
+    if let Some(task_board) = task_board {
+        engine = engine
+            .with_task_board(task_board)
+            .with_task_consumer(state_path.to_string_lossy().into_owned());
+    }
+    let engine = Arc::new(engine);
     let restored = engine.restore_bindings().await?;
     tracing::info!(restored, "restored durable conversation bindings");
 
@@ -356,6 +368,9 @@ async fn run_engine_loop(
             () = shutdown.cancelled() => break,
             _ = working_interval.tick() => {
                 engine.refresh_working_turns().await;
+                if let Err(error) = engine.refresh_task_board().await {
+                    tracing::warn!(%error, "task board refresh failed");
+                }
             }
             envelope = inbound.recv(), if inbound_open => {
                 let Some(envelope) = envelope else {
@@ -688,6 +703,17 @@ async fn handle_control_request(
     }
 }
 
+fn telegram_menu_commands(task_board_enabled: bool) -> Vec<teloxide::types::BotCommand> {
+    let mut commands = agentix_telegram::menu_commands();
+    if task_board_enabled {
+        commands.insert(
+            1,
+            teloxide::types::BotCommand::new("dashboard", "Browse projects and task boards"),
+        );
+    }
+    commands
+}
+
 fn build_channels(
     config: &Config,
     config_path: &Path,
@@ -703,7 +729,8 @@ fn build_channels(
             let mut adapter = TelegramAdapter::with_bot(
                 build_telegram_bot(telegram, &config.network)?,
                 TelegramPolicy::new(telegram.owner_user_ids.iter().copied()),
-            );
+            )
+            .with_menu_commands(telegram_menu_commands(config.task_board.is_some()));
             if telegram.owner_user_ids.is_empty() {
                 adapter = adapter.with_owner_claimer(Arc::new(MemoryTelegramOwnerClaimer {
                     path: config_path.to_owned(),
@@ -991,6 +1018,7 @@ mod tests {
                 agent.clone(),
                 None,
                 vec![channel.clone()],
+                None,
                 state_path.clone(),
                 format!("tcp://{}", unused_loopback_address()),
                 config_path.clone(),
@@ -1110,6 +1138,7 @@ mod tests {
             Arc::new(LifecycleAgent::new()),
             None,
             vec![Arc::new(LifecycleChannel::stubborn())],
+            None,
             directory.path().join("agentix.sqlite3"),
             format!("tcp://{}", unused_loopback_address()),
             directory.path().join("config.toml"),
@@ -1306,6 +1335,30 @@ owner_open_ids = ["ou_owner"]
             );
             assert_eq!(channels.len(), 1);
             assert_eq!(channels[0].kind(), expected);
+        }
+    }
+    #[test]
+    fn telegram_default_menu_adds_dashboard_only_when_task_board_is_enabled() {
+        for enabled in [false, true] {
+            let commands = super::telegram_menu_commands(enabled);
+            let expected = if enabled {
+                vec!["sessions", "dashboard", "cancel", "rmux", "help"]
+            } else {
+                vec!["sessions", "cancel", "rmux", "help"]
+            };
+            assert_eq!(
+                commands
+                    .iter()
+                    .map(|c| c.command.as_str())
+                    .collect::<Vec<_>>(),
+                expected
+            );
+            assert_eq!(commands.iter().any(|c| c.command == "dashboard"), enabled);
+            assert!(
+                !commands
+                    .iter()
+                    .any(|c| matches!(c.command.as_str(), "board" | "jobs" | "tasks"))
+            );
         }
     }
 }

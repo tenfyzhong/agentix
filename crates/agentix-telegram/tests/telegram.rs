@@ -105,7 +105,7 @@ fn telegram_default_menu_only_lists_commands_available_before_attach() {
             .iter()
             .map(|command| command.command.as_str())
             .collect::<Vec<_>>(),
-        ["sessions", "rmux", "cancel", "help"]
+        ["sessions", "cancel", "rmux", "help"]
     );
     assert!(
         commands
@@ -126,6 +126,9 @@ fn telegram_attached_menu_lists_session_commands() {
         .iter()
         .map(|command| command.command.as_str())
         .collect::<Vec<_>>();
+
+    assert_eq!(&names[..4], &["sessions", "cancel", "rmux", "help"]);
+    assert!(names[4..].windows(2).all(|pair| pair[0] < pair[1]));
 
     for name in [
         "compact",
@@ -154,7 +157,7 @@ fn telegram_attached_menu_lists_session_commands() {
             .all(|command| parse_input(&format!("/{}", command.command)).is_ok())
     );
     for command in &commands {
-        if ["sessions", "rmux", "cancel", "help"].contains(&command.command.as_str()) {
+        if ["sessions", "cancel", "rmux", "help"].contains(&command.command.as_str()) {
             assert!(!command.description.starts_with("✌️ "));
         } else {
             assert!(
@@ -186,7 +189,7 @@ async fn telegram_registers_commands_and_the_private_chat_menu_button() {
         requests[0].0
     );
     assert_eq!(commands["commands"][0]["command"], "sessions");
-    assert_eq!(commands["commands"][1]["command"], "rmux");
+    assert_eq!(commands["commands"][1]["command"], "cancel");
     assert_eq!(commands["commands"][3]["command"], "help");
     assert!(requests[1].0.ends_with("/SetChatMenuButton"));
     assert_eq!(menu_button["menu_button"]["type"], "commands");
@@ -243,7 +246,7 @@ fn telegram_views_are_labeled_and_bounded() {
     let view = OutboundView {
         title: "Codex · 9f31c2ab".into(),
         subtitle: Some("Turn 0187 · running".into()),
-        body: "你".repeat(2_000),
+        body: "\u{2603}".repeat(2_000),
         status: ViewStatus::Running,
         actions: Vec::new(),
     };
@@ -1015,4 +1018,33 @@ async fn telegram_inbound_action_does_not_wait_for_rate_limited_acknowledgement(
     assert_eq!(answer.method, "POST");
     let answer_body: serde_json::Value = serde_json::from_str(&answer.body).unwrap();
     assert_eq!(answer_body["callback_query_id"], "callback-1");
+}
+
+#[tokio::test]
+async fn telegram_registers_configured_dashboard_in_the_default_menu() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let requests = tokio::spawn(capture_boolean_requests(listener, 2));
+    let bot = Bot::new("test-token").set_api_url(format!("http://{address}/").parse().unwrap());
+    let mut commands = menu_commands();
+    commands.push(teloxide::types::BotCommand::new(
+        "dashboard",
+        "Browse projects and task boards",
+    ));
+    let adapter =
+        TelegramAdapter::with_bot(bot, TelegramPolicy::new([42])).with_menu_commands(commands);
+    adapter.register_menu().await.unwrap();
+    let requests = requests.await.unwrap();
+    let payload: serde_json::Value = serde_json::from_str(&requests[0].1).unwrap();
+    let commands = payload["commands"].as_array().unwrap();
+    assert!(commands.iter().any(|c| c["command"] == "dashboard"));
+    assert!(
+        !commands
+            .iter()
+            .any(|c| matches!(c["command"].as_str(), Some("board" | "jobs" | "tasks")))
+    );
+    assert!(
+        payload.get("scope").is_none(),
+        "startup commands must apply before a chat is attached"
+    );
 }

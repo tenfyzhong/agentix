@@ -1,0 +1,10 @@
+{
+  "name": "agent-task-manager",
+  "version": "0.1.0",
+  "description": "Coordinate tracked work with taskcli and read-only Markdown boards.",
+  "author": { "name": "tenfyzhong" },
+  "repository": "https://github.com/tenfyzhong/agentix",
+  "license": "MIT",
+  "hooks": "./hooks/claude.json",
+  "skills": "./skills/"
+}

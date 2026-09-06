@@ -6,6 +6,8 @@ members = [
   "crates/agentix-feishu",
   "crates/agentix-pi",
   "crates/agentix-telegram",
+  "crates/agentix-task",
+  "crates/taskcli",
 ]
 resolver = "3"
 
@@ -30,6 +32,7 @@ rmux-sdk = { version = "0.10.0", default-features = false }
 larksuite-oapi-sdk-rs = { version = "=0.3.11", features = ["channel"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+serde_yaml = "0.9"
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite", "migrate"] }
 thiserror = "2.0"
 tempfile = "3.23"
@@ -46,6 +49,7 @@ toml = "0.9"
 toml_edit = "0.25"
 url = "2.5"
 uuid = { version = "1.18", features = ["v4", "serde"] }
+sha2 = "0.10"
 walkdir = "2.5"
 
 

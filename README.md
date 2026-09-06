@@ -1,223 +1,97 @@
 # Agentix
 
-Agentix connects the coding agents already running on your computer to Telegram or Feishu, so you can monitor and continue local sessions when you step away from the terminal or IDE. It is a local-first Rust bridge for Codex, Pi, and Oh My Pi. Claude Code is intentionally out of scope for this release.
+Agentix connects local Codex, Pi, and Oh My Pi sessions to Telegram or Feishu. Attach a session from chat, send prompts, and follow the agent's replies.
 
-Each IM conversation maps explicitly and durably to an agent session. Messages include a readable session title, short session ID, and turn identifier so concurrent sessions remain unambiguous.
+## Features
 
-## Capabilities
+- Browse local agent sessions, attach from chat, and follow streamed replies and history.
+- Control Codex models, reasoning, plans, and reviews, and respond to approvals in IM.
+- Restore session bindings after restarts and receive background completion notifications.
+- Create Codex sessions from chat with optional rmux integration.
+- Coordinate work with standalone `taskcli` and browse project, Job, and Task boards in IM or Obsidian.
 
-- Native Codex app-server integration plus isolated Pi and Oh My Pi RPC transports
-- Telegram long polling and Feishu long-connection support with interactive actions
-- A duplex FIFO message center for IM traffic, with ordered retries at the outbound queue head
-- A global HTTP/HTTPS/SOCKS5 proxy configured in TOML, including for Homebrew services
-- Running-session discovery, attachment, history, prompts, queues, steering, stopping, approvals, and user-input round trips
-- Codex controls for models, reasoning, Fast mode, plans, goals, reviews, diffs, forks, compaction, skills, and MCP servers
-- Interactive rmux workspace browsing and safe Codex session creation from IM
-- Owner allowlists, one-time owner claiming, group mention requirements, event deduplication, and single-use actions
-- Durable bindings, restart recovery, process-exit notifications, and automatic Codex reattachment
-- Streamed in-place responses, background completion notifications, and reply context
+## Install
 
-While `agentix serve` is running, Agentix checks running Codex sessions for completed turns every ten seconds using read-only history queries, including sessions that have never been attached or were detached from IM. Background monitoring does not resume sessions or acquire their writer locks. New completions include the completed turn's prompt and response, a Background label, and an Attach button. Feishu uses a purple header and a tinted quote area; Telegram uses a ⚫ Background marker and blockquotes. Notifications go to authenticated IM conversations known to the service. Send the bot `/help` once to register a conversation for these notifications; attaching a session is optional.
-
-Before a Codex session's first user message, background history reads may report that the thread is not materialized yet. Agentix logs this expected condition at debug level and keeps polling; other background read errors remain warnings.
-
-Attaching a session restores its latest turn with a Stop button when that turn is running. Only the current attached session's active turn message has Stop; switching sessions, moving the attachment to another conversation, detaching, or finishing the turn removes it from the previous message. Copies shown by `/history` never include Stop.
-
-Startup recovery, automatic reattachment, and shutdown notifications only use channels enabled in the current configuration. Saved bindings and turn messages for other channels are retained for when those channels are enabled again. Each IM adapter and its clones share a duplex FIFO message center. Normalized incoming messages use an independent inbound queue; sends, edits, menus, owner-claim replies, callback acknowledgements, and Feishu reply lookups use the outbound queue. A rate-limited request stays at the head until it succeeds, fails permanently, or is cancelled, so later requests cannot overtake its retries. Telegram honors `retry_after` and spaces requests globally and per chat. Feishu HTTP 429 responses use exponential backoff from one second up to 60 seconds because its SDK does not expose the server retry delay. Cancelling a request removes that operation while preserving the channel cooldown. Telegram streams and working-duration updates refresh at most once every five seconds. Final turn updates bypass that refresh interval while still respecting Telegram cooldowns. Telegram rate-limit logs include the API method and chat ID.
-
-To disable completion notices for unattached sessions, add this to `config.toml` and restart Agentix:
-
-```toml
-[notifications]
-background_turns = false
-```
-
-The default is `true`. Disabling notifications also stops automatic background turn polling and full-content reads. When no sessions need exit/resume monitoring, automatic session discovery stops too. Existing attached or draining turn cards still complete in place; attached-session exit/resume monitoring remains active. Both completion deduplication caches keep only the latest completed turn per session, with recipient tracking for that turn, so records do not accumulate for every completed turn.
-
-## Dependencies
-
-### Official Codex CLI
-
-The Codex backend requires Codex CLI 0.153.0 or newer from the official standalone installer on macOS or Linux. The Homebrew Codex package does not include the managed app-server layout Agentix needs.
-
-```sh
-curl -fsSL https://chatgpt.com/codex/install.sh | sh
-```
-
-### rmux (optional)
-
-Install rmux to create new Codex sessions directly from Telegram or Feishu. Send `/rmux` to the bot to browse workspaces and launch Codex in a session, window, or split. Agentix connects to the local rmux daemon and starts it when needed. rmux is optional for connecting to existing Codex sessions.
-
-See [rmux workspaces](docs/usage.md#rmux-workspaces) for details.
-
-## Quick start
-
-### Install
-
-#### macOS and Linux
-
-Install Agentix with Homebrew:
+### macOS and Linux
 
 ```sh
 brew tap tenfyzhong/tap
 brew install agentix
 ```
 
-The Homebrew formula is maintained in [tenfyzhong/homebrew-tap](https://github.com/tenfyzhong/homebrew-tap/blob/main/Formula/agentix.rb). Release automation updates that formula and publishes a macOS arm64 bottle.
-
-#### Windows (x86_64)
-
-Download `agentix-<version>-x86_64-pc-windows-msvc.zip` and `SHA256SUMS` from the [latest GitHub release](https://github.com/tenfyzhong/agentix/releases/latest). Verify and extract the archive in PowerShell:
-
-```powershell
-$archive = Get-ChildItem .\agentix-*-x86_64-pc-windows-msvc.zip | Select-Object -First 1
-Get-FileHash $archive.FullName -Algorithm SHA256
-Expand-Archive $archive.FullName -DestinationPath .\agentix
-$env:Path = "$(Resolve-Path .\agentix);$env:Path"
-```
-
-Keep the extracted directory in a stable location and add it to your user `PATH`. Windows supports the Pi and Oh My Pi backends; the Codex backend is not available on Windows because its transport requires a Unix-domain socket.
-
-#### Build from source
-
-Install the Rust toolchain declared by `rust-toolchain.toml`, then run:
+For Codex, install the official standalone CLI (0.153.0 or newer). The Homebrew Codex package does not include the managed app-server layout Agentix requires:
 
 ```sh
-make release
+curl -fsSL https://chatgpt.com/codex/install.sh | sh
 ```
 
-The binary is written to `target/release/agentix` (`agentix.exe` on Windows).
+### Windows (x86_64)
 
-### Shell completions
+Download and extract `agentix-<version>-x86_64-pc-windows-msvc.zip` from the [latest release](https://github.com/tenfyzhong/agentix/releases/latest), then add the extracted directory to `PATH`. Use Pi or Oh My Pi; the Codex backend is not available on Windows.
 
-Generate completions for the installed CLI with `agentix completions bash`,
-`agentix completions zsh`, or `agentix completions fish`. This command does not
-require a configuration file or a running server.
+For checksums, other release archives, or building from source, see the [installation guide](docs/guide.md#install).
 
-For bash, add this line to `~/.bashrc` (or `~/.bash_profile` on macOS):
+## Configure
 
-```bash
-source <(agentix completions bash)
-```
-
-For zsh, save the completion file:
-
-```zsh
-mkdir -p ~/.zsh/completions
-agentix completions zsh > ~/.zsh/completions/_agentix
-```
-
-Add the following to `~/.zshrc`, placing the `fpath` line before any existing
-`compinit` call. If your shell framework already calls `compinit`, use that call
-instead of adding another one:
-
-```zsh
-fpath=(~/.zsh/completions $fpath)
-autoload -Uz compinit
-compinit
-```
-
-For fish:
-
-```fish
-mkdir -p ~/.config/fish/completions
-agentix completions fish > ~/.config/fish/completions/agentix.fish
-```
-
-Restart your shell after installation. Regenerate saved files after upgrading
-Agentix. Source checkouts and release archives also include ready-to-use files
-in `completions/`: `agentix.bash`, `_agentix`, and `agentix.fish`. You can source
-the bash file or copy the zsh/fish file to the directories above.
-
-### Configure
-
-Create the default configuration file.
-
-For a Homebrew installation:
+Copy the example configuration. With Homebrew:
 
 ```sh
 mkdir -p ~/.config/agentix
 cp "$(brew --prefix agentix)/share/agentix/agentix.example.toml" ~/.config/agentix/config.toml
+chmod 600 ~/.config/agentix/config.toml
 ```
 
-For a source checkout:
-
-```sh
-mkdir -p ~/.config/agentix
-cp config/agentix.example.toml ~/.config/agentix/config.toml
-```
-
-On Windows:
+On Windows, assuming the archive was extracted into `agentix`:
 
 ```powershell
 New-Item -ItemType Directory -Force "$HOME\.config\agentix" | Out-Null
 Copy-Item .\agentix\agentix.example.toml "$HOME\.config\agentix\config.toml"
 ```
 
-In `config.toml`:
+Edit `~/.config/agentix/config.toml`:
 
-1. Select one backend in `[agent]`: `codex`, `pi`, or `oh-my-pi`.
-2. Select one IM transport with `[channel].kind`: `telegram` or `feishu`.
-3. Configure the matching `[channel.telegram]` or `[channel.feishu]` table.
-4. Leave the selected channel's owner list empty for first-time claiming, or add the owner IDs directly.
+1. Select `codex`, `pi`, or `oh-my-pi` in `[agent]` and set its executable path using the examples in the file.
+2. Select `telegram` or `feishu` in `[channel].kind`.
+3. Fill in the Telegram bot `token`, or the Feishu `app_id` and `app_secret`, in the matching channel table.
+4. Leave the selected channel's owner list empty for first-time claiming.
 
-For Codex, keep the standalone binary path explicit:
+For Feishu bot setup, proxies, and other settings, see [Configuration and operations](docs/development-and-operations.md).
 
-```toml
-[agent]
-kind = "codex"
-command = "~/.codex/packages/standalone/current/codex"
-endpoint = "unix://"
-```
+## Start
 
-Fill in the actual credentials for the selected channel in `config.toml`:
-
-```toml
-[channel.telegram]
-token = "your-telegram-bot-token"
-
-# Or, when channel.kind = "feishu":
-[channel.feishu]
-app_id = "your-feishu-app-id"
-app_secret = "your-feishu-app-secret"
-```
-
-Credentials are read directly from this file, including when running as a Homebrew service. On macOS/Linux, restrict access with `chmod 600 ~/.config/agentix/config.toml`.
-
-To configure the global outbound proxy, add a separate top-level table:
-
-```toml
-[network]
-proxy = "http://127.0.0.1:7890"
-```
-
-Use your proxy's actual address and port. HTTP, HTTPS, SOCKS5, and SOCKS5h proxies are supported. The setting covers all Telegram requests and works without shell proxy variables. The Feishu SDK does not use this setting and retains its existing network behavior. After changing it, restart a running Homebrew service with `brew services restart tenfyzhong/tap/agentix`.
-
-See [Configuration and operations](docs/development-and-operations.md) for backend details, Feishu permissions, logging, service management, and diagnostics.
-
-### Start
-
-Validate the configuration, then start the bridge:
+Check the configuration and start Agentix:
 
 ```sh
 agentix doctor
 agentix serve
 ```
 
-On Windows, use `agentix.exe doctor` and `agentix.exe serve`. A Homebrew installation can run in the background instead:
+On Windows, use `agentix.exe doctor` and `agentix.exe serve`. To run a Homebrew installation in the background, use `brew services start tenfyzhong/tap/agentix`.
+
+Keep the service running and claim the bot from another local terminal:
 
 ```sh
-brew services start tenfyzhong/tap/agentix
+agentix client claim
 ```
 
-For a source build that is not on `PATH`, replace `agentix` with `target/release/agentix` in the commands above.
+Send the printed `/claim <code>` command to the bot in a private chat. Skip this step if your owner ID is already configured.
 
-If the selected channel has no configured owner, keep `agentix serve` running, execute `agentix client claim` in another local terminal, and send the printed `/claim <code>` command to the bot in a private chat.
+## Basic use
 
-## Documentation
+1. Start a coding-agent session locally.
+2. Send `/sessions` to the bot and select the session's **Attach** action.
+3. Send an ordinary message to prompt the agent and receive its replies in chat.
+4. Use `/history` to browse turns, `/stop` to interrupt a writable active turn, and `/detach` to disconnect.
+5. Send `/help` to see the commands available in the current session.
 
-- [Usage guide](docs/usage.md)
-- [Configuration and operations](docs/development-and-operations.md)
-- [Contributing](CONTRIBUTING.md)
-- [Product design](docs/product-design.md)
-- [Internal architecture and message flow diagrams](docs/architecture.md): service components, duplex FIFO queues, and rate-limit retry ordering
+Mention the bot in group chats. If another Codex process owns the session's writer, Agentix attaches read-only; send prompts through that original process.
+
+To create Codex sessions from chat, install optional rmux and use `/rmux`; see [rmux workspaces](docs/usage.md#rmux-workspaces). Connecting to existing Codex sessions does not require rmux.
+
+With [task boards configured](docs/guide.md#im-task-boards), use `/dashboard` to browse projects, or `/board` and `/jobs` to view the attached session's work. Task and Job details link to each other.
+
+For Obsidian task views, configure taskcli for your vault, close Obsidian, and run [`taskcli obsidian setup`](docs/task-board.md#obsidian-plugin-setup) to install and configure TaskNotes.
+
+Run `taskcli --help` to browse commands and `taskcli <command> --help` to see each group's subcommands and descriptions. For a specific operation, use nested help such as `taskcli task claim --help` or `taskcli plan create --help`.
+
+See the [detailed guide](docs/guide.md) for installation alternatives, shell completions, session behavior, task boards, and links to the command reference and development documentation.

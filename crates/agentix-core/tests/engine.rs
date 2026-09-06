@@ -387,7 +387,9 @@ struct FakeChannel {
     disabled_actions: Arc<Mutex<Vec<MessageRef>>>,
     messages: Arc<Mutex<HashMap<MessageRef, OutboundView>>>,
     session_commands: Arc<Mutex<Vec<(ConversationRef, bool)>>>,
+    menus: Arc<Mutex<Vec<CommandMenu>>>,
     fail_menu_updates: Arc<Mutex<bool>>,
+    task_send_failures: Arc<Mutex<usize>>,
     reject_unchanged_updates: bool,
 }
 
@@ -429,6 +431,15 @@ impl ChannelAdapter for FakeChannel {
         conversation: &ConversationRef,
         view: &OutboundView,
     ) -> Result<MessageRef, ChannelError> {
+        if view.title == "Task update" {
+            let mut failures = self.task_send_failures.lock().unwrap();
+            if *failures > 0 {
+                *failures -= 1;
+                return Err(ChannelError::Transport(
+                    "injected task delivery failure".into(),
+                ));
+            }
+        }
         self.sent
             .lock()
             .unwrap()
@@ -479,6 +490,7 @@ impl ChannelAdapter for FakeChannel {
         if *self.fail_menu_updates.lock().unwrap() {
             return Err(ChannelError::Transport("temporary menu failure".into()));
         }
+        self.menus.lock().unwrap().push(menu.clone());
         self.session_commands.lock().unwrap().push((
             conversation.clone(),
             menu.commands
@@ -505,6 +517,659 @@ fn inbound_as(chat: &str, owner: &str, text: &str) -> InboundEnvelope {
         owner,
         text,
     )
+}
+
+async fn task_fixture() -> (tempfile::TempDir, Arc<agentix_task::Service>, String) {
+    use agentix_task::{
+        Config, DocumentConfig, DocumentFormat, Service, StorageConfig, WriteOptions,
+    };
+    use serde_json::json;
+    let dir = tempdir().unwrap();
+    let service = Arc::new(
+        Service::open(Config {
+            schema_version: 1,
+            storage: StorageConfig {
+                path: dir.path().join("tasks.sqlite3"),
+            },
+            documents: DocumentConfig {
+                format: DocumentFormat::Markdown,
+                root: dir.path().to_owned(),
+                directory: "docs".into(),
+            },
+        })
+        .await
+        .unwrap(),
+    );
+    let project = service
+        .execute(
+            json!({"command":"project.register","root":dir.path(),"name":"demo"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap()
+        .result;
+    let job=service.execute(json!({"command":"job.create","project":project["id"],"title":"Task board","goal":"Ship"}),WriteOptions::default()).await.unwrap().result;
+    let task = service
+        .execute(
+            json!({"command":"task.add","job":job["id"],"title":"Implement task board"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap()
+        .result;
+    let id = task["id"].as_str().unwrap().to_owned();
+    service
+        .execute(
+            json!({"command":"task.claim","task":id,"executor":"agent:codex","session":"thr_a"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    service
+        .execute(
+            json!({"command":"plan.create","task":id,"body":"# Plan"}),
+            task_write_options(&service, &id).await,
+        )
+        .await
+        .unwrap();
+    service
+        .execute(
+            json!({"command":"task.start","task":id}),
+            task_write_options(&service, &id).await,
+        )
+        .await
+        .unwrap();
+    (dir, service, id)
+}
+
+#[tokio::test]
+async fn task_buttons_follow_claim_plan_start_done_phases() {
+    use agentix_task::WriteOptions;
+    use serde_json::json;
+    let (_dir, service, existing) = task_fixture().await;
+    service
+        .execute(
+            json!({"command":"task.release","task":existing,"reason":"another task"}),
+            task_write_options(&service, &existing).await,
+        )
+        .await
+        .unwrap();
+    let job = service.store().snapshot().await.unwrap().jobs[0].id.clone();
+    let task = service
+        .execute(
+            json!({"command":"task.add","job":job,"title":"Unplanned"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap()
+        .result;
+    let id = task["id"].as_str().unwrap();
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        Arc::new(FakeAgent::new()),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    )
+    .with_task_board(service.clone());
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    let claim = task_button(&engine, &channel, id, "Claim").await;
+    engine
+        .handle_inbound(InboundEnvelope::action(
+            "claim-unplanned",
+            ConversationRef::new(ChannelKind::Telegram, "chat-a"),
+            "owner",
+            claim,
+        ))
+        .await
+        .unwrap();
+    let view = channel.sent().last().unwrap().1.clone();
+    assert!(view.body.contains("PLANNING"));
+    assert!(
+        !view
+            .actions
+            .iter()
+            .any(|a| matches!(a.label.as_str(), "Done" | "Start"))
+    );
+    service
+        .execute(
+            json!({"command":"plan.create","task":id,"body":"# Plan"}),
+            task_write_options(&service, id).await,
+        )
+        .await
+        .unwrap();
+    let start = task_button(&engine, &channel, id, "Start").await;
+    assert!(
+        !channel
+            .sent()
+            .last()
+            .unwrap()
+            .1
+            .actions
+            .iter()
+            .any(|a| a.label == "Done")
+    );
+    engine
+        .handle_inbound(InboundEnvelope::action(
+            "start-planned",
+            ConversationRef::new(ChannelKind::Telegram, "chat-a"),
+            "owner",
+            start,
+        ))
+        .await
+        .unwrap();
+    let view = channel.sent().last().unwrap().1.clone();
+    assert!(view.body.contains("EXECUTING"));
+    assert!(view.actions.iter().any(|a| a.label == "Done"));
+    assert!(!view.actions.iter().any(|a| a.label == "Start"));
+}
+
+#[tokio::test]
+async fn task_board_commands_reasons_and_notifications_follow_bound_session() {
+    let (_dir, service, id) = task_fixture().await;
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        Arc::new(FakeAgent::new()),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    )
+    .with_task_board(service.clone());
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound("chat-b", "/attach thr_b"))
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound("chat-a", "/jobs"))
+        .await
+        .unwrap();
+    assert!(channel.sent().last().unwrap().1.body.contains("Task board"));
+    engine
+        .handle_inbound(inbound("chat-a", &format!("/task {id}")))
+        .await
+        .unwrap();
+    let view = channel.sent().last().unwrap().1.clone();
+    let block = view
+        .actions
+        .iter()
+        .find(|a| a.label == "Block")
+        .unwrap()
+        .token
+        .clone();
+    engine
+        .handle_inbound(InboundEnvelope::action(
+            "task-block",
+            ConversationRef::new(ChannelKind::Telegram, "chat-a"),
+            "owner",
+            block,
+        ))
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound("chat-a", "Need upstream API"))
+        .await
+        .unwrap();
+    let task = &service.store().snapshot().await.unwrap().tasks[0];
+    assert_eq!(task.status.to_string(), "BLOCKED");
+    assert_eq!(task.reason.as_deref(), Some("Need upstream API"));
+    engine.refresh_task_board().await.unwrap();
+    let notifications: Vec<_> = channel
+        .sent()
+        .into_iter()
+        .filter(|(_, v)| v.title == "Task update")
+        .collect();
+    assert_eq!(notifications.len(), 1);
+    assert_eq!(notifications[0].0.conversation_id, "chat-a");
+    let count = channel.sent().len();
+    engine.refresh_task_board().await.unwrap();
+    assert_eq!(channel.sent().len(), count);
+}
+
+#[tokio::test]
+async fn missing_task_plan_resumes_planning_without_interrupting_session_lifecycle() {
+    let (dir, service, _id) = task_fixture().await;
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        Arc::new(FakeAgent::new()),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel],
+    )
+    .with_task_board(service.clone());
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::SessionExited {
+            session_id: "thr_a".into(),
+        })
+        .await
+        .unwrap();
+    let plan = service.store().snapshot().await.unwrap().plans[0].clone();
+    std::fs::rename(
+        service.config().output_dir().join(plan.path),
+        dir.path().join("moved-plan.md"),
+    )
+    .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::SessionResumed {
+            session_id: "thr_a".into(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        service.store().snapshot().await.unwrap().tasks[0].phase,
+        Some(agentix_task::TaskPhase::Planning)
+    );
+}
+
+#[tokio::test]
+async fn task_board_actions_reject_other_sessions_and_exited_session_buttons() {
+    let (_dir, service, id) = task_fixture().await;
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        Arc::new(FakeAgent::new()),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    )
+    .with_task_board(service.clone());
+    engine
+        .handle_inbound(inbound("chat-b", "/attach thr_b"))
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound("chat-b", &format!("/task {id}")))
+        .await
+        .unwrap();
+    assert!(
+        channel
+            .sent()
+            .last()
+            .unwrap()
+            .1
+            .actions
+            .iter()
+            .all(|a| a.label == "Job")
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound("chat-a", &format!("/task {id}")))
+        .await
+        .unwrap();
+    let token = channel
+        .sent()
+        .last()
+        .unwrap()
+        .1
+        .actions
+        .iter()
+        .find(|a| a.label == "Done")
+        .unwrap()
+        .token
+        .clone();
+    engine
+        .handle_agent_event(AgentEvent::SessionExited {
+            session_id: "thr_a".into(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        service.store().snapshot().await.unwrap().tasks[0]
+            .status
+            .to_string(),
+        "BLOCKED"
+    );
+    let result = engine
+        .handle_inbound(InboundEnvelope::action(
+            "old-task-button",
+            ConversationRef::new(ChannelKind::Telegram, "chat-a"),
+            "owner",
+            token,
+        ))
+        .await;
+    assert!(result.is_err());
+    engine
+        .handle_agent_event(AgentEvent::SessionResumed {
+            session_id: "thr_a".into(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        service.store().snapshot().await.unwrap().tasks[0]
+            .status
+            .to_string(),
+        "IN_PROGRESS"
+    );
+}
+
+async fn task_write_options(
+    service: &agentix_task::Service,
+    id: &str,
+) -> agentix_task::WriteOptions {
+    let state = service.store().snapshot().await.unwrap();
+    let lease = state.leases.iter().find(|l| l.task_id == id).unwrap();
+    agentix_task::WriteOptions {
+        actor_ref: "agent:test".into(),
+        session_ref: Some(lease.session_ref.clone()),
+        lease_token: Some(lease.token.clone()),
+        ..agentix_task::WriteOptions::default()
+    }
+}
+
+async fn task_button(engine: &Engine, channel: &FakeChannel, id: &str, label: &str) -> String {
+    engine
+        .handle_inbound(InboundEnvelope::text(
+            uuid::Uuid::new_v4().to_string(),
+            ConversationRef::new(ChannelKind::Telegram, "chat-a"),
+            "owner",
+            format!("/task {id}"),
+        ))
+        .await
+        .unwrap();
+    channel
+        .sent()
+        .last()
+        .unwrap()
+        .1
+        .actions
+        .iter()
+        .find(|a| a.label == label)
+        .unwrap()
+        .token
+        .clone()
+}
+
+#[tokio::test]
+async fn task_revision_change_rejects_button_without_changing_session_or_lease() {
+    let (_dir, service, id) = task_fixture().await;
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        Arc::new(FakeAgent::new()),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    )
+    .with_task_board(service.clone());
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    let token = task_button(&engine, &channel, &id, "Done").await;
+    let options = task_write_options(&service, &id).await;
+    service
+        .execute(
+            serde_json::json!({"command":"task.update","task":id,"title":"Concurrent update"}),
+            options.clone(),
+        )
+        .await
+        .unwrap();
+    let error = engine
+        .handle_inbound(InboundEnvelope::action(
+            "stale-task-revision",
+            ConversationRef::new(ChannelKind::Telegram, "chat-a"),
+            "owner",
+            token,
+        ))
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("revision"), "{error}");
+    let state = service.store().snapshot().await.unwrap();
+    assert_eq!(state.tasks[0].status, agentix_task::TaskStatus::InProgress);
+    assert_eq!(Some(&state.leases[0].token), options.lease_token.as_ref());
+}
+
+#[tokio::test]
+async fn task_wait_fail_and_job_completion_notify_only_the_bound_session() {
+    for (button, event_type, status) in [
+        ("Wait", "task.waiting_user", "WAITING_USER"),
+        ("Fail", "task.failed", "FAILED"),
+        ("Done", "job.completed", "DONE"),
+    ] {
+        let (_dir, service, id) = task_fixture().await;
+        let channel = Arc::new(FakeChannel::default());
+        let engine = Engine::new(
+            Arc::new(FakeAgent::new()),
+            SqliteState::in_memory().await.unwrap(),
+            vec![channel.clone()],
+        )
+        .with_task_board(service.clone());
+        engine
+            .handle_inbound(inbound("chat-a", "/attach thr_a"))
+            .await
+            .unwrap();
+        engine
+            .handle_inbound(inbound("chat-b", "/attach thr_b"))
+            .await
+            .unwrap();
+        let token = task_button(&engine, &channel, &id, button).await;
+        engine
+            .handle_inbound(InboundEnvelope::action(
+                "task-action",
+                ConversationRef::new(ChannelKind::Telegram, "chat-a"),
+                "owner",
+                token,
+            ))
+            .await
+            .unwrap();
+        if button != "Done" {
+            engine
+                .handle_inbound(inbound("chat-a", "Specific acceptance reason"))
+                .await
+                .unwrap();
+        }
+        assert_eq!(
+            service.store().snapshot().await.unwrap().tasks[0]
+                .status
+                .to_string(),
+            status
+        );
+        engine.refresh_task_board().await.unwrap();
+        let messages: Vec<_> = channel
+            .sent()
+            .into_iter()
+            .filter(|(_, v)| v.title == "Task update")
+            .collect();
+        assert_eq!(messages.len(), 1, "{event_type}");
+        assert_eq!(messages[0].0.conversation_id, "chat-a");
+        assert!(messages[0].1.body.contains(event_type));
+        if button != "Done" {
+            assert!(messages[0].1.body.contains("Specific acceptance reason"));
+        }
+        engine.refresh_task_board().await.unwrap();
+        assert_eq!(
+            channel
+                .sent()
+                .iter()
+                .filter(|(_, v)| v.title == "Task update")
+                .count(),
+            1
+        );
+    }
+}
+
+#[tokio::test]
+async fn task_notification_send_failure_retries_after_restart_and_persists_cursor() {
+    let (dir, service, id) = task_fixture().await;
+    let path = dir.path().join("runtime.sqlite3");
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        Arc::new(FakeAgent::new()),
+        SqliteState::open(&path).await.unwrap(),
+        vec![channel.clone()],
+    )
+    .with_task_board(service.clone())
+    .with_task_consumer("restart-test".into());
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound("chat-b", "/attach thr_b"))
+        .await
+        .unwrap();
+    engine.refresh_task_board().await.unwrap();
+    service
+        .execute(
+            serde_json::json!({"command":"task.wait","task":id,"reason":"Notify after restart"}),
+            task_write_options(&service, &id).await,
+        )
+        .await
+        .unwrap();
+    *channel.task_send_failures.lock().unwrap() = 1;
+    assert!(engine.refresh_task_board().await.is_err());
+    assert!(!channel.sent().iter().any(|(_, v)| v.title == "Task update"));
+    let cursor = service
+        .store()
+        .metadata("agentix:cursor:restart-test")
+        .await
+        .unwrap()
+        .unwrap()
+        .as_i64()
+        .unwrap();
+    assert!(cursor < service.store().latest_sequence().await.unwrap());
+    drop(engine);
+    let reopened = Arc::new(
+        agentix_task::Service::open(service.config().clone())
+            .await
+            .unwrap(),
+    );
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        Arc::new(FakeAgent::new()),
+        SqliteState::open(&path).await.unwrap(),
+        vec![channel.clone()],
+    )
+    .with_task_board(reopened.clone())
+    .with_task_consumer("restart-test".into());
+    engine.restore_bindings().await.unwrap();
+    engine.refresh_task_board().await.unwrap();
+    let sent: Vec<_> = channel
+        .sent()
+        .into_iter()
+        .filter(|(_, v)| v.title == "Task update")
+        .collect();
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0].0.conversation_id, "chat-a");
+    assert!(sent[0].1.body.contains("Notify after restart"));
+    drop(engine);
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        Arc::new(FakeAgent::new()),
+        SqliteState::open(&path).await.unwrap(),
+        vec![channel.clone()],
+    )
+    .with_task_board(reopened)
+    .with_task_consumer("restart-test".into());
+    engine.restore_bindings().await.unwrap();
+    engine.refresh_task_board().await.unwrap();
+    assert!(!channel.sent().iter().any(|(_, v)| v.title == "Task update"));
+}
+
+#[tokio::test]
+async fn task_notifications_cross_event_pages_without_skipping_the_final_event() {
+    let (_dir, service, id) = task_fixture().await;
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        Arc::new(FakeAgent::new()),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    )
+    .with_task_board(service.clone());
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    let options = task_write_options(&service, &id).await;
+    for index in 0..105 {
+        service.store().execute(serde_json::json!({"command":"task.update","task":id,"title":format!("Revision {index}")}),options.clone()).await.unwrap();
+    }
+    service
+        .store()
+        .execute(
+            serde_json::json!({"command":"task.fail","task":id,"reason":"Last event"}),
+            options,
+        )
+        .await
+        .unwrap();
+    for _ in 0..4 {
+        engine.refresh_task_board().await.unwrap();
+    }
+    let sent: Vec<_> = channel
+        .sent()
+        .into_iter()
+        .filter(|(_, v)| v.title == "Task update")
+        .collect();
+    assert_eq!(sent.len(), 1);
+    assert!(sent[0].1.body.contains("Last event"));
+    assert_eq!(
+        service
+            .store()
+            .metadata("agentix:cursor:default")
+            .await
+            .unwrap()
+            .unwrap()
+            .as_i64()
+            .unwrap(),
+        service.store().latest_sequence().await.unwrap()
+    );
+}
+
+#[tokio::test]
+async fn cancel_task_reason_does_not_change_task_and_unbound_events_are_skipped() {
+    let (_dir, service, id) = task_fixture().await;
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        Arc::new(FakeAgent::new()),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    )
+    .with_task_board(service.clone());
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    let token = task_button(&engine, &channel, &id, "Wait").await;
+    engine
+        .handle_inbound(InboundEnvelope::action(
+            "ask-reason",
+            ConversationRef::new(ChannelKind::Telegram, "chat-a"),
+            "owner",
+            token,
+        ))
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound("chat-a", "/cancel"))
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound("chat-a", "Ordinary prompt, not a task reason"))
+        .await
+        .unwrap();
+    assert_eq!(
+        service.store().snapshot().await.unwrap().tasks[0].status,
+        agentix_task::TaskStatus::InProgress
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/detach"))
+        .await
+        .unwrap();
+    service
+        .execute(
+            serde_json::json!({"command":"task.wait","task":id,"reason":"No bound conversation"}),
+            task_write_options(&service, &id).await,
+        )
+        .await
+        .unwrap();
+    engine.refresh_task_board().await.unwrap();
+    assert!(!channel.sent().iter().any(|(_, v)| v.title == "Task update"));
 }
 
 fn user_input_request(request_id: &str, questions: &serde_json::Value) -> InteractionRequest {
@@ -3251,3 +3916,6 @@ async fn stream_and_working_timer_share_the_channel_interval_but_completion_flus
     assert_eq!(channel.updated().len(), before + 2);
     assert!(channel.updated().last().unwrap().1.actions.is_empty());
 }
+
+#[path = "support/task_board.rs"]
+mod task_board;

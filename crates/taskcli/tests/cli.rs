@@ -1,0 +1,1064 @@
+use std::process::{Command, Output};
+
+use serde_json::{Value, json};
+use tempfile::TempDir;
+
+#[path = "support/projections.rs"]
+mod projections;
+
+struct Cli {
+    dir: TempDir,
+}
+impl Cli {
+    fn new(format: &str) -> Self {
+        let dir = TempDir::new().unwrap();
+        std::fs::create_dir_all(dir.path().join("vault")).unwrap();
+        if format == "obsidian" {
+            std::fs::create_dir_all(dir.path().join("vault/.obsidian")).unwrap();
+        }
+        let cli = Self { dir };
+        cli.ok(&[
+            "init",
+            "--format",
+            format,
+            "--root",
+            cli.dir.path().join("vault").to_str().unwrap(),
+            "--directory",
+            "Tasks \u{2603}",
+            "--database",
+            cli.dir.path().join("state.sqlite3").to_str().unwrap(),
+        ]);
+        cli
+    }
+    fn run(&self, args: &[&str]) -> Output {
+        self.command(args).output().unwrap()
+    }
+    fn command(&self, args: &[&str]) -> Command {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_taskcli"));
+        command
+            .arg("--config")
+            .arg(self.dir.path().join("config.toml"))
+            .arg("--json")
+            .args(args)
+            .current_dir(self.dir.path());
+        command
+    }
+    fn job(&self, title: &str) -> String {
+        let project = self.ok(&[
+            "project",
+            "register",
+            "--name",
+            "Demo",
+            "--root",
+            self.dir.path().to_str().unwrap(),
+        ]);
+        self.ok(&[
+            "job",
+            "create",
+            "--project",
+            project["id"].as_str().unwrap(),
+            "--title",
+            title,
+        ])["id"]
+            .as_str()
+            .unwrap()
+            .into()
+    }
+    fn task(&self, job: &str, title: &str) -> String {
+        let task = self.ok(&["task", "add", "--job", job, "--title", title]);
+        let id = task["id"].as_str().unwrap();
+        id.into()
+    }
+    fn owned(&self, args: &[&str], claim: &Value) -> Value {
+        let mut args = args.to_vec();
+        args.extend([
+            "--session",
+            claim["lease"]["session_ref"].as_str().unwrap(),
+            "--lease-token",
+            claim["lease"]["token"].as_str().unwrap(),
+        ]);
+        self.ok(&args)
+    }
+    fn claim(&self, task: &str, session: &str) -> Value {
+        self.ok(&[
+            "task",
+            "claim",
+            task,
+            "--session",
+            session,
+            "--executor",
+            &format!("agent:{session}"),
+        ])
+    }
+    fn ok(&self, args: &[&str]) -> Value {
+        let out = self.run(args);
+        assert!(
+            out.status.success(),
+            "{args:?}: {} {}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let value: Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(value["schema_version"], 1);
+        assert_eq!(value["ok"], true);
+        value["result"].clone()
+    }
+}
+
+#[test]
+fn cli_deletes_jobs_and_projects_with_their_documents() {
+    let cli = Cli::new("markdown");
+    let job = cli.job("Remove me");
+    let task = cli.task(&job, "Remove plan");
+    let claim = cli.claim(&task, "delete");
+    let plan = cli.owned(
+        &["plan", "create", &task, "--body", "# Delete this plan"],
+        &claim,
+    );
+    cli.owned(
+        &["task", "release", &task, "--reason", "ready to delete"],
+        &claim,
+    );
+    let before = cli.ok(&["job", "show", &job]);
+    let project = before["project_id"].as_str().unwrap();
+    assert_eq!(cli.ok(&["job", "delete", &job])["deleted"], true);
+    assert_eq!(cli.run(&["task", "show", &task]).status.code(), Some(1));
+    assert!(!std::path::Path::new(plan["absolute_path"].as_str().unwrap()).exists());
+    let directory = cli.dir.path().join("vault/Tasks ☃/Projects/Demo");
+    std::fs::write(
+        directory.join("attachment.txt"),
+        "Remove project attachment",
+    )
+    .unwrap();
+    assert_eq!(cli.ok(&["project", "delete", project])["deleted"], true);
+    assert!(!directory.exists());
+    assert!(cli.ok(&["project", "list"]).as_array().unwrap().is_empty());
+    assert_eq!(cli.ok(&["doctor"])["healthy"], true);
+}
+
+#[test]
+fn cli_claim_plan_start_done_requires_ownership_and_preserves_lease() {
+    let cli = Cli::new("markdown");
+    let job = cli.job("Owned planning");
+    let id = cli.task(&job, "Plan safely");
+    assert_eq!(
+        cli.run(&["plan", "create", &id, "--body", "# Plan"])
+            .status
+            .code(),
+        Some(1)
+    );
+    let claim = cli.ok(&[
+        "task",
+        "claim",
+        &id,
+        "--executor",
+        "agent:a",
+        "--session",
+        "a",
+    ]);
+    assert_eq!(claim["phase"], "PLANNING");
+    let token = claim["lease"]["token"].as_str().unwrap();
+    cli.ok(&[
+        "plan",
+        "create",
+        &id,
+        "--body",
+        "# Plan",
+        "--session",
+        "a",
+        "--lease-token",
+        token,
+    ]);
+    assert_eq!(
+        cli.run(&[
+            "task",
+            "done",
+            &id,
+            "--session",
+            "a",
+            "--lease-token",
+            token
+        ])
+        .status
+        .code(),
+        Some(1)
+    );
+    assert_eq!(
+        cli.run(&[
+            "task",
+            "start",
+            &id,
+            "--session",
+            "b",
+            "--lease-token",
+            token
+        ])
+        .status
+        .code(),
+        Some(1)
+    );
+    let args = [
+        "task",
+        "start",
+        &id,
+        "--session",
+        "a",
+        "--lease-token",
+        token,
+        "--idempotency-key",
+        "start-once",
+    ];
+    let started = cli.ok(&args);
+    assert_eq!(started["phase"], "EXECUTING");
+    assert_eq!(started["lease"]["token"], token);
+    assert_eq!(cli.ok(&args), started);
+    assert_eq!(
+        cli.ok(&["context", "--session", "a"])["task"]["phase"],
+        "EXECUTING"
+    );
+    cli.ok(&[
+        "task",
+        "done",
+        &id,
+        "--session",
+        "a",
+        "--lease-token",
+        token,
+    ]);
+}
+
+struct RunningCli(std::process::Child);
+impl RunningCli {
+    fn start(cli: &Cli, args: &[&str]) -> Self {
+        Self(
+            cli.command(args)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .unwrap(),
+        )
+    }
+    fn output(&mut self) -> Output {
+        use std::io::Read;
+        let status = self.0.wait().unwrap();
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        self.0
+            .stdout
+            .take()
+            .unwrap()
+            .read_to_end(&mut stdout)
+            .unwrap();
+        self.0
+            .stderr
+            .take()
+            .unwrap()
+            .read_to_end(&mut stderr)
+            .unwrap();
+        Output {
+            status,
+            stdout,
+            stderr,
+        }
+    }
+}
+impl Drop for RunningCli {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+#[test]
+fn separate_cli_processes_racing_to_claim_have_exactly_one_winner() {
+    let cli = Cli::new("markdown");
+    let job = cli.job("Race");
+    let task = cli.task(&job, "Exclusive");
+    let mut children: Vec<_> = (0..8)
+        .map(|i| {
+            RunningCli::start(
+                &cli,
+                &[
+                    "task",
+                    "claim",
+                    &task,
+                    "--executor",
+                    &format!("agent:{i}"),
+                    "--session",
+                    &format!("session:{i}"),
+                ],
+            )
+        })
+        .collect();
+    let outputs: Vec<_> = children.iter_mut().map(RunningCli::output).collect();
+    assert_eq!(outputs.iter().filter(|o| o.status.success()).count(), 1);
+    for output in outputs.iter().filter(|o| !o.status.success()) {
+        let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(output.status.code(), Some(1));
+        assert!(
+            value["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("conflict"),
+            "{value}"
+        );
+    }
+    assert_eq!(cli.ok(&["task", "show", &task])["status"], "IN_PROGRESS");
+}
+
+#[test]
+fn concurrent_cli_jobs_preserve_notes_and_all_projections() {
+    for format in ["markdown", "obsidian"] {
+        let cli = Cli::new(format);
+        let jobs: Vec<_> = (0..4)
+            .map(|i| cli.job(&format!("Requirement {i}")))
+            .collect();
+        let tasks: Vec<_> = jobs
+            .iter()
+            .enumerate()
+            .map(|(i, j)| cli.task(j, &format!("Parallel {i}")))
+            .collect();
+        let output = cli.dir.path().join("vault/Tasks \u{2603}");
+        let paths: Vec<_> = jobs
+            .iter()
+            .map(|j| {
+                output.join(
+                    cli.ok(&["job", "show", j])["document_path"]
+                        .as_str()
+                        .unwrap(),
+                )
+            })
+            .collect();
+        for path in &paths {
+            let body = std::fs::read_to_string(path).unwrap().replace(
+                "<!-- taskcli:notes:start -->",
+                "<!-- taskcli:notes:start -->\nKeep my notes.",
+            );
+            std::fs::write(path, body).unwrap();
+        }
+        let mut children: Vec<_> = tasks
+            .iter()
+            .enumerate()
+            .map(|(i, t)| {
+                RunningCli::start(
+                    &cli,
+                    &[
+                        "task",
+                        "claim",
+                        t,
+                        "--executor",
+                        &format!("agent:{i}"),
+                        "--session",
+                        &format!("session:{i}"),
+                    ],
+                )
+            })
+            .collect();
+        for child in &mut children {
+            let result = child.output();
+            assert!(
+                result.status.success(),
+                "{}",
+                String::from_utf8_lossy(&result.stdout)
+            );
+            let value: Value = serde_json::from_slice(&result.stdout).unwrap();
+            assert!(value["projection_pending"].is_null(), "{value}");
+        }
+        for (path, task) in paths.iter().zip(&tasks) {
+            let body = std::fs::read_to_string(path).unwrap();
+            assert_eq!(body.matches("Keep my notes.").count(), 1);
+            assert!(body.contains("Tasks/") && body.contains(&task.replace('_', "-")));
+            let folder = path.parent().unwrap().parent().unwrap().join("Tasks");
+            let note = std::fs::read_dir(folder)
+                .unwrap()
+                .map(|e| std::fs::read_to_string(e.unwrap().path()).unwrap())
+                .find(|s| s.contains(task))
+                .unwrap();
+            assert!(note.contains("status: \"IN_PROGRESS\""));
+        }
+        assert_eq!(
+            cli.ok(&["task", "list", "--status", "IN_PROGRESS"])
+                .as_array()
+                .unwrap()
+                .len(),
+            4
+        );
+        assert_eq!(cli.ok(&["doctor"])["healthy"], true);
+    }
+}
+
+#[tokio::test]
+async fn killed_cli_after_database_commit_replays_without_duplicates_and_repairs_files() {
+    let cli = Cli::new("markdown");
+    let job = cli.job("Crash recovery");
+    let store = agentix_task::Store::open(&cli.dir.path().join("state.sqlite3"))
+        .await
+        .unwrap();
+    let lock =
+        std::fs::File::open(cli.dir.path().join("vault/Tasks \u{2603}/.taskcli.lock")).unwrap();
+    lock.lock().unwrap();
+    let args = [
+        "task",
+        "add",
+        "--job",
+        &job,
+        "--title",
+        "Committed before crash",
+        "--idempotency-key",
+        "crash-once",
+    ];
+    let mut child = RunningCli::start(&cli, &args);
+    let task = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+        loop {
+            let state = store.snapshot().await.unwrap();
+            if let Some(task) = state.tasks.first() {
+                break task.clone();
+            }
+            assert!(
+                child.0.try_wait().unwrap().is_none(),
+                "CLI exited before commit"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(
+        child.0.try_wait().unwrap().is_none(),
+        "projection must still be blocked"
+    );
+    child.0.kill().unwrap();
+    child.0.wait().unwrap();
+    let sequence = store.latest_sequence().await.unwrap();
+    drop(lock);
+    drop(store);
+    let replay = cli.ok(&args);
+    assert_eq!(replay["id"], task.id);
+    let reopened = agentix_task::Store::open(&cli.dir.path().join("state.sqlite3"))
+        .await
+        .unwrap();
+    assert_eq!(reopened.latest_sequence().await.unwrap(), sequence);
+    assert_eq!(reopened.snapshot().await.unwrap().tasks.len(), 1);
+    assert_eq!(cli.ok(&["doctor"])["healthy"], true);
+    let path = cli.ok(&["job", "show", &job])["document_path"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(
+        std::fs::read_to_string(cli.dir.path().join("vault/Tasks \u{2603}").join(path))
+            .unwrap()
+            .contains(&task.id.replace('_', "-"))
+    );
+}
+
+#[test]
+fn plugin_entrypoints_execute_the_compiled_taskcli() {
+    let plugin =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins/agent-task-manager");
+    let output = Command::new("node")
+        .args(["--test", "tests/integration.mjs"])
+        .current_dir(plugin)
+        .env("TASKCLI_BIN", env!("CARGO_BIN_EXE_taskcli"))
+        .output()
+        .expect("Node.js 24+ is required for plugin integration tests");
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn cli_rejects_invalid_inputs_and_preserves_configuration_and_state() {
+    let cli = Cli::new("markdown");
+    let job = cli.job("Validation");
+    let task = cli.task(&job, "Check inputs");
+    let before = cli.ok(&["task", "show", &task]);
+    for args in [
+        vec!["task", "update", &task, "--title", " "],
+        vec!["task", "update", &task, "--position=-1"],
+        vec!["task", "list", "--status", "UNKNOWN"],
+        vec!["task", "depend", &task, &task],
+        vec!["task", "claim", &task],
+        vec!["job", "archive", &job],
+        vec!["job", "unarchive", &job],
+        vec!["job", "list", "--period", "2026-13"],
+        vec!["job", "list", "--created-from", "not-a-date"],
+        vec!["event", "list", "--after=-1"],
+        vec!["event", "list", "--limit", "0"],
+        vec!["event", "list", "--limit", "1001"],
+        vec!["plan", "create", &task, "--body", "duplicate"],
+    ] {
+        let output = cli.run(&args);
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        let error: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(error["ok"], false);
+        assert_eq!(cli.ok(&["task", "show", &task]), before);
+    }
+    for args in [
+        vec!["task", "block", &task],
+        vec!["job", "list", "--active", "--completed"],
+        vec!["plan", "revise", &task, "--body", "x", "--file", "x"],
+    ] {
+        assert_eq!(cli.run(&args).status.code(), Some(2), "{args:?}");
+    }
+    let config = std::fs::read(cli.dir.path().join("config.toml")).unwrap();
+    assert_eq!(
+        cli.run(&[
+            "init",
+            "--format",
+            "markdown",
+            "--root",
+            cli.dir.path().join("vault").to_str().unwrap()
+        ])
+        .status
+        .code(),
+        Some(1)
+    );
+    assert_eq!(
+        std::fs::read(cli.dir.path().join("config.toml")).unwrap(),
+        config
+    );
+}
+
+#[test]
+fn cli_dependency_edits_filters_plan_files_and_archive_round_trip() {
+    let cli = Cli::new("markdown");
+    let job = cli.job("First requirement");
+    let a = cli.task(&job, "prerequisite");
+    let b = cli.task(&job, "dependent");
+    cli.ok(&["task", "depend", &b, &a]);
+    assert_eq!(
+        cli.ok(&["task", "list", "--ready"])
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    cli.ok(&["task", "undepend", &b, &a]);
+    assert_eq!(
+        cli.ok(&["task", "list", "--ready"])
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    cli.ok(&[
+        "task",
+        "update",
+        &b,
+        "--title",
+        "Changed title",
+        "--position",
+        "0",
+    ]);
+    cli.ok(&[
+        "job",
+        "update",
+        &job,
+        "--title",
+        "Changed job",
+        "--goal",
+        "Acceptance goal",
+    ]);
+    let plan = cli.dir.path().join("input-plan.md");
+    std::fs::write(&plan, "# File plan\nPreserve exact body.\n").unwrap();
+    let claim = cli.claim(&b, "editor");
+    cli.owned(&["plan", "create", &b, "--body", "# Initial"], &claim);
+    cli.owned(
+        &["plan", "revise", &b, "--file", plan.to_str().unwrap()],
+        &claim,
+    );
+    assert_eq!(
+        cli.ok(&["plan", "show", &b])["body"],
+        "# File plan\nPreserve exact body.\n"
+    );
+    cli.owned(&["task", "release", &b, "--reason", "cancel scope"], &claim);
+    cli.ok(&["job", "cancel", &job]);
+    assert!(
+        cli.ok(&["task", "list", "--job", &job])
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|t| t["status"] == "CANCELLED")
+    );
+    cli.ok(&["job", "archive", &job]);
+    assert_eq!(
+        cli.ok(&["job", "list", "--archived"])
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    cli.ok(&["job", "unarchive", &job]);
+    assert!(
+        cli.ok(&["job", "list", "--archived"])
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(cli.ok(&["job", "show", &job])["status"], "CANCELLED");
+    let next = cli.job("New scope");
+    assert_ne!(next, job);
+    let events = cli.ok(&["event", "list", "--job", &job, "--limit", "2"]);
+    assert_eq!(events["events"].as_array().unwrap().len(), 2);
+    let cursor = events["next_cursor"].as_i64().unwrap();
+    let page = cli.ok(&[
+        "event",
+        "list",
+        "--job",
+        &job,
+        "--after",
+        &cursor.to_string(),
+    ]);
+    assert!(
+        page["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|e| e["sequence"].as_i64().unwrap() > cursor)
+    );
+}
+
+#[test]
+fn inline_plan_bodies_accept_yaml_frontmatter_and_merge_properties() {
+    let cli = Cli::new("obsidian");
+    let job = cli.job("Frontmatter");
+    let task = cli.ok(&[
+        "task",
+        "add",
+        "--job",
+        &job,
+        "--title",
+        "Plan with properties",
+    ]);
+    let id = task["id"].as_str().unwrap();
+    let claim = cli.ok(&[
+        "task",
+        "claim",
+        id,
+        "--session",
+        "frontmatter",
+        "--executor",
+        "agent:frontmatter",
+    ]);
+    let token = claim["lease"]["token"].as_str().unwrap();
+    for (command, title) in [("create", "First"), ("revise", "Second")] {
+        let body = format!("---\ntitle: {title}\n---\n\n# Plan\n");
+        cli.ok(&[
+            "plan",
+            command,
+            id,
+            "--body",
+            &body,
+            "--session",
+            "frontmatter",
+            "--lease-token",
+            token,
+        ]);
+        let shown = cli.ok(&["plan", "show", id]);
+        assert_eq!(shown["body"], "# Plan\n");
+        assert_eq!(shown["properties"]["title"], title);
+    }
+}
+
+#[test]
+fn cli_creates_and_repairs_plugin_views_without_installing_obsidian_plugins() {
+    for format in ["markdown", "obsidian"] {
+        let cli = Cli::new(format);
+        let job = cli.job("Plugin-compatible views");
+        let task = cli.task(&job, "Visible card");
+        let project = cli.ok(&["project", "list"])[0].clone();
+        let output = cli.dir.path().join("vault/Tasks \u{2603}");
+        let directory = output.join(format!("Projects/{}", project["key"].as_str().unwrap()));
+        let board = std::fs::read_to_string(directory.join("Board.md")).unwrap();
+        assert!(!directory.join("Tasks.md").exists());
+        assert!(board.starts_with("---\n"));
+        assert!(board.contains("tasknotesKanban"));
+        assert!(!board.contains("kanban-plugin:"));
+        assert!(
+            std::fs::read_dir(directory.join("Tasks"))
+                .unwrap()
+                .any(|e| e
+                    .unwrap()
+                    .file_name()
+                    .to_string_lossy()
+                    .contains("Visible card"))
+        );
+        assert!(!board.contains("|Project]]") && !board.contains("[Project]("));
+        assert!(!directory.join("meta.md").exists());
+        assert!(!board.contains("Task list"));
+        let before = cli.ok(&["task", "show", &task]);
+        std::fs::write(directory.join("Board.md"), "# Old table or manual edit\n").unwrap();
+        cli.ok(&["sync"]);
+        assert_eq!(
+            std::fs::read_to_string(directory.join("Board.md")).unwrap(),
+            board
+        );
+        assert!(!directory.join("Tasks.md").exists());
+        assert_eq!(cli.ok(&["task", "show", &task]), before);
+        let settings = cli.dir.path().join("vault/.obsidian");
+        assert_eq!(settings.exists(), format == "obsidian");
+        if settings.exists() {
+            assert_eq!(std::fs::read_dir(settings).unwrap().count(), 0);
+        }
+    }
+}
+
+#[test]
+fn standalone_json_workflow_in_both_document_formats() {
+    for format in ["markdown", "obsidian"] {
+        let cli = Cli::new(format);
+        let project = cli.ok(&[
+            "project",
+            "register",
+            "--name",
+            "Demo",
+            "--root",
+            cli.dir.path().to_str().unwrap(),
+        ]);
+        let pid = project["id"].as_str().unwrap();
+        let job = cli.ok(&[
+            "job",
+            "create",
+            "--project",
+            pid,
+            "--title",
+            "Deliver task board",
+            "--goal",
+            "CLI works standalone",
+        ]);
+        let jid = job["id"].as_str().unwrap();
+        let task = cli.ok(&["task", "add", "--job", jid, "--title", "Build"]);
+        let tid = task["id"].as_str().unwrap();
+        let claim = cli.ok(&[
+            "task",
+            "claim",
+            tid,
+            "--executor",
+            "agent:test",
+            "--session",
+            "session:test",
+            "--delegated-by",
+            "team:test",
+        ]);
+        let token = claim["lease"]["token"].as_str().unwrap();
+        cli.ok(&[
+            "plan",
+            "create",
+            tid,
+            "--body",
+            "# Build\nRun tests.",
+            "--session",
+            "session:test",
+            "--lease-token",
+            token,
+        ]);
+        cli.ok(&[
+            "task",
+            "start",
+            tid,
+            "--session",
+            "session:test",
+            "--lease-token",
+            token,
+        ]);
+        let context = cli.ok(&["context", "--session", "session:test"]);
+        assert_eq!(context["job_id"], jid);
+        assert_eq!(context["documents"]["format"], format);
+        cli.ok(&[
+            "task",
+            "done",
+            tid,
+            "--session",
+            "session:test",
+            "--lease-token",
+            token,
+        ]);
+        assert_eq!(cli.ok(&["job", "show", jid])["status"], "COMPLETED");
+        cli.ok(&["job", "archive", jid]);
+        assert_eq!(
+            cli.ok(&["job", "list", "--archived"])
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(
+            !cli.ok(&["event", "list", "--job", jid])["events"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(cli.ok(&["doctor"])["healthy"], true);
+        cli.ok(&["sync"]);
+    }
+}
+
+#[test]
+fn invalid_arguments_and_business_errors_have_distinct_exit_codes() {
+    let cli = Cli::new("markdown");
+    assert_eq!(cli.run(&["watch"]).status.code(), Some(2));
+    let out = cli.run(&["task", "show", "task_missing"]);
+    assert_eq!(out.status.code(), Some(1));
+    let value: Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(value["ok"], false);
+    assert!(!value["error"]["message"].as_str().unwrap().is_empty());
+    let version = Command::new(env!("CARGO_BIN_EXE_taskcli"))
+        .arg("--version")
+        .output()
+        .unwrap();
+    assert!(String::from_utf8_lossy(&version.stdout).starts_with("taskcli "));
+}
+
+#[test]
+fn hooks_consume_host_json_and_do_not_require_a_job() {
+    use std::io::Write;
+    let cli = Cli::new("markdown");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_taskcli"))
+        .arg("--config")
+        .arg(cli.dir.path().join("config.toml"))
+        .args(["--json", "hook", "session-start"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(json!({"session_id":"host-session","cwd":cli.dir.path(),"hook_event_name":"SessionStart"}).to_string().as_bytes()).unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["result"]["session_ref"], "host-session");
+}
+
+#[test]
+fn git_worktrees_share_one_project() {
+    let cli = Cli::new("markdown");
+    let repo = cli.dir.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    for args in [
+        vec!["init", "-b", "main"],
+        vec![
+            "-c",
+            "user.name=Test",
+            "-c",
+            "user.email=test@example.com",
+            "-c",
+            "commit.gpgsign=false",
+            "commit",
+            "-s",
+            "--no-verify",
+            "--allow-empty",
+            "-m",
+            "init",
+        ],
+    ] {
+        assert!(
+            Command::new("git")
+                .args(args)
+                .current_dir(&repo)
+                .output()
+                .unwrap()
+                .status
+                .success()
+        );
+    }
+    let worktree = cli.dir.path().join("branch");
+    assert!(
+        Command::new("git")
+            .args(["worktree", "add", "-b", "test"])
+            .arg(&worktree)
+            .current_dir(&repo)
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
+    let first = cli.ok(&["project", "register", "--root", repo.to_str().unwrap()]);
+    let second = cli.ok(&["project", "register", "--root", worktree.to_str().unwrap()]);
+    assert_eq!(first["id"], second["id"]);
+    assert_eq!(cli.ok(&["project", "list"]).as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn legacy_document_language_is_ignored_without_accepting_other_unknown_fields() {
+    let cli = Cli::new("markdown");
+    let path = cli.dir.path().join("config.toml");
+    let mut config: toml::Value = toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    config["documents"]
+        .as_table_mut()
+        .unwrap()
+        .insert("language".into(), toml::Value::String("fr".into()));
+    std::fs::write(&path, toml::to_string(&config).unwrap()).unwrap();
+    let docs = &cli.ok(&["doctor"])["documents"];
+    assert!(docs.get("language").is_none());
+    config["documents"].as_table_mut().unwrap().insert(
+        "unknown_setting".into(),
+        toml::Value::String("invalid".into()),
+    );
+    std::fs::write(&path, toml::to_string(&config).unwrap()).unwrap();
+    assert_eq!(cli.run(&["doctor"]).status.code(), Some(1));
+}
+
+#[test]
+fn taskcli_preserves_authored_language_without_language_configuration() {
+    let cli = Cli::new("markdown");
+    let job = cli.job("Long requirement");
+    let task = cli.ok(&[
+        "task",
+        "add",
+        "--job",
+        &job,
+        "--title",
+        "Implement all acceptance checks for this long requirement",
+        "--name",
+        "验收检查",
+    ]);
+    assert_eq!(task["name"], "验收检查");
+    let output = cli
+        .command(&["sync"])
+        .env("TASKCLI_LANGUAGE", "zh-CN")
+        .env("AGENT_TASK_LANG", "ja")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let dashboard =
+        std::fs::read_to_string(cli.dir.path().join("vault/Tasks ☃/Dashboard.md")).unwrap();
+    assert!(dashboard.contains("Task dashboard"), "{dashboard}");
+    assert!(
+        std::fs::read_dir(cli.dir.path().join("vault/Tasks ☃/Projects/Demo/Tasks"))
+            .unwrap()
+            .any(|e| e
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .contains("验收检查"))
+    );
+    let output = cli
+        .command(&["sync"])
+        .env("TASKCLI_LANGUAGE", "unsupported")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let project = cli.ok(&["project", "list"])[0]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    cli.ok(&["job", "cancel", &job]);
+    cli.ok(&["project", "archive", &project]);
+    assert!(cli.ok(&["project", "list"]).as_array().unwrap().is_empty());
+    assert_eq!(cli.ok(&["project", "list", "--archived"])[0]["id"], project);
+    cli.ok(&["project", "unarchive", &project]);
+    assert_eq!(cli.ok(&["project", "list"])[0]["id"], project);
+}
+
+#[test]
+fn initialization_ignores_language_environment_and_omits_language_configuration() {
+    let cli = Cli {
+        dir: TempDir::new().unwrap(),
+    };
+    let root = cli.dir.path().join("documents");
+    std::fs::create_dir(&root).unwrap();
+    let output = cli
+        .command(&[
+            "init",
+            "--format",
+            "markdown",
+            "--root",
+            root.to_str().unwrap(),
+            "--database",
+            cli.dir.path().join("tasks.sqlite3").to_str().unwrap(),
+        ])
+        .env("TASKCLI_LANGUAGE", "zh-CN")
+        .env("AGENT_TASK_LANG", "ja")
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(
+        std::fs::read_to_string(root.join("Dashboard.md"))
+            .unwrap()
+            .contains("Task dashboard")
+    );
+    let config = std::fs::read_to_string(cli.dir.path().join("config.toml")).unwrap();
+    assert!(!config.contains("language"));
+    assert!(cli.ok(&["doctor"])["documents"].get("language").is_none());
+}
+
+#[test]
+fn task_note_timestamps_follow_the_system_local_zone() {
+    let cli = Cli::new("markdown");
+    let job = cli.job("System local time projection");
+    let id = cli.task(&job, "System time zone");
+    let created = time::OffsetDateTime::from_unix_timestamp(
+        cli.ok(&["task", "show", &id])["created_at"]
+            .as_i64()
+            .unwrap(),
+    )
+    .unwrap();
+    let offset = time::UtcOffset::local_offset_at(created).unwrap();
+    // Windows CI changes the OS time zone and supplies an independent expected offset.
+    if let Ok(expected) = std::env::var("TASKCLI_TEST_EXPECTED_OFFSET_SECONDS") {
+        assert_eq!(offset.whole_seconds(), expected.parse::<i32>().unwrap());
+    }
+    assert_task_note_timestamps(&cli, &id, offset);
+    cli.ok(&["sync"]);
+    assert_task_note_timestamps(&cli, &id, offset);
+}
+
+// Windows resolves the native system time zone and does not use POSIX TZ overrides.
+#[cfg(unix)]
+#[test]
+fn task_note_timestamps_follow_the_process_local_zone() {
+    let cli = Cli::new("markdown");
+    let job = cli.job("Local time projection");
+    let id = cli.task(&job, "Time zones");
+    for (zone, hours) in [("Asia/Tokyo", 9), ("Etc/GMT+5", -5), ("UTC", 0)] {
+        let output = cli.command(&["sync"]).env("TZ", zone).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{zone}: {}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        assert_task_note_timestamps(&cli, &id, time::UtcOffset::from_hms(hours, 0, 0).unwrap());
+    }
+}
+
+fn assert_task_note_timestamps(cli: &Cli, id: &str, offset: time::UtcOffset) {
+    let task = cli.ok(&["task", "show", id]);
+    let project = cli.ok(&["project", "list"])[0].clone();
+    let folder = cli
+        .dir
+        .path()
+        .join("vault/Tasks ☃/Projects")
+        .join(project["key"].as_str().unwrap())
+        .join("Tasks");
+    let path = std::fs::read_dir(folder)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let doc = std::fs::read_to_string(path).unwrap();
+    let created =
+        time::OffsetDateTime::from_unix_timestamp(task["created_at"].as_i64().unwrap()).unwrap();
+    let expected = created
+        .to_offset(offset)
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    assert!(
+        doc.contains(&format!("created_at: {expected:?}")),
+        "{offset}: {doc}"
+    );
+    assert!(doc.contains(&format!("dateCreated: {expected:?}")));
+    assert!(doc.contains("completed_at: null"));
+    assert!(!doc.lines().any(|line| line.starts_with("version:")));
+}

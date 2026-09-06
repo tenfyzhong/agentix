@@ -17,3 +17,7 @@ pub use client::CodexClient;
 pub use client_unsupported::CodexClient;
 pub use endpoint::{CodexEndpoint, EndpointError};
 pub use protocol::{ProtocolError, RpcError, ServerMessage, decode_server_frame};
+
+// Reuse the protocol mock in library tests as well as integration tests.
+#[cfg(test)]
+extern crate self as agentix_codex;

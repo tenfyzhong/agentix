@@ -1,0 +1,16 @@
+{
+  "name": "agentix",
+  "owner": {
+    "name": "tenfyzhong"
+  },
+  "metadata": {
+    "description": "Agentix plugins for coordinating agent tasks."
+  },
+  "plugins": [
+    {
+      "name": "agent-task-manager",
+      "source": "./plugins/agent-task-manager",
+      "description": "Coordinate tracked work with taskcli and read-only Markdown boards."
+    }
+  ]
+}

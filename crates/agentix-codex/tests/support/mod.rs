@@ -188,6 +188,7 @@ struct ServerState {
     request_methods: Vec<String>,
     active_writers: HashSet<String>,
     turn_reads: HashMap<String, usize>,
+    background_turn_reads: HashMap<String, usize>,
     results: HashMap<String, Vec<Value>>,
     notifications: Vec<Value>,
     server_requests: Vec<Value>,
@@ -284,6 +285,11 @@ impl MockCodexAppServer {
             .insert(method.into(), count);
     }
 
+    #[allow(dead_code)] // Used by library lifecycle tests sharing this mock.
+    pub async fn remove_thread(&self, id: &str) {
+        self.shared.state.lock().await.threads.remove(id);
+    }
+
     pub async fn thread(&self, id: &str) -> Option<MockThread> {
         self.shared.state.lock().await.threads.get(id).cloned()
     }
@@ -375,6 +381,32 @@ impl MockCodexAppServer {
         })
         .await
         .unwrap_or_else(|_| panic!("timed out waiting for {expected} turn reads of {thread_id}"));
+    }
+
+    #[allow(dead_code)] // Shared with suites that do not exercise background polling.
+    pub async fn wait_for_background_turn_reads(&self, thread_id: &str, expected: usize) {
+        tokio::time::timeout(std::time::Duration::from_secs(40), async {
+            loop {
+                if self
+                    .shared
+                    .state
+                    .lock()
+                    .await
+                    .background_turn_reads
+                    .get(thread_id)
+                    .copied()
+                    .unwrap_or_default()
+                    >= expected
+                {
+                    return;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| {
+            panic!("timed out waiting for {expected} background reads of {thread_id}")
+        });
     }
 
     pub async fn complete_turn(&self, thread_id: &str, turn_id: &str, answer: &str) {
@@ -776,11 +808,15 @@ async fn handle_request(
             }))
         }
         "thread/read" => with_thread(&state, params, |thread| {
-            Ok(json!({
+            let mut response = json!({
                 "thread": thread.as_json(
                     params.get("includeTurns").and_then(Value::as_bool).unwrap_or(false)
                 )
-            }))
+            });
+            if state.active_writers.contains(&thread.id) {
+                response["thread"]["status"] = json!({"type":"notLoaded"});
+            }
+            Ok(response)
         }),
         "thread/resume" => {
             if let Some(thread_id) = params["threadId"].as_str()
@@ -835,6 +871,12 @@ async fn handle_request(
         "thread/turns/list" => {
             if let Some(thread_id) = params["threadId"].as_str() {
                 *state.turn_reads.entry(thread_id.to_owned()).or_default() += 1;
+                if params["itemsView"] == "notLoaded" {
+                    *state
+                        .background_turn_reads
+                        .entry(thread_id.to_owned())
+                        .or_default() += 1;
+                }
             }
             with_thread(&state, params, |thread| {
                 let turns = thread

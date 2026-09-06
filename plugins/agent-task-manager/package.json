@@ -1,0 +1,40 @@
+{
+  "name": "agent-task-manager",
+  "version": "0.1.0",
+  "description": "Shared taskcli workflow for Codex, Claude, Pi, and OMP",
+  "type": "module",
+  "license": "MIT",
+  "keywords": ["pi-package"],
+  "files": [
+    ".codex-plugin/",
+    ".claude-plugin/",
+    "extensions/",
+    "hooks/",
+    "skills/",
+    "obsidian/",
+    "runtime.mjs",
+    "README.md"
+  ],
+  "dependencies": {
+    "@sinclair/typebox": "^0.34.0"
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/pi.ts"
+    ],
+    "skills": [
+      "./skills"
+    ]
+  },
+  "omp": {
+    "extensions": [
+      "./extensions/omp.ts"
+    ],
+    "skills": [
+      "./skills"
+    ]
+  }
+}

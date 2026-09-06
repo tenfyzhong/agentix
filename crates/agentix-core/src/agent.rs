@@ -438,6 +438,9 @@ pub trait AgentAdapter: Send + Sync {
     ) -> Result<HistoryPage, AgentError>;
 
     async fn attach(&self, session_id: &SessionId) -> Result<(), AgentError>;
+    async fn is_read_only(&self, _session_id: &SessionId) -> bool {
+        false
+    }
     async fn unsubscribe(&self, session_id: &SessionId) -> Result<(), AgentError>;
     async fn start_turn(&self, session_id: &SessionId, text: &str) -> Result<String, AgentError>;
     async fn steer(

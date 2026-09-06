@@ -34,14 +34,21 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - name: Install protobuf compiler on Linux
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Test task host plugin
+        run: |
+          npm ci --ignore-scripts --prefix plugins/agent-task-manager
+          node --test plugins/agent-task-manager/tests/*.test.mjs
+      - name: Install test tools on Linux
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install --yes protobuf-compiler
-      - name: Install protobuf compiler on macOS
+          sudo apt-get install --yes protobuf-compiler fish
+      - name: Install test tools on macOS
         if: runner.os == 'macOS'
-        run: brew install protobuf
+        run: brew install protobuf fish
       - name: Install protobuf compiler on Windows
         if: runner.os == 'Windows'
         run: choco install protoc --yes --no-progress
@@ -53,6 +60,8 @@ jobs:
           shared-key: tests-${{ matrix.os }}
       - name: Run workspace tests
         if: runner.os != 'Windows'
+        env:
+          TASKCLI_TEST_HOOK_SHELL: fish
         run: cargo test --workspace --all-features
       - name: Check the Windows workspace
         if: runner.os == 'Windows'
@@ -60,3 +69,29 @@ jobs:
       - name: Run Windows TCP control tests
         if: runner.os == 'Windows'
         run: cargo test -p agentix --bin agentix control::tests::tcp_control_server
+      - name: Run Windows task board tests
+        if: runner.os == 'Windows'
+        run: cargo test -p agentix-task -p taskcli
+      - name: Verify Windows system time zones
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $originalTimeZone = tzutil /g
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot read the system time zone' }
+          try {
+            foreach ($zone in @(
+              @{ Name = 'Tokyo Standard Time'; Offset = '32400' },
+              @{ Name = 'SA Pacific Standard Time'; Offset = '-18000' },
+              @{ Name = 'UTC'; Offset = '0' }
+            )) {
+              tzutil /s $zone.Name
+              if ($LASTEXITCODE -ne 0) { throw "Cannot set time zone $($zone.Name)" }
+              $env:TASKCLI_TEST_EXPECTED_OFFSET_SECONDS = $zone.Offset
+              cargo test -p taskcli --test cli task_note_timestamps_follow_the_system_local_zone -- --exact
+              if ($LASTEXITCODE -ne 0) { throw "Time zone test failed for $($zone.Name)" }
+            }
+          } finally {
+            Remove-Item Env:TASKCLI_TEST_EXPECTED_OFFSET_SECONDS -ErrorAction SilentlyContinue
+            tzutil /s $originalTimeZone
+            if ($LASTEXITCODE -ne 0) { throw 'Cannot restore the original time zone' }
+          }

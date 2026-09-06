@@ -18,6 +18,330 @@ use serde_json::json;
 use support::{MockCodexAppServer, MockThread, MockTurn};
 
 #[tokio::test]
+async fn session_selection_exposes_read_only_history_and_menu() {
+    let server = MockCodexAppServer::start();
+    server
+        .add_thread(
+            MockThread::new("thr_external", "External", "/work").with_turn(
+                MockTurn::in_progress_with_output("turn_external", "Question", "Latest output"),
+            ),
+        )
+        .await;
+    server.set_active_writer("thr_external").await;
+    let client = Arc::new(CodexClient::connect(server.endpoint()).await.unwrap());
+    let channel = Arc::new(RecordingChannel::default());
+    let state = SqliteState::in_memory().await.unwrap();
+    let engine = Engine::new(client.clone(), state.clone(), vec![channel.clone()]);
+    engine.handle_inbound(inbound("/sessions")).await.unwrap();
+    let listed = channel.views().last().unwrap().clone();
+    assert!(listed.body.contains("Active"));
+    let conversation = ConversationRef::new(ChannelKind::Telegram, "chat-e2e");
+    engine
+        .handle_inbound(InboundEnvelope::action_from_message(
+            "select-external",
+            conversation.clone(),
+            "owner-e2e",
+            listed.actions[0].token.clone(),
+            MessageRef::new(conversation.clone(), "session-list"),
+        ))
+        .await
+        .unwrap();
+    let views = channel.views();
+    assert!(views.iter().any(|v| v.body.contains("read-only")));
+    assert!(views.last().unwrap().body.contains("Latest output"));
+    assert!(
+        views
+            .last()
+            .unwrap()
+            .actions
+            .iter()
+            .all(|a| a.label != "Stop")
+    );
+    assert_eq!(
+        state.list_bindings().await.unwrap(),
+        vec![(conversation, SessionId::new("thr_external"))]
+    );
+    let menu = channel.menus.lock().unwrap().last().unwrap().clone();
+    for name in ["current", "history", "detach"] {
+        assert!(menu.commands.iter().any(|c| c.name == name));
+    }
+    for name in ["stop", "model", "compact", "plan", "review"] {
+        assert!(menu.commands.iter().all(|c| c.name != name));
+    }
+    for text in ["New prompt", "/stop", "/model", "/queue"] {
+        engine.handle_inbound(inbound(text)).await.unwrap();
+        assert!(channel.views().last().unwrap().body.contains("read-only"));
+    }
+    assert!(
+        !server
+            .request_methods()
+            .await
+            .contains(&"turn/start".into())
+    );
+}
+
+#[tokio::test]
+async fn failed_session_selection_reports_error_and_offers_a_fresh_retry() {
+    let server = MockCodexAppServer::start();
+    server
+        .add_thread(MockThread::new("thr_existing", "Existing", "/work"))
+        .await;
+    server
+        .add_thread(MockThread::new("thr_selected", "Selected", "/work"))
+        .await;
+    let client = Arc::new(CodexClient::connect(server.endpoint()).await.unwrap());
+    let channel = Arc::new(RecordingChannel::default());
+    let state = SqliteState::in_memory().await.unwrap();
+    let engine = Engine::new(client, state.clone(), vec![channel.clone()]);
+    engine
+        .handle_inbound(inbound("/attach thr_existing"))
+        .await
+        .unwrap();
+    engine.handle_inbound(inbound("/sessions")).await.unwrap();
+    let token = channel.views().last().unwrap().actions[0].token.clone();
+    let conversation = ConversationRef::new(ChannelKind::Telegram, "chat-e2e");
+    server
+        .fail_next("thread/resume", -32600, "Permission denied")
+        .await;
+    engine
+        .handle_inbound(InboundEnvelope::action_from_message(
+            "failed-selection",
+            conversation.clone(),
+            "owner-e2e",
+            token.clone(),
+            MessageRef::new(conversation.clone(), "session-list"),
+        ))
+        .await
+        .unwrap();
+    let failed = channel.views().last().unwrap().clone();
+    assert_eq!(failed.status, agentix_core::ViewStatus::Error);
+    assert!(failed.body.contains("Permission denied"));
+    assert_eq!(failed.actions.len(), 1);
+    assert_ne!(failed.actions[0].token, token);
+    assert_eq!(
+        state.list_bindings().await.unwrap()[0].1,
+        SessionId::new("thr_existing")
+    );
+    engine
+        .handle_inbound(InboundEnvelope::action(
+            "retry-selection",
+            conversation,
+            "owner-e2e",
+            failed.actions[0].token.clone(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        state.list_bindings().await.unwrap()[0].1,
+        SessionId::new("thr_selected")
+    );
+}
+
+#[tokio::test]
+async fn failed_history_during_transfer_preserves_the_existing_subscription() {
+    let server = MockCodexAppServer::start();
+    server
+        .add_thread(MockThread::new("thr_shared", "Shared", "/work"))
+        .await;
+    let client = Arc::new(CodexClient::connect(server.endpoint()).await.unwrap());
+    let channel = Arc::new(RecordingChannel::default());
+    let state = SqliteState::in_memory().await.unwrap();
+    let engine = Engine::new(client, state.clone(), vec![channel.clone()]);
+    engine
+        .handle_inbound(inbound("/attach thr_shared"))
+        .await
+        .unwrap();
+    let original = state.list_bindings().await.unwrap();
+    server
+        .fail_next("thread/turns/list", -32600, "History unavailable")
+        .await;
+    let mut request = inbound("/attach thr_shared");
+    request.event_id = "transfer-session".into();
+    request.conversation = ConversationRef::new(ChannelKind::Telegram, "other-chat");
+    engine.handle_inbound(request).await.unwrap();
+    assert!(
+        channel
+            .views()
+            .last()
+            .unwrap()
+            .body
+            .contains("History unavailable")
+    );
+    assert_eq!(state.list_bindings().await.unwrap(), original);
+    assert!(
+        !server
+            .request_methods()
+            .await
+            .contains(&"thread/unsubscribe".into())
+    );
+}
+
+#[tokio::test]
+async fn read_only_attachment_survives_reconnect_without_resuming() {
+    let server = MockCodexAppServer::start();
+    server
+        .add_thread(MockThread::new("thr_external", "External", "/work"))
+        .await;
+    server.set_active_writer("thr_external").await;
+    let client = CodexClient::connect(server.endpoint()).await.unwrap();
+    let session = SessionId::new("thr_external");
+    client.attach(&session).await.unwrap();
+    let mut events = client.subscribe();
+    server.disconnect_clients();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !matches!(events.recv().await.unwrap(), AgentEvent::Connected { .. }) {}
+    })
+    .await
+    .unwrap();
+    assert!(client.is_read_only(&session).await);
+    client.read_history(&session, None, 1).await.unwrap();
+    assert_eq!(
+        server
+            .request_methods()
+            .await
+            .iter()
+            .filter(|method| *method == "thread/resume")
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn external_writer_sessions_show_latest_turn_status_without_resuming() {
+    let server = MockCodexAppServer::start();
+    server
+        .add_thread(
+            MockThread::new("thr_external", "External", "/work").with_turn(
+                MockTurn::in_progress_with_output("turn_external", "Work", "Working"),
+            ),
+        )
+        .await;
+    server.set_active_writer("thr_external").await;
+    let client = CodexClient::connect(server.endpoint()).await.unwrap();
+    assert_eq!(
+        client.list_sessions(None, 25).await.unwrap().sessions[0].status,
+        agentix_core::SessionStatus::Active
+    );
+    server
+        .complete_turn("thr_external", "turn_external", "Done")
+        .await;
+    assert_eq!(
+        client.list_sessions(None, 25).await.unwrap().sessions[0].status,
+        agentix_core::SessionStatus::Idle
+    );
+    assert!(
+        !server
+            .request_methods()
+            .await
+            .contains(&"thread/resume".into())
+    );
+}
+
+#[tokio::test]
+async fn external_writer_polling_delivers_content_without_live_notifications() {
+    let server = MockCodexAppServer::start();
+    server
+        .add_thread(
+            MockThread::new("thr_observed", "Observed", "/work").with_turn(
+                MockTurn::in_progress_with_output("turn_observed", "Question", "Working"),
+            ),
+        )
+        .await;
+    server.set_active_writer("thr_observed").await;
+    let client = CodexClient::connect_with_background_turn_notifications(
+        server.endpoint(),
+        std::path::Path::new("codex"),
+        std::path::Path::new("~"),
+        false,
+    )
+    .await
+    .unwrap();
+    let mut events = client.subscribe();
+    client
+        .attach(&SessionId::new("thr_observed"))
+        .await
+        .unwrap();
+    // Updating storage without a notification reproduces a different writer process.
+    server
+        .add_thread(
+            MockThread::new("thr_observed", "Observed", "/work").with_turn(MockTurn::completed(
+                "turn_observed",
+                "Question",
+                "Finished externally",
+            )),
+        )
+        .await;
+    let mut saw_content = false;
+    tokio::time::timeout(Duration::from_secs(20), async {
+        loop {
+            match events.recv().await.unwrap() {
+                AgentEvent::ItemCompleted { item, .. } => {
+                    saw_content |= item.text.as_deref() == Some("Finished externally");
+                }
+                AgentEvent::TurnCompleted { turn_id, .. } if turn_id == "turn_observed" => break,
+                _ => {}
+            }
+        }
+    })
+    .await
+    .unwrap();
+    assert!(saw_content);
+    assert_eq!(
+        server
+            .request_methods()
+            .await
+            .iter()
+            .filter(|m| *m == "thread/resume")
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn attaching_an_external_writer_preserves_read_access_and_rejects_writes_locally() {
+    let server = MockCodexAppServer::start();
+    server
+        .add_thread(
+            MockThread::new("thr_external", "External", "/work").with_turn(
+                MockTurn::in_progress_with_output("turn_external", "Work", "Working"),
+            ),
+        )
+        .await;
+    server.set_active_writer("thr_external").await;
+    let client = CodexClient::connect(server.endpoint()).await.unwrap();
+    let session = SessionId::new("thr_external");
+    client.attach(&session).await.unwrap();
+    let history = client.read_history(&session, None, 1).await.unwrap();
+    assert_eq!(history.turns[0].agent_text.as_deref(), Some("Working"));
+    assert!(
+        client
+            .start_turn(&session, "Do more")
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("read-only")
+    );
+    assert!(
+        client
+            .interrupt(&session, "turn_external")
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("read-only")
+    );
+    let methods = server.request_methods().await;
+    assert!(!methods.contains(&"turn/start".into()));
+    assert!(!methods.contains(&"turn/interrupt".into()));
+    client.unsubscribe(&session).await.unwrap();
+    assert!(
+        !server
+            .request_methods()
+            .await
+            .contains(&"thread/unsubscribe".into())
+    );
+}
+
+#[tokio::test]
 #[allow(clippy::too_many_lines)]
 async fn mock_frames_include_official_required_fields_for_supported_flows() {
     let server = MockCodexAppServer::start();
@@ -1201,7 +1525,9 @@ async fn background_completion_with_an_active_writer_uses_only_reads() {
     server.set_active_writer("thr_writer").await;
     let client = CodexClient::connect(server.endpoint()).await.unwrap();
     let mut events = client.subscribe();
-    server.wait_for_turn_reads("thr_writer", 1).await;
+    // Discovery also reads full history for external-writer status. Wait for the
+    // separate metadata poll to establish its baseline before completing the turn.
+    server.wait_for_background_turn_reads("thr_writer", 1).await;
     server
         .complete_turn("thr_writer", "turn_writer", "done")
         .await;
@@ -1214,7 +1540,9 @@ async fn background_completion_with_an_active_writer_uses_only_reads() {
             error: None,
         }
     );
-    server.wait_for_turn_reads("thr_writer", 3).await;
+    // The fourth poll starts only after a post-completion poll has finished,
+    // so duplicate-event assertions do not race the client's response handling.
+    server.wait_for_background_turn_reads("thr_writer", 4).await;
     assert!(
         events.try_recv().is_err(),
         "completion must only be emitted once"
@@ -1653,6 +1981,7 @@ fn inbound(text: &str) -> InboundEnvelope {
 #[derive(Clone, Default)]
 struct RecordingChannel {
     views: Arc<Mutex<Vec<OutboundView>>>,
+    menus: Arc<Mutex<Vec<CommandMenu>>>,
 }
 
 impl RecordingChannel {
@@ -1693,8 +2022,9 @@ impl ChannelAdapter for RecordingChannel {
     async fn set_command_menu(
         &self,
         _conversation: &ConversationRef,
-        _menu: &CommandMenu,
+        menu: &CommandMenu,
     ) -> Result<(), ChannelError> {
+        self.menus.lock().unwrap().push(menu.clone());
         Ok(())
     }
 }

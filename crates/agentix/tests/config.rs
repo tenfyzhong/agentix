@@ -16,6 +16,17 @@ path = "/tmp/agentix.sqlite3"
 }
 
 #[test]
+fn task_board_configuration_is_optional_and_expands_home() {
+    let base = credential_config("telegram", "[channel.telegram]\ntoken='token'");
+    assert!(Config::from_toml(&base).unwrap().task_board.is_none());
+    let config = Config::from_toml(&format!(
+        "{base}\n[task_board]\nconfig='~/.config/taskcli/config.toml'\n"
+    ))
+    .unwrap();
+    assert!(config.task_board.unwrap().config.is_absolute());
+}
+
+#[test]
 fn accepts_global_proxy_configuration_for_either_channel() {
     for (kind, credentials) in [
         ("telegram", "[channel.telegram]\ntoken = 'mock-token'"),
