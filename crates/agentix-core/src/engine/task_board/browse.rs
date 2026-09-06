@@ -347,13 +347,18 @@ impl Engine {
             .job_markdown(id)
             .await
             .unwrap_or_else(|_| format!("## Goal\n\n{}\n\nJob document is unavailable.", job.goal));
+        let markdown = if job.title.chars().count() > 60 {
+            format!("**Job title:** {}\n\n{markdown}", escape(&job.title))
+        } else {
+            markdown
+        };
         let content = markdown_pages(&markdown);
         let mut tasks: Vec<_> = state.tasks.iter().filter(|t| t.job_id == job.id).collect();
         tasks.sort_by_key(|t| (t.position, &t.id));
         let pages = content.len().max(page_count(tasks.len()));
         let page = page.min(pages - 1);
         let mut view = OutboundView::text(
-            &job.title,
+            short(&job.title),
             format!(
                 "**Job:** `{}`\n**Project:** {}\n**Status:** {}\n\n{}\n\n**Tasks ({})**",
                 job.id,
@@ -468,7 +473,7 @@ fn page_count(count: usize) -> usize {
     count.div_ceil(PAGE_SIZE).max(1)
 }
 
-fn short(text: &str) -> String {
+pub(super) fn short(text: &str) -> String {
     text.chars().take(60).collect()
 }
 

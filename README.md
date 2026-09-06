@@ -233,7 +233,7 @@ Add the following to `~/.config/agentix/config.toml`, then restart Agentix to br
 config = "~/.config/taskcli/config.toml"
 ```
 
-The referenced taskcli configuration and database must already exist. Without this section, board commands report `Task board is not configured.`
+The referenced taskcli configuration must already exist. Agentix opens the database specified there and creates it if missing; use the same configuration as your taskcli writers to see their existing work. Restart Agentix after changing this section. Without it, board commands report `Task board is not configured.`
 
 | Command | View |
 | --- | --- |
@@ -243,7 +243,7 @@ The referenced taskcli configuration and database must already exist. Without th
 
 `/dashboard` is registered in Telegram’s default menu at startup when the task board is configured. Top-level commands appear in the order `/sessions`, `/dashboard`, `/cancel`, `/rmux`, `/help`; contextual commands follow in alphabetical order. `/board` and `/jobs` are contextual secondary commands added after attach and removed on detach. Both follow the current attachment, including Jobs containing tasks whose lease or last recorded session matches it. Sibling tasks show overall Job progress; blocked and completed work remains visible after lease release. Archived projects and Jobs are excluded from lists.
 
-Job details display the authored Goal and Notes, plus buttons for associated tasks. Task details display the authored Task note body, status and planning/execution phase, with a **Job** button to open the parent Job. Existing Task action buttons remain available where ownership permits. Lists and long Markdown details have **Previous**/**Next** buttons; code fences remain balanced across detail pages. Project boards include a **Dashboard** button, and Job details link to their **Project board**.
+Job details display the authored Goal and Notes, plus buttons for associated tasks. Task details display the authored Task note body, status and planning/execution phase, with a **Job** button to open the parent Job. Existing Task action buttons remain available where ownership permits. Lists and long Markdown details, including Task reasons, have **Previous**/**Next** buttons; code fences remain balanced across detail pages. Detail headers shorten long titles to 60 characters; their full titles remain in the paginated body. Project boards include a **Dashboard** button, and Job details link to their **Project board**.
 
 Browsing reads current task data without changing task state or Plan hashes. Navigation buttons are scoped to the conversation, owner, and current attachment; reopen the command after switching sessions. The earlier `/projects` and `/sessionboard` commands are replaced by `/dashboard` and `/board`. Legacy `/tasks [job-or-project]` and `/task <id>` remain direct shortcuts. See the [task board guide](docs/task-board.md#agentix-integration) for setup and task actions.
 

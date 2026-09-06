@@ -128,21 +128,27 @@ impl Engine {
             .task_markdown(id)
             .await
             .unwrap_or_else(|_| "Task document is unavailable.".into());
-        let pages = browse::markdown_pages(&markdown);
+        let mut content = String::new();
+        for (label, title) in [("Task title", &task.title), ("Job title", &job.title)] {
+            if title.chars().count() > 60 {
+                content.push_str(&format!("**{label}:** {}\n\n", browse::escape(title)));
+            }
+        }
+        if let Some(reason) = &task.reason {
+            content.push_str(&format!("{}\n\n", browse::escape(reason)));
+        }
+        content.push_str(&markdown);
+        let pages = browse::markdown_pages(&content);
         let page = page.min(pages.len() - 1);
         let mut view = OutboundView::text(
-            &task.title,
+            browse::short(&task.title),
             format!(
-                "**Task:** `{}`\n**Status:** {} · {}\n**Job:** {}\n**Revision:** {}\n\n{}\n\n{}",
+                "**Task:** `{}`\n**Status:** {} · {}\n**Job:** {}\n**Revision:** {}\n\n{}",
                 task.id,
                 task.status,
                 task.phase.map_or_else(|| "—".into(), |p| p.to_string()),
-                browse::escape(&job.title),
+                browse::escape(&browse::short(&job.title)),
                 task.revision,
-                task.reason
-                    .as_deref()
-                    .map(browse::escape)
-                    .unwrap_or_default(),
                 pages[page]
             ),
         );

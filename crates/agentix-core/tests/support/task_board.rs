@@ -309,3 +309,183 @@ async fn long_markdown_details_are_paged_with_fences_and_job_navigation() {
     assert!(pages > 1);
     assert!(last_found);
 }
+
+#[tokio::test]
+async fn long_task_reason_is_paged_without_losing_the_plan() {
+    let (_dir, service, id) = task_fixture().await;
+    let reason = format!("{}Reason tail", "Waiting for review.\n".repeat(300));
+    service
+        .execute(
+            json!({"command":"task.block","task":id,"reason":reason}),
+            task_write_options(&service, &id).await,
+        )
+        .await
+        .unwrap();
+    let (engine, channel) = engine(service).await;
+    engine
+        .handle_inbound(input(&format!("/task {id}")))
+        .await
+        .unwrap();
+    let mut content = String::new();
+    loop {
+        let view = last(&channel);
+        assert!(
+            view.body.len() < 2000,
+            "reason must share the detail page budget"
+        );
+        content.push_str(&view.body);
+        assert!(view.actions.iter().any(|a| a.label == "Job"));
+        let Some(next) = view.actions.iter().find(|a| a.label == "Next") else {
+            break;
+        };
+        click(&engine, next.token.clone()).await;
+    }
+    assert!(content.contains("Reason tail"));
+    assert!(content.contains("# Plan"));
+}
+
+#[tokio::test]
+async fn dashboard_and_session_jobs_paginate_and_exclude_archives() {
+    let (dir, service, id) = task_fixture().await;
+    service
+        .execute(
+            json!({"command":"task.block","task":id,"reason":"Keep session history"}),
+            task_write_options(&service, &id).await,
+        )
+        .await
+        .unwrap();
+    let state = service.store().snapshot().await.unwrap();
+    for index in 0..8 {
+        let root = dir.path().join(format!("project-{index}"));
+        std::fs::create_dir(&root).unwrap();
+        let project = write(
+            &service,
+            json!({"command":"project.register","root":root,"name":format!("Project {index}")}),
+        )
+        .await;
+        let job = write(&service, json!({"command":"job.create","project":state.projects[0].id,"title":format!("Job {index}")})).await;
+        let task = write(
+            &service,
+            json!({"command":"task.add","job":job["id"],"title":format!("Task {index}")}),
+        )
+        .await;
+        let task_id = task["id"].as_str().unwrap();
+        write(&service, json!({"command":"task.claim","task":task_id,"executor":"agent:codex","session":"thr_a"})).await;
+        service
+            .execute(
+                json!({"command":"task.block","task":task_id,"reason":"Keep session history"}),
+                task_write_options(&service, task_id).await,
+            )
+            .await
+            .unwrap();
+        if index == 7 {
+            write(
+                &service,
+                json!({"command":"project.archive","project":project["id"]}),
+            )
+            .await;
+            write(&service, json!({"command":"job.cancel","job":job["id"]})).await;
+            write(&service, json!({"command":"job.archive","job":job["id"]})).await;
+        }
+    }
+    let (engine, channel) = engine(service).await;
+    engine.handle_inbound(input("/attach thr_a")).await.unwrap();
+    for (command, prefix, initial) in [
+        ("/dashboard", "Project ", "demo"),
+        ("/jobs", "Job ", "Task board"),
+    ] {
+        engine.handle_inbound(input(command)).await.unwrap();
+        let first = last(&channel).body;
+        let mut seen = std::collections::BTreeSet::new();
+        loop {
+            let view = last(&channel);
+            assert!(!view.body.contains(&format!("{prefix}7")));
+            let entries: Vec<_> = view
+                .actions
+                .iter()
+                .filter(|a| a.label.starts_with(prefix) || a.label == initial)
+                .collect();
+            assert!(entries.len() <= 6);
+            seen.extend(entries.into_iter().map(|a| a.label.clone()));
+            let Some(next) = view.actions.iter().find(|a| a.label == "Next") else {
+                break;
+            };
+            click(&engine, next.token.clone()).await;
+        }
+        assert_eq!(seen.len(), 8);
+        click(&engine, button(&last(&channel), "Previous")).await;
+        assert_eq!(last(&channel).body, first);
+    }
+}
+
+#[tokio::test]
+async fn missing_documents_keep_metadata_and_bidirectional_navigation() {
+    let (_dir, service, id) = task_fixture().await;
+    let state = service.store().snapshot().await.unwrap();
+    let output = service.config().output_dir();
+    std::fs::remove_file(output.join(&state.plans[0].path)).unwrap();
+    std::fs::remove_file(output.join(&state.jobs[0].document_path)).unwrap();
+    let before = service.store().snapshot().await.unwrap();
+    let (engine, channel) = engine(service.clone()).await;
+    engine
+        .handle_inbound(input(&format!("/task {id}")))
+        .await
+        .unwrap();
+    assert!(
+        last(&channel)
+            .body
+            .contains("Task document is unavailable.")
+    );
+    assert!(last(&channel).body.contains("EXECUTING"));
+    click(&engine, button(&last(&channel), "Job")).await;
+    assert!(last(&channel).body.contains("Job document is unavailable."));
+    assert!(last(&channel).body.contains("Ship"));
+    click(&engine, button(&last(&channel), "Implement task board")).await;
+    assert!(
+        last(&channel)
+            .body
+            .contains("Task document is unavailable.")
+    );
+    assert_eq!(service.store().snapshot().await.unwrap(), before);
+}
+
+#[tokio::test]
+async fn long_task_and_job_titles_leave_room_for_paged_details() {
+    let (_dir, service, id) = task_fixture().await;
+    let state = service.store().snapshot().await.unwrap();
+    service.execute(json!({"command":"task.update","task":id,"title":format!("{}Task title tail", "任务名称 ".repeat(400))}), task_write_options(&service, &id).await).await.unwrap();
+    write(&service, json!({"command":"job.update","job":state.jobs[0].id,"title":format!("{}Job title tail", "Requirement ".repeat(400))})).await;
+    let (engine, channel) = engine(service).await;
+    engine
+        .handle_inbound(input(&format!("/task {id}")))
+        .await
+        .unwrap();
+    for expected in [
+        vec!["Task title tail", "Job title tail", "# Plan"],
+        vec!["Job title tail", "Ship"],
+    ] {
+        let mut content = String::new();
+        loop {
+            let view = last(&channel);
+            assert!(
+                view.title.chars().count() <= 60,
+                "title must leave room for the body"
+            );
+            assert!(
+                view.body.len() < 2000,
+                "metadata must share the page budget"
+            );
+            content.push_str(&view.body);
+            let Some(next) = view.actions.iter().find(|a| a.label == "Next") else {
+                break;
+            };
+            click(&engine, next.token.clone()).await;
+        }
+        for text in expected {
+            assert!(content.contains(text), "missing {text}");
+        }
+        if last(&channel).actions.iter().any(|a| a.label == "Job") {
+            click(&engine, button(&last(&channel), "Job")).await;
+        }
+    }
+}
