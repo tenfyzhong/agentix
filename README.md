@@ -68,10 +68,6 @@ agentix serve
 
 On Windows, use `agentix.exe doctor` and `agentix.exe serve`. To run a Homebrew installation in the background, use `brew services start tenfyzhong/tap/agentix`.
 
-Agentix restores durable bindings and turn state before starting its control and IM tasks. Menu updates, online notices, and restored turn displays run in the background, so slow IM requests do not delay `Agentix is running`. Pending startup updates are cancelled before shutdown notices, and updates for bindings that changed are skipped. The running log does not mean the IM connection is ready; Telegram logs separately when initialization finishes and polling starts.
-
-Startup logs include `phase` and `elapsed_ms` for the agent connection, channel/task setup, state storage, binding restoration, and background IM presentation. The `elapsed_ms` on `Agentix is running` measures service setup from opening state storage; the preceding setup phases are logged separately.
-
 Keep the service running and claim the bot from another local terminal:
 
 ```sh
