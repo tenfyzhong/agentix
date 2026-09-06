@@ -2,6 +2,8 @@
 
 One plugin package connects Codex, Claude Code, Pi, and Oh My Pi (OMP) to the independent `taskcli` task board. Lifecycle configuration is bundled; do not copy it into each project's settings.
 
+Job creation captures the original user request with `job create --prompt`, separately from the summarized Goal. The generated Job note displays it as literal text under **Prompt**; sync, renaming, and archival preserve it. The skill keeps the prompt in its original language and wording. Existing active Jobs can be backfilled with `job update --prompt`.
+
 ## Bundled entrypoints
 
 | Host | Plugin configuration | Lifecycle entrypoint |

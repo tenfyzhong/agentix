@@ -120,6 +120,8 @@ pub struct Job {
     pub sequence: u64,
     pub goal: String,
     #[serde(default)]
+    pub prompt: String,
+    #[serde(default)]
     pub agent: Option<String>,
     #[serde(default)]
     pub session_id: Option<String>,

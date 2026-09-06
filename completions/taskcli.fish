@@ -232,7 +232,7 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -s h -l help -d 'Print help'
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -f -a "delete" -d 'Delete the Job, its Tasks, and their Plan documents'
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -f -a "create" -d 'Create a Job with a title and acceptance goal in the selected Project'
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -f -a "update" -d 'Change a Job\'s display name, title, or acceptance goal'
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -f -a "update" -d 'Change a Job\'s display name, title, acceptance goal, or original prompt'
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -f -a "list" -d 'List Jobs, optionally filtered by Project, status, or date'
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -f -a "show" -d 'Show a Job\'s goal, status, and lifecycle metadata'
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from delete create update list show cancel archive unarchive help" -f -a "cancel" -d 'Cancel a Job and its unfinished Tasks after their leases have been released'
@@ -253,6 +253,7 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_sub
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from create" -l name -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from create" -l title -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from create" -l goal -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from create" -l prompt -d 'Original user prompt, preserved verbatim in the Job document' -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from create" -l config -r -F
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from create" -l project -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from create" -l actor -r
@@ -267,6 +268,7 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_sub
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from update" -l name -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from update" -l title -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from update" -l goal -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from update" -l prompt -d 'Replace the original user prompt; an empty string clears it' -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from update" -l config -r -F
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from update" -l project -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from update" -l actor -r
@@ -341,7 +343,7 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_sub
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from unarchive" -s h -l help -d 'Print help'
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from help" -f -a "delete" -d 'Delete the Job, its Tasks, and their Plan documents'
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from help" -f -a "create" -d 'Create a Job with a title and acceptance goal in the selected Project'
-complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from help" -f -a "update" -d 'Change a Job\'s display name, title, or acceptance goal'
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from help" -f -a "update" -d 'Change a Job\'s display name, title, acceptance goal, or original prompt'
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from help" -f -a "list" -d 'List Jobs, optionally filtered by Project, status, or date'
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from help" -f -a "show" -d 'Show a Job\'s goal, status, and lifecycle metadata'
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from help" -f -a "cancel" -d 'Cancel a Job and its unfinished Tasks after their leases have been released'
@@ -780,7 +782,7 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_su
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from project" -f -a "unarchive" -d 'Restore an archived Project to the active project views'
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from job" -f -a "delete" -d 'Delete the Job, its Tasks, and their Plan documents'
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from job" -f -a "create" -d 'Create a Job with a title and acceptance goal in the selected Project'
-complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from job" -f -a "update" -d 'Change a Job\'s display name, title, or acceptance goal'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from job" -f -a "update" -d 'Change a Job\'s display name, title, acceptance goal, or original prompt'
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from job" -f -a "list" -d 'List Jobs, optionally filtered by Project, status, or date'
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from job" -f -a "show" -d 'Show a Job\'s goal, status, and lifecycle metadata'
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from job" -f -a "cancel" -d 'Cancel a Job and its unfinished Tasks after their leases have been released'

@@ -5,7 +5,7 @@ Configuration defaults to `~/.config/taskcli/config.toml`; `TASKCLI_CONFIG` or `
 ```sh
 taskcli project register --json
 taskcli job list --active --json
-taskcli job create --project prj_ID --title 'Requirement' --goal 'Acceptance checks' --executor agent:HOST --session HOST_SESSION --json
+taskcli job create --project prj_ID --title 'Requirement' --goal 'Acceptance checks' --prompt 'Original user request' --executor agent:HOST --session HOST_SESSION --json
 taskcli task add --job job_ID --title 'Deliver the interface with passing unit tests' --name 'Build interface' --executor agent:HOST --session HOST_SESSION --json
 taskcli task add --job job_ID --title 'Integrate the interface with passing end-to-end checks' --name 'Integrate interface' --executor agent:HOST --session HOST_SESSION --json
 taskcli task depend task_SECOND task_FIRST --json
@@ -24,6 +24,8 @@ taskcli plan revise task_ID --body '# Revised plan' --session HOST_SESSION --lea
 taskcli event list --job job_ID --after 0 --json
 taskcli sync --json
 ```
+
+Supply `--prompt` with the original user request, including its language and line breaks; quote it as one shell argument. `job update JOB_ID --prompt 'Original user request'` backfills or corrects an active Job; an empty string clears it. The generated Prompt section is stored separately from Goal and Notes and survives sync, renaming, and archival.
 
 Replace `HOST` with `codex`, `claude`, `pi`, or `omp`, and use the actual host session ID. Creation records the Job creator and initial Task provenance in managed `agent` and `session_id` frontmatter; claiming replaces the Task provenance with its latest owner.
 
