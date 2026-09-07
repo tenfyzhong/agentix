@@ -239,7 +239,11 @@ pub(crate) async fn request_scope(conn: &mut SqliteConnection, request: &Value) 
     }
     // Only operations that modify a whole Job need all of its Task records.
     // Other lifecycle checks use SQL summaries of the unmaterialized siblings.
-    if matches!(command, "job.cancel" | "job.delete" | "project.delete") || inbox_wide {
+    if matches!(
+        command,
+        "job.cancel" | "job.followup" | "job.delete" | "project.delete"
+    ) || inbox_wide
+    {
         scope.job_tasks(conn).await?;
     }
     scope.inboxes.extend(ids(conn,"SELECT id FROM inbox_entries WHERE json_extract(data,'$.job_id') IN (SELECT value FROM json_each(?))",&json!(scope.jobs).to_string()).await?);
@@ -283,7 +287,7 @@ async fn session_scope(
     let command = required(request, "command")?;
     if command == "session.record" {
         if scope.jobs.is_empty() {
-            scope.jobs.extend(ids(conn,"WITH activity(job_id,stamp) AS (SELECT id,json_extract(data,'$.created_at') FROM jobs WHERE json_extract(data,'$.session_id')=?1 UNION ALL SELECT job_id,MAX(json_extract(data,'$.updated_at')) FROM tasks WHERE json_extract(data,'$.last_session')=?1 GROUP BY job_id) SELECT jobs.id FROM activity JOIN jobs ON jobs.id=activity.job_id WHERE json_extract(jobs.data,'$.archived_at') IS NULL GROUP BY jobs.id ORDER BY MAX(MAX(stamp,json_extract(jobs.data,'$.created_at'))) DESC,jobs.id DESC LIMIT 1",session).await?);
+            scope.jobs.extend(ids(conn,"WITH activity(job_id,stamp,token) AS (SELECT id,json_extract(data,'$.created_at'),substr(id,instr(id,'_')+1) FROM jobs WHERE json_extract(data,'$.session_id')=?1 UNION ALL SELECT id,json_extract(data,'$.followup_at'),substr(COALESCE(json_extract(data,'$.followup_id'),id),instr(COALESCE(json_extract(data,'$.followup_id'),id),'_')+1) FROM jobs WHERE json_extract(data,'$.followup_session_id')=?1 UNION ALL SELECT job_id,json_extract(data,'$.updated_at'),substr(id,instr(id,'_')+1) FROM tasks WHERE json_extract(data,'$.last_session')=?1) SELECT jobs.id FROM activity JOIN jobs ON jobs.id=activity.job_id WHERE json_extract(jobs.data,'$.archived_at') IS NULL ORDER BY MAX(stamp,json_extract(jobs.data,'$.created_at')) DESC,token DESC,jobs.id DESC LIMIT 1",session).await?);
         }
         for job in &scope.jobs {
             let task: Option<String>=sqlx::query_scalar("SELECT id FROM tasks WHERE json_extract(data,'$.last_session')=? AND job_id=? ORDER BY json_extract(data,'$.updated_at') DESC,rowid DESC LIMIT 1")

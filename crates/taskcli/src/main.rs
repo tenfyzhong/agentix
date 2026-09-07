@@ -213,6 +213,12 @@ struct JobList {
 }
 #[derive(Subcommand)]
 enum JobCommand {
+    /// Resume a pending Job with a supplemental user prompt.
+    Followup {
+        id: String,
+        #[arg(long)]
+        prompt: String,
+    },
     /// Submit an ACTIVE Job for review once all non-cancelled Tasks are DONE.
     Submit { id: String },
     /// Record human acceptance of a Job awaiting review.
@@ -232,6 +238,8 @@ enum JobCommand {
         /// Original user prompt, preserved verbatim in the Job document.
         #[arg(long, default_value = "")]
         prompt: String,
+        #[arg(long, value_parser = ["required", "none"], default_value = "required")]
+        review_policy: String,
     },
     /// Change a Job's display name, title, acceptance goal, or original prompt.
     Update {
@@ -245,6 +253,8 @@ enum JobCommand {
         /// Replace the original user prompt; an empty string clears it.
         #[arg(long)]
         prompt: Option<String>,
+        #[arg(long, value_parser = ["required", "none"])]
+        review_policy: Option<String>,
     },
     /// List Jobs, optionally filtered by Project, status, or date.
     List(JobList),
@@ -702,6 +712,14 @@ async fn resolve_project(cli: &Cli, service: &Service) -> Result<String> {
 
 async fn job(cli: &Cli, service: &Service, action: &JobCommand) -> Result<Value> {
     match action {
+        JobCommand::Followup { id, prompt } => {
+            mutate(
+                cli,
+                service,
+                json!({"command":"job.followup","job":id,"prompt":prompt}),
+            )
+            .await
+        }
         JobCommand::Submit { id } => {
             mutate(cli, service, json!({"command":"job.submit","job":id})).await
         }
@@ -724,12 +742,13 @@ async fn job(cli: &Cli, service: &Service, action: &JobCommand) -> Result<Value>
             goal,
             name,
             prompt,
+            review_policy,
         } => {
             let project = resolve_project(cli, service).await?;
             mutate(
                 cli,
                 service,
-                json!({"command":"job.create","project":project,"title":title,"goal":goal,"name":name,"prompt":prompt}),
+                json!({"command":"job.create","project":project,"title":title,"goal":goal,"name":name,"prompt":prompt,"review_policy":review_policy}),
             )
             .await
         }
@@ -739,8 +758,12 @@ async fn job(cli: &Cli, service: &Service, action: &JobCommand) -> Result<Value>
             goal,
             name,
             prompt,
+            review_policy,
         } => {
             let mut request = json!({"command":"job.update","job":id});
+            if let Some(review_policy) = review_policy {
+                request["review_policy"] = json!(review_policy);
+            }
             if let Some(name) = name {
                 request["name"] = json!(name);
             }
@@ -926,6 +949,76 @@ async fn plan(cli: &Cli, service: &Service, action: &PlanCommand) -> Result<Valu
     .await
 }
 
+fn previous_job(state: &agentix_task::Snapshot, session: &str, project: &str) -> Option<Value> {
+    state
+        .jobs
+        .iter()
+        .filter(|candidate| candidate.project_id == project)
+        .filter_map(|candidate| {
+            let activity = state
+                .tasks
+                .iter()
+                .filter(|task| {
+                    task.job_id == candidate.id && task.last_session.as_deref() == Some(session)
+                })
+                .map(|task| task.updated_at)
+                .chain(
+                    (candidate.followup_session_id.as_deref() == Some(session))
+                        .then_some(candidate.followup_at)
+                        .flatten(),
+                )
+                .max();
+            if candidate.session_id.as_deref() != Some(session) && activity.is_none() {
+                return None;
+            }
+            let activity = activity
+                .unwrap_or(candidate.created_at)
+                .max(candidate.created_at);
+            let activity_id = (candidate.followup_session_id.as_deref() == Some(session)
+                && candidate.followup_at == Some(activity))
+            .then_some(candidate.followup_id.as_deref())
+            .flatten()
+            .and_then(|id| id.strip_prefix("message_"))
+            .into_iter()
+            .chain(
+                state
+                    .tasks
+                    .iter()
+                    .filter(|task| {
+                        task.job_id == candidate.id
+                            && task.last_session.as_deref() == Some(session)
+                            && task.updated_at == activity
+                    })
+                    .filter_map(|task| task.id.strip_prefix("task_")),
+            )
+            .chain(candidate.id.strip_prefix("job_"))
+            .max()
+            .unwrap_or(&candidate.id);
+            Some((candidate, activity, activity_id))
+        })
+        .max_by(
+            |(_, left_activity, left_id), (_, right_activity, right_id)| {
+                (left_activity, left_id).cmp(&(right_activity, right_id))
+            },
+        )
+        .map(|(candidate, _, _)| candidate)
+        .filter(|candidate| {
+            candidate.status == JobStatus::PendingReview && candidate.archived_at.is_none()
+        })
+        .map(|candidate| {
+            let mut value = json!(candidate);
+            value["task_ids"] = json!(
+                state
+                    .tasks
+                    .iter()
+                    .filter(|task| task.job_id == candidate.id)
+                    .map(|task| &task.id)
+                    .collect::<Vec<_>>()
+            );
+            value
+        })
+}
+
 async fn context(
     cli: &Cli,
     service: &Service,
@@ -972,6 +1065,15 @@ async fn context(
             }
         }
     };
+    let previous_job = job
+        .is_none()
+        .then(|| {
+            cli.session
+                .as_deref()
+                .zip(project.as_ref())
+                .and_then(|(session, project)| previous_job(&state, session, &project.id))
+        })
+        .flatten();
     let inbox_path = project
         .as_ref()
         .map(|p| service.inbox_path(p))
@@ -987,7 +1089,7 @@ async fn context(
     });
     let lease = task.and_then(|t| state.leases.iter().find(|l| l.task_id == t.id));
     Ok(response(
-        json!({"project_id":project.map(|p|p.id),"job_id":job.map(|j|&j.id),"task_id":task.map(|t|&t.id),"task":task,"lease":lease,"plan_path":plan.map(|p|service.config().output_dir().join(&p.path)),"documents":service.config().documents,"context_owner":"external_agent_team","editable_regions":["Goal","Notes","Plan body"],"inbox":owned_inbox,"inbox_path":inbox_path,"inbox_cancellations":cancellations}),
+        json!({"previous_job":previous_job,"project_id":project.map(|p|p.id),"job_id":job.map(|j|&j.id),"task_id":task.map(|t|&t.id),"task":task,"lease":lease,"plan_path":plan.map(|p|service.config().output_dir().join(&p.path)),"documents":service.config().documents,"context_owner":"external_agent_team","editable_regions":["Goal","Notes","Plan body"],"inbox":owned_inbox,"inbox_path":inbox_path,"inbox_cancellations":cancellations}),
     ))
 }
 
@@ -1074,6 +1176,53 @@ fn format_date(timestamp: i64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn previous_job_orders_same_second_followups_and_ignores_late_replies() {
+        let make_job = |id: &str, created_at: i64| {
+            json!({
+                "id": id, "project_id": "project", "title": "Work", "goal": "",
+                "status": "PENDING_REVIEW", "revision": 1, "created_at": created_at,
+                "updated_at": created_at, "document_path": "job.md", "session_id": "session"
+            })
+        };
+        let mut old = make_job("job_001", 1);
+        old["followup_session_id"] = json!("session");
+        old["followup_at"] = json!(100);
+        old["followup_id"] = json!("message_003");
+        old["conversation"] = json!([{
+            "id": "followup:message_003", "session_id": "session", "role": "user",
+            "text": "Supplement", "recorded_at": 100
+        }]);
+        let mut state: agentix_task::Snapshot = serde_json::from_value(json!({
+            "projects": [], "jobs": [old, make_job("job_002", 100)],
+            "tasks": [], "plans": [], "leases": []
+        }))
+        .unwrap();
+        assert_eq!(
+            previous_job(&state, "session", "project").unwrap()["id"],
+            "job_001"
+        );
+        state
+            .jobs
+            .push(serde_json::from_value(make_job("job_004", 100)).unwrap());
+        assert_eq!(
+            previous_job(&state, "session", "project").unwrap()["id"],
+            "job_004"
+        );
+        state.jobs[0].updated_at = 101;
+        state.jobs[0].conversation.push(agentix_task::JobMessage {
+            id: "reply_005".into(),
+            session_id: "session".into(),
+            role: "assistant".into(),
+            text: "Late reply".into(),
+            recorded_at: 101,
+        });
+        assert_eq!(
+            previous_job(&state, "session", "project").unwrap()["id"],
+            "job_004"
+        );
+    }
 
     #[test]
     fn every_subcommand_has_a_description_in_short_and_long_help() {

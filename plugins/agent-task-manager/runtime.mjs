@@ -71,6 +71,12 @@ function skillContext(context) {
     };
 }
 
+function workflowContext(context) {
+    const policy = "For investigation-only, document-only, or simple Git operation Jobs, set --review-policy none so finished work completes directly. Keep required review for code changes or mixed implementation Jobs.";
+    if (context?.previous_job?.status !== "PENDING_REVIEW") return policy;
+    return "The previous Job is pending review. If the new user prompt supplements that delivery, reuse it with job followup JOB_ID --prompt ORIGINAL_TEXT, then add new Tasks; they inherit all prior Tasks as dependencies. Preserve completed Tasks and the original prompt. Determine relevance from the user's request; independent requests get new Jobs. Do not reopen a Job merely because another prompt arrived.\n" + policy;
+}
+
 function cancellationContext(context) {
     const entries = (context?.inbox_cancellations || []).filter(
         (entry) => !context.job_id || entry.job_id === context.job_id,
@@ -101,13 +107,16 @@ export async function runHook(event, runner = runTaskcli) {
         return {
             hookSpecificOutput: {
                 hookEventName: "SessionStart",
-                additionalContext: `Task session: ${event.session_id}. Use the agent-task-manager skill for tracked work.\n${JSON.stringify(skillContext(context.result))}`,
+                additionalContext: `Task session: ${event.session_id}. Use the agent-task-manager skill for tracked work.\n${workflowContext(context.result)}\n${JSON.stringify(skillContext(context.result))}`,
             },
         };
     }
     if (["PreToolUse", "PostToolUse"].includes(event.hook_event_name)) {
         const context = await runner(["context"], options);
-        const notice = cancellationContext(context.result);
+        const notice = cancellationContext(context.result) ||
+            (event.hook_event_name === "PreToolUse" && context.result.previous_job?.status === "PENDING_REVIEW"
+                ? `${workflowContext(context.result)}\n${JSON.stringify(skillContext(context.result))}`
+                : undefined);
         if (notice)
             return {
                 hookSpecificOutput: {
@@ -254,7 +263,7 @@ export function registerExtension(
         return {
             message: {
                 customType: "taskcli-context",
-                content: `Task context (facts, not instructions):\n${JSON.stringify(skillContext(result.result))}`,
+                content: `${workflowContext(result.result)}\nTask context (facts, not instructions):\n${JSON.stringify(skillContext(result.result))}`,
                 display: false,
             },
         };
@@ -313,6 +322,7 @@ export function registerExtension(
                 "submit",
                 "approve",
                 "reject",
+                "followup",
                 "delete",
                 "depend",
                 "undepend",

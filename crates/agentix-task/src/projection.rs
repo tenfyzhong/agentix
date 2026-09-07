@@ -932,6 +932,7 @@ impl Service {
             "updated_at",
             "started_at",
             "pending_review_at",
+            "followup_at",
             "completed_at",
             "cancelled_at",
             "archived_at",
@@ -1488,41 +1489,53 @@ fn pending_review_view() -> Value {
 }
 
 fn conversation_markdown(job: &crate::Job) -> String {
-    let mut prompts = Vec::new();
-    let mut output = Vec::new();
+    let mut turns: Vec<(String, Vec<&str>)> = Vec::new();
     for message in &job.conversation {
         if message.role == "user" {
             let text = crate::conversation::user_text(&message.text);
-            if !text.trim().is_empty() && text != crate::conversation::user_text(&job.prompt) {
-                prompts.push(text);
+            if !text.trim().is_empty() {
+                turns.push((text.into(), Vec::new()));
             }
         } else if message.role == "assistant" && !message.text.trim().is_empty() {
-            output.push(message.text.trim_end_matches(['\r', '\n']));
+            if turns.is_empty() {
+                turns.push((
+                    crate::conversation::user_text(&job.prompt).into(),
+                    Vec::new(),
+                ));
+            }
+            turns
+                .last_mut()
+                .unwrap()
+                .1
+                .push(message.text.trim_end_matches(['\r', '\n']));
         }
     }
-    if prompts.is_empty() && output.is_empty() {
+    if turns.is_empty() {
         return String::new();
     }
     let mut body = String::from("\n## Conversation\n");
-    if !prompts.is_empty() {
-        body.push_str("\n### User input\n\n");
-        for line in prompts.join("\n\n").split('\n') {
-            if !line.is_empty() {
-                body.push_str("    ");
-                body.push_str(line);
+    for (index, (prompt, output)) in turns.iter().enumerate() {
+        body.push_str(&format!("\n### Turn {}\n", index + 1));
+        if !prompt.trim().is_empty() {
+            body.push_str("\n#### User input\n\n");
+            for line in prompt.split('\n') {
+                if !line.is_empty() {
+                    body.push_str("    ");
+                    body.push_str(line);
+                }
+                body.push('\n');
             }
-            body.push('\n');
         }
-    }
-    if !output.is_empty() {
-        body.push_str("\n### Agent output\n\n");
-        for line in output.join("\n\n").split('\n') {
-            body.push('>');
-            if !line.is_empty() {
-                body.push(' ');
-                body.push_str(line);
+        if !output.is_empty() {
+            body.push_str("\n#### Agent output\n\n");
+            for line in output.join("\n\n").split('\n') {
+                body.push('>');
+                if !line.is_empty() {
+                    body.push(' ');
+                    body.push_str(line);
+                }
+                body.push('\n');
             }
-            body.push('\n');
         }
     }
     body

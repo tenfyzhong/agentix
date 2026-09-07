@@ -412,3 +412,38 @@ for (const host of ["pi", "omp"]) {
         assert.equal(calls.at(-1).options.token, undefined);
     });
 }
+
+test("hooks expose the previous pending Job before tools without reopening unrelated prompts", async () => {
+    const previous = { id: "job_previous", status: "PENDING_REVIEW", prompt: "Original request", task_ids: ["task_old"] };
+    for (const event of ["SessionStart", "PreToolUse"]) {
+        const calls = [];
+        const result = await runHook({hook_event_name:event,session_id:"s",cwd:"/work"}, async args => {
+            calls.push(args);
+            return {result:{previous_job:previous}};
+        });
+        const context = result.hookSpecificOutput.additionalContext;
+        assert.match(context, /job followup/);
+        assert.match(context, /review-policy none/);
+        assert.match(context, /job_previous/);
+        assert.ok(!calls.some(args => ["followup", "create", "approve"].includes(args[1])));
+    }
+});
+
+test("Pi and OMP explain pending Job followups at each prompt and protect retry identity", async () => {
+    for (const host of ["pi", "omp"]) {
+        const handlers = new Map(), calls = [];
+        let tool;
+        registerExtension({on:(name,fn)=>handlers.set(name,fn),registerTool:value=>{tool=value;}},host,
+            async (args,options) => {
+                calls.push({args,options});
+                return {result:{previous_job:{id:"job_previous",status:"PENDING_REVIEW"}}};
+            });
+        const ctx = {cwd:"/work",sessionManager:{getSessionId:()=>"s"}};
+        const result = await handlers.get("before_agent_start")({prompt:"Supplement"},ctx);
+        assert.match(result.message.content, /job followup/);
+        assert.match(result.message.content, /review-policy none/);
+        await tool.execute("followup-call",{args:["job","followup","job_previous","--prompt","Supplement"]},undefined,undefined,ctx);
+        assert.equal(calls.at(-1).options.idempotencyKey, `${host}:s:followup-call`);
+        assert.equal(calls.at(-1).options.token, undefined);
+    }
+});

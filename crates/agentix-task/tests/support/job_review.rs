@@ -333,3 +333,209 @@ async fn review_time_migration_uses_submission_event_before_later_edits() {
     let again = Store::open(&f.service.config().storage.path).await.unwrap();
     assert_eq!(state.jobs, again.snapshot().await.unwrap().jobs);
 }
+
+#[tokio::test]
+async fn followup_preserves_job_and_snapshots_previous_dependencies() {
+    let f = Fixture::new("markdown").await;
+    f.service
+        .execute(
+            json!({"command":"job.update","job":f.job,"prompt":"Original request"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    let old = f.task("Original work").await;
+    finish(&f, &old).await;
+    let result = f
+        .service
+        .execute(
+            json!({"command":"job.followup","job":f.job,"prompt":"Also handle this\nverbatim"}),
+            WriteOptions {
+                session_ref: Some("followup-session".into()),
+                ..WriteOptions::default()
+            },
+        )
+        .await
+        .unwrap()
+        .result;
+    assert_eq!(result["status"], "ACTIVE");
+    assert_eq!(result["prompt"], "Original request");
+    assert_eq!(result["followup_task_ids"], json!([old]));
+    assert_eq!(
+        result["conversation"][0]["text"],
+        "Also handle this\nverbatim"
+    );
+    let a = f.task("First followup").await;
+    let b = f.task("Second followup").await;
+    let state = f.service.store().snapshot().await.unwrap();
+    for id in [&a, &b] {
+        assert_eq!(
+            state.tasks[state.task_index(id).unwrap()].dependencies,
+            vec![old.clone()]
+        );
+    }
+    finish(&f, &a).await;
+    assert_eq!(job(&f).await["status"], "ACTIVE");
+    finish(&f, &b).await;
+    assert_eq!(job(&f).await["status"], "PENDING_REVIEW");
+    f.service
+        .execute(
+            json!({"command":"job.followup","job":f.job,"prompt":"Third request"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    let third = f.task("Third delivery").await;
+    let state = f.service.store().snapshot().await.unwrap();
+    let deps = &state.tasks[state.task_index(&third).unwrap()].dependencies;
+    assert_eq!(deps.len(), 3);
+    for prior in [&old, &a, &b] {
+        assert!(deps.contains(prior));
+    }
+    assert_eq!(state.jobs[0].conversation.len(), 2);
+    assert_eq!(state.jobs[0].prompt, "Original request");
+}
+
+#[tokio::test]
+async fn review_policy_none_completes_only_finished_work() {
+    let f = Fixture::new("markdown").await;
+    f.service
+        .execute(
+            json!({"command":"job.update","job":f.job,"review_policy":"none"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    let id = f.task("Investigate").await;
+    assert!(
+        f.service
+            .execute(
+                json!({"command":"job.submit","job":f.job}),
+                WriteOptions::default()
+            )
+            .await
+            .is_err()
+    );
+    finish(&f, &id).await;
+    assert_eq!(job(&f).await["status"], "COMPLETED");
+    assert!(job(&f).await["completed_at"].is_number());
+    assert!(job(&f).await["pending_review_at"].is_null());
+}
+
+#[tokio::test]
+async fn followup_cancelled_prerequisite_stays_cancelled_and_blocks_execution() {
+    let f = Fixture::new("markdown").await;
+    let cancelled = f.task("Cancelled work").await;
+    f.service
+        .execute(
+            json!({"command":"task.cancel","task":cancelled}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    let done = f.task("Delivered work").await;
+    finish(&f, &done).await;
+    f.service
+        .execute(
+            json!({"command":"job.followup","job":f.job,"prompt":"More work"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    let id = f.task("Supplement").await;
+    let state = f.service.store().snapshot().await.unwrap();
+    assert_eq!(
+        state.tasks[state.task_index(&cancelled).unwrap()].status,
+        agentix_task::TaskStatus::Cancelled
+    );
+    assert!(
+        state.tasks[state.task_index(&id).unwrap()]
+            .dependencies
+            .contains(&cancelled)
+    );
+    let claim = f.claim(&id, "followup").await;
+    f.plan(&id).await;
+    let error = f
+        .service
+        .execute(json!({"command":"task.start","task":id}), owner(&claim))
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("dependencies are incomplete"));
+}
+
+#[tokio::test]
+async fn review_policy_creation_validation_and_explicit_submit() {
+    let f = Fixture::new("markdown").await;
+    assert_eq!(job(&f).await["review_policy"], "required");
+    let created = f.service.execute(json!({"command":"job.create","project":f.project,"title":"Documentation","review_policy":"none"}), WriteOptions::default()).await.unwrap().result;
+    assert_eq!(created["review_policy"], "none");
+    assert!(
+        f.service
+            .execute(
+                json!({"command":"job.update","job":f.job,"review_policy":"invalid"}),
+                WriteOptions::default()
+            )
+            .await
+            .is_err()
+    );
+    let id = f.task("Delivery").await;
+    finish(&f, &id).await;
+    change(&f, "job.reject").await;
+    f.service
+        .execute(
+            json!({"command":"job.update","job":f.job,"review_policy":"none"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(change(&f, "job.submit").await["status"], "COMPLETED");
+}
+
+#[tokio::test]
+async fn followup_new_session_records_before_tasks_without_stealing_later_capture() {
+    let f = Fixture::new("markdown").await;
+    let id = f.task("Original delivery").await;
+    finish(&f, &id).await;
+    let options = WriteOptions {
+        session_ref: Some("new-session".into()),
+        ..WriteOptions::default()
+    };
+    f.service.execute(json!({"command":"job.create","project":f.project,"title":"Earlier same-second request"}), options.clone()).await.unwrap();
+    f.service
+        .execute(
+            json!({"command":"job.followup","job":f.job,"prompt":"New session supplement"}),
+            options.clone(),
+        )
+        .await
+        .unwrap();
+    for (message, explicit) in [("automatic", false), ("explicit", true)] {
+        let mut request = json!({"command":"session.record","session":"new-session","messages":[{"id":message,"role":"assistant","text":message}]});
+        if explicit {
+            request["job"] = json!(f.job);
+        }
+        let recorded = f
+            .service
+            .execute(request, options.clone())
+            .await
+            .unwrap()
+            .result;
+        assert_eq!(recorded["recorded"], 1);
+        assert_eq!(recorded["job_id"], f.job);
+    }
+    let next = f
+        .service
+        .execute(
+            json!({"command":"job.create","project":f.project,"title":"Separate later request"}),
+            options.clone(),
+        )
+        .await
+        .unwrap()
+        .result;
+    f.service.execute(json!({"command":"session.record","session":"new-session","job":f.job,"messages":[{"id":"late","role":"assistant","text":"Late old result"}]}), options.clone()).await.unwrap();
+    f.service.execute(json!({"command":"session.record","session":"new-session","messages":[{"id":"new","role":"assistant","text":"New result"}]}), options).await.unwrap();
+    let state = f.service.store().snapshot().await.unwrap();
+    assert_eq!(
+        state.jobs[state.job_index(next["id"].as_str().unwrap()).unwrap()].conversation[0].text,
+        "New result"
+    );
+}
