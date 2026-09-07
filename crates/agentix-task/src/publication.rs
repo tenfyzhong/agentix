@@ -14,6 +14,19 @@ use crate::{
 #[path = "publication_tests.rs"]
 mod tests;
 
+#[derive(Default)]
+pub(crate) struct PublicationMetadata {
+    pub plans: Vec<PublishedPlan>,
+    pub goals: BTreeMap<String, String>,
+}
+
+#[derive(serde::Serialize)]
+pub(crate) struct PublishedPlan {
+    pub id: String,
+    pub version: i64,
+    pub hash: String,
+}
+
 // Keep each MAX eligible for its Project/activity index instead of scanning
 // every Task inside a global GROUP BY. Batch all index seeks in one statement.
 const PROJECT_ACTIVITY_QUERY: &str = "SELECT selected.value AS project_id,
@@ -203,24 +216,34 @@ impl Store {
         paths: &BTreeMap<String, String>,
         remove: &BTreeSet<String>,
         sequence: i64,
+        metadata: &PublicationMetadata,
     ) -> Result<()> {
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
-        for key in remove {
-            sqlx::query("DELETE FROM document_registry WHERE key=?")
-                .bind(key)
-                .execute(&mut *tx)
-                .await?;
+        if !metadata.plans.is_empty() {
+            sqlx::query("UPDATE plans SET data=json_remove(json_set(plans.data,'$.hash',receipt.hash),'$.pending_body')
+                FROM (SELECT json_extract(value,'$.id') AS id,json_extract(value,'$.version') AS version,json_extract(value,'$.hash') AS hash FROM json_each(?)) receipt
+                WHERE plans.id=receipt.id AND plans.version=receipt.version")
+                .bind(serde_json::to_string(&metadata.plans)?).execute(&mut *tx).await?;
         }
-        for (key, path) in paths {
-            sqlx::query("INSERT INTO document_registry(key,path) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET path=excluded.path")
-                .bind(key).bind(path).execute(&mut *tx).await?;
+        if !metadata.goals.is_empty() {
+            sqlx::query("INSERT INTO projection_state(key,value) SELECT 'goal:'||key,json_quote(value) FROM json_each(?) WHERE true ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+                .bind(serde_json::to_string(&metadata.goals)?).execute(&mut *tx).await?;
         }
-        for (key, generation) in pending {
-            sqlx::query("DELETE FROM pending_documents WHERE key=? AND generation=?")
-                .bind(key)
-                .bind(generation)
-                .execute(&mut *tx)
-                .await?;
+        if !remove.is_empty() {
+            sqlx::query(
+                "DELETE FROM document_registry WHERE key IN (SELECT value FROM json_each(?))",
+            )
+            .bind(serde_json::to_string(remove)?)
+            .execute(&mut *tx)
+            .await?;
+        }
+        if !paths.is_empty() {
+            sqlx::query("INSERT INTO document_registry(key,path) SELECT key,value FROM json_each(?) WHERE true ON CONFLICT(key) DO UPDATE SET path=excluded.path")
+                .bind(serde_json::to_string(paths)?).execute(&mut *tx).await?;
+        }
+        if !pending.is_empty() {
+            sqlx::query("DELETE FROM pending_documents WHERE (key,generation) IN (SELECT key,value FROM json_each(?))")
+                .bind(serde_json::to_string(pending)?).execute(&mut *tx).await?;
         }
         let remaining: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM pending_documents)")
             .fetch_one(&mut *tx)

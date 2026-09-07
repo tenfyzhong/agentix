@@ -305,6 +305,7 @@ impl Service {
                     &std::collections::BTreeMap::new(),
                     &BTreeSet::new(),
                     sequence,
+                    &crate::publication::PublicationMetadata::default(),
                 )
                 .await?;
         }

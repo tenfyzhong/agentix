@@ -89,6 +89,8 @@ Directory resolution reads only Project records and selects the closest register
 
 The legacy IM `/tasks` list applies its Project or Job filter and 50-row limit in SQL. Task buttons read only the target lease before applying the existing revision and ownership checks. Task detail snapshots fetch dependency status by ID, so a completed dependency outside the displayed Task still enables Start without loading that dependency’s body.
 
+After writing document files, publication commits Plan hashes, Job goal metadata, registered paths, and generation-checked pending acknowledgements in one transaction. Plan updates remain conditional on the published version, and failed acknowledgements roll back all publication metadata so retries can recover. Job goal metadata and document receipt rows use batched queries.
+
 Full document publication prepares borrowed Project, Job, Task, and Plan lookups once, groups Tasks by Job in document order, and indexes registered paths before checking destination ownership. Obsidian metadata snapshots omit Plan and lease bodies and generate status properties directly, sharing their property builder with Task documents instead of rendering and reparsing Markdown.
 
 CLI Project and Job detail reads load only the requested entity. Project lists load Project records, and Job lists restrict reads to the selected Project when supplied. Task lists apply Job, Project, status, and readiness filters in SQLite; readiness checks dependency status by ID, including dependencies in other Jobs. These commands preserve insertion order and the existing lease-expiry maintenance behavior.

@@ -401,6 +401,24 @@ impl Store {
             .map(|v| serde_json::from_str(&v).map_err(Into::into))
             .transpose()
     }
+    pub(crate) async fn metadata_batch(
+        &self,
+        keys: &std::collections::BTreeSet<String>,
+    ) -> Result<std::collections::BTreeMap<String, Value>> {
+        if keys.is_empty() {
+            return Ok(std::collections::BTreeMap::new());
+        }
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            "SELECT key,value FROM projection_state WHERE key IN (SELECT value FROM json_each(?))",
+        )
+        .bind(serde_json::to_string(keys)?)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(|(key, value)| Ok((key, serde_json::from_str(&value)?)))
+            .collect()
+    }
+
     pub async fn set_metadata(&self, key: &str, value: &Value) -> Result<()> {
         if key == "documents" {
             let paths: std::collections::BTreeMap<String, String> =
@@ -428,12 +446,6 @@ impl Store {
             .bind(id)
             .execute(&self.pool)
             .await?;
-        Ok(())
-    }
-
-    pub(crate) async fn publish_plan(&self, id: &str, version: i64, hash: &str) -> Result<()> {
-        sqlx::query("UPDATE plans SET data = json_remove(json_set(data, '$.hash', ?), '$.pending_body') WHERE id = ? AND version = ?")
-            .bind(hash).bind(id).bind(version).execute(&self.pool).await?;
         Ok(())
     }
 

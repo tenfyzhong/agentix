@@ -170,3 +170,146 @@ async fn full_projection_does_not_rescan_entity_vectors_for_each_document() {
         state.tasks.len()
     );
 }
+
+async fn planned_export_fixture() -> (tempfile::TempDir, Service, String) {
+    let (dir, service, task) = export_fixture().await;
+    let claim = service
+        .store
+        .execute(
+            json!({"command":"task.claim","task":task,"executor":"agent:test","session":"export"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap()
+        .result;
+    service
+        .execute(
+            json!({"command":"plan.create","task":task,"body":"Initial plan"}),
+            WriteOptions {
+                session_ref: Some("export".into()),
+                lease_token: Some(claim["lease"]["token"].as_str().unwrap().into()),
+                ..WriteOptions::default()
+            },
+        )
+        .await
+        .unwrap();
+    (dir, service, task)
+}
+
+#[tokio::test]
+async fn publication_receipts_share_one_commit() {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    let (_dir, service, _) = planned_export_fixture().await;
+    let project = service.store.projects().await.unwrap()[0].id.clone();
+    for index in 0..16 {
+        service
+            .store
+            .execute(
+                json!({"command":"job.create","project":project,"title":format!("Extra {index}")}),
+                WriteOptions::default(),
+            )
+            .await
+            .unwrap();
+    }
+    let state = service.store.snapshot().await.unwrap();
+    let commits = Arc::new(AtomicUsize::new(0));
+    // Install on every connection without allowing the pool to reuse one slot.
+    let mut connections = Vec::new();
+    for _ in 0..4 {
+        let mut conn = service.store.pool.acquire().await.unwrap();
+        let measured = commits.clone();
+        conn.lock_handle().await.unwrap().set_commit_hook(move || {
+            measured.fetch_add(1, Ordering::Relaxed);
+            true
+        });
+        connections.push(conn);
+    }
+    drop(connections);
+    service
+        .render_state_locked(&state, None, &BTreeMap::new())
+        .await
+        .unwrap();
+    assert_eq!(
+        commits.load(Ordering::Relaxed),
+        1,
+        "Plan hashes, Job metadata, and document receipts must commit together"
+    );
+}
+
+#[tokio::test]
+async fn failed_document_receipt_rolls_back_plan_and_goal_metadata() {
+    let (_dir, service, _) = planned_export_fixture().await;
+    sqlx::query(
+        "UPDATE plans SET data=json_set(data,'$.hash','old-hash','$.pending_body','Pending body')",
+    )
+    .execute(&service.store.pool)
+    .await
+    .unwrap();
+    let state = service.store.snapshot().await.unwrap();
+    let key = format!("goal:{}", state.jobs[0].id);
+    service
+        .store
+        .set_metadata(&key, &json!("Previous goal"))
+        .await
+        .unwrap();
+    sqlx::query("CREATE TRIGGER reject_receipt BEFORE INSERT ON document_registry BEGIN SELECT RAISE(ABORT,'receipt failure'); END").execute(&service.store.pool).await.unwrap();
+    let error = service
+        .render_state_locked(&state, None, &BTreeMap::new())
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("receipt failure"));
+    let after = service.store.snapshot().await.unwrap();
+    assert_eq!(after.plans, state.plans);
+    assert_eq!(
+        service.store.metadata(&key).await.unwrap(),
+        Some(json!("Previous goal"))
+    );
+    sqlx::query("DROP TRIGGER reject_receipt")
+        .execute(&service.store.pool)
+        .await
+        .unwrap();
+    service
+        .render_state_locked(&after, None, &BTreeMap::new())
+        .await
+        .unwrap();
+    let recovered = service.store.snapshot().await.unwrap();
+    assert!(recovered.plans[0].pending_body.is_none());
+    assert_ne!(recovered.plans[0].hash, "old-hash");
+    assert_eq!(
+        service.store.metadata(&key).await.unwrap(),
+        Some(json!(state.jobs[0].goal))
+    );
+}
+
+#[tokio::test]
+async fn stale_plan_receipt_preserves_the_newer_version() {
+    let (_dir, service, _) = planned_export_fixture().await;
+    let state = service.store.snapshot().await.unwrap();
+    let plan = &state.plans[0];
+    sqlx::query("UPDATE plans SET data=json_set(data,'$.version',?,'$.hash','newer-hash','$.pending_body','Newer body') WHERE id=?")
+        .bind(plan.version + 1).bind(&plan.id).execute(&service.store.pool).await.unwrap();
+    let expected = service.store.snapshot().await.unwrap().plans;
+    let metadata = crate::publication::PublicationMetadata {
+        plans: vec![crate::publication::PublishedPlan {
+            id: plan.id.clone(),
+            version: plan.version,
+            hash: "stale-hash".into(),
+        }],
+        ..Default::default()
+    };
+    service
+        .store
+        .acknowledge_documents(
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &BTreeSet::new(),
+            0,
+            &metadata,
+        )
+        .await
+        .unwrap();
+    assert_eq!(service.store.snapshot().await.unwrap().plans, expected);
+}

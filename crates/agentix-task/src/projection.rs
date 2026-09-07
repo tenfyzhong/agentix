@@ -523,6 +523,17 @@ impl Service {
         let previous_paths: BTreeSet<_> = previous.values().map(String::as_str).collect();
         let index = ProjectionIndex::new(state);
         let includes = |key: &str| selected.is_none_or(|selected| selected == key);
+        let goals = self
+            .store
+            .metadata_batch(
+                &state
+                    .jobs
+                    .iter()
+                    .filter(|job| includes(&format!("job:{}", job.id)))
+                    .map(|job| format!("goal:{}", job.id))
+                    .collect(),
+            )
+            .await?;
         let mut paths = BTreeMap::new();
         let mut files = BTreeMap::new();
         let created = state
@@ -565,10 +576,8 @@ impl Service {
                 };
                 let notes = section(&existing, "notes")?.unwrap_or_default();
                 let goal = section(&existing, "goal")?.unwrap_or_else(|| job.goal.clone());
-                let goal = if self
-                    .store
-                    .metadata(&format!("goal:{}", job.id))
-                    .await?
+                let goal = if goals
+                    .get(&format!("goal:{}", job.id))
                     .is_some_and(|v| v.as_str() != Some(&job.goal))
                 {
                     job.goal.clone()
@@ -722,23 +731,24 @@ impl Service {
                 }
             }
         }
+        let mut metadata = crate::publication::PublicationMetadata::default();
         for plan in &state.plans {
             if !paths.contains_key(&format!("plan:{}", plan.id)) {
                 continue;
             }
             let bytes = std::fs::read(self.safe_path(&plan.path)?)
                 .with_context(|| format!("missing Plan {}", plan.path))?;
-            self.store
-                .publish_plan(&plan.id, plan.version, &hash_bytes(&bytes))
-                .await?;
+            metadata.plans.push(crate::publication::PublishedPlan {
+                id: plan.id.clone(),
+                version: plan.version,
+                hash: hash_bytes(&bytes),
+            });
         }
         for job in &state.jobs {
             if !paths.contains_key(&format!("job:{}", job.id)) {
                 continue;
             }
-            self.store
-                .set_metadata(&format!("goal:{}", job.id), &json!(job.goal))
-                .await?;
+            metadata.goals.insert(job.id.clone(), job.goal.clone());
         }
         let removed = previous
             .keys()
@@ -746,7 +756,7 @@ impl Service {
             .cloned()
             .collect();
         self.store
-            .acknowledge_documents(pending, &paths, &removed, sequence)
+            .acknowledge_documents(pending, &paths, &removed, sequence, &metadata)
             .await?;
         Ok(())
     }
