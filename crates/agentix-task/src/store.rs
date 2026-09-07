@@ -11,6 +11,10 @@ use sqlx::{
 
 use crate::{Outcome, Snapshot, TaskEvent, WriteOptions, mutations, new_id};
 
+#[cfg(test)]
+#[path = "persist_tests.rs"]
+pub(crate) mod persist_tests;
+
 const JOB_EVENTS_QUERY: &str = "SELECT sequence,data FROM task_events WHERE job_id = ? AND sequence > ? ORDER BY sequence LIMIT ?";
 
 #[derive(Clone)]
@@ -782,8 +786,11 @@ async fn persist(
     options: &WriteOptions,
     now: i64,
 ) -> Result<()> {
+    let old = crate::state_index::StateIndex::new(before);
+    let new = crate::state_index::StateIndex::new(after);
+    let recent = crate::state_index::recent_session_tasks(after);
     for project in &after.projects {
-        if before.projects.iter().find(|p| p.id == project.id) == Some(project) {
+        if old.projects.get(project.id.as_str()).copied() == Some(project) {
             continue;
         }
         upsert(conn, "projects", &project.id, project).await?;
@@ -799,14 +806,14 @@ async fn persist(
         .await?;
     }
     for job in &after.jobs {
-        if before.jobs.iter().find(|j| j.id == job.id) == Some(job) {
+        if old.jobs.get(job.id.as_str()).copied() == Some(job) {
             continue;
         }
         upsert(conn, "jobs", &job.id, job).await?;
-        let event_type = if before
+        let event_type = if old
             .jobs
-            .iter()
-            .any(|j| j.id == job.id && j.status != job.status)
+            .get(job.id.as_str())
+            .is_some_and(|j| j.status != job.status)
         {
             match job.status {
                 crate::JobStatus::Completed => "job.completed",
@@ -814,8 +821,8 @@ async fn persist(
                 crate::JobStatus::Active
                     if command == "job.reject"
                         || (command == "inbox.set-status"
-                            && before.jobs.iter().any(|old| {
-                                old.id == job.id && old.status == crate::JobStatus::PendingReview
+                            && old.jobs.get(job.id.as_str()).is_some_and(|job| {
+                                job.status == crate::JobStatus::PendingReview
                             })) =>
                 {
                     "job.rejected"
@@ -825,11 +832,7 @@ async fn persist(
         } else {
             command
         };
-        let related = after
-            .tasks
-            .iter()
-            .filter(|t| t.job_id == job.id && t.last_session.is_some())
-            .max_by_key(|t| t.updated_at);
+        let related = recent.get(job.id.as_str()).copied();
         append_event(
             conn,
             TaskEvent {
@@ -847,14 +850,14 @@ async fn persist(
         .await?;
     }
     for task in &after.tasks {
-        if before.tasks.iter().find(|t| t.id == task.id) == Some(task) {
+        if old.tasks.get(task.id.as_str()).copied() == Some(task) {
             continue;
         }
         upsert(conn, "tasks", &task.id, task).await?;
-        let changed_status = before
+        let changed_status = old
             .tasks
-            .iter()
-            .any(|t| t.id == task.id && t.status != task.status);
+            .get(task.id.as_str())
+            .is_some_and(|t| t.status != task.status);
         let event_type = if changed_status {
             format!("task.{}", task.status.to_string().to_lowercase())
         } else {
@@ -882,12 +885,12 @@ async fn persist(
         .await?;
     }
     for plan in &after.plans {
-        if before.plans.iter().find(|p| p.id == plan.id) != Some(plan) {
+        if old.plans.get(plan.id.as_str()).copied() != Some(plan) {
             upsert(conn, "plans", &plan.id, plan).await?;
         }
     }
     for lease in &before.leases {
-        if !after.leases.iter().any(|l| l.task_id == lease.task_id) {
+        if !new.leases.contains_key(lease.task_id.as_str()) {
             sqlx::query("DELETE FROM task_leases WHERE id=?")
                 .bind(&lease.task_id)
                 .execute(&mut *conn)
@@ -895,15 +898,15 @@ async fn persist(
         }
     }
     for lease in &after.leases {
-        if before.leases.iter().find(|l| l.task_id == lease.task_id) != Some(lease) {
+        if old.leases.get(lease.task_id.as_str()).copied() != Some(lease) {
             upsert(conn, "task_leases", &lease.task_id, lease).await?;
         }
     }
     for task in &after.tasks {
-        if before
+        if old
             .tasks
-            .iter()
-            .find(|t| t.id == task.id)
+            .get(task.id.as_str())
+            .copied()
             .is_some_and(|t| t.dependencies == task.dependencies)
         {
             continue;
@@ -921,7 +924,7 @@ async fn persist(
         }
     }
     for entry in &after.inboxes {
-        if before.inboxes.iter().find(|old| old.id == entry.id) == Some(entry) {
+        if old.inboxes.get(entry.id.as_str()).copied() == Some(entry) {
             continue;
         }
         upsert(conn, "inbox_entries", &entry.id, entry).await?;
@@ -938,14 +941,14 @@ async fn persist(
         .await?;
     }
     for entry in &before.inboxes {
-        if !after.inboxes.iter().any(|e| e.id == entry.id) {
+        if !new.inboxes.contains_key(entry.id.as_str()) {
             sqlx::query("DELETE FROM inbox_entries WHERE id = ?")
                 .bind(&entry.id)
                 .execute(&mut *conn)
                 .await?;
         }
     }
-    crate::deletion::persist(conn, before, after, command, options, now).await?;
+    crate::deletion::persist(conn, before, (&old, &new), command, options, now).await?;
     crate::publication::enqueue_changes(conn, before, after, command).await?;
     if before.document_sequences != after.document_sequences {
         sqlx::query("INSERT INTO projection_state(key,value) VALUES ('document_sequences',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")

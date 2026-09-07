@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sqlx::{Row, SqliteConnection};
@@ -131,20 +131,24 @@ pub(crate) async fn check_pending_paths(
 pub(crate) async fn persist(
     conn: &mut SqliteConnection,
     before: &Snapshot,
-    after: &Snapshot,
+    indexes: (
+        &crate::state_index::StateIndex<'_>,
+        &crate::state_index::StateIndex<'_>,
+    ),
     command: &str,
     options: &WriteOptions,
     now: i64,
 ) -> Result<()> {
+    let (old, new) = indexes;
     let jobs: Vec<_> = before
         .jobs
         .iter()
-        .filter(|j| !after.jobs.iter().any(|a| a.id == j.id))
+        .filter(|j| !new.jobs.contains_key(j.id.as_str()))
         .collect();
     let projects: Vec<_> = before
         .projects
         .iter()
-        .filter(|p| !after.projects.iter().any(|a| a.id == p.id))
+        .filter(|p| !new.projects.contains_key(p.id.as_str()))
         .collect();
     if jobs.is_empty() && projects.is_empty() {
         return Ok(());
@@ -178,7 +182,7 @@ pub(crate) async fn persist(
     for plan in before
         .plans
         .iter()
-        .filter(|p| !after.plans.iter().any(|a| a.id == p.id))
+        .filter(|p| !new.plans.contains_key(p.id.as_str()))
     {
         cleanup
             .candidates
@@ -196,11 +200,16 @@ pub(crate) async fn persist(
     for task in before
         .tasks
         .iter()
-        .filter(|t| !after.tasks.iter().any(|a| a.id == t.id))
+        .filter(|t| !new.tasks.contains_key(t.id.as_str()))
     {
         cleanup
             .candidates
-            .entry(crate::naming::task_path(before, task)?)
+            .entry(crate::naming::task_path_in(
+                old.projects
+                    .get(task.project_id.as_str())
+                    .context("missing task project")?,
+                task,
+            )?)
             .or_default()
             .insert(task.id.clone());
         if let Some(path) = previous.get(&format!("task:{}", task.id)) {
@@ -215,7 +224,7 @@ pub(crate) async fn persist(
     for task in before
         .tasks
         .iter()
-        .filter(|t| !after.tasks.iter().any(|a| a.id == t.id))
+        .filter(|t| !new.tasks.contains_key(t.id.as_str()))
     {
         sqlx::query("DELETE FROM tasks WHERE id = ?")
             .bind(&task.id)
