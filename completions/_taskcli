@@ -630,7 +630,25 @@ _arguments "${_arguments_options[@]}" : \
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:taskcli-job-command-$line[1]:"
         case $line[1] in
-            (submit)
+            (followup)
+_arguments "${_arguments_options[@]}" : \
+'--prompt=[]:PROMPT:_default' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(submit)
 _arguments "${_arguments_options[@]}" : \
 '--config=[]:CONFIG:_files' \
 '--project=[]:PROJECT:_default' \
@@ -705,6 +723,7 @@ _arguments "${_arguments_options[@]}" : \
 '--title=[]:TITLE:_default' \
 '--goal=[]:GOAL:_default' \
 '--prompt=[Original user prompt, preserved verbatim in the Job document]:PROMPT:_default' \
+'--review-policy=[]:REVIEW_POLICY:(required none)' \
 '--config=[]:CONFIG:_files' \
 '--project=[]:PROJECT:_default' \
 '--actor=[]:ACTOR:_default' \
@@ -725,6 +744,7 @@ _arguments "${_arguments_options[@]}" : \
 '--title=[]:TITLE:_default' \
 '--goal=[]:GOAL:_default' \
 '--prompt=[Replace the original user prompt; an empty string clears it]:PROMPT:_default' \
+'--review-policy=[]:REVIEW_POLICY:(required none)' \
 '--config=[]:CONFIG:_files' \
 '--project=[]:PROJECT:_default' \
 '--actor=[]:ACTOR:_default' \
@@ -843,7 +863,11 @@ _arguments "${_arguments_options[@]}" : \
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:taskcli-job-help-command-$line[1]:"
         case $line[1] in
-            (submit)
+            (followup)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(submit)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -1847,7 +1871,11 @@ _arguments "${_arguments_options[@]}" : \
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:taskcli-help-job-command-$line[1]:"
         case $line[1] in
-            (submit)
+            (followup)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(submit)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -2300,6 +2328,7 @@ _taskcli__subcmd__help__subcmd__init_commands() {
 (( $+functions[_taskcli__subcmd__help__subcmd__job_commands] )) ||
 _taskcli__subcmd__help__subcmd__job_commands() {
     local commands; commands=(
+'followup:Resume a pending Job with a supplemental user prompt' \
 'submit:Submit an ACTIVE Job for review once all non-cancelled Tasks are DONE' \
 'approve:Record human acceptance of a Job awaiting review' \
 'reject:Return a Job awaiting review to ACTIVE, preserving its Tasks' \
@@ -2338,6 +2367,11 @@ _taskcli__subcmd__help__subcmd__job__subcmd__create_commands() {
 _taskcli__subcmd__help__subcmd__job__subcmd__delete_commands() {
     local commands; commands=()
     _describe -t commands 'taskcli help job delete commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__job__subcmd__followup_commands] )) ||
+_taskcli__subcmd__help__subcmd__job__subcmd__followup_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help job followup commands' commands "$@"
 }
 (( $+functions[_taskcli__subcmd__help__subcmd__job__subcmd__list_commands] )) ||
 _taskcli__subcmd__help__subcmd__job__subcmd__list_commands() {
@@ -2780,6 +2814,7 @@ _taskcli__subcmd__init_commands() {
 (( $+functions[_taskcli__subcmd__job_commands] )) ||
 _taskcli__subcmd__job_commands() {
     local commands; commands=(
+'followup:Resume a pending Job with a supplemental user prompt' \
 'submit:Submit an ACTIVE Job for review once all non-cancelled Tasks are DONE' \
 'approve:Record human acceptance of a Job awaiting review' \
 'reject:Return a Job awaiting review to ACTIVE, preserving its Tasks' \
@@ -2820,9 +2855,15 @@ _taskcli__subcmd__job__subcmd__delete_commands() {
     local commands; commands=()
     _describe -t commands 'taskcli job delete commands' commands "$@"
 }
+(( $+functions[_taskcli__subcmd__job__subcmd__followup_commands] )) ||
+_taskcli__subcmd__job__subcmd__followup_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli job followup commands' commands "$@"
+}
 (( $+functions[_taskcli__subcmd__job__subcmd__help_commands] )) ||
 _taskcli__subcmd__job__subcmd__help_commands() {
     local commands; commands=(
+'followup:Resume a pending Job with a supplemental user prompt' \
 'submit:Submit an ACTIVE Job for review once all non-cancelled Tasks are DONE' \
 'approve:Record human acceptance of a Job awaiting review' \
 'reject:Return a Job awaiting review to ACTIVE, preserving its Tasks' \
@@ -2862,6 +2903,11 @@ _taskcli__subcmd__job__subcmd__help__subcmd__create_commands() {
 _taskcli__subcmd__job__subcmd__help__subcmd__delete_commands() {
     local commands; commands=()
     _describe -t commands 'taskcli job help delete commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__job__subcmd__help__subcmd__followup_commands] )) ||
+_taskcli__subcmd__job__subcmd__help__subcmd__followup_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli job help followup commands' commands "$@"
 }
 (( $+functions[_taskcli__subcmd__job__subcmd__help__subcmd__help_commands] )) ||
 _taskcli__subcmd__job__subcmd__help__subcmd__help_commands() {

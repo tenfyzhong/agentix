@@ -38,7 +38,7 @@ pub(crate) fn apply(
         "session.record" => crate::conversation::record(state, request, options, now),
         "job.create" => create_job(state, request, options, now),
         "job.update" | "job.cancel" | "job.archive" | "job.unarchive" | "job.submit"
-        | "job.approve" | "job.reject" => update_job(state, request, options, now),
+        | "job.approve" | "job.reject" | "job.followup" => update_job(state, request, options, now),
         "task.add" => add_task(state, request, options, now),
         "session.start" | "session.end" | "session.interrupt" | "session.heartbeat" => {
             session(state, request, now)
@@ -108,6 +108,11 @@ pub(crate) fn create_job(
         status: JobStatus::Active,
         conversation: Vec::new(),
         review_reason: None,
+        review_policy: review_policy(request)?.unwrap_or_default(),
+        followup_task_ids: Vec::new(),
+        followup_session_id: None,
+        followup_at: None,
+        followup_id: None,
         pending_review_at: None,
         revision: 1,
         created_at: now,
@@ -188,7 +193,7 @@ fn add_task(
         started_at: None,
         completed_at: None,
         reason: None,
-        dependencies: Vec::new(),
+        dependencies: job.followup_task_ids.clone(),
         current_plan: None,
         last_executor: crate::model::agent_name(&options.actor_ref)
             .map(|_| options.actor_ref.clone()),
@@ -271,6 +276,9 @@ fn update_job(
     if matches!(command, "job.submit" | "job.approve" | "job.reject") {
         return review_job(state, i, request, now);
     }
+    if command == "job.followup" {
+        return followup_job(state, i, request, options, now);
+    }
     if command == "job.cancel" {
         ensure!(
             !state.jobs[i].status.terminal(),
@@ -321,7 +329,8 @@ fn update_job(
                     || (renamed.is_some()
                         && request.get("title").is_none()
                         && request.get("goal").is_none()
-                        && request.get("prompt").is_none()))
+                        && request.get("prompt").is_none()
+                        && request.get("review_policy").is_none()))
                     && job.archived_at.is_none(),
                 "conflict: Job is closed"
             );
@@ -337,6 +346,9 @@ fn update_job(
             }
             if request.get("title").is_some() {
                 job.title = required(request, "title")?.into();
+            }
+            if let Some(policy) = review_policy(request)? {
+                job.review_policy = policy;
             }
             if let Some(prompt) = request["prompt"].as_str() {
                 job.prompt = prompt.into();
@@ -733,7 +745,7 @@ pub(crate) fn review_job(
     };
     let job = &mut state.jobs[index];
     job.status = match command {
-        "job.submit" => JobStatus::PendingReview,
+        "job.submit" => ready_status(job.review_policy),
         "job.approve" => JobStatus::Completed,
         _ => JobStatus::Active,
     };
@@ -751,9 +763,9 @@ fn aggregate_job(state: &mut Snapshot, index: usize, was_ready: bool, now: i64) 
     let ready = job_ready(state, &state.jobs[index].id);
     let job = &mut state.jobs[index];
     if job.status == JobStatus::Active && !was_ready && ready {
-        job.status = JobStatus::PendingReview;
-        job.pending_review_at = Some(now);
-        job.completed_at = None;
+        job.status = ready_status(job.review_policy);
+        job.pending_review_at = (job.status == JobStatus::PendingReview).then_some(now);
+        job.completed_at = (job.status == JobStatus::Completed).then_some(now);
         job.review_reason = None;
     }
     job.revision += 1;
@@ -817,4 +829,66 @@ pub(crate) fn system_block(state: &mut Snapshot, index: usize, reason: &str, now
     task.revision += 1;
     task.updated_at = now;
     state.leases.retain(|l| l.task_id != task.id);
+}
+
+fn review_policy(request: &Value) -> Result<Option<crate::ReviewPolicy>> {
+    request
+        .get("review_policy")
+        .filter(|v| !v.is_null())
+        .map(|v| {
+            serde_json::from_value(v.clone())
+                .context("invalid: review_policy must be required or none")
+        })
+        .transpose()
+}
+
+fn ready_status(policy: crate::ReviewPolicy) -> JobStatus {
+    match policy {
+        crate::ReviewPolicy::Required => JobStatus::PendingReview,
+        crate::ReviewPolicy::None => JobStatus::Completed,
+    }
+}
+
+fn followup_job(
+    state: &mut Snapshot,
+    index: usize,
+    request: &Value,
+    options: &WriteOptions,
+    now: i64,
+) -> Result<Value> {
+    let prompt = required(request, "prompt")?;
+    ensure!(
+        state.jobs[index].status == JobStatus::PendingReview
+            && state.jobs[index].archived_at.is_none(),
+        "conflict: job.followup requires an unarchived PENDING_REVIEW Job"
+    );
+    let old_tasks = state
+        .tasks
+        .iter()
+        .filter(|t| t.job_id == state.jobs[index].id)
+        .map(|t| t.id.clone())
+        .collect();
+    let job = &mut state.jobs[index];
+    job.followup_task_ids = old_tasks;
+    job.followup_session_id.clone_from(&options.session_ref);
+    job.followup_at = Some(now);
+    let followup_id = new_id("message");
+    job.followup_id = Some(followup_id.clone());
+    job.conversation.push(crate::JobMessage {
+        id: format!("followup:{followup_id}"),
+        session_id: options
+            .session_ref
+            .clone()
+            .or_else(|| job.session_id.clone())
+            .unwrap_or_default(),
+        role: "user".into(),
+        text: prompt.into(),
+        recorded_at: now,
+    });
+    job.status = JobStatus::Active;
+    job.review_reason = None;
+    job.completed_at = None;
+    job.revision += 1;
+    job.updated_at = now;
+    Ok(serde_json::to_value(job)?)
 }

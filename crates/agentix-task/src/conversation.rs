@@ -48,19 +48,10 @@ pub(crate) fn user_text(mut text: &str) -> &str {
     }
 }
 
-pub(crate) fn record(
-    state: &mut Snapshot,
-    request: &Value,
-    options: &WriteOptions,
-    now: i64,
-) -> Result<Value> {
-    let session = required(request, "session")?;
-    ensure!(
-        options.session_ref.as_deref() == Some(session),
-        "conflict: conversation session mismatch"
-    );
+fn session_job_index(state: &Snapshot, request: &Value, session: &str) -> Result<Option<usize>> {
     let associated = |job: &crate::Job| {
         job.session_id.as_deref() == Some(session)
+            || job.followup_session_id.as_deref() == Some(session)
             || state
                 .tasks
                 .iter()
@@ -80,20 +71,42 @@ pub(crate) fn record(
             .enumerate()
             .filter(|(_, job)| associated(job) && job.archived_at.is_none())
             .max_by_key(|(_, job)| {
-                let activity = state
-                    .tasks
-                    .iter()
-                    .filter(|task| {
-                        task.job_id == job.id && task.last_session.as_deref() == Some(session)
-                    })
-                    .map(|task| task.updated_at)
-                    .max()
-                    .unwrap_or(job.created_at)
-                    .max(job.created_at);
-                (activity, job.id.clone())
+                let suffix = |id: &str| {
+                    id.split_once('_')
+                        .map_or(id, |(_, suffix)| suffix)
+                        .to_owned()
+                };
+                let mut activity = (job.created_at, suffix(&job.id));
+                for task in state.tasks.iter().filter(|task| {
+                    task.job_id == job.id && task.last_session.as_deref() == Some(session)
+                }) {
+                    activity = activity.max((task.updated_at, suffix(&task.id)));
+                }
+                if job.followup_session_id.as_deref() == Some(session) {
+                    activity = activity.max((
+                        job.followup_at.unwrap_or(job.created_at),
+                        suffix(job.followup_id.as_deref().unwrap_or(&job.id)),
+                    ));
+                }
+                activity
             })
             .map(|(index, _)| index)
     };
+    Ok(index)
+}
+
+pub(crate) fn record(
+    state: &mut Snapshot,
+    request: &Value,
+    options: &WriteOptions,
+    now: i64,
+) -> Result<Value> {
+    let session = required(request, "session")?;
+    ensure!(
+        options.session_ref.as_deref() == Some(session),
+        "conflict: conversation session mismatch"
+    );
+    let index = session_job_index(state, request, session)?;
     let Some(index) = index else {
         return Ok(json!({"recorded":0}));
     };
@@ -118,6 +131,8 @@ pub(crate) fn record(
         if text.trim().is_empty() {
             continue;
         }
+        // Deduplicate historical IDs before adopting a followup placeholder.
+        // Identical wording from an earlier turn must not claim the new prompt.
         if let Some(existing) = job
             .conversation
             .iter_mut()
@@ -128,6 +143,14 @@ pub(crate) fn record(
                 continue;
             }
             existing.text = text.into();
+        } else if role == "user"
+            && let Some(pending) = job.conversation.last_mut()
+            && pending.role == "user"
+            && pending.id.starts_with("followup:")
+            && pending.session_id == session
+            && pending.text == text
+        {
+            pending.id = id.into();
         } else {
             job.conversation.push(JobMessage {
                 id: id.into(),

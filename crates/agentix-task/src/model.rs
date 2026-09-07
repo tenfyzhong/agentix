@@ -125,6 +125,14 @@ pub struct Project {
     pub archived_at: Option<i64>,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ReviewPolicy {
+    #[default]
+    Required,
+    None,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Job {
     pub id: String,
@@ -146,6 +154,16 @@ pub struct Job {
     pub status: JobStatus,
     #[serde(default)]
     pub review_reason: Option<String>,
+    #[serde(default)]
+    pub review_policy: ReviewPolicy,
+    #[serde(default)]
+    pub followup_task_ids: Vec<String>,
+    #[serde(default)]
+    pub followup_session_id: Option<String>,
+    #[serde(default)]
+    pub followup_at: Option<i64>,
+    #[serde(default)]
+    pub followup_id: Option<String>,
     #[serde(default)]
     pub pending_review_at: Option<i64>,
     pub revision: i64,

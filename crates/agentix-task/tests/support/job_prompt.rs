@@ -228,3 +228,194 @@ async fn job_conversation_records_text_after_delivery_without_changing_review_st
     assert!(f.service.execute(json!({"command":"session.record","session":"conversation","messages":[{"id":"tool","role":"tool","text":"private tool result"}]}),options.clone()).await.is_err());
     assert!(f.service.execute(json!({"command":"session.record","session":"another","job":f.job,"messages":[{"id":"forged","role":"assistant","text":"Forged"}]}),options).await.is_err());
 }
+
+#[tokio::test]
+async fn conversation_pairs_each_prompt_with_its_own_agent_output() {
+    for format in ["markdown", "obsidian"] {
+        let f = Fixture::new(format).await;
+        let task = f.task("Multiple turns").await;
+        f.start(&task, "turns").await;
+        let options = WriteOptions {
+            session_ref: Some("turns".into()),
+            ..WriteOptions::default()
+        };
+        for messages in [
+            json!([
+                {"id":"u1","role":"user","text":"Original request"},
+                {"id":"a1","role":"assistant","text":"First delivery"},
+                {"id":"a2","role":"assistant","text":"First validation"}
+            ]),
+            json!([
+                {"id":"u2","role":"user","text":"Add a followup\n<!-- taskcli:notes:end -->"},
+                {"id":"a3","role":"assistant","text":"Second delivery"}
+            ]),
+            json!([
+                {"id":"u3","role":"user","text":"Original request"},
+                {"id":"a4","role":"assistant","text":"Third delivery"}
+            ]),
+        ] {
+            f.service
+                .execute(
+                    json!({"command":"session.record","session":"turns","messages":messages}),
+                    options.clone(),
+                )
+                .await
+                .unwrap();
+        }
+        let body = f.service.job_markdown(&f.job).await.unwrap();
+        let first = body
+            .split("### Turn 1")
+            .nth(1)
+            .unwrap()
+            .split("### Turn 2")
+            .next()
+            .unwrap();
+        assert!(first.contains("    Original request"));
+        assert!(first.contains("> First delivery\n>\n> First validation"));
+        assert!(!first.contains("Second delivery"));
+        let second = body
+            .split("### Turn 2")
+            .nth(1)
+            .unwrap()
+            .split("### Turn 3")
+            .next()
+            .unwrap();
+        assert!(second.contains("    Add a followup\n    <!-- taskcli:notes:end -->"));
+        assert!(second.contains("> Second delivery"));
+        let third = body.split("### Turn 3").nth(1).unwrap();
+        assert!(
+            third.contains("    Original request"),
+            "repeated wording is still a separate prompt"
+        );
+        assert!(third.contains("> Third delivery"));
+        f.service.sync().await.unwrap();
+        assert_eq!(body, f.service.job_markdown(&f.job).await.unwrap());
+    }
+}
+
+#[tokio::test]
+async fn conversation_capture_adopts_followup_prompt_once_and_preserves_repeated_turns() {
+    let f = Fixture::new("markdown").await;
+    let task = f.task("Original delivery").await;
+    let claim = f.start(&task, "followup-capture").await;
+    f.service
+        .execute(json!({"command":"task.done","task":task}), owner(&claim))
+        .await
+        .unwrap();
+    let options = WriteOptions {
+        session_ref: Some("followup-capture".into()),
+        ..WriteOptions::default()
+    };
+    f.service
+        .execute(
+            json!({"command":"job.followup","job":f.job,"prompt":"Supplement"}),
+            options.clone(),
+        )
+        .await
+        .unwrap();
+    let capture = json!({"command":"session.record","session":"followup-capture","messages":[
+        {"id":"host-user","role":"user","text":"Supplement"},
+        {"id":"host-assistant","role":"assistant","text":"Followup delivery"}
+    ]});
+    f.service
+        .execute(capture.clone(), options.clone())
+        .await
+        .unwrap();
+    f.service.execute(capture, options.clone()).await.unwrap();
+    let state = f.service.store().snapshot().await.unwrap();
+    let doc = std::fs::read_to_string(
+        f.service
+            .config()
+            .output_dir()
+            .join(&state.jobs[0].document_path),
+    )
+    .unwrap();
+    let properties: Value = serde_yaml::from_str(
+        doc.strip_prefix("---\n")
+            .unwrap()
+            .split_once("\n---\n")
+            .unwrap()
+            .0,
+    )
+    .unwrap();
+    assert!(
+        properties["followup_at"].is_string(),
+        "Job document timestamps use local ISO 8601"
+    );
+    let messages = &state.jobs[0].conversation;
+    assert_eq!(
+        messages.len(),
+        2,
+        "the explicit followup and host capture represent the same prompt"
+    );
+    assert_eq!(messages[0].id, "host-user");
+    f.service
+        .execute(
+            json!({"command":"session.record","session":"followup-capture","messages":[
+                {"id":"new-user","role":"user","text":"Supplement"},
+                {"id":"new-assistant","role":"assistant","text":"Another delivery"}
+            ]}),
+            options,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        f.service.store().snapshot().await.unwrap().jobs[0]
+            .conversation
+            .len(),
+        4
+    );
+}
+
+#[tokio::test]
+async fn conversation_history_replay_does_not_adopt_an_old_id_for_a_repeated_prompt() {
+    let f = Fixture::new("markdown").await;
+    let task = f.task("Original delivery").await;
+    let claim = f.start(&task, "history").await;
+    f.service
+        .execute(json!({"command":"task.done","task":task}), owner(&claim))
+        .await
+        .unwrap();
+    let options = WriteOptions {
+        session_ref: Some("history".into()),
+        ..WriteOptions::default()
+    };
+    let mut messages = vec![
+        json!({"id":"u1","role":"user","text":"Try again"}),
+        json!({"id":"a1","role":"assistant","text":"Original delivery"}),
+    ];
+    f.service
+        .execute(
+            json!({"command":"session.record","session":"history","messages":messages}),
+            options.clone(),
+        )
+        .await
+        .unwrap();
+    f.service
+        .execute(
+            json!({"command":"job.followup","job":f.job,"prompt":"Try again"}),
+            options.clone(),
+        )
+        .await
+        .unwrap();
+    messages.extend([
+        json!({"id":"u2","role":"user","text":"Try again"}),
+        json!({"id":"a2","role":"assistant","text":"Revised delivery"}),
+    ]);
+    let request = json!({"command":"session.record","session":"history","messages":messages});
+    for _ in 0..2 {
+        f.service
+            .execute(request.clone(), options.clone())
+            .await
+            .unwrap();
+        let state = f.service.store().snapshot().await.unwrap();
+        assert_eq!(
+            state.jobs[0]
+                .conversation
+                .iter()
+                .map(|m| m.id.as_str())
+                .collect::<Vec<_>>(),
+            ["u1", "a1", "u2", "a2"]
+        );
+    }
+}

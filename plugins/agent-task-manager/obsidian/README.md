@@ -132,7 +132,7 @@ File events are monitored only inside the configured `documents.directory`, incl
 | Task | TODO from FAILED | retry |
 | Task | TODO from DONE or CANCELLED | reopen |
 | Task | IN_PROGRESS or DONE | Rejected; use the owning agent's claim, Plan, start/done workflow |
-| Job | ACTIVE → PENDING_REVIEW | submit, when all non-cancelled Tasks are DONE and at least one exists |
+| Job | ACTIVE → PENDING_REVIEW | submit for `review_policy: required`, when all non-cancelled Tasks are DONE and at least one exists |
 | Job | PENDING_REVIEW → COMPLETED | approve after verification |
 | Job | PENDING_REVIEW → ACTIVE | reject; Task states are preserved |
 | Job | CANCELLED | cancel from an eligible unfinished Job |
@@ -177,6 +177,8 @@ There is no command to import the vault or rebuild SQLite from it. `taskcli sync
 
 Keep a matched backup of the SQLite database, the document tree, and taskcli configuration. Include Obsidian's TaskNotes settings for the same display on another device. SQLite alone does not retain all published plan bodies or editable Notes. See [data coverage and recovery](https://github.com/tenfyzhong/agentix/blob/main/docs/task-board.md#data-coverage-and-recovery) for the field coverage and backup procedure.
 
-Job notes include the stored original **Prompt** and a generated **Conversation** of user prompts and agent text replies. Host hooks and Agentix omit injected AGENTS.md/environment context, tool calls, tool results, and reasoning. Agent replies appear together in one Markdown blockquote, without per-message timestamps. Sync also filters legacy injected context from existing notes. These sections are regenerated from SQLite; see [conversation capture](https://github.com/tenfyzhong/agentix/blob/main/docs/task-board.md#job-conversation-records).
+Job notes include the stored original **Prompt** and a generated **Conversation** of user prompts and agent text replies. Host hooks and Agentix omit injected AGENTS.md/environment context, tool calls, tool results, and reasoning. Conversation uses ordered `Turn N` sections, each with `User input` and `Agent output`; replies within each turn share one Markdown blockquote. Supplementary prompts preserve the original Prompt and earlier turns. Sync also filters legacy injected context from existing notes. These sections are regenerated from SQLite; see [conversation capture](https://github.com/tenfyzhong/agentix/blob/main/docs/task-board.md#job-conversation-records).
 
 Inbox items render consecutively without an extra blank line. Telegram message edits and Feishu source refreshes (every 30 seconds) update the same registered Inbox item and document while preserving its state and Job link.
+
+Investigation-only, document-only, and simple git commit/push Jobs use `review_policy: none` and complete directly when ready. The default `required` retains review for code changes and mixed Jobs. Related supplements to pending Jobs use `job followup` to return the same Job to ACTIVE, retain existing Tasks, and automatically add them as prerequisites of new Tasks; the dependency graph displays these edges.
