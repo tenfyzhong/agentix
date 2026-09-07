@@ -236,6 +236,12 @@ fn decode_notification(method: &str, params: &Value) -> Result<ServerMessage, Pr
             item_id: required_string(params, method, "itemId")?,
             delta: required_string(params, method, "delta")?,
         },
+        "item/plan/delta" => AgentEvent::PlanDelta {
+            session_id: required_string(params, method, "threadId")?,
+            turn_id: required_string(params, method, "turnId")?,
+            item_id: required_string(params, method, "itemId")?,
+            delta: required_string(params, method, "delta")?,
+        },
         "thread/status/changed" => AgentEvent::SessionStatusChanged {
             session_id: required_string(params, method, "threadId")?,
             status: parse_session_status(params.get("status")),

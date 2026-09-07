@@ -308,6 +308,12 @@ pub enum AgentEvent {
         item_id: String,
         delta: String,
     },
+    PlanDelta {
+        session_id: String,
+        turn_id: String,
+        item_id: String,
+        delta: String,
+    },
     ItemStarted {
         session_id: String,
         turn_id: String,
@@ -345,6 +351,7 @@ impl AgentEvent {
             | Self::TurnStarted { session_id, .. }
             | Self::UserMessage { session_id, .. }
             | Self::AgentMessageDelta { session_id, .. }
+            | Self::PlanDelta { session_id, .. }
             | Self::ItemStarted { session_id, .. }
             | Self::ItemCompleted { session_id, .. }
             | Self::TurnCompleted { session_id, .. }

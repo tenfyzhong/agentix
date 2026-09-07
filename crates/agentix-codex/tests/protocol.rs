@@ -107,3 +107,20 @@ fn approval_requests_keep_rpc_and_session_context() {
     assert_eq!(request.kind, InteractionKind::CommandApproval);
     assert_eq!(request.available_decisions, vec!["accept", "decline"]);
 }
+
+#[test]
+fn plan_deltas_keep_the_text_and_routing_identifiers() {
+    let message = decode_server_frame(&json!({
+        "method": "item/plan/delta",
+        "params": {"threadId": "thr_a", "turnId": "turn_b", "itemId": "plan_c", "delta": "# Implementation plan"}
+    })).unwrap();
+    let ServerMessage::Event(event) = message else {
+        panic!("plan delta must be delivered: {message:?}");
+    };
+    assert_eq!(
+        serde_json::to_value(event).unwrap(),
+        json!({"PlanDelta": {
+            "session_id": "thr_a", "turn_id": "turn_b", "item_id": "plan_c", "delta": "# Implementation plan"
+        }})
+    );
+}

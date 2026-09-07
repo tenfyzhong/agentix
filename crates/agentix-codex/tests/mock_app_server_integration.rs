@@ -1980,6 +1980,7 @@ fn inbound(text: &str) -> InboundEnvelope {
 
 #[derive(Clone, Default)]
 struct RecordingChannel {
+    streaming_interval: Option<Duration>,
     views: Arc<Mutex<Vec<OutboundView>>>,
     menus: Arc<Mutex<Vec<CommandMenu>>>,
 }
@@ -1992,6 +1993,10 @@ impl RecordingChannel {
 
 #[async_trait]
 impl ChannelAdapter for RecordingChannel {
+    fn streaming_update_interval(&self) -> Duration {
+        self.streaming_interval.unwrap_or(Duration::from_secs(1))
+    }
+
     fn kind(&self) -> ChannelKind {
         ChannelKind::Telegram
     }
@@ -2055,5 +2060,136 @@ async fn disabled_background_notifications_do_not_poll_sessions_or_turns() {
             .request_methods()
             .await
             .contains(&"thread/turns/list".into())
+    );
+}
+
+#[tokio::test]
+#[allow(clippy::too_many_lines)]
+async fn plan_mode_streams_content_accepts_strategy_and_starts_only_after_im_confirmation() {
+    let server = MockCodexAppServer::start();
+    server
+        .add_thread(MockThread::new("thr_plan", "Plan", "/work"))
+        .await;
+    let client = Arc::new(CodexClient::connect(server.endpoint()).await.unwrap());
+    let channel = Arc::new(RecordingChannel {
+        streaming_interval: Some(Duration::ZERO),
+        ..RecordingChannel::default()
+    });
+    let engine = Engine::new(
+        client.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound("/attach thr_plan"))
+        .await
+        .unwrap();
+    let mut events = client.subscribe();
+    engine
+        .handle_inbound(inbound("/plan Design the change"))
+        .await
+        .unwrap();
+    let turn = server.latest_turn_id("thr_plan").await.unwrap();
+    loop {
+        let event = recv_event(&mut events).await;
+        let started = matches!(&event, AgentEvent::TurnStarted { .. });
+        engine.handle_agent_event(event).await.unwrap();
+        if started {
+            break;
+        }
+    }
+    assert_eq!(
+        server
+            .thread("thr_plan")
+            .await
+            .unwrap()
+            .collaboration_mode
+            .unwrap()["mode"],
+        "plan"
+    );
+    let response = server.request_user_input("thr_plan", &turn, "question", json!([{
+        "id": "strategy", "header": "Strategy", "question": "Which strategy?",
+        "options": [{"label": "Incremental", "description": "Update in stages."}, {"label": "Full", "description": "Update together."}]
+    }])).await;
+    loop {
+        let event = recv_event(&mut events).await;
+        let requested = matches!(&event, AgentEvent::InteractionRequested(_));
+        engine.handle_agent_event(event).await.unwrap();
+        if requested {
+            break;
+        }
+    }
+    let choice = channel.views().last().unwrap().actions[0].token.clone();
+    engine
+        .handle_inbound(InboundEnvelope::action(
+            "choose-strategy",
+            ConversationRef::new(ChannelKind::Telegram, "chat-e2e"),
+            "owner-e2e",
+            choice,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        response.await.unwrap(),
+        json!({"answers": {"strategy": {"answers": ["Incremental"]}}})
+    );
+    for frame in [
+        json!({"method":"item/plan/delta", "params":{"threadId":"thr_plan", "turnId":turn, "itemId":"plan", "delta":"Draft plan."}}),
+        json!({"method":"item/completed", "params":{"threadId":"thr_plan", "turnId":turn, "item":{"id":"plan", "type":"plan", "text":"Final incremental plan."}}}),
+        json!({"method":"turn/completed", "params":{"threadId":"thr_plan", "turn":{"id":turn, "status":"completed"}}}),
+    ] {
+        server.send_notification(frame).await;
+        engine
+            .handle_agent_event(recv_event(&mut events).await)
+            .await
+            .unwrap();
+    }
+    let views = channel.views();
+    assert!(views.iter().any(|view| view.body.contains("Draft plan.")));
+    let completed = views.last().unwrap();
+    assert!(completed.body.contains("Final incremental plan."));
+    assert!(!completed.body.contains("Draft plan."));
+    assert_eq!(
+        server
+            .request_methods()
+            .await
+            .iter()
+            .filter(|method| *method == "turn/start")
+            .count(),
+        1
+    );
+    let token = completed
+        .actions
+        .iter()
+        .find(|a| a.label == "Implement plan")
+        .unwrap()
+        .token
+        .clone();
+    engine
+        .handle_inbound(InboundEnvelope::action(
+            "implement-plan",
+            ConversationRef::new(ChannelKind::Telegram, "chat-e2e"),
+            "owner-e2e",
+            token,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        server
+            .thread("thr_plan")
+            .await
+            .unwrap()
+            .collaboration_mode
+            .unwrap()["mode"],
+        "default"
+    );
+    assert_eq!(
+        server
+            .request_methods()
+            .await
+            .iter()
+            .filter(|method| *method == "turn/start")
+            .count(),
+        2
     );
 }

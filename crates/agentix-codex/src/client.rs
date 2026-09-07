@@ -2210,7 +2210,7 @@ fn parse_turn_summary(value: &Value) -> Result<TurnSummary, ClientError> {
         let summary = item_summary(item, "history")?;
         match summary.kind.as_str() {
             "userMessage" => user_text.extend(summary.text.clone()),
-            "agentMessage" => agent_text.extend(summary.text.clone()),
+            "agentMessage" | "plan" => agent_text.extend(summary.text.clone()),
             "commandExecution" | "fileChange" | "mcpToolCall" => tools.push(ToolSummary {
                 kind: summary.kind.clone(),
                 label: item
@@ -2517,3 +2517,19 @@ mod tests {
 
 #[cfg(all(test, unix))]
 mod lifecycle_tests;
+
+#[cfg(test)]
+mod plan_history_tests {
+    #[test]
+    fn saved_plans_are_included_in_history_output() {
+        let turn = super::parse_turn_summary(&serde_json::json!({
+            "id": "turn_plan", "status": "completed",
+            "items": [{"id": "plan", "type": "plan", "text": "Saved implementation plan."}]
+        }))
+        .unwrap();
+        assert_eq!(
+            turn.agent_text.as_deref(),
+            Some("Saved implementation plan.")
+        );
+    }
+}

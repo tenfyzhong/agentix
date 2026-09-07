@@ -49,12 +49,23 @@ pub enum EngineError {
 struct TurnBuffer {
     user_text: String,
     agent_text: String,
+    plan_text: String,
+    plan_action_group: Option<String>,
     status: TurnStatus,
     started_at: Option<Instant>,
     rendered_elapsed_seconds: Option<u64>,
 }
 
 impl TurnBuffer {
+    fn append_delta(&mut self, delta: &str, is_plan: bool) {
+        self.ensure_started();
+        if is_plan {
+            self.plan_text.push_str(delta);
+        } else {
+            self.agent_text.push_str(delta);
+        }
+    }
+
     fn ensure_started(&mut self) {
         self.started_at.get_or_insert_with(Instant::now);
     }
@@ -329,6 +340,8 @@ impl Engine {
                 TurnBuffer {
                     user_text: stored.user_text,
                     agent_text: stored.agent_text,
+                    plan_text: stored.plan_text,
+                    plan_action_group: None,
                     started_at: matches!(
                         &stored.status,
                         TurnStatus::InProgress | TurnStatus::Unknown
@@ -495,6 +508,8 @@ impl Engine {
                 let buffer = TurnBuffer {
                     user_text: stored.user_text.clone(),
                     agent_text: stored.agent_text.clone(),
+                    plan_text: stored.plan_text.clone(),
+                    plan_action_group: None,
                     status: stored.status.clone(),
                     started_at: None,
                     rendered_elapsed_seconds: None,
@@ -1627,6 +1642,8 @@ impl Engine {
             TurnBuffer {
                 user_text: turn.user_text.clone().unwrap_or_default(),
                 agent_text: turn.agent_text.clone().unwrap_or_default(),
+                plan_text: String::new(),
+                plan_action_group: None,
                 status: turn.status.clone(),
                 started_at: Some(Instant::now()),
                 rendered_elapsed_seconds: None,
@@ -2056,6 +2073,7 @@ impl Engine {
             return Ok(());
         }
         let turn_id = self.agent.start_turn(&session, prompt).await?;
+        self.clear_plan_actions(&session).await;
         self.turns
             .set_active(session.clone(), turn_id.clone())
             .await;
@@ -2064,6 +2082,8 @@ impl Engine {
             TurnBuffer {
                 user_text: prompt.to_owned(),
                 agent_text: String::new(),
+                plan_text: String::new(),
+                plan_action_group: None,
                 status: TurnStatus::InProgress,
                 started_at: Some(Instant::now()),
                 rendered_elapsed_seconds: None,
@@ -2250,13 +2270,15 @@ impl Engine {
             return Ok(());
         };
 
+        let is_plan = matches!(event, AgentEvent::PlanDelta { .. });
         match event {
-            AgentEvent::AgentMessageDelta { turn_id, delta, .. } => {
-                let key = (session_id.clone(), turn_id.clone());
+            AgentEvent::AgentMessageDelta { turn_id, delta, .. }
+            | AgentEvent::PlanDelta { turn_id, delta, .. } => {
                 let mut buffers = self.turns.buffers.lock().await;
-                let buffer = buffers.entry(key.clone()).or_default();
-                buffer.ensure_started();
-                buffer.agent_text.push_str(&delta);
+                let buffer = buffers
+                    .entry((session_id.clone(), turn_id.clone()))
+                    .or_default();
+                buffer.append_delta(&delta, is_plan);
                 drop(buffers);
                 self.render_turn(&conversation, &session_id, &turn_id, delivery, false)
                     .await?;
@@ -2477,6 +2499,7 @@ impl Engine {
         session_id: SessionId,
         turn_id: String,
     ) -> Result<(), EngineError> {
+        self.clear_plan_actions(&session_id).await;
         if let Some(previous) = self.turns.active_turn(&session_id).await
             && previous != turn_id
         {
@@ -2698,7 +2721,7 @@ impl Engine {
         turn_id: &str,
         item: &ItemSummary,
     ) -> bool {
-        if !matches!(item.kind.as_str(), "agentMessage" | "userMessage") {
+        if !matches!(item.kind.as_str(), "agentMessage" | "userMessage" | "plan") {
             return false;
         }
         let mut buffers = self.turns.buffers.lock().await;
@@ -2708,6 +2731,7 @@ impl Engine {
         buffer.ensure_started();
         match item.kind.as_str() {
             "agentMessage" => buffer.agent_text = item.text.clone().unwrap_or_default(),
+            "plan" => buffer.plan_text = item.text.clone().unwrap_or_default(),
             "userMessage" => buffer.user_text = item.text.clone().unwrap_or_default(),
             _ => {}
         }
@@ -2749,22 +2773,9 @@ impl Engine {
             )
         };
         let existing = self.turns.views.lock().await.get(&key).cloned();
-        let can_stop = is_running
-            && !self.agent.is_read_only(session_id).await
-            && delivery == DeliveryClass::Live
-            && self.sessions.current(conversation).await.as_ref() == Some(session_id)
-            && {
-                // Some adapters deliver output before a turn-started event.
-                let mut active = self.turns.active.lock().await;
-                if existing.is_none() {
-                    active
-                        .entry(session_id.clone())
-                        .or_insert_with(|| turn_id.to_owned());
-                }
-                active
-                    .get(session_id)
-                    .is_some_and(|active_turn| active_turn == turn_id)
-            };
+        let can_stop = self
+            .can_stop_turn(conversation, &key, delivery, is_running, existing.is_none())
+            .await;
         let owner_id = self
             .interactions
             .owners
@@ -2778,6 +2789,10 @@ impl Engine {
         {
             view.actions.push(stop_action);
         }
+        view.actions.extend(
+            self.plan_actions(conversation, owner_id.as_deref(), &key, &snapshot, delivery)
+                .await,
+        );
         if delivery == DeliveryClass::Draining
             && !is_running
             && let Some(owner_id) = owner_id.as_deref()
@@ -2811,6 +2826,7 @@ impl Engine {
                     owner_id,
                     user_text: snapshot.user_text,
                     agent_text: snapshot.agent_text,
+                    plan_text: snapshot.plan_text,
                     status: snapshot.status,
                 })
                 .await?;
@@ -2818,6 +2834,115 @@ impl Engine {
             self.state.delete_turn_view(session_id, turn_id).await?;
         }
         Ok(())
+    }
+
+    async fn can_stop_turn(
+        &self,
+        conversation: &ConversationRef,
+        key: &(SessionId, String),
+        delivery: DeliveryClass,
+        is_running: bool,
+        first_view: bool,
+    ) -> bool {
+        if !is_running
+            || self.agent.is_read_only(&key.0).await
+            || delivery != DeliveryClass::Live
+            || self.sessions.current(conversation).await.as_ref() != Some(&key.0)
+        {
+            return false;
+        }
+        // Some adapters deliver output before a turn-started event.
+        let mut active = self.turns.active.lock().await;
+        if first_view {
+            active.entry(key.0.clone()).or_insert_with(|| key.1.clone());
+        }
+        active.get(&key.0).is_some_and(|turn| turn == &key.1)
+    }
+
+    async fn plan_actions(
+        &self,
+        conversation: &ConversationRef,
+        owner_id: Option<&str>,
+        key: &(SessionId, String),
+        buffer: &TurnBuffer,
+        delivery: DeliveryClass,
+    ) -> Vec<ActionButton> {
+        let Some(owner_id) = owner_id else {
+            return Vec::new();
+        };
+        if buffer.status != TurnStatus::Completed
+            || buffer.plan_text.trim().is_empty()
+            || delivery != DeliveryClass::Live
+            || self.sessions.current(conversation).await.as_ref() != Some(&key.0)
+            || self.agent.is_read_only(&key.0).await
+            || self.agent.session_control().is_none()
+        {
+            return Vec::new();
+        }
+        let group = Uuid::new_v4().simple().to_string();
+        let previous = self
+            .turns
+            .buffers
+            .lock()
+            .await
+            .get_mut(key)
+            .and_then(|buffer| buffer.plan_action_group.replace(group.clone()));
+        if let Some(previous) = previous {
+            self.revoke_action_group(&previous).await;
+        }
+        let mut actions = Vec::new();
+        for (label, enabled, prompt) in [
+            (
+                "Implement plan",
+                false,
+                Some("Implement the plan.".to_owned()),
+            ),
+            ("Keep planning", true, None),
+        ] {
+            let token = self
+                .issue_action(
+                    conversation,
+                    owner_id,
+                    &group,
+                    UiAction::SessionCommand {
+                        session_id: key.0.clone(),
+                        command: SessionCommand::Plan { enabled, prompt },
+                    },
+                )
+                .await;
+            actions.push(ActionButton {
+                label: label.into(),
+                token,
+                style: ActionStyle::Default,
+            });
+        }
+        actions
+    }
+
+    async fn clear_plan_actions(&self, session_id: &SessionId) {
+        let groups = self
+            .turns
+            .buffers
+            .lock()
+            .await
+            .iter_mut()
+            .filter(|((session, _), _)| session == session_id)
+            .filter_map(|(key, buffer)| {
+                buffer
+                    .plan_action_group
+                    .take()
+                    .map(|group| (key.clone(), group))
+            })
+            .collect::<Vec<_>>();
+        for (key, group) in groups {
+            self.revoke_action_group(&group).await;
+            if let Some(message) = self.turns.views.lock().await.get(&key).cloned()
+                && let Ok(channel) = self.channel(message.conversation.channel)
+                && let Err(error) = channel.disable_actions(&message).await
+            {
+                tracing::warn!(%error, "failed to disable obsolete plan choices");
+            }
+        }
     }
 
     async fn clear_session_stop_actions(&self, session_id: &SessionId) -> Result<(), EngineError> {
@@ -3760,11 +3885,13 @@ fn history_turn_view(agent_name: &str, turn: &TurnSummary) -> OutboundView {
 }
 
 fn live_turn_body(agent_name: &str, buffer: &TurnBuffer, delivery: DeliveryClass) -> String {
-    let mut body = turn_conversation_body(
-        agent_name,
-        Some(&buffer.user_text),
-        Some(&buffer.agent_text),
-    );
+    let output = [&buffer.agent_text, &buffer.plan_text]
+        .into_iter()
+        .filter(|text| !text.trim().is_empty())
+        .cloned()
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let mut body = turn_conversation_body(agent_name, Some(&buffer.user_text), Some(&output));
     if delivery == DeliveryClass::Draining {
         body.push_str("\n\nThis is a background session after switching.");
     }

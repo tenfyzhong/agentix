@@ -98,6 +98,7 @@ pub struct MockThread {
     pub model: String,
     pub reasoning_effort: String,
     pub service_tier: Option<String>,
+    pub collaboration_mode: Option<Value>,
     pub turns: Vec<MockTurn>,
     goal: Option<Value>,
 }
@@ -111,6 +112,7 @@ impl MockThread {
             model: "gpt-5.6".into(),
             reasoning_effort: "medium".into(),
             service_tier: None,
+            collaboration_mode: None,
             turns: Vec::new(),
             goal: None,
         }
@@ -629,7 +631,7 @@ impl MockCodexAppServer {
         receiver
     }
 
-    async fn send_notification(&self, notification: Value) {
+    pub async fn send_notification(&self, notification: Value) {
         self.shared
             .state
             .lock()
@@ -1032,6 +1034,9 @@ async fn handle_request(
             }
             if let Some(effort) = string_param(params, "effort") {
                 thread.reasoning_effort = effort.into();
+            }
+            if let Some(mode) = params.get("collaborationMode") {
+                thread.collaboration_mode = Some(mode.clone());
             }
             if params.get("serviceTier").is_some() {
                 thread.service_tier = string_param(params, "serviceTier").map(str::to_owned);

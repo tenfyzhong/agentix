@@ -14,6 +14,7 @@ pub(crate) struct StoredTurnView {
     pub owner_id: Option<String>,
     pub user_text: String,
     pub agent_text: String,
+    pub plan_text: String,
     pub status: TurnStatus,
 }
 
@@ -137,6 +138,17 @@ impl SqliteState {
         )
         .execute(&self.pool)
         .await?;
+        let columns = sqlx::query("PRAGMA table_info(turn_views)")
+            .fetch_all(&self.pool)
+            .await?;
+        if !columns
+            .iter()
+            .any(|row| row.get::<String, _>("name") == "plan_text")
+        {
+            sqlx::query("ALTER TABLE turn_views ADD COLUMN plan_text TEXT NOT NULL DEFAULT ''")
+                .execute(&self.pool)
+                .await?;
+        }
         Ok(())
     }
 
@@ -424,8 +436,8 @@ impl SqliteState {
         sqlx::query(
             "INSERT INTO turn_views (\
                 session_id, turn_id, channel, conversation_id, message_id, owner_id, \
-                user_text, agent_text, status\
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) \
+                user_text, agent_text, plan_text, status\
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) \
              ON CONFLICT(session_id, turn_id) DO UPDATE SET \
                 channel = excluded.channel, \
                 conversation_id = excluded.conversation_id, \
@@ -433,6 +445,7 @@ impl SqliteState {
                 owner_id = excluded.owner_id, \
                 user_text = excluded.user_text, \
                 agent_text = excluded.agent_text, \
+                plan_text = excluded.plan_text, \
                 status = excluded.status, \
                 updated_at = unixepoch()",
         )
@@ -444,6 +457,7 @@ impl SqliteState {
         .bind(&view.owner_id)
         .bind(&view.user_text)
         .bind(&view.agent_text)
+        .bind(&view.plan_text)
         .bind(turn_status_name(&view.status))
         .execute(&self.pool)
         .await?;
@@ -453,7 +467,7 @@ impl SqliteState {
     pub(crate) async fn list_turn_views(&self) -> Result<Vec<StoredTurnView>, sqlx::Error> {
         let rows = sqlx::query(
             "SELECT session_id, turn_id, channel, conversation_id, message_id, owner_id, \
-                    user_text, agent_text, status \
+                    user_text, agent_text, plan_text, status \
              FROM turn_views ORDER BY updated_at",
         )
         .fetch_all(&self.pool)
@@ -475,6 +489,7 @@ impl SqliteState {
                     owner_id: row.get("owner_id"),
                     user_text: row.get("user_text"),
                     agent_text: row.get("agent_text"),
+                    plan_text: row.get("plan_text"),
                     status,
                 })
             })

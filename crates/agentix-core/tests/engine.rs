@@ -4056,3 +4056,291 @@ async fn stream_and_working_timer_share_the_channel_interval_but_completion_flus
 
 #[path = "support/task_board.rs"]
 mod task_board;
+
+#[tokio::test]
+async fn completed_plan_is_shown_in_im_without_streaming_deltas() {
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent,
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::ItemCompleted {
+            session_id: "thr_a".into(),
+            turn_id: "turn_plan".into(),
+            item: ItemSummary {
+                id: "plan_a".into(),
+                kind: "plan".into(),
+                text: Some(
+                    "# Implementation plan\n1. Add regression coverage.\n2. Fix delivery.".into(),
+                ),
+                status: None,
+            },
+        })
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::TurnCompleted {
+            session_id: "thr_a".into(),
+            turn_id: "turn_plan".into(),
+            status: TurnStatus::Completed,
+            error: None,
+        })
+        .await
+        .unwrap();
+    let view = channel.sent().last().unwrap().1.clone();
+    assert!(view.body.contains("# Implementation plan"), "{}", view.body);
+    assert!(view.body.contains("2. Fix delivery."));
+}
+
+#[tokio::test]
+async fn completed_plan_offers_execute_or_keep_planning_without_starting_automatically() {
+    for (choice, enabled) in [("Implement plan", false), ("Keep planning", true)] {
+        let agent = Arc::new(FakeAgent::new());
+        let channel = Arc::new(FakeChannel::default());
+        let engine = Engine::new(
+            agent.clone(),
+            SqliteState::in_memory().await.unwrap(),
+            vec![channel.clone()],
+        );
+        engine
+            .handle_inbound(inbound_as("chat-a", "owner-42", "/attach thr_a"))
+            .await
+            .unwrap();
+        engine
+            .handle_agent_event(AgentEvent::ItemCompleted {
+                session_id: "thr_a".into(),
+                turn_id: "turn_plan".into(),
+                item: ItemSummary {
+                    id: "plan".into(),
+                    kind: "plan".into(),
+                    text: Some("Build the selected strategy.".into()),
+                    status: None,
+                },
+            })
+            .await
+            .unwrap();
+        engine
+            .handle_agent_event(AgentEvent::TurnCompleted {
+                session_id: "thr_a".into(),
+                turn_id: "turn_plan".into(),
+                status: TurnStatus::Completed,
+                error: None,
+            })
+            .await
+            .unwrap();
+        let view = channel.sent().last().unwrap().1.clone();
+        assert_eq!(
+            view.actions
+                .iter()
+                .map(|a| a.label.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Implement plan", "Keep planning"]
+        );
+        assert!(!agent.calls().iter().any(|call| call.starts_with("start:")));
+        let token = view
+            .actions
+            .iter()
+            .find(|a| a.label == choice)
+            .unwrap()
+            .token
+            .clone();
+        click_action(&engine, "choose-plan-strategy", token.clone()).await;
+        assert!(agent.calls().iter().any(|call| call.starts_with(&format!("command:thr_a:Plan {{ enabled: {enabled},"))));
+        assert_eq!(
+            agent.calls().iter().any(|call| call.starts_with("start:")),
+            !enabled
+        );
+        assert!(matches!(
+            engine
+                .handle_inbound(InboundEnvelope::action(
+                    "repeat-plan",
+                    ConversationRef::new(ChannelKind::Telegram, "chat-a"),
+                    "owner-42",
+                    token
+                ))
+                .await,
+            Err(EngineError::InvalidAction)
+        ));
+    }
+}
+
+#[tokio::test]
+async fn plan_survives_later_agent_commentary_and_restart() {
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel::default());
+    let state = SqliteState::in_memory().await.unwrap();
+    let engine = Engine::new(agent.clone(), state.clone(), vec![channel.clone()]);
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::ItemCompleted {
+            session_id: "thr_a".into(),
+            turn_id: "turn_plan".into(),
+            item: ItemSummary {
+                id: "plan".into(),
+                kind: "plan".into(),
+                text: Some("Authoritative plan.".into()),
+                status: None,
+            },
+        })
+        .await
+        .unwrap();
+    drop(engine);
+    let engine = Engine::new(agent, state, vec![channel.clone()]);
+    engine.restore_bindings().await.unwrap();
+    engine
+        .handle_agent_event(AgentEvent::ItemCompleted {
+            session_id: "thr_a".into(),
+            turn_id: "turn_plan".into(),
+            item: ItemSummary {
+                id: "message".into(),
+                kind: "agentMessage".into(),
+                text: Some("Ready for your decision.".into()),
+                status: None,
+            },
+        })
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::TurnCompleted {
+            session_id: "thr_a".into(),
+            turn_id: "turn_plan".into(),
+            status: TurnStatus::Completed,
+            error: None,
+        })
+        .await
+        .unwrap();
+    let view = channel.sent().last().unwrap().1.clone();
+    assert!(view.body.contains("Authoritative plan."), "{}", view.body);
+    assert!(view.body.contains("Ready for your decision."));
+    assert_eq!(view.actions.len(), 2);
+}
+
+#[tokio::test]
+async fn final_plan_replaces_streamed_draft_and_old_choices_expire_on_new_turn() {
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound_as("chat-a", "owner-42", "/attach thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::PlanDelta {
+            session_id: "thr_a".into(),
+            turn_id: "turn_plan".into(),
+            item_id: "plan".into(),
+            delta: "Draft strategy.".into(),
+        })
+        .await
+        .unwrap();
+    assert!(
+        channel
+            .sent()
+            .last()
+            .unwrap()
+            .1
+            .body
+            .contains("Draft strategy.")
+    );
+    engine
+        .handle_agent_event(AgentEvent::ItemCompleted {
+            session_id: "thr_a".into(),
+            turn_id: "turn_plan".into(),
+            item: ItemSummary {
+                id: "plan".into(),
+                kind: "plan".into(),
+                text: Some("Final strategy.".into()),
+                status: None,
+            },
+        })
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::TurnCompleted {
+            session_id: "thr_a".into(),
+            turn_id: "turn_plan".into(),
+            status: TurnStatus::Completed,
+            error: None,
+        })
+        .await
+        .unwrap();
+    let view = channel.sent().last().unwrap().1.clone();
+    assert!(view.body.contains("Final strategy."));
+    assert!(!view.body.contains("Draft strategy."));
+    let token = view.actions[0].token.clone();
+    engine
+        .handle_agent_event(AgentEvent::TurnStarted {
+            session_id: "thr_a".into(),
+            turn_id: "turn_new".into(),
+        })
+        .await
+        .unwrap();
+    assert!(matches!(
+        engine
+            .handle_inbound(InboundEnvelope::action(
+                "stale-plan",
+                ConversationRef::new(ChannelKind::Telegram, "chat-a"),
+                "owner-42",
+                token
+            ))
+            .await,
+        Err(EngineError::InvalidAction)
+    ));
+    assert!(!agent.calls().iter().any(|call| call.starts_with("start:")));
+}
+
+#[tokio::test]
+async fn failed_and_interrupted_plans_do_not_offer_execution() {
+    for status in [TurnStatus::Failed, TurnStatus::Interrupted] {
+        let agent = Arc::new(FakeAgent::new());
+        let channel = Arc::new(FakeChannel::default());
+        let engine = Engine::new(
+            agent,
+            SqliteState::in_memory().await.unwrap(),
+            vec![channel.clone()],
+        );
+        engine
+            .handle_inbound(inbound("chat-a", "/attach thr_a"))
+            .await
+            .unwrap();
+        engine
+            .handle_agent_event(AgentEvent::ItemCompleted {
+                session_id: "thr_a".into(),
+                turn_id: "turn_plan".into(),
+                item: ItemSummary {
+                    id: "plan".into(),
+                    kind: "plan".into(),
+                    text: Some("Incomplete plan.".into()),
+                    status: None,
+                },
+            })
+            .await
+            .unwrap();
+        engine
+            .handle_agent_event(AgentEvent::TurnCompleted {
+                session_id: "thr_a".into(),
+                turn_id: "turn_plan".into(),
+                status,
+                error: None,
+            })
+            .await
+            .unwrap();
+        let view = channel.sent().last().unwrap().1.clone();
+        assert!(view.body.contains("Incomplete plan."));
+        assert!(view.actions.is_empty());
+    }
+}

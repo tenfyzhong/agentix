@@ -84,6 +84,8 @@ Replying to a Telegram or Feishu message adds the earlier message as quoted cont
 
 ## Interactive requests
 
+Codex proposed plans stream into the IM turn message. The completed plan replaces its streamed draft and remains visible alongside later agent replies, in history, and across an Agentix restart during the turn. When an attached, writable session finishes a plan successfully, the message offers `Implement plan` and `Keep planning`. Implement switches to default mode and sends a request to execute the plan; Keep planning leaves the session in plan mode for your next message. No execution starts without your choice. Starting another turn invalidates the previous plan buttons.
+
 Agentix renders Codex approval and plan-input requests as separate actionable messages. After an approval decision, Agentix removes or disables the original controls and shows the result in place.
 
 For multi-question input, Agentix presents one question at a time with option buttons and an `Other…` free-text path. It submits all answers together and replaces the controls with an answer summary. If the request is resolved in Codex CLI, Agentix marks the IM request as resolved outside the chat because the app-server notification does not include the selected decision or answers.
