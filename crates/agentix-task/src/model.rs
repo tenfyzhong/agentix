@@ -250,6 +250,7 @@ pub struct Snapshot {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct QueryContext {
+    pub(crate) done_dependencies: Option<std::collections::BTreeSet<String>>,
     pub(crate) cancelled_inboxes:
         std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
     pub(crate) names: std::collections::BTreeMap<(String, String), Vec<(String, String)>>,
@@ -324,6 +325,21 @@ impl InboxEntry {
 }
 
 impl Snapshot {
+    /// Check dependency state from the same snapshot, including scoped SQL summaries.
+    #[must_use]
+    pub fn dependencies_done(&self, task: &Task) -> bool {
+        task.dependencies.iter().all(|id| {
+            self.query_context.done_dependencies.as_ref().map_or_else(
+                || {
+                    self.tasks
+                        .iter()
+                        .any(|t| t.id == *id && t.status == TaskStatus::Done)
+                },
+                |done| done.contains(id),
+            )
+        })
+    }
+
     pub fn project_index(&self, id: &str) -> Result<usize> {
         resolve(
             self.projects

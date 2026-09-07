@@ -167,3 +167,44 @@ async fn session_board_keeps_expired_lease_associations_and_excludes_archives() 
         .unwrap();
     }
 }
+
+#[tokio::test]
+async fn task_detail_reads_dependency_status_without_dependency_bodies() {
+    let f = Fixture::new("markdown").await;
+    let dependency = f.task("Dependency").await;
+    let task = f.task("Dependent").await;
+    f.service
+        .execute(
+            json!({"command":"task.depend","task":task,"dependency":dependency}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    let mut conn = connection(&f).await;
+    sqlx::query("UPDATE tasks SET data=json_remove(data,'$.title') WHERE id=?")
+        .bind(&dependency)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    let state = f
+        .service
+        .store()
+        .browse_snapshot(BrowseScope::Task(&task))
+        .await
+        .unwrap();
+    assert_eq!(state.tasks.len(), 1);
+    assert!(!state.dependencies_done(&state.tasks[0]));
+    sqlx::query("UPDATE tasks SET data=json_set(data,'$.status','DONE') WHERE id=?")
+        .bind(&dependency)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    let state = f
+        .service
+        .store()
+        .browse_snapshot(BrowseScope::Task(&task))
+        .await
+        .unwrap();
+    assert_eq!(state.tasks.len(), 1);
+    assert!(state.dependencies_done(&state.tasks[0]));
+}

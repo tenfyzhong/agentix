@@ -545,29 +545,30 @@ impl Store {
                 "invalid task status"
             );
         }
-        let mut query =
-            sqlx::QueryBuilder::<sqlx::Sqlite>::new("SELECT t.data FROM tasks t WHERE 1=1");
-        if let Some(job) = job {
-            query.push(" AND t.job_id=").push_bind(job);
-        }
-        if let Some(project) = project {
-            query
-                .push(" AND json_extract(t.data,'$.project_id')=")
-                .push_bind(project);
-        }
-        if let Some(status) = status {
-            query
-                .push(" AND json_extract(t.data,'$.status')=")
-                .push_bind(status);
-        }
-        if ready {
-            query.push(" AND json_extract(t.data,'$.status')='TODO' AND NOT EXISTS (SELECT 1 FROM json_each(t.data,'$.dependencies') d WHERE NOT EXISTS (SELECT 1 FROM tasks dependency WHERE dependency.id=d.value AND json_extract(dependency.data,'$.status')='DONE'))");
-        }
-        query.push(" ORDER BY t.rowid");
-        let rows: Vec<String> = query.build_query_scalar().fetch_all(&mut *tx).await?;
-        rows.into_iter()
-            .map(|row| serde_json::from_str(&row).map_err(Into::into))
-            .collect()
+        read_tasks(&mut tx, job, project, status, ready, None).await
+    }
+
+    /// The legacy IM list gives Job identifiers precedence over Project identifiers.
+    pub async fn legacy_tasks(&self, filter: Option<&str>, limit: u32) -> Result<Vec<crate::Task>> {
+        let mut tx = self.pool.begin().await?;
+        let (job, project) = match filter {
+            Some(filter) => match resolve(&mut tx, "jobs", filter).await {
+                Ok(id) => (Some(id), None),
+                Err(_) => (None, Some(resolve(&mut tx, "projects", filter).await?)),
+            },
+            None => (None, None),
+        };
+        read_tasks(&mut tx, job, project, None, false, Some(limit)).await
+    }
+
+    /// Read an exact Task ID's lease for action ownership checks.
+    pub async fn task_lease(&self, id: &str) -> Result<Option<crate::Lease>> {
+        let row: Option<String> = sqlx::query_scalar("SELECT data FROM task_leases WHERE id=?")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await?;
+        row.map(|row| serde_json::from_str(&row).map_err(Into::into))
+            .transpose()
     }
 
     pub async fn projects(&self) -> Result<Vec<crate::Project>> {
@@ -580,6 +581,41 @@ impl Store {
         self.request_snapshot(&json!({"command":"inbox.sync","project":project}))
             .await
     }
+}
+
+async fn read_tasks(
+    conn: &mut SqliteConnection,
+    job: Option<String>,
+    project: Option<String>,
+    status: Option<&str>,
+    ready: bool,
+    limit: Option<u32>,
+) -> Result<Vec<crate::Task>> {
+    let mut query = sqlx::QueryBuilder::<sqlx::Sqlite>::new("SELECT t.data FROM tasks t WHERE 1=1");
+    if let Some(job) = job {
+        query.push(" AND t.job_id=").push_bind(job);
+    }
+    if let Some(project) = project {
+        query
+            .push(" AND json_extract(t.data,'$.project_id')=")
+            .push_bind(project);
+    }
+    if let Some(status) = status {
+        query
+            .push(" AND json_extract(t.data,'$.status')=")
+            .push_bind(status);
+    }
+    if ready {
+        query.push(" AND json_extract(t.data,'$.status')='TODO' AND NOT EXISTS (SELECT 1 FROM json_each(t.data,'$.dependencies') d WHERE NOT EXISTS (SELECT 1 FROM tasks dependency WHERE dependency.id=d.value AND json_extract(dependency.data,'$.status')='DONE'))");
+    }
+    query.push(" ORDER BY t.rowid");
+    if let Some(limit) = limit {
+        query.push(" LIMIT ").push_bind(i64::from(limit));
+    }
+    let rows: Vec<String> = query.build_query_scalar().fetch_all(conn).await?;
+    rows.into_iter()
+        .map(|row| serde_json::from_str(&row).map_err(Into::into))
+        .collect()
 }
 
 #[cfg(test)]

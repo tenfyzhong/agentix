@@ -1,4 +1,6 @@
 //! Read-only scopes for IM browsing; never load Plan or Inbox bodies.
+use std::collections::BTreeSet;
+
 use anyhow::Result;
 use sqlx::Row;
 
@@ -86,13 +88,23 @@ impl Store {
             scope.job_tasks(&mut tx).await?;
         }
         scope.parents(&mut tx).await?;
-        let state = Snapshot {
+        let mut state = Snapshot {
             projects: entities(&mut tx, "projects", &scope.projects).await?,
             jobs: entities(&mut tx, "jobs", &scope.jobs).await?,
             tasks: entities(&mut tx, "tasks", &scope.tasks).await?,
             leases: entities(&mut tx, "task_leases", &scope.tasks).await?,
             ..Snapshot::default()
         };
+        if matches!(selection, BrowseScope::Task(_)) {
+            let dependencies: BTreeSet<_> = state
+                .tasks
+                .iter()
+                .flat_map(|t| t.dependencies.iter())
+                .collect();
+            state.query_context.done_dependencies = Some(ids(&mut tx,
+                "SELECT id FROM tasks WHERE id IN (SELECT value FROM json_each(?)) AND json_extract(data,'$.status')='DONE'",
+                &serde_json::to_string(&dependencies)?).await?);
+        }
         tx.commit().await?;
         Ok(state)
     }
