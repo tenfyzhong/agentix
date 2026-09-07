@@ -137,6 +137,8 @@ File events are monitored only inside the configured `documents.directory`, incl
 | Job | PENDING_REVIEW → ACTIVE | reject; Task states are preserved |
 | Job | CANCELLED | cancel from an eligible unfinished Job |
 
+Status values must be uppercase strings. Leading and trailing whitespace, including newlines saved by the Obsidian property editor, is trimmed before applying the transition. Accepted edits are written back with the canonical status; changing only whitespace does not issue a state-changing command.
+
 Commands requiring a reason receive `Status changed in Obsidian: OLD -> NEW`. All other transitions are rejected. The plugin never claims Tasks or reads lease tokens. Task edits against an active agent lease fail safely.
 
 ### Inbox checkbox edits

@@ -209,6 +209,72 @@ fn taskcli_sync_and_dual_boards_in_desktop() {
 
 #[test]
 #[ignore = "requires an open TASKCLI_OBSIDIAN_VAULT with TaskNotes enabled"]
+fn whitespace_job_cancellation_preserves_terminal_tasks_in_desktop() {
+    let _guard = DESKTOP_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let vault = std::env::var("TASKCLI_OBSIDIAN_VAULT").expect("choose the test vault");
+    let (f, project) = desktop_fixture(&vault, "obsidian");
+    let (job, _) = desktop_finished_job(&f, &project, "Whitespace cancellation");
+    f.cli(&["job", "reject", &job, "--reason", "Add cancelled work"]);
+    let cancelled = f.cli(&["task", "add", "--job", &job, "--title", "Cancelled work"]);
+    f.cli(&["task", "cancel", cancelled["id"].as_str().unwrap()]);
+    f.cli(&[
+        "job",
+        "reject",
+        &job,
+        "--reason",
+        "Keep active for cancellation",
+    ]);
+    assert_eq!(f.cli(&["job", "show", &job])["status"], "ACTIVE");
+    let before = f.cli(&["task", "list", "--job", &job]);
+    let task_history = || {
+        f.cli(&["event", "list", "--job", &job, "--limit", "1000"])["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|event| event["task_id"].is_string())
+            .cloned()
+            .collect::<Vec<_>>()
+    };
+    let history_before = task_history();
+    assert!(!history_before.is_empty());
+    let path = f.cli(&["obsidian", "show", &job])["path"].clone();
+    load_sync_plugin(&f);
+    wait_for(
+        &vault,
+        &format!(
+            "app.metadataCache.getFileCache(app.vault.getAbstractFileByPath({path}))?.frontmatter?.status"
+        ),
+        |status| status == "ACTIVE",
+    );
+    obsidian(
+        &vault,
+        &format!(
+            "app.fileManager.processFrontMatter(app.vault.getAbstractFileByPath({path}), fm=>{{fm.status={};}})",
+            json!("CANCELLED\n")
+        ),
+    );
+    let lookup = format!(
+        "[...window.taskcliSyncSmoke.engine.notes.values()].find(n=>n.id==={})?.status",
+        json!(job)
+    );
+    wait_for(&vault, &lookup, |status| status == "CANCELLED");
+    assert_eq!(f.cli(&["job", "show", &job])["status"], "CANCELLED");
+    assert_eq!(f.cli(&["task", "list", "--job", &job]), before);
+    assert_eq!(task_history(), history_before);
+    wait_for(
+        &vault,
+        &format!(
+            "app.metadataCache.getFileCache(app.vault.getAbstractFileByPath({path}))?.frontmatter?.status"
+        ),
+        |status| status == "CANCELLED",
+    );
+    assert_eq!(obsidian(&vault, "window.taskcliSmokeNotices"), json!([]));
+}
+
+#[test]
+#[ignore = "requires an open TASKCLI_OBSIDIAN_VAULT with TaskNotes enabled"]
 fn inbox_checkbox_sync_in_desktop() {
     let _guard = DESKTOP_LOCK
         .lock()

@@ -199,14 +199,15 @@ class SyncEngine {
             return;
         }
         const previous = this.pending.get(filePath);
-        if (previous && equal(previous.target, properties.status) &&
+        if (previous && equal(previous.rawTarget, properties.status) &&
             previous.revision === properties.revision) return;
         const generation = (this.generations.get(filePath) || 0) + 1;
         this.generations.set(filePath, generation);
         this.pending.set(filePath, {
             ...note, kind, id: properties.id, path: filePath, filePath: inboxFile || note?.filePath,
             project_id: properties.project_id || note?.project_id,
-            revision: properties.revision, target: properties.status, reconcileOnly,
+            revision: properties.revision, rawTarget: properties.status,
+            target: typeof properties.status === "string" ? properties.status.trim() : properties.status, reconcileOnly,
             generation, key: randomUUID(), ready: false,
         });
         clearTimeout(this.timers.get(filePath));
@@ -355,7 +356,7 @@ class SyncEngine {
         if (this.disposed || (intent && this.generations.get(note.path) !== intent.generation)) return;
         const file = await this.io.read(note.filePath || note.path, note);
         if (!file || file.id !== note.id || file.revision > note.revision) return;
-        if (intent && ![intent.target, intent.status, note.status].some((status) => equal(status, file.status))) {
+        if (intent && ![intent.rawTarget, intent.target, intent.status, note.status].some((status) => equal(status, file.status))) {
             this.observe(note.path, file);
             return;
         }

@@ -57,6 +57,98 @@ test("Obsidian mappings preserve task leases and explicitly route Job review", (
     assert.throws(() => commandFor({ ...job, status: "ACTIVE" }, "COMPLETED"));
 });
 
+async function jobFixture(t) {
+    const f = await fixture();
+    t.after(() => f.engine.dispose());
+    Object.assign(f.row, { kind: "job", id: "job_one", status: "ACTIVE" });
+    f.row.properties.status = "ACTIVE";
+    Object.assign(f.files.get(f.row.path), { id: "job_one", status: "ACTIVE" });
+    await f.engine.initialize();
+    return f;
+}
+
+test("Obsidian cancels Jobs with canonical or whitespace-padded status strings", async (t) => {
+    for (const target of ["CANCELLED", "CANCELLED\n", " \tCANCELLED\r\n"]) {
+        await t.test(JSON.stringify(target), async (t) => {
+            const f = await jobFixture(t);
+            f.edit(target);
+            await f.engine.flush();
+            assert.equal(f.calls.length, 1);
+            assert.deepEqual(f.calls[0].slice(0, 3), ["job", "cancel", "job_one"]);
+            assert.equal(f.row.status, "CANCELLED");
+            assert.equal(f.files.get(f.row.path).status, "CANCELLED");
+            assert.deepEqual(f.notices, []);
+            await f.engine.flush();
+            assert.equal(f.calls.length, 1);
+        });
+    }
+});
+
+test("Obsidian restores rejected padded Job edits without replaying them", async (t) => {
+    const f = await jobFixture(t);
+    let attempts = 0;
+    f.io.execute = async () => { attempts++; throw new Error("active lease"); };
+    f.edit("CANCELLED\n");
+    await f.engine.flush();
+    assert.equal(attempts, 1);
+    assert.equal(f.files.get(f.row.path).status, "ACTIVE");
+    assert.match(f.notices[0], /active lease/);
+    await f.engine.flush();
+    assert.equal(attempts, 1);
+    assert.equal(f.engine.pending.size, 0);
+});
+
+test("Obsidian preserves a newer edit while padded cancellation is rejected", async (t) => {
+    const f = await jobFixture(t);
+    let release, entered;
+    const started = new Promise((resolve) => { entered = resolve; });
+    f.io.execute = async (args) => {
+        f.calls.push(copy(args));
+        if (args[1] === "cancel") {
+            entered();
+            await new Promise((resolve) => { release = resolve; });
+            throw new Error("active lease");
+        }
+        assert.equal(args[1], "submit");
+        f.row.status = "PENDING_REVIEW";
+        f.row.properties.status = "PENDING_REVIEW";
+        f.row.revision++;
+        return { result: copy(f.row) };
+    };
+    f.edit("CANCELLED\n");
+    const pending = f.engine.flush();
+    await started;
+    f.edit(" PENDING_REVIEW\n");
+    release();
+    await pending;
+    await f.engine.flush();
+    assert.deepEqual(f.calls.map((args) => args[1]), ["cancel", "submit"]);
+    assert.equal(f.files.get(f.row.path).status, "PENDING_REVIEW");
+    assert.equal(f.engine.pending.size, 0);
+});
+
+test("Obsidian normalizes unchanged Job status without a mutation", async (t) => {
+    const f = await jobFixture(t);
+    f.edit(" ACTIVE\n");
+    await f.engine.flush();
+    assert.equal(f.calls.length, 0);
+    assert.equal(f.files.get(f.row.path).status, "ACTIVE");
+    assert.deepEqual(f.notices, []);
+});
+
+test("Obsidian keeps status case and type validation", async (t) => {
+    for (const target of ["cancelled\n", ["CANCELLED"], null, 1]) {
+        await t.test(JSON.stringify(target), async (t) => {
+            const f = await jobFixture(t);
+            f.edit(target);
+            await f.engine.flush();
+            assert.equal(f.calls.length, 0);
+            assert.equal(f.files.get(f.row.path).status, "ACTIVE");
+            assert.match(f.notices[0], /Unsupported job transition/);
+        });
+    }
+});
+
 test("Obsidian debounces edits, fences revisions, and ignores CLI projection echoes", async (t) => {
     const f = await fixture(); t.after(() => f.engine.dispose());
     f.edit("BLOCKED"); f.edit("WAITING_USER");
