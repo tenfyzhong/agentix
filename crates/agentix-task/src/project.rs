@@ -1,10 +1,9 @@
 use std::{
-    collections::BTreeSet,
     path::{Path, PathBuf},
     process::Command,
 };
 
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result};
 
 use crate::{Project, Service};
 
@@ -52,12 +51,11 @@ impl Service {
         cwd: Option<&Path>,
         session: Option<&str>,
     ) -> Result<Option<Project>> {
-        let state = self.store().snapshot().await?;
         if let Some(cwd) = cwd.filter(|p| p.is_dir()) {
             let (root, _, git) = directory_identity(cwd)?;
-            let mut candidates: Vec<_> = state
-                .projects
-                .iter()
+            let projects = self.store().projects().await?;
+            return Ok(projects
+                .into_iter()
                 .filter(|p| {
                     let registered = Path::new(&p.root)
                         .canonicalize()
@@ -68,37 +66,11 @@ impl Service {
                         root.starts_with(registered)
                     }
                 })
-                .collect();
-            candidates.sort_by_key(|p| std::cmp::Reverse(Path::new(&p.root).components().count()));
-            return Ok(candidates.first().map(|p| (*p).clone()));
+                .min_by_key(|p| std::cmp::Reverse(Path::new(&p.root).components().count())));
         }
         let Some(session) = session else {
             return Ok(None);
         };
-        let ids: BTreeSet<_> = state
-            .tasks
-            .iter()
-            .filter(|t| t.last_session.as_deref() == Some(session))
-            .map(|t| &t.project_id)
-            .chain(
-                state
-                    .jobs
-                    .iter()
-                    .filter(|j| j.session_id.as_deref() == Some(session))
-                    .map(|j| &j.project_id),
-            )
-            .chain(
-                state
-                    .inboxes
-                    .iter()
-                    .filter(|e| e.last_session.as_deref() == Some(session))
-                    .map(|e| &e.project_id),
-            )
-            .collect();
-        ensure!(
-            ids.len() <= 1,
-            "ambiguous Project for this session; select a registered project directory"
-        );
-        Ok(state.projects.iter().find(|p| ids.contains(&p.id)).cloned())
+        self.store().session_project(session).await
     }
 }

@@ -55,6 +55,211 @@ async fn unreadable_other_job(f: &Fixture) {
 }
 
 #[tokio::test]
+async fn session_project_without_context_does_not_read_records() {
+    let f = Fixture::new("obsidian").await;
+    unreadable_other_job(&f).await;
+    for cwd in [None, Some(f.dir.path().join("missing"))] {
+        let result = f.service.project_for_session(cwd.as_deref(), None).await;
+        assert!(result.is_ok(), "no context needs no records: {result:?}");
+        assert!(result.unwrap().is_none());
+    }
+}
+
+#[tokio::test]
+async fn session_project_by_directory_does_not_read_job_or_task_records() {
+    let f = Fixture::new("obsidian").await;
+    unreadable_other_job(&f).await;
+    let result = f
+        .service
+        .project_for_session(Some(f.dir.path()), None)
+        .await;
+    assert!(
+        result.is_ok(),
+        "directory lookup needs only Projects: {result:?}"
+    );
+    assert_eq!(result.unwrap().unwrap().id, f.project);
+}
+
+#[tokio::test]
+async fn session_project_history_does_not_deserialize_unrelated_records() {
+    let f = Fixture::new("obsidian").await;
+    let task = f.task("Historical association").await;
+    f.claim(&task, "target").await;
+    unreadable_other_job(&f).await;
+    for (session, expected) in [("target", Some(f.project.as_str())), ("unknown", None)] {
+        let result = f.service.project_for_session(None, Some(session)).await;
+        assert!(
+            result.is_ok(),
+            "history must use session indexes: {result:?}"
+        );
+        assert_eq!(result.unwrap().map(|p| p.id).as_deref(), expected);
+    }
+}
+
+#[tokio::test]
+async fn session_project_history_combines_and_deduplicates_sources() {
+    let f = Fixture::new("obsidian").await;
+    let task = f.task("Task history").await;
+    let inbox = f
+        .service
+        .execute(
+            json!({"command":"inbox.add","project":f.project,"content":"Inbox history"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap()
+        .result["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let associations = [
+        ("tasks", "last_session", task.as_str()),
+        ("jobs", "session_id", f.job.as_str()),
+        ("inbox_entries", "last_session", inbox.as_str()),
+    ];
+    let mut conn = connection(&f).await;
+    for (table, field, id) in associations {
+        sqlx::query(&format!(
+            "UPDATE {table} SET data=json_set(data,'$.{field}','target') WHERE id=?"
+        ))
+        .bind(id)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+        assert_eq!(
+            f.service
+                .project_for_session(None, Some("target"))
+                .await
+                .unwrap()
+                .unwrap()
+                .id,
+            f.project
+        );
+        sqlx::query(&format!(
+            "UPDATE {table} SET data=json_remove(data,'$.{field}') WHERE id=?"
+        ))
+        .bind(id)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    }
+    // Multiple matching records in the same Project are not ambiguous.
+    for (table, field, id) in associations {
+        sqlx::query(&format!(
+            "UPDATE {table} SET data=json_set(data,'$.{field}','target') WHERE id=?"
+        ))
+        .bind(id)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    }
+    assert_eq!(
+        f.service
+            .project_for_session(None, Some("target"))
+            .await
+            .unwrap()
+            .unwrap()
+            .id,
+        f.project
+    );
+}
+
+#[tokio::test]
+async fn session_project_history_rejects_ambiguity_but_defers_to_directory() {
+    let f = Fixture::new("obsidian").await;
+    let task = f.task("Task history").await;
+    f.claim(&task, "target").await;
+    let other_dir = tempfile::tempdir().unwrap();
+    let project = f
+        .service
+        .execute(
+            json!({"command":"project.register","name":"Other","root":other_dir.path()}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap()
+        .result["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    f.service
+        .execute(
+            json!({"command":"job.create","project":project,"title":"Other history"}),
+            WriteOptions {
+                actor_ref: "agent:test".into(),
+                session_ref: Some("target".into()),
+                ..WriteOptions::default()
+            },
+        )
+        .await
+        .unwrap();
+    let error = f
+        .service
+        .project_for_session(None, Some("target"))
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("ambiguous Project"), "{error:#}");
+    // A known directory takes priority even when session history is ambiguous.
+    assert_eq!(
+        f.service
+            .project_for_session(Some(f.dir.path()), Some("target"))
+            .await
+            .unwrap()
+            .unwrap()
+            .id,
+        f.project
+    );
+}
+
+#[tokio::test]
+async fn session_project_directory_uses_the_closest_registered_ancestor() {
+    let f = Fixture::new("markdown").await;
+    let nested = f.dir.path().join("nested");
+    let cwd = nested.join("working");
+    fs::create_dir_all(&cwd).unwrap();
+    let project = f
+        .service
+        .execute(
+            json!({"command":"project.register","name":"Nested","root":nested}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap()
+        .result["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let task = f.task("Outer history").await;
+    f.claim(&task, "target").await;
+    assert_eq!(
+        f.service
+            .project_for_session(Some(&cwd), Some("target"))
+            .await
+            .unwrap()
+            .unwrap()
+            .id,
+        project
+    );
+    let unknown = tempfile::tempdir().unwrap();
+    assert!(
+        f.service
+            .project_for_session(Some(unknown.path()), Some("target"))
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        f.service
+            .project_for_session(Some(&unknown.path().join("missing")), Some("target"))
+            .await
+            .unwrap()
+            .unwrap()
+            .id,
+        f.project
+    );
+}
+
+#[tokio::test]
 async fn targeted_events_do_not_deserialize_unrelated_records() {
     let f = Fixture::new("obsidian").await;
     let expected = f

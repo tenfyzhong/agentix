@@ -10,6 +10,12 @@ use sqlx::{Row, SqliteConnection};
 
 use crate::{Snapshot, Store, mutations::required};
 
+const SESSION_PROJECTS_QUERY: &str = "SELECT DISTINCT project_id FROM (
+    SELECT json_extract(data,'$.project_id') AS project_id FROM tasks WHERE json_extract(data,'$.last_session')=?1
+    UNION ALL SELECT project_id FROM jobs WHERE json_extract(data,'$.session_id')=?1
+    UNION ALL SELECT project_id FROM inbox_entries WHERE json_extract(data,'$.last_session')=?1
+) LIMIT 2";
+
 pub(crate) async fn ids(
     conn: &mut SqliteConnection,
     query: &str,
@@ -426,6 +432,17 @@ async fn load_query_context(
 }
 
 impl Store {
+    pub(crate) async fn session_project(&self, session: &str) -> Result<Option<crate::Project>> {
+        let mut tx = self.pool.begin().await?;
+        // Two distinct IDs are enough to reject an ambiguous association.
+        let projects = ids(&mut tx, SESSION_PROJECTS_QUERY, session).await?;
+        ensure!(
+            projects.len() <= 1,
+            "ambiguous Project for this session; select a registered project directory"
+        );
+        Ok(entities(&mut tx, "projects", &projects).await?.pop())
+    }
+
     pub(crate) async fn job_record(&self, id: &str) -> Result<crate::Job> {
         let mut tx = self.pool.begin().await?;
         let id = resolve(&mut tx, "jobs", id).await?;
@@ -497,5 +514,32 @@ impl Store {
     pub(crate) async fn inbox_snapshot(&self, project: &str) -> Result<Snapshot> {
         self.request_snapshot(&json!({"command":"inbox.sync","project":project}))
             .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn session_project_history_uses_all_three_session_indexes() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("tasks.sqlite3"))
+            .await
+            .unwrap();
+        let rows = sqlx::query(&format!("EXPLAIN QUERY PLAN {SESSION_PROJECTS_QUERY}"))
+            .bind("target")
+            .fetch_all(&store.pool)
+            .await
+            .unwrap();
+        let details: Vec<String> = rows.iter().map(|row| row.get("detail")).collect();
+        for index in ["tasks_by_session", "jobs_by_session", "inbox_by_session"] {
+            assert!(
+                details
+                    .iter()
+                    .any(|detail| detail.contains("SEARCH") && detail.contains(index)),
+                "Session history must seek through {index}: {details:?}"
+            );
+        }
     }
 }

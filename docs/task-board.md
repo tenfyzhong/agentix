@@ -85,6 +85,8 @@ One `/inbox` message appends one `TODO` entry, preserving newlines, internal spa
 
 Project resolution uses the attached session's directory and Git common directory, including worktrees. Without an available directory, a unique recorded Project association is required. Missing or ambiguous associations must be resolved by attaching the correct session; IM does not register or guess Projects. Navigation remains scoped to the owner, conversation, and attachment epoch, so switching sessions invalidates old buttons.
 
+Directory resolution reads only Project records and selects the closest registered ancestor for non-Git directories. Historical resolution uses the existing Task, Job, and Inbox session indexes to find up to two distinct Project IDs; it loads only the matching Project when the association is unique. Neither path loads a full database snapshot, and calls without a usable directory or session return without querying the database.
+
 ## Shell completions
 
 `taskcli completions bash`, `taskcli completions zsh`, and `taskcli completions fish` print shell scripts directly, including when `--json` is present. Generation skips configuration loading and does not open or mutate the task database, so it works before `taskcli init`.
