@@ -523,6 +523,12 @@ fn exercise_status_bridge(
     wait_for(&f.vault, "!!window.taskcliSyncSmoke?.engine?.ready", |v| {
         v == true
     });
+    obsidian(&f.vault, "window.taskcliSyncSmoke.checkConnection()");
+    wait_for(
+        &f.vault,
+        "[...document.querySelectorAll('.notice')].some(el=>el.textContent.includes('Connected to taskcli.'))",
+        |v| v == true,
+    );
     obsidian(
         &f.vault,
         "(() => { const io=window.taskcliSyncSmoke.engine.io; const notice=io.notice; window.taskcliSmokeNotices=[]; io.notice=m=>{window.taskcliSmokeNotices.push(m); notice(m);}; return true;})()",

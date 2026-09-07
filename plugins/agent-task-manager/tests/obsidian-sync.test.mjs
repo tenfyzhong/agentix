@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { fixture, loadPlugin, copy } from "./support/obsidian-plugin.mjs";
+import { fixture, loadPlugin, copy, connectionFixture } from "./support/obsidian-plugin.mjs";
 
 test("Obsidian mappings preserve task leases and explicitly route Job review", () => {
     const { commandFor } = loadPlugin();
@@ -231,4 +231,48 @@ test("Obsidian preserves another note's queued edit across a full projection", a
     assert.equal(second.status, "WAITING_USER");
     assert.equal(f.files.get(second.path).status, "WAITING_USER");
     assert.equal(f.calls.length, 2);
+});
+
+test("Obsidian Connect button shows progress, then success, and enables itself again", async (t) => {
+    const f = await connectionFixture(); t.after(() => f.plugin.onunload());
+    const checking = f.button.click();
+    assert.equal(f.button.disabled, true);
+    assert.equal(f.button.text, "Checking...");
+    assert.match(f.notices[0].message, /Checking/);
+    f.reply(); await checking;
+    assert.equal(f.button.disabled, false);
+    assert.equal(f.button.text, "Connect");
+    assert.equal(f.notices[0].hidden, true);
+    assert.match(f.notices.at(-1).message, /Connected to taskcli/);
+    assert.equal(f.plugin.engine.ready, true);
+});
+
+test("Obsidian connection failure is visible and allows another attempt", async (t) => {
+    const f = await connectionFixture(); t.after(() => f.plugin.onunload());
+    const checking = f.button.click(); f.reply("Executable is unavailable"); await checking;
+    assert.equal(f.button.disabled, false);
+    assert.equal(f.button.text, "Connect");
+    assert.equal(f.notices[0].hidden, true);
+    assert.match(f.notices.at(-1).message, /Executable is unavailable/);
+    assert.equal(f.plugin.engine.ready, false);
+    const retry = f.button.click(); f.reply(); await retry;
+    assert.match(f.notices.at(-1).message, /Connected to taskcli/);
+});
+
+test("Obsidian manual connection command reports success while startup stays quiet", async (t) => {
+    const f = await connectionFixture(); t.after(() => f.plugin.onunload());
+    const startup = f.plugin.connect(); f.reply(); await startup;
+    assert.equal(f.notices.length, 0);
+    const checking = f.commands[0].callback();
+    f.reply(); await checking;
+    assert.match(f.notices.at(-1).message, /Connected to taskcli/);
+});
+
+test("Obsidian connection setup errors restore the button and surface the error", async (t) => {
+    const f = await connectionFixture(); t.after(() => f.plugin.onunload());
+    f.plugin.app.vault.adapter.getBasePath = () => { throw new Error("Vault path unavailable"); };
+    await f.button.click();
+    assert.equal(f.button.disabled, false);
+    assert.match(f.notices.at(-1).message, /Vault path unavailable/);
+    assert.equal(f.notices[0].hidden, true);
 });

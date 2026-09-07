@@ -120,7 +120,7 @@ Job archival keeps task notes in `Tasks/`, sets `archived: true`, and adds TaskN
 
 ## State changes and styling
 
-With Taskcli Sync enabled, saved frontmatter `status` edits and TaskNotes status dragging call taskcli. Configure the executable and config file in **Settings → Taskcli Sync**, then click **Connect**. Initial setup fills absolute paths and preserves user settings on later runs. The plugin is desktop-only and requires Obsidian 1.10.1 or later.
+With Taskcli Sync enabled, saved frontmatter `status` edits and TaskNotes status dragging call taskcli. Configure the executable and config file in **Settings → Taskcli Sync**, then click **Connect**. The button shows **Checking...** and is disabled during the check. A successful check reports the number of monitored notes; a failure displays its reason and allows another attempt. The command palette connection check provides the same feedback, while successful automatic startup stays quiet. Initial setup fills absolute paths and preserves user settings on later runs. The plugin is desktop-only and requires Obsidian 1.10.1 or later.
 
 ### Status edits
 

@@ -64,3 +64,58 @@ export async function fixture(overrides = {}) {
         },
     };
 }
+
+export async function connectionFixture() {
+    const notices = [], requests = [], commands = [], buttons = [];
+    let settingsTab;
+    const Plugin = loadPlugin({
+        PluginSettingTab: class { constructor() { this.containerEl = { empty() {} }; } },
+        Notice: class {
+            constructor(message) { this.message = message; this.hidden = false; notices.push(this); }
+            hide() { this.hidden = true; }
+        },
+        Setting: class {
+            setName() { return this; }
+            setDesc() { return this; }
+            addText(callback) {
+                callback({ setValue() { return this; }, onChange() { return this; } });
+                return this;
+            }
+            addButton(callback) {
+                const button = {
+                    setButtonText(value) { this.text = value; return this; },
+                    setDisabled(value) { this.disabled = value; return this; },
+                    onClick(handler) { this.click = handler; return this; },
+                };
+                buttons.push(button); callback(button); return this;
+            }
+        },
+    }, {}, {
+        "node:fs": { realpathSync: (path) => path },
+        "node:child_process": {
+            execFile(binary, args, options, callback) {
+                requests.push({ binary, args, callback });
+                return { kill() {} };
+            },
+        },
+    });
+    const plugin = new Plugin();
+    plugin.app = {
+        vault: { adapter: { getBasePath: () => "/vault" }, on() {}, getAbstractFileByPath() { return null; } },
+        metadataCache: { on() {} }, workspace: { onLayoutReady() {} },
+    };
+    plugin.loadData = async () => ({ cliPath: "/bin/taskcli", configPath: "/config.toml" });
+    plugin.addSettingTab = (tab) => { settingsTab = tab; };
+    plugin.addCommand = (command) => commands.push(command);
+    plugin.registerEvent = () => {};
+    await plugin.onload();
+    settingsTab.display();
+    return {
+        plugin, notices, requests, commands, button: buttons[0],
+        reply(error, index = requests.length - 1) {
+            requests[index].callback(error ? new Error(error) : null, JSON.stringify(error
+                ? { schema_version: 1, ok: false, error: { message: error } }
+                : { schema_version: 1, ok: true, result: { documents: { format: "obsidian", root: "/vault" }, notes: [] } }), "");
+        },
+    };
+}

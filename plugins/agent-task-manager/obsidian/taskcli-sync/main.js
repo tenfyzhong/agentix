@@ -294,7 +294,7 @@ class TaskcliSyncPlugin extends Plugin {
         this.addSettingTab(new TaskcliSettings(this.app, this));
         this.addCommand({
             id: "refresh", name: "Check connection and refresh state",
-            callback: () => void this.connect(),
+            callback: () => this.checkConnection(),
         });
         this.registerEvent(this.app.metadataCache.on("changed", (file, _data, cache) => {
             this.engine?.observe(file.path, cache.frontmatter);
@@ -354,6 +354,24 @@ class TaskcliSyncPlugin extends Plugin {
             engine.ready = false;
             engine.notify(`Taskcli sync is paused: ${error.message}`);
         }
+        return engine;
+    }
+
+    async checkConnection() {
+        if (this.checkingConnection) return;
+        this.checkingConnection = true;
+        const progress = new Notice("Checking taskcli connection...", 0);
+        try {
+            const engine = await this.connect();
+            if (engine.ready && !engine.disposed && !this.stopped) {
+                new Notice(`Connected to taskcli. Monitoring ${engine.notes.size} notes.`, 5000);
+            }
+        } catch (error) {
+            if (!this.stopped) new Notice(`Taskcli sync is paused: ${error.message}`, 10000);
+        } finally {
+            progress.hide();
+            this.checkingConnection = false;
+        }
     }
 
     onunload() {
@@ -382,7 +400,14 @@ class TaskcliSettings extends PluginSettingTab {
             });
         }
         new Setting(this.containerEl).setName("Apply settings and check connection").addButton((button) => {
-            button.setButtonText("Connect").onClick(() => this.plugin.connect());
+            button.setButtonText("Connect").onClick(async () => {
+                button.setDisabled(true).setButtonText("Checking...");
+                try {
+                    await this.plugin.checkConnection();
+                } finally {
+                    button.setDisabled(false).setButtonText("Connect");
+                }
+            });
         });
     }
 }
