@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use sqlx::SqliteConnection;
+use sqlx::{Row, SqliteConnection};
 
 use crate::{
     Snapshot, TaskEvent, WriteOptions,
@@ -149,14 +149,26 @@ pub(crate) async fn persist(
     if jobs.is_empty() && projects.is_empty() {
         return Ok(());
     }
-    let old: Option<String> =
-        sqlx::query_scalar("SELECT value FROM projection_state WHERE key = 'documents'")
-            .fetch_optional(&mut *conn)
-            .await?;
-    let previous: BTreeMap<String, String> = old
-        .map(|v| serde_json::from_str(&v))
-        .transpose()?
-        .unwrap_or_default();
+    let keys: Vec<_> = before
+        .jobs
+        .iter()
+        .map(|j| format!("job:{}", j.id))
+        .chain(before.tasks.iter().map(|t| format!("task:{}", t.id)))
+        .chain(before.plans.iter().map(|p| format!("plan:{}", p.id)))
+        .chain(before.projects.iter().flat_map(|p| {
+            ["meta", "board", "tasks", "sync"].map(|kind| format!("{kind}:{}", p.id))
+        }))
+        .collect();
+    let rows = sqlx::query(
+        "SELECT key,path FROM document_registry WHERE key IN (SELECT value FROM json_each(?))",
+    )
+    .bind(json!(keys).to_string())
+    .fetch_all(&mut *conn)
+    .await?;
+    let previous: BTreeMap<String, String> = rows
+        .into_iter()
+        .map(|r| (r.get("key"), r.get("path")))
+        .collect();
     let mut cleanup = Cleanup {
         id: new_id("cleanup"),
         files: BTreeSet::new(),

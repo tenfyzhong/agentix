@@ -24,7 +24,7 @@ async fn job_review_migrates_schema_eight_without_reopening_historical_completed
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(version, 9);
+    assert_eq!(version, 12);
 }
 
 async fn finish(f: &Fixture, id: &str) {
@@ -228,4 +228,108 @@ async fn job_review_serializes_competing_decisions_and_replays_approval() {
         .unwrap_err();
     assert!(error.to_string().contains("revision"));
     assert_eq!(job(&f).await["status"], "COMPLETED");
+}
+
+#[tokio::test]
+async fn review_time_tracks_each_submission_and_projects_local_dates() {
+    let f = Fixture::new("obsidian").await;
+    assert!(job(&f).await["pending_review_at"].is_null());
+    let id = f.task("Timed review").await;
+    finish(&f, &id).await;
+    let first = f.clock.load(Ordering::SeqCst);
+    assert_eq!(job(&f).await["pending_review_at"], first);
+    f.clock.fetch_add(60, Ordering::SeqCst);
+    f.service
+        .execute(
+            json!({"command":"job.update","job":f.job,"name":"Edited"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(job(&f).await["pending_review_at"], first);
+    change(&f, "job.reject").await;
+    f.clock.fetch_add(60, Ordering::SeqCst);
+    change(&f, "job.submit").await;
+    let second = f.clock.load(Ordering::SeqCst);
+    assert_eq!(job(&f).await["pending_review_at"], second);
+    change(&f, "job.approve").await;
+    assert_eq!(job(&f).await["pending_review_at"], second);
+    let value = job(&f).await;
+    let doc = std::fs::read_to_string(
+        f.service
+            .config()
+            .output_dir()
+            .join(value["document_path"].as_str().unwrap()),
+    )
+    .unwrap();
+    let props: Value = serde_yaml::from_str(
+        doc.strip_prefix("---\n")
+            .unwrap()
+            .split_once("\n---\n")
+            .unwrap()
+            .0,
+    )
+    .unwrap();
+    let snapshot = f.service.obsidian_snapshot().await.unwrap();
+    let note = snapshot["notes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["id"] == f.job)
+        .unwrap();
+    for field in [
+        "created_at",
+        "updated_at",
+        "completed_at",
+        "pending_review_at",
+    ] {
+        let instant =
+            time::OffsetDateTime::from_unix_timestamp(value[field].as_i64().unwrap()).unwrap();
+        let local = instant
+            .to_offset(time::UtcOffset::local_offset_at(instant).unwrap())
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap();
+        assert_eq!(props[field], local, "{field}");
+        if field != "created_at" {
+            assert_eq!(note["properties"][field], local);
+        }
+    }
+}
+
+#[tokio::test]
+async fn review_time_migration_uses_submission_event_before_later_edits() {
+    let f = Fixture::new("markdown").await;
+    let id = f.task("Legacy review").await;
+    finish(&f, &id).await;
+    let submitted = f.clock.load(Ordering::SeqCst);
+    f.clock.fetch_add(60, Ordering::SeqCst);
+    f.service
+        .execute(
+            json!({"command":"job.update","job":f.job,"name":"Later edit"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new().filename(&f.service.config().storage.path),
+        )
+        .await
+        .unwrap();
+    sqlx::query("UPDATE jobs SET data = json_remove(data, '$.pending_review_at')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("PRAGMA user_version = 10")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let store = Store::open(&f.service.config().storage.path).await.unwrap();
+    let state = store.snapshot().await.unwrap();
+    assert_eq!(
+        serde_json::to_value(&state.jobs[0]).unwrap()["pending_review_at"],
+        submitted
+    );
+    let again = Store::open(&f.service.config().storage.path).await.unwrap();
+    assert_eq!(state.jobs, again.snapshot().await.unwrap().jobs);
 }

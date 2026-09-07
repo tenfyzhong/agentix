@@ -215,6 +215,7 @@ impl RestoredBindings {
 
 pub struct Engine {
     task_board: Option<Arc<agentix_task::Service>>,
+    job_conversations: tokio::sync::Mutex<HashMap<(String, String), Vec<serde_json::Value>>>,
     task_inputs: tokio::sync::Mutex<HashMap<ConversationRef, PendingTaskInput>>,
     task_refresh: tokio::sync::Mutex<()>,
     task_consumer: String,
@@ -238,6 +239,7 @@ impl Engine {
         let rmux = RmuxController::new(agent.capabilities().workspace_runtime);
         Self {
             task_board: None,
+            job_conversations: tokio::sync::Mutex::new(HashMap::new()),
             task_inputs: tokio::sync::Mutex::new(HashMap::new()),
             task_refresh: tokio::sync::Mutex::new(()),
             task_consumer: "default".into(),
@@ -562,6 +564,20 @@ impl Engine {
                     &envelope.owner_id,
                     &text,
                     &envelope.event_id,
+                )
+                .await
+            }
+            InboundPayload::TextEdited {
+                original_event_id,
+                version,
+                text,
+            } => {
+                self.edit_inbox_message(
+                    &envelope.conversation,
+                    &envelope.owner_id,
+                    &original_event_id,
+                    version,
+                    &text,
                 )
                 .await
             }
@@ -2204,6 +2220,8 @@ impl Engine {
     }
 
     pub async fn handle_agent_event(&self, event: AgentEvent) -> Result<(), EngineError> {
+        self.record_job_message(&event).await;
+
         match &event {
             AgentEvent::Connected { .. } => return Ok(()),
             AgentEvent::Disconnected { generation, .. } => {

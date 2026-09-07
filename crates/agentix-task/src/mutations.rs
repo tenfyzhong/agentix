@@ -35,6 +35,7 @@ pub(crate) fn apply(
         "project.register" => register_project(state, request, now),
         "project.delete" | "job.delete" => crate::deletion::apply(state, request, options),
         "project.archive" | "project.unarchive" => archive_project(state, request, options, now),
+        "session.record" => crate::conversation::record(state, request, options, now),
         "job.create" => create_job(state, request, options, now),
         "job.update" | "job.cancel" | "job.archive" | "job.unarchive" | "job.submit"
         | "job.approve" | "job.reject" => update_job(state, request, options, now),
@@ -62,13 +63,12 @@ pub(crate) fn create_job(
     );
     let id = new_id("job");
     let title = required(request, "title")?;
-    let name = unique_name(
+    let name = entity_name(
+        state,
+        &project.id,
+        "job",
+        None,
         request["name"].as_str().unwrap_or(title),
-        state
-            .jobs
-            .iter()
-            .filter(|j| j.project_id == project.id)
-            .map(|j| j.name.as_str()),
     );
     let sequence = next_sequence(
         now,
@@ -77,6 +77,14 @@ pub(crate) fn create_job(
             .iter()
             .filter(|j| j.project_id == project.id)
             .map(|j| (j.created_at, j.sequence))
+            .chain(std::iter::once((
+                now,
+                *state
+                    .query_context
+                    .sequences
+                    .get(&(project.id.clone(), "job".into()))
+                    .unwrap_or(&0),
+            )))
             .chain(std::iter::once((
                 now,
                 *state
@@ -98,7 +106,9 @@ pub(crate) fn create_job(
         agent: crate::model::agent_name(&options.actor_ref).map(str::to_owned),
         session_id: options.session_ref.clone(),
         status: JobStatus::Active,
+        conversation: Vec::new(),
         review_reason: None,
+        pending_review_at: None,
         revision: 1,
         created_at: now,
         updated_at: now,
@@ -140,20 +150,27 @@ fn add_task(
                 .chain(std::iter::once((
                     now,
                     *state
+                        .query_context
+                        .sequences
+                        .get(&(job.project_id.clone(), "task".into()))
+                        .unwrap_or(&0),
+                )))
+                .chain(std::iter::once((
+                    now,
+                    *state
                         .document_sequences
                         .get(&crate::deletion::sequence_key(&job.project_id, "task", now))
                         .unwrap_or(&0),
                 ))),
         )?,
-        name: unique_name(
+        name: entity_name(
+            state,
+            &job.project_id,
+            "task",
+            None,
             request["name"]
                 .as_str()
                 .unwrap_or(required(request, "title")?),
-            state
-                .tasks
-                .iter()
-                .filter(|t| t.project_id == job.project_id)
-                .map(|t| t.name.as_str()),
         ),
         id: new_id("task"),
         project_id: job.project_id.clone(),
@@ -162,7 +179,10 @@ fn add_task(
         status: TaskStatus::Todo,
         phase: None,
         revision: 1,
-        position: i64::try_from(state.tasks.len())?,
+        position: state
+            .query_context
+            .task_count
+            .unwrap_or(i64::try_from(state.tasks.len())?),
         created_at: now,
         updated_at: now,
         started_at: None,
@@ -280,13 +300,12 @@ fn update_job(
         state.jobs[i].cancelled_at = Some(now);
     }
     let renamed = if command == "job.update" && request.get("name").is_some() {
-        Some(unique_name(
+        Some(entity_name(
+            state,
+            &state.jobs[i].project_id,
+            "job",
+            Some(&state.jobs[i].id),
             required(request, "name")?,
-            state
-                .jobs
-                .iter()
-                .filter(|j| j.project_id == state.jobs[i].project_id && j.id != state.jobs[i].id)
-                .map(|j| j.name.as_str()),
         ))
     } else {
         None
@@ -438,13 +457,12 @@ fn update_task(
                 "conflict: Task is closed"
             );
             if request.get("name").is_some() {
-                let name = unique_name(
+                let name = entity_name(
+                    state,
+                    &task.project_id,
+                    "task",
+                    Some(&task.id),
                     required(request, "name")?,
-                    state
-                        .tasks
-                        .iter()
-                        .filter(|t| t.project_id == task.project_id && t.id != task.id)
-                        .map(|t| t.name.as_str()),
                 );
                 let filename = numbered_name(&name, task.created_at, task.sequence)?;
                 for plan in state.plans.iter_mut().filter(|p| p.task_id == task.id) {
@@ -631,12 +649,61 @@ fn depends_on(state: &Snapshot, source: &str, target: &str) -> bool {
 }
 
 fn job_ready(state: &Snapshot, job_id: &str) -> bool {
+    let (eligible, incomplete) = state
+        .query_context
+        .job_counts
+        .get(job_id)
+        .copied()
+        .unwrap_or_default();
     let mut tasks = state
         .tasks
         .iter()
         .filter(|t| t.job_id == job_id && t.status != TaskStatus::Cancelled)
         .peekable();
-    tasks.peek().is_some() && tasks.all(|t| t.status == TaskStatus::Done)
+    (eligible > 0 || tasks.peek().is_some())
+        && incomplete == 0
+        && tasks.all(|t| t.status == TaskStatus::Done)
+}
+
+fn entity_name(
+    state: &Snapshot,
+    project: &str,
+    kind: &str,
+    excluded: Option<&str>,
+    title: &str,
+) -> String {
+    if let Some(names) = state
+        .query_context
+        .names
+        .get(&(project.into(), kind.into()))
+    {
+        return unique_name(
+            title,
+            names
+                .iter()
+                .filter(|(id, _)| Some(id.as_str()) != excluded)
+                .map(|(_, name)| name.as_str()),
+        );
+    }
+    if kind == "task" {
+        unique_name(
+            title,
+            state
+                .tasks
+                .iter()
+                .filter(|t| t.project_id == project && Some(t.id.as_str()) != excluded)
+                .map(|t| t.name.as_str()),
+        )
+    } else {
+        unique_name(
+            title,
+            state
+                .jobs
+                .iter()
+                .filter(|j| j.project_id == project && Some(j.id.as_str()) != excluded)
+                .map(|j| j.name.as_str()),
+        )
+    }
 }
 
 pub(crate) fn review_job(
@@ -671,6 +738,9 @@ pub(crate) fn review_job(
         _ => JobStatus::Active,
     };
     job.completed_at = (job.status == JobStatus::Completed).then_some(now);
+    if job.status == JobStatus::PendingReview {
+        job.pending_review_at = Some(now);
+    }
     job.review_reason = reason;
     job.revision += 1;
     job.updated_at = now;
@@ -682,6 +752,7 @@ fn aggregate_job(state: &mut Snapshot, index: usize, was_ready: bool, now: i64) 
     let job = &mut state.jobs[index];
     if job.status == JobStatus::Active && !was_ready && ready {
         job.status = JobStatus::PendingReview;
+        job.pending_review_at = Some(now);
         job.completed_at = None;
         job.review_reason = None;
     }

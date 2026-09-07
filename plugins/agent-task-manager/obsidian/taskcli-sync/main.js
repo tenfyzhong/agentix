@@ -6,8 +6,16 @@ const { randomUUID } = require("node:crypto");
 const { realpathSync } = require("node:fs");
 const path = require("node:path");
 
+function localTimestamp(seconds) {
+    const date = new Date(seconds * 1000);
+    const offset = -date.getTimezoneOffset();
+    const pad = value => String(Math.abs(value)).padStart(2, "0");
+    return new Date(date.getTime() + offset * 60000).toISOString().replace(/\.000Z$/, "") +
+        `${offset < 0 ? "-" : "+"}${pad(Math.trunc(offset / 60))}:${pad(offset % 60)}`;
+}
+
 function commandFor(note, target) {
-    if (note.kind === "inbox" && ["TODO", "DONE", "CANCELLED"].includes(target)) {
+    if (note.kind === "inbox" && ["TODO", "ACTIVE", "PENDING_REVIEW", "COMPLETED", "CANCELLED"].includes(target)) {
         return ["inbox", "set-status", note.id, "--status", target];
     }
     const reason = `Status changed in Obsidian: ${note.status} -> ${target}`;
@@ -66,12 +74,11 @@ function parseInbox(source, project) {
         }
         if (matches.length !== 1 || ids.has(matches[0][1])) throw new Error("Duplicate Inbox entry identity");
         ids.add(matches[0][1]);
-        const receipt = / <!-- taskcli:entry-state (TODO|IN_PROGRESS|DONE|CANCELLED)(?: revision=(\d+))? -->/.exec(text);
+        const receipt = / <!-- taskcli:entry-state (TODO|ACTIVE|PENDING_REVIEW|COMPLETED|CANCELLED|IN_PROGRESS|DONE)(?: revision=(\d+))? -->/.exec(text);
         if (!receipt || !/^- \[.\] /.test(text)) throw new Error("Invalid Inbox status receipt or checkbox");
         const checkbox = text[3];
-        const status = checkbox === "x" || checkbox === "X" ? "DONE" : checkbox === "-" ? "CANCELLED" :
-            checkbox === " " ? (receipt[1] === "IN_PROGRESS" ? "IN_PROGRESS" : "TODO") : checkbox;
-        rows.push({ id: matches[0][1], status, revision: Number(receipt[2] || 0),
+        const status = { " ": "TODO", "/": "ACTIVE", r: "PENDING_REVIEW", p: "PENDING_REVIEW", x: "COMPLETED", X: "COMPLETED", "-": "CANCELLED" }[checkbox] || checkbox;
+        rows.push({ id: matches[0][1], project_id: starts[0][1], status, revision: Number(receipt[2] || 0),
             checkboxOffset: start + line.index + 3,
             receiptOffset: start + line.index + receipt.index, receiptLength: receipt[0].length });
     }
@@ -82,13 +89,34 @@ function parseInbox(source, project) {
 function patchInbox(source, note, expected, properties) {
     const row = parseInbox(source, note.project_id).find((entry) => entry.id === note.id);
     if (!row || row.id !== expected.id || row.revision !== expected.revision || row.status !== expected.status) return source;
-    const checkbox = properties.status === "DONE" ? "x" : properties.status === "CANCELLED" ? "-" : " ";
+    const checkbox = { TODO: " ", ACTIVE: "/", PENDING_REVIEW: "r", COMPLETED: "x", CANCELLED: "-" }[properties.status];
+    if (!checkbox) throw new Error(`Invalid Inbox state: ${properties.status}`);
     const receipt = ` <!-- taskcli:entry-state ${properties.status} revision=${properties.revision} -->`;
     const next = source.slice(0, row.receiptOffset) + receipt + source.slice(row.receiptOffset + row.receiptLength);
     return next.slice(0, row.checkboxOffset) + checkbox + next.slice(row.checkboxOffset + 1);
 }
 
 const inboxKey = (filePath, id) => `${filePath}#${id}`;
+
+function recentJobsView(app, controller, container) {
+    // Resolve at view creation so TaskNotes can load after Taskcli Sync.
+    const registration = app.internalPlugins?.plugins?.bases?.instance?.registrations?.tasknotesKanban;
+    if (!registration?.factory) throw new Error("Recent Jobs requires the TaskNotes Kanban view. Enable TaskNotes and reopen this Base.");
+    const view = registration.factory(controller, container);
+    const extract = view.dataAdapter.extractDataItems.bind(view.dataAdapter);
+    view.dataAdapter.extractDataItems = () => {
+        // Bases already sorted these entries. Limit independently per status,
+        // without changing shared query data or other TaskNotes views.
+        const counts = new Map();
+        return extract().filter(item => {
+            const status = item.properties.status;
+            const count = counts.get(status) || 0;
+            counts.set(status, count + 1);
+            return count < 10;
+        });
+    };
+    return view;
+}
 
 class SyncEngine {
     constructor(io) {
@@ -101,62 +129,85 @@ class SyncEngine {
         this.ready = false;
         this.running = null;
         this.inFlight = null;
-        this.refreshRequested = false;
+        this.directory = null;
     }
 
-    adopt(snapshot) {
-        if (!snapshot || !Array.isArray(snapshot.notes)) throw new Error("Invalid taskcli snapshot");
-        this.notes = new Map(snapshot.notes.map((note) => {
-            const item = note.kind === "inbox" ? { ...note, filePath: note.path, path: inboxKey(note.path, note.id) } : note;
-            return [item.path, item];
-        }));
+    remember(note) {
+        this.notes.delete(note.path);
+        this.notes.set(note.path, note);
+        while (this.notes.size > 128) this.notes.delete(this.notes.keys().next().value);
+        return note;
+    }
+
+    async lookup(intent) {
+        const note = await this.io.lookup(intent.id);
+        if (!note) return null;
+        if (note.id !== intent.id || note.kind !== intent.kind || !Number.isInteger(note.revision)) {
+            throw new Error("Invalid taskcli note response");
+        }
+        if (note.path !== (intent.filePath || intent.path) ||
+            (intent.project_id && note.project_id !== intent.project_id)) return null;
+        const item = note.kind === "inbox" ? { ...note, filePath: note.path, path: inboxKey(note.path, note.id) } : note;
+        if (!this.disposed && this.generations.get(intent.path) === intent.generation) this.remember(item);
+        return item;
+    }
+
+    watches(filePath) {
+        if (!this.ready || this.disposed || this.directory === null) return false;
+        const relative = path.posix.relative(this.directory, filePath);
+        return relative !== ".." && !relative.startsWith("../") && !path.posix.isAbsolute(relative);
     }
 
     async initialize() {
         this.ready = false;
-        this.adopt(await this.io.snapshot());
+        const { documents } = await this.io.connection();
         if (this.disposed) return;
+        this.directory = documents.directory;
+        this.notes.clear();
+        this.ready = true;
         await this.reconcile();
-        this.ready = !this.disposed;
     }
 
     async reconcile() {
-        for (const note of this.notes.values()) {
-            if (!this.pending.has(note.path) && this.inFlight?.path !== note.path) {
-                await this.restore(note);
-            }
+        for await (const file of this.io.openNotes?.() || []) {
+            this.observe(file.path, file.properties, true);
+            if (file.source) this.observeInbox(file.path, file.source, true);
         }
+        await this.flush();
     }
 
-    observe(filePath, properties) {
+    observe(filePath, properties, reconcileOnly = false, inboxFile) {
         if (!this.ready || this.disposed || !properties) return;
-        const note = this.notes.get(filePath);
-        if (!note) {
-            if (typeof properties.id === "string" && /^(task|job|inbox)_/.test(properties.id)) this.requestRefresh();
-            return;
-        }
-        if (properties.id !== note.id || (note.kind === "task" && properties.task_id !== note.id)) return;
-        if (properties.revision !== note.revision) {
-            this.requestRefresh();
-            return;
-        }
+        const kind = typeof properties.id === "string" && /^(task|job|inbox)_/.exec(properties.id)?.[1];
+        if (!kind || !Number.isInteger(properties.revision) ||
+            (kind === "task" && properties.task_id !== properties.id)) return;
+        const queued = this.pending.get(filePath);
+        const note = this.notes.get(filePath) || (queued?.status ? queued : undefined);
+        if (note && properties.id !== note.id) return;
+        if (reconcileOnly && (this.pending.has(filePath) || this.inFlight?.path === filePath)) return;
         if (this.inFlight?.path === filePath && properties.revision > this.inFlight.revision &&
-            equal(properties.status, note.status)) return;
-        if (equal(properties.status, note.status) && this.inFlight?.path !== filePath) {
+            equal(properties.status, this.inFlight.target)) return;
+        if (!reconcileOnly && note && properties.revision === note.revision &&
+            equal(properties.status, note.status) && this.inFlight?.path !== filePath) {
             // One CLI write projects every note. Do not let that projection
             // discard a different note's already queued user edit.
             if (this.inFlight && this.pending.has(filePath)) return;
             this.pending.delete(filePath);
+            this.generations.delete(filePath);
             clearTimeout(this.timers.get(filePath));
             this.timers.delete(filePath);
             return;
         }
         const previous = this.pending.get(filePath);
-        if (previous && equal(previous.target, properties.status)) return;
+        if (previous && equal(previous.target, properties.status) &&
+            previous.revision === properties.revision) return;
         const generation = (this.generations.get(filePath) || 0) + 1;
         this.generations.set(filePath, generation);
         this.pending.set(filePath, {
-            ...note, target: properties.status, generation, key: randomUUID(), ready: false,
+            ...note, kind, id: properties.id, path: filePath, filePath: inboxFile || note?.filePath,
+            project_id: properties.project_id || note?.project_id,
+            revision: properties.revision, target: properties.status, reconcileOnly,
+            generation, key: randomUUID(), ready: false,
         });
         clearTimeout(this.timers.get(filePath));
         this.timers.set(filePath, setTimeout(() => {
@@ -167,31 +218,22 @@ class SyncEngine {
         }, 300));
     }
 
-    observeInbox(filePath, source) {
+    observeInbox(filePath, source, reconcileOnly = false) {
         if (!this.ready || this.disposed) return;
         const notes = [...this.notes.values()].filter((note) => note.kind === "inbox" && note.filePath === filePath);
-        if (!notes.length) {
-            if (source.includes("<!-- taskcli:inbox:start project=")) this.requestRefresh();
-            return;
-        }
+        if (!notes.length && !source.includes("<!-- taskcli:inbox:start project=")) return;
         try {
-            const rows = parseInbox(source, notes[0].project_id);
+            const rows = parseInbox(source, notes[0]?.project_id);
             const present = new Set(rows.map((row) => row.id));
-            for (const note of notes) if (!present.has(note.id)) this.forget(note.path);
-            for (const row of rows) this.observe(inboxKey(filePath, row.id), row);
+            for (const note of [...notes, ...this.pending.values()]) {
+                if (note.filePath === filePath && !present.has(note.id)) this.forget(note.path);
+            }
+            for (const row of rows) this.observe(inboxKey(filePath, row.id), row, reconcileOnly, filePath);
         } catch (error) {
             // Discard pending intents from a malformed file; never guess which
             // duplicate ID to update or treat a broken region as withdrawal.
-            for (const note of notes) this.forget(note.path);
+            this.forget(filePath);
             this.notify(`Inbox synchronization paused for ${filePath}: ${error.message}`);
-        }
-    }
-
-    requestRefresh() {
-        this.refreshRequested = true;
-        if (!this.running) {
-            clearTimeout(this.refreshTimer);
-            this.refreshTimer = setTimeout(() => void this.drain(), 300);
         }
     }
 
@@ -209,7 +251,7 @@ class SyncEngine {
             this.notify(`Taskcli synchronization failed: ${error.message}`);
         }).finally(() => {
             this.running = null;
-            if (!this.disposed && (this.refreshRequested || [...this.pending.values()].some((item) => item.ready))) {
+            if (!this.disposed && [...this.pending.values()].some((item) => item.ready)) {
                 this.drainTimer = setTimeout(() => void this.drain(), 0);
             }
         });
@@ -220,15 +262,26 @@ class SyncEngine {
         while (!this.disposed) {
             const intent = [...this.pending.values()].find((item) => item.ready);
             if (!intent) break;
+            // A write can re-project other queued files. Learn their baselines
+            // first so projection echoes cannot replace uncached user edits.
+            for (const queued of [...this.pending.values()]) {
+                if (queued === intent || queued.status !== undefined) continue;
+                try {
+                    const note = await this.lookup(queued);
+                    if (note && this.pending.get(queued.path) === queued) {
+                        queued.status = note.status;
+                        queued.properties = note.properties;
+                    }
+                } catch {
+                    // Its own operation will report a read failure and retry.
+                }
+            }
+            if (this.pending.get(intent.path) !== intent || this.disposed) continue;
             this.pending.delete(intent.path);
             this.inFlight = intent;
             await this.apply(intent);
             this.inFlight = null;
-        }
-        if (this.refreshRequested && !this.disposed) {
-            this.refreshRequested = false;
-            this.adopt(await this.io.snapshot());
-            await this.reconcile();
+            if (!this.pending.has(intent.path)) this.generations.delete(intent.path);
         }
     }
 
@@ -236,11 +289,11 @@ class SyncEngine {
         let current = this.notes.get(intent.path);
         let committed = false;
         try {
-            this.adopt(await this.io.snapshot());
+            current = await this.lookup(intent);
             if (this.disposed || this.generations.get(intent.path) !== intent.generation) return;
-            current = this.notes.get(intent.path);
-            if (!current || current.id !== intent.id) throw new Error("The registered note was renamed or removed.");
-            if (current.status !== intent.target) {
+            if (!current) { this.notes.delete(intent.path); return; }
+            intent.status ??= current.status;
+            if (!intent.reconcileOnly && current.status !== intent.target) {
                 if (current.revision !== intent.revision) throw new Error("The taskcli revision changed. Review the latest state before retrying.");
                 const args = commandFor(current, intent.target);
                 args.push("--expect-revision", String(intent.revision), "--idempotency-key", intent.key);
@@ -255,22 +308,19 @@ class SyncEngine {
                 // projection or snapshot reads fail. Never restore its old state.
                 const properties = { status: entity.status, revision: entity.revision };
                 if (Object.hasOwn(entity, "phase")) properties.phase = entity.phase;
-                for (const key of ["started_at", "completed_at", "updated_at"]) {
+                for (const key of ["started_at", "pending_review_at", "completed_at", "cancelled_at", "updated_at"]) {
                     if (Object.hasOwn(entity, key)) {
-                        properties[key] = entity[key] === null ? null : new Date(entity[key] * 1000).toISOString();
+                        properties[key] = entity[key] === null ? null : localTimestamp(entity[key]);
                     }
                 }
-                if (Object.hasOwn(properties, "completed_at")) properties.completedDate = properties.completed_at;
-                if (Object.hasOwn(properties, "updated_at")) properties.dateModified = properties.updated_at;
                 current = { ...current, status: entity.status, revision: entity.revision, properties };
-                this.notes.set(intent.path, current);
+                this.remember(current);
                 if (result.projection_pending) {
-                    try { await this.io.execute(["sync"]); }
+                    try { await this.io.execute(["sync", "--pending"]); }
                     catch (error) { this.notify(`State saved; document synchronization is pending: ${error.message}`); }
                 }
             }
-            this.adopt(await this.io.snapshot());
-            current = this.notes.get(intent.path);
+            if (committed) current = await this.lookup(intent);
             if (current?.id === intent.id) {
                 const next = this.pending.get(intent.path);
                 // A user's second edit may precede our first projection. Only
@@ -286,8 +336,7 @@ class SyncEngine {
             if (this.disposed) return;
             let confirmed = false;
             try {
-                this.adopt(await this.io.snapshot());
-                current = this.notes.get(intent.path);
+                current = await this.lookup(intent);
                 confirmed = true;
             } catch {
                 // Preserve the last confirmed display when the CLI cannot run.
@@ -322,14 +371,15 @@ class SyncEngine {
     }
 
     forget(filePath) {
-        for (const note of this.notes.values()) {
+        for (const note of [...this.notes.values(), ...this.pending.values(), ...(this.inFlight ? [this.inFlight] : [])]) {
             if (note.filePath === filePath) this.forget(note.path);
         }
         this.pending.delete(filePath);
         this.notes.delete(filePath);
         clearTimeout(this.timers.get(filePath));
         this.timers.delete(filePath);
-        this.generations.set(filePath, (this.generations.get(filePath) || 0) + 1);
+        if (this.inFlight?.path === filePath) this.generations.set(filePath, (this.generations.get(filePath) || 0) + 1);
+        else this.generations.delete(filePath);
     }
 
     notify(message) {
@@ -339,10 +389,11 @@ class SyncEngine {
     dispose() {
         this.disposed = true;
         for (const timer of this.timers.values()) clearTimeout(timer);
-        clearTimeout(this.refreshTimer);
         clearTimeout(this.drainTimer);
         this.pending.clear();
         this.timers.clear();
+        this.notes.clear();
+        this.generations.clear();
     }
 }
 
@@ -373,21 +424,44 @@ class TaskcliSyncPlugin extends Plugin {
     async onload() {
         this.settings = { cliPath: "taskcli", configPath: "", ...await this.loadData() };
         this.children = new Set();
+        this.registerBasesView("taskcliRecentJobs", {
+            name: "Recent Jobs", icon: "columns-3",
+            factory: (controller, container) => recentJobsView(this.app, controller, container),
+            options: () => this.app.internalPlugins?.plugins?.bases?.instance?.registrations?.tasknotesKanban?.options?.() || [],
+        });
         this.addSettingTab(new TaskcliSettings(this.app, this));
         this.addCommand({
             id: "refresh", name: "Check connection and refresh state",
             callback: () => this.checkConnection(),
         });
         this.registerEvent(this.app.metadataCache.on("changed", (file, data, cache) => {
-            this.engine?.observe(file.path, cache.frontmatter);
-            this.engine?.observeInbox(file.path, data);
+            if (!this.engine?.watches(file.path)) return;
+            this.engine.observe(file.path, cache.frontmatter);
+            this.engine.observeInbox(file.path, data);
         }));
-        this.registerEvent(this.app.vault.on("delete", (file) => this.engine?.forget(file.path)));
+        this.registerEvent(this.app.vault.on("delete", (file) => {
+            if (this.engine?.watches(file.path)) this.engine.forget(file.path);
+        }));
         this.registerEvent(this.app.vault.on("rename", (file, oldPath) => {
-            this.engine?.forget(oldPath);
-            this.engine?.requestRefresh();
+            if (!this.engine?.watches(file.path) && !this.engine?.watches(oldPath)) return;
+            this.engine.forget(oldPath);
+            return this.inspectFile(file);
         }));
+        this.registerEvent(this.app.workspace.on("file-open", (file) => { void this.inspectFile(file); }));
         this.app.workspace.onLayoutReady(() => { if (!this.stopped) void this.connect(); });
+    }
+
+    async inspectFile(file) {
+        const engine = this.engine;
+        if (!(file instanceof TFile) || !engine?.watches(file.path)) return;
+        try {
+            const source = await this.app.vault.read(file);
+            const match = /^(?:\uFEFF)?---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(source);
+            engine.observe(file.path, match ? parseYaml(match[1]) : null, true);
+            engine.observeInbox(file.path, source, true);
+        } catch (error) {
+            engine.notify(`Could not check ${file.path}: ${error.message}`);
+        }
     }
 
     async connect() {
@@ -405,15 +479,20 @@ class TaskcliSyncPlugin extends Plugin {
         };
         const engine = new SyncEngine({
             execute, read,
-            snapshot: async () => {
-                const { result } = await execute(["obsidian", "snapshot"]);
+            connection: async () => {
+                const { result } = await execute(["obsidian", "connection"]);
+                if (result?.protocol_version !== 1) throw new Error("Update taskcli to support on-demand Obsidian queries.");
                 if (result?.documents?.format !== "obsidian" ||
                     realpathSync(result.documents.root) !== realpathSync(settings.vaultPath)) {
                     throw new Error("taskcli must be configured for this Obsidian vault.");
                 }
-                for (const note of result.notes || []) {
-                    const relative = path.relative(settings.vaultPath, path.resolve(settings.vaultPath, note.path));
-                    if (relative.startsWith("..") || path.isAbsolute(relative)) throw new Error("Snapshot path escapes this vault.");
+                return result;
+            },
+            lookup: async (id) => {
+                const { result } = await execute(["obsidian", "show", id]);
+                if (result) {
+                    const relative = path.relative(settings.vaultPath, path.resolve(settings.vaultPath, result.path));
+                    if (relative === ".." || relative.startsWith("../") || path.isAbsolute(relative)) throw new Error("Note path escapes this vault.");
                 }
                 return result;
             },
@@ -429,6 +508,16 @@ class TaskcliSyncPlugin extends Plugin {
                     if (engine.disposed || frontmatter.id !== expected.id ||
                         frontmatter.revision !== expected.revision || !equal(frontmatter.status, expected.status)) return;
                     Object.assign(frontmatter, properties);
+                    for (const [old, canonical] of [
+                        ["dateCreated", "created_at"], ["created", "created_at"],
+                        ["dateModified", "updated_at"], ["updated", "updated_at"],
+                        ["completedDate", "completed_at"],
+                    ]) {
+                        if (Object.hasOwn(frontmatter, old)) {
+                            if (!Object.hasOwn(frontmatter, canonical)) frontmatter[canonical] = frontmatter[old];
+                            delete frontmatter[old];
+                        }
+                    }
                     updated = true;
                 });
                 return updated;
@@ -438,6 +527,10 @@ class TaskcliSyncPlugin extends Plugin {
         this.engine = engine;
         try {
             await engine.initialize();
+            for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
+                await this.inspectFile(leaf.view.file);
+            }
+            await engine.flush();
         } catch (error) {
             engine.ready = false;
             engine.notify(`Taskcli sync is paused: ${error.message}`);
@@ -452,8 +545,7 @@ class TaskcliSyncPlugin extends Plugin {
         try {
             const engine = await this.connect();
             if (engine.ready && !engine.disposed && !this.stopped) {
-                const entries = [...engine.notes.values()].filter((note) => note.kind === "inbox").length;
-                new Notice(`Connected to taskcli. Monitoring ${engine.notes.size - entries} notes and ${entries} Inbox items.`, 5000);
+                new Notice(`Connected to taskcli. Monitoring ${engine.directory}; records are queried when needed.`, 5000);
             }
         } catch (error) {
             if (!this.stopped) new Notice(`Taskcli sync is paused: ${error.message}`, 10000);
@@ -507,3 +599,4 @@ module.exports.commandFor = commandFor;
 module.exports.runCli = runCli;
 module.exports.parseInbox = parseInbox;
 module.exports.patchInbox = patchInbox;
+module.exports.recentJobsView = recentJobsView;

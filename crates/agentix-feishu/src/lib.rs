@@ -165,6 +165,78 @@ impl FeishuAdapter {
 
 #[async_trait]
 impl ChannelAdapter for FeishuAdapter {
+    async fn read_inbox_message(
+        &self,
+        reference: &MessageRef,
+    ) -> Result<Option<InboundEnvelope>, ChannelError> {
+        let option = RequestOption::default();
+        let response = with_tenant_token_refresh(self, || async {
+            self.client
+                .im()
+                .message
+                .get(&reference.message_id, Some("open_id"), &option)
+                .await
+        })
+        .await
+        .map_err(|error| ChannelError::Transport(error.to_string()))?;
+        if !response.success() {
+            return Err(ChannelError::Transport(response.code_error.to_string()));
+        }
+        let Some(message) = response
+            .data
+            .and_then(|data| data.items)
+            .and_then(|items| items.into_iter().next())
+        else {
+            return Ok(None);
+        };
+        if message.updated != Some(true)
+            || message.deleted == Some(true)
+            || message.chat_id.as_deref() != Some(&reference.conversation.conversation_id)
+        {
+            return Ok(None);
+        }
+        let Some(owner) = message.sender.as_ref().and_then(|sender| sender.open_id()) else {
+            return Ok(None);
+        };
+        if !self.policy.contains_owner(owner) {
+            return Ok(None);
+        }
+        let Some(version) = message
+            .update_time
+            .as_deref()
+            .and_then(|time| time.parse::<i64>().ok())
+            .filter(|time| *time > 0)
+        else {
+            return Ok(None);
+        };
+        let Some(content) = message.body.and_then(|body| body.content) else {
+            return Ok(None);
+        };
+        let Some(text) =
+            extract_message_text(message.msg_type.as_deref().unwrap_or_default(), &content)
+        else {
+            return Ok(None);
+        };
+        // Only strip mention tokens before the command; preserve mentions in the requirement.
+        let mut text = text.trim_start();
+        for mention in message.mentions.as_deref().unwrap_or_default() {
+            if let Some(key) = mention.key.as_deref() {
+                text = text.strip_prefix(key).unwrap_or(text).trim_start();
+            }
+        }
+        let text = text.to_owned();
+        Ok(Some(InboundEnvelope {
+            event_id: format!("{}:edit:{version}", reference.message_id),
+            conversation: reference.conversation.clone(),
+            owner_id: owner.into(),
+            payload: agentix_core::InboundPayload::TextEdited {
+                original_event_id: reference.message_id.clone(),
+                version,
+                text,
+            },
+        }))
+    }
+
     fn kind(&self) -> ChannelKind {
         ChannelKind::Feishu
     }

@@ -1068,7 +1068,7 @@ fn assert_task_note_timestamps(cli: &Cli, id: &str, offset: time::UtcOffset) {
         doc.contains(&format!("created_at: {expected:?}")),
         "{offset}: {doc}"
     );
-    assert!(doc.contains(&format!("dateCreated: {expected:?}")));
+    assert!(doc.contains(&format!("created_at: {expected:?}")));
     assert!(doc.contains("completed_at: null"));
     assert!(!doc.lines().any(|line| line.starts_with("version:")));
 }
@@ -1098,4 +1098,41 @@ fn cli_creates_and_updates_job_prompt_verbatim() {
     let updated = cli.ok(&["job", "update", id, "--prompt", "Revised request"]);
     assert_eq!(updated["prompt"], "Revised request");
     assert_eq!(cli.ok(&["job", "update", id, "--prompt", ""])["prompt"], "");
+}
+
+#[test]
+fn hook_record_persists_only_text_in_its_sessions_job() {
+    let cli = Cli::new("markdown");
+    let project = cli.ok(&["project", "register", "--name", "demo"])["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let job = cli
+        .ok(&[
+            "job",
+            "create",
+            "--project",
+            &project,
+            "--title",
+            "Capture",
+            "--session",
+            "capture",
+            "--executor",
+            "agent:codex",
+        ])
+        .clone();
+    let path = cli.dir.path().join("messages.json");
+    std::fs::write(&path, json!([{"id":"u","role":"user","text":"Original"},{"id":"a","role":"assistant","text":"Answer"}]).to_string()).unwrap();
+    cli.ok(&[
+        "hook",
+        "record",
+        "--session",
+        "capture",
+        "--file",
+        path.to_str().unwrap(),
+    ]);
+    let current = cli
+        .ok(&["job", "show", job["id"].as_str().unwrap()])
+        .clone();
+    assert_eq!(current["conversation"][1]["text"], "Answer");
 }

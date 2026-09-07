@@ -67,7 +67,11 @@ enum Command {
     /// Check for missing Plan files and documents that are behind the event log.
     Doctor,
     /// Regenerate task documents from the current database state.
-    Sync,
+    Sync {
+        /// Retry only pending document publications without a full rebuild.
+        #[arg(long)]
+        pending: bool,
+    },
     /// Register, inspect, archive, or delete Projects shared across worktrees.
     Project {
         #[command(subcommand)]
@@ -109,6 +113,10 @@ enum Command {
 
 #[derive(Subcommand)]
 enum ObsidianCommand {
+    /// Read the Obsidian connection configuration without loading task records.
+    Connection,
+    /// Query one registered Task, Job, or Inbox entry by its exact ID.
+    Show { id: String },
     /// Query registered notes and authoritative status properties without lease credentials.
     Snapshot,
     /// Install `TaskNotes` and configure its task statuses and Bases. Close Obsidian first.
@@ -180,7 +188,7 @@ enum InboxCommand {
     /// Set a human Inbox status; linked completion requires a pending review.
     SetStatus {
         id: String,
-        #[arg(long, value_parser = ["TODO", "DONE", "CANCELLED"])]
+        #[arg(long, value_parser = ["TODO", "ACTIVE", "PENDING_REVIEW", "COMPLETED", "CANCELLED", "IN_PROGRESS", "DONE"])]
         status: String,
     },
 }
@@ -355,6 +363,13 @@ enum EventCommand {
 }
 #[derive(Subcommand)]
 enum HookCommand {
+    /// Record visible user/assistant messages from a JSON array in the session Job.
+    Record {
+        #[arg(long)]
+        file: PathBuf,
+        #[arg(long)]
+        job: Option<String>,
+    },
     /// Acknowledge turn completion without claiming Inbox work.
     Stop,
     /// Recover the session's Tasks blocked by interruption or lease expiry into planning.
@@ -471,7 +486,36 @@ async fn run(cli: &Cli) -> Result<Value> {
             obsidian::setup(&config, &cli.config_path()?, plugin_dir.as_deref()).await?,
         ));
     }
-    let service = Service::open(Config::load(&cli.config_path()?)?).await?;
+    let config = Config::load(&cli.config_path()?)?;
+    if matches!(
+        &cli.command,
+        Command::Obsidian {
+            action: ObsidianCommand::Connection
+        }
+    ) {
+        ensure!(
+            config.documents.format == DocumentFormat::Obsidian,
+            "Obsidian queries require documents.format = obsidian"
+        );
+        return Ok(response(
+            json!({"protocol_version":1,"documents":config.documents}),
+        ));
+    }
+    let service = Service::open(config).await?;
+    // Point reads must not load all entities through global lease maintenance.
+    match &cli.command {
+        Command::Task {
+            action: TaskCommand::Show(args),
+        } => {
+            return Ok(response(service.store().task_result(&args.id).await?));
+        }
+        Command::Obsidian {
+            action: ObsidianCommand::Show { id },
+        } => {
+            return Ok(response(service.obsidian_note(id).await?));
+        }
+        _ => (),
+    }
     service.store().reap_expired().await?;
     match &cli.command {
         Command::Inbox { action } => inbox(cli, &service, action).await,
@@ -490,13 +534,19 @@ async fn run(cli: &Cli) -> Result<Value> {
                 .await?
                 .and_then(|v| v.as_i64())
                 .unwrap_or(0);
-            let healthy = missing.is_empty() && rendered >= sequence;
+            let healthy = missing.is_empty()
+                && rendered >= sequence
+                && !service.store().has_pending_documents().await?;
             Ok(response(
                 json!({"healthy":healthy,"missing_plans":missing,"sequence":sequence,"rendered_sequence":rendered,"documents":service.config().documents}),
             ))
         }
-        Command::Sync => {
-            service.sync().await?;
+        Command::Sync { pending } => {
+            if *pending {
+                service.sync_pending_documents().await?;
+            } else {
+                service.sync().await?;
+            }
             Ok(response(json!({"synced":true})))
         }
         Command::Project { action } => project(cli, &service, action).await,
@@ -627,9 +677,8 @@ async fn project(cli: &Cli, service: &Service, action: &ProjectCommand) -> Resul
 }
 
 async fn resolve_project(cli: &Cli, service: &Service) -> Result<String> {
-    let state = service.store().snapshot().await?;
     if let Some(id) = &cli.project {
-        return Ok(state.projects[state.project_index(id)?].id.clone());
+        return Ok(service.store().project_result(id).await?.id);
     }
     let cwd = std::env::current_dir()?;
     let check = Process::new("git")
@@ -643,11 +692,11 @@ async fn resolve_project(cli: &Cli, service: &Service) -> Result<String> {
     );
     let (root, _) = git_identity(&cwd)?;
     let root = root.to_string_lossy();
-    state
-        .projects
-        .iter()
-        .find(|p| p.root == root)
-        .map(|p| p.id.clone())
+    service
+        .store()
+        .project_by_root(&root)
+        .await?
+        .map(|p| p.id)
         .context("register this project first with taskcli project register, or specify --project")
 }
 
@@ -825,9 +874,7 @@ async fn task(cli: &Cli, service: &Service, action: &TaskCommand) -> Result<Valu
             return Ok(response(json!(tasks)));
         }
         TaskCommand::Show(args) => {
-            return Ok(response(
-                service.store().snapshot().await?.task_result(&args.id)?,
-            ));
+            return Ok(response(service.store().task_result(&args.id).await?));
         }
         TaskCommand::Depend { id, dependency } => {
             json!({"command":"task.depend","task":id,"dependency":dependency})
@@ -960,6 +1007,20 @@ async fn hook(cli: &Cli, service: &Service, action: &HookCommand) -> Result<Valu
         .or_else(|| event["session_id"].as_str())
         .context("hook requires session_id on stdin or --session")?;
     let command = match action {
+        HookCommand::Record { file, job } => {
+            let messages: Value = serde_json::from_slice(&std::fs::read(file)?)?;
+            let mut request =
+                json!({"command":"session.record","session":session,"messages":messages});
+            if let Some(job) = job {
+                request["job"] = json!(job);
+            }
+            let mut options = cli.options();
+            options.session_ref = Some(session.into());
+            let outcome = service.execute(request, options).await?;
+            return Ok(
+                json!({"schema_version":1,"ok":true,"result":outcome.result,"sequence":outcome.sequence,"projection_pending":outcome.projection_pending}),
+            );
+        }
         // Keep the legacy entrypoint safe for installed plugins that still call it.
         HookCommand::Stop => {
             return Ok(response(

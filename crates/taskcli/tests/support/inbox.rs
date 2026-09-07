@@ -20,7 +20,7 @@ fn inbox_cli_sets_status_with_revision_and_idempotency() {
         "once",
     ];
     let result = cli.ok(&args);
-    assert_eq!(result["status"], "DONE");
+    assert_eq!(result["status"], "COMPLETED");
     assert_eq!(cli.ok(&args), result);
     assert_eq!(
         cli.ok(&["inbox", "set-status", id, "--status", "TODO"])["status"],

@@ -1,6 +1,8 @@
 //! Persistent task coordination and read-only document projections.
 
 mod config;
+mod conversation;
+pub use conversation::JobMessage;
 mod deletion;
 mod inbox;
 mod inbox_document;
@@ -9,6 +11,8 @@ mod mutations;
 mod naming;
 mod project;
 mod projection;
+mod publication;
+mod scoped;
 mod store;
 
 pub use config::{Config, DocumentConfig, DocumentFormat, StorageConfig, expand_home};

@@ -270,3 +270,82 @@ impl Engine {
         Ok(())
     }
 }
+
+impl Engine {
+    pub(in crate::engine) async fn edit_inbox_message(
+        &self,
+        conversation: &ConversationRef,
+        owner: &str,
+        original: &str,
+        version: i64,
+        text: &str,
+    ) -> Result<(), EngineError> {
+        let Some(service) = self.task_board.as_ref() else {
+            return Ok(());
+        };
+        let Ok(crate::ParsedInput::Command(crate::AgentCommand::Inbox(content))) =
+            crate::parse_input(text)
+        else {
+            return Ok(());
+        };
+        let source =
+            json!([conversation.channel, conversation.conversation_id, original]).to_string();
+        let state = service.store().snapshot().await.map_err(error)?;
+        let Some(entry) = state
+            .inboxes
+            .iter()
+            .find(|e| e.source.as_deref() == Some(&source))
+        else {
+            return Ok(());
+        };
+        let result = service.execute(json!({"command":"inbox.edit","inbox":entry.id,"source":source,"version":version,"content":content}), WriteOptions { actor_ref:format!("im:{owner}"), ..WriteOptions::default() }).await.map_err(error)?;
+        if let Some(warning) = result.projection_pending {
+            return Err(error(format!(
+                "Inbox saved; document synchronization is pending: {warning}"
+            )));
+        }
+        Ok(())
+    }
+}
+
+impl Engine {
+    pub async fn refresh_inbox_sources(&self) -> Result<(), EngineError> {
+        let Some(service) = self.task_board.as_ref() else {
+            return Ok(());
+        };
+        let state = service.store().snapshot().await.map_err(error)?;
+        for entry in state
+            .inboxes
+            .iter()
+            .filter(|entry| !entry.deleted && entry.published)
+        {
+            if state
+                .projects
+                .iter()
+                .any(|p| p.id == entry.project_id && p.archived_at.is_some())
+            {
+                continue;
+            }
+            let Some(source) = entry.source.as_deref().and_then(|source| {
+                serde_json::from_str::<(crate::ChannelKind, String, String)>(source).ok()
+            }) else {
+                continue;
+            };
+            let Some(channel) = self.channels.get(&source.0) else {
+                continue;
+            };
+            let reference =
+                crate::MessageRef::new(ConversationRef::new(source.0, source.1), source.2);
+            match channel.read_inbox_message(&reference).await {
+                Ok(Some(envelope)) if matches!(&envelope.payload, crate::InboundPayload::TextEdited { version, .. } if *version > entry.source_version) => {
+                    if let Err(error) = self.handle_inbound(envelope).await {
+                        tracing::warn!(%error, inbox = %entry.id, "Inbox source synchronization failed");
+                    }
+                }
+                Err(error) => tracing::warn!(%error, inbox = %entry.id, "Inbox source read failed"),
+                _ => (),
+            }
+        }
+        Ok(())
+    }
+}

@@ -179,7 +179,7 @@ fn cli_project_archive_restores_dashboard_and_task_visibility_in_both_formats() 
                 serde_yaml::from_str(&fs::read_to_string(root.join("Dashboard.base")).unwrap())
                     .unwrap();
             assert!(
-                base["filters"]["and"]
+                base["views"][0]["filters"]["and"]
                     .as_array()
                     .unwrap()
                     .contains(&json!("note.status == \"ACTIVE\""))

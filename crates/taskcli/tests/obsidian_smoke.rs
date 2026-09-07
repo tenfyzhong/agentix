@@ -106,14 +106,17 @@ struct DesktopFixture {
 
 impl DesktopFixture {
     fn cli(&self, args: &[&str]) -> Value {
-        let output = Command::new(env!("CARGO_BIN_EXE_taskcli"))
-            .arg("--config")
-            .arg(self.metadata.path().join("config.toml"))
-            .arg("--json")
-            .args(args)
-            .current_dir(self.metadata.path())
-            .output()
-            .unwrap();
+        let output = Command::new(
+            std::env::var_os("TASKCLI_OBSIDIAN_BINARY")
+                .unwrap_or_else(|| env!("CARGO_BIN_EXE_taskcli").into()),
+        )
+        .arg("--config")
+        .arg(self.metadata.path().join("config.toml"))
+        .arg("--json")
+        .args(args)
+        .current_dir(self.metadata.path())
+        .output()
+        .unwrap();
         assert!(
             output.status.success(),
             "{args:?}: status={} stdout={} stderr={}",
@@ -121,7 +124,12 @@ impl DesktopFixture {
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-        serde_json::from_slice::<Value>(&output.stdout).unwrap()["result"].clone()
+        let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert!(
+            response["projection_pending"].is_null(),
+            "{args:?}: {response}"
+        );
+        response["result"].clone()
     }
 
     fn open(&mut self, path: &str, view_type: &str) {
@@ -151,7 +159,7 @@ impl Drop for DesktopFixture {
     fn drop(&mut self) {
         // Do not panic a second time if the app was closed during a failed test.
         let expression = format!(
-            "(async () => {{ await app.plugins.unloadPlugin(\"taskcli-sync-smoke\"); delete app.plugins.manifests[\"taskcli-sync-smoke\"]; delete window.taskcliSyncSmoke; if (window.taskcliSmokeStatuses) {{app.plugins.plugins.tasknotes.statusManager.updateStatuses(window.taskcliSmokeStatuses); delete window.taskcliSmokeStatuses;}} app.workspace.getLeafById({})?.detach(); for (const leaf of ['markdown','bases'].flatMap(type=>app.workspace.getLeavesOfType(type))) {{ if (leaf.view.file?.path.startsWith({})) leaf.detach(); }} const original = app.workspace.getLeafById({}); if (original) app.workspace.setActiveLeaf(original, {{focus:true}}); return true; }})()",
+            "(async () => {{ await app.plugins.unloadPlugin(\"taskcli-sync-smoke\"); delete app.plugins.manifests[\"taskcli-sync-smoke\"]; delete window.taskcliSyncSmoke; if (window.taskcliSmokeStatuses) {{app.plugins.plugins.tasknotes.statusManager.updateStatuses(window.taskcliSmokeStatuses); delete window.taskcliSmokeStatuses;}} if(window.taskcliSmokeFieldMapping){{app.plugins.plugins.tasknotes.fieldMapper.updateMapping(window.taskcliSmokeFieldMapping);delete window.taskcliSmokeFieldMapping;}} app.workspace.getLeafById({})?.detach(); for (const leaf of ['markdown','bases'].flatMap(type=>app.workspace.getLeavesOfType(type))) {{ if (leaf.view.file?.path.startsWith({})) leaf.detach(); }} const original = app.workspace.getLeafById({}); if (original) app.workspace.setActiveLeaf(original, {{focus:true}}); return true; }})()",
             self.leaf,
             json!(format!("{}/", self.relative)),
             self.original_leaf
@@ -209,6 +217,68 @@ fn inbox_checkbox_sync_in_desktop() {
     let (f, project) = desktop_fixture(&vault, "obsidian");
     load_sync_plugin(&f);
     exercise_inbox_bridge(&f, project["id"].as_str().unwrap());
+}
+
+#[test]
+#[ignore = "requires an open TASKCLI_OBSIDIAN_VAULT with TaskNotes enabled"]
+fn id_queries_and_status_sync_in_desktop() {
+    let _guard = DESKTOP_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let vault = std::env::var("TASKCLI_OBSIDIAN_VAULT").expect("choose the test vault");
+    let (f, project) = desktop_fixture(&vault, "obsidian");
+    let job = f.cli(&[
+        "job",
+        "create",
+        "--project",
+        project["id"].as_str().unwrap(),
+        "--title",
+        "ID query acceptance",
+    ]);
+    let task = f.cli(&[
+        "task",
+        "add",
+        "--job",
+        job["id"].as_str().unwrap(),
+        "--title",
+        "Leased task",
+    ]);
+    f.cli(&[
+        "task",
+        "add",
+        "--job",
+        job["id"].as_str().unwrap(),
+        "--title",
+        "Unleased task",
+    ]);
+    f.cli(&[
+        "task",
+        "claim",
+        task["id"].as_str().unwrap(),
+        "--executor",
+        "agent:smoke",
+        "--session",
+        "smoke",
+    ]);
+    let task_note = f.cli(&["obsidian", "show", task["id"].as_str().unwrap()]);
+    let job_note = f.cli(&["obsidian", "show", job["id"].as_str().unwrap()]);
+    for note in [&task_note, &job_note] {
+        wait_for(
+            &vault,
+            &format!(
+                "app.metadataCache.getFileCache(app.vault.getAbstractFileByPath({}))?.frontmatter?.id",
+                note["path"]
+            ),
+            |id| id == &note["id"],
+        );
+    }
+    exercise_status_bridge(
+        &f,
+        &task,
+        &job,
+        task_note["path"].as_str().unwrap(),
+        job_note["path"].as_str().unwrap(),
+    );
 }
 
 fn exercise_dashboard(f: &mut DesktopFixture, project: &Value, format: &str) {
@@ -346,6 +416,10 @@ fn desktop_fixture(vault: &str, format: &str) -> (DesktopFixture, Value) {
             ))
             .unwrap()["customStatuses"]
         ),
+    );
+    obsidian(
+        vault,
+        "(() => {const mapper=app.plugins.plugins.tasknotes.fieldMapper;window.taskcliSmokeFieldMapping=structuredClone(mapper.getMapping());mapper.updateMapping({...window.taskcliSmokeFieldMapping,dateCreated:'created_at',dateModified:'updated_at',completedDate:'completed_at'});return true;})()",
     );
     f.cli(&[
         "init",
@@ -554,6 +628,26 @@ fn exercise_status_bridge(
     job_path: &str,
 ) {
     load_sync_plugin(f);
+    assert_eq!(
+        obsidian(
+            &f.vault,
+            "typeof window.taskcliSyncSmoke.engine.io.snapshot"
+        ),
+        "undefined"
+    );
+    obsidian(
+        &f.vault,
+        &format!(
+            "(async()=>{{for (const path of [{},{}]) await window.taskcliSyncSmoke.inspectFile(app.vault.getAbstractFileByPath(path)); await window.taskcliSyncSmoke.engine.flush(); return true;}})()",
+            json!(task_path),
+            json!(job_path)
+        ),
+    );
+    wait_for(
+        &f.vault,
+        "!window.taskcliSyncSmoke.engine.running && !window.taskcliSyncSmoke.engine.pending.size",
+        |v| v == true,
+    );
     // The owning agent lease must reject a UI cancellation and restore dates/body.
     obsidian(
         &f.vault,
@@ -609,14 +703,7 @@ fn exercise_status_bridge(
         .iter()
         .find(|t| t["id"] != task["id"])
         .unwrap();
-    let snapshot = f.cli(&["obsidian", "snapshot"]);
-    let path = snapshot["notes"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|n| n["id"] == unleased["id"])
-        .unwrap()["path"]
-        .clone();
+    let path = f.cli(&["obsidian", "show", unleased["id"].as_str().unwrap()])["path"].clone();
     obsidian(
         &f.vault,
         &format!(
@@ -642,6 +729,7 @@ fn exercise_status_bridge(
     );
 }
 
+#[allow(clippy::too_many_lines)] // Keep the opt-in five-state workflow and assertions together.
 fn exercise_inbox_bridge(f: &DesktopFixture, project: &str) {
     let entry = f.cli(&[
         "inbox",
@@ -654,15 +742,23 @@ fn exercise_inbox_bridge(f: &DesktopFixture, project: &str) {
     let id = &entry["id"];
     let lookup = format!("[...window.taskcliSyncSmoke.engine.notes.values()].find(n=>n.id==={id})");
     let note = wait_for(&f.vault, &lookup, |v| v["kind"] == "inbox");
-    // Discovery adopts the snapshot before reconciling its initial display.
-    // Edit only after that refresh has finished, as with a completed Connect.
+    // The ID query can see a commit before the CLI finishes writing the file.
+    // Wait for the displayed checkbox before simulating the next user click.
     wait_for(
         &f.vault,
-        "!window.taskcliSyncSmoke.engine.running && !window.taskcliSyncSmoke.engine.refreshRequested",
+        "!window.taskcliSyncSmoke.engine.running && !window.taskcliSyncSmoke.engine.pending.size",
         |v| v == true,
     );
     let path = &note["filePath"];
     let edit = |from: &str, to: &str| {
+        wait_for(
+            &f.vault,
+            &format!(
+                "(async()=> !window.taskcliSyncSmoke.engine.running && !window.taskcliSyncSmoke.engine.pending.size && (await app.vault.read(app.vault.getAbstractFileByPath({path}))).includes({}))()",
+                json!(format!("- [{from}] Manual Inbox smoke"))
+            ),
+            |v| v == true,
+        );
         obsidian(
             &f.vault,
             &format!(
@@ -678,11 +774,11 @@ fn exercise_inbox_bridge(f: &DesktopFixture, project: &str) {
         &format!(
             "(async()=> ({{note:({lookup}),ready:window.taskcliSyncSmoke.engine.ready,pending:[...window.taskcliSyncSmoke.engine.pending.values()],notices:window.taskcliSmokeNotices,source:await app.vault.read(app.vault.getAbstractFileByPath({path}))}}))()"
         ),
-        |v| v["note"]["status"] == "DONE",
+        |v| v["note"]["status"] == "COMPLETED",
     );
     assert_eq!(
         f.cli(&["inbox", "list", "--project", project])[0]["status"],
-        "DONE"
+        "COMPLETED"
     );
     let notices = obsidian(&f.vault, "window.taskcliSmokeNotices.length")
         .as_u64()
@@ -703,4 +799,401 @@ fn exercise_inbox_bridge(f: &DesktopFixture, project: &str) {
     let rows = f.cli(&["inbox", "list", "--project", project]);
     assert_eq!(rows[0]["status"], "TODO");
     assert_eq!(rows[0]["content"], "Manual Inbox smoke\nKeep details.");
+    edit(" ", "/");
+    wait_for(&f.vault, &format!("({lookup})?.status"), |v| v == "ACTIVE");
+    let rows = f.cli(&["inbox", "list", "--project", project]);
+    let job = rows[0]["job_id"].as_str().unwrap();
+    let task = f.cli(&[
+        "task",
+        "add",
+        "--job",
+        job,
+        "--title",
+        "Review checkbox smoke",
+    ]);
+    let task_id = task["id"].as_str().unwrap();
+    let owned = f.cli(&[
+        "task",
+        "claim",
+        task_id,
+        "--session",
+        "desktop-inbox",
+        "--executor",
+        "agent:test",
+    ]);
+    let token = owned["lease"]["token"].as_str().unwrap();
+    f.cli(&[
+        "plan",
+        "create",
+        task_id,
+        "--body",
+        "Verify five Inbox states",
+        "--session",
+        "desktop-inbox",
+        "--lease-token",
+        token,
+    ]);
+    for command in ["start", "done"] {
+        f.cli(&[
+            "task",
+            command,
+            task_id,
+            "--session",
+            "desktop-inbox",
+            "--lease-token",
+            token,
+        ]);
+    }
+    wait_for(&f.vault, &format!("({lookup})?.status"), |v| {
+        v == "PENDING_REVIEW"
+    });
+    wait_for(
+        &f.vault,
+        "!window.taskcliSyncSmoke.engine.running && !window.taskcliSyncSmoke.engine.pending.size",
+        |v| v == true,
+    );
+    for (from, to, status) in [
+        ("r", "/", "ACTIVE"),
+        ("/", "r", "PENDING_REVIEW"),
+        ("r", "x", "COMPLETED"),
+    ] {
+        edit(from, to);
+        wait_for(&f.vault, &format!("({lookup})?.status"), |v| v == status);
+        assert_eq!(f.cli(&["job", "show", job])["status"], status);
+    }
+}
+
+#[test]
+#[ignore = "requires a visible TASKCLI_OBSIDIAN_VAULT with TaskNotes/Bases enabled"]
+fn pending_review_dashboard_and_boards_sort_by_lifecycle_times() {
+    let _guard = DESKTOP_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let vault = std::env::var("TASKCLI_OBSIDIAN_VAULT").expect("choose the test vault");
+    let (mut f, project) = desktop_fixture(&vault, "obsidian");
+    let (first_job, first_task) = desktop_finished_job(&f, &project, "First");
+    let (second_job, second_task) = desktop_finished_job(&f, &project, "Second");
+    // Resubmitting the older file must place it after the newer file.
+    std::thread::sleep(Duration::from_secs(1));
+    f.cli(&["task", "update", &first_task, "--name", "Updated first"]);
+    f.cli(&["job", "reject", &first_job, "--reason", "Recheck"]);
+    f.cli(&["job", "submit", &first_job]);
+    let snapshot = f.cli(&["obsidian", "snapshot"]);
+    let path = |id: &str| {
+        snapshot["notes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|note| note["id"] == id)
+            .unwrap()["path"]
+            .clone()
+    };
+    let board = format!(
+        "{}/Projects/{}/Board.md",
+        f.relative,
+        project["key"].as_str().unwrap()
+    );
+    f.open(&board, "markdown");
+    let expression = |leaf: &Value| {
+        format!(
+            "[...app.workspace.getLeafById({leaf}).view.contentEl.querySelectorAll('.task-card')].map(el=>el.dataset.taskPath)"
+        )
+    };
+    let cards = wait_for(&vault, &expression(&f.leaf), |cards| {
+        cards.as_array().is_some_and(|cards| cards.len() == 4)
+    });
+    assert_eq!(
+        cards,
+        json!([
+            path(&second_job),
+            path(&first_job),
+            path(&second_task),
+            path(&first_task)
+        ])
+    );
+    let dashboard = f.output.path().join("Dashboard.base");
+    let mut base: Value =
+        serde_yaml::from_str(&std::fs::read_to_string(&dashboard).unwrap()).unwrap();
+    // Make the existing pending view the initial view in this isolated fixture.
+    base["views"].as_array_mut().unwrap().rotate_left(1);
+    std::fs::write(&dashboard, serde_yaml::to_string(&base).unwrap()).unwrap();
+    f.open(&format!("{}/Dashboard.base", f.relative), "bases");
+    let cards = wait_for(&vault, &expression(&f.leaf), |cards| {
+        cards.as_array().is_some_and(|cards| cards.len() == 2)
+    });
+    assert_eq!(cards, json!([path(&second_job), path(&first_job)]));
+
+    // Recent Jobs includes all projects and retains Jobs after review transitions.
+    let other_root = f.metadata.path().join("other-project");
+    std::fs::create_dir_all(&other_root).unwrap();
+    let other = f.cli(&[
+        "project",
+        "register",
+        "--root",
+        other_root.to_str().unwrap(),
+        "--name",
+        "Other",
+    ]);
+    let (other_job, _) = desktop_finished_job(&f, &other, "Other project");
+    let other_path = f.cli(&["job", "show", &other_job])["document_path"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let other_path = json!(format!("{}/{other_path}", f.relative));
+    f.open(&format!("{}/Recent Jobs.base", f.relative), "bases");
+    let cards = wait_for(&vault, &expression(&f.leaf), |cards| {
+        cards.as_array().is_some_and(|cards| cards.len() == 3)
+    });
+    assert_eq!(
+        cards,
+        json!([other_path, path(&first_job), path(&second_job)])
+    );
+    f.cli(&["job", "approve", &second_job]);
+    f.cli(&["job", "reject", &other_job, "--reason", "Needs repair"]);
+    let cards = wait_for(&vault, &expression(&f.leaf), |cards| {
+        cards.as_array().is_some_and(|cards| {
+            cards == &vec![other_path.clone(), path(&first_job), path(&second_job)]
+        })
+    });
+    assert_eq!(
+        cards,
+        json!([other_path, path(&first_job), path(&second_job)])
+    );
+}
+
+#[test]
+#[ignore = "requires an open TASKCLI_OBSIDIAN_VAULT with TaskNotes enabled"]
+fn tasknotes_reads_and_writes_canonical_timestamps() {
+    let _guard = DESKTOP_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let vault = std::env::var("TASKCLI_OBSIDIAN_VAULT").expect("choose the test vault");
+    let (f, project) = desktop_fixture(&vault, "obsidian");
+    let (_job, task) = desktop_finished_job(&f, &project, "Canonical dates");
+    let plan = f.cli(&["plan", "show", &task]);
+    let path = format!("{}/{}", f.relative, plan["path"].as_str().unwrap());
+    let lookup = format!(
+        "app.plugins.plugins.tasknotes.cacheManager.getTaskInfo({})",
+        json!(path)
+    );
+    let info = wait_for(&vault, &lookup, |value| value["completedDate"].is_string());
+    let props = obsidian(
+        &vault,
+        &format!(
+            "app.metadataCache.getFileCache(app.vault.getAbstractFileByPath({}))?.frontmatter",
+            json!(path)
+        ),
+    );
+    assert_eq!(info["dateCreated"], props["created_at"]);
+    assert_eq!(info["dateModified"], props["updated_at"]);
+    assert_eq!(info["completedDate"], props["completed_at"]);
+    obsidian_action(
+        &vault,
+        &format!(
+            "(async()=>{{const plugin=app.plugins.plugins.tasknotes;const task=await {lookup};await plugin.taskService.updateTask(task,{{priority:'high'}});}})()"
+        ),
+    );
+    let props = wait_for(
+        &vault,
+        &format!(
+            "app.metadataCache.getFileCache(app.vault.getAbstractFileByPath({}))?.frontmatter",
+            json!(path)
+        ),
+        |value| value["priority"] == "high",
+    );
+    for key in ["created_at", "updated_at", "completed_at"] {
+        assert!(props[key].is_string(), "{key}");
+    }
+    for key in [
+        "dateCreated",
+        "dateModified",
+        "completedDate",
+        "created",
+        "updated",
+    ] {
+        assert!(props.get(key).is_none(), "{key}");
+    }
+}
+
+fn desktop_finished_job(f: &DesktopFixture, project: &Value, name: &str) -> (String, String) {
+    let job = f.cli(&[
+        "job",
+        "create",
+        "--project",
+        project["id"].as_str().unwrap(),
+        "--title",
+        name,
+    ]);
+    let id = job["id"].as_str().unwrap();
+    let task = f.cli(&["task", "add", "--job", id, "--title", name]);
+    let task_id = task["id"].as_str().unwrap();
+    let claim = f.cli(&[
+        "task",
+        "claim",
+        task_id,
+        "--executor",
+        "agent:smoke",
+        "--session",
+        "review-smoke",
+    ]);
+    let token = claim["lease"]["token"].as_str().unwrap();
+    f.cli(&[
+        "plan",
+        "create",
+        task_id,
+        "--body",
+        "Verify rendering.",
+        "--session",
+        "review-smoke",
+        "--lease-token",
+        token,
+    ]);
+    for command in ["start", "done"] {
+        f.cli(&[
+            "task",
+            command,
+            task_id,
+            "--session",
+            "review-smoke",
+            "--lease-token",
+            token,
+        ]);
+    }
+    (id.into(), task_id.into())
+}
+
+#[test]
+#[ignore = "requires a visible TASKCLI_OBSIDIAN_VAULT with TaskNotes/Bases enabled"]
+fn recent_jobs_cards_show_project_and_local_review_time() {
+    let _guard = DESKTOP_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let vault = std::env::var("TASKCLI_OBSIDIAN_VAULT").expect("choose the test vault");
+    let (mut f, project) = desktop_fixture(&vault, "obsidian");
+    let (job, _) = desktop_finished_job(&f, &project, "Card fields");
+    f.open(&format!("{}/Recent Jobs.base", f.relative), "bases");
+    let expression = format!(
+        "[...app.workspace.getLeafById({}).view.contentEl.querySelectorAll('.task-card')].map(el=>el.innerText)",
+        f.leaf
+    );
+    let cards = wait_for(&vault, &expression, |v| {
+        v.as_array().is_some_and(|cards| cards.len() == 1)
+    });
+    let job = f.cli(&["job", "show", &job]);
+    let expected = obsidian(
+        &vault,
+        &format!(
+            "new Date({} * 1000).toLocaleString(\"sv-SE\")",
+            job["pending_review_at"]
+        ),
+    );
+    let text = cards[0].as_str().unwrap();
+    assert_eq!(
+        obsidian(
+            &vault,
+            &format!(
+                "[...app.workspace.getLeafById({}).view.contentEl.querySelectorAll('.kanban-view__column')].map(el=>el.dataset.group)",
+                f.leaf
+            )
+        ),
+        json!(["ACTIVE", "PENDING_REVIEW", "COMPLETED", "CANCELLED"]),
+        "keep all Job statuses, including empty ones, without Task-only columns"
+    );
+    assert!(
+        text.contains(expected.as_str().unwrap()),
+        "missing review time {expected}: {text}"
+    );
+    assert!(
+        text.contains(project["name"].as_str().unwrap()),
+        "missing project: {text}"
+    );
+    let links = obsidian(
+        &vault,
+        &format!(
+            "[...app.workspace.getLeafById({}).view.contentEl.querySelectorAll('.task-card a.internal-link')].map(el=>el.dataset.href)",
+            f.leaf
+        ),
+    );
+    assert!(
+        links
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|link| link.as_str().is_some_and(|s| s.contains("/Board"))),
+        "project link: {links}"
+    );
+}
+
+#[test]
+#[ignore = "requires an open TASKCLI_OBSIDIAN_VAULT with TaskNotes and Taskcli Sync enabled"]
+fn recent_jobs_limits_each_status_to_ten_cards() {
+    let _guard = DESKTOP_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let vault = std::env::var("TASKCLI_OBSIDIAN_VAULT").expect("choose the test vault");
+    let (mut f, project) = desktop_fixture(&vault, "obsidian");
+    let statuses = ["ACTIVE", "PENDING_REVIEW", "COMPLETED", "CANCELLED"];
+    let mut expected = Vec::new();
+    for status in statuses {
+        for rank in 0..12 {
+            let name = format!("{status}-{rank:02}");
+            let id = if ["PENDING_REVIEW", "COMPLETED"].contains(&status) {
+                desktop_finished_job(&f, &project, &name).0
+            } else {
+                f.cli(&[
+                    "job",
+                    "create",
+                    "--project",
+                    project["id"].as_str().unwrap(),
+                    "--title",
+                    &name,
+                ])["id"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned()
+            };
+            if status == "COMPLETED" {
+                f.cli(&["job", "approve", &id]);
+            }
+            if status == "CANCELLED" {
+                f.cli(&["job", "cancel", &id]);
+            }
+            let job = f.cli(&["job", "show", &id]);
+            let relative = job["document_path"].as_str().unwrap();
+            let path = f.output.path().join(relative);
+            // Distinct fixture times make the newest-ten expectation independent
+            // of machine speed and also exercise canonical timestamp sorting.
+            let source = std::fs::read_to_string(&path).unwrap();
+            let source = source
+                .lines()
+                .map(|line| {
+                    if line.starts_with("updated_at:") {
+                        format!("updated_at: '2026-09-07T12:00:{rank:02}+08:00'")
+                    } else {
+                        line.to_owned()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+                + "\n";
+            std::fs::write(path, source).unwrap();
+            if rank >= 2 {
+                expected.push(format!("{}/{relative}", f.relative));
+            }
+        }
+    }
+    f.open(&format!("{}/Recent Jobs.base", f.relative), "bases");
+    let expression = format!(
+        "[...app.workspace.getLeafById({}).view.contentEl.querySelectorAll('.task-card')].map(el=>el.dataset.taskPath)",
+        f.leaf
+    );
+    let cards = wait_for(&vault, &expression, |v| {
+        v.as_array().is_some_and(|a| a.len() == 40)
+    });
+    let expected: Vec<_> = expected
+        .chunks(10)
+        .flat_map(|chunk| chunk.iter().rev())
+        .cloned()
+        .collect();
+    assert_eq!(cards, json!(expected));
 }

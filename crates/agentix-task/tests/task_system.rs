@@ -28,6 +28,9 @@ mod inbox;
 #[path = "support/job_review.rs"]
 mod job_review;
 
+#[path = "support/incremental.rs"]
+mod incremental;
+
 struct Fixture {
     dir: TempDir,
     service: Service,
@@ -630,7 +633,7 @@ async fn legacy_executing_tasks_migrate_without_losing_their_lease_or_history() 
         .fetch_one(&mut db)
         .await
         .unwrap();
-    assert_eq!(version, 9);
+    assert_eq!(version, 12);
 }
 
 #[tokio::test]
@@ -2309,7 +2312,7 @@ async fn numbered_filenames_migrate_v3_and_recover_after_a_destination_conflict(
         .execute(&mut db)
         .await
         .unwrap();
-    sqlx::query("DELETE FROM projection_state WHERE key = 'documents'")
+    sqlx::query("DELETE FROM document_registry")
         .execute(&mut db)
         .await
         .unwrap();

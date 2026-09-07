@@ -15,6 +15,11 @@ impl Snapshot {
             .filter(|entry| {
                 entry.status == InboxStatus::Cancelled
                     && (entry.last_session.as_deref() == Some(session)
+                        || self
+                            .query_context
+                            .cancelled_inboxes
+                            .get(session)
+                            .is_some_and(|ids| ids.contains(&entry.id))
                         || self.tasks.iter().any(|task| {
                             Some(&task.job_id) == entry.job_id.as_ref()
                                 && task.last_session.as_deref() == Some(session)
@@ -59,6 +64,9 @@ fn insert(
         id,
         project_id: project.into(),
         content: content.trim().into(),
+        source: None,
+        source_version: 0,
+        content_pending: false,
         position: state
             .inboxes
             .iter()
@@ -89,6 +97,9 @@ pub(crate) fn apply(
     now: i64,
 ) -> Result<Value> {
     let command = required(request, "command")?;
+    if command == "inbox.edit" {
+        return edit(state, request, options, now);
+    }
     if matches!(
         command,
         "inbox.cancel" | "inbox.release" | "inbox.set-status"
@@ -96,7 +107,7 @@ pub(crate) fn apply(
         let i = index(state, required(request, "inbox")?)?;
         check_revision(state.inboxes[i].revision, options)?;
         if command == "inbox.set-status" {
-            set_status(state, i, required(request, "status")?, now)?;
+            set_status(state, i, required(request, "status")?, options, now)?;
         } else if command == "inbox.cancel" {
             cancel(state, i, false, now);
         } else {
@@ -132,14 +143,25 @@ pub(crate) fn apply(
                 !content.contains("<!-- taskcli:"),
                 "invalid: Inbox content contains reserved taskcli control markers"
             );
-            Ok(serde_json::to_value(insert(
+            let mut entry = insert(
                 state,
                 &project_id,
                 content,
                 &options.actor_ref,
                 new_id("inbox"),
                 now,
-            ))?)
+            );
+            entry.source = request["source"]
+                .as_str()
+                .or_else(|| {
+                    options
+                        .idempotency_key
+                        .as_deref()
+                        .and_then(|key| key.strip_prefix("im:inbox:"))
+                })
+                .map(str::to_owned);
+            *state.inboxes.last_mut().unwrap() = entry.clone();
+            Ok(serde_json::to_value(entry)?)
         }
         "inbox.list" | "inbox.sync" => {
             let mut entries: Vec<_> = state
@@ -163,6 +185,7 @@ pub(crate) fn apply(
                     "conflict: Inbox Project mismatch"
                 );
                 state.inboxes[i].published = true;
+                state.inboxes[i].content_pending = false;
             }
             Ok(json!({"published":true}))
         }
@@ -196,7 +219,7 @@ fn import(state: &mut Snapshot, project: &str, request: &Value, now: i64) -> Res
         }
         let old = entry.clone();
         entry.position = i64::try_from(position)?;
-        if entry.status == InboxStatus::Todo && entry.job_id.is_none() {
+        if !entry.content_pending && entry.status == InboxStatus::Todo && entry.job_id.is_none() {
             entry.content = content.into();
         }
         entry.published = true;
@@ -239,7 +262,11 @@ fn claim_next(
         .iter()
         .enumerate()
         .filter(|(_, e)| {
-            e.project_id == project && !e.deleted && e.published && e.status == InboxStatus::Todo
+            e.project_id == project
+                && !e.deleted
+                && e.published
+                && e.lease.is_none()
+                && matches!(e.status, InboxStatus::Todo | InboxStatus::Active)
         })
         .map(|(i, e)| (i, e.job_id.is_none(), e.position))
         .collect();
@@ -250,11 +277,9 @@ fn claim_next(
         return Ok(json!({"claimed":false,"reason":"empty"}));
     };
     let linked = state.inboxes[i].job_id.as_deref();
-    if state
-        .jobs
-        .iter()
-        .any(|j| j.project_id == project && !j.status.terminal() && Some(j.id.as_str()) != linked)
-    {
+    if state.jobs.iter().any(|j| {
+        j.project_id == project && j.status == JobStatus::Active && Some(j.id.as_str()) != linked
+    }) {
         return Ok(json!({"claimed":false,"reason":"active_jobs"}));
     }
     if linked.is_some_and(|job| {
@@ -274,7 +299,7 @@ fn claim_next(
     };
     let entry = &mut state.inboxes[i];
     entry.job_id = job["id"].as_str().map(str::to_owned);
-    entry.status = InboxStatus::InProgress;
+    entry.status = InboxStatus::Active;
     entry.last_session = Some(session.into());
     entry.lease = Some(InboxLease {
         executor_ref: options.actor_ref.clone(),
@@ -309,12 +334,20 @@ fn release(state: &mut Snapshot, i: usize, now: i64) {
     changed(entry, now);
 }
 
-fn set_status(state: &mut Snapshot, i: usize, target: &str, now: i64) -> Result<()> {
+fn set_status(
+    state: &mut Snapshot,
+    i: usize,
+    target: &str,
+    options: &WriteOptions,
+    now: i64,
+) -> Result<()> {
     let target = match target {
         "TODO" => InboxStatus::Todo,
-        "DONE" => InboxStatus::Done,
+        "ACTIVE" | "IN_PROGRESS" => InboxStatus::Active,
+        "PENDING_REVIEW" => InboxStatus::PendingReview,
+        "COMPLETED" | "DONE" => InboxStatus::Completed,
         "CANCELLED" => InboxStatus::Cancelled,
-        _ => bail!("invalid: use TODO, DONE or CANCELLED; IN_PROGRESS requires inbox claim-next"),
+        _ => bail!("invalid: use TODO, ACTIVE, PENDING_REVIEW, COMPLETED or CANCELLED"),
     };
     let entry = &state.inboxes[i];
     ensure!(!entry.deleted, "conflict: Inbox entry was withdrawn");
@@ -340,24 +373,36 @@ fn set_status(state: &mut Snapshot, i: usize, target: &str, now: i64) -> Result<
     match target {
         InboxStatus::Todo => {
             ensure!(
-                matches!(entry.status, InboxStatus::Done | InboxStatus::Cancelled),
-                "conflict: use inbox release with the owning lease, or reject the pending Job"
+                entry.lease.is_none()
+                    && !state
+                        .tasks
+                        .iter()
+                        .any(|t| Some(&t.job_id) == entry.job_id.as_ref()
+                            && state.leases.iter().any(|l| l.task_id == t.id)),
+                "conflict: release the active Inbox and Task leases before returning to TODO"
             );
             if let Some(j) = job_index {
-                ensure!(
-                    state.jobs[j].status.terminal(),
-                    "conflict: linked Job is still active"
-                );
-                let job = &mut state.jobs[j];
-                job.status = JobStatus::Active;
-                job.completed_at = None;
-                job.cancelled_at = None;
-                job.review_reason = Some("Inbox entry reopened".into());
-                job.revision += 1;
-                job.updated_at = now;
+                activate_job(state, j, now)?;
             }
         }
-        InboxStatus::Done => {
+        InboxStatus::Active => {
+            if let Some(j) = job_index {
+                activate_job(state, j, now)?;
+            } else {
+                let entry = &state.inboxes[i];
+                let request =
+                    json!({"project":entry.project_id,"title":entry.title(),"goal":entry.content});
+                let job = crate::mutations::create_job(state, &request, options, now)?;
+                state.inboxes[i].job_id = job["id"].as_str().map(str::to_owned);
+            }
+        }
+        InboxStatus::PendingReview => {
+            let j = job_index.context(
+                "conflict: activate the Inbox item before submitting its Job for review",
+            )?;
+            crate::mutations::review_job(state, j, &json!({"command":"job.submit"}), now)?;
+        }
+        InboxStatus::Completed => {
             ensure!(
                 entry.status != InboxStatus::Cancelled,
                 "conflict: reopen the cancelled entry first"
@@ -368,13 +413,12 @@ fn set_status(state: &mut Snapshot, i: usize, target: &str, now: i64) -> Result<
         }
         InboxStatus::Cancelled => {
             ensure!(
-                entry.status != InboxStatus::Done,
+                entry.status != InboxStatus::Completed,
                 "conflict: reopen the completed entry before cancelling"
             );
             cancel(state, i, false, now);
             return Ok(());
         }
-        InboxStatus::InProgress => unreachable!(),
     }
     let entry = &mut state.inboxes[i];
     entry.status = target;
@@ -383,11 +427,34 @@ fn set_status(state: &mut Snapshot, i: usize, target: &str, now: i64) -> Result<
     Ok(())
 }
 
+fn activate_job(state: &mut Snapshot, j: usize, now: i64) -> Result<()> {
+    if state.jobs[j].status == JobStatus::PendingReview {
+        crate::mutations::review_job(
+            state,
+            j,
+            &json!({"command":"job.reject","reason":"Inbox status changed: verification rejected"}),
+            now,
+        )?;
+    } else if state.jobs[j].status.terminal() {
+        let job = &mut state.jobs[j];
+        job.status = JobStatus::Active;
+        job.completed_at = None;
+        job.cancelled_at = None;
+        job.review_reason = Some("Inbox entry reopened".into());
+        job.revision += 1;
+        job.updated_at = now;
+    }
+    Ok(())
+}
+
 fn cancel(state: &mut Snapshot, i: usize, deleted: bool, now: i64) {
     let entry = &mut state.inboxes[i];
     let old = entry.clone();
     entry.deleted |= deleted;
-    if !matches!(entry.status, InboxStatus::Done | InboxStatus::Cancelled) {
+    if !matches!(
+        entry.status,
+        InboxStatus::Completed | InboxStatus::Cancelled
+    ) {
         entry.status = InboxStatus::Cancelled;
         entry.lease = None;
         if let Some(job_id) = &entry.job_id {
@@ -438,7 +505,10 @@ fn cancel(state: &mut Snapshot, i: usize, deleted: bool, now: i64) {
 pub(crate) fn refresh(state: &mut Snapshot, now: i64) {
     for i in 0..state.inboxes.len() {
         let entry = &state.inboxes[i];
-        if matches!(entry.status, InboxStatus::Done | InboxStatus::Cancelled) {
+        if matches!(
+            entry.status,
+            InboxStatus::Completed | InboxStatus::Cancelled
+        ) {
             continue;
         }
         let job = entry
@@ -447,7 +517,7 @@ pub(crate) fn refresh(state: &mut Snapshot, now: i64) {
             .and_then(|id| state.jobs.iter().find(|j| &j.id == id));
         if job.is_some_and(|j| j.status == JobStatus::Completed) {
             let entry = &mut state.inboxes[i];
-            entry.status = InboxStatus::Done;
+            entry.status = InboxStatus::Completed;
             entry.lease = None;
             changed(entry, now);
         } else if (entry.job_id.is_some() && job.is_none())
@@ -456,18 +526,21 @@ pub(crate) fn refresh(state: &mut Snapshot, now: i64) {
             cancel(state, i, false, now);
         } else if job.is_some_and(|j| j.status == JobStatus::PendingReview) {
             let entry = &mut state.inboxes[i];
-            if entry.lease.is_some() || entry.status != InboxStatus::InProgress {
+            if entry.lease.is_some() || entry.status != InboxStatus::PendingReview {
                 entry.lease = None;
-                entry.status = InboxStatus::InProgress;
+                entry.status = InboxStatus::PendingReview;
                 changed(entry, now);
             }
-        } else if (job.is_some_and(|j| j.status == JobStatus::Active)
-            && entry.status == InboxStatus::InProgress
-            && entry.lease.is_none())
-            || entry
-                .lease
-                .as_ref()
-                .is_some_and(|l| l.lease_expires_at <= now)
+        } else if job.is_some_and(|j| j.status == JobStatus::Active)
+            && entry.status == InboxStatus::PendingReview
+        {
+            let entry = &mut state.inboxes[i];
+            entry.status = InboxStatus::Active;
+            changed(entry, now);
+        } else if entry
+            .lease
+            .as_ref()
+            .is_some_and(|l| l.lease_expires_at <= now)
         {
             release(state, i, now);
         }
@@ -491,4 +564,40 @@ pub(crate) fn session(state: &mut Snapshot, session: &str, command: &str, now: i
             release(state, i, now);
         }
     }
+}
+
+fn edit(state: &mut Snapshot, request: &Value, options: &WriteOptions, now: i64) -> Result<Value> {
+    let i = index(state, required(request, "inbox")?)?;
+    let entry = &state.inboxes[i];
+    check_revision(entry.revision, options)?;
+    ensure!(
+        entry.actor_ref == options.actor_ref
+            && entry.source.as_deref() == Some(required(request, "source")?),
+        "conflict: Inbox source owner mismatch"
+    );
+    ensure!(
+        !entry.deleted
+            && state.projects[state.project_index(&entry.project_id)?]
+                .archived_at
+                .is_none(),
+        "conflict: Inbox entry is withdrawn or archived"
+    );
+    let content = required(request, "content")?;
+    ensure!(
+        !content.contains("<!-- taskcli:"),
+        "invalid: Inbox content contains reserved taskcli control markers"
+    );
+    let version = request["version"]
+        .as_i64()
+        .filter(|v| *v > 0)
+        .context("invalid: source version")?;
+    if version <= entry.source_version {
+        return Ok(serde_json::to_value(entry)?);
+    }
+    let entry = &mut state.inboxes[i];
+    entry.content = content.trim().into();
+    entry.source_version = version;
+    entry.content_pending = true;
+    changed(entry, now);
+    Ok(serde_json::to_value(entry)?)
 }

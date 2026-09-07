@@ -2,6 +2,16 @@
   "taskIdentificationMethod": "tag",
   "taskTag": "task",
   "openTaskAfterCreation": "none",
+  "singleClickAction": "openNote",
+  "fieldMapping": {
+    "title": "title",
+    "status": "status",
+    "projects": "projects",
+    "dateCreated": "created_at",
+    "dateModified": "updated_at",
+    "completedDate": "completed_at",
+    "archiveTag": "archived"
+  },
   "customStatuses": [
     {
       "id": "agent-todo",

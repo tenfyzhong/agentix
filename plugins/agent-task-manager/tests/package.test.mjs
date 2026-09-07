@@ -215,6 +215,7 @@ test("npm package contains all host manifests, hooks and resources but no tests"
         "hooks/claude.json",
         "hooks/run.mjs",
         "runtime.mjs",
+        "conversation.mjs",
         "extensions/pi.ts",
         "extensions/omp.ts",
         "skills/agent-task-manager/SKILL.md",

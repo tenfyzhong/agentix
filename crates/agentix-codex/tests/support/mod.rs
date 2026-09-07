@@ -192,6 +192,7 @@ struct ServerState {
     results: HashMap<String, Vec<Value>>,
     notifications: Vec<Value>,
     server_requests: Vec<Value>,
+    rate_limits: Value,
     page_size: Option<usize>,
     failures: HashMap<String, VecDeque<(i64, String)>>,
     disconnect_responses: HashMap<String, usize>,
@@ -253,6 +254,10 @@ impl MockCodexAppServer {
             .await
             .threads
             .insert(thread.id.clone(), thread);
+    }
+
+    pub async fn set_rate_limits(&self, value: Value) {
+        self.shared.state.lock().await.rate_limits = value;
     }
 
     pub async fn set_page_size(&self, page_size: usize) {
@@ -1038,6 +1043,7 @@ async fn handle_request(
             }
             Ok(json!({}))
         }
+        "account/rateLimits/read" => Ok(state.rate_limits.clone()),
         "thread/goal/get" => with_thread(&state, params, |thread| Ok(json!({"goal": thread.goal}))),
         "thread/goal/set" => {
             let Some(thread_id) = string_param(params, "threadId") else {

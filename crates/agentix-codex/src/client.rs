@@ -1150,6 +1150,18 @@ impl CodexClient {
         })
     }
 
+    async fn quota_status(&self) -> String {
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            self.request("account/rateLimits/read", json!({})),
+        )
+        .await
+        {
+            Ok(Ok(value)) => crate::quota::render(&value),
+            _ => "Quota unavailable; retry /status later.".into(),
+        }
+    }
+
     async fn status_command(
         &self,
         session_id: &SessionId,
@@ -1237,10 +1249,11 @@ impl CodexClient {
                 (context, format!("{total} total"))
             },
         );
+        let quota = self.quota_status().await;
         Ok(SessionCommandResult::message(
             "Codex · Status",
             format!(
-                "**Session:** {name}\n**ID:** `{}`\n**State:** `{status}`\n**Directory:** `{cwd}`\n**Model:** `{model}`\n**Reasoning:** `{effort}`\n**Service tier:** `{service_tier}`\n**Approval:** `{approval}`\n**Sandbox:** `{sandbox}`\n**Writable roots:** {}\n**Context:** {context_usage}\n**Tokens:** {total_usage}\n\n**Goal**\n\n{}",
+                "**Session:** {name}\n**ID:** `{}`\n**State:** `{status}`\n**Directory:** `{cwd}`\n**Model:** `{model}`\n**Reasoning:** `{effort}`\n**Service tier:** `{service_tier}`\n**Approval:** `{approval}`\n**Sandbox:** `{sandbox}`\n**Writable roots:** {}\n**Context:** {context_usage}\n**Tokens:** {total_usage}\n\n**Quota**\n\n{quota}\n\n**Goal**\n\n{}",
                 session_id.as_str(),
                 if writable_roots.is_empty() {
                     "none".into()

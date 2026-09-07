@@ -62,14 +62,16 @@ test("Obsidian bridge uses real CLI revisions, lease guards and manual Job revie
     const task = await f.run(["task", "add", "--job", f.job.id, "--title", "Bridge"]);
     const { SyncEngine, runCli } = loadPlugin();
     const execute = (args) => runCli({ cliPath: process.env.TASKCLI_BIN, configPath: process.env.TASKCLI_CONFIG, vaultPath: f.root }, args);
-    const snapshot = async () => (await execute(["obsidian", "snapshot"])).result;
+    const lookup = async (id) => (await execute(["obsidian", "show", id])).result;
     const files = new Map();
     const notices = [];
-    for (const row of (await snapshot()).notes) {
+    for (const row of [await lookup(task.id), await lookup(f.job.id)]) {
         files.set(row.path, { ...copy(row.properties), id: row.id, task_id: row.kind === "task" ? row.id : undefined, revision: row.revision, custom: "preserved" });
     }
     const engine = new SyncEngine({
-        snapshot, execute, notice: (message) => notices.push(message),
+        connection: async () => (await execute(["obsidian", "connection"])).result,
+        lookup, execute, notice: (message) => notices.push(message),
+        openNotes: () => [...files].map(([path, properties]) => ({ path, properties })),
         read: async (path) => copy(files.get(path)),
         patch: async (path, expected, properties) => {
             const file = files.get(path);
@@ -81,7 +83,7 @@ test("Obsidian bridge uses real CLI revisions, lease guards and manual Job revie
     t.after(() => engine.dispose());
     await engine.initialize();
     const edit = async (id, status) => {
-        const row = (await snapshot()).notes.find((note) => note.id === id);
+        const row = await lookup(id);
         Object.assign(files.get(row.path), copy(row.properties), { revision: row.revision, status });
         engine.observe(row.path, files.get(row.path));
         await engine.flush();
@@ -107,7 +109,8 @@ test("Obsidian bridge uses real CLI revisions, lease guards and manual Job revie
     await edit(f.job.id, "PENDING_REVIEW");
     const approved = await edit(f.job.id, "COMPLETED");
     assert.equal(approved.status, "COMPLETED");
-    assert.ok(approved.completedDate);
+    assert.ok(approved.completed_at);
+    assert.equal(Object.hasOwn(approved, "completedDate"), false);
     const job = await f.run(["job", "show", f.job.id]);
     assert.ok(job.completed_at);
     assert.match(await readFile(join(f.root, "Tasks \u{2603}", job.document_path), "utf8"), /status: "COMPLETED"/);
@@ -122,15 +125,14 @@ test("Inbox bridge edits real Markdown, enforces Job review and reopens complete
     const task = await f.run(["task", "add", "--job", claimed.job.id, "--title", "Implementation"]);
     const { SyncEngine, runCli, parseInbox, patchInbox } = loadPlugin();
     const execute = (args) => runCli({ cliPath: process.env.TASKCLI_BIN, configPath: process.env.TASKCLI_CONFIG, vaultPath: f.root }, args);
-    const snapshot = async () => {
-        const result = (await execute(["obsidian", "snapshot"])).result;
-        return { ...result, notes: result.notes.filter((note) => note.kind === "inbox") };
-    };
-    const note = (await snapshot()).notes[0];
+    const lookup = async (id) => (await execute(["obsidian", "show", id])).result;
+    const note = await lookup(entry.id);
     const path = join(f.root, note.path);
     const notices = [];
     const engine = new SyncEngine({
-        snapshot, execute, notice: (message) => notices.push(message),
+        connection: async () => (await execute(["obsidian", "connection"])).result,
+        lookup, execute, notice: (message) => notices.push(message),
+        openNotes: async function* () { yield { path: note.path, source: await readFile(path, "utf8") }; },
         read: async () => parseInbox(await readFile(path, "utf8"), f.project.id).find((row) => row.id === entry.id),
         patch: async (_path, expected, properties, row) => {
             await writeFile(path, patchInbox(await readFile(path, "utf8"), row, expected, properties));
@@ -142,19 +144,28 @@ test("Inbox bridge edits real Markdown, enforces Job review and reopens complete
         const source = (await readFile(path, "utf8")).replace(`- [${from}] Deliver`, `- [${to}] Deliver`);
         await writeFile(path, source); engine.observeInbox(note.path, source); await engine.flush();
     };
-    await edit(" ", "x");
+    await edit("/", "x");
     assert.equal((await f.run(["job", "show", claimed.job.id])).status, "ACTIVE");
     assert.match(notices[0], /PENDING_REVIEW/);
-    assert.match(await readFile(path, "utf8"), /- \[ \] Deliver/);
+    assert.match(await readFile(path, "utf8"), /- \[\/\] Deliver/);
     const owner = { session: "inbox-worker", executor: "agent:test" };
     const claim = await f.run(["task", "claim", task.id], owner); owner.token = claim.lease.token;
     await f.run(["plan", "create", task.id, "--body", "Verify"], owner);
     await f.run(["task", "start", task.id], owner); await f.run(["task", "done", task.id], owner);
     await engine.initialize();
-    await edit(" ", "x");
-    assert.equal((await f.run(["job", "show", claimed.job.id])).status, "COMPLETED");
-    await edit("x", " ");
+    assert.match(await readFile(path, "utf8"), /- \[r\] Deliver/);
+    await edit("r", "/");
     assert.equal((await f.run(["job", "show", claimed.job.id])).status, "ACTIVE");
+    await edit("/", "r");
+    assert.equal((await f.run(["job", "show", claimed.job.id])).status, "PENDING_REVIEW");
+    await edit("r", "x");
+    assert.equal((await f.run(["job", "show", claimed.job.id])).status, "COMPLETED");
+    await edit("x", "/");
+    assert.equal((await f.run(["job", "show", claimed.job.id])).status, "ACTIVE");
+    await edit("/", " ");
+    await edit(" ", "-");
+    assert.equal((await f.run(["job", "show", claimed.job.id])).status, "CANCELLED");
+    await edit("-", " ");
     assert.equal((await f.run(["inbox", "list", "--project", f.project.id]))[0].status, "TODO");
     assert.equal((await f.run(["task", "show", task.id])).status, "DONE");
     assert.match(await readFile(path, "utf8"), /Preserve these details/);
@@ -441,7 +452,7 @@ for (const host of ["codex", "claude"]) {
             const f = await fixture(t);
             const root = join(f.dir, "installed plugin \u{2603}");
             await mkdir(root);
-            for (const path of ["hooks", "runtime.mjs", `.${host}-plugin`]) {
+            for (const path of ["hooks", "runtime.mjs", "conversation.mjs", `.${host}-plugin`]) {
                 await cp(resolve(path), join(root, path), { recursive: true });
             }
             const task = await f.run([

@@ -137,8 +137,12 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and __fish_seen_s
 complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and __fish_seen_subcommand_from cancel" -l json
 complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and __fish_seen_subcommand_from cancel" -s h -l help -d 'Print help'
 complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and __fish_seen_subcommand_from set-status" -l status -r -f -a "TODO\t''
-DONE\t''
-CANCELLED\t''"
+ACTIVE\t''
+PENDING_REVIEW\t''
+COMPLETED\t''
+CANCELLED\t''
+IN_PROGRESS\t''
+DONE\t''"
 complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and __fish_seen_subcommand_from set-status" -l config -r -F
 complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and __fish_seen_subcommand_from set-status" -l project -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and __fish_seen_subcommand_from set-status" -l actor -r
@@ -185,20 +189,44 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand init" -l expect-revision
 complete -c taskcli -n "__fish_taskcli_using_subcommand init" -l idempotency-key -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand init" -l json
 complete -c taskcli -n "__fish_taskcli_using_subcommand init" -s h -l help -d 'Print help'
-complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from snapshot setup help" -l config -r -F
-complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from snapshot setup help" -l project -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from snapshot setup help" -l actor -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from snapshot setup help" -l executor -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from snapshot setup help" -l session -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from snapshot setup help" -l delegated-by -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from snapshot setup help" -l lease-token -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from snapshot setup help" -l expect-revision -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from snapshot setup help" -l idempotency-key -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from snapshot setup help" -l json
-complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from snapshot setup help" -s h -l help -d 'Print help'
-complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from snapshot setup help" -f -a "snapshot" -d 'Query registered notes and authoritative status properties without lease credentials'
-complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from snapshot setup help" -f -a "setup" -d 'Install `TaskNotes` and configure its task statuses and Bases. Close Obsidian first'
-complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from snapshot setup help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show snapshot setup help" -l config -r -F
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show snapshot setup help" -l project -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show snapshot setup help" -l actor -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show snapshot setup help" -l executor -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show snapshot setup help" -l session -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show snapshot setup help" -l delegated-by -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show snapshot setup help" -l lease-token -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show snapshot setup help" -l expect-revision -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show snapshot setup help" -l idempotency-key -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show snapshot setup help" -l json
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show snapshot setup help" -s h -l help -d 'Print help'
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show snapshot setup help" -f -a "connection" -d 'Read the Obsidian connection configuration without loading task records'
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show snapshot setup help" -f -a "show" -d 'Query one registered Task, Job, or Inbox entry by its exact ID'
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show snapshot setup help" -f -a "snapshot" -d 'Query registered notes and authoritative status properties without lease credentials'
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show snapshot setup help" -f -a "setup" -d 'Install `TaskNotes` and configure its task statuses and Bases. Close Obsidian first'
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show snapshot setup help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from connection" -l config -r -F
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from connection" -l project -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from connection" -l actor -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from connection" -l executor -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from connection" -l session -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from connection" -l delegated-by -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from connection" -l lease-token -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from connection" -l expect-revision -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from connection" -l idempotency-key -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from connection" -l json
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from connection" -s h -l help -d 'Print help'
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from show" -l config -r -F
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from show" -l project -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from show" -l actor -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from show" -l executor -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from show" -l session -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from show" -l delegated-by -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from show" -l lease-token -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from show" -l expect-revision -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from show" -l idempotency-key -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from show" -l json
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from show" -s h -l help -d 'Print help'
 complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from snapshot" -l config -r -F
 complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from snapshot" -l project -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from snapshot" -l actor -r
@@ -222,6 +250,8 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_see
 complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from setup" -l idempotency-key -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from setup" -l json
 complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from setup" -s h -l help -d 'Print help'
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from help" -f -a "connection" -d 'Read the Obsidian connection configuration without loading task records'
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from help" -f -a "show" -d 'Query one registered Task, Job, or Inbox entry by its exact ID'
 complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from help" -f -a "snapshot" -d 'Query registered notes and authoritative status properties without lease credentials'
 complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from help" -f -a "setup" -d 'Install `TaskNotes` and configure its task statuses and Bases. Close Obsidian first'
 complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
@@ -245,6 +275,7 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand sync" -l delegated-by -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand sync" -l lease-token -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand sync" -l expect-revision -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand sync" -l idempotency-key -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand sync" -l pending -d 'Retry only pending document publications without a full rebuild'
 complete -c taskcli -n "__fish_taskcli_using_subcommand sync" -l json
 complete -c taskcli -n "__fish_taskcli_using_subcommand sync" -s h -l help -d 'Print help'
 complete -c taskcli -n "__fish_taskcli_using_subcommand project; and not __fish_seen_subcommand_from delete register list show archive unarchive help" -l config -r -F
@@ -858,23 +889,37 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand context" -l expect-revis
 complete -c taskcli -n "__fish_taskcli_using_subcommand context" -l idempotency-key -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand context" -l json
 complete -c taskcli -n "__fish_taskcli_using_subcommand context" -s h -l help -d 'Print help'
-complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from stop session-start session-end interrupt heartbeat help" -l config -r -F
-complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from stop session-start session-end interrupt heartbeat help" -l project -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from stop session-start session-end interrupt heartbeat help" -l actor -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from stop session-start session-end interrupt heartbeat help" -l executor -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from stop session-start session-end interrupt heartbeat help" -l session -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from stop session-start session-end interrupt heartbeat help" -l delegated-by -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from stop session-start session-end interrupt heartbeat help" -l lease-token -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from stop session-start session-end interrupt heartbeat help" -l expect-revision -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from stop session-start session-end interrupt heartbeat help" -l idempotency-key -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from stop session-start session-end interrupt heartbeat help" -l json
-complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from stop session-start session-end interrupt heartbeat help" -s h -l help -d 'Print help'
-complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from stop session-start session-end interrupt heartbeat help" -f -a "stop" -d 'Acknowledge turn completion without claiming Inbox work'
-complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from stop session-start session-end interrupt heartbeat help" -f -a "session-start" -d 'Recover the session\'s Tasks blocked by interruption or lease expiry into planning'
-complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from stop session-start session-end interrupt heartbeat help" -f -a "session-end" -d 'Record session shutdown and release its active Task leases'
-complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from stop session-start session-end interrupt heartbeat help" -f -a "interrupt" -d 'Release an interrupted session\'s Task leases while preserving its Plans'
-complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from stop session-start session-end interrupt heartbeat help" -f -a "heartbeat" -d 'Renew all active Task leases owned by the session'
-complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from stop session-start session-end interrupt heartbeat help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start session-end interrupt heartbeat help" -l config -r -F
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start session-end interrupt heartbeat help" -l project -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start session-end interrupt heartbeat help" -l actor -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start session-end interrupt heartbeat help" -l executor -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start session-end interrupt heartbeat help" -l session -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start session-end interrupt heartbeat help" -l delegated-by -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start session-end interrupt heartbeat help" -l lease-token -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start session-end interrupt heartbeat help" -l expect-revision -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start session-end interrupt heartbeat help" -l idempotency-key -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start session-end interrupt heartbeat help" -l json
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start session-end interrupt heartbeat help" -s h -l help -d 'Print help'
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start session-end interrupt heartbeat help" -f -a "record" -d 'Record visible user/assistant messages from a JSON array in the session Job'
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start session-end interrupt heartbeat help" -f -a "stop" -d 'Acknowledge turn completion without claiming Inbox work'
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start session-end interrupt heartbeat help" -f -a "session-start" -d 'Recover the session\'s Tasks blocked by interruption or lease expiry into planning'
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start session-end interrupt heartbeat help" -f -a "session-end" -d 'Record session shutdown and release its active Task leases'
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start session-end interrupt heartbeat help" -f -a "interrupt" -d 'Release an interrupted session\'s Task leases while preserving its Plans'
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start session-end interrupt heartbeat help" -f -a "heartbeat" -d 'Renew all active Task leases owned by the session'
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start session-end interrupt heartbeat help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from record" -l file -r -F
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from record" -l job -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from record" -l config -r -F
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from record" -l project -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from record" -l actor -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from record" -l executor -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from record" -l session -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from record" -l delegated-by -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from record" -l lease-token -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from record" -l expect-revision -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from record" -l idempotency-key -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from record" -l json
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from record" -s h -l help -d 'Print help'
 complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from stop" -l config -r -F
 complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from stop" -l project -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from stop" -l actor -r
@@ -930,6 +975,7 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_su
 complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from heartbeat" -l idempotency-key -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from heartbeat" -l json
 complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from heartbeat" -s h -l help -d 'Print help'
+complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from help" -f -a "record" -d 'Record visible user/assistant messages from a JSON array in the session Job'
 complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from help" -f -a "stop" -d 'Acknowledge turn completion without claiming Inbox work'
 complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from help" -f -a "session-start" -d 'Recover the session\'s Tasks blocked by interruption or lease expiry into planning'
 complete -c taskcli -n "__fish_taskcli_using_subcommand hook; and __fish_seen_subcommand_from help" -f -a "session-end" -d 'Record session shutdown and release its active Task leases'
@@ -957,6 +1003,8 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_su
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from inbox" -f -a "release" -d 'Release an owned Inbox lease so another agent can resume its existing Job'
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from inbox" -f -a "cancel" -d 'Cancel a requirement and its unfinished work, preserving history'
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from inbox" -f -a "set-status" -d 'Set a human Inbox status; linked completion requires a pending review'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from obsidian" -f -a "connection" -d 'Read the Obsidian connection configuration without loading task records'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from obsidian" -f -a "show" -d 'Query one registered Task, Job, or Inbox entry by its exact ID'
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from obsidian" -f -a "snapshot" -d 'Query registered notes and authoritative status properties without lease credentials'
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from obsidian" -f -a "setup" -d 'Install `TaskNotes` and configure its task statuses and Bases. Close Obsidian first'
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from project" -f -a "delete" -d 'Delete the Project, its work, and its entire generated document directory'
@@ -997,6 +1045,7 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_su
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from plan" -f -a "revise" -d 'Replace the Plan body in the same Task note while holding its lease'
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from plan" -f -a "show" -d 'Show the current Plan\'s metadata and absolute file path for a Task'
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from event" -f -a "list" -d 'List events after a sequence cursor, optionally filtered by Job and limited in count'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from hook" -f -a "record" -d 'Record visible user/assistant messages from a JSON array in the session Job'
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from hook" -f -a "stop" -d 'Acknowledge turn completion without claiming Inbox work'
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from hook" -f -a "session-start" -d 'Recover the session\'s Tasks blocked by interruption or lease expiry into planning'
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from hook" -f -a "session-end" -d 'Record session shutdown and release its active Task leases'

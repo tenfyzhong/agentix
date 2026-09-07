@@ -16,6 +16,7 @@ rmux-sdk.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+time = { workspace = true, features = ["formatting"] }
 tokio.workspace = true
 tokio-tungstenite.workspace = true
 tracing.workspace = true

@@ -1048,3 +1048,32 @@ async fn telegram_registers_configured_dashboard_in_the_default_menu() {
         "startup commands must apply before a chat is attached"
     );
 }
+
+#[tokio::test]
+async fn telegram_forwards_authorized_message_edits_with_original_identity() {
+    let server = MockTelegramApi::start().await;
+    server
+        .push_updates(vec![serde_json::json!({
+            "update_id": 301, "edited_message": {"message_id": 11, "date": 1, "edit_date": 2,
+            "chat": {"id": 42, "type": "private", "first_name": "Owner"},
+            "from": {"id": 42, "is_bot": false, "first_name": "Owner"}, "text": "/inbox Revised"}
+        })])
+        .await;
+    let bot = Bot::new("test-token").set_api_url(server.api_url().parse().unwrap());
+    let adapter = TelegramAdapter::with_bot(bot, TelegramPolicy::new([42]));
+    let shutdown = CancellationToken::new();
+    let (sender, mut receiver) = mpsc::channel(4);
+    let task = tokio::spawn({
+        let shutdown = shutdown.clone();
+        async move { adapter.run(sender, shutdown).await }
+    });
+    let result = tokio::time::timeout(std::time::Duration::from_secs(2), receiver.recv()).await;
+    shutdown.cancel();
+    task.await.unwrap().unwrap();
+    let envelope = result.expect("edited message was not forwarded").unwrap();
+    assert_ne!(envelope.event_id, "42:11");
+    assert_eq!(
+        serde_json::to_value(envelope.payload).unwrap(),
+        serde_json::json!({"TextEdited":{"original_event_id":"42:11","version":301,"text":"/inbox Revised"}})
+    );
+}

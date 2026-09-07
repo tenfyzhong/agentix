@@ -22,14 +22,16 @@ export async function fixture(overrides = {}) {
     const { SyncEngine } = loadPlugin();
     const row = {
         kind: "task", id: "task_one", project_id: "prj_one", path: "Tasks/Projects/Demo/Tasks/One.md",
-        revision: 1, status: "TODO", properties: { status: "TODO", completedDate: null },
+        revision: 1, status: "TODO", properties: { status: "TODO", completed_at: null },
     };
     const state = { documents: { format: "obsidian", root: "/vault", directory: "Tasks" }, notes: [row] };
-    const files = new Map([[row.path, { id: row.id, task_id: row.id, revision: 1, status: "TODO", completedDate: null, custom: "keep" }]]);
+    const files = new Map([[row.path, { id: row.id, task_id: row.id, revision: 1, status: "TODO", completed_at: null, custom: "keep" }]]);
     const calls = [], notices = [];
     let engine;
     const io = {
-        snapshot: async () => copy(state),
+        connection: async () => ({ documents: copy(state.documents) }),
+        lookup: async (id) => copy(state.notes.find((note) => note.id === id) || null),
+        openNotes: () => [...files].map(([path, properties]) => ({ path, properties: copy(properties) })),
         read: async (path) => copy(files.get(path)),
         patch: async (path, expected, properties) => {
             const file = files.get(path);
@@ -65,10 +67,15 @@ export async function fixture(overrides = {}) {
     };
 }
 
-export async function connectionFixture() {
+export async function connectionFixture(directory = "11-Agents") {
     const notices = [], requests = [], commands = [], buttons = [];
+    const vaultEvents = new Map(), metadataEvents = new Map();
+    class TFile {}
+    const file = new TFile();
     let settingsTab;
     const Plugin = loadPlugin({
+        TFile,
+        parseYaml: JSON.parse,
         PluginSettingTab: class { constructor() { this.containerEl = { empty() {} }; } },
         Notice: class {
             constructor(message) { this.message = message; this.hidden = false; notices.push(this); }
@@ -101,21 +108,24 @@ export async function connectionFixture() {
     });
     const plugin = new Plugin();
     plugin.app = {
-        vault: { adapter: { getBasePath: () => "/vault" }, on() {}, getAbstractFileByPath() { return null; } },
-        metadataCache: { on() {} }, workspace: { onLayoutReady() {} },
+        vault: { adapter: { getBasePath: () => "/vault" }, on: (name, handler) => vaultEvents.set(name, handler), getAbstractFileByPath() { return null; } },
+        metadataCache: { on: (name, handler) => metadataEvents.set(name, handler) },
+        workspace: { onLayoutReady() {}, on() {}, getLeavesOfType() { return []; } },
     };
     plugin.loadData = async () => ({ cliPath: "/bin/taskcli", configPath: "/config.toml" });
     plugin.addSettingTab = (tab) => { settingsTab = tab; };
     plugin.addCommand = (command) => commands.push(command);
     plugin.registerEvent = () => {};
+    plugin.registerBasesView = () => {};
     await plugin.onload();
     settingsTab.display();
     return {
-        plugin, notices, requests, commands, button: buttons[0],
-        reply(error, index = requests.length - 1) {
+        plugin, file, notices, requests, commands, vaultEvents, metadataEvents, button: buttons[0],
+        reply(error, index = requests.length - 1, result) {
+            result ??= requests[index].args.includes("show") ? null : { protocol_version: 1, documents: { format: "obsidian", root: "/vault", directory } };
             requests[index].callback(error ? new Error(error) : null, JSON.stringify(error
                 ? { schema_version: 1, ok: false, error: { message: error } }
-                : { schema_version: 1, ok: true, result: { documents: { format: "obsidian", root: "/vault" }, notes: [] } }), "");
+                : { schema_version: 1, ok: true, result }), "");
         },
     };
 }

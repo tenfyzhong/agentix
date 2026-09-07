@@ -91,10 +91,18 @@ fn installs_configures_preserves_settings_and_repeats_without_download_or_databa
     assert_eq!(settings["calendarView"], "week");
     assert_eq!(settings["fieldMapping"]["priority"], "importance");
     assert_eq!(settings["fieldMapping"]["status"], "status");
+    for (key, field) in [
+        ("dateCreated", "created_at"),
+        ("dateModified", "updated_at"),
+        ("completedDate", "completed_at"),
+    ] {
+        assert_eq!(settings["fieldMapping"][key], field);
+    }
     assert_eq!(settings["taskTag"], "task");
     assert_eq!(settings["taskIdentificationMethod"], "tag");
     assert_eq!(settings["defaultTaskStatus"], "TODO");
     assert_eq!(settings["openTaskAfterCreation"], "none");
+    assert_eq!(settings["singleClickAction"], "openNote");
     let preset: Value = serde_json::from_str(include_str!(
         "../../../plugins/agent-task-manager/obsidian/tasknotes-settings.json"
     ))

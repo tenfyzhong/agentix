@@ -13,7 +13,7 @@ use crate::{Outcome, Snapshot, TaskEvent, WriteOptions, mutations, new_id};
 
 #[derive(Clone)]
 pub struct Store {
-    pool: SqlitePool,
+    pub(crate) pool: SqlitePool,
     clock: Arc<dyn Fn() -> i64 + Send + Sync>,
 }
 
@@ -71,7 +71,7 @@ impl Store {
             .fetch_one(&mut *tx)
             .await?;
         ensure!(
-            version <= 9,
+            version <= 12,
             "unsupported task database schema version {version}"
         );
         sqlx::raw_sql(include_str!("schema.sql"))
@@ -94,6 +94,30 @@ impl Store {
         if version > 0 && version < 7 {
             migrate_task_notes(&mut tx).await?;
         }
+        if version > 0 && version < 10 {
+            sqlx::query("UPDATE inbox_entries SET data = json_set(data, '$.status', CASE WHEN json_extract(data, '$.status') = 'DONE' THEN 'COMPLETED' WHEN EXISTS (SELECT 1 FROM jobs WHERE jobs.id = json_extract(inbox_entries.data, '$.job_id') AND json_extract(jobs.data, '$.status') = 'PENDING_REVIEW') THEN 'PENDING_REVIEW' ELSE 'ACTIVE' END, '$.revision', json_extract(data, '$.revision') + 1, '$.updated_at', ?) WHERE json_extract(data, '$.status') IN ('IN_PROGRESS', 'DONE')")
+                .bind(self.now()).execute(&mut *tx).await?;
+        }
+        if version > 0 && version < 11 {
+            sqlx::query("UPDATE inbox_entries SET data = json_set(data, '$.source', (SELECT substr(key, 10) FROM idempotency_keys WHERE key LIKE 'im:inbox:%' AND json_extract(result, '$.result.id') = inbox_entries.id LIMIT 1)) WHERE json_extract(data, '$.source') IS NULL")
+                .execute(&mut *tx).await?;
+            sqlx::query("UPDATE jobs SET data = json_set(data, '$.pending_review_at', COALESCE((SELECT json_extract(task_events.data, '$.occurred_at') FROM task_events WHERE task_events.job_id = jobs.id AND json_extract(task_events.data, '$.event_type') = 'job.pending_review' ORDER BY sequence DESC LIMIT 1), CASE WHEN json_extract(jobs.data, '$.status') = 'PENDING_REVIEW' THEN json_extract(jobs.data, '$.updated_at') END)) WHERE json_extract(data, '$.pending_review_at') IS NULL")
+                .execute(&mut *tx).await?;
+        }
+        if version < 12 {
+            sqlx::query("INSERT OR REPLACE INTO document_registry(key,path) SELECT json_each.key,json_each.value FROM projection_state,json_each(projection_state.value) WHERE projection_state.key='documents'")
+                .execute(&mut *tx).await?;
+            sqlx::query("DELETE FROM projection_state WHERE key='documents'")
+                .execute(&mut *tx)
+                .await?;
+            // Upgrades explicitly rebuild once, including legacy path cleanup.
+            sqlx::query(
+                "INSERT OR REPLACE INTO pending_documents(key,generation) VALUES ('rebuild',?)",
+            )
+            .bind(new_id("publication"))
+            .execute(&mut *tx)
+            .await?;
+        }
         tx.commit().await?;
         Ok(())
     }
@@ -103,6 +127,79 @@ impl Store {
         let state = load(&mut tx).await?;
         tx.commit().await?;
         Ok(state)
+    }
+
+    /// Read one Task and its lease in the same transaction. Prefix resolution
+    /// uses the primary-key index and reads at most two candidate identifiers.
+    pub async fn task_result(&self, id: &str) -> Result<Value> {
+        ensure!(!id.is_empty(), "invalid: empty identifier");
+        let mut tx = self.pool.begin().await?;
+        let mut data: Option<String> = sqlx::query_scalar("SELECT data FROM tasks WHERE id = ?")
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await?;
+        if data.is_none() {
+            let candidates: Vec<String> = sqlx::query_scalar(
+                "SELECT id FROM tasks WHERE id >= ? AND id < ? ORDER BY id LIMIT 2",
+            )
+            .bind(id)
+            .bind(format!("{id}\u{10ffff}"))
+            .fetch_all(&mut *tx)
+            .await?;
+            ensure!(!candidates.is_empty(), "not_found: {id}");
+            ensure!(candidates.len() == 1, "ambiguous identifier: {id}");
+            data = sqlx::query_scalar("SELECT data FROM tasks WHERE id = ?")
+                .bind(&candidates[0])
+                .fetch_optional(&mut *tx)
+                .await?;
+        }
+        let task: crate::Task = serde_json::from_str(&data.context("not_found: task")?)?;
+        let lease: Option<String> = sqlx::query_scalar("SELECT data FROM task_leases WHERE id = ?")
+            .bind(&task.id)
+            .fetch_optional(&mut *tx)
+            .await?;
+        let lease: Option<crate::Lease> = lease.map(|s| serde_json::from_str(&s)).transpose()?;
+        let mut result = serde_json::to_value(task)?;
+        result["lease"] = serde_json::to_value(lease)?;
+        tx.commit().await?;
+        Ok(result)
+    }
+
+    /// Fetch just the requested entity and its project key, without authored
+    /// content or credentials. Both reads use existing primary keys.
+    pub(crate) async fn obsidian_record(&self, id: &str) -> Result<Option<(Value, String)>> {
+        let query = match id.split_once('_').map(|(kind, _)| kind) {
+            Some("task") => "SELECT json_remove(data, '$.title') FROM tasks WHERE id = ?",
+            Some("job") => {
+                "SELECT json_remove(data, '$.title', '$.goal', '$.prompt', '$.conversation') FROM jobs WHERE id = ?"
+            }
+            Some("inbox") => {
+                "SELECT json_remove(data, '$.content', '$.lease', '$.source') FROM inbox_entries WHERE id = ?"
+            }
+            _ => anyhow::bail!("invalid: expected a task, job, or inbox ID"),
+        };
+        let mut tx = self.pool.begin().await?;
+        let data: Option<String> = sqlx::query_scalar(query)
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await?;
+        let Some(data) = data else {
+            return Ok(None);
+        };
+        let entity: Value = serde_json::from_str(&data)?;
+        if id.starts_with("inbox_") && (entity["deleted"] == true || entity["published"] != true) {
+            return Ok(None);
+        }
+        let project = entity["project_id"]
+            .as_str()
+            .context("missing project ID")?;
+        let key: String =
+            sqlx::query_scalar("SELECT json_extract(data, '$.key') FROM projects WHERE id = ?")
+                .bind(project)
+                .fetch_one(&mut *tx)
+                .await?;
+        tx.commit().await?;
+        Ok(Some((entity, key)))
     }
 
     pub async fn execute(&self, request: Value, options: WriteOptions) -> Result<Outcome> {
@@ -162,7 +259,7 @@ impl Store {
                 return Ok(serde_json::from_str(&row.get::<String, _>("result"))?);
             }
         }
-        let before = load(&mut tx).await?;
+        let before = crate::scoped::load_request(&mut tx, &request, self.now()).await?;
         let mut state = before.clone();
         let result = mutations::apply(&mut state, &request, &options, self.now())?;
         crate::inbox::refresh(&mut state, self.now());
@@ -188,14 +285,21 @@ impl Store {
 
     pub async fn reap_expired(&self) -> Result<usize> {
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
-        let before = load(&mut tx).await?;
+        let expired = crate::scoped::ids(&mut tx, "SELECT id FROM task_leases WHERE json_extract(data,'$.lease_expires_at')<=CAST(? AS INTEGER)", &self.now().to_string()).await?;
+        let inboxes = crate::scoped::ids(&mut tx, "SELECT id FROM inbox_entries WHERE json_extract(data,'$.lease.lease_expires_at')<=CAST(? AS INTEGER)", &self.now().to_string()).await?;
+        if expired.is_empty() && inboxes.is_empty() {
+            return Ok(0);
+        }
+        let mut scope = crate::scoped::Scope {
+            tasks: expired.clone(),
+            inboxes,
+            ..Default::default()
+        };
+        scope.parents(&mut tx).await?;
+        scope.job_tasks(&mut tx).await?;
+        scope.inboxes.extend(crate::scoped::ids(&mut tx,"SELECT id FROM inbox_entries WHERE json_extract(data,'$.job_id') IN (SELECT value FROM json_each(?))", &json!(scope.jobs).to_string()).await?);
+        let before = scope.load(&mut tx).await?;
         let mut state = before.clone();
-        let expired: Vec<_> = state
-            .leases
-            .iter()
-            .filter(|l| l.lease_expires_at <= self.now())
-            .map(|l| l.task_id.clone())
-            .collect();
         for task in &expired {
             let i = state.task_index(task)?;
             mutations::system_block(&mut state, i, "lease expired", self.now());
@@ -254,6 +358,11 @@ impl Store {
     }
 
     pub async fn metadata(&self, key: &str) -> Result<Option<Value>> {
+        if key == "documents" {
+            return Ok(Some(serde_json::to_value(
+                self.document_paths(None).await?,
+            )?));
+        }
         let value: Option<String> =
             sqlx::query_scalar("SELECT value FROM projection_state WHERE key = ?")
                 .bind(key)
@@ -264,6 +373,23 @@ impl Store {
             .transpose()
     }
     pub async fn set_metadata(&self, key: &str, value: &Value) -> Result<()> {
+        if key == "documents" {
+            let paths: std::collections::BTreeMap<String, String> =
+                serde_json::from_value(value.clone())?;
+            let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+            sqlx::query("DELETE FROM document_registry")
+                .execute(&mut *tx)
+                .await?;
+            for (key, path) in paths {
+                sqlx::query("INSERT INTO document_registry(key,path) VALUES (?,?)")
+                    .bind(key)
+                    .bind(path)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+            tx.commit().await?;
+            return Ok(());
+        }
         sqlx::query("INSERT INTO projection_state(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(key).bind(serde_json::to_string(value)?).execute(&self.pool).await?;
         Ok(())
     }
@@ -568,6 +694,7 @@ async fn load(conn: &mut SqliteConnection) -> Result<Snapshot> {
         tasks: read_entities(conn, "tasks").await?,
         plans: read_entities(conn, "plans").await?,
         leases: read_entities(conn, "task_leases").await?,
+        ..Snapshot::default()
     })
 }
 
@@ -621,7 +748,15 @@ async fn persist(
             match job.status {
                 crate::JobStatus::Completed => "job.completed",
                 crate::JobStatus::PendingReview => "job.pending_review",
-                crate::JobStatus::Active if command == "job.reject" => "job.rejected",
+                crate::JobStatus::Active
+                    if command == "job.reject"
+                        || (command == "inbox.set-status"
+                            && before.jobs.iter().any(|old| {
+                                old.id == job.id && old.status == crate::JobStatus::PendingReview
+                            })) =>
+                {
+                    "job.rejected"
+                }
                 _ => command,
             }
         } else {
@@ -688,11 +823,16 @@ async fn persist(
             upsert(conn, "plans", &plan.id, plan).await?;
         }
     }
-    if before.leases != after.leases {
-        sqlx::query("DELETE FROM task_leases")
-            .execute(&mut *conn)
-            .await?;
-        for lease in &after.leases {
+    for lease in &before.leases {
+        if !after.leases.iter().any(|l| l.task_id == lease.task_id) {
+            sqlx::query("DELETE FROM task_leases WHERE id=?")
+                .bind(&lease.task_id)
+                .execute(&mut *conn)
+                .await?;
+        }
+    }
+    for lease in &after.leases {
+        if before.leases.iter().find(|l| l.task_id == lease.task_id) != Some(lease) {
             upsert(conn, "task_leases", &lease.task_id, lease).await?;
         }
     }
@@ -743,6 +883,7 @@ async fn persist(
         }
     }
     crate::deletion::persist(conn, before, after, command, options, now).await?;
+    crate::publication::enqueue_changes(conn, before, after, command).await?;
     if before.document_sequences != after.document_sequences {
         sqlx::query("INSERT INTO projection_state(key,value) VALUES ('document_sequences',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
             .bind(serde_json::to_string(&after.document_sequences)?).execute(&mut *conn).await?;

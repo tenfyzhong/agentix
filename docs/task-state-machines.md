@@ -59,6 +59,10 @@ stateDiagram-v2
     COMPLETED --> ACTIVE: task reopen / Inbox set-status TODO
     ACTIVE --> CANCELLED: job cancel
     PENDING_REVIEW --> CANCELLED: job cancel
+    note right of PENDING_REVIEW
+        Verification is pending.
+        Explicitly requested next Inbox work may start.
+    end note
     CANCELLED --> ACTIVE: task retry / reopen / Inbox set-status TODO
     classDef active fill:#bfdbfe,stroke:#bfdbfe,color:#1f2937
     classDef review fill:#fed7aa,stroke:#fed7aa,color:#1f2937
@@ -72,25 +76,43 @@ stateDiagram-v2
 
 Readiness means at least one non-CANCELLED Task exists and every such Task is DONE. Only a false-to-true readiness transition submits automatically. Cancelling every Task never counts as delivery. A rejection records `review_reason` and preserves every Task's status; metadata edits, heartbeats, and sync do not resubmit it. Reopen a Task or add repair work to make changes, then finish that work, or explicitly use `job submit` after rechecking unchanged deliverables.
 
+`pending_review_at` records the most recent transition into PENDING_REVIEW, including automatic readiness and explicit resubmission. Metadata edits, rejection, and approval preserve it; the Dashboard Pending review view sorts pending Jobs oldest first by this field; Recent Jobs sorts all statuses by latest update. Job document timestamps use the computer’s local time zone.
+
 Approval alone sets `completed_at` and emits `job.completed`. Submission emits `job.pending_review`; rejection emits `job.rejected`. Resubmission and approval clear the current review reason; events retain the history. The CLI checks state and readiness, while the reviewer is responsible for performing acceptance checks. Agents must not approve their own delivery unless the user explicitly authorizes them to perform that verification.
 
-PENDING_REVIEW is unfinished: it cannot be archived, blocks Project archival and new Inbox intake, and keeps its Inbox entry IN_PROGRESS without a lease. Rejection makes that entry available to resume its existing Job. Approval checks it off. COMPLETED and CANCELLED Jobs may be archived/unarchived; archival is an independent property, not another status. Database schema 9 preserves historical COMPLETED Jobs.
+PENDING_REVIEW is unfinished: it cannot be archived, blocks Project archival but does not block explicitly requested new Inbox intake, and sets its Inbox entry PENDING_REVIEW without a lease. Rejection returns that entry to ACTIVE for explicit recovery of its existing Job. Approval checks it off. COMPLETED and CANCELLED Jobs may be archived/unarchived; archival is an independent property, not another status. Database schema 9 preserves historical COMPLETED Jobs.
 
 ## Inbox item
+
+| Checkbox | State |
+| --- | --- |
+| `- [ ]` | TODO |
+| `- [/]` | ACTIVE |
+| `- [r]` | PENDING_REVIEW |
+| `- [x]` | COMPLETED |
+| `- [-]` | CANCELLED |
 
 ```mermaid
 stateDiagram-v2
     [*] --> TODO: submission
-    TODO --> IN_PROGRESS: explicit claim-next
-    IN_PROGRESS --> TODO: release / interruption / lease expiry / Job rejection
-    IN_PROGRESS --> DONE: Job approval / checked box approves pending Job
-    TODO --> DONE: set-status DONE (unlinked item only)
+    TODO --> ACTIVE: explicit claim-next / set-status ACTIVE
+    ACTIVE --> TODO: release / interruption / lease expiry / queue without active leases
+    ACTIVE --> PENDING_REVIEW: Tasks ready / submit ready Job
+    PENDING_REVIEW --> ACTIVE: verification rejected
+    PENDING_REVIEW --> TODO: queue for recovery (reject review)
+    PENDING_REVIEW --> COMPLETED: verification approved
+    TODO --> COMPLETED: complete an unlinked item
     TODO --> CANCELLED: cancellation / withdrawal
-    IN_PROGRESS --> CANCELLED: cancellation / withdrawal / Job cancellation
-    DONE --> TODO: set-status TODO / uncheck
-    CANCELLED --> TODO: set-status TODO / uncheck
+    ACTIVE --> CANCELLED: cancellation / withdrawal
+    PENDING_REVIEW --> CANCELLED: cancellation / withdrawal
+    COMPLETED --> ACTIVE: reopen with slash
+    CANCELLED --> ACTIVE: reopen with slash
+    COMPLETED --> TODO: reopen with blank checkbox
+    CANCELLED --> TODO: reopen with blank checkbox
 ```
 
-The connected Obsidian plugin maps saved checkbox edits to `inbox set-status`, with a revision check, idempotency key and rollback notification on failure. Reopening a terminal entry reuses its Job, sets that Job ACTIVE, and preserves all Task states. It does not automatically claim work or rerun DONE Tasks. Archived work must be unarchived first; withdrawn entries cannot be revived. Cancelled entries must be reopened before completion, and completed entries before cancellation.
+The connected plugin submits checkbox edits through `inbox set-status` with revision checks and idempotency keys. Failed edits restore the matching checkbox and notify the user. Job readiness automatically sets the Inbox item PENDING_REVIEW; review rejection and approval map to ACTIVE and COMPLETED. An explicit TODO represents queued/released work, even when its existing Job remains ACTIVE.
 
-TODO and IN_PROGRESS share the blank checkbox. PENDING_REVIEW keeps the entry IN_PROGRESS without a lease; approval requires the Job's readiness checks. A blank box alone cannot release active ownership or reject verification: use the corresponding lease-authorized release or Job rejection. Plain CLI sync retains cancellation/withdrawal import but does not replay completion/reopening from checkbox drift.
+Manual activation creates or resumes the Job without claiming an agent lease. Agents still need an explicit intake request to claim unleased TODO/ACTIVE entries, then follow the Task claim/Plan/start workflow. Reopening preserves Task outcomes and does not rerun DONE Tasks. Archived work must be unarchived first; withdrawn entries cannot be revived. Cancelled entries must be reopened before completion, and completed entries before cancellation.
+
+Schema 10 migrates legacy Inbox IN_PROGRESS/DONE values to ACTIVE/COMPLETED and restores pending review from the linked Job. The CLI accepts legacy names as aliases; synchronization updates receipts and checkbox symbols. Plain CLI sync retains cancellation/withdrawal import but does not replay other status changes from checkbox drift.

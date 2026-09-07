@@ -10,10 +10,12 @@ taskcli inbox claim-next --project prj_ID --executor agent:HOST --session HOST_S
 taskcli inbox release inbox_ID --session HOST_SESSION --lease-token INBOX_LEASE_TOKEN --json
 taskcli inbox cancel inbox_ID --json
 taskcli inbox set-status inbox_ID --status TODO --json
-taskcli inbox set-status inbox_ID --status DONE --expect-revision REVISION --idempotency-key KEY --json
+taskcli inbox set-status inbox_ID --status ACTIVE --json
+taskcli inbox set-status inbox_ID --status PENDING_REVIEW --json
+taskcli inbox set-status inbox_ID --status COMPLETED --expect-revision REVISION --idempotency-key KEY --json
 ```
 
-`add` appends one complete Markdown body. `list` and `sync` import human submissions, cancellation marks (`- [-]`), and withdrawals. `claim-next` returns `claimed`, an `entry` with its separate lease, and the existing or newly created `job`; an empty or ineligible queue returns `claimed: false` and a reason. Use that Job with the normal Task workflow. `context` exposes the owned Inbox entry even before its first Task exists. `hook stop` is a compatibility no-op that returns `claimed: false` with reason `manual_intake_required`. Lifecycle hooks never claim or enqueue Inbox work. After completing the claimed Job, return the result and wait for the next explicit user request. Job approval checks off its Inbox entry; PENDING_REVIEW leaves it IN_PROGRESS without a lease. Rejection returns it to TODO for resumption of the same Job. Cancelling or deleting an unfinished entry preserves history and prevents old lease holders from continuing.
+`add` appends one complete Markdown body. `list` and `sync` import human submissions, cancellation marks (`- [-]`), and withdrawals. `claim-next` returns `claimed`, an `entry` with its separate lease, and the existing or newly created `job`; an empty or ineligible queue returns `claimed: false` and a reason. Use that Job with the normal Task workflow. `context` exposes the owned Inbox entry even before its first Task exists. `hook stop` is a compatibility no-op that returns `claimed: false` with reason `manual_intake_required`. Lifecycle hooks never claim or enqueue Inbox work. After completing the claimed Job, return the result and wait for the next explicit user request. Job approval checks off its Inbox entry; PENDING_REVIEW sets the same Inbox status without a lease. Rejection returns it to ACTIVE for explicit resumption of the same Job. Cancelling or deleting an unfinished entry preserves history and prevents old lease holders from continuing.
 
 Configuration defaults to `~/.config/taskcli/config.toml`; `TASKCLI_CONFIG` or `--config` selects another file. Run `taskcli <command> --help` for arguments. `--json` always has `schema_version`, `ok`, and `result` or `error`. Exit codes: 0 success, 1 business/runtime failure, 2 argument error.
 
@@ -82,3 +84,5 @@ taskcli obsidian setup --json
 ```
 
 `submit`, `approve`, and `reject` support expected revisions and idempotency keys. Submit requires ACTIVE and ready Tasks; approve/reject require PENDING_REVIEW. Reject preserves all Task outcomes and records `review_reason`. Approval alone sets Job completion time. All status changes remain subject to CLI guards when initiated by Taskcli Sync in Obsidian.
+
+`taskcli hook record --session SESSION --file messages.json [--job JOB_ID]` records an array of visible `{id, role, text}` messages (`role` is `user` or `assistant`). Use stable IDs for retries. The Job must belong to that session; automatic selection uses its most recently worked Job. This does not claim work or change lifecycle state. Host hooks normally supply these records automatically.

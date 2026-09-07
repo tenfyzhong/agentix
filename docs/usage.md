@@ -69,8 +69,10 @@ The following commands are available only while a Codex session is attached:
 - `/plan [prompt]`, `/plan off` — enter plan mode, optionally with a prompt, or return to default mode; unavailable during an active turn
 - `/goal [objective|pause|resume|clear]` — inspect or manage the thread goal
 - `/review` — start an inline review of staged, unstaged, and untracked changes
-- `/status` — show session, model, execution-policy, token-usage, and goal details
+- `/status` — show session, model, execution-policy, token-usage, goal details, and remaining account quota (window percentages, local reset times, and credits when reported)
 - `/mcp` — list MCP server connection, authentication, and tool status
+
+`/status` reads the [Codex account quota endpoint](https://learn.chatgpt.com/docs/app-server#6-rate-limits-chatgpt). A missing quota response is shown as unavailable or not reported; it does not hide other session details.
 
 These extended controls use the Codex adapter; Pi and Oh My Pi report them as unsupported.
 

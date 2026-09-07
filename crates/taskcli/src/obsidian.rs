@@ -180,6 +180,7 @@ fn merge_settings(mut settings: Value) -> Result<Value> {
         "taskIdentificationMethod",
         "taskTag",
         "openTaskAfterCreation",
+        "singleClickAction",
         "defaultTaskStatus",
     ] {
         object.insert(key.into(), preset[key].clone());
@@ -189,17 +190,12 @@ fn merge_settings(mut settings: Value) -> Result<Value> {
         .or_insert(json!({}))
         .as_object_mut()
         .context("fieldMapping must be an object")?;
-    for key in [
-        "title",
-        "status",
-        "projects",
-        "dateCreated",
-        "dateModified",
-        "completedDate",
-    ] {
-        mapping.insert(key.into(), json!(key));
+    for (key, field) in preset["fieldMapping"]
+        .as_object()
+        .context("invalid bundled fieldMapping")?
+    {
+        mapping.insert(key.clone(), field.clone());
     }
-    mapping.insert("archiveTag".into(), json!("archived"));
     Ok(settings)
 }
 
