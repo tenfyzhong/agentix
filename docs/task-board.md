@@ -353,10 +353,11 @@ After initializing taskcli, add to Agentix's configuration:
 
 ```toml
 [task_board]
+enable = true
 config = "~/.config/taskcli/config.toml"
 ```
 
-The referenced configuration must exist; its SQLite database is created if missing. Select the same taskcli configuration as your task writers to browse their existing work. Restart Agentix after adding or changing `[task_board]`; taskcli being configured on its own does not enable the IM integration. With `[task_board]` enabled, Telegram registers `/dashboard` in its default command menu at startup, before any attachment. The top-level menu order is `/sessions`, `/dashboard`, `/cancel`, `/rmux`, `/help` (omit `/dashboard` when not configured). Contextual commands follow in alphabetical order. `/board`, `/jobs`, `/inboxes`, and `/inbox` appear in the chat menu only after attach; `/tasks` is not added to the menu.
+`task_board.enable` defaults to `false`; a `config` path alone does not enable the integration. When disabled, Agentix does not load the taskcli configuration or start the task board, and IM menus and help omit task-board commands. When `enable = true`, the referenced configuration must exist; its SQLite database is created if missing. Select the same taskcli configuration as your task writers to browse their existing work. Restart Agentix after adding or changing `[task_board]`; taskcli being configured on its own does not enable the IM integration. With `task_board.enable = true`, Telegram registers `/dashboard` in its default command menu at startup, before any attachment. The top-level menu order is `/sessions`, `/dashboard`, `/cancel`, `/rmux`, `/help` (omit `/dashboard` when disabled). Contextual commands follow in alphabetical order. `/board`, `/jobs`, `/inboxes`, and `/inbox` appear in the chat menu only after attach; `/tasks` is not added to the menu.
 
 `/dashboard` is the top-level IM dashboard. Each unarchived project has a button that opens its task board, grouped by status with full counts and clickable task entries. Project boards can be browsed without attaching a session.
 

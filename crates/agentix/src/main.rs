@@ -210,6 +210,16 @@ fn print_json(value: &impl Serialize) -> Result<()> {
     Ok(())
 }
 
+async fn build_task_board(config: &Config) -> Result<Option<Arc<agentix_task::Service>>> {
+    let service = if let Some(task_board) = config.enabled_task_board() {
+        let task_config = agentix_task::Config::load(&task_board.config)?;
+        Some(Arc::new(agentix_task::Service::open(task_config).await?))
+    } else {
+        None
+    };
+    Ok(service)
+}
+
 async fn serve(config: Config, config_path: &Path) -> Result<()> {
     let started = Instant::now();
     let BuiltAgent { adapter, codex } =
@@ -222,12 +232,7 @@ async fn serve(config: Config, config_path: &Path) -> Result<()> {
     let started = Instant::now();
     let claims = Arc::new(ClaimRegistry::default());
     let channels = build_channels(&config, config_path, claims.clone())?;
-    let task_board = if let Some(task_board) = &config.task_board {
-        let task_config = agentix_task::Config::load(&task_board.config)?;
-        Some(Arc::new(agentix_task::Service::open(task_config).await?))
-    } else {
-        None
-    };
+    let task_board = build_task_board(&config).await?;
     tracing::info!(
         phase = "channel_and_task_setup",
         elapsed_ms = started.elapsed().as_millis(),
@@ -750,9 +755,9 @@ async fn handle_control_request(
     }
 }
 
-fn telegram_menu_commands(task_board_enabled: bool) -> Vec<teloxide::types::BotCommand> {
+fn telegram_menu_commands(config: &Config) -> Vec<teloxide::types::BotCommand> {
     let mut commands = agentix_telegram::menu_commands();
-    if task_board_enabled {
+    if config.enabled_task_board().is_some() {
         commands.insert(
             1,
             teloxide::types::BotCommand::new("dashboard", "Browse projects and task boards"),
@@ -777,7 +782,7 @@ fn build_channels(
                 build_telegram_bot(telegram, &config.network)?,
                 TelegramPolicy::new(telegram.owner_user_ids.iter().copied()),
             )
-            .with_menu_commands(telegram_menu_commands(config.task_board.is_some()));
+            .with_menu_commands(telegram_menu_commands(config));
             if telegram.owner_user_ids.is_empty() {
                 adapter = adapter.with_owner_claimer(Arc::new(MemoryTelegramOwnerClaimer {
                     path: config_path.to_owned(),
@@ -854,6 +859,7 @@ fn default_config_path() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
     use std::sync::{Arc, Mutex as StdMutex};
 
     use agentix::{Config, ImChannel};
@@ -1536,10 +1542,63 @@ owner_open_ids = ["ou_owner"]
             assert_eq!(channels[0].kind(), expected);
         }
     }
+    fn task_board_test_config(setting: Option<&str>, path: &Path) -> Config {
+        let mut source = String::from(
+            "[channel]\nkind='telegram'\n[channel.telegram]\ntoken='mock-token'\n\
+             [agent]\nkind='codex'\n[storage]\npath='/tmp/agentix.sqlite3'\n",
+        );
+        if let Some(setting) = setting {
+            source.push_str(&format!(
+                "\n[task_board]\n{setting}\nconfig='{}'\n",
+                path.display()
+            ));
+        }
+        Config::from_toml(&source).unwrap()
+    }
+
+    #[tokio::test]
+    async fn disabled_task_board_does_not_load_its_configuration() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("missing-taskcli.toml");
+        for setting in [None, Some(""), Some("enable = false")] {
+            let config = task_board_test_config(setting, &path);
+            assert!(super::build_task_board(&config).await.unwrap().is_none());
+            assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn enabled_task_board_requires_configuration_and_opens_its_database() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("taskcli.toml");
+        let database = directory.path().join("tasks.sqlite3");
+        let config = task_board_test_config(Some("enable = true"), &path);
+        assert!(super::build_task_board(&config).await.is_err());
+        std::fs::write(
+            &path,
+            format!(
+                "schema_version=1\n[storage]\npath='{}'\n\
+                 [documents]\nformat='markdown'\nroot='{}'\ndirectory='Tasks'\n",
+                database.display(),
+                directory.path().display(),
+            ),
+        )
+        .unwrap();
+        let service = super::build_task_board(&config).await.unwrap().unwrap();
+        assert_eq!(service.config().storage.path, database);
+        assert!(database.is_file());
+    }
+
     #[test]
     fn telegram_default_menu_adds_dashboard_only_when_task_board_is_enabled() {
-        for enabled in [false, true] {
-            let commands = super::telegram_menu_commands(enabled);
+        for (setting, enabled) in [
+            (None, false),
+            (Some(""), false),
+            (Some("enable = false"), false),
+            (Some("enable = true"), true),
+        ] {
+            let config = task_board_test_config(setting, Path::new("/missing/taskcli.toml"));
+            let commands = super::telegram_menu_commands(&config);
             let expected = if enabled {
                 vec!["sessions", "dashboard", "cancel", "rmux", "help"]
             } else {

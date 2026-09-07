@@ -198,6 +198,35 @@ async fn dashboard_navigation_is_owner_and_conversation_scoped() {
 }
 
 #[tokio::test]
+async fn disabled_task_board_has_no_board_menus_or_help_entries() {
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        Arc::new(FakeAgent::new()),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    for command in ["/attach thr_a", "/help", "/detach", "/help"] {
+        engine.handle_inbound(input(command)).await.unwrap();
+        let menus = channel.menus.lock().unwrap();
+        let menu = menus.last().unwrap();
+        for name in [
+            "dashboard",
+            "board",
+            "jobs",
+            "inboxes",
+            "inbox",
+            "tasks",
+            "task",
+        ] {
+            assert!(!menu.commands.iter().any(|entry| entry.name == name));
+            if command == "/help" {
+                assert!(!last(&channel).body.contains(&format!("/{name}")));
+            }
+        }
+    }
+}
+
+#[tokio::test]
 async fn configured_menus_have_dashboard_and_attached_secondary_commands() {
     let (_dir, service, _) = task_fixture().await;
     let (engine, channel) = engine(service).await;
