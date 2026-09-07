@@ -2744,13 +2744,13 @@ impl Engine {
         force: bool,
     ) -> Result<(), EngineError> {
         let key = (session_id.clone(), turn_id.to_owned());
-        let session_label = self.session_label(session_id).await;
         let interval = self
             .channel(conversation.channel)?
             .streaming_update_interval();
         if !self.turns.should_render(&key, force, interval).await {
             return Ok(());
         }
+        let session_label = self.session_label(session_id).await;
         let (mut view, is_running, snapshot) = {
             let buffers = self.turns.buffers.lock().await;
             let Some(buffer) = buffers.get(&key) else {
@@ -4159,3 +4159,7 @@ fn decision_label(decision: &str) -> String {
     }
     .to_owned()
 }
+
+#[cfg(test)]
+#[path = "engine/render_tests.rs"]
+mod render_tests;
