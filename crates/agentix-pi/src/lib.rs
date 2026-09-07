@@ -1,6 +1,6 @@
 //! Pi and Oh My Pi JSONL-RPC adapter primitives.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -22,6 +22,10 @@ use tokio::sync::{Mutex, broadcast, oneshot};
 use walkdir::WalkDir;
 
 static NEXT_GENERATION: AtomicU64 = AtomicU64::new(1);
+
+#[cfg(test)]
+#[path = "file_tests.rs"]
+mod file_tests;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PiFlavor {
@@ -70,9 +74,22 @@ pub fn process_args(flavor: PiFlavor, session_path: &str) -> Vec<String> {
 }
 
 pub fn discover_sessions(root: &Path) -> Result<Vec<DiscoveredSession>, PiError> {
+    Ok(scan_sessions(root, read_session_summary))
+}
+
+fn discover_headers(root: &Path) -> Vec<DiscoveredSession> {
+    #[cfg(test)]
+    file_tests::wait_header_scan(root);
+    scan_sessions(root, read_session_header)
+}
+
+fn scan_sessions(
+    root: &Path,
+    read: fn(&Path) -> Result<DiscoveredSession, PiError>,
+) -> Vec<DiscoveredSession> {
     let mut sessions = Vec::new();
     if !root.exists() {
-        return Ok(sessions);
+        return sessions;
     }
     for entry in WalkDir::new(root).follow_links(false) {
         let Ok(entry) = entry else {
@@ -83,15 +100,25 @@ pub fn discover_sessions(root: &Path) -> Result<Vec<DiscoveredSession>, PiError>
         {
             continue;
         }
-        if let Ok(session) = read_session_summary(entry.path()) {
+        if let Ok(session) = read(entry.path()) {
             sessions.push(session);
         }
     }
     sessions.sort_by_key(|session| std::cmp::Reverse(session.summary.updated_at));
-    Ok(sessions)
+    sessions
 }
 
 fn read_session_summary(path: &Path) -> Result<DiscoveredSession, PiError> {
+    #[cfg(test)]
+    file_tests::SUMMARY_READS
+        .lock()
+        .unwrap()
+        .push(path.to_owned());
+    #[cfg(test)]
+    file_tests::SUMMARY_THREADS
+        .lock()
+        .unwrap()
+        .insert(path.to_owned(), std::thread::current().id());
     let file = File::open(path)?;
     let metadata = file.metadata()?;
     let lines = BufReader::new(file).lines();
@@ -129,6 +156,31 @@ fn read_session_summary(path: &Path) -> Result<DiscoveredSession, PiError> {
         }
     }
     let header = header.ok_or(PiError::MissingHeader("session"))?;
+    let mut session = session_from_header(path, &header, &metadata)?;
+    session.summary.name = name;
+    session.summary.preview = preview;
+    Ok(session)
+}
+
+fn read_session_header(path: &Path) -> Result<DiscoveredSession, PiError> {
+    let file = File::open(path)?;
+    let metadata = file.metadata()?;
+    for line in BufReader::new(file).lines().map_while(Result::ok) {
+        let Ok(header) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        if header.get("type").and_then(Value::as_str) == Some("session") {
+            return session_from_header(path, &header, &metadata);
+        }
+    }
+    Err(PiError::MissingHeader("session"))
+}
+
+fn session_from_header(
+    path: &Path,
+    header: &Value,
+    metadata: &std::fs::Metadata,
+) -> Result<DiscoveredSession, PiError> {
     let id = header
         .get("id")
         .and_then(Value::as_str)
@@ -141,8 +193,8 @@ fn read_session_summary(path: &Path) -> Result<DiscoveredSession, PiError> {
     Ok(DiscoveredSession {
         summary: SessionSummary {
             id: SessionId::new(id),
-            name,
-            preview,
+            name: None,
+            preview: None,
             cwd: header.get("cwd").and_then(Value::as_str).map(str::to_owned),
             updated_at,
             status: SessionStatus::Idle,
@@ -372,16 +424,29 @@ impl PiRpcAdapter {
             .ok_or_else(|| AgentError::Unavailable(format!("session {session_id} is not attached")))
     }
 
-    fn locate_session(&self, session_id: &SessionId) -> Result<DiscoveredSession, AgentError> {
-        discover_sessions(&self.session_root)
-            .map_err(|error| AgentError::Unavailable(error.to_string()))?
-            .into_iter()
-            .find(|session| &session.summary.id == session_id)
-            .ok_or_else(|| AgentError::Rejected(format!("unknown Pi session {session_id}")))
+    async fn locate_session(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<DiscoveredSession, AgentError> {
+        let root = self.session_root.clone();
+        let id = session_id.clone();
+        tokio::task::spawn_blocking(move || {
+            discover_headers(&root)
+                .into_iter()
+                .find(|session| session.summary.id == id)
+                .ok_or_else(|| AgentError::Rejected(format!("unknown Pi session {id}")))
+        })
+        .await
+        .map_err(|error| AgentError::Unavailable(error.to_string()))?
     }
 
-    fn spawn_session(&self, session_id: &SessionId) -> Result<Arc<RpcProcess>, AgentError> {
-        let discovered = self.locate_session(session_id)?;
+    fn spawn_session(
+        &self,
+        session_id: &SessionId,
+        discovered: &DiscoveredSession,
+    ) -> Result<Arc<RpcProcess>, AgentError> {
+        #[cfg(test)]
+        file_tests::record_spawn(&self.session_root);
         let path = discovered
             .path
             .to_str()
@@ -440,21 +505,26 @@ impl AgentAdapter for PiRpcAdapter {
         cursor: Option<String>,
         limit: u32,
     ) -> Result<SessionPage, AgentError> {
-        let all = discover_sessions(&self.session_root)
-            .map_err(|error| AgentError::Unavailable(error.to_string()))?;
-        let offset = cursor
-            .as_deref()
-            .unwrap_or("0")
-            .parse::<usize>()
-            .map_err(|error| AgentError::Protocol(error.to_string()))?;
-        let end = offset.saturating_add(limit as usize).min(all.len());
-        Ok(SessionPage {
-            sessions: all[offset.min(all.len())..end]
-                .iter()
-                .map(|session| session.summary.clone())
-                .collect(),
-            next_cursor: (end < all.len()).then(|| end.to_string()),
+        let root = self.session_root.clone();
+        tokio::task::spawn_blocking(move || {
+            let all = discover_headers(&root);
+            let offset = cursor
+                .as_deref()
+                .unwrap_or("0")
+                .parse::<usize>()
+                .map_err(|error| AgentError::Protocol(error.to_string()))?;
+            let end = offset.saturating_add(limit as usize).min(all.len());
+            Ok(SessionPage {
+                sessions: all[offset.min(all.len())..end]
+                    .iter()
+                    .filter_map(|session| read_session_summary(&session.path).ok())
+                    .map(|session| session.summary)
+                    .collect(),
+                next_cursor: (end < all.len()).then(|| end.to_string()),
+            })
         })
+        .await
+        .map_err(|error| AgentError::Unavailable(error.to_string()))?
     }
 
     async fn read_history(
@@ -463,20 +533,26 @@ impl AgentAdapter for PiRpcAdapter {
         cursor: Option<String>,
         limit: u32,
     ) -> Result<HistoryPage, AgentError> {
-        let session = self.locate_session(session_id)?;
-        read_history_file(&session.path, cursor.as_deref(), limit)
-            .map_err(|error| AgentError::Protocol(error.to_string()))
+        let session = self.locate_session(session_id).await?;
+        tokio::task::spawn_blocking(move || {
+            read_history_file(&session.path, cursor.as_deref(), limit)
+        })
+        .await
+        .map_err(|error| AgentError::Unavailable(error.to_string()))?
+        .map_err(|error| AgentError::Protocol(error.to_string()))
     }
 
     async fn attach(&self, session_id: &SessionId) -> Result<(), AgentError> {
         if self.processes.lock().await.contains_key(session_id) {
             return Ok(());
         }
-        let process = self.spawn_session(session_id)?;
-        self.processes
-            .lock()
-            .await
-            .insert(session_id.clone(), process);
+        let discovered = self.locate_session(session_id).await?;
+        let mut processes = self.processes.lock().await;
+        if processes.contains_key(session_id) {
+            return Ok(());
+        }
+        let process = self.spawn_session(session_id, &discovered)?;
+        processes.insert(session_id.clone(), process);
         Ok(())
     }
 
@@ -633,7 +709,15 @@ fn read_history_file(
     cursor: Option<&str>,
     limit: u32,
 ) -> Result<HistoryPage, PiError> {
-    let mut turns = Vec::<TurnSummary>::new();
+    let requested_end = cursor.map(str::parse::<usize>).transpose();
+    let window_end = requested_end
+        .as_ref()
+        .ok()
+        .copied()
+        .flatten()
+        .unwrap_or(usize::MAX);
+    let mut total = 0;
+    let mut turns = VecDeque::<TurnSummary>::new();
     for line in BufReader::new(File::open(path)?)
         .lines()
         .map_while(Result::ok)
@@ -644,36 +728,45 @@ fn read_history_file(
         }
         let message = entry.get("message").unwrap_or(&Value::Null);
         match message.get("role").and_then(Value::as_str) {
-            Some("user") => turns.push(TurnSummary {
-                id: entry
-                    .get("id")
-                    .and_then(Value::as_str)
-                    .map_or_else(|| format!("turn-{}", turns.len() + 1), str::to_owned),
-                status: TurnStatus::Completed,
-                user_text: message_text(message),
-                agent_text: None,
-                tools: Vec::new(),
-                items: Vec::new(),
-            }),
-            Some("assistant") => {
-                if let Some(turn) = turns.last_mut() {
+            Some("user") => {
+                total += 1;
+                if total <= window_end && limit > 0 {
+                    if turns.len() == limit as usize {
+                        turns.pop_front();
+                    }
+                    turns.push_back(TurnSummary {
+                        id: entry
+                            .get("id")
+                            .and_then(Value::as_str)
+                            .map_or_else(|| format!("turn-{total}"), str::to_owned),
+                        status: TurnStatus::Completed,
+                        user_text: message_text(message),
+                        agent_text: None,
+                        tools: Vec::new(),
+                        items: Vec::new(),
+                    });
+                }
+            }
+            Some("assistant") if total <= window_end => {
+                if let Some(turn) = turns.back_mut() {
                     turn.agent_text = message_text(message);
                 }
             }
             _ => {}
         }
+        #[cfg(test)]
+        file_tests::record_history_peak(path, turns.len());
     }
-    let end = cursor
-        .map(str::parse::<usize>)
-        .transpose()
+    // Preserve JSON/I/O error precedence over invalid cursor errors.
+    let end = requested_end
         .map_err(|error| PiError::Io(std::io::Error::new(std::io::ErrorKind::InvalidInput, error)))?
-        .unwrap_or(turns.len())
-        .min(turns.len());
+        .unwrap_or(total)
+        .min(total);
     let start = end.saturating_sub(limit as usize);
     Ok(HistoryPage {
-        turns: turns[start..end].to_vec(),
+        turns: turns.into_iter().collect(),
         older_cursor: (start > 0).then(|| start.to_string()),
-        newer_cursor: (end < turns.len()).then(|| turns.len().to_string()),
+        newer_cursor: (end < total).then(|| total.to_string()),
     })
 }
 

@@ -238,6 +238,8 @@ The workspace runtime is rmux-specific. `agentix-codex` talks to the official Ru
 
 Both use their official `--mode rpc` newline-delimited JSON protocol. Agentix discovers JSONL session headers and starts one subprocess per attached session (`pi --session <path>` or `omp --resume <path>`). This is important: independent stdout streams retain an unambiguous session context even when multiple agents run concurrently.
 
+Session listing scans headers and modification times, then reads full summaries only for the requested page. History lookup reads headers without parsing unrelated session bodies. File scans run on blocking workers, and each request observes current files without a persistent body cache. History parsing retains at most one requested page of turns; it still validates the complete selected file to preserve numeric cursors and malformed-record errors. Concurrent attachment checks ownership again after discovery so only one subprocess is started for a session.
+
 Each prompt is assigned a local turn ID before it is written. Stream, tool, completion, and extension UI frames are normalized with that session/turn context. `omp` protocol-v1 frames are supported; frames remain subject to its v1 physical size bound.
 
 ## 7. Channel transports
