@@ -9,6 +9,8 @@ pub use conversation::JobMessage;
 mod deletion;
 mod inbox;
 mod inbox_document;
+mod inbox_read;
+pub use inbox_read::InboxSource;
 mod model;
 mod mutations;
 mod naming;

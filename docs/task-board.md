@@ -89,6 +89,8 @@ Directory resolution reads only Project records and selects the closest register
 
 CLI Job lists apply status, archive visibility, creation-date bounds, and archive-month bounds in SQL before loading Job bodies. Date bounds remain UTC, the creation end date includes the whole day, and results retain insertion order.
 
+IM Inbox views read only the requested Project and entry, re-reading the entry after document synchronization. Source edits resolve the entry through a source index. The periodic source refresh reads only IDs, source references, and source versions for published, non-deleted entries in unarchived Projects; it does not load Job, Task, Plan, or Inbox bodies.
+
 The legacy IM `/tasks` list applies its Project or Job filter and 50-row limit in SQL. Task buttons read only the target lease before applying the existing revision and ownership checks. Task detail snapshots fetch dependency status by ID, so a completed dependency outside the displayed Task still enables Start without loading that dependency’s body.
 
 After writing document files, publication commits Plan hashes, Job goal metadata, registered paths, and generation-checked pending acknowledgements in one transaction. Plan updates remain conditional on the published version, and failed acknowledgements roll back all publication metadata so retries can recover. Job goal metadata and document receipt rows use batched queries.
