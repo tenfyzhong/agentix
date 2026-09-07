@@ -11,6 +11,8 @@ use sqlx::{
 
 use crate::{Outcome, Snapshot, TaskEvent, WriteOptions, mutations, new_id};
 
+const JOB_EVENTS_QUERY: &str = "SELECT sequence,data FROM task_events WHERE job_id = ? AND sequence > ? ORDER BY sequence LIMIT ?";
+
 #[derive(Clone)]
 pub struct Store {
     pub(crate) pool: SqlitePool,
@@ -333,13 +335,26 @@ impl Store {
             after >= 0 && (1..=1000).contains(&limit),
             "invalid: event cursor or limit"
         );
-        let job = if let Some(id) = job {
-            let state = self.snapshot().await?;
-            Some(state.jobs[state.job_index(id)?].id.clone())
+        let rows = if let Some(id) = job {
+            let mut tx = self.pool.begin().await?;
+            let id = crate::scoped::resolve(&mut tx, "jobs", id).await?;
+            let rows = sqlx::query(JOB_EVENTS_QUERY)
+                .bind(id)
+                .bind(after)
+                .bind(limit)
+                .fetch_all(&mut *tx)
+                .await?;
+            tx.commit().await?;
+            rows
         } else {
-            None
+            sqlx::query(
+                "SELECT sequence,data FROM task_events WHERE sequence > ? ORDER BY sequence LIMIT ?",
+            )
+            .bind(after)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?
         };
-        let rows=sqlx::query("SELECT sequence,data FROM task_events WHERE sequence > ? AND (? IS NULL OR job_id = ?) ORDER BY sequence LIMIT ?").bind(after).bind(&job).bind(&job).bind(limit).fetch_all(&self.pool).await?;
         rows.into_iter()
             .map(|row| {
                 let mut event: TaskEvent = serde_json::from_str(&row.get::<String, _>("data"))?;
@@ -944,4 +959,35 @@ async fn max_sequence(conn: &mut SqliteConnection) -> Result<i64> {
 
 pub(crate) fn hash_bytes(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn job_event_pages_use_the_job_sequence_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("tasks.sqlite3"))
+            .await
+            .unwrap();
+        let rows = sqlx::query(&format!("EXPLAIN QUERY PLAN {JOB_EVENTS_QUERY}"))
+            .bind("job_target")
+            .bind(100)
+            .bind(10)
+            .fetch_all(&store.pool)
+            .await
+            .unwrap();
+        let details: Vec<String> = rows.iter().map(|row| row.get("detail")).collect();
+        assert!(
+            details.iter().any(|detail| {
+                detail.contains("events_by_job") && detail.contains("job_id=? AND sequence>?")
+            }),
+            "Job pages must seek by Job and cursor: {details:?}"
+        );
+        assert!(
+            details.iter().all(|detail| !detail.contains("TEMP B-TREE")),
+            "Job pages must stream in index order: {details:?}"
+        );
+    }
 }

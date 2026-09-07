@@ -438,19 +438,13 @@ impl Service {
     }
 
     pub async fn plan(&self, task: &str) -> Result<Value> {
-        let state = self.store.snapshot().await?;
-        let task = &state.tasks[state.task_index(task)?];
-        let plan = state
-            .plans
-            .iter()
-            .find(|p| Some(&p.id) == task.current_plan.as_ref())
-            .context("not_found: current Plan")?;
+        let plan = self.store.current_plan(task).await?;
         let path = self.safe_path(&plan.path)?;
         let body = std::fs::read_to_string(&path)?;
         self.store
             .update_plan_hash(&plan.id, &hash_bytes(body.as_bytes()))
             .await?;
-        let mut result = serde_json::to_value(plan)?;
+        let mut result = serde_json::to_value(&plan)?;
         result["hash"] = json!(hash_bytes(body.as_bytes()));
         result["absolute_path"] = json!(path);
         let (properties, content) = split_properties(&body)?;
@@ -461,7 +455,7 @@ impl Service {
 
     /// Read the authored Task body without changing its Plan hash or task state.
     pub async fn task_markdown(&self, id: &str) -> Result<String> {
-        let state = self.store.snapshot().await?;
+        let state = self.store.task_document_snapshot(id).await?;
         let task = &state.tasks[state.task_index(id)?];
         let path = self.safe_path(&crate::naming::task_path(&state, task)?)?;
         let document = std::fs::read_to_string(path)?;
@@ -470,15 +464,14 @@ impl Service {
 
     /// Read authored Job sections, excluding generated local navigation and graphs.
     pub async fn job_markdown(&self, id: &str) -> Result<String> {
-        let state = self.store.snapshot().await?;
-        let job = &state.jobs[state.job_index(id)?];
+        let job = self.store.job_record(id).await?;
         let document = std::fs::read_to_string(self.safe_path(&job.document_path)?)?;
         let goal = section(&document, "goal")?.unwrap_or_else(|| job.goal.clone());
         let notes = section(&document, "notes")?.unwrap_or_default();
         Ok(format!(
             "{}{}## Goal\n\n{goal}\n\n## Notes\n\n{notes}",
             prompt_markdown(&job.prompt),
-            conversation_markdown(job)
+            conversation_markdown(&job)
         ))
     }
 

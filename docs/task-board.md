@@ -138,6 +138,8 @@ IDs use UUIDv7 with `prj_`, `job_`, `task_`, and `plan_` prefixes; full IDs or u
 
 `task show ID` reads the Task and its lease by primary key in one transaction. Unique prefixes use an indexed range limited to two candidate IDs. It does not load other entities or perform global expiry maintenance; it reports stored state, including the stored lease expiry. Lifecycle commands continue enforcing lease expiry. The Obsidian `show ID` query follows the same read-only principle and accepts exact Task, Job, or Inbox IDs.
 
+Individual Plan, Task Markdown, and Job Markdown reads also avoid full database snapshots: they load only the selected Task and current Plan, the Task and its parent Project, or the selected Job, respectively. Job-filtered event pages resolve the Job ID through its index and seek using the existing `(job_id, sequence)` index, so unrelated entity bodies and other Jobs' event histories are not loaded. Unique prefixes, cursor ordering, document path validation, and Plan hash refresh behavior are preserved.
+
 Claim returns the Task and a `lease` containing its token. Subsequent writes to a leased Task must include the current session and token:
 
 ```sh

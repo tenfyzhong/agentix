@@ -38,6 +38,177 @@ async fn other_job(f: &Fixture) -> (String, String) {
     (job, task)
 }
 
+async fn unreadable_other_job(f: &Fixture) {
+    let (job, task) = other_job(f).await;
+    let mut conn = connection(f).await;
+    // Preserve valid JSON, IDs, and indexed relationships. A targeted read
+    // must not deserialize these unrelated domain records.
+    for (table, id) in [("jobs", job), ("tasks", task)] {
+        sqlx::query(&format!(
+            "UPDATE {table} SET data=json_remove(data,'$.title') WHERE id=?"
+        ))
+        .bind(id)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    }
+}
+
+#[tokio::test]
+async fn targeted_events_do_not_deserialize_unrelated_records() {
+    let f = Fixture::new("obsidian").await;
+    let expected = f
+        .service
+        .store()
+        .events(Some(&f.job), 0, 100)
+        .await
+        .unwrap();
+    unreadable_other_job(&f).await;
+    let events = f.service.store().events(Some(&f.job), 0, 100).await;
+    assert!(
+        events.is_ok(),
+        "unrelated rows must not be read: {events:?}"
+    );
+    assert_eq!(json!(events.unwrap()), json!(expected));
+}
+
+#[tokio::test]
+async fn targeted_plan_does_not_deserialize_unrelated_records() {
+    let f = Fixture::new("obsidian").await;
+    let task = f.task("Target").await;
+    f.start(&task, "target").await;
+    let expected = f.service.plan(&task).await.unwrap();
+    unreadable_other_job(&f).await;
+    let plan = f.service.plan(&task).await;
+    assert!(plan.is_ok(), "unrelated rows must not be read: {plan:?}");
+    assert_eq!(plan.unwrap(), expected);
+}
+
+#[tokio::test]
+async fn targeted_task_markdown_does_not_deserialize_unrelated_records() {
+    let f = Fixture::new("obsidian").await;
+    let task = f.task("Target without a plan").await;
+    let expected = f.service.task_markdown(&task).await.unwrap();
+    unreadable_other_job(&f).await;
+    let body = f.service.task_markdown(&task).await;
+    assert!(body.is_ok(), "unrelated rows must not be read: {body:?}");
+    assert_eq!(body.unwrap(), expected);
+}
+
+#[tokio::test]
+async fn targeted_job_markdown_does_not_deserialize_unrelated_records() {
+    let f = Fixture::new("obsidian").await;
+    let expected = f.service.job_markdown(&f.job).await.unwrap();
+    unreadable_other_job(&f).await;
+    let body = f.service.job_markdown(&f.job).await;
+    assert!(body.is_ok(), "unrelated rows must not be read: {body:?}");
+    assert_eq!(body.unwrap(), expected);
+}
+
+#[tokio::test]
+async fn targeted_reads_preserve_identifier_resolution() {
+    let f = Fixture::new("markdown").await;
+    let task = f.task("Target").await;
+    let no_plan = f.service.plan(&task).await.unwrap_err().to_string();
+    assert!(no_plan.contains("not_found: current Plan"), "{no_plan}");
+    f.start(&task, "target").await;
+    assert_eq!(
+        f.service.plan("task_").await.unwrap(),
+        f.service.plan(&task).await.unwrap()
+    );
+    assert_eq!(
+        f.service.task_markdown("task_").await.unwrap(),
+        f.service.task_markdown(&task).await.unwrap()
+    );
+    assert_eq!(
+        f.service.job_markdown("job_").await.unwrap(),
+        f.service.job_markdown(&f.job).await.unwrap()
+    );
+    assert_eq!(
+        json!(
+            f.service
+                .store()
+                .events(Some("job_"), 0, 100)
+                .await
+                .unwrap()
+        ),
+        json!(
+            f.service
+                .store()
+                .events(Some(&f.job), 0, 100)
+                .await
+                .unwrap()
+        )
+    );
+    other_job(&f).await;
+    for (task_id, job_id, expected) in [
+        ("", "", "invalid: empty identifier"),
+        ("task_missing", "job_missing", "not_found"),
+        ("task_", "job_", "ambiguous identifier"),
+    ] {
+        let errors = [
+            f.service.plan(task_id).await.unwrap_err(),
+            f.service.task_markdown(task_id).await.unwrap_err(),
+            f.service.job_markdown(job_id).await.unwrap_err(),
+            f.service
+                .store()
+                .events(Some(job_id), 0, 100)
+                .await
+                .unwrap_err(),
+        ];
+        for error in errors {
+            assert!(error.to_string().contains(expected), "{error:#}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn targeted_event_pages_preserve_cursors_and_global_order() {
+    let f = Fixture::new("obsidian").await;
+    f.task("Before unrelated events").await;
+    other_job(&f).await;
+    f.task("After unrelated events").await;
+    let all = f.service.store().events(None, 0, 100).await.unwrap();
+    assert!(
+        all.windows(2)
+            .all(|pair| pair[0].sequence < pair[1].sequence)
+    );
+    let expected: Vec<_> = all
+        .iter()
+        .filter(|event| event.job_id.as_deref() == Some(&f.job))
+        .collect();
+    for job in [Some(f.job.as_str()), None] {
+        let mut pages = Vec::new();
+        let mut cursor = 0;
+        loop {
+            let page = f.service.store().events(job, cursor, 1).await.unwrap();
+            let Some(event) = page.into_iter().next() else {
+                break;
+            };
+            assert!(event.sequence > cursor);
+            cursor = event.sequence;
+            pages.push(event);
+        }
+        assert_eq!(
+            json!(pages),
+            if job.is_some() {
+                json!(expected)
+            } else {
+                json!(all)
+            }
+        );
+        for (after, limit) in [(-1, 1), (0, 0), (0, 1001)] {
+            let error = f
+                .service
+                .store()
+                .events(job, after, limit)
+                .await
+                .unwrap_err();
+            assert!(error.to_string().contains("invalid: event cursor or limit"));
+        }
+    }
+}
+
 #[tokio::test]
 async fn status_write_does_not_deserialize_unrelated_records() {
     let f = Fixture::new("obsidian").await;

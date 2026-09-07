@@ -3,7 +3,7 @@
 //! be interpreted as deletions, so the same scope is used for both sides of diff.
 use std::collections::{BTreeMap, BTreeSet};
 
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 use sqlx::{Row, SqliteConnection};
@@ -426,6 +426,44 @@ async fn load_query_context(
 }
 
 impl Store {
+    pub(crate) async fn job_record(&self, id: &str) -> Result<crate::Job> {
+        let mut tx = self.pool.begin().await?;
+        let id = resolve(&mut tx, "jobs", id).await?;
+        Ok(entities(&mut tx, "jobs", &BTreeSet::from([id]))
+            .await?
+            .remove(0))
+    }
+
+    pub(crate) async fn current_plan(&self, id: &str) -> Result<crate::Plan> {
+        let mut tx = self.pool.begin().await?;
+        let id = resolve(&mut tx, "tasks", id).await?;
+        let task: crate::Task = entities(&mut tx, "tasks", &BTreeSet::from([id]))
+            .await?
+            .remove(0);
+        entities(&mut tx, "plans", &task.current_plan.into_iter().collect())
+            .await?
+            .pop()
+            .context("not_found: current Plan")
+    }
+
+    /// A Task's document path needs only its own record and parent Project.
+    pub(crate) async fn task_document_snapshot(&self, id: &str) -> Result<Snapshot> {
+        let mut tx = self.pool.begin().await?;
+        let id = resolve(&mut tx, "tasks", id).await?;
+        let tasks: Vec<crate::Task> = entities(&mut tx, "tasks", &BTreeSet::from([id])).await?;
+        let projects = entities(
+            &mut tx,
+            "projects",
+            &BTreeSet::from([tasks[0].project_id.clone()]),
+        )
+        .await?;
+        Ok(Snapshot {
+            projects,
+            tasks,
+            ..Snapshot::default()
+        })
+    }
+
     pub async fn project_result(&self, id: &str) -> Result<crate::Project> {
         let mut tx = self.pool.begin().await?;
         let id = resolve(&mut tx, "projects", id).await?;
