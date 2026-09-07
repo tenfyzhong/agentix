@@ -2412,6 +2412,9 @@ impl Engine {
         if recipients.is_empty() {
             return Ok(());
         }
+        if self.agent.is_subagent(session_id).await? {
+            return Ok(());
+        }
         let content = self.background_turn_content(session_id, turn_id).await;
         let body = format!("{}\n\n{content}", background_completion_body(status, error));
         self.cache_session_summary(session_id).await;

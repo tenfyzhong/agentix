@@ -99,6 +99,7 @@ pub struct MockThread {
     pub reasoning_effort: String,
     pub service_tier: Option<String>,
     pub turns: Vec<MockTurn>,
+    pub source: Value,
     goal: Option<Value>,
 }
 
@@ -112,6 +113,7 @@ impl MockThread {
             reasoning_effort: "medium".into(),
             service_tier: None,
             turns: Vec::new(),
+            source: json!("cli"),
             goal: None,
         }
     }
@@ -158,7 +160,7 @@ impl MockThread {
             "ephemeral": false,
             "path": format!("/mock/rollout-{}.jsonl", self.id),
             "projectId": null,
-            "source": "cli",
+            "source": self.source,
             "turns": turns
         })
     }

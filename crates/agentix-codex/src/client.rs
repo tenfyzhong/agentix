@@ -1516,6 +1516,17 @@ impl AgentAdapter for CodexClient {
         "Codex"
     }
 
+    async fn is_subagent(&self, session_id: &SessionId) -> Result<bool, AgentError> {
+        let thread = self
+            .read_thread(session_id, false)
+            .await
+            .map_err(agent_error)?;
+        Ok(thread
+            .get("source")
+            .and_then(Value::as_object)
+            .is_some_and(|source| source.contains_key("subAgent")))
+    }
+
     fn queued_prompts(&self) -> Option<&dyn QueuedPromptPort> {
         Some(self)
     }
