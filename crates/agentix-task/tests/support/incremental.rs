@@ -92,7 +92,10 @@ async fn status_write_leaves_unrelated_documents_and_dynamic_views_untouched() {
     fs::write(&path, "---\nunclosed: [\n---\nHuman draft\n").unwrap();
     let views = ["Dashboard.base", "Recent Jobs.base"];
     for relative in views {
-        fs::File::open(f.service.config().output_dir().join(relative))
+        // Windows requires a writable handle to update file timestamps.
+        fs::File::options()
+            .write(true)
+            .open(f.service.config().output_dir().join(relative))
             .unwrap()
             .set_times(fs::FileTimes::new().set_modified(SystemTime::UNIX_EPOCH))
             .unwrap();
@@ -143,7 +146,10 @@ async fn job_approval_preserves_registered_bases_saved_without_comments() {
             // Obsidian can serialize view settings without retaining generated comments.
             let contents = serde_yaml::to_string(&value).unwrap();
             fs::write(&path, &contents).unwrap();
-            fs::File::open(&path)
+            // Windows requires a writable handle to update file timestamps.
+            fs::File::options()
+                .write(true)
+                .open(&path)
                 .unwrap()
                 .set_times(fs::FileTimes::new().set_modified(SystemTime::UNIX_EPOCH))
                 .unwrap();
