@@ -1,6 +1,8 @@
 //! Persistent task coordination and read-only document projections.
 
 mod browse;
+mod browse_page;
+pub use browse_page::{JobBrowsePage, JobListItem, TaskBrowsePage, TaskListItem};
 mod config;
 mod context;
 pub use browse::{BrowseScope, ProjectSummary};

@@ -52,7 +52,7 @@ pub struct ProjectSummary {
     pub task_count: usize,
 }
 
-const SESSION_JOBS: &str = "WITH related(job_id) AS (
+pub(super) const SESSION_JOBS: &str = "WITH related(job_id) AS (
     SELECT job_id FROM tasks WHERE json_extract(data,'$.last_session')=?1
     UNION
     SELECT tasks.job_id FROM task_leases JOIN tasks ON tasks.id=task_leases.id WHERE session_ref=?1

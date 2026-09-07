@@ -681,3 +681,92 @@ async fn start_button_checks_dependencies_outside_the_task_detail() {
     click(&engine, start).await;
     assert!(last(&channel).body.contains("EXECUTING"));
 }
+
+async fn paged_browse_fixture() -> (tempfile::TempDir, Arc<Service>, String) {
+    use sqlx::Connection;
+    let (dir, service, id) = task_fixture().await;
+    let mut conn = sqlx::SqliteConnection::connect_with(
+        &sqlx::sqlite::SqliteConnectOptions::new().filename(&service.config().storage.path),
+    )
+    .await
+    .unwrap();
+    sqlx::query(
+        "WITH RECURSIVE n(v) AS (VALUES(1) UNION ALL SELECT v+1 FROM n WHERE v<1000)
+        INSERT INTO tasks(id,data) SELECT printf('task_page_%04d',v),
+        json_set(t.data,'$.id',printf('task_page_%04d',v),'$.title','Page task '||v,
+        '$.status','TODO','$.phase',NULL,'$.position',v,'$.current_plan',json('{}'))
+        FROM n CROSS JOIN tasks t WHERE t.id=?",
+    )
+    .bind(&id)
+    .execute(&mut conn)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE tasks SET data=json_remove(data,'$.title') WHERE id>'task_page_0005'")
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    (dir, service, id)
+}
+
+#[tokio::test]
+async fn board_page_ignores_off_page_task_bodies_and_job_content() {
+    use sqlx::Connection;
+    let (_dir, service, _) = paged_browse_fixture().await;
+    let (engine, channel) = engine(service.clone()).await;
+    engine.handle_inbound(input("/attach thr_a")).await.unwrap();
+    let mut conn = sqlx::SqliteConnection::connect_with(
+        &sqlx::sqlite::SqliteConnectOptions::new().filename(&service.config().storage.path),
+    )
+    .await
+    .unwrap();
+    sqlx::query("UPDATE jobs SET data=json_set(data,'$.goal',json('{}'))")
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    let result = engine.handle_inbound(input("/board")).await;
+    assert!(
+        result.is_ok(),
+        "board must read page summaries only: {result:?}"
+    );
+    let view = last(&channel);
+    assert!(view.body.contains("1 jobs · 1001 tasks"));
+    assert!(view.body.contains("TODO (1000)"));
+    assert!(view.body.contains("Current ·"));
+    assert_eq!(view.actions.len(), 8);
+}
+
+#[tokio::test]
+async fn session_jobs_page_ignores_task_bodies_and_job_content() {
+    use sqlx::Connection;
+    let (_dir, service, _) = paged_browse_fixture().await;
+    let (engine, channel) = engine(service.clone()).await;
+    engine.handle_inbound(input("/attach thr_a")).await.unwrap();
+    let mut conn = sqlx::SqliteConnection::connect_with(
+        &sqlx::sqlite::SqliteConnectOptions::new().filename(&service.config().storage.path),
+    )
+    .await
+    .unwrap();
+    sqlx::query("UPDATE jobs SET data=json_set(data,'$.goal',json('{}'))")
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    let result = engine.handle_inbound(input("/jobs")).await;
+    assert!(
+        result.is_ok(),
+        "job list needs summaries and counts: {result:?}"
+    );
+    assert!(last(&channel).body.contains("1001 tasks"));
+}
+
+#[tokio::test]
+async fn job_page_ignores_off_page_tasks_and_unused_task_fields() {
+    let (_dir, service, id) = paged_browse_fixture().await;
+    let (engine, channel) = engine(service).await;
+    engine
+        .handle_inbound(input(&format!("/task {id}")))
+        .await
+        .unwrap();
+    click(&engine, button(&last(&channel), "Job")).await;
+    assert!(last(&channel).body.contains("**Tasks (1001)**"));
+    assert_eq!(last(&channel).actions.len(), 8);
+}
