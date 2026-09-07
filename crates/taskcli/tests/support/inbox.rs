@@ -1,5 +1,33 @@
 use super::*;
 
+#[test]
+fn inbox_cli_sets_status_with_revision_and_idempotency() {
+    let cli = Cli::new("obsidian");
+    let project = project(&cli);
+    let entry = cli.ok(&["inbox", "add", "--project", &project, "--content", "Manual"]);
+    let id = entry["id"].as_str().unwrap();
+    let rows = cli.ok(&["inbox", "list", "--project", &project]);
+    let revision = rows[0]["revision"].to_string();
+    let args = [
+        "inbox",
+        "set-status",
+        id,
+        "--status",
+        "DONE",
+        "--expect-revision",
+        &revision,
+        "--idempotency-key",
+        "once",
+    ];
+    let result = cli.ok(&args);
+    assert_eq!(result["status"], "DONE");
+    assert_eq!(cli.ok(&args), result);
+    assert_eq!(
+        cli.ok(&["inbox", "set-status", id, "--status", "TODO"])["status"],
+        "TODO"
+    );
+}
+
 fn project(cli: &Cli) -> String {
     cli.ok(&[
         "project",

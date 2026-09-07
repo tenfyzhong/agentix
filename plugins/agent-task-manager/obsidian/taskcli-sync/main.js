@@ -7,6 +7,9 @@ const { realpathSync } = require("node:fs");
 const path = require("node:path");
 
 function commandFor(note, target) {
+    if (note.kind === "inbox" && ["TODO", "DONE", "CANCELLED"].includes(target)) {
+        return ["inbox", "set-status", note.id, "--status", target];
+    }
     const reason = `Status changed in Obsidian: ${note.status} -> ${target}`;
     let command;
     if (note.kind === "task") {
@@ -35,6 +38,58 @@ function commandFor(note, target) {
 
 const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
+// Offsets refer to the original document so rollback can preserve every byte
+// outside this entry's checkbox and generated state receipt.
+function parseInbox(source, project) {
+    const starts = [...source.matchAll(/^<!-- taskcli:inbox:start project=([^\r\n]+) -->\r?$/gm)];
+    const ends = [...source.matchAll(/^<!-- taskcli:inbox:end -->\r?$/gm)];
+    if (starts.length !== 1 || ends.length !== 1 || starts[0].index >= ends[0].index ||
+        (project && starts[0][1] !== project)) throw new Error("Invalid Inbox project or managed region");
+    const rows = [], ids = new Set();
+    const start = starts[0].index + starts[0][0].length;
+    const region = source.slice(start, ends[0].index);
+    let fence;
+    for (const line of region.matchAll(/[^\n]+/g)) {
+        const text = line[0].replace(/\r$/, "");
+        const delimiter = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(text);
+        if (fence) {
+            if (delimiter && delimiter[1][0] === fence[0] && delimiter[1].length >= fence.length && !delimiter[2].trim()) fence = null;
+            continue;
+        }
+        if (delimiter) { fence = delimiter[1]; continue; }
+        if (!text.startsWith("- [")) continue;
+        const identity = / <!-- taskcli:entry:(inbox_[0-9a-f]{32}) -->/g;
+        const matches = [...text.matchAll(identity)];
+        if (matches.length === 0) {
+            if (text.includes("<!-- taskcli:entry:")) throw new Error("Invalid Inbox entry identity");
+            continue; // New submissions are registered by inbox sync.
+        }
+        if (matches.length !== 1 || ids.has(matches[0][1])) throw new Error("Duplicate Inbox entry identity");
+        ids.add(matches[0][1]);
+        const receipt = / <!-- taskcli:entry-state (TODO|IN_PROGRESS|DONE|CANCELLED)(?: revision=(\d+))? -->/.exec(text);
+        if (!receipt || !/^- \[.\] /.test(text)) throw new Error("Invalid Inbox status receipt or checkbox");
+        const checkbox = text[3];
+        const status = checkbox === "x" || checkbox === "X" ? "DONE" : checkbox === "-" ? "CANCELLED" :
+            checkbox === " " ? (receipt[1] === "IN_PROGRESS" ? "IN_PROGRESS" : "TODO") : checkbox;
+        rows.push({ id: matches[0][1], status, revision: Number(receipt[2] || 0),
+            checkboxOffset: start + line.index + 3,
+            receiptOffset: start + line.index + receipt.index, receiptLength: receipt[0].length });
+    }
+    if (fence) throw new Error("Unclosed Inbox code fence");
+    return rows;
+}
+
+function patchInbox(source, note, expected, properties) {
+    const row = parseInbox(source, note.project_id).find((entry) => entry.id === note.id);
+    if (!row || row.id !== expected.id || row.revision !== expected.revision || row.status !== expected.status) return source;
+    const checkbox = properties.status === "DONE" ? "x" : properties.status === "CANCELLED" ? "-" : " ";
+    const receipt = ` <!-- taskcli:entry-state ${properties.status} revision=${properties.revision} -->`;
+    const next = source.slice(0, row.receiptOffset) + receipt + source.slice(row.receiptOffset + row.receiptLength);
+    return next.slice(0, row.checkboxOffset) + checkbox + next.slice(row.checkboxOffset + 1);
+}
+
+const inboxKey = (filePath, id) => `${filePath}#${id}`;
+
 class SyncEngine {
     constructor(io) {
         this.io = io;
@@ -51,14 +106,18 @@ class SyncEngine {
 
     adopt(snapshot) {
         if (!snapshot || !Array.isArray(snapshot.notes)) throw new Error("Invalid taskcli snapshot");
-        this.notes = new Map(snapshot.notes.map((note) => [note.path, note]));
+        this.notes = new Map(snapshot.notes.map((note) => {
+            const item = note.kind === "inbox" ? { ...note, filePath: note.path, path: inboxKey(note.path, note.id) } : note;
+            return [item.path, item];
+        }));
     }
 
     async initialize() {
+        this.ready = false;
         this.adopt(await this.io.snapshot());
         if (this.disposed) return;
-        this.ready = true;
         await this.reconcile();
+        this.ready = !this.disposed;
     }
 
     async reconcile() {
@@ -73,7 +132,7 @@ class SyncEngine {
         if (!this.ready || this.disposed || !properties) return;
         const note = this.notes.get(filePath);
         if (!note) {
-            if (typeof properties.id === "string" && /^(task|job)_/.test(properties.id)) this.requestRefresh();
+            if (typeof properties.id === "string" && /^(task|job|inbox)_/.test(properties.id)) this.requestRefresh();
             return;
         }
         if (properties.id !== note.id || (note.kind === "task" && properties.task_id !== note.id)) return;
@@ -106,6 +165,26 @@ class SyncEngine {
             if (intent) intent.ready = true;
             void this.drain();
         }, 300));
+    }
+
+    observeInbox(filePath, source) {
+        if (!this.ready || this.disposed) return;
+        const notes = [...this.notes.values()].filter((note) => note.kind === "inbox" && note.filePath === filePath);
+        if (!notes.length) {
+            if (source.includes("<!-- taskcli:inbox:start project=")) this.requestRefresh();
+            return;
+        }
+        try {
+            const rows = parseInbox(source, notes[0].project_id);
+            const present = new Set(rows.map((row) => row.id));
+            for (const note of notes) if (!present.has(note.id)) this.forget(note.path);
+            for (const row of rows) this.observe(inboxKey(filePath, row.id), row);
+        } catch (error) {
+            // Discard pending intents from a malformed file; never guess which
+            // duplicate ID to update or treat a broken region as withdrawal.
+            for (const note of notes) this.forget(note.path);
+            this.notify(`Inbox synchronization paused for ${filePath}: ${error.message}`);
+        }
     }
 
     requestRefresh() {
@@ -225,7 +304,7 @@ class SyncEngine {
 
     async restore(note, intent) {
         if (this.disposed || (intent && this.generations.get(note.path) !== intent.generation)) return;
-        const file = await this.io.read(note.path);
+        const file = await this.io.read(note.filePath || note.path, note);
         if (!file || file.id !== note.id || file.revision > note.revision) return;
         if (intent && ![intent.target, intent.status, note.status].some((status) => equal(status, file.status))) {
             this.observe(note.path, file);
@@ -235,7 +314,7 @@ class SyncEngine {
         if (Object.entries(properties).every(([key, value]) => equal(file[key], value))) return;
         if (!this.disposed) {
             try {
-                await this.io.patch(note.path, { id: file.id, revision: file.revision, status: file.status }, properties);
+                await this.io.patch(note.filePath || note.path, { id: file.id, revision: file.revision, status: file.status }, properties, note);
             } catch (error) {
                 this.notify(`Could not restore ${note.path}: ${error.message}`);
             }
@@ -243,6 +322,9 @@ class SyncEngine {
     }
 
     forget(filePath) {
+        for (const note of this.notes.values()) {
+            if (note.filePath === filePath) this.forget(note.path);
+        }
         this.pending.delete(filePath);
         this.notes.delete(filePath);
         clearTimeout(this.timers.get(filePath));
@@ -296,8 +378,9 @@ class TaskcliSyncPlugin extends Plugin {
             id: "refresh", name: "Check connection and refresh state",
             callback: () => this.checkConnection(),
         });
-        this.registerEvent(this.app.metadataCache.on("changed", (file, _data, cache) => {
+        this.registerEvent(this.app.metadataCache.on("changed", (file, data, cache) => {
             this.engine?.observe(file.path, cache.frontmatter);
+            this.engine?.observeInbox(file.path, data);
         }));
         this.registerEvent(this.app.vault.on("delete", (file) => this.engine?.forget(file.path)));
         this.registerEvent(this.app.vault.on("rename", (file, oldPath) => {
@@ -312,10 +395,11 @@ class TaskcliSyncPlugin extends Plugin {
         for (const child of this.children) child.kill();
         const settings = { ...this.settings, vaultPath: this.app.vault.adapter.getBasePath() };
         const execute = (args) => runCli(settings, args, this.children);
-        const read = async (filePath) => {
+        const read = async (filePath, note) => {
             const file = this.app.vault.getAbstractFileByPath(filePath);
             if (!(file instanceof TFile)) return null;
             const content = await this.app.vault.read(file);
+            if (note.kind === "inbox") return parseInbox(content, note.project_id).find((entry) => entry.id === note.id);
             const match = /^(?:\uFEFF)?---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(content);
             return match ? parseYaml(match[1]) : null;
         };
@@ -333,9 +417,13 @@ class TaskcliSyncPlugin extends Plugin {
                 }
                 return result;
             },
-            patch: async (filePath, expected, properties) => {
+            patch: async (filePath, expected, properties, note) => {
                 const file = this.app.vault.getAbstractFileByPath(filePath);
                 if (!(file instanceof TFile) || engine.disposed) return false;
+                if (note.kind === "inbox") {
+                    await this.app.vault.process(file, (source) => engine.disposed ? source : patchInbox(source, note, expected, properties));
+                    return true;
+                }
                 let updated = false;
                 await this.app.fileManager.processFrontMatter(file, (frontmatter) => {
                     if (engine.disposed || frontmatter.id !== expected.id ||
@@ -364,7 +452,8 @@ class TaskcliSyncPlugin extends Plugin {
         try {
             const engine = await this.connect();
             if (engine.ready && !engine.disposed && !this.stopped) {
-                new Notice(`Connected to taskcli. Monitoring ${engine.notes.size} notes.`, 5000);
+                const entries = [...engine.notes.values()].filter((note) => note.kind === "inbox").length;
+                new Notice(`Connected to taskcli. Monitoring ${engine.notes.size - entries} notes and ${entries} Inbox items.`, 5000);
             }
         } catch (error) {
             if (!this.stopped) new Notice(`Taskcli sync is paused: ${error.message}`, 10000);
@@ -416,3 +505,5 @@ module.exports = TaskcliSyncPlugin;
 module.exports.SyncEngine = SyncEngine;
 module.exports.commandFor = commandFor;
 module.exports.runCli = runCli;
+module.exports.parseInbox = parseInbox;
+module.exports.patchInbox = patchInbox;

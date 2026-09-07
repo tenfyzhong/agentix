@@ -2,6 +2,174 @@ use super::*;
 
 const END: &str = "<!-- taskcli:inbox:end -->";
 
+async fn set_status(f: &Fixture, id: &str, status: &str) -> anyhow::Result<agentix_task::Outcome> {
+    f.service
+        .execute(
+            json!({"command":"inbox.set-status","inbox":id,"status":status}),
+            WriteOptions::default(),
+        )
+        .await
+}
+
+#[tokio::test]
+async fn inbox_status_completes_unlinked_items_and_reopens_without_creating_jobs() {
+    let f = fixture("obsidian").await;
+    let item = add(&f, "Manual work").await;
+    let id = item["id"].as_str().unwrap();
+    assert_eq!(
+        set_status(&f, id, "DONE").await.unwrap().result["status"],
+        "DONE"
+    );
+    assert_eq!(
+        set_status(&f, id, "TODO").await.unwrap().result["status"],
+        "TODO"
+    );
+    assert_eq!(
+        set_status(&f, id, "CANCELLED").await.unwrap().result["status"],
+        "CANCELLED"
+    );
+    assert_eq!(
+        set_status(&f, id, "TODO").await.unwrap().result["status"],
+        "TODO"
+    );
+    assert_eq!(f.service.store().snapshot().await.unwrap().jobs.len(), 1);
+    assert!(set_status(&f, id, "IN_PROGRESS").await.is_err());
+    let snapshot = f.service.obsidian_snapshot().await.unwrap();
+    let note = snapshot["notes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["id"] == id)
+        .unwrap();
+    assert_eq!(note["kind"], "inbox");
+    assert!(
+        note["path"]
+            .as_str()
+            .unwrap()
+            .ends_with("Projects/demo/Inbox.md")
+    );
+    assert_eq!(note["revision"], entries(&f).await[0]["revision"]);
+    assert!(note.get("lease").is_none());
+    assert!(
+        std::fs::read_to_string(path(&f))
+            .unwrap()
+            .contains("revision=")
+    );
+}
+
+#[tokio::test]
+async fn inbox_status_requires_review_and_reopens_the_same_job_preserving_tasks() {
+    let mut f = fixture("obsidian").await;
+    let entry = add(&f, "Deliver").await;
+    let id = entry["id"].as_str().unwrap();
+    let claimed = claim(&f, "one").await;
+    f.job = claimed["job"]["id"].as_str().unwrap().into();
+    assert!(
+        set_status(&f, id, "DONE")
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("PENDING_REVIEW")
+    );
+    assert!(set_status(&f, id, "TODO").await.is_err());
+    let task = f.task("Implementation").await;
+    let owned = f.start(&task, "one").await;
+    f.service
+        .execute(json!({"command":"task.done","task":task}), owner(&owned))
+        .await
+        .unwrap();
+    assert_eq!(
+        set_status(&f, id, "DONE").await.unwrap().result["status"],
+        "DONE"
+    );
+    let before = f.service.store().snapshot().await.unwrap();
+    assert_eq!(
+        set_status(&f, id, "TODO").await.unwrap().result["status"],
+        "TODO"
+    );
+    f.service.sync().await.unwrap();
+    let state = f.service.store().snapshot().await.unwrap();
+    assert_eq!(state.tasks, before.tasks);
+    let job = state.jobs.iter().find(|j| j.id == f.job).unwrap();
+    assert_eq!(job.status.to_string(), "ACTIVE");
+    assert!(job.completed_at.is_none());
+    assert_eq!(claim(&f, "two").await["job"]["id"], f.job);
+}
+
+#[tokio::test]
+async fn inbox_status_fences_checkbox_cancellation_and_replays_once() {
+    let f = fixture("obsidian").await;
+    let entry = add(&f, "Cancel me").await;
+    let row = entries(&f).await.remove(0);
+    let id = entry["id"].as_str().unwrap();
+    let source = std::fs::read_to_string(path(&f)).unwrap();
+    std::fs::write(
+        path(&f),
+        source.replace("- [ ] Cancel me", "- [-] Cancel me"),
+    )
+    .unwrap();
+    let options = WriteOptions {
+        expected_revision: row["revision"].as_i64(),
+        idempotency_key: Some("cancel-checkbox".into()),
+        ..WriteOptions::default()
+    };
+    let request = json!({"command":"inbox.set-status","inbox":id,"status":"CANCELLED"});
+    let first = f
+        .service
+        .execute(request.clone(), options.clone())
+        .await
+        .unwrap();
+    assert_eq!(first.result["status"], "CANCELLED");
+    assert_eq!(
+        f.service
+            .execute(request, options.clone())
+            .await
+            .unwrap()
+            .sequence,
+        first.sequence
+    );
+    assert!(
+        f.service
+            .execute(
+                json!({"command":"inbox.set-status","inbox":id,"status":"TODO"}),
+                WriteOptions {
+                    idempotency_key: None,
+                    ..options
+                }
+            )
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("revision")
+    );
+}
+
+#[tokio::test]
+async fn inbox_status_does_not_revive_withdrawn_or_archived_work() {
+    let f = fixture("obsidian").await;
+    let entry = add(&f, "Withdraw").await;
+    let id = entry["id"].as_str().unwrap();
+    let source = std::fs::read_to_string(path(&f)).unwrap();
+    let source = source
+        .lines()
+        .filter(|line| !line.contains(id))
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(path(&f), source).unwrap();
+    assert!(set_status(&f, id, "TODO").await.is_err());
+    let entry = add(&f, "Archive").await;
+    let id = entry["id"].as_str().unwrap();
+    set_status(&f, id, "DONE").await.unwrap();
+    f.service
+        .execute(
+            json!({"command":"project.archive","project":f.project}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    assert!(set_status(&f, id, "TODO").await.is_err());
+}
+
 #[tokio::test]
 async fn inbox_rejects_reserved_control_markers_before_committing_a_submission() {
     let f = fixture("markdown").await;
@@ -124,8 +292,9 @@ async fn inbox_metadata_stays_on_the_header_with_status_in_a_comment() {
         let entry = add(&f, content).await;
         let id = entry["id"].as_str().unwrap();
         let source = std::fs::read_to_string(path(&f)).unwrap();
+        let revision = entries(&f).await[0]["revision"].as_i64().unwrap();
         assert!(source.contains(&format!(
-            "- [ ] Request <!-- taskcli:entry:{id} --> <!-- taskcli:entry-state TODO -->\n  Details with **Markdown**.\n  - [ ] Acceptance\n\n"
+            "- [ ] Request <!-- taskcli:entry:{id} --> <!-- taskcli:entry-state TODO revision={revision} -->\n  Details with **Markdown**.\n  - [ ] Acceptance\n\n"
         )));
         assert!(!source.contains("\n  <!-- taskcli:entry-state"));
         f.service.sync().await.unwrap();
@@ -139,7 +308,10 @@ async fn inbox_metadata_stays_on_the_header_with_status_in_a_comment() {
             .lines()
             .find(|line| line.starts_with("- [ ] Request"))
             .unwrap();
-        assert!(header.contains("<!-- taskcli:entry-state IN_PROGRESS --> · "));
+        let revision = entries(&f).await[0]["revision"].as_i64().unwrap();
+        assert!(header.contains(&format!(
+            "<!-- taskcli:entry-state IN_PROGRESS revision={revision} --> · "
+        )));
         assert!(header.contains(if format == "obsidian" { "[[" } else { "](" }));
         assert!(header.ends_with(" · agent:one"));
         assert!(!source.contains("\n  <!-- taskcli:entry-state"));
@@ -155,8 +327,9 @@ async fn inbox_metadata_stays_on_the_header_with_status_in_a_comment() {
             .await
             .unwrap();
         let source = std::fs::read_to_string(path(&f)).unwrap();
+        let revision = entries(&f).await[0]["revision"].as_i64().unwrap();
         assert!(source.contains(&format!(
-            "- [-] Request <!-- taskcli:entry:{id} --> <!-- taskcli:entry-state CANCELLED --> · "
+            "- [-] Request <!-- taskcli:entry:{id} --> <!-- taskcli:entry-state CANCELLED revision={revision} --> · "
         )));
         assert!(!source.contains("agent:one"));
     }
@@ -178,8 +351,9 @@ async fn inbox_legacy_receipt_migrates_without_changing_identity_or_content() {
     assert_eq!(rows[0]["content"], "Request\nDetails.");
     assert_eq!(rows[0]["status"], "TODO");
     let source = std::fs::read_to_string(path(&f)).unwrap();
+    let revision = rows[0]["revision"].as_i64().unwrap();
     assert!(source.contains(&format!(
-        "- [ ] Request <!-- taskcli:entry:{id} --> <!-- taskcli:entry-state TODO -->\n  Details.\n\n"
+        "- [ ] Request <!-- taskcli:entry:{id} --> <!-- taskcli:entry-state TODO revision={revision} -->\n  Details.\n\n"
     )));
     f.service.sync().await.unwrap();
     assert_eq!(entries(&f).await, rows);
@@ -401,8 +575,8 @@ async fn inbox_completion_checks_the_box_and_idempotent_append_keeps_one_entry()
         std::fs::read_to_string(path(&f))
             .unwrap()
             .contains(&format!(
-                "- [x] Ship <!-- taskcli:entry:{} --> <!-- taskcli:entry-state DONE --> · ",
-                first.result["id"].as_str().unwrap()
+        "- [x] Ship <!-- taskcli:entry:{} --> <!-- taskcli:entry-state DONE revision={} --> · ",
+        first.result["id"].as_str().unwrap(), entries(&f).await[0]["revision"]
             ))
     );
 }

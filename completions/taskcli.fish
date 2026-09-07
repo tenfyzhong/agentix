@@ -50,24 +50,25 @@ complete -c taskcli -n "__fish_taskcli_needs_command" -f -a "event" -d 'Inspect 
 complete -c taskcli -n "__fish_taskcli_needs_command" -f -a "context" -d 'Show Task, Job, lease, Plan, and document context for a session or explicit IDs'
 complete -c taskcli -n "__fish_taskcli_needs_command" -f -a "hook" -d 'Handle agent session lifecycle events and maintain Task leases'
 complete -c taskcli -n "__fish_taskcli_needs_command" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
-complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel help" -l config -r -F
-complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel help" -l project -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel help" -l actor -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel help" -l executor -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel help" -l session -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel help" -l delegated-by -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel help" -l lease-token -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel help" -l expect-revision -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel help" -l idempotency-key -r
-complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel help" -l json
-complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel help" -s h -l help -d 'Print help'
-complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel help" -f -a "add" -d 'Append one requirement, preserving its complete Markdown content'
-complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel help" -f -a "list" -d 'Import human edits and show visible Inbox entries in document order'
-complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel help" -f -a "sync" -d 'Import submissions, cancellations, and withdrawals and repair the document'
-complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel help" -f -a "claim-next" -d 'Atomically claim the next eligible requirement and create or resume its Job'
-complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel help" -f -a "release" -d 'Release an owned Inbox lease so another agent can resume its existing Job'
-complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel help" -f -a "cancel" -d 'Cancel a requirement and its unfinished work, preserving history'
-complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel set-status help" -l config -r -F
+complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel set-status help" -l project -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel set-status help" -l actor -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel set-status help" -l executor -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel set-status help" -l session -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel set-status help" -l delegated-by -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel set-status help" -l lease-token -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel set-status help" -l expect-revision -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel set-status help" -l idempotency-key -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel set-status help" -l json
+complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel set-status help" -s h -l help -d 'Print help'
+complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel set-status help" -f -a "add" -d 'Append one requirement, preserving its complete Markdown content'
+complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel set-status help" -f -a "list" -d 'Import human edits and show visible Inbox entries in document order'
+complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel set-status help" -f -a "sync" -d 'Import submissions, cancellations, and withdrawals and repair the document'
+complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel set-status help" -f -a "claim-next" -d 'Atomically claim the next eligible requirement and create or resume its Job'
+complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel set-status help" -f -a "release" -d 'Release an owned Inbox lease so another agent can resume its existing Job'
+complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel set-status help" -f -a "cancel" -d 'Cancel a requirement and its unfinished work, preserving history'
+complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel set-status help" -f -a "set-status" -d 'Set a human Inbox status; linked completion requires a pending review'
+complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel set-status help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
 complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and __fish_seen_subcommand_from add" -l content -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and __fish_seen_subcommand_from add" -l config -r -F
 complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and __fish_seen_subcommand_from add" -l project -r
@@ -135,12 +136,27 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and __fish_seen_s
 complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and __fish_seen_subcommand_from cancel" -l idempotency-key -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and __fish_seen_subcommand_from cancel" -l json
 complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and __fish_seen_subcommand_from cancel" -s h -l help -d 'Print help'
+complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and __fish_seen_subcommand_from set-status" -l status -r -f -a "TODO\t''
+DONE\t''
+CANCELLED\t''"
+complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and __fish_seen_subcommand_from set-status" -l config -r -F
+complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and __fish_seen_subcommand_from set-status" -l project -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and __fish_seen_subcommand_from set-status" -l actor -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and __fish_seen_subcommand_from set-status" -l executor -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and __fish_seen_subcommand_from set-status" -l session -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and __fish_seen_subcommand_from set-status" -l delegated-by -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and __fish_seen_subcommand_from set-status" -l lease-token -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and __fish_seen_subcommand_from set-status" -l expect-revision -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and __fish_seen_subcommand_from set-status" -l idempotency-key -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and __fish_seen_subcommand_from set-status" -l json
+complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and __fish_seen_subcommand_from set-status" -s h -l help -d 'Print help'
 complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and __fish_seen_subcommand_from help" -f -a "add" -d 'Append one requirement, preserving its complete Markdown content'
 complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and __fish_seen_subcommand_from help" -f -a "list" -d 'Import human edits and show visible Inbox entries in document order'
 complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and __fish_seen_subcommand_from help" -f -a "sync" -d 'Import submissions, cancellations, and withdrawals and repair the document'
 complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and __fish_seen_subcommand_from help" -f -a "claim-next" -d 'Atomically claim the next eligible requirement and create or resume its Job'
 complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and __fish_seen_subcommand_from help" -f -a "release" -d 'Release an owned Inbox lease so another agent can resume its existing Job'
 complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and __fish_seen_subcommand_from help" -f -a "cancel" -d 'Cancel a requirement and its unfinished work, preserving history'
+complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and __fish_seen_subcommand_from help" -f -a "set-status" -d 'Set a human Inbox status; linked completion requires a pending review'
 complete -c taskcli -n "__fish_taskcli_using_subcommand inbox; and __fish_seen_subcommand_from help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
 complete -c taskcli -n "__fish_taskcli_using_subcommand completions" -l config -r -F
 complete -c taskcli -n "__fish_taskcli_using_subcommand completions" -l project -r
@@ -940,6 +956,7 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_su
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from inbox" -f -a "claim-next" -d 'Atomically claim the next eligible requirement and create or resume its Job'
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from inbox" -f -a "release" -d 'Release an owned Inbox lease so another agent can resume its existing Job'
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from inbox" -f -a "cancel" -d 'Cancel a requirement and its unfinished work, preserving history'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from inbox" -f -a "set-status" -d 'Set a human Inbox status; linked completion requires a pending review'
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from obsidian" -f -a "snapshot" -d 'Query registered notes and authoritative status properties without lease credentials'
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from obsidian" -f -a "setup" -d 'Install `TaskNotes` and configure its task statuses and Bases. Close Obsidian first'
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from project" -f -a "delete" -d 'Delete the Project, its work, and its entire generated document directory'

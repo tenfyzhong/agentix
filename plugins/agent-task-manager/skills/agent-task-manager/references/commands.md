@@ -9,6 +9,8 @@ taskcli inbox sync --project prj_ID --json
 taskcli inbox claim-next --project prj_ID --executor agent:HOST --session HOST_SESSION --json
 taskcli inbox release inbox_ID --session HOST_SESSION --lease-token INBOX_LEASE_TOKEN --json
 taskcli inbox cancel inbox_ID --json
+taskcli inbox set-status inbox_ID --status TODO --json
+taskcli inbox set-status inbox_ID --status DONE --expect-revision REVISION --idempotency-key KEY --json
 ```
 
 `add` appends one complete Markdown body. `list` and `sync` import human submissions, cancellation marks (`- [-]`), and withdrawals. `claim-next` returns `claimed`, an `entry` with its separate lease, and the existing or newly created `job`; an empty or ineligible queue returns `claimed: false` and a reason. Use that Job with the normal Task workflow. `context` exposes the owned Inbox entry even before its first Task exists. `hook stop` is a compatibility no-op that returns `claimed: false` with reason `manual_intake_required`. Lifecycle hooks never claim or enqueue Inbox work. After completing the claimed Job, return the result and wait for the next explicit user request. Job approval checks off its Inbox entry; PENDING_REVIEW leaves it IN_PROGRESS without a lease. Rejection returns it to TODO for resumption of the same Job. Cancelling or deleting an unfinished entry preserves history and prevents old lease holders from continuing.

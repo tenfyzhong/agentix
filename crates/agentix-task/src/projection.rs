@@ -92,6 +92,19 @@ impl Service {
                     "completedDate":optional_local_timestamp(job.completed_at)?,
                     "dateModified":local_timestamp(job.updated_at)?}}));
         }
+        for entry in state
+            .inboxes
+            .iter()
+            .filter(|entry| entry.published && !entry.deleted)
+        {
+            let project = &state.projects[state.project_index(&entry.project_id)?];
+            notes.push(
+                json!({"kind":"inbox","id":entry.id,"project_id":entry.project_id,
+                "path":path(&format!("Projects/{}/Inbox.md", project.key))?,
+                "status":entry.status,"revision":entry.revision,
+                "properties":{"status":entry.status,"revision":entry.revision}}),
+            );
+        }
         Ok(json!({"documents":self.config.documents,"notes":notes}))
     }
 
@@ -119,7 +132,19 @@ impl Service {
             && !matches!(command, "project.delete" | "job.delete")
             && self.store.replay(&request, &options).await?.is_none()
         {
-            self.reconcile_inboxes_locked(Some(&projects)).await?;
+            // The explicit status command owns this entry's checkbox intent.
+            // Still import content, order, withdrawals and other cancellations.
+            let deferred = if command == "inbox.set-status" {
+                Some(
+                    state.inboxes[crate::inbox::index(&state, required(&request, "inbox")?)?]
+                        .id
+                        .as_str(),
+                )
+            } else {
+                None
+            };
+            self.reconcile_inboxes_locked(Some(&projects), deferred)
+                .await?;
         }
         // Replays must remain valid even if the Plan file subsequently disappears.
         if command == "task.start" && self.store.replay(&request, &options).await?.is_none() {
@@ -169,7 +194,7 @@ impl Service {
 
     pub async fn sync(&self) -> Result<()> {
         let _lock = self.lock_output().await?;
-        self.reconcile_inboxes_locked(None).await?;
+        self.reconcile_inboxes_locked(None, None).await?;
         self.store.reap_expired().await?;
         self.render_locked().await
     }
@@ -198,7 +223,7 @@ impl Service {
         }
         let state = self.store.snapshot().await?;
         let projects = crate::inbox_document::request_projects(&state, &request);
-        self.reconcile_inboxes_locked(Some(&projects)).await?;
+        self.reconcile_inboxes_locked(Some(&projects), None).await?;
         let state = self.store.snapshot().await?;
         let task = &state.tasks[state.task_index(required(&request, "task")?)?];
         let command = required(&request, "command")?;

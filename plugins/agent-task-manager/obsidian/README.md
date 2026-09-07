@@ -137,7 +137,19 @@ With Taskcli Sync enabled, saved frontmatter `status` edits and TaskNotes status
 
 Commands requiring a reason receive `Status changed in Obsidian: OLD -> NEW`. All other transitions are rejected. The plugin never claims Tasks or reads lease tokens. Task edits against an active agent lease fail safely.
 
-Changes debounce for 300 ms per note and execute one at a time with expected revision and a unique idempotency key. Only registered paths with matching identities are eligible; copied notes are ignored. A stale revision refreshes the authoritative state. On failure, status and managed dates are restored without replacing authored bodies or custom properties, and a Notice explains the error. Newer queued edits are protected from older rollback and projection echoes.
+### Inbox checkbox edits
+
+Taskcli Sync also monitors registered top-level items in `Projects/<project>/Inbox.md`. The connection check reports both note and Inbox item counts. Run `taskcli inbox sync` to register newly authored submissions. Nested checklists, fenced examples and copied Inbox files are ignored. Keep the generated entry ID, state/revision receipt and region markers intact; `taskcli sync` upgrades older receipts.
+
+| Checkbox edit | Result through `inbox set-status` |
+| --- | --- |
+| Check `[x]` | DONE. An unlinked TODO item completes directly; a linked Job must be PENDING_REVIEW with all required Tasks DONE. Checking it approves verification. |
+| Uncheck a DONE or CANCELLED item to `[ ]` | TODO. Its unarchived terminal Job reopens to ACTIVE, retaining the same ID and every Task's state. Claim the entry explicitly to resume work; add repair Tasks or reopen the relevant Task. |
+| Change an unfinished item to `[-]` | CANCELLED. Cancels its unfinished Job/Tasks and revokes their leases. Reopen a DONE item before cancelling it. |
+
+TODO and IN_PROGRESS both display `[ ]`; an unchanged blank box does not release active ownership. Use `inbox release` with the owning lease, or reject a PENDING_REVIEW Job. IN_PROGRESS cannot be assigned by a checkbox. Cancelled entries must be reopened before completion. Deleted entries cannot be revived, and archived Projects/Jobs must be unarchived first. Invalid edits restore the checkbox and report the CLI error. Deletion retains the existing withdrawal behavior.
+
+Changes debounce for 300 ms per note or Inbox entry and execute one at a time with expected revision and a unique idempotency key. Only registered paths with matching identities are eligible; copied notes are ignored. A stale revision refreshes the authoritative state. On failure, status and managed dates are restored without replacing authored bodies or custom properties, and a Notice explains the error. Inbox rollback updates only the matching checkbox and receipt, preserving other entries, links and details. Newer queued edits are protected from older rollback and projection echoes, including multiple entries in one file.
 
 A 30-second process timeout is followed by a fresh snapshot because the database may already have committed. A `projection_pending` response means success: the plugin retries `sync` once and reports any remaining document failure without undoing the acknowledged state. If the CLI cannot be reached, the last confirmed state is shown with an explicit uncertainty notice; reconnect to reconcile it. Startup restores offline drift without replaying it as new commands.
 

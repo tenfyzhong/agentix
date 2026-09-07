@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { spawn } from "node:child_process";
-import { cp, mkdtemp, mkdir, readFile, rm } from "node:fs/promises";
+import { cp, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -111,6 +111,53 @@ test("Obsidian bridge uses real CLI revisions, lease guards and manual Job revie
     const job = await f.run(["job", "show", f.job.id]);
     assert.ok(job.completed_at);
     assert.match(await readFile(join(f.root, "Tasks \u{2603}", job.document_path), "utf8"), /status: "COMPLETED"/);
+    assert.equal(notices.length, 1);
+});
+
+test("Inbox bridge edits real Markdown, enforces Job review and reopens completed work", async (t) => {
+    const f = await fixture(t, "obsidian");
+    await f.run(["job", "cancel", f.job.id]);
+    const entry = await f.run(["inbox", "add", "--project", f.project.id, "--content", "Deliver\nPreserve these details."]);
+    const claimed = await f.run(["inbox", "claim-next", "--project", f.project.id], { session: "inbox-worker", executor: "agent:test" });
+    const task = await f.run(["task", "add", "--job", claimed.job.id, "--title", "Implementation"]);
+    const { SyncEngine, runCli, parseInbox, patchInbox } = loadPlugin();
+    const execute = (args) => runCli({ cliPath: process.env.TASKCLI_BIN, configPath: process.env.TASKCLI_CONFIG, vaultPath: f.root }, args);
+    const snapshot = async () => {
+        const result = (await execute(["obsidian", "snapshot"])).result;
+        return { ...result, notes: result.notes.filter((note) => note.kind === "inbox") };
+    };
+    const note = (await snapshot()).notes[0];
+    const path = join(f.root, note.path);
+    const notices = [];
+    const engine = new SyncEngine({
+        snapshot, execute, notice: (message) => notices.push(message),
+        read: async () => parseInbox(await readFile(path, "utf8"), f.project.id).find((row) => row.id === entry.id),
+        patch: async (_path, expected, properties, row) => {
+            await writeFile(path, patchInbox(await readFile(path, "utf8"), row, expected, properties));
+        },
+    });
+    t.after(() => engine.dispose());
+    await engine.initialize();
+    const edit = async (from, to) => {
+        const source = (await readFile(path, "utf8")).replace(`- [${from}] Deliver`, `- [${to}] Deliver`);
+        await writeFile(path, source); engine.observeInbox(note.path, source); await engine.flush();
+    };
+    await edit(" ", "x");
+    assert.equal((await f.run(["job", "show", claimed.job.id])).status, "ACTIVE");
+    assert.match(notices[0], /PENDING_REVIEW/);
+    assert.match(await readFile(path, "utf8"), /- \[ \] Deliver/);
+    const owner = { session: "inbox-worker", executor: "agent:test" };
+    const claim = await f.run(["task", "claim", task.id], owner); owner.token = claim.lease.token;
+    await f.run(["plan", "create", task.id, "--body", "Verify"], owner);
+    await f.run(["task", "start", task.id], owner); await f.run(["task", "done", task.id], owner);
+    await engine.initialize();
+    await edit(" ", "x");
+    assert.equal((await f.run(["job", "show", claimed.job.id])).status, "COMPLETED");
+    await edit("x", " ");
+    assert.equal((await f.run(["job", "show", claimed.job.id])).status, "ACTIVE");
+    assert.equal((await f.run(["inbox", "list", "--project", f.project.id]))[0].status, "TODO");
+    assert.equal((await f.run(["task", "show", task.id])).status, "DONE");
+    assert.match(await readFile(path, "utf8"), /Preserve these details/);
     assert.equal(notices.length, 1);
 });
 

@@ -161,6 +161,24 @@ _arguments "${_arguments_options[@]}" : \
 ':id:_default' \
 && ret=0
 ;;
+(set-status)
+_arguments "${_arguments_options[@]}" : \
+'--status=[]:STATUS:(TODO DONE CANCELLED)' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
 (help)
 _arguments "${_arguments_options[@]}" : \
 ":: :_taskcli__subcmd__inbox__subcmd__help_commands" \
@@ -194,6 +212,10 @@ _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
 (cancel)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(set-status)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -1653,6 +1675,10 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
+(set-status)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
         esac
     ;;
 esac
@@ -2145,6 +2171,7 @@ _taskcli__subcmd__help__subcmd__inbox_commands() {
 'claim-next:Atomically claim the next eligible requirement and create or resume its Job' \
 'release:Release an owned Inbox lease so another agent can resume its existing Job' \
 'cancel:Cancel a requirement and its unfinished work, preserving history' \
+'set-status:Set a human Inbox status; linked completion requires a pending review' \
     )
     _describe -t commands 'taskcli help inbox commands' commands "$@"
 }
@@ -2172,6 +2199,11 @@ _taskcli__subcmd__help__subcmd__inbox__subcmd__list_commands() {
 _taskcli__subcmd__help__subcmd__inbox__subcmd__release_commands() {
     local commands; commands=()
     _describe -t commands 'taskcli help inbox release commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__inbox__subcmd__set-status_commands] )) ||
+_taskcli__subcmd__help__subcmd__inbox__subcmd__set-status_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help inbox set-status commands' commands "$@"
 }
 (( $+functions[_taskcli__subcmd__help__subcmd__inbox__subcmd__sync_commands] )) ||
 _taskcli__subcmd__help__subcmd__inbox__subcmd__sync_commands() {
@@ -2540,6 +2572,7 @@ _taskcli__subcmd__inbox_commands() {
 'claim-next:Atomically claim the next eligible requirement and create or resume its Job' \
 'release:Release an owned Inbox lease so another agent can resume its existing Job' \
 'cancel:Cancel a requirement and its unfinished work, preserving history' \
+'set-status:Set a human Inbox status; linked completion requires a pending review' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'taskcli inbox commands' commands "$@"
@@ -2568,6 +2601,7 @@ _taskcli__subcmd__inbox__subcmd__help_commands() {
 'claim-next:Atomically claim the next eligible requirement and create or resume its Job' \
 'release:Release an owned Inbox lease so another agent can resume its existing Job' \
 'cancel:Cancel a requirement and its unfinished work, preserving history' \
+'set-status:Set a human Inbox status; linked completion requires a pending review' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'taskcli inbox help commands' commands "$@"
@@ -2602,6 +2636,11 @@ _taskcli__subcmd__inbox__subcmd__help__subcmd__release_commands() {
     local commands; commands=()
     _describe -t commands 'taskcli inbox help release commands' commands "$@"
 }
+(( $+functions[_taskcli__subcmd__inbox__subcmd__help__subcmd__set-status_commands] )) ||
+_taskcli__subcmd__inbox__subcmd__help__subcmd__set-status_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli inbox help set-status commands' commands "$@"
+}
 (( $+functions[_taskcli__subcmd__inbox__subcmd__help__subcmd__sync_commands] )) ||
 _taskcli__subcmd__inbox__subcmd__help__subcmd__sync_commands() {
     local commands; commands=()
@@ -2616,6 +2655,11 @@ _taskcli__subcmd__inbox__subcmd__list_commands() {
 _taskcli__subcmd__inbox__subcmd__release_commands() {
     local commands; commands=()
     _describe -t commands 'taskcli inbox release commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__inbox__subcmd__set-status_commands] )) ||
+_taskcli__subcmd__inbox__subcmd__set-status_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli inbox set-status commands' commands "$@"
 }
 (( $+functions[_taskcli__subcmd__inbox__subcmd__sync_commands] )) ||
 _taskcli__subcmd__inbox__subcmd__sync_commands() {

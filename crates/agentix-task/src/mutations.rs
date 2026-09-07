@@ -639,7 +639,12 @@ fn job_ready(state: &Snapshot, job_id: &str) -> bool {
     tasks.peek().is_some() && tasks.all(|t| t.status == TaskStatus::Done)
 }
 
-fn review_job(state: &mut Snapshot, index: usize, request: &Value, now: i64) -> Result<Value> {
+pub(crate) fn review_job(
+    state: &mut Snapshot,
+    index: usize,
+    request: &Value,
+    now: i64,
+) -> Result<Value> {
     let command = required(request, "command")?;
     let expected = if command == "job.submit" {
         JobStatus::Active

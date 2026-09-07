@@ -199,6 +199,18 @@ fn taskcli_sync_and_dual_boards_in_desktop() {
     }
 }
 
+#[test]
+#[ignore = "requires an open TASKCLI_OBSIDIAN_VAULT with TaskNotes enabled"]
+fn inbox_checkbox_sync_in_desktop() {
+    let _guard = DESKTOP_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let vault = std::env::var("TASKCLI_OBSIDIAN_VAULT").expect("choose the test vault");
+    let (f, project) = desktop_fixture(&vault, "obsidian");
+    load_sync_plugin(&f);
+    exercise_inbox_bridge(&f, project["id"].as_str().unwrap());
+}
+
 fn exercise_dashboard(f: &mut DesktopFixture, project: &Value, format: &str) {
     let dashboard = format!(
         "{}/Dashboard.{}",
@@ -286,8 +298,7 @@ fn exercise_dashboard(f: &mut DesktopFixture, project: &Value, format: &str) {
     f.leaf = obsidian(&f.vault, "app.workspace.getMostRecentLeaf()?.id");
 }
 
-#[allow(clippy::too_many_lines)] // Keep the opt-in desktop scenario and cleanup visible together.
-fn exercise_plugin_views(vault: &str, format: &str, dashboard_only: bool) {
+fn desktop_fixture(vault: &str, format: &str) -> (DesktopFixture, Value) {
     let info = obsidian(
         vault,
         "({root:app.vault.adapter.basePath,leaf:app.workspace.getMostRecentLeaf()?.id})",
@@ -318,7 +329,7 @@ fn exercise_plugin_views(vault: &str, format: &str, dashboard_only: bool) {
     );
     let leaf = obsidian(vault, "app.workspace.getMostRecentLeaf()?.id");
     assert_ne!(leaf, info["leaf"], "use a dedicated test tab");
-    let mut f = DesktopFixture {
+    let f = DesktopFixture {
         vault: vault.to_owned(),
         original_leaf: info["leaf"].clone(),
         leaf,
@@ -355,6 +366,12 @@ fn exercise_plugin_views(vault: &str, format: &str, dashboard_only: bool) {
         "--root",
         f.metadata.path().to_str().unwrap(),
     ]);
+    (f, project)
+}
+
+#[allow(clippy::too_many_lines)] // Keep the opt-in desktop scenario and cleanup visible together.
+fn exercise_plugin_views(vault: &str, format: &str, dashboard_only: bool) {
+    let (mut f, project) = desktop_fixture(vault, format);
     if dashboard_only {
         exercise_dashboard(&mut f, &project, format);
         return;
@@ -492,13 +509,7 @@ fn exercise_plugin_views(vault: &str, format: &str, dashboard_only: bool) {
 }
 
 #[allow(clippy::too_many_lines)] // Keep the desktop mutation, rollback and database assertions together.
-fn exercise_status_bridge(
-    f: &DesktopFixture,
-    task: &Value,
-    job: &Value,
-    task_path: &str,
-    job_path: &str,
-) {
+fn load_sync_plugin(f: &DesktopFixture) {
     let plugin_dir = f.output.path().join("test-plugin");
     std::fs::create_dir_all(&plugin_dir).unwrap();
     std::fs::write(
@@ -526,13 +537,23 @@ fn exercise_status_bridge(
     obsidian(&f.vault, "window.taskcliSyncSmoke.checkConnection()");
     wait_for(
         &f.vault,
-        "[...document.querySelectorAll('.notice')].some(el=>el.textContent.includes('Connected to taskcli.'))",
+        "[...activeDocument.querySelectorAll('.notice')].some(el=>el.textContent.includes('Connected to taskcli.'))",
         |v| v == true,
     );
     obsidian(
         &f.vault,
         "(() => { const io=window.taskcliSyncSmoke.engine.io; const notice=io.notice; window.taskcliSmokeNotices=[]; io.notice=m=>{window.taskcliSmokeNotices.push(m); notice(m);}; return true;})()",
     );
+}
+
+fn exercise_status_bridge(
+    f: &DesktopFixture,
+    task: &Value,
+    job: &Value,
+    task_path: &str,
+    job_path: &str,
+) {
+    load_sync_plugin(f);
     // The owning agent lease must reject a UI cancellation and restore dates/body.
     obsidian(
         &f.vault,
@@ -614,8 +635,72 @@ fn exercise_status_bridge(
         f.cli(&["task", "show", unleased["id"].as_str().unwrap()])["status"],
         "BLOCKED"
     );
+    exercise_inbox_bridge(f, job["project_id"].as_str().unwrap());
     obsidian(
         &f.vault,
         "(async () => {await app.plugins.unloadPlugin(\"taskcli-sync-smoke\"); delete app.plugins.manifests[\"taskcli-sync-smoke\"]; delete window.taskcliSyncSmoke; return true;})()",
     );
+}
+
+fn exercise_inbox_bridge(f: &DesktopFixture, project: &str) {
+    let entry = f.cli(&[
+        "inbox",
+        "add",
+        "--project",
+        project,
+        "--content",
+        "Manual Inbox smoke\nKeep details.",
+    ]);
+    let id = &entry["id"];
+    let lookup = format!("[...window.taskcliSyncSmoke.engine.notes.values()].find(n=>n.id==={id})");
+    let note = wait_for(&f.vault, &lookup, |v| v["kind"] == "inbox");
+    // Discovery adopts the snapshot before reconciling its initial display.
+    // Edit only after that refresh has finished, as with a completed Connect.
+    wait_for(
+        &f.vault,
+        "!window.taskcliSyncSmoke.engine.running && !window.taskcliSyncSmoke.engine.refreshRequested",
+        |v| v == true,
+    );
+    let path = &note["filePath"];
+    let edit = |from: &str, to: &str| {
+        obsidian(
+            &f.vault,
+            &format!(
+                "app.vault.process(app.vault.getAbstractFileByPath({path}), source=>source.replace({},{}))",
+                json!(format!("- [{from}] Manual Inbox smoke")),
+                json!(format!("- [{to}] Manual Inbox smoke"))
+            ),
+        );
+    };
+    edit(" ", "x");
+    wait_for(
+        &f.vault,
+        &format!(
+            "(async()=> ({{note:({lookup}),ready:window.taskcliSyncSmoke.engine.ready,pending:[...window.taskcliSyncSmoke.engine.pending.values()],notices:window.taskcliSmokeNotices,source:await app.vault.read(app.vault.getAbstractFileByPath({path}))}}))()"
+        ),
+        |v| v["note"]["status"] == "DONE",
+    );
+    assert_eq!(
+        f.cli(&["inbox", "list", "--project", project])[0]["status"],
+        "DONE"
+    );
+    let notices = obsidian(&f.vault, "window.taskcliSmokeNotices.length")
+        .as_u64()
+        .unwrap();
+    edit("x", "-");
+    wait_for(&f.vault, "window.taskcliSmokeNotices.length", |v| {
+        v.as_u64().unwrap_or(0) > notices
+    });
+    wait_for(
+        &f.vault,
+        &format!(
+            "(async()=> (await app.vault.read(app.vault.getAbstractFileByPath({path}))).includes('- [x] Manual Inbox smoke'))()"
+        ),
+        |v| v == true,
+    );
+    edit("x", " ");
+    wait_for(&f.vault, &format!("({lookup})?.status"), |v| v == "TODO");
+    let rows = f.cli(&["inbox", "list", "--project", project]);
+    assert_eq!(rows[0]["status"], "TODO");
+    assert_eq!(rows[0]["content"], "Manual Inbox smoke\nKeep details.");
 }

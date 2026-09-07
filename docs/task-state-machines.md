@@ -1,4 +1,4 @@
-# Task and Job state machines
+# Task, Job and Inbox state machines
 
 SQLite enforces these transitions. The desktop Taskcli Sync plugin submits saved Obsidian `status` edits through the same CLI; a rejected edit is restored and produces a notification. See [Obsidian setup and supported edits](../plugins/agent-task-manager/obsidian/README.md#status-edits).
 
@@ -56,10 +56,10 @@ stateDiagram-v2
     PENDING_REVIEW --> COMPLETED: job approve (verification passed)
     PENDING_REVIEW --> ACTIVE: job reject --reason (verification failed)
     PENDING_REVIEW --> ACTIVE: task reopen
-    COMPLETED --> ACTIVE: task reopen
+    COMPLETED --> ACTIVE: task reopen / Inbox set-status TODO
     ACTIVE --> CANCELLED: job cancel
     PENDING_REVIEW --> CANCELLED: job cancel
-    CANCELLED --> ACTIVE: task retry / reopen
+    CANCELLED --> ACTIVE: task retry / reopen / Inbox set-status TODO
     classDef active fill:#bfdbfe,stroke:#bfdbfe,color:#1f2937
     classDef review fill:#fed7aa,stroke:#fed7aa,color:#1f2937
     classDef completed fill:#bbf7d0,stroke:#bbf7d0,color:#1f2937
@@ -75,3 +75,22 @@ Readiness means at least one non-CANCELLED Task exists and every such Task is DO
 Approval alone sets `completed_at` and emits `job.completed`. Submission emits `job.pending_review`; rejection emits `job.rejected`. Resubmission and approval clear the current review reason; events retain the history. The CLI checks state and readiness, while the reviewer is responsible for performing acceptance checks. Agents must not approve their own delivery unless the user explicitly authorizes them to perform that verification.
 
 PENDING_REVIEW is unfinished: it cannot be archived, blocks Project archival and new Inbox intake, and keeps its Inbox entry IN_PROGRESS without a lease. Rejection makes that entry available to resume its existing Job. Approval checks it off. COMPLETED and CANCELLED Jobs may be archived/unarchived; archival is an independent property, not another status. Database schema 9 preserves historical COMPLETED Jobs.
+
+## Inbox item
+
+```mermaid
+stateDiagram-v2
+    [*] --> TODO: submission
+    TODO --> IN_PROGRESS: explicit claim-next
+    IN_PROGRESS --> TODO: release / interruption / lease expiry / Job rejection
+    IN_PROGRESS --> DONE: Job approval / checked box approves pending Job
+    TODO --> DONE: set-status DONE (unlinked item only)
+    TODO --> CANCELLED: cancellation / withdrawal
+    IN_PROGRESS --> CANCELLED: cancellation / withdrawal / Job cancellation
+    DONE --> TODO: set-status TODO / uncheck
+    CANCELLED --> TODO: set-status TODO / uncheck
+```
+
+The connected Obsidian plugin maps saved checkbox edits to `inbox set-status`, with a revision check, idempotency key and rollback notification on failure. Reopening a terminal entry reuses its Job, sets that Job ACTIVE, and preserves all Task states. It does not automatically claim work or rerun DONE Tasks. Archived work must be unarchived first; withdrawn entries cannot be revived. Cancelled entries must be reopened before completion, and completed entries before cancellation.
+
+TODO and IN_PROGRESS share the blank checkbox. PENDING_REVIEW keeps the entry IN_PROGRESS without a lease; approval requires the Job's readiness checks. A blank box alone cannot release active ownership or reject verification: use the corresponding lease-authorized release or Job rejection. Plain CLI sync retains cancellation/withdrawal import but does not replay completion/reopening from checkbox drift.

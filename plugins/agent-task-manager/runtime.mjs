@@ -289,6 +289,7 @@ export function registerExtension(
                 "revise",
                 "claim",
                 "claim-next",
+                "set-status",
                 "start",
                 "done",
                 "cancel",

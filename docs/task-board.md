@@ -39,18 +39,20 @@ Nested checklists and fenced examples do not become separate entries. Synchroniz
 | --- | --- |
 | `TODO` | Queued, or unfinished work released for recovery |
 | `IN_PROGRESS` | Exclusively claimed by a session; a formal Job is linked |
-| `DONE` | Its formal Job completed; rendered as `- [x]` |
+| `DONE` | Its formal Job passed verification, or an unlinked item was completed manually; rendered as `- [x]` |
 | `CANCELLED` | Withdrawn by the human or its formal Job cancelled; rendered as `- [-]` |
 
 Managed metadata stays on the entry's checkbox line: the ID and status are HTML comments, followed by a visible Job link and current executor when present. For example:
 
 ```markdown
-- [ ] Check feature completeness <!-- taskcli:entry:inbox_01a07760d6a673f2a863e0f105eb9783 --> <!-- taskcli:entry-state TODO -->
+- [ ] Check feature completeness <!-- taskcli:entry:inbox_01a07760d6a673f2a863e0f105eb9783 --> <!-- taskcli:entry-state TODO revision=1 -->
 ```
 
-Synchronization converts older receipts beneath entries to this inline format, preserving entry IDs and authored details. Changing a checkbox to `- [x]` does not complete a Job: completion requires Job approval after verification. Set it to `- [-]` to cancel. Deleting an unfinished entry withdraws it too. Cancellation revokes Inbox and associated Task leases, cancels unfinished Tasks and the active Job, and preserves completed/failed Task outcomes, Plans, Job documents, and audit history. Agents receive cancellation facts at subsequent context/tool/heartbeat boundaries and stop that work; filesystem edits already made are not rolled back. A stale lease cannot submit completion. Restoring an old document buffer cannot revive a cancelled or deleted entry; submit a new entry to request it again. Deleting a terminal entry only hides it from the queue.
+Synchronization upgrades older receipts to this inline format with a revision, preserving entry IDs and authored details. With Taskcli Sync connected, checking a registered item calls `inbox set-status --status DONE`: an unlinked TODO item completes directly, while a linked Job requires PENDING_REVIEW and the check approves verification. Unchecking a DONE or CANCELLED item calls `--status TODO`, reopening the same unarchived terminal Job to ACTIVE while retaining its Task history. Unsupported edits restore the checkbox and show a notification. See [Inbox checkbox edits](../plugins/agent-task-manager/obsidian/README.md#inbox-checkbox-edits).
 
-Deleting the entire Inbox file, an unreadable file, duplicate IDs, or malformed markers causes a synchronization error, never cancellation of every entry. Restore the document before retrying. The service imports saved edits at synchronization, claim, and relevant task/lifecycle boundaries; there is no filesystem watcher. Database commits and document publication recover separately: `projection_pending` means the request is saved and `taskcli sync` can repair the document. An append awaiting publication is not treated as a human deletion.
+Set an unfinished item to `- [-]` to cancel, or delete it to withdraw it. Cancellation revokes Inbox and associated Task leases, cancels unfinished Tasks and the active Job, and preserves completed/failed Task outcomes, Plans, Job documents, and audit history. Agents receive cancellation facts at subsequent context/tool/heartbeat boundaries and stop that work; filesystem edits already made are not rolled back. A stale lease cannot submit completion. Deleted entries cannot be revived. Deleting a terminal entry only hides it from the queue. Without the connected plugin, ordinary sync imports cancellations and withdrawals but does not interpret checks/unchecks as completion or reopening; use the explicit status command instead. Startup reconciles offline checkbox drift without replaying it.
+
+Deleting the entire Inbox file, an unreadable file, duplicate IDs, or malformed markers causes a synchronization error, never cancellation of every entry. Restore the document before retrying. The service imports saved edits at synchronization, claim, and relevant task/lifecycle boundaries; the desktop plugin additionally listens to saved checkbox changes. Database commits and document publication recover separately: `projection_pending` means the request is saved and `taskcli sync` can repair the document. An append awaiting publication is not treated as a human deletion.
 
 Agents take one Inbox entry only after the user explicitly asks for the next Job, for example “Get the next Job from the Inbox.” They return that Job’s result and wait for another explicit request. Adding an entry or completing a Job does not start the next requirement. New intake also waits for existing Project Jobs to finish. Every unfinished Job counts, including PENDING_REVIEW, unplanned Jobs, and Jobs with blocked or waiting Tasks. `inbox claim-next` atomically reserves the next entry and creates its formal Job in one SQLite transaction. The agent then uses the existing decomposition, dependency, claim, Plan, start, verification, and completion workflow. A lease lasts 15 minutes and renews with the session heartbeat. Interruption, explicit release, or expiry returns unfinished Inbox work to `TODO`; the next claimant resumes the same Job and Tasks, without duplicating decomposition. Recovery entries take priority over new submissions; entries within each group follow document order. Pending review retains IN_PROGRESS without a lease; rejection makes the same entry resumable. Recovery also waits for other unfinished Jobs and outstanding Task leases.
 
@@ -62,6 +64,9 @@ taskcli inbox sync
 taskcli --executor agent:codex --session SESSION inbox claim-next --json
 taskcli --session SESSION --lease-token INBOX_LEASE inbox release inbox_ID
 taskcli inbox cancel inbox_ID
+taskcli inbox set-status inbox_ID --status TODO
+# After verifying the linked PENDING_REVIEW Job, or for an unlinked TODO item:
+taskcli inbox set-status inbox_ID --status DONE --expect-revision REVISION --idempotency-key KEY
 ```
 
 Use `--project PROJECT` outside Git. The Inbox lease is distinct from a Task lease. Use the full Inbox ID and its own token for release. `context --session SESSION --json` includes owned Inbox facts even before decomposition, plus cancellation facts. The legacy CLI `hook stop` is a compatibility no-op: it returns `claimed: false` with reason `manual_intake_required`. Codex/Claude Stop only renews leases. Pi/OMP completion and idle callbacks handle lifecycle state without claiming work or requesting Inbox follow-ups.
@@ -278,7 +283,7 @@ Database removal and file-cleanup records commit in one transaction. File failur
 
 ### Read-only boundary
 
-`Inbox.md` imports saved human requirements and cancellations. Taskcli Sync also listens to saved Obsidian Job/Task status edits, including TaskNotes dragging, and sends supported transitions to taskcli. Failed or unsupported changes restore authoritative status and completion dates and show a Notice. See [supported edits and recovery](../plugins/agent-task-manager/obsidian/README.md#status-edits). The plugin never claims Tasks or borrows an agent lease.
+`Inbox.md` imports saved human requirements and cancellations. Taskcli Sync also listens to saved Obsidian Job/Task status edits, including TaskNotes dragging, and registered Inbox checkbox edits, sending supported transitions to taskcli. Failed or unsupported changes restore authoritative status, completion dates or the affected checkbox and show a Notice. See [supported edits and recovery](../plugins/agent-task-manager/obsidian/README.md#status-edits). The plugin never claims work or borrows an agent lease.
 
 Other managed fields and generated Base definitions remain read-only projections. Goal/Notes markers preserve their editable bodies, and custom Job/Task properties survive synchronization. Explicit `job update --goal` replaces a manually edited Goal; Notes remain untouched. Missing/duplicated editable markers fail synchronization instead of dropping content. With the plugin disabled, status edits are local drift and the next projection restores them. Startup reconciliation never replays offline edits as commands. There is no CLI `watch` daemon.
 

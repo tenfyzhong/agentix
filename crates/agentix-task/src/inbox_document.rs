@@ -148,18 +148,24 @@ impl Service {
     pub(crate) async fn reconcile_inboxes_locked(
         &self,
         projects: Option<&BTreeSet<String>>,
+        deferred_status: Option<&str>,
     ) -> Result<()> {
         let state = self.store().snapshot().await?;
         for project in &state.projects {
             if projects.is_some_and(|ids| !ids.contains(&project.id)) {
                 continue;
             }
-            self.reconcile_inbox_locked(project).await?;
+            self.reconcile_inbox_locked(project, deferred_status)
+                .await?;
         }
         Ok(())
     }
 
-    async fn reconcile_inbox_locked(&self, project: &Project) -> Result<()> {
+    async fn reconcile_inbox_locked(
+        &self,
+        project: &Project,
+        deferred_status: Option<&str>,
+    ) -> Result<()> {
         let path = self.inbox_path(project)?;
         let key = format!("inbox_initialized:{}", project.id);
         let initialized = self.store().metadata(&key).await?.is_some();
@@ -191,7 +197,10 @@ impl Service {
         let parsed = parse(&source, &project.id)?;
         let entries: Vec<_> = parsed
             .iter()
-            .map(|e| json!({"id":e.id,"content":e.content,"cancelled":e.cancelled}))
+            .map(|e| {
+                json!({"id":e.id,"content":e.content,
+                "cancelled":e.cancelled && e.id.as_deref() != deferred_status})
+            })
             .collect();
         let options = WriteOptions {
             actor_ref: "user:inbox".into(),
@@ -269,10 +278,11 @@ impl Service {
             _ => ' ',
         };
         let mut output = format!(
-            "- [{check}] {}{ID}{} -->{STATE}{} -->",
+            "- [{check}] {}{ID}{} -->{STATE}{} revision={} -->",
             lines.next().unwrap_or_default(),
             entry.id,
-            entry.status
+            entry.status,
+            entry.revision
         );
         if let Some(job) = entry
             .job_id

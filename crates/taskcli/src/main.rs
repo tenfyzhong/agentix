@@ -177,6 +177,12 @@ enum InboxCommand {
     Release { id: String },
     /// Cancel a requirement and its unfinished work, preserving history.
     Cancel { id: String },
+    /// Set a human Inbox status; linked completion requires a pending review.
+    SetStatus {
+        id: String,
+        #[arg(long, value_parser = ["TODO", "DONE", "CANCELLED"])]
+        status: String,
+    },
 }
 
 #[derive(Args)]
@@ -970,6 +976,9 @@ async fn hook(cli: &Cli, service: &Service, action: &HookCommand) -> Result<Valu
 
 async fn inbox(cli: &Cli, service: &Service, action: &InboxCommand) -> Result<Value> {
     let request = match action {
+        InboxCommand::SetStatus { id, status } => {
+            json!({"command":"inbox.set-status","inbox":id,"status":status})
+        }
         InboxCommand::Cancel { id } => json!({"command":"inbox.cancel","inbox":id}),
         InboxCommand::Release { id } => json!({"command":"inbox.release","inbox":id}),
         _ => {

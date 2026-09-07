@@ -89,10 +89,15 @@ pub(crate) fn apply(
     now: i64,
 ) -> Result<Value> {
     let command = required(request, "command")?;
-    if matches!(command, "inbox.cancel" | "inbox.release") {
+    if matches!(
+        command,
+        "inbox.cancel" | "inbox.release" | "inbox.set-status"
+    ) {
         let i = index(state, required(request, "inbox")?)?;
         check_revision(state.inboxes[i].revision, options)?;
-        if command == "inbox.cancel" {
+        if command == "inbox.set-status" {
+            set_status(state, i, required(request, "status")?, now)?;
+        } else if command == "inbox.cancel" {
             cancel(state, i, false, now);
         } else {
             let lease = state.inboxes[i]
@@ -302,6 +307,80 @@ fn release(state: &mut Snapshot, i: usize, now: i64) {
     entry.lease = None;
     entry.status = InboxStatus::Todo;
     changed(entry, now);
+}
+
+fn set_status(state: &mut Snapshot, i: usize, target: &str, now: i64) -> Result<()> {
+    let target = match target {
+        "TODO" => InboxStatus::Todo,
+        "DONE" => InboxStatus::Done,
+        "CANCELLED" => InboxStatus::Cancelled,
+        _ => bail!("invalid: use TODO, DONE or CANCELLED; IN_PROGRESS requires inbox claim-next"),
+    };
+    let entry = &state.inboxes[i];
+    ensure!(!entry.deleted, "conflict: Inbox entry was withdrawn");
+    let project = &state.projects[state.project_index(&entry.project_id)?];
+    ensure!(
+        project.archived_at.is_none(),
+        "conflict: Project is archived"
+    );
+    let job_index = entry
+        .job_id
+        .as_ref()
+        .map(|id| state.job_index(id))
+        .transpose()?;
+    if let Some(j) = job_index {
+        ensure!(
+            state.jobs[j].archived_at.is_none(),
+            "conflict: Job is archived"
+        );
+    }
+    if entry.status == target {
+        return Ok(());
+    }
+    match target {
+        InboxStatus::Todo => {
+            ensure!(
+                matches!(entry.status, InboxStatus::Done | InboxStatus::Cancelled),
+                "conflict: use inbox release with the owning lease, or reject the pending Job"
+            );
+            if let Some(j) = job_index {
+                ensure!(
+                    state.jobs[j].status.terminal(),
+                    "conflict: linked Job is still active"
+                );
+                let job = &mut state.jobs[j];
+                job.status = JobStatus::Active;
+                job.completed_at = None;
+                job.cancelled_at = None;
+                job.review_reason = Some("Inbox entry reopened".into());
+                job.revision += 1;
+                job.updated_at = now;
+            }
+        }
+        InboxStatus::Done => {
+            ensure!(
+                entry.status != InboxStatus::Cancelled,
+                "conflict: reopen the cancelled entry first"
+            );
+            if let Some(j) = job_index {
+                crate::mutations::review_job(state, j, &json!({"command":"job.approve"}), now)?;
+            }
+        }
+        InboxStatus::Cancelled => {
+            ensure!(
+                entry.status != InboxStatus::Done,
+                "conflict: reopen the completed entry before cancelling"
+            );
+            cancel(state, i, false, now);
+            return Ok(());
+        }
+        InboxStatus::InProgress => unreachable!(),
+    }
+    let entry = &mut state.inboxes[i];
+    entry.status = target;
+    entry.lease = None;
+    changed(entry, now);
+    Ok(())
 }
 
 fn cancel(state: &mut Snapshot, i: usize, deleted: bool, now: i64) {
