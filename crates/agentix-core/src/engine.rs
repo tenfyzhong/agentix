@@ -8,6 +8,7 @@ use thiserror::Error;
 use tokio::time::Instant;
 use uuid::Uuid;
 
+mod cold_turns;
 mod coordinator;
 mod task_board;
 
@@ -1633,11 +1634,9 @@ impl Engine {
         turn: &TurnSummary,
     ) -> Result<(), EngineError> {
         let key = (session_id.clone(), turn.id.clone());
-        self.turns
-            .active
-            .lock()
-            .await
-            .insert(session_id.clone(), turn.id.clone());
+        self.record_turn_started(session_id.clone(), turn.id.clone())
+            .await?;
+        self.turns.cold.remove(session_id, &turn.id).await?;
         self.turns.buffers.lock().await.insert(
             key.clone(),
             TurnBuffer {
@@ -2270,13 +2269,7 @@ impl Engine {
 
         match event {
             AgentEvent::AgentMessageDelta { turn_id, delta, .. } => {
-                let key = (session_id.clone(), turn_id.clone());
-                let mut buffers = self.turns.buffers.lock().await;
-                let buffer = buffers.entry(key.clone()).or_default();
-                buffer.ensure_started();
-                buffer.agent_text.push_str(&delta);
-                drop(buffers);
-                self.render_turn(&conversation, &session_id, &turn_id, delivery, false)
+                self.handle_message_delta(&conversation, &session_id, &turn_id, &delta, delivery)
                     .await?;
             }
             AgentEvent::ItemCompleted { turn_id, item, .. } => {
@@ -2352,6 +2345,7 @@ impl Engine {
         error: Option<String>,
         delivery: DeliveryClass,
     ) -> Result<(), EngineError> {
+        self.restore_cold_turn(session_id, &turn_id).await?;
         let key = (session_id.clone(), turn_id.clone());
         let mut buffers = self.turns.buffers.lock().await;
         let buffer = buffers.entry(key).or_default();
@@ -2384,6 +2378,7 @@ impl Engine {
         error: Option<&str>,
     ) -> Result<(), EngineError> {
         self.turns.remove_active(session_id).await;
+        self.archive_turn(session_id, turn_id).await?;
         if !self.background_turn_notifications {
             return Ok(());
         }
@@ -2478,6 +2473,29 @@ impl Engine {
         "Turn content is unavailable.".into()
     }
 
+    async fn handle_message_delta(
+        &self,
+        conversation: &ConversationRef,
+        session_id: &SessionId,
+        turn_id: &str,
+        delta: &str,
+        delivery: DeliveryClass,
+    ) -> Result<(), EngineError> {
+        let was_cold = self.restore_cold_turn(session_id, turn_id).await?;
+        let key = (session_id.clone(), turn_id.to_owned());
+        let mut buffers = self.turns.buffers.lock().await;
+        let buffer = buffers.entry(key).or_default();
+        buffer.ensure_started();
+        buffer.agent_text.push_str(delta);
+        drop(buffers);
+        self.render_turn(conversation, session_id, turn_id, delivery, false)
+            .await?;
+        if was_cold {
+            self.archive_turn(session_id, turn_id).await?;
+        }
+        Ok(())
+    }
+
     async fn handle_completed_item(
         &self,
         conversation: &ConversationRef,
@@ -2486,9 +2504,13 @@ impl Engine {
         item: &ItemSummary,
         delivery: DeliveryClass,
     ) -> Result<(), EngineError> {
+        let was_cold = self.restore_cold_turn(session_id, turn_id).await?;
         if self.apply_completed_item(session_id, turn_id, item).await {
             self.render_turn(conversation, session_id, turn_id, delivery, false)
                 .await?;
+        }
+        if was_cold {
+            self.archive_turn(session_id, turn_id).await?;
         }
         Ok(())
     }
@@ -2498,11 +2520,13 @@ impl Engine {
         session_id: SessionId,
         turn_id: String,
     ) -> Result<(), EngineError> {
+        self.restore_cold_turn(&session_id, &turn_id).await?;
         if let Some(previous) = self.turns.active_turn(&session_id).await
             && previous != turn_id
         {
-            self.clear_turn_stop_action(&(session_id.clone(), previous))
+            self.clear_turn_stop_action(&(session_id.clone(), previous.clone()))
                 .await?;
+            self.archive_turn(&session_id, &previous).await?;
         }
         self.turns
             .set_active(session_id.clone(), turn_id.clone())
@@ -2519,6 +2543,28 @@ impl Engine {
 
     async fn handle_session_exit(&self, session_id: &SessionId) -> Result<(), EngineError> {
         let Some(conversation) = self.sessions.bound_conversation(session_id).await else {
+            self.turns.cold.remove_session(session_id).await?;
+            self.turns.active.lock().await.remove(session_id);
+            self.turns
+                .buffers
+                .lock()
+                .await
+                .retain(|(session, _), _| session != session_id);
+            self.turns
+                .views
+                .lock()
+                .await
+                .retain(|(session, _), _| session != session_id);
+            self.turns
+                .last_renders
+                .lock()
+                .await
+                .retain(|(session, _), _| session != session_id);
+            self.turns
+                .stop_actions
+                .lock()
+                .await
+                .retain(|(session, _), _| session != session_id);
             return Ok(());
         };
         let session_label = self.session_label(session_id).await;
@@ -2550,6 +2596,7 @@ impl Engine {
             .filter(|(session, _)| session == session_id)
             .map(|(_, turn_id)| turn_id.clone())
             .collect::<Vec<_>>();
+        turn_ids.extend(self.turns.cold.session_turns(session_id).await?);
         turn_ids.extend(
             self.interactions
                 .turn_action_groups
@@ -2648,6 +2695,10 @@ impl Engine {
         session_id: &SessionId,
         turn_id: &str,
     ) {
+        if let Err(error) = self.restore_cold_turn(session_id, turn_id).await {
+            tracing::warn!(%error, %session_id, %turn_id, "failed to restore exited turn");
+            return;
+        }
         let key = (session_id.clone(), turn_id.to_owned());
         if self.turns.views.lock().await.contains_key(&key) {
             self.turns
@@ -2689,6 +2740,9 @@ impl Engine {
         self.turns.views.lock().await.remove(&key);
         self.turns.last_renders.lock().await.remove(&key);
         self.turns.stop_actions.lock().await.remove(&key);
+        if let Err(error) = self.turns.cold.remove(session_id, turn_id).await {
+            tracing::warn!(%error, %session_id, %turn_id, "failed to remove exited turn cache");
+        }
     }
 
     async fn notify_session_exit(
@@ -2838,6 +2892,65 @@ impl Engine {
         } else {
             self.state.delete_turn_view(session_id, turn_id).await?;
         }
+        if !is_running {
+            self.archive_turn(session_id, turn_id).await?;
+        }
+        Ok(())
+    }
+
+    async fn restore_cold_turn(
+        &self,
+        session: &SessionId,
+        turn: &str,
+    ) -> Result<bool, EngineError> {
+        let key = (session.clone(), turn.to_owned());
+        if self.turns.buffers.lock().await.contains_key(&key) {
+            return Ok(false);
+        }
+        if let Some(cold) = self.turns.cold.load(session, turn).await? {
+            self.turns
+                .buffers
+                .lock()
+                .await
+                .insert(key.clone(), cold.buffer);
+            if let Some(message) = cold.message {
+                self.turns.views.lock().await.insert(key.clone(), message);
+            }
+            if let Some(last_render) = cold.last_render {
+                self.turns
+                    .last_renders
+                    .lock()
+                    .await
+                    .insert(key, last_render);
+            }
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    async fn archive_turn(&self, session: &SessionId, turn: &str) -> Result<(), EngineError> {
+        let key = (session.clone(), turn.to_owned());
+        let Some(buffer) = self.turns.buffers.lock().await.get(&key).cloned() else {
+            return Ok(());
+        };
+        let message = self.turns.views.lock().await.get(&key).cloned();
+        let last_render = self.turns.last_renders.lock().await.get(&key).copied();
+        self.turns
+            .cold
+            .store(
+                session,
+                turn,
+                cold_turns::ColdTurn {
+                    buffer,
+                    message,
+                    last_render,
+                },
+            )
+            .await?;
+        // Keep the hot state until the complete cold record has been written.
+        self.turns.buffers.lock().await.remove(&key);
+        self.turns.views.lock().await.remove(&key);
+        self.turns.last_renders.lock().await.remove(&key);
         Ok(())
     }
 

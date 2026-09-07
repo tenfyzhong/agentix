@@ -60,6 +60,370 @@ impl AgentAdapter for UnusedAgent {
 
 struct UnusedChannel;
 
+#[derive(Default)]
+struct CompletedTurnChannel {
+    interval: Duration,
+    sends: std::sync::atomic::AtomicUsize,
+    updates: tokio::sync::Mutex<Vec<(MessageRef, OutboundView)>>,
+}
+
+#[async_trait]
+impl ChannelAdapter for CompletedTurnChannel {
+    fn streaming_update_interval(&self) -> Duration {
+        self.interval
+    }
+    fn kind(&self) -> ChannelKind {
+        ChannelKind::Telegram
+    }
+    async fn send(
+        &self,
+        conversation: &ConversationRef,
+        _: &OutboundView,
+    ) -> Result<MessageRef, ChannelError> {
+        let id = self
+            .sends
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Ok(MessageRef::new(conversation.clone(), id.to_string()))
+    }
+    async fn update(
+        &self,
+        _: &ConversationRef,
+        message: &MessageRef,
+        view: &OutboundView,
+    ) -> Result<(), ChannelError> {
+        self.updates
+            .lock()
+            .await
+            .push((message.clone(), view.clone()));
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn completed_turn_bodies_do_not_accumulate_for_a_connected_session() {
+    let channel = Arc::new(CompletedTurnChannel::default());
+    let engine = Engine::new(
+        Arc::new(UnusedAgent),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    let session = SessionId::new("session");
+    let conversation = ConversationRef::new(ChannelKind::Telegram, "chat");
+    for number in 0..100 {
+        let turn = format!("turn-{number}");
+        engine
+            .record_turn_started(session.clone(), turn.clone())
+            .await
+            .unwrap();
+        engine
+            .turns
+            .buffers
+            .lock()
+            .await
+            .get_mut(&(session.clone(), turn.clone()))
+            .unwrap()
+            .agent_text = "x".repeat(8192);
+        engine
+            .handle_turn_completed(
+                &conversation,
+                &session,
+                turn,
+                crate::TurnStatus::Completed,
+                None,
+                DeliveryClass::Live,
+            )
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        channel.sends.load(std::sync::atomic::Ordering::Relaxed),
+        100
+    );
+    let buffers = engine.turns.buffers.lock().await;
+    let bytes: usize = buffers
+        .values()
+        .map(|buffer| buffer.user_text.capacity() + buffer.agent_text.capacity())
+        .sum();
+    assert!(
+        bytes <= 256 * 1024,
+        "completed turns retain {bytes} bytes in {} buffers",
+        buffers.len()
+    );
+    assert!(engine.turns.views.lock().await.is_empty());
+    assert!(engine.turns.last_renders.lock().await.is_empty());
+}
+
+#[tokio::test]
+async fn cold_turn_restore_updates_the_original_message_and_keeps_its_prompt() {
+    let channel = Arc::new(CompletedTurnChannel::default());
+    let engine = Engine::new(
+        Arc::new(UnusedAgent),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    let session = SessionId::new("session");
+    let conversation = ConversationRef::new(ChannelKind::Telegram, "chat");
+    let key = (session.clone(), "turn".to_owned());
+    engine
+        .record_turn_started(session.clone(), key.1.clone())
+        .await
+        .unwrap();
+    engine
+        .turns
+        .buffers
+        .lock()
+        .await
+        .get_mut(&key)
+        .unwrap()
+        .user_text = "Original question".into();
+    engine
+        .handle_turn_completed(
+            &conversation,
+            &session,
+            key.1.clone(),
+            crate::TurnStatus::Completed,
+            None,
+            DeliveryClass::Live,
+        )
+        .await
+        .unwrap();
+    assert!(!engine.turns.buffers.lock().await.contains_key(&key));
+    engine
+        .handle_completed_item(
+            &conversation,
+            &session,
+            &key.1,
+            &crate::ItemSummary {
+                id: "late".into(),
+                kind: "agentMessage".into(),
+                text: Some("Late answer".into()),
+                status: Some("completed".into()),
+            },
+            DeliveryClass::Live,
+        )
+        .await
+        .unwrap();
+    let updates = channel.updates.lock().await;
+    assert_eq!(updates.len(), 1);
+    assert_eq!(updates[0].0.message_id, "0");
+    assert!(updates[0].1.body.contains("Original question"));
+    assert!(updates[0].1.body.contains("Late answer"));
+    assert!(updates[0].1.actions.is_empty());
+    assert_eq!(channel.sends.load(std::sync::atomic::Ordering::Relaxed), 1);
+    assert!(!engine.turns.buffers.lock().await.contains_key(&key));
+    drop(updates);
+    engine
+        .cleanup_exited_turn(&conversation, &session, &key.1)
+        .await;
+    assert!(
+        engine
+            .turns
+            .cold
+            .session_turns(&session)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn throttled_late_items_return_to_cold_storage() {
+    let channel = Arc::new(CompletedTurnChannel {
+        interval: Duration::MAX,
+        ..CompletedTurnChannel::default()
+    });
+    let engine = Engine::new(
+        Arc::new(UnusedAgent),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    let session = SessionId::new("session");
+    let conversation = ConversationRef::new(ChannelKind::Telegram, "chat");
+    engine
+        .handle_turn_completed(
+            &conversation,
+            &session,
+            "turn".into(),
+            crate::TurnStatus::Completed,
+            None,
+            DeliveryClass::Live,
+        )
+        .await
+        .unwrap();
+    engine
+        .handle_completed_item(
+            &conversation,
+            &session,
+            "turn",
+            &crate::ItemSummary {
+                id: "late".into(),
+                kind: "agentMessage".into(),
+                text: Some("Late answer".into()),
+                status: Some("completed".into()),
+            },
+            DeliveryClass::Live,
+        )
+        .await
+        .unwrap();
+    assert!(channel.updates.lock().await.is_empty());
+    assert!(engine.turns.buffers.lock().await.is_empty());
+    assert_eq!(
+        engine
+            .turns
+            .cold
+            .load(&session, "turn")
+            .await
+            .unwrap()
+            .unwrap()
+            .buffer
+            .agent_text,
+        "Late answer"
+    );
+}
+
+#[tokio::test]
+async fn unattached_completion_releases_its_turn_buffer() {
+    let engine = Engine::new(
+        Arc::new(UnusedAgent),
+        SqliteState::in_memory().await.unwrap(),
+        vec![Arc::new(UnusedChannel)],
+    );
+    let session = SessionId::new("session");
+    engine
+        .record_turn_started(session.clone(), "turn".into())
+        .await
+        .unwrap();
+    engine
+        .notify_unattached_turn_completion(&session, "turn", &crate::TurnStatus::Completed, None)
+        .await
+        .unwrap();
+    assert!(engine.turns.buffers.lock().await.is_empty());
+    engine.handle_session_exit(&session).await.unwrap();
+    assert!(
+        engine
+            .turns
+            .cold
+            .session_turns(&session)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn hydrating_a_new_running_turn_releases_the_previous_body() {
+    let engine = Engine::new(
+        Arc::new(UnusedAgent),
+        SqliteState::in_memory().await.unwrap(),
+        vec![Arc::new(CompletedTurnChannel::default())],
+    );
+    let session = SessionId::new("session");
+    let conversation = ConversationRef::new(ChannelKind::Telegram, "chat");
+    for id in ["first", "second"] {
+        engine
+            .hydrate_running_turn(
+                &conversation,
+                &session,
+                &crate::TurnSummary {
+                    id: id.into(),
+                    status: crate::TurnStatus::InProgress,
+                    user_text: Some("Question".into()),
+                    agent_text: Some("Answer".into()),
+                    tools: Vec::new(),
+                    items: Vec::new(),
+                },
+            )
+            .await
+            .unwrap();
+    }
+    assert_eq!(engine.turns.buffers.lock().await.len(), 1);
+    assert_eq!(
+        engine.turns.cold.session_turns(&session).await.unwrap(),
+        vec!["first"]
+    );
+}
+
+#[tokio::test]
+async fn failed_turn_archive_keeps_hot_state_for_retry() {
+    let channel = Arc::new(CompletedTurnChannel::default());
+    let engine = Engine::new(
+        Arc::new(UnusedAgent),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    let session = SessionId::new("session");
+    let conversation = ConversationRef::new(ChannelKind::Telegram, "chat");
+    engine
+        .handle_turn_completed(
+            &conversation,
+            &session,
+            "first".into(),
+            crate::TurnStatus::Completed,
+            None,
+            DeliveryClass::Live,
+        )
+        .await
+        .unwrap();
+    engine.turns.cold.reject_writes(true).await;
+    let key = (session.clone(), "second".to_owned());
+    engine
+        .record_turn_started(session.clone(), key.1.clone())
+        .await
+        .unwrap();
+    engine
+        .turns
+        .buffers
+        .lock()
+        .await
+        .get_mut(&key)
+        .unwrap()
+        .agent_text = "Preserve this answer".into();
+    assert!(
+        engine
+            .handle_turn_completed(
+                &conversation,
+                &session,
+                key.1.clone(),
+                crate::TurnStatus::Completed,
+                None,
+                DeliveryClass::Live
+            )
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        engine.turns.buffers.lock().await[&key].agent_text,
+        "Preserve this answer"
+    );
+    assert!(engine.turns.views.lock().await.contains_key(&key));
+    engine.turns.cold.reject_writes(false).await;
+    engine
+        .handle_turn_completed(
+            &conversation,
+            &session,
+            key.1.clone(),
+            crate::TurnStatus::Completed,
+            None,
+            DeliveryClass::Live,
+        )
+        .await
+        .unwrap();
+    assert!(engine.turns.buffers.lock().await.is_empty());
+    assert_eq!(channel.sends.load(std::sync::atomic::Ordering::Relaxed), 2);
+    assert_eq!(
+        engine
+            .turns
+            .cold
+            .load(&session, &key.1)
+            .await
+            .unwrap()
+            .unwrap()
+            .buffer
+            .agent_text,
+        "Preserve this answer"
+    );
+}
+
 #[async_trait]
 impl ChannelAdapter for UnusedChannel {
     fn streaming_update_interval(&self) -> Duration {
