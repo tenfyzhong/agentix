@@ -131,18 +131,40 @@ impl Store {
         Ok(state)
     }
 
-    /// Entity metadata for note exports, without Plan or lease bodies.
-    pub(crate) async fn note_snapshot(&self) -> Result<Snapshot> {
+    /// Read note metadata in entity order, excluding authored bodies and leases.
+    pub(crate) async fn obsidian_records(&self) -> Result<Vec<(Value, String)>> {
         let mut tx = self.pool.begin().await?;
-        let state = Snapshot {
-            projects: read_entities(&mut tx, "projects").await?,
-            jobs: read_entities(&mut tx, "jobs").await?,
-            tasks: read_entities(&mut tx, "tasks").await?,
-            inboxes: read_entities(&mut tx, "inbox_entries").await?,
-            ..Snapshot::default()
-        };
+        let mut records = Vec::new();
+        for (table, fields, filter) in [
+            ("tasks", "'$.title'", "1"),
+            (
+                "jobs",
+                "'$.title', '$.goal', '$.prompt', '$.conversation'",
+                "1",
+            ),
+            (
+                "inbox_entries",
+                "'$.content', '$.lease', '$.source'",
+                "json_extract(e.data, '$.published') = 1 AND json_extract(e.data, '$.deleted') IS NOT 1",
+            ),
+        ] {
+            let rows = sqlx::query(&format!(
+                "SELECT json_remove(e.data, {fields}) AS entity, json_extract(p.data, '$.key') AS project_key \
+                 FROM {table} e LEFT JOIN projects p ON p.id = json_extract(e.data, '$.project_id') \
+                 WHERE {filter} ORDER BY e.rowid"
+            ))
+            .fetch_all(&mut *tx)
+            .await?;
+            for row in rows {
+                let entity = serde_json::from_str(&row.get::<String, _>("entity"))?;
+                let key = row
+                    .get::<Option<String>, _>("project_key")
+                    .context("missing note Project")?;
+                records.push((entity, key));
+            }
+        }
         tx.commit().await?;
-        Ok(state)
+        Ok(records)
     }
 
     /// Read one Task and its lease in the same transaction. Prefix resolution

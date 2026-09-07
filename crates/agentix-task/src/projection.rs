@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::{BTreeMap, BTreeSet},
     fs::{File, OpenOptions},
     io::Write,
     path::{Component, Path, PathBuf},
@@ -55,6 +55,11 @@ impl Service {
         let Some((entity, project_key)) = self.store.obsidian_record(id).await? else {
             return Ok(Value::Null);
         };
+        self.obsidian_record_note(&entity, &project_key)
+    }
+
+    fn obsidian_record_note(&self, entity: &Value, project_key: &str) -> Result<Value> {
+        let id = entity["id"].as_str().context("missing note ID")?;
         let kind = id.split_once('_').context("invalid ID")?.0;
         let relative = match kind {
             "task" => {
@@ -85,7 +90,14 @@ impl Service {
             .replace('\\', "/")
             .trim_start_matches("./")
             .to_owned();
-        let mut properties = json!({"status":entity["status"], "revision":entity["revision"]});
+        let status = if kind == "inbox" {
+            serde_json::to_value(serde_json::from_value::<crate::InboxStatus>(
+                entity["status"].clone(),
+            )?)?
+        } else {
+            entity["status"].clone()
+        };
+        let mut properties = json!({"status":status, "revision":entity["revision"]});
         if kind == "task" {
             for key in ["phase", "dependencies"] {
                 properties[key] = entity[key].clone();
@@ -107,7 +119,7 @@ impl Service {
         }
         Ok(
             json!({"kind":kind,"id":entity["id"],"project_id":entity["project_id"],
-            "path":path,"status":entity["status"],"revision":entity["revision"],"properties":properties}),
+            "path":path,"status":status,"revision":entity["revision"],"properties":properties}),
         )
     }
 
@@ -118,54 +130,13 @@ impl Service {
             self.config.documents.format == DocumentFormat::Obsidian,
             "Obsidian snapshot requires documents.format = obsidian"
         );
-        let state = self.store.note_snapshot().await?;
-        let projects: HashMap<_, _> = state.projects.iter().map(|p| (p.id.as_str(), p)).collect();
-        let mut notes = Vec::new();
-        let path = |relative: &str| -> Result<String> {
-            self.safe_path(relative)?;
-            Ok(self
-                .config
-                .documents
-                .directory
-                .join(relative)
-                .to_string_lossy()
-                .replace('\\', "/")
-                .trim_start_matches("./")
-                .to_owned())
-        };
-        for task in &state.tasks {
-            let properties = task_state_properties(task)?;
-            notes.push(
-                json!({"kind":"task","id":task.id,"project_id":task.project_id,
-                "path":path(&crate::naming::task_path_in(projects.get(task.project_id.as_str()).context("missing Task Project")?, task)?)?,
-                "status":task.status,"revision":task.revision,"properties":properties}),
-            );
-        }
-        for job in &state.jobs {
-            notes.push(json!({"kind":"job","id":job.id,"project_id":job.project_id,
-                "path":path(&job.document_path)?,"status":job.status,"revision":job.revision,
-                "properties":{"status":job.status,"revision":job.revision,
-                    "review_reason":job.review_reason,"completed_at":optional_local_timestamp(job.completed_at)?,
-                    "cancelled_at":optional_local_timestamp(job.cancelled_at)?,
-                    "created_at":local_timestamp(job.created_at)?,
-                    "updated_at":local_timestamp(job.updated_at)?,
-                    "pending_review_at":optional_local_timestamp(job.pending_review_at)?}}));
-        }
-        for entry in state
-            .inboxes
+        let notes = self
+            .store
+            .obsidian_records()
+            .await?
             .iter()
-            .filter(|entry| entry.published && !entry.deleted)
-        {
-            let project = projects
-                .get(entry.project_id.as_str())
-                .context("missing Inbox Project")?;
-            notes.push(
-                json!({"kind":"inbox","id":entry.id,"project_id":entry.project_id,
-                "path":path(&format!("Projects/{}/Inbox.md", project.key))?,
-                "status":entry.status,"revision":entry.revision,
-                "properties":{"status":entry.status,"revision":entry.revision}}),
-            );
-        }
+            .map(|(entity, project_key)| self.obsidian_record_note(entity, project_key))
+            .collect::<Result<Vec<_>>>()?;
         Ok(json!({"documents":self.config.documents,"notes":notes}))
     }
 

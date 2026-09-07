@@ -119,6 +119,79 @@ async fn obsidian_export_does_not_generate_markdown_for_properties() {
 }
 
 #[tokio::test]
+async fn obsidian_export_ignores_authored_bodies() {
+    let (_dir, service, _) = export_fixture().await;
+    let project = service.store.projects().await.unwrap()[0].id.clone();
+    service
+        .store
+        .execute(
+            json!({"command":"inbox.add","project":project,"content":"Submission"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    sqlx::query("UPDATE inbox_entries SET data = json_set(data, '$.published', json('true'))")
+        .execute(&service.store.pool)
+        .await
+        .unwrap();
+    let expected = service.obsidian_snapshot().await.unwrap();
+    assert_eq!(expected["notes"].as_array().unwrap().len(), 3);
+    // Valid JSON with deliberately incompatible body types makes accidental
+    // full-entity deserialization fail, without relying on wall-clock timing.
+    for query in [
+        "UPDATE tasks SET data = json_set(data, '$.title', json('{}'))",
+        "UPDATE jobs SET data = json_set(data, '$.title', json('{}'), '$.goal', json('{}'), '$.prompt', json('{}'), '$.conversation', json('{}'))",
+        "UPDATE inbox_entries SET data = json_set(data, '$.content', json('{}'), '$.lease', json('{}'), '$.source', json('{}'))",
+    ] {
+        sqlx::query(query)
+            .execute(&service.store.pool)
+            .await
+            .unwrap();
+    }
+    assert_eq!(service.obsidian_snapshot().await.unwrap(), expected);
+}
+
+#[tokio::test]
+async fn obsidian_export_normalizes_legacy_inbox_status() {
+    let (_dir, service, _) = export_fixture().await;
+    let project = service.store.projects().await.unwrap()[0].id.clone();
+    let inbox = service
+        .store
+        .execute(
+            json!({"command":"inbox.add","project":project,"content":"Submission"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap()
+        .result;
+    sqlx::query("UPDATE inbox_entries SET data = json_set(data, '$.published', json('true'), '$.status', 'IN_PROGRESS')")
+        .execute(&service.store.pool).await.unwrap();
+    let snapshot = service.obsidian_snapshot().await.unwrap();
+    assert_eq!(snapshot["notes"][2]["status"], "ACTIVE");
+    assert_eq!(snapshot["notes"][2]["properties"]["status"], "ACTIVE");
+    assert_eq!(
+        snapshot["notes"][2],
+        service
+            .obsidian_note(inbox["id"].as_str().unwrap())
+            .await
+            .unwrap()
+    );
+}
+
+#[tokio::test]
+async fn obsidian_metadata_payload_does_not_grow_with_job_conversation() {
+    let (_dir, service, _) = export_fixture().await;
+    let expected = service.store.obsidian_records().await.unwrap();
+    let conversation = json!([{"user_input":"x".repeat(1_000_000)}]).to_string();
+    sqlx::query("UPDATE jobs SET data = json_set(data, '$.conversation', json(?))")
+        .bind(conversation)
+        .execute(&service.store.pool)
+        .await
+        .unwrap();
+    assert_eq!(service.store.obsidian_records().await.unwrap(), expected);
+}
+
+#[tokio::test]
 async fn obsidian_export_ignores_plan_and_lease_bodies() {
     let (_dir, service, task) = export_fixture().await;
     let expected = service.obsidian_snapshot().await.unwrap();
