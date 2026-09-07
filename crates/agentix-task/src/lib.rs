@@ -16,6 +16,7 @@ mod project;
 mod projection;
 mod publication;
 mod scoped;
+pub use scoped::JobFilter;
 mod store;
 
 pub use config::{Config, DocumentConfig, DocumentFormat, StorageConfig, expand_home};

@@ -87,6 +87,8 @@ Project resolution uses the attached session's directory and Git common director
 
 Directory resolution reads only Project records and selects the closest registered ancestor for non-Git directories. Historical resolution uses the existing Task, Job, and Inbox session indexes to find up to two distinct Project IDs; it loads only the matching Project when the association is unique. Neither path loads a full database snapshot, and calls without a usable directory or session return without querying the database.
 
+CLI Job lists apply status, archive visibility, creation-date bounds, and archive-month bounds in SQL before loading Job bodies. Date bounds remain UTC, the creation end date includes the whole day, and results retain insertion order.
+
 The legacy IM `/tasks` list applies its Project or Job filter and 50-row limit in SQL. Task buttons read only the target lease before applying the existing revision and ownership checks. Task detail snapshots fetch dependency status by ID, so a completed dependency outside the displayed Task still enables Start without loading that dependency’s body.
 
 After writing document files, publication commits Plan hashes, Job goal metadata, registered paths, and generation-checked pending acknowledgements in one transaction. Plan updates remain conditional on the published version, and failed acknowledgements roll back all publication metadata so retries can recover. Job goal metadata and document receipt rows use batched queries.

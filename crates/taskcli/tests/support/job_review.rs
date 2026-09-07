@@ -1,5 +1,90 @@
 use super::*;
 
+#[tokio::test]
+async fn job_list_filters_before_reading_excluded_bodies() {
+    use sqlx::Connection;
+    let cli = Cli::new("markdown");
+    let target = cli.job("Selected");
+    let other = cli.job("Excluded");
+    let target_record = cli.ok(&["job", "show", &target]);
+    let other_record = cli.ok(&["job", "show", &other]);
+    let mut db = sqlx::SqliteConnection::connect_with(
+        &sqlx::sqlite::SqliteConnectOptions::new().filename(cli.dir.path().join("state.sqlite3")),
+    )
+    .await
+    .unwrap();
+    let january = 1_767_225_600_i64;
+    let february = 1_769_904_000_i64;
+    let cases: Vec<(&[&str], Value, Value)> = vec![
+        (
+            &["--active"],
+            json!({"status":"ACTIVE"}),
+            json!({"status":"COMPLETED"}),
+        ),
+        (
+            &["--active"],
+            json!({"status":"ACTIVE"}),
+            json!({"status":"ACTIVE","archived_at":january}),
+        ),
+        (
+            &["--pending-review"],
+            json!({"status":"PENDING_REVIEW"}),
+            json!({"status":"PENDING_REVIEW","archived_at":january}),
+        ),
+        (
+            &["--completed"],
+            json!({"status":"COMPLETED","archived_at":january}),
+            json!({"status":"ACTIVE"}),
+        ),
+        (&["--archived"], json!({"archived_at":january}), json!({})),
+        (
+            &["--created-from", "2026-01-01"],
+            json!({}),
+            json!({"created_at":january-1}),
+        ),
+        (
+            &["--created-to", "2026-01-01"],
+            json!({"created_at":january+86399}),
+            json!({"created_at":january+86400}),
+        ),
+        (
+            &["--period", "2026-01"],
+            json!({"archived_at":january}),
+            json!({"archived_at":february}),
+        ),
+        (
+            &["--period", "2026-01"],
+            json!({"archived_at":february-1}),
+            json!({"archived_at":january-1}),
+        ),
+    ];
+    for (flags, selected, excluded) in cases {
+        for (base, patch) in [(&target_record, selected), (&other_record, excluded)] {
+            let mut record = base.clone();
+            record["created_at"] = json!(january);
+            record["archived_at"] = Value::Null;
+            record
+                .as_object_mut()
+                .unwrap()
+                .extend(patch.as_object().unwrap().clone());
+            if record["id"] == other {
+                record["title"] = json!({"unreadable":"excluded body"});
+            }
+            sqlx::query("UPDATE jobs SET data=? WHERE id=?")
+                .bind(record.to_string())
+                .bind(record["id"].as_str().unwrap())
+                .execute(&mut db)
+                .await
+                .unwrap();
+        }
+        let mut args = vec!["job", "list"];
+        args.extend_from_slice(flags);
+        let result = cli.ok(&args);
+        assert_eq!(result.as_array().unwrap().len(), 1, "{flags:?}");
+        assert_eq!(result[0]["id"], target, "{flags:?}");
+    }
+}
+
 #[test]
 fn job_review_cli_routes_decisions_and_filters_pending_jobs() {
     let cli = Cli::new("markdown");

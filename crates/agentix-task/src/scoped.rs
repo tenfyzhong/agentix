@@ -10,6 +10,18 @@ use sqlx::{Row, SqliteConnection};
 
 use crate::{Snapshot, Store, mutations::required};
 
+/// Optional Job predicates, applied before loading authored content.
+/// Timestamp lower bounds are inclusive; upper bounds are exclusive.
+#[derive(Debug, Default)]
+pub struct JobFilter {
+    pub status: Option<crate::JobStatus>,
+    pub archived: Option<bool>,
+    pub created_from: Option<i64>,
+    pub created_before: Option<i64>,
+    pub archived_from: Option<i64>,
+    pub archived_before: Option<i64>,
+}
+
 const SESSION_PROJECTS_QUERY: &str = "SELECT DISTINCT project_id FROM (
     SELECT json_extract(data,'$.project_id') AS project_id FROM tasks WHERE json_extract(data,'$.last_session')=?1
     UNION ALL SELECT project_id FROM jobs WHERE json_extract(data,'$.session_id')=?1
@@ -507,11 +519,54 @@ impl Store {
 
     /// List Jobs without loading their Tasks, Plans, or Inbox bodies.
     pub async fn jobs(&self, project: Option<&str>) -> Result<Vec<crate::Job>> {
+        self.filtered_jobs(project, &JobFilter::default()).await
+    }
+
+    /// Filter Jobs in `SQLite` while retaining insertion order and full results.
+    pub async fn filtered_jobs(
+        &self,
+        project: Option<&str>,
+        filter: &JobFilter,
+    ) -> Result<Vec<crate::Job>> {
         let mut tx = self.pool.begin().await?;
-        let mut query = sqlx::QueryBuilder::<sqlx::Sqlite>::new("SELECT data FROM jobs");
+        let mut query = sqlx::QueryBuilder::<sqlx::Sqlite>::new("SELECT data FROM jobs WHERE 1");
         if let Some(project) = project {
             let project = resolve(&mut tx, "projects", project).await?;
-            query.push(" WHERE project_id=").push_bind(project);
+            query.push(" AND project_id=").push_bind(project);
+        }
+        if let Some(status) = filter.status {
+            query
+                .push(" AND json_extract(data,'$.status')=")
+                .push_bind(status.to_string());
+        }
+        if let Some(archived) = filter.archived {
+            query.push(if archived {
+                " AND json_extract(data,'$.archived_at') IS NOT NULL"
+            } else {
+                " AND json_extract(data,'$.archived_at') IS NULL"
+            });
+        }
+        for (condition, bound) in [
+            (
+                " AND json_extract(data,'$.created_at')>=",
+                filter.created_from,
+            ),
+            (
+                " AND json_extract(data,'$.created_at')<",
+                filter.created_before,
+            ),
+            (
+                " AND json_extract(data,'$.archived_at')>=",
+                filter.archived_from,
+            ),
+            (
+                " AND json_extract(data,'$.archived_at')<",
+                filter.archived_before,
+            ),
+        ] {
+            if let Some(bound) = bound {
+                query.push(condition).push_bind(bound);
+            }
         }
         query.push(" ORDER BY rowid");
         let rows: Vec<String> = query.build_query_scalar().fetch_all(&mut *tx).await?;
@@ -621,6 +676,81 @@ async fn read_tasks(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn filtered_jobs_preserve_scope_order_and_full_records() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("tasks.sqlite3"))
+            .await
+            .unwrap();
+        let project = store
+            .execute(
+                json!({"command":"project.register","name":"Scope","root":dir.path()}),
+                crate::WriteOptions::default(),
+            )
+            .await
+            .unwrap()
+            .result["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let job = store.execute(
+            json!({"command":"job.create","project":project,"title":"Body preserved","prompt":"Full prompt"}),
+            crate::WriteOptions::default(),
+        ).await.unwrap().result;
+        let mut expected = Vec::new();
+        for id in ["job_z", "job_a"] {
+            let mut record = job.clone();
+            record["id"] = json!(id);
+            record["created_at"] = json!(100);
+            record["archived_at"] = json!(200);
+            record["status"] = json!("COMPLETED");
+            sqlx::query("INSERT INTO jobs(id,data) VALUES(?,?)")
+                .bind(id)
+                .bind(record.to_string())
+                .execute(&store.pool)
+                .await
+                .unwrap();
+            expected.push(serde_json::from_value::<crate::Job>(record).unwrap());
+        }
+        let filter = JobFilter {
+            status: Some(crate::JobStatus::Completed),
+            archived: Some(true),
+            created_from: Some(100),
+            created_before: Some(101),
+            archived_from: Some(200),
+            archived_before: Some(201),
+        };
+        assert_eq!(
+            store
+                .filtered_jobs(Some(&project[..project.len() - 1]), &filter)
+                .await
+                .unwrap(),
+            expected
+        );
+        assert_eq!(store.filtered_jobs(None, &filter).await.unwrap(), expected);
+        assert!(
+            store
+                .filtered_jobs(Some("prj_missing"), &filter)
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("not_found")
+        );
+        assert!(
+            store
+                .filtered_jobs(
+                    None,
+                    &JobFilter {
+                        created_before: Some(100),
+                        ..filter
+                    }
+                )
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
 
     #[tokio::test]
     async fn session_project_history_uses_all_three_session_indexes() {

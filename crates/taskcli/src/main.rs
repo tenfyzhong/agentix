@@ -799,28 +799,45 @@ async fn list_jobs(cli: &Cli, service: &Service, filters: &JobList) -> Result<Va
             "period must be YYYY-MM"
         );
     }
-    let jobs: Vec<_> = service
+    let (archived_from, archived_before) = if let Some(period) = &filters.period {
+        let start = date(&format!("{period}-01"))?;
+        let day = time::OffsetDateTime::from_unix_timestamp(start)?;
+        // Preserve the existing unpadded-year formatting for early dates.
+        let days = if format_date(start).starts_with(period) {
+            i64::from(time::util::days_in_month(day.month(), day.year()))
+        } else {
+            0
+        };
+        (Some(start), Some(start + days * 86400))
+    } else {
+        (None, None)
+    };
+    let filter = agentix_task::JobFilter {
+        status: if filters.active {
+            Some(JobStatus::Active)
+        } else if filters.pending_review {
+            Some(JobStatus::PendingReview)
+        } else if filters.completed {
+            Some(JobStatus::Completed)
+        } else {
+            None
+        },
+        archived: if filters.active || filters.pending_review {
+            Some(false)
+        } else if filters.archived {
+            Some(true)
+        } else {
+            None
+        },
+        created_from: from,
+        created_before: to.map(|timestamp| timestamp + 86400),
+        archived_from,
+        archived_before,
+    };
+    let jobs = service
         .store()
-        .jobs(cli.project.as_deref())
-        .await?
-        .into_iter()
-        .filter(|j| !filters.active || (j.status == JobStatus::Active && j.archived_at.is_none()))
-        .filter(|j| !filters.completed || j.status == JobStatus::Completed)
-        .filter(|j| {
-            !filters.pending_review
-                || (j.status == JobStatus::PendingReview && j.archived_at.is_none())
-        })
-        .filter(|j| !filters.archived || j.archived_at.is_some())
-        .filter(|j| {
-            from.is_none_or(|v| j.created_at >= v) && to.is_none_or(|v| j.created_at < v + 86400)
-        })
-        .filter(|j| {
-            filters
-                .period
-                .as_ref()
-                .is_none_or(|p| j.archived_at.is_some_and(|t| format_date(t).starts_with(p)))
-        })
-        .collect();
+        .filtered_jobs(cli.project.as_deref(), &filter)
+        .await?;
     Ok(response(json!(jobs)))
 }
 
