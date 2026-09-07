@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashMap},
     fs::{File, OpenOptions},
     io::Write,
     path::{Component, Path, PathBuf},
@@ -16,6 +16,10 @@ use crate::{
 #[cfg(test)]
 #[path = "projection_tests.rs"]
 mod tests;
+
+#[path = "projection_index.rs"]
+mod index;
+use index::ProjectionIndex;
 
 #[derive(Clone)]
 pub struct Service {
@@ -114,7 +118,8 @@ impl Service {
             self.config.documents.format == DocumentFormat::Obsidian,
             "Obsidian snapshot requires documents.format = obsidian"
         );
-        let state = self.store.snapshot().await?;
+        let state = self.store.note_snapshot().await?;
+        let projects: HashMap<_, _> = state.projects.iter().map(|p| (p.id.as_str(), p)).collect();
         let mut notes = Vec::new();
         let path = |relative: &str| -> Result<String> {
             self.safe_path(relative)?;
@@ -129,24 +134,10 @@ impl Service {
                 .to_owned())
         };
         for task in &state.tasks {
-            let document = self.task_document(&state, task, None, "")?;
-            let (generated, _) = split_properties(&document)?;
-            let mut properties = serde_json::Map::new();
-            for key in [
-                "status",
-                "revision",
-                "phase",
-                "dependencies",
-                "created_at",
-                "started_at",
-                "completed_at",
-                "updated_at",
-            ] {
-                properties.insert(key.into(), generated[key].clone());
-            }
+            let properties = task_state_properties(task)?;
             notes.push(
                 json!({"kind":"task","id":task.id,"project_id":task.project_id,
-                "path":path(&crate::naming::task_path(&state, task)?)?,
+                "path":path(&crate::naming::task_path_in(projects.get(task.project_id.as_str()).context("missing Task Project")?, task)?)?,
                 "status":task.status,"revision":task.revision,"properties":properties}),
             );
         }
@@ -165,7 +156,9 @@ impl Service {
             .iter()
             .filter(|entry| entry.published && !entry.deleted)
         {
-            let project = &state.projects[state.project_index(&entry.project_id)?];
+            let project = projects
+                .get(entry.project_id.as_str())
+                .context("missing Inbox Project")?;
             notes.push(
                 json!({"kind":"inbox","id":entry.id,"project_id":entry.project_id,
                 "path":path(&format!("Projects/{}/Inbox.md", project.key))?,
@@ -527,6 +520,8 @@ impl Service {
             keys
         });
         let previous = self.store.document_paths(selected_keys.as_ref()).await?;
+        let previous_paths: BTreeSet<_> = previous.values().map(String::as_str).collect();
+        let index = ProjectionIndex::new(state);
         let includes = |key: &str| selected.is_none_or(|selected| selected == key);
         let mut paths = BTreeMap::new();
         let mut files = BTreeMap::new();
@@ -546,7 +541,12 @@ impl Service {
                 );
                 paths.insert(format!("board:{}", project.id), board_path.clone());
             }
-            for job in state.jobs.iter().filter(|j| j.project_id == project.id) {
+            for job in index
+                .jobs_by_project
+                .get(project.id.as_str())
+                .into_iter()
+                .flatten()
+            {
                 let key = format!("job:{}", job.id);
                 if !includes(&key) {
                     continue;
@@ -593,14 +593,19 @@ impl Service {
                 doc.push_str(&prompt_markdown(&job.prompt));
                 doc.push_str(&conversation_markdown(job));
                 doc.push_str(&format!("\n## {}\n\n<!-- taskcli:goal:start -->\n{}\n<!-- taskcli:goal:end -->\n\n## {}\n", "Goal", goal, "Tasks"));
-                doc.push_str(&job_dependency_graph(self, state, &job.id)?);
-                for task in state.tasks.iter().filter(|t| t.job_id == job.id) {
+                doc.push_str(&job_dependency_graph(self, &index, &job.id)?);
+                for task in index
+                    .tasks_by_job
+                    .get(job.id.as_str())
+                    .into_iter()
+                    .flatten()
+                {
                     if self.config.documents.format == DocumentFormat::Markdown {
                         doc.push_str(&format!("\n<a id=\"{}\"></a>\n", task.id.replace('_', "-")));
                     }
                     doc.push_str(&format!(
                         "\n{}\n",
-                        self.task_line(state, task, &job.document_path)?
+                        self.task_line(&index, task, &job.document_path)?
                     ));
                     if self.config.documents.format == DocumentFormat::Obsidian {
                         doc.push_str(&format!("\n^{}\n", task.id.replace('_', "-")));
@@ -618,11 +623,11 @@ impl Service {
             if !includes(&format!("task:{}", task.id)) {
                 continue;
             }
-            let plan = state
-                .plans
-                .iter()
-                .find(|p| Some(&p.id) == task.current_plan.as_ref());
-            let path = crate::naming::task_path(state, task)?;
+            let plan = task
+                .current_plan
+                .as_deref()
+                .and_then(|id| index.plans.get(id).copied());
+            let path = index.task_path(task)?;
             let key = format!("task:{}", task.id);
             let candidates = [
                 previous.get(&key),
@@ -646,7 +651,7 @@ impl Service {
                 );
                 String::new()
             };
-            let doc = self.task_document(state, task, plan, &existing)?;
+            let doc = self.task_document(&index, task, plan, &existing)?;
             files.insert(path.clone(), doc);
             paths.insert(key, path.clone());
             if let Some(plan) = plan {
@@ -680,7 +685,7 @@ impl Service {
         // paths can be regenerated; new paths must not clobber unrelated notes.
         for (relative, contents) in &files {
             let path = self.safe_path(relative)?;
-            if path.exists() && !previous.values().any(|old| old == relative) {
+            if path.exists() && !previous_paths.contains(relative.as_str()) {
                 let existing = std::fs::read_to_string(&path)?;
                 let owned = if relative == "Dashboard.base" {
                     existing.starts_with("# taskcli-generated: dashboard\n")
@@ -1012,7 +1017,7 @@ impl Service {
 
     fn task_document(
         &self,
-        state: &Snapshot,
+        index: &ProjectionIndex<'_>,
         task: &Task,
         plan: Option<&Plan>,
         existing: &str,
@@ -1031,8 +1036,8 @@ impl Service {
         } else {
             existing_body
         };
-        let project = &state.projects[state.project_index(&task.project_id)?];
-        let job = &state.jobs[state.job_index(&task.job_id)?];
+        let project = index.project(&task.project_id)?;
+        let job = index.job(&task.job_id)?;
         let wiki = |path: &str| {
             format!(
                 "[[{}]]",
@@ -1046,15 +1051,14 @@ impl Service {
                     .trim_end_matches(".md")
             )
         };
-        let generated = json!({
+        let mut generated = task_state_properties(task)?;
+        generated.as_object_mut().unwrap().extend(json!({
             "id":task.id,"task_id":task.id,"plan_id":task.current_plan,"job_id":task.job_id,"project_id":task.project_id,
-            "sequence":task.sequence,"revision":task.revision,"dependencies":task.dependencies,
+            "sequence":task.sequence,
             "agent":task.last_executor.as_deref().and_then(crate::model::agent_name),"session_id":task.last_session,
-            "status":task.status,"phase":task.phase,"archived":job.archived_at.is_some() || project.archived_at.is_some(),
-            "created_at":local_timestamp(task.created_at)?,"updated_at":local_timestamp(task.updated_at)?,
-            "started_at":optional_local_timestamp(task.started_at)?,"completed_at":optional_local_timestamp(task.completed_at)?,
+            "archived":job.archived_at.is_some() || project.archived_at.is_some(),
             "projects":[wiki(&format!("Projects/{}/Board.md",project.key))],"job":wiki(&job.document_path)
-        });
+        }).as_object().unwrap().clone());
         authored.as_object_mut().unwrap().remove("version");
         if authored["title"].is_null() || authored["title"] == authored["name"] {
             authored["title"] = json!(task.name);
@@ -1087,8 +1091,8 @@ impl Service {
         format!("# {}\n\n{}\n", escape(title), Self::notice())
     }
 
-    fn task_line(&self, state: &Snapshot, task: &Task, from: &str) -> Result<String> {
-        let path = crate::naming::task_path(state, task)?;
+    fn task_line(&self, index: &ProjectionIndex<'_>, task: &Task, from: &str) -> Result<String> {
+        let path = index.task_path(task)?;
         let label = Path::new(&path)
             .file_stem()
             .and_then(|name| name.to_str())
@@ -1170,7 +1174,18 @@ fn optional_timestamp(value: Option<i64>) -> Value {
     value.map_or(Value::Null, timestamp)
 }
 
+fn task_state_properties(task: &Task) -> Result<Value> {
+    Ok(json!({
+        "status":task.status,"revision":task.revision,"phase":task.phase,
+        "dependencies":task.dependencies,
+        "created_at":local_timestamp(task.created_at)?,"updated_at":local_timestamp(task.updated_at)?,
+        "started_at":optional_local_timestamp(task.started_at)?,"completed_at":optional_local_timestamp(task.completed_at)?
+    }))
+}
+
 fn frontmatter(mut properties: Value) -> String {
+    #[cfg(test)]
+    tests::FRONTMATTER_CALLS.with(|calls| calls.set(calls.get() + 1));
     normalize_timestamp_properties(&mut properties);
     properties["taskcli-generated"] = json!(true);
     let mut result = String::from("---\n");
@@ -1256,17 +1271,20 @@ fn split_properties(body: &str) -> Result<(Value, &str)> {
     }
 }
 
-fn job_dependency_graph(service: &Service, state: &Snapshot, job_id: &str) -> Result<String> {
-    let tasks = state
-        .tasks
-        .iter()
-        .filter(|task| task.job_id == job_id)
-        .collect::<Vec<_>>();
+fn job_dependency_graph(
+    service: &Service,
+    index: &ProjectionIndex<'_>,
+    job_id: &str,
+) -> Result<String> {
+    let tasks = index
+        .tasks_by_job
+        .get(job_id)
+        .map_or(&[][..], Vec::as_slice);
     if tasks.is_empty() {
         return Ok(String::new());
     }
     let mut nodes = BTreeSet::new();
-    for task in &tasks {
+    for task in tasks {
         nodes.insert(task.id.as_str());
         nodes.extend(task.dependencies.iter().map(String::as_str));
     }
@@ -1274,15 +1292,15 @@ fn job_dependency_graph(service: &Service, state: &Snapshot, job_id: &str) -> Re
         "\nArrows point from prerequisites to dependent tasks.\n\n```mermaid\nflowchart TD\n",
     );
     for id in nodes {
-        let task = &state.tasks[state.task_index(id)?];
+        let task = index.task(id)?;
         let label = if task.job_id == job_id {
             task.name.clone()
         } else {
-            let job = &state.jobs[state.job_index(&task.job_id)?];
+            let job = index.job(&task.job_id)?;
             format!("{} (Job: {})", task.name, job.name)
         };
         let label = format!("{} · {}", mermaid_label(&label), task.status);
-        let path = crate::naming::task_path(state, task)?;
+        let path = index.task_path(task)?;
         match service.config.documents.format {
             DocumentFormat::Obsidian => {
                 // Obsidian strips custom URI schemes from Mermaid SVG links.
@@ -1303,7 +1321,7 @@ fn job_dependency_graph(service: &Service, state: &Snapshot, job_id: &str) -> Re
                 ));
             }
             DocumentFormat::Markdown => {
-                let url = relative_url(&state.jobs[state.job_index(job_id)?].document_path, &path);
+                let url = relative_url(&index.job(job_id)?.document_path, &path);
                 diagram.push_str(&format!("    {id}[\"{label}\"]:::status_{}\n", task.status));
                 diagram.push_str(&format!("    click {id} href \"{url}\" \"Open task\"\n"));
             }

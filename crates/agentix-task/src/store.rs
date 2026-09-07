@@ -131,6 +131,20 @@ impl Store {
         Ok(state)
     }
 
+    /// Entity metadata for note exports, without Plan or lease bodies.
+    pub(crate) async fn note_snapshot(&self) -> Result<Snapshot> {
+        let mut tx = self.pool.begin().await?;
+        let state = Snapshot {
+            projects: read_entities(&mut tx, "projects").await?,
+            jobs: read_entities(&mut tx, "jobs").await?,
+            tasks: read_entities(&mut tx, "tasks").await?,
+            inboxes: read_entities(&mut tx, "inbox_entries").await?,
+            ..Snapshot::default()
+        };
+        tx.commit().await?;
+        Ok(state)
+    }
+
     /// Read one Task and its lease in the same transaction. Prefix resolution
     /// uses the primary-key index and reads at most two candidate identifiers.
     pub async fn task_result(&self, id: &str) -> Result<Value> {

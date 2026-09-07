@@ -365,10 +365,17 @@ impl Snapshot {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    pub(crate) static RESOLVE_ITEMS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 fn resolve<'a>(items: impl Iterator<Item = (&'a str, &'a str)>, query: &str) -> Result<usize> {
     if query.is_empty() {
         bail!("invalid: empty identifier");
     }
+    #[cfg(test)]
+    let items = items.inspect(|_| RESOLVE_ITEMS.set(RESOLVE_ITEMS.get() + 1));
     let items: Vec<_> = items.collect();
     if let Some(index) = items.iter().position(|(id, _)| *id == query) {
         return Ok(index);

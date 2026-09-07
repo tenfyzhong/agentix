@@ -4,6 +4,10 @@ use anyhow::{Context, Result};
 
 pub(crate) fn task_path(state: &crate::Snapshot, task: &crate::Task) -> Result<String> {
     let project = &state.projects[state.project_index(&task.project_id)?];
+    task_path_in(project, task)
+}
+
+pub(crate) fn task_path_in(project: &crate::Project, task: &crate::Task) -> Result<String> {
     let filename = numbered_name(&task.name, task.created_at, task.sequence)?;
     Ok(format!("Projects/{}/Tasks/{filename}.md", project.key))
 }
