@@ -15,6 +15,9 @@ mod job_review;
 #[path = "support/obsidian_sync.rs"]
 mod obsidian_sync;
 
+#[path = "support/scoped_reads.rs"]
+mod scoped_reads;
+
 struct Cli {
     dir: TempDir,
 }

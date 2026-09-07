@@ -2,6 +2,7 @@
 
 mod browse;
 mod config;
+mod context;
 pub use browse::{BrowseScope, ProjectSummary};
 mod conversation;
 pub use conversation::JobMessage;

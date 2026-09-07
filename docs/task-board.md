@@ -87,6 +87,10 @@ Project resolution uses the attached session's directory and Git common director
 
 Directory resolution reads only Project records and selects the closest registered ancestor for non-Git directories. Historical resolution uses the existing Task, Job, and Inbox session indexes to find up to two distinct Project IDs; it loads only the matching Project when the association is unique. Neither path loads a full database snapshot, and calls without a usable directory or session return without querying the database.
 
+CLI Project and Job detail reads load only the requested entity. Project lists load Project records, and Job lists restrict reads to the selected Project when supplied. Task lists apply Job, Project, status, and readiness filters in SQLite; readiness checks dependency status by ID, including dependencies in other Jobs. These commands preserve insertion order and the existing lease-expiry maintenance behavior.
+
+`context` loads the selected assignment, current Plan, owned Inbox, and session cancellation notifications. Previous-Job selection ranks session activity before loading the winning Job body and its Task IDs, preserving same-second follow-up ordering and ignoring late assistant replies. Session and follow-up indexes keep unrelated historical Jobs out of this lookup; the indexes are installed automatically when opening the database.
+
 ## Shell completions
 
 `taskcli completions bash`, `taskcli completions zsh`, and `taskcli completions fish` print shell scripts directly, including when `--json` is present. Generation skips configuration loading and does not open or mutate the task database, so it works before `taskcli init`.

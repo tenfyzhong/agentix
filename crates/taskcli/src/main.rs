@@ -656,9 +656,8 @@ async fn project(cli: &Cli, service: &Service, action: &ProjectCommand) -> Resul
         ProjectCommand::List { archived } => Ok(response(json!(
             service
                 .store()
-                .snapshot()
+                .projects()
                 .await?
-                .projects
                 .into_iter()
                 .filter(|p| p.archived_at.is_some() == *archived)
                 .collect::<Vec<_>>()
@@ -680,8 +679,7 @@ async fn project(cli: &Cli, service: &Service, action: &ProjectCommand) -> Resul
             .await
         }
         ProjectCommand::Show { id } => {
-            let state = service.store().snapshot().await?;
-            Ok(response(json!(state.projects[state.project_index(id)?])))
+            Ok(response(json!(service.store().project_result(id).await?)))
         }
     }
 }
@@ -779,10 +777,7 @@ async fn job(cli: &Cli, service: &Service, action: &JobCommand) -> Result<Value>
             mutate(cli, service, request).await
         }
         JobCommand::List(filters) => list_jobs(cli, service, filters).await,
-        JobCommand::Show { id } => {
-            let state = service.store().snapshot().await?;
-            Ok(response(json!(state.jobs[state.job_index(id)?])))
-        }
+        JobCommand::Show { id } => Ok(response(json!(service.store().job_record(id).await?))),
         JobCommand::Cancel { id } => {
             mutate(cli, service, json!({"command":"job.cancel","job":id})).await
         }
@@ -796,12 +791,6 @@ async fn job(cli: &Cli, service: &Service, action: &JobCommand) -> Result<Value>
 }
 
 async fn list_jobs(cli: &Cli, service: &Service, filters: &JobList) -> Result<Value> {
-    let state = service.store().snapshot().await?;
-    let pid = cli
-        .project
-        .as_ref()
-        .map(|p| state.project_index(p).map(|i| state.projects[i].id.clone()))
-        .transpose()?;
     let from = filters.created_from.as_ref().map(|s| date(s)).transpose()?;
     let to = filters.created_to.as_ref().map(|s| date(s)).transpose()?;
     if let Some(period) = &filters.period {
@@ -810,10 +799,11 @@ async fn list_jobs(cli: &Cli, service: &Service, filters: &JobList) -> Result<Va
             "period must be YYYY-MM"
         );
     }
-    let jobs: Vec<_> = state
-        .jobs
+    let jobs: Vec<_> = service
+        .store()
+        .jobs(cli.project.as_deref())
+        .await?
         .into_iter()
-        .filter(|j| pid.as_ref().is_none_or(|p| *p == j.project_id))
         .filter(|j| !filters.active || (j.status == JobStatus::Active && j.archived_at.is_none()))
         .filter(|j| !filters.completed || j.status == JobStatus::Completed)
         .filter(|j| {
@@ -858,42 +848,15 @@ async fn task(cli: &Cli, service: &Service, action: &TaskCommand) -> Result<Valu
             r
         }
         TaskCommand::List { job, ready, status } => {
-            let state = service.store().snapshot().await?;
-            let jid = job
-                .as_ref()
-                .map(|j| state.job_index(j).map(|i| state.jobs[i].id.clone()))
-                .transpose()?;
-            let pid = cli
-                .project
-                .as_ref()
-                .map(|p| state.project_index(p).map(|i| state.projects[i].id.clone()))
-                .transpose()?;
-            if let Some(status) = status {
-                ensure!(
-                    agentix_task::TaskStatus::ALL
-                        .iter()
-                        .any(|s| s.to_string() == *status),
-                    "invalid task status"
-                );
-            }
-            let tasks: Vec<_> = state
-                .tasks
-                .iter()
-                .filter(|t| {
-                    jid.as_ref().is_none_or(|j| *j == t.job_id)
-                        && pid.as_ref().is_none_or(|p| *p == t.project_id)
-                })
-                .filter(|t| status.as_ref().is_none_or(|s| t.status.to_string() == *s))
-                .filter(|t| {
-                    !*ready
-                        || (t.status == agentix_task::TaskStatus::Todo
-                            && t.dependencies.iter().all(|d| {
-                                state.tasks.iter().any(|x| {
-                                    x.id == *d && x.status == agentix_task::TaskStatus::Done
-                                })
-                            }))
-                })
-                .collect();
+            let tasks = service
+                .store()
+                .tasks(
+                    job.as_deref(),
+                    cli.project.as_deref(),
+                    status.as_deref(),
+                    *ready,
+                )
+                .await?;
             return Ok(response(json!(tasks)));
         }
         TaskCommand::Show(args) => {
@@ -949,83 +912,16 @@ async fn plan(cli: &Cli, service: &Service, action: &PlanCommand) -> Result<Valu
     .await
 }
 
-fn previous_job(state: &agentix_task::Snapshot, session: &str, project: &str) -> Option<Value> {
-    state
-        .jobs
-        .iter()
-        .filter(|candidate| candidate.project_id == project)
-        .filter_map(|candidate| {
-            let activity = state
-                .tasks
-                .iter()
-                .filter(|task| {
-                    task.job_id == candidate.id && task.last_session.as_deref() == Some(session)
-                })
-                .map(|task| task.updated_at)
-                .chain(
-                    (candidate.followup_session_id.as_deref() == Some(session))
-                        .then_some(candidate.followup_at)
-                        .flatten(),
-                )
-                .max();
-            if candidate.session_id.as_deref() != Some(session) && activity.is_none() {
-                return None;
-            }
-            let activity = activity
-                .unwrap_or(candidate.created_at)
-                .max(candidate.created_at);
-            let activity_id = (candidate.followup_session_id.as_deref() == Some(session)
-                && candidate.followup_at == Some(activity))
-            .then_some(candidate.followup_id.as_deref())
-            .flatten()
-            .and_then(|id| id.strip_prefix("message_"))
-            .into_iter()
-            .chain(
-                state
-                    .tasks
-                    .iter()
-                    .filter(|task| {
-                        task.job_id == candidate.id
-                            && task.last_session.as_deref() == Some(session)
-                            && task.updated_at == activity
-                    })
-                    .filter_map(|task| task.id.strip_prefix("task_")),
-            )
-            .chain(candidate.id.strip_prefix("job_"))
-            .max()
-            .unwrap_or(&candidate.id);
-            Some((candidate, activity, activity_id))
-        })
-        .max_by(
-            |(_, left_activity, left_id), (_, right_activity, right_id)| {
-                (left_activity, left_id).cmp(&(right_activity, right_id))
-            },
-        )
-        .map(|(candidate, _, _)| candidate)
-        .filter(|candidate| {
-            candidate.status == JobStatus::PendingReview && candidate.archived_at.is_none()
-        })
-        .map(|candidate| {
-            let mut value = json!(candidate);
-            value["task_ids"] = json!(
-                state
-                    .tasks
-                    .iter()
-                    .filter(|task| task.job_id == candidate.id)
-                    .map(|task| &task.id)
-                    .collect::<Vec<_>>()
-            );
-            value
-        })
-}
-
 async fn context(
     cli: &Cli,
     service: &Service,
     task: Option<&str>,
     job: Option<&str>,
 ) -> Result<Value> {
-    let state = service.store().snapshot().await?;
+    let state = service
+        .store()
+        .context_snapshot(task, job, cli.session.as_deref())
+        .await?;
     let task = if let Some(id) = task {
         Some(&state.tasks[state.task_index(id)?])
     } else {
@@ -1050,7 +946,7 @@ async fn context(
     let project = if let Some(job) = job {
         Some(state.projects[state.project_index(&job.project_id)?].clone())
     } else if let Some(id) = &cli.project {
-        Some(state.projects[state.project_index(id)?].clone())
+        Some(service.store().project_result(id).await?)
     } else {
         let cwd = std::env::current_dir()?;
         match service
@@ -1065,15 +961,15 @@ async fn context(
             }
         }
     };
-    let previous_job = job
-        .is_none()
-        .then(|| {
-            cli.session
-                .as_deref()
-                .zip(project.as_ref())
-                .and_then(|(session, project)| previous_job(&state, session, &project.id))
-        })
-        .flatten();
+    let previous_job = if job.is_none() {
+        if let Some((session, project)) = cli.session.as_deref().zip(project.as_ref()) {
+            service.store().previous_job(session, &project.id).await?
+        } else {
+            None
+        }
+    } else {
+        None
+    };
     let inbox_path = project
         .as_ref()
         .map(|p| service.inbox_path(p))
@@ -1177,8 +1073,38 @@ fn format_date(timestamp: i64) -> String {
 mod tests {
     use super::*;
 
-    #[test]
-    fn previous_job_orders_same_second_followups_and_ignores_late_replies() {
+    async fn previous_job(
+        state: &agentix_task::Snapshot,
+        session: &str,
+        project: &str,
+    ) -> Option<Value> {
+        use sqlx::Connection;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tasks.sqlite3");
+        let store = agentix_task::Store::open(&path).await.unwrap();
+        let mut conn = sqlx::SqliteConnection::connect_with(
+            &sqlx::sqlite::SqliteConnectOptions::new().filename(&path),
+        )
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO projects(id,data) VALUES(?,'{}')")
+            .bind(project)
+            .execute(&mut conn)
+            .await
+            .unwrap();
+        for job in &state.jobs {
+            sqlx::query("INSERT INTO jobs(id,data) VALUES(?,?)")
+                .bind(&job.id)
+                .bind(json!(job).to_string())
+                .execute(&mut conn)
+                .await
+                .unwrap();
+        }
+        store.previous_job(session, project).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn previous_job_orders_same_second_followups_and_ignores_late_replies() {
         let make_job = |id: &str, created_at: i64| {
             json!({
                 "id": id, "project_id": "project", "title": "Work", "goal": "",
@@ -1200,14 +1126,14 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(
-            previous_job(&state, "session", "project").unwrap()["id"],
+            previous_job(&state, "session", "project").await.unwrap()["id"],
             "job_001"
         );
         state
             .jobs
             .push(serde_json::from_value(make_job("job_004", 100)).unwrap());
         assert_eq!(
-            previous_job(&state, "session", "project").unwrap()["id"],
+            previous_job(&state, "session", "project").await.unwrap()["id"],
             "job_004"
         );
         state.jobs[0].updated_at = 101;
@@ -1219,7 +1145,7 @@ mod tests {
             recorded_at: 101,
         });
         assert_eq!(
-            previous_job(&state, "session", "project").unwrap()["id"],
+            previous_job(&state, "session", "project").await.unwrap()["id"],
             "job_004"
         );
     }

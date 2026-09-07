@@ -443,7 +443,7 @@ impl Store {
         Ok(entities(&mut tx, "projects", &projects).await?.pop())
     }
 
-    pub(crate) async fn job_record(&self, id: &str) -> Result<crate::Job> {
+    pub async fn job_record(&self, id: &str) -> Result<crate::Job> {
         let mut tx = self.pool.begin().await?;
         let id = resolve(&mut tx, "jobs", id).await?;
         Ok(entities(&mut tx, "jobs", &BTreeSet::from([id]))
@@ -503,6 +503,71 @@ impl Store {
         let state = load_request(&mut tx, request, self.now()).await?;
         tx.commit().await?;
         Ok(state)
+    }
+
+    /// List Jobs without loading their Tasks, Plans, or Inbox bodies.
+    pub async fn jobs(&self, project: Option<&str>) -> Result<Vec<crate::Job>> {
+        let mut tx = self.pool.begin().await?;
+        let mut query = sqlx::QueryBuilder::<sqlx::Sqlite>::new("SELECT data FROM jobs");
+        if let Some(project) = project {
+            let project = resolve(&mut tx, "projects", project).await?;
+            query.push(" WHERE project_id=").push_bind(project);
+        }
+        query.push(" ORDER BY rowid");
+        let rows: Vec<String> = query.build_query_scalar().fetch_all(&mut *tx).await?;
+        rows.into_iter()
+            .map(|row| serde_json::from_str(&row).map_err(Into::into))
+            .collect()
+    }
+
+    /// Filter Tasks in `SQLite`, including dependencies outside the selected scope.
+    pub async fn tasks(
+        &self,
+        job: Option<&str>,
+        project: Option<&str>,
+        status: Option<&str>,
+        ready: bool,
+    ) -> Result<Vec<crate::Task>> {
+        let mut tx = self.pool.begin().await?;
+        let job = match job {
+            Some(id) => Some(resolve(&mut tx, "jobs", id).await?),
+            None => None,
+        };
+        let project = match project {
+            Some(id) => Some(resolve(&mut tx, "projects", id).await?),
+            None => None,
+        };
+        if let Some(status) = status {
+            ensure!(
+                crate::TaskStatus::ALL
+                    .iter()
+                    .any(|s| s.to_string() == status),
+                "invalid task status"
+            );
+        }
+        let mut query =
+            sqlx::QueryBuilder::<sqlx::Sqlite>::new("SELECT t.data FROM tasks t WHERE 1=1");
+        if let Some(job) = job {
+            query.push(" AND t.job_id=").push_bind(job);
+        }
+        if let Some(project) = project {
+            query
+                .push(" AND json_extract(t.data,'$.project_id')=")
+                .push_bind(project);
+        }
+        if let Some(status) = status {
+            query
+                .push(" AND json_extract(t.data,'$.status')=")
+                .push_bind(status);
+        }
+        if ready {
+            query.push(" AND json_extract(t.data,'$.status')='TODO' AND NOT EXISTS (SELECT 1 FROM json_each(t.data,'$.dependencies') d WHERE NOT EXISTS (SELECT 1 FROM tasks dependency WHERE dependency.id=d.value AND json_extract(dependency.data,'$.status')='DONE'))");
+        }
+        query.push(" ORDER BY t.rowid");
+        let rows: Vec<String> = query.build_query_scalar().fetch_all(&mut *tx).await?;
+        rows.into_iter()
+            .map(|row| serde_json::from_str(&row).map_err(Into::into))
+            .collect()
     }
 
     pub async fn projects(&self) -> Result<Vec<crate::Project>> {
