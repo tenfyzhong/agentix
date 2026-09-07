@@ -1513,6 +1513,141 @@ async fn background_codex_turn_completion_notifies_im_with_attach_action() {
 }
 
 #[tokio::test]
+async fn background_subagent_polled_completion_does_not_notify_im() {
+    assert_subagent_completion_does_not_notify_im(true).await;
+}
+
+#[tokio::test]
+async fn background_subagent_direct_completion_does_not_notify_im() {
+    assert_subagent_completion_does_not_notify_im(false).await;
+}
+
+async fn assert_subagent_completion_does_not_notify_im(polled: bool) {
+    for source in [
+        json!({"subAgent": {"thread_spawn": {"parent_thread_id": "parent", "depth": 1}}}),
+        json!({"subAgent": "review"}),
+        json!({"subAgent": "compact"}),
+        json!({"subAgent": "memory_consolidation"}),
+        json!({"subAgent": {"other": "helper"}}),
+    ]
+    .into_iter()
+    .take(if polled { 1 } else { 5 })
+    {
+        let server = MockCodexAppServer::start();
+        let mut thread = MockThread::new("thr_subagent", "Subagent work", "/work").with_turn(
+            MockTurn::in_progress_with_output("turn_subagent", "delegated work", ""),
+        );
+        thread.source = source.clone();
+        server.add_thread(thread).await;
+        let client = Arc::new(CodexClient::connect(server.endpoint()).await.unwrap());
+        let channel = Arc::new(RecordingChannel::default());
+        let engine = Engine::new(
+            client.clone(),
+            SqliteState::in_memory().await.unwrap(),
+            vec![channel.clone()],
+        );
+        let mut events = client.subscribe();
+        engine.handle_inbound(inbound("/help")).await.unwrap();
+        let before = channel.views().len();
+        let event = if polled {
+            server.wait_for_turn_reads("thr_subagent", 1).await;
+            server
+                .complete_turn("thr_subagent", "turn_subagent", "Delegated work completed.")
+                .await;
+            recv_background_event(&mut events).await
+        } else {
+            AgentEvent::TurnCompleted {
+                session_id: "thr_subagent".into(),
+                turn_id: "turn_subagent".into(),
+                status: TurnStatus::Completed,
+                error: None,
+            }
+        };
+        engine.handle_agent_event(event).await.unwrap();
+        assert_eq!(
+            channel.views().len(),
+            before,
+            "subagent completion must not notify IM: source={source}, polled={polled}"
+        );
+        if !polled {
+            for (turn_id, status) in [
+                ("turn_failed", TurnStatus::Failed),
+                ("turn_interrupted", TurnStatus::Interrupted),
+            ] {
+                engine
+                    .handle_agent_event(AgentEvent::TurnCompleted {
+                        session_id: "thr_subagent".into(),
+                        turn_id: turn_id.into(),
+                        status,
+                        error: None,
+                    })
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    channel.views().len(),
+                    before,
+                    "source={source}, turn={turn_id}"
+                );
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn background_completion_source_lookup_failure_does_not_notify_im() {
+    let server = MockCodexAppServer::start();
+    let client = Arc::new(CodexClient::connect(server.endpoint()).await.unwrap());
+    let channel = Arc::new(RecordingChannel::default());
+    let engine = Engine::new(
+        client,
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine.handle_inbound(inbound("/help")).await.unwrap();
+    let before = channel.views().len();
+    let result = engine
+        .handle_agent_event(AgentEvent::TurnCompleted {
+            session_id: "thr_missing".into(),
+            turn_id: "turn_missing".into(),
+            status: TurnStatus::Completed,
+            error: None,
+        })
+        .await;
+    assert_eq!(channel.views().len(), before);
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn background_root_source_variants_still_notify_im() {
+    for source in [json!("appServer"), json!({"custom": "desktop"})] {
+        let server = MockCodexAppServer::start();
+        let mut thread = MockThread::new("thr_root", "Root work", "/work")
+            .with_turn(MockTurn::completed("turn_root", "root work", "done"));
+        thread.source = source.clone();
+        server.add_thread(thread).await;
+        let client = Arc::new(CodexClient::connect(server.endpoint()).await.unwrap());
+        let channel = Arc::new(RecordingChannel::default());
+        let engine = Engine::new(
+            client,
+            SqliteState::in_memory().await.unwrap(),
+            vec![channel.clone()],
+        );
+        engine.handle_inbound(inbound("/help")).await.unwrap();
+        let before = channel.views().len();
+        engine
+            .handle_agent_event(AgentEvent::TurnCompleted {
+                session_id: "thr_root".into(),
+                turn_id: "turn_root".into(),
+                status: TurnStatus::Completed,
+                error: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(channel.views().len(), before + 1, "source={source}");
+    }
+}
+
+#[tokio::test]
 async fn background_completion_with_an_active_writer_uses_only_reads() {
     let server = MockCodexAppServer::start();
     server

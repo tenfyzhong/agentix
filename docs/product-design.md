@@ -74,7 +74,7 @@ When the underlying Codex process exits, Agentix marks any visible running turn 
 
 ### Background completion
 
-When a turn finishes outside the currently attached session, Agentix identifies the completed session by title and short ID and offers a one-tap Attach action. A session that is draining after a switch updates its existing turn card; another unbound session creates one notification containing the completed turn's prompt and response for each authenticated conversation known to the running service. The standalone notices can be disabled with `notifications.background_turns = false`; existing cards still finish in place. Replayed terminal events are deduplicated. Completion in the current session remains part of its normal turn card and does not create a second notification.
+When a turn finishes outside the currently attached session, Agentix identifies the completed session by title and short ID and offers a one-tap Attach action. A session that is draining after a switch updates its existing turn card; another unbound session creates one notification containing the completed turn's prompt and response for each authenticated conversation known to the running service. Codex subagent sessions do not generate standalone notices; parent sessions and existing attached or draining turn cards continue updating normally. The standalone notices can be disabled with `notifications.background_turns = false`; existing cards still finish in place. Replayed terminal events are deduplicated. Completion in the current session remains part of its normal turn card and does not create a second notification.
 
 ### Prompt, queue, and steer
 

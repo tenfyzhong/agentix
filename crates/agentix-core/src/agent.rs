@@ -441,6 +441,10 @@ pub trait AgentAdapter: Send + Sync {
     async fn is_read_only(&self, _session_id: &SessionId) -> bool {
         false
     }
+    /// Whether this is an internal session started by another agent.
+    async fn is_subagent(&self, _session_id: &SessionId) -> Result<bool, AgentError> {
+        Ok(false)
+    }
     async fn unsubscribe(&self, session_id: &SessionId) -> Result<(), AgentError>;
     async fn start_turn(&self, session_id: &SessionId, text: &str) -> Result<String, AgentError>;
     async fn steer(
