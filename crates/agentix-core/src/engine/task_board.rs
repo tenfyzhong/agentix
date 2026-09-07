@@ -119,7 +119,7 @@ impl Engine {
         let state = self
             .tasks_service()?
             .store()
-            .snapshot()
+            .browse_snapshot(agentix_task::BrowseScope::Task(id))
             .await
             .map_err(error)?;
         let task = &state.tasks[state.task_index(id).map_err(error)?];

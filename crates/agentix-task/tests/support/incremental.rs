@@ -1,7 +1,7 @@
 use super::*;
 use std::{fs, time::SystemTime};
 
-async fn connection(f: &Fixture) -> sqlx::SqliteConnection {
+pub(super) async fn connection(f: &Fixture) -> sqlx::SqliteConnection {
     use sqlx::Connection;
     sqlx::SqliteConnection::connect_with(
         &sqlx::sqlite::SqliteConnectOptions::new().filename(&f.service.config().storage.path),

@@ -1,6 +1,8 @@
 //! Persistent task coordination and read-only document projections.
 
+mod browse;
 mod config;
+pub use browse::{BrowseScope, ProjectSummary};
 mod conversation;
 pub use conversation::JobMessage;
 mod deletion;

@@ -59,6 +59,62 @@ async fn click(engine: &Engine, token: String) {
 }
 
 #[tokio::test]
+async fn browsing_ignores_unrelated_job_task_and_plan_bodies() {
+    use sqlx::Connection;
+    let (_dir, service, id) = task_fixture().await;
+    let state = service.store().snapshot().await.unwrap();
+    let other_job = write(
+        &service,
+        json!({"command":"job.create","project":state.projects[0].id,"title":"Unrelated"}),
+    )
+    .await;
+    write(
+        &service,
+        json!({"command":"task.add","job":other_job["id"],"title":"Unrelated task"}),
+    )
+    .await;
+    let (engine, channel) = engine(service.clone()).await;
+    engine.handle_inbound(input("/attach thr_a")).await.unwrap();
+    engine.handle_inbound(input("/dashboard")).await.unwrap();
+    let dashboard = last(&channel);
+    click(&engine, button(&dashboard, "demo")).await;
+    click(&engine, button(&last(&channel), "Implement task board")).await;
+    let task_view = last(&channel);
+    // The dashboard only needs counts; the session board and details do not
+    // need the unrelated Job. No browse view needs serialized Plan records.
+    let mut conn = sqlx::SqliteConnection::connect_with(
+        &sqlx::sqlite::SqliteConnectOptions::new().filename(&service.config().storage.path),
+    )
+    .await
+    .unwrap();
+    sqlx::query("UPDATE jobs SET data=json_remove(data,'$.title') WHERE id=?")
+        .bind(other_job["id"].as_str().unwrap())
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE tasks SET data=json_remove(data,'$.title') WHERE job_id=?")
+        .bind(other_job["id"].as_str().unwrap())
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE plans SET data=json_remove(data,'$.hash')")
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    for command in ["/dashboard", "/board", "/jobs"] {
+        let result = engine.handle_inbound(input(command)).await;
+        assert!(
+            result.is_ok(),
+            "{command} must read only its required data: {result:?}"
+        );
+    }
+    click(&engine, button(&task_view, "Job")).await;
+    assert!(last(&channel).body.contains("Ship"));
+    click(&engine, button(&last(&channel), "Implement task board")).await;
+    assert!(last(&channel).body.contains(&id));
+}
+
+#[tokio::test]
 async fn dashboard_project_board_task_job_roundtrip_renders_authored_markdown() {
     let (_dir, service, id) = task_fixture().await;
     service.execute(json!({"command":"plan.revise","task":id,"body":"## Implementation\n\n**Bold plan** with `code`\n\n- Test first"}), task_write_options(&service, &id).await).await.unwrap();

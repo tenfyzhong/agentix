@@ -1,4 +1,6 @@
-use agentix_task::{Job, Snapshot, Task, TaskStatus};
+use std::collections::{HashMap, HashSet};
+
+use agentix_task::{BrowseScope, Snapshot, Task, TaskStatus};
 
 use super::{
     ActionButton, ActionStyle, ConversationRef, Engine, EngineError, OutboundView, SessionId,
@@ -137,17 +139,12 @@ impl Engine {
         owner: &str,
         page: usize,
     ) -> Result<(), EngineError> {
-        let state = self
+        let projects = self
             .tasks_service()?
             .store()
-            .snapshot()
+            .project_summaries()
             .await
             .map_err(error)?;
-        let projects: Vec<_> = state
-            .projects
-            .iter()
-            .filter(|p| p.archived_at.is_none())
-            .collect();
         let pages = page_count(projects.len());
         let page = page.min(pages - 1);
         let mut view = OutboundView::text(
@@ -158,20 +155,13 @@ impl Engine {
             ),
         );
         let mut buttons = Vec::new();
-        for project in projects.iter().skip(page * PAGE_SIZE).take(PAGE_SIZE) {
-            let jobs: Vec<_> = visible_jobs(&state)
-                .into_iter()
-                .filter(|j| j.project_id == project.id)
-                .collect();
-            let tasks = state
-                .tasks
-                .iter()
-                .filter(|t| jobs.iter().any(|j| j.id == t.job_id))
-                .count();
+        for summary in projects.iter().skip(page * PAGE_SIZE).take(PAGE_SIZE) {
+            let project = &summary.project;
             view.body.push_str(&format!(
-                "\n\n**{}**\n{} jobs · {tasks} tasks",
+                "\n\n**{}**\n{} jobs · {} tasks",
                 escape(&short(&project.name)),
-                jobs.len()
+                summary.job_count,
+                summary.task_count
             ));
             buttons.push((
                 project.name.clone(),
@@ -225,22 +215,18 @@ impl Engine {
             self.sessions.current(conversation).await
         };
         let service = self.tasks_service()?;
-        let state = service.store().snapshot().await.map_err(error)?;
-        let jobs = if let Some(project) = &project {
-            let project = &state.projects[state.project_index(project).map_err(error)?];
-            visible_jobs(&state)
-                .into_iter()
-                .filter(|j| j.project_id == project.id)
-                .collect()
+        let selection = if let Some(project) = &project {
+            BrowseScope::Project(project)
         } else {
-            session_jobs(&state, session.as_ref().expect("required session"))
+            BrowseScope::Session(session.as_ref().expect("required session").as_str())
         };
-        let mut tasks: Vec<_> = state
-            .tasks
-            .iter()
-            .filter(|t| jobs.iter().any(|j| j.id == t.job_id))
-            .collect();
-        let current: Vec<_> = state
+        let state = service
+            .store()
+            .browse_snapshot(selection)
+            .await
+            .map_err(error)?;
+        let mut tasks: Vec<_> = state.tasks.iter().collect();
+        let current: HashSet<_> = state
             .leases
             .iter()
             .filter(|l| {
@@ -264,7 +250,11 @@ impl Engine {
         let heading = board_heading(&state, project.as_deref(), session.as_ref());
         let mut view = OutboundView::text(
             "Task board",
-            format!("{heading}\n{} jobs · {} tasks", jobs.len(), tasks.len()),
+            format!(
+                "{heading}\n{} jobs · {} tasks",
+                state.jobs.len(),
+                tasks.len()
+            ),
         );
         for status in TaskStatus::ALL {
             view.body.push_str(&format!(
@@ -319,10 +309,14 @@ impl Engine {
         let state = self
             .tasks_service()?
             .store()
-            .snapshot()
+            .browse_snapshot(BrowseScope::Session(session.as_str()))
             .await
             .map_err(error)?;
-        let jobs = session_jobs(&state, &session);
+        let jobs = &state.jobs;
+        let mut counts = HashMap::new();
+        for task in &state.tasks {
+            *counts.entry(task.job_id.as_str()).or_insert(0usize) += 1;
+        }
         let pages = page_count(jobs.len());
         let page = page.min(pages - 1);
         let mut view = OutboundView::text(
@@ -331,7 +325,7 @@ impl Engine {
         );
         let mut buttons = Vec::new();
         for job in jobs.iter().skip(page * PAGE_SIZE).take(PAGE_SIZE) {
-            let count = state.tasks.iter().filter(|t| t.job_id == job.id).count();
+            let count = counts.get(job.id.as_str()).copied().unwrap_or(0);
             view.body.push_str(&format!(
                 "\n\n**{}**\n{} · {count} tasks",
                 escape(&short(&job.title)),
@@ -369,7 +363,11 @@ impl Engine {
         page: usize,
     ) -> Result<(), EngineError> {
         let service = self.tasks_service()?;
-        let state = service.store().snapshot().await.map_err(error)?;
+        let state = service
+            .store()
+            .browse_snapshot(BrowseScope::Job(id))
+            .await
+            .map_err(error)?;
         let job = &state.jobs[state.job_index(id).map_err(error)?];
         let project = &state.projects[state.project_index(&job.project_id).map_err(error)?];
         let markdown = service
@@ -426,36 +424,6 @@ impl Engine {
         self.send_view(conversation, &view).await?;
         Ok(())
     }
-}
-
-fn visible_jobs(state: &Snapshot) -> Vec<&Job> {
-    state
-        .jobs
-        .iter()
-        .filter(|j| {
-            j.archived_at.is_none()
-                && state
-                    .projects
-                    .iter()
-                    .any(|p| p.id == j.project_id && p.archived_at.is_none())
-        })
-        .collect()
-}
-
-fn session_jobs<'a>(state: &'a Snapshot, session: &SessionId) -> Vec<&'a Job> {
-    visible_jobs(state)
-        .into_iter()
-        .filter(|j| {
-            state.tasks.iter().any(|t| {
-                t.job_id == j.id
-                    && (t.last_session.as_deref() == Some(session.as_str())
-                        || state
-                            .leases
-                            .iter()
-                            .any(|l| l.task_id == t.id && l.session_ref == session.as_str()))
-            })
-        })
-        .collect()
 }
 
 fn task_buttons(tasks: &[&Task]) -> Vec<(String, TaskBrowse)> {

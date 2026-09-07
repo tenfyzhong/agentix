@@ -13,6 +13,10 @@ use crate::{
     config::resolved_path, mutations::required, new_id, store::hash_bytes,
 };
 
+#[cfg(test)]
+#[path = "projection_tests.rs"]
+mod tests;
+
 #[derive(Clone)]
 pub struct Service {
     config: Config,
@@ -900,9 +904,15 @@ impl Service {
             .iter()
             .filter(|p| p.archived_at.is_none())
             .collect();
-        let mut activity = BTreeMap::new();
+        let mut activity = self
+            .store
+            .project_activity(&projects.iter().map(|p| p.id.as_str()).collect())
+            .await?;
         for project in &projects {
-            activity.insert(&project.id, self.store.project_receipt(project).await?.1);
+            let updated = activity
+                .entry(project.id.clone())
+                .or_insert(project.created_at);
+            *updated = (*updated).max(project.created_at);
         }
         projects.sort_by_key(|p| (std::cmp::Reverse(activity[&p.id]), &p.name));
         for project in projects {
