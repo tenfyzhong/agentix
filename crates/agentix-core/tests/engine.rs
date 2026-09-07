@@ -397,6 +397,7 @@ struct FakeChannel {
     fail_menu_updates: Arc<Mutex<bool>>,
     task_send_failures: Arc<Mutex<usize>>,
     inbox_send_failures: Arc<Mutex<usize>>,
+    inbox_source: Arc<Mutex<Option<InboundEnvelope>>>,
     reject_unchanged_updates: bool,
     next_menu_gate: Arc<
         Mutex<
@@ -432,6 +433,12 @@ impl FakeChannel {
 
 #[async_trait]
 impl ChannelAdapter for FakeChannel {
+    async fn read_inbox_message(
+        &self,
+        _message: &MessageRef,
+    ) -> Result<Option<InboundEnvelope>, ChannelError> {
+        Ok(self.inbox_source.lock().unwrap().clone())
+    }
     fn streaming_update_interval(&self) -> std::time::Duration {
         self.streaming_interval
             .unwrap_or(std::time::Duration::from_secs(1))
@@ -959,7 +966,7 @@ async fn task_wait_fail_and_job_completion_notify_only_the_bound_session() {
     for (button, event_type, status) in [
         ("Wait", "task.waiting_user", "WAITING_USER"),
         ("Fail", "task.failed", "FAILED"),
-        ("Done", "job.completed", "DONE"),
+        ("Done", "job.pending_review", "DONE"),
     ] {
         let (_dir, service, id) = task_fixture().await;
         let channel = Arc::new(FakeChannel::default());

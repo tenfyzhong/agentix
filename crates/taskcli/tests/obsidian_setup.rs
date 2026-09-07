@@ -81,7 +81,7 @@ fn installs_configures_preserves_settings_and_repeats_without_download_or_databa
     assert_eq!(result["restart_required"], true);
     assert_eq!(
         f.read("vault/.obsidian/community-plugins.json"),
-        json!(["other-plugin", "tasknotes"])
+        json!(["other-plugin", "tasknotes", "taskcli-sync"])
     );
     assert_eq!(
         f.read("vault/.obsidian/core-plugins.json"),
@@ -91,16 +91,24 @@ fn installs_configures_preserves_settings_and_repeats_without_download_or_databa
     assert_eq!(settings["calendarView"], "week");
     assert_eq!(settings["fieldMapping"]["priority"], "importance");
     assert_eq!(settings["fieldMapping"]["status"], "status");
+    for (key, field) in [
+        ("dateCreated", "created_at"),
+        ("dateModified", "updated_at"),
+        ("completedDate", "completed_at"),
+    ] {
+        assert_eq!(settings["fieldMapping"][key], field);
+    }
     assert_eq!(settings["taskTag"], "task");
     assert_eq!(settings["taskIdentificationMethod"], "tag");
     assert_eq!(settings["defaultTaskStatus"], "TODO");
     assert_eq!(settings["openTaskAfterCreation"], "none");
+    assert_eq!(settings["singleClickAction"], "openNote");
     let preset: Value = serde_json::from_str(include_str!(
         "../../../plugins/agent-task-manager/obsidian/tasknotes-settings.json"
     ))
     .unwrap();
     let statuses = settings["customStatuses"].as_array().unwrap();
-    assert_eq!(statuses.len(), 8);
+    assert_eq!(statuses.len(), 11);
     for expected in preset["customStatuses"].as_array().unwrap() {
         let actual = statuses
             .iter()
@@ -151,6 +159,7 @@ fn malformed_settings_or_plugin_lists_are_preserved_before_installation() {
         ("plugins/tasknotes/data.json", "not json"),
         ("plugins/tasknotes/data.json", "[]"),
         ("community-plugins.json", "{}"),
+        ("plugins/taskcli-sync/data.json", "[]"),
         ("core-plugins.json", "null"),
         ("plugins/tasknotes/data.json", "{\"customStatuses\":false}"),
         ("plugins/tasknotes/data.json", "{\"fieldMapping\":[]}"),
@@ -217,6 +226,8 @@ fn symlinked_configuration_paths_cannot_change_external_files() {
         ".obsidian/plugins/tasknotes",
         ".obsidian/community-plugins.json",
         ".obsidian/plugins/tasknotes/data.json",
+        ".obsidian/plugins/taskcli-sync",
+        ".obsidian/plugins/taskcli-sync/data.json",
     ] {
         let f = Fixture::new();
         let external = f.path("external");
@@ -246,5 +257,59 @@ fn ambiguous_status_definitions_are_rejected_before_installation() {
         );
         f.run(true, false);
         assert!(!f.path("vault/.obsidian/plugins/tasknotes/main.js").exists());
+    }
+}
+
+#[test]
+fn installs_sync_plugin_with_absolute_paths_and_preserves_user_configuration() {
+    let f = Fixture::new();
+    f.run(true, true);
+    let manifest = f.read("vault/.obsidian/plugins/taskcli-sync/manifest.json");
+    assert_eq!(manifest["id"], "taskcli-sync");
+    assert_eq!(manifest["isDesktopOnly"], true);
+    assert!(
+        f.path("vault/.obsidian/plugins/taskcli-sync/main.js")
+            .is_file()
+    );
+    let config = f.read("vault/.obsidian/plugins/taskcli-sync/data.json");
+    assert_eq!(
+        Path::new(config["cliPath"].as_str().unwrap())
+            .canonicalize()
+            .unwrap(),
+        Path::new(env!("CARGO_BIN_EXE_taskcli"))
+            .canonicalize()
+            .unwrap()
+    );
+    assert_eq!(
+        Path::new(config["configPath"].as_str().unwrap())
+            .canonicalize()
+            .unwrap(),
+        f.path("config.toml").canonicalize().unwrap()
+    );
+    let custom =
+        json!({"cliPath":"/custom/taskcli", "configPath":"/custom/config.toml", "other":true});
+    f.write("vault/.obsidian/plugins/taskcli-sync/data.json", &custom);
+    f.run(false, true);
+    assert_eq!(f.run(false, true)["result"]["changed"], false);
+    assert_eq!(
+        f.read("vault/.obsidian/plugins/taskcli-sync/data.json"),
+        custom
+    );
+    let settings = f.read("vault/.obsidian/plugins/tasknotes/data.json");
+    for (value, color) in [
+        ("ACTIVE", "#bfdbfe"),
+        ("PENDING_REVIEW", "#fed7aa"),
+        ("COMPLETED", "#bbf7d0"),
+    ] {
+        let status = settings["customStatuses"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["value"] == value)
+            .unwrap();
+        assert_eq!(status["color"], color);
+        assert_eq!(status["isCompleted"], value == "COMPLETED");
+        assert_eq!(status["excludeFromCycle"], true);
+        assert_eq!(status["autoArchive"], false);
     }
 }

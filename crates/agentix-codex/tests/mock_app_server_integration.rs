@@ -2057,3 +2057,72 @@ async fn disabled_background_notifications_do_not_poll_sessions_or_turns() {
             .contains(&"thread/turns/list".into())
     );
 }
+
+#[tokio::test]
+async fn status_reports_remaining_quota_windows_and_survives_quota_errors() {
+    use agentix_core::SessionControlPort;
+    let server = MockCodexAppServer::start();
+    server
+        .add_thread(MockThread::new("thr_quota", "Quota", "/work/quota"))
+        .await;
+    let client = CodexClient::connect(server.endpoint()).await.unwrap();
+    let session = SessionId::new("thr_quota");
+    server.set_rate_limits(json!({"rateLimitsByLimitId": {
+        "codex":{"limitName":"Codex", "primary":{"usedPercent":25,"windowDurationMins":300,"resetsAt":1_788_566_400},"secondary":{"usedPercent":80.5,"windowDurationMins":10080,"resetsAt":1_788_652_800}},
+        "review":{"primary":{"usedPercent":100,"windowDurationMins":60},"credits":{"balance":"12.50","unlimited":false}}
+    }})).await;
+    let status = client
+        .run_session_command(&session, SessionCommand::Status)
+        .await
+        .unwrap();
+    for expected in [
+        "75% remaining",
+        "19.5% remaining",
+        "0% remaining",
+        "5h",
+        "7d",
+        "resets",
+        "12.50",
+    ] {
+        assert!(
+            status.body.contains(expected),
+            "{expected}: {}",
+            status.body
+        );
+    }
+    server
+        .set_rate_limits(
+            json!({"rateLimits":{"primary":{"usedPercent":40,"windowDurationMins":15}}}),
+        )
+        .await;
+    assert!(
+        client
+            .run_session_command(&session, SessionCommand::Status)
+            .await
+            .unwrap()
+            .body
+            .contains("60% remaining")
+    );
+    server
+        .fail_next(
+            "account/rateLimits/read",
+            -32601,
+            "Unsupported quota endpoint",
+        )
+        .await;
+    let status = client
+        .run_session_command(&session, SessionCommand::Status)
+        .await
+        .unwrap();
+    assert!(status.body.contains("**Session:** Quota"));
+    assert!(status.body.contains("Quota unavailable"));
+    server
+        .set_rate_limits(json!({"rateLimits":{"primary":{"windowDurationMins":300}}}))
+        .await;
+    let status = client
+        .run_session_command(&session, SessionCommand::Status)
+        .await
+        .unwrap();
+    assert!(status.body.contains("not reported"));
+    assert!(!status.body.contains("100% remaining"));
+}

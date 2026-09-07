@@ -121,6 +121,9 @@ _taskcli() {
             taskcli__subcmd__help__subcmd__hook,interrupt)
                 cmd="taskcli__subcmd__help__subcmd__hook__subcmd__interrupt"
                 ;;
+            taskcli__subcmd__help__subcmd__hook,record)
+                cmd="taskcli__subcmd__help__subcmd__hook__subcmd__record"
+                ;;
             taskcli__subcmd__help__subcmd__hook,session-end)
                 cmd="taskcli__subcmd__help__subcmd__hook__subcmd__session__subcmd__end"
                 ;;
@@ -145,8 +148,14 @@ _taskcli() {
             taskcli__subcmd__help__subcmd__inbox,release)
                 cmd="taskcli__subcmd__help__subcmd__inbox__subcmd__release"
                 ;;
+            taskcli__subcmd__help__subcmd__inbox,set-status)
+                cmd="taskcli__subcmd__help__subcmd__inbox__subcmd__set__subcmd__status"
+                ;;
             taskcli__subcmd__help__subcmd__inbox,sync)
                 cmd="taskcli__subcmd__help__subcmd__inbox__subcmd__sync"
+                ;;
+            taskcli__subcmd__help__subcmd__job,approve)
+                cmd="taskcli__subcmd__help__subcmd__job__subcmd__approve"
                 ;;
             taskcli__subcmd__help__subcmd__job,archive)
                 cmd="taskcli__subcmd__help__subcmd__job__subcmd__archive"
@@ -163,8 +172,14 @@ _taskcli() {
             taskcli__subcmd__help__subcmd__job,list)
                 cmd="taskcli__subcmd__help__subcmd__job__subcmd__list"
                 ;;
+            taskcli__subcmd__help__subcmd__job,reject)
+                cmd="taskcli__subcmd__help__subcmd__job__subcmd__reject"
+                ;;
             taskcli__subcmd__help__subcmd__job,show)
                 cmd="taskcli__subcmd__help__subcmd__job__subcmd__show"
+                ;;
+            taskcli__subcmd__help__subcmd__job,submit)
+                cmd="taskcli__subcmd__help__subcmd__job__subcmd__submit"
                 ;;
             taskcli__subcmd__help__subcmd__job,unarchive)
                 cmd="taskcli__subcmd__help__subcmd__job__subcmd__unarchive"
@@ -172,8 +187,17 @@ _taskcli() {
             taskcli__subcmd__help__subcmd__job,update)
                 cmd="taskcli__subcmd__help__subcmd__job__subcmd__update"
                 ;;
+            taskcli__subcmd__help__subcmd__obsidian,connection)
+                cmd="taskcli__subcmd__help__subcmd__obsidian__subcmd__connection"
+                ;;
             taskcli__subcmd__help__subcmd__obsidian,setup)
                 cmd="taskcli__subcmd__help__subcmd__obsidian__subcmd__setup"
+                ;;
+            taskcli__subcmd__help__subcmd__obsidian,show)
+                cmd="taskcli__subcmd__help__subcmd__obsidian__subcmd__show"
+                ;;
+            taskcli__subcmd__help__subcmd__obsidian,snapshot)
+                cmd="taskcli__subcmd__help__subcmd__obsidian__subcmd__snapshot"
                 ;;
             taskcli__subcmd__help__subcmd__plan,create)
                 cmd="taskcli__subcmd__help__subcmd__plan__subcmd__create"
@@ -262,6 +286,9 @@ _taskcli() {
             taskcli__subcmd__hook,interrupt)
                 cmd="taskcli__subcmd__hook__subcmd__interrupt"
                 ;;
+            taskcli__subcmd__hook,record)
+                cmd="taskcli__subcmd__hook__subcmd__record"
+                ;;
             taskcli__subcmd__hook,session-end)
                 cmd="taskcli__subcmd__hook__subcmd__session__subcmd__end"
                 ;;
@@ -279,6 +306,9 @@ _taskcli() {
                 ;;
             taskcli__subcmd__hook__subcmd__help,interrupt)
                 cmd="taskcli__subcmd__hook__subcmd__help__subcmd__interrupt"
+                ;;
+            taskcli__subcmd__hook__subcmd__help,record)
+                cmd="taskcli__subcmd__hook__subcmd__help__subcmd__record"
                 ;;
             taskcli__subcmd__hook__subcmd__help,session-end)
                 cmd="taskcli__subcmd__hook__subcmd__help__subcmd__session__subcmd__end"
@@ -307,6 +337,9 @@ _taskcli() {
             taskcli__subcmd__inbox,release)
                 cmd="taskcli__subcmd__inbox__subcmd__release"
                 ;;
+            taskcli__subcmd__inbox,set-status)
+                cmd="taskcli__subcmd__inbox__subcmd__set__subcmd__status"
+                ;;
             taskcli__subcmd__inbox,sync)
                 cmd="taskcli__subcmd__inbox__subcmd__sync"
                 ;;
@@ -328,8 +361,14 @@ _taskcli() {
             taskcli__subcmd__inbox__subcmd__help,release)
                 cmd="taskcli__subcmd__inbox__subcmd__help__subcmd__release"
                 ;;
+            taskcli__subcmd__inbox__subcmd__help,set-status)
+                cmd="taskcli__subcmd__inbox__subcmd__help__subcmd__set__subcmd__status"
+                ;;
             taskcli__subcmd__inbox__subcmd__help,sync)
                 cmd="taskcli__subcmd__inbox__subcmd__help__subcmd__sync"
+                ;;
+            taskcli__subcmd__job,approve)
+                cmd="taskcli__subcmd__job__subcmd__approve"
                 ;;
             taskcli__subcmd__job,archive)
                 cmd="taskcli__subcmd__job__subcmd__archive"
@@ -349,14 +388,23 @@ _taskcli() {
             taskcli__subcmd__job,list)
                 cmd="taskcli__subcmd__job__subcmd__list"
                 ;;
+            taskcli__subcmd__job,reject)
+                cmd="taskcli__subcmd__job__subcmd__reject"
+                ;;
             taskcli__subcmd__job,show)
                 cmd="taskcli__subcmd__job__subcmd__show"
+                ;;
+            taskcli__subcmd__job,submit)
+                cmd="taskcli__subcmd__job__subcmd__submit"
                 ;;
             taskcli__subcmd__job,unarchive)
                 cmd="taskcli__subcmd__job__subcmd__unarchive"
                 ;;
             taskcli__subcmd__job,update)
                 cmd="taskcli__subcmd__job__subcmd__update"
+                ;;
+            taskcli__subcmd__job__subcmd__help,approve)
+                cmd="taskcli__subcmd__job__subcmd__help__subcmd__approve"
                 ;;
             taskcli__subcmd__job__subcmd__help,archive)
                 cmd="taskcli__subcmd__job__subcmd__help__subcmd__archive"
@@ -376,8 +424,14 @@ _taskcli() {
             taskcli__subcmd__job__subcmd__help,list)
                 cmd="taskcli__subcmd__job__subcmd__help__subcmd__list"
                 ;;
+            taskcli__subcmd__job__subcmd__help,reject)
+                cmd="taskcli__subcmd__job__subcmd__help__subcmd__reject"
+                ;;
             taskcli__subcmd__job__subcmd__help,show)
                 cmd="taskcli__subcmd__job__subcmd__help__subcmd__show"
+                ;;
+            taskcli__subcmd__job__subcmd__help,submit)
+                cmd="taskcli__subcmd__job__subcmd__help__subcmd__submit"
                 ;;
             taskcli__subcmd__job__subcmd__help,unarchive)
                 cmd="taskcli__subcmd__job__subcmd__help__subcmd__unarchive"
@@ -385,17 +439,35 @@ _taskcli() {
             taskcli__subcmd__job__subcmd__help,update)
                 cmd="taskcli__subcmd__job__subcmd__help__subcmd__update"
                 ;;
+            taskcli__subcmd__obsidian,connection)
+                cmd="taskcli__subcmd__obsidian__subcmd__connection"
+                ;;
             taskcli__subcmd__obsidian,help)
                 cmd="taskcli__subcmd__obsidian__subcmd__help"
                 ;;
             taskcli__subcmd__obsidian,setup)
                 cmd="taskcli__subcmd__obsidian__subcmd__setup"
                 ;;
+            taskcli__subcmd__obsidian,show)
+                cmd="taskcli__subcmd__obsidian__subcmd__show"
+                ;;
+            taskcli__subcmd__obsidian,snapshot)
+                cmd="taskcli__subcmd__obsidian__subcmd__snapshot"
+                ;;
+            taskcli__subcmd__obsidian__subcmd__help,connection)
+                cmd="taskcli__subcmd__obsidian__subcmd__help__subcmd__connection"
+                ;;
             taskcli__subcmd__obsidian__subcmd__help,help)
                 cmd="taskcli__subcmd__obsidian__subcmd__help__subcmd__help"
                 ;;
             taskcli__subcmd__obsidian__subcmd__help,setup)
                 cmd="taskcli__subcmd__obsidian__subcmd__help__subcmd__setup"
+                ;;
+            taskcli__subcmd__obsidian__subcmd__help,show)
+                cmd="taskcli__subcmd__obsidian__subcmd__help__subcmd__show"
+                ;;
+            taskcli__subcmd__obsidian__subcmd__help,snapshot)
+                cmd="taskcli__subcmd__obsidian__subcmd__help__subcmd__snapshot"
                 ;;
             taskcli__subcmd__plan,create)
                 cmd="taskcli__subcmd__plan__subcmd__create"
@@ -1104,7 +1176,7 @@ _taskcli() {
             return 0
             ;;
         taskcli__subcmd__help__subcmd__hook)
-            opts="stop session-start session-end interrupt heartbeat"
+            opts="record stop session-start session-end interrupt heartbeat"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1132,6 +1204,20 @@ _taskcli() {
             return 0
             ;;
         taskcli__subcmd__help__subcmd__hook__subcmd__interrupt)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        taskcli__subcmd__help__subcmd__hook__subcmd__record)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -1188,7 +1274,7 @@ _taskcli() {
             return 0
             ;;
         taskcli__subcmd__help__subcmd__inbox)
-            opts="add list sync claim-next release cancel"
+            opts="add list sync claim-next release cancel set-status"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1271,6 +1357,20 @@ _taskcli() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
+        taskcli__subcmd__help__subcmd__inbox__subcmd__set__subcmd__status)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
         taskcli__subcmd__help__subcmd__inbox__subcmd__sync)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
@@ -1300,8 +1400,22 @@ _taskcli() {
             return 0
             ;;
         taskcli__subcmd__help__subcmd__job)
-            opts="delete create update list show cancel archive unarchive"
+            opts="submit approve reject delete create update list show cancel archive unarchive"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        taskcli__subcmd__help__subcmd__job__subcmd__approve)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi
@@ -1383,7 +1497,35 @@ _taskcli() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
+        taskcli__subcmd__help__subcmd__job__subcmd__reject)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
         taskcli__subcmd__help__subcmd__job__subcmd__show)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        taskcli__subcmd__help__subcmd__job__subcmd__submit)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -1426,7 +1568,7 @@ _taskcli() {
             return 0
             ;;
         taskcli__subcmd__help__subcmd__obsidian)
-            opts="setup"
+            opts="connection show snapshot setup"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1439,7 +1581,49 @@ _taskcli() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
+        taskcli__subcmd__help__subcmd__obsidian__subcmd__connection)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
         taskcli__subcmd__help__subcmd__obsidian__subcmd__setup)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        taskcli__subcmd__help__subcmd__obsidian__subcmd__show)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        taskcli__subcmd__help__subcmd__obsidian__subcmd__snapshot)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -1874,7 +2058,7 @@ _taskcli() {
             return 0
             ;;
         taskcli__subcmd__hook)
-            opts="-h --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help stop session-start session-end interrupt heartbeat help"
+            opts="-h --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help record stop session-start session-end interrupt heartbeat help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1996,7 +2180,7 @@ _taskcli() {
             return 0
             ;;
         taskcli__subcmd__hook__subcmd__help)
-            opts="stop session-start session-end interrupt heartbeat help"
+            opts="record stop session-start session-end interrupt heartbeat help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -2038,6 +2222,20 @@ _taskcli() {
             return 0
             ;;
         taskcli__subcmd__hook__subcmd__help__subcmd__interrupt)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        taskcli__subcmd__hook__subcmd__help__subcmd__record)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -2100,6 +2298,75 @@ _taskcli() {
                 return 0
             fi
             case "${prev}" in
+                --config)
+                    local oldifs
+                    if [ -n "${IFS+x}" ]; then
+                        oldifs="$IFS"
+                    fi
+                    IFS=$'\n'
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    if [ -n "${oldifs+x}" ]; then
+                        IFS="$oldifs"
+                    fi
+                    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+                        compopt -o filenames
+                    fi
+                    return 0
+                    ;;
+                --project)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --actor)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --executor)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --session)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --delegated-by)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --lease-token)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --expect-revision)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --idempotency-key)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        taskcli__subcmd__hook__subcmd__record)
+            opts="-h --file --job --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --file)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --job)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
                 --config)
                     local oldifs
                     if [ -n "${IFS+x}" ]; then
@@ -2338,7 +2605,7 @@ _taskcli() {
             return 0
             ;;
         taskcli__subcmd__inbox)
-            opts="-h --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help add list sync claim-next release cancel help"
+            opts="-h --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help add list sync claim-next release cancel set-status help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -2586,7 +2853,7 @@ _taskcli() {
             return 0
             ;;
         taskcli__subcmd__inbox__subcmd__help)
-            opts="add list sync claim-next release cancel help"
+            opts="add list sync claim-next release cancel set-status help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -2683,6 +2950,20 @@ _taskcli() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
+        taskcli__subcmd__inbox__subcmd__help__subcmd__set__subcmd__status)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
         taskcli__subcmd__inbox__subcmd__help__subcmd__sync)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
@@ -2765,6 +3046,71 @@ _taskcli() {
                 return 0
             fi
             case "${prev}" in
+                --config)
+                    local oldifs
+                    if [ -n "${IFS+x}" ]; then
+                        oldifs="$IFS"
+                    fi
+                    IFS=$'\n'
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    if [ -n "${oldifs+x}" ]; then
+                        IFS="$oldifs"
+                    fi
+                    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+                        compopt -o filenames
+                    fi
+                    return 0
+                    ;;
+                --project)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --actor)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --executor)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --session)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --delegated-by)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --lease-token)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --expect-revision)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --idempotency-key)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        taskcli__subcmd__inbox__subcmd__set__subcmd__status)
+            opts="-h --status --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --status)
+                    COMPREPLY=($(compgen -W "TODO ACTIVE PENDING_REVIEW COMPLETED CANCELLED IN_PROGRESS DONE" -- "${cur}"))
+                    return 0
+                    ;;
                 --config)
                     local oldifs
                     if [ -n "${IFS+x}" ]; then
@@ -2975,8 +3321,69 @@ _taskcli() {
             return 0
             ;;
         taskcli__subcmd__job)
-            opts="-h --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help delete create update list show cancel archive unarchive help"
+            opts="-h --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help submit approve reject delete create update list show cancel archive unarchive help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --config)
+                    local oldifs
+                    if [ -n "${IFS+x}" ]; then
+                        oldifs="$IFS"
+                    fi
+                    IFS=$'\n'
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    if [ -n "${oldifs+x}" ]; then
+                        IFS="$oldifs"
+                    fi
+                    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+                        compopt -o filenames
+                    fi
+                    return 0
+                    ;;
+                --project)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --actor)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --executor)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --session)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --delegated-by)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --lease-token)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --expect-revision)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --idempotency-key)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        taskcli__subcmd__job__subcmd__approve)
+            opts="-h --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi
@@ -3296,8 +3703,22 @@ _taskcli() {
             return 0
             ;;
         taskcli__subcmd__job__subcmd__help)
-            opts="delete create update list show cancel archive unarchive help"
+            opts="submit approve reject delete create update list show cancel archive unarchive help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        taskcli__subcmd__job__subcmd__help__subcmd__approve)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi
@@ -3393,7 +3814,35 @@ _taskcli() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
+        taskcli__subcmd__job__subcmd__help__subcmd__reject)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
         taskcli__subcmd__job__subcmd__help__subcmd__show)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        taskcli__subcmd__job__subcmd__help__subcmd__submit)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -3436,7 +3885,7 @@ _taskcli() {
             return 0
             ;;
         taskcli__subcmd__job__subcmd__list)
-            opts="-h --active --completed --archived --period --created-from --created-to --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help"
+            opts="-h --active --pending-review --completed --archived --period --created-from --created-to --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -3508,7 +3957,133 @@ _taskcli() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
+        taskcli__subcmd__job__subcmd__reject)
+            opts="-h --reason --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --reason)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --config)
+                    local oldifs
+                    if [ -n "${IFS+x}" ]; then
+                        oldifs="$IFS"
+                    fi
+                    IFS=$'\n'
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    if [ -n "${oldifs+x}" ]; then
+                        IFS="$oldifs"
+                    fi
+                    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+                        compopt -o filenames
+                    fi
+                    return 0
+                    ;;
+                --project)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --actor)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --executor)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --session)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --delegated-by)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --lease-token)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --expect-revision)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --idempotency-key)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
         taskcli__subcmd__job__subcmd__show)
+            opts="-h --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --config)
+                    local oldifs
+                    if [ -n "${IFS+x}" ]; then
+                        oldifs="$IFS"
+                    fi
+                    IFS=$'\n'
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    if [ -n "${oldifs+x}" ]; then
+                        IFS="$oldifs"
+                    fi
+                    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+                        compopt -o filenames
+                    fi
+                    return 0
+                    ;;
+                --project)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --actor)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --executor)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --session)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --delegated-by)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --lease-token)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --expect-revision)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --idempotency-key)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        taskcli__subcmd__job__subcmd__submit)
             opts="-h --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -3708,7 +4283,7 @@ _taskcli() {
             return 0
             ;;
         taskcli__subcmd__obsidian)
-            opts="-h --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help setup help"
+            opts="-h --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help connection show snapshot setup help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -3768,9 +4343,84 @@ _taskcli() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
-        taskcli__subcmd__obsidian__subcmd__help)
-            opts="setup help"
+        taskcli__subcmd__obsidian__subcmd__connection)
+            opts="-h --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --config)
+                    local oldifs
+                    if [ -n "${IFS+x}" ]; then
+                        oldifs="$IFS"
+                    fi
+                    IFS=$'\n'
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    if [ -n "${oldifs+x}" ]; then
+                        IFS="$oldifs"
+                    fi
+                    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+                        compopt -o filenames
+                    fi
+                    return 0
+                    ;;
+                --project)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --actor)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --executor)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --session)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --delegated-by)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --lease-token)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --expect-revision)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --idempotency-key)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        taskcli__subcmd__obsidian__subcmd__help)
+            opts="connection show snapshot setup help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        taskcli__subcmd__obsidian__subcmd__help__subcmd__connection)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi
@@ -3810,6 +4460,34 @@ _taskcli() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
+        taskcli__subcmd__obsidian__subcmd__help__subcmd__show)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        taskcli__subcmd__obsidian__subcmd__help__subcmd__snapshot)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
         taskcli__subcmd__obsidian__subcmd__setup)
             opts="-h --plugin-dir --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
@@ -3824,6 +4502,128 @@ _taskcli() {
                     fi
                     return 0
                     ;;
+                --config)
+                    local oldifs
+                    if [ -n "${IFS+x}" ]; then
+                        oldifs="$IFS"
+                    fi
+                    IFS=$'\n'
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    if [ -n "${oldifs+x}" ]; then
+                        IFS="$oldifs"
+                    fi
+                    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+                        compopt -o filenames
+                    fi
+                    return 0
+                    ;;
+                --project)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --actor)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --executor)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --session)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --delegated-by)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --lease-token)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --expect-revision)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --idempotency-key)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        taskcli__subcmd__obsidian__subcmd__show)
+            opts="-h --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --config)
+                    local oldifs
+                    if [ -n "${IFS+x}" ]; then
+                        oldifs="$IFS"
+                    fi
+                    IFS=$'\n'
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    if [ -n "${oldifs+x}" ]; then
+                        IFS="$oldifs"
+                    fi
+                    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+                        compopt -o filenames
+                    fi
+                    return 0
+                    ;;
+                --project)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --actor)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --executor)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --session)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --delegated-by)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --lease-token)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --expect-revision)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --idempotency-key)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        taskcli__subcmd__obsidian__subcmd__snapshot)
+            opts="-h --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
                 --config)
                     local oldifs
                     if [ -n "${IFS+x}" ]; then
@@ -4781,7 +5581,7 @@ _taskcli() {
             return 0
             ;;
         taskcli__subcmd__sync)
-            opts="-h --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help"
+            opts="-h --pending --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0

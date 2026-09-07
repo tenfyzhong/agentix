@@ -1,3 +1,4 @@
+import { visibleMessage, transcriptMessages, recordMessages } from "./conversation.mjs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
@@ -92,6 +93,9 @@ export async function runHook(event, runner = runTaskcli) {
                 : "heartbeat";
     const options = { cwd: event.cwd, session: event.session_id };
     await runner(["hook", operation], options);
+    if (event.hook_event_name === "Stop" && event.transcript_path) {
+        await recordMessages(await transcriptMessages(event.transcript_path), runner, options);
+    }
     if (operation === "session-start") {
         const context = await runner(["context"], options);
         return {
@@ -219,6 +223,10 @@ export function registerExtension(
     api.on("agent_end", async (event, ctx) => {
         const state = stateFor(ctx);
         if (!state) return;
+        const messages = (event.messages || []).map(message => visibleMessage(message)).filter(Boolean);
+        if (state.prompt && !messages.some(message => message.role === "user")) messages.unshift(state.prompt);
+        await recordMessages(messages, runner, state.options);
+        state.prompt = undefined;
         const lastAssistant = event.messages?.findLast(message => message.role === "assistant");
         state.aborted = lastAssistant?.stopReason === "aborted" && event.willContinue !== true;
         if (host === "omp" && state.aborted) await release(state, "interrupt");
@@ -231,7 +239,7 @@ export function registerExtension(
             if (state?.aborted && ctx.isIdle()) await release(state, "interrupt");
         });
     }
-    api.on("before_agent_start", async (_event, ctx) => {
+    api.on("before_agent_start", async (event, ctx) => {
         const state = stateFor(ctx);
         if (state) {
             if (state.cleanup) await state.cleanup;
@@ -241,6 +249,7 @@ export function registerExtension(
                 renew(state, ctx);
             }
         }
+        if (state && event.prompt) state.prompt = visibleMessage({role:"user",content:event.prompt,timestamp:Date.now()});
         const result = await runner(["context"], optionsFor(ctx));
         return {
             message: {
@@ -289,6 +298,7 @@ export function registerExtension(
                 "revise",
                 "claim",
                 "claim-next",
+                "set-status",
                 "start",
                 "done",
                 "cancel",
@@ -300,6 +310,9 @@ export function registerExtension(
                 "release",
                 "archive",
                 "unarchive",
+                "submit",
+                "approve",
+                "reject",
                 "delete",
                 "depend",
                 "undepend",

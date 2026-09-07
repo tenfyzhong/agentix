@@ -13,7 +13,7 @@ First decompose the requirement into a Task DAG, create or resolve every node’
 | Hook / Extension | Handle session events, inject task context, renew leases, and handle exits and resumption | Does not decompose work, generate Plans, or automatically call start or done |
 | taskcli / agentix-task | Validate state transitions, ownership, dependencies, revisions, and idempotency; persist changes | Does not judge business correctness or run acceptance commands from a Plan |
 | SQLite | Store Project, Inbox, Job, Task, and Plan metadata, leases, and events | Does not store complete Plan bodies or isolate code workspaces |
-| Markdown / Obsidian files | Store Plans, Goal/Notes, and the human Project Inbox; display generated boards | Only Inbox entries and cancellations are imported; generated Task status edits remain read-only and there is no file watcher |
+| Markdown / Obsidian files | Store Plans, Goal/Notes, and the human Project Inbox; display generated boards | Inbox imports human requests; Taskcli Sync submits supported Obsidian status edits through taskcli |
 
 The Skill defines working instructions, hooks adapt host events, and taskcli provides validated task operations. None replaces the others.
 
@@ -109,12 +109,12 @@ The board still has seven status columns. PLANNING and EXECUTING are phases with
 | claim | Task is claimable; neither the Task nor the executor/session pair has a lease | Enter IN_PROGRESS / PLANNING and obtain a new token; no existing Plan or completed dependencies required |
 | plan create/revise | Hold the Task's valid session/token | Write and register a Plan version without starting execution |
 | start | Be in PLANNING with a valid lease, a nonblank current Plan file, and all dependencies DONE | Enter EXECUTING with the same token; set `started_at` on the first execution start |
-| done | Be in EXECUTING with a valid lease | Enter DONE, clear the phase and lease, and check Job completion |
+| done | Be in EXECUTING with a valid lease | Enter DONE, clear the phase and lease, and check Job readiness for review |
 | block / wait / fail / release | Satisfy the applicable transition rules; supply current ownership when leased | Record the reason and release the lease; release enters BLOCKED |
 
 Validation of `done` establishes that the state and ownership are valid. **It does not prove that acceptance checks passed.** The agent must follow the Skill to check that tests ran and results meet the user's requirements, with user or independent review when needed.
 
-A Job becomes COMPLETED only when it has at least one non-CANCELLED Task and every such Task is DONE. Cancelling every Task does not count as delivery.
+A Job enters PENDING_REVIEW when at least one non-CANCELLED Task exists and every such Task is DONE. A reviewer approves it to COMPLETED or rejects it to ACTIVE, preserving Task outcomes. Cancelling every Task does not count as delivery. See the [Task and Job state machines](task-state-machines.md) for all transitions and guards.
 
 ## 4. How the Skill Works
 
@@ -200,7 +200,7 @@ Pi/OMP reports periodic heartbeat failures and retries on later ticks. Interrupt
 
 taskcli does not depend on the IM bridge process. Attached sessions can use `/inboxes` to browse the Project queue and `/inbox <content>` to append one requirement with durable message deduplication, including on read-only agent attachments. When Agentix task boards are enabled, IM can browse Tasks, and a bound session can use buttons to claim, start, or change state. Agentix validates these actions through the same Service and handles resumption or exit processing from session events.
 
-IM does not create Plans or replace the Skill. Its existing refresh loop also consumes task events and sends waiting-user, blocked, failed, or Job-completion notifications to the corresponding session. This is not a file watcher.
+IM does not create Plans or replace the Skill. Its existing refresh loop also consumes task events and sends waiting-user, blocked, failed, or Job review, rejection, or completion notifications to the corresponding session. This is not a file watcher.
 
 ## 6. Concurrency and Ownership
 
@@ -242,17 +242,17 @@ A Plan that has not yet been created, or a missing Plan file, does not prevent r
 
 This distinction prevents a session restart from being mistaken for confirmation that dependencies and the execution workspace are still safe.
 
-## 8. Why Documents Need No Watcher
+## 8. Documents and the Obsidian Status Bridge
 
-SQLite is authoritative for task status, dependencies, revisions, ownership, and other metadata. Board, Dashboard, and Job task sections are logically read-only views generated from those facts. TaskNotes card edits and Kanban dragging do not feed status changes back into the system.
+SQLite is authoritative for task status, dependencies, revisions, ownership, and other metadata. Board, Dashboard, and Job task sections are logically read-only views generated from those facts. The optional desktop Taskcli Sync plugin listens to saved status edits and submits supported changes through taskcli.
 
 Obsidian uses a native `Dashboard.base` table with clickable Name, Status, and Updated formula columns, filtered to active generated project Boards and sorted by recent activity. Markdown uses a compact `Dashboard.md` table. Board contains project metadata; there is no separate meta note or Project link on Board. Sync safely migrates registered legacy files after publishing replacements. Job task sections render dependency arrows, seven statuses, and task links in Mermaid, without repeating Dependencies prose.
 
-Both output formats generate `Board.md` with an embedded TaskNotes Base. It selects Task notes in the exact project folder by project ID and archived state. Each Task has one file under `Tasks/`, whose frontmatter records status and metadata and whose body contains the Plan. Jobs link these notes directly, so their checklists and authored Plan checklists do not duplicate task cards. Link syntax remains format-specific: wikilinks for Obsidian and relative Markdown links for ordinary directories. Rendering requires TaskNotes and Bases; generating Markdown does not modify vault settings.
+Both output formats generate `Board.md` with a Job Base above a Task Base. Each `tasknotesKanban` view selects its exact project folder, entity tag, project ID, and unarchived notes. Pinned status columns remain visible while unrelated empty statuses are hidden. Each Task has one file under `Tasks/`, whose frontmatter records status and metadata and whose body contains the Plan. Jobs link these notes directly, so their checklists and authored Plan checklists do not duplicate task cards. Link syntax remains format-specific: wikilinks for Obsidian and relative Markdown links for ordinary directories. Rendering requires TaskNotes and Bases; generating Markdown does not modify vault settings.
 
 Obsidian with both plugins enabled is the recommended viewing environment; use `--format obsidian` when initializing against a vault. Plain Markdown mode remains available for CLI-only workflows and other editors. This recommendation changes neither SQLite ownership rules nor the requirement to route task-state changes through taskcli or Agentix.
 
-TaskNotes controls remain editable. Dragging cards or using card menus may change the projected Markdown until the next sync. Those edits cannot obtain a lease or change SQLite task state. This is a logical read-only boundary, not a complete UI or filesystem lock, and still needs no watcher.
+Taskcli Sync debounces saved status changes, verifies the registered note identity and revision, and serializes CLI writes with idempotency keys. It never obtains or borrows leases. Unsupported transitions and ownership conflicts restore authoritative properties and show a Notice. Startup drift is reconciled without replaying offline edits. See the [supported status edits](../plugins/agent-task-manager/obsidian/README.md#status-edits).
 
 Plan bodies live in the Task notes, alongside frontmatter properties. Projection preserves editable Goal/Notes sections, while an explicit `job update --goal` replaces the Goal. Agents must publish Plans through `plan create/revise`, not overwrite registered files directly.
 
@@ -262,7 +262,7 @@ Plan bodies live in the Task notes, alongside frontmatter properties. Projection
 
 Task-state writes normally commit to the database before updating projections. A projection failure returns `projection_pending`, meaning the state change succeeded and `sync` should repair the view; do not recreate the Task. Plan publication validates and writes the file before registering metadata transactionally. The filesystem and SQLite do not share one atomic transaction, so an interruption can leave an unregistered file. The implementation checks existing content at that path instead of blindly overwriting it.
 
-Manual board edits are never imported into SQLite and are overwritten by the next projection. Manual Plan-body edits can refresh hashes through `sync` or `plan show`, but this provides no concurrent ownership protection and is not an agent collaboration workflow.
+Edits to generated Base definitions and other managed metadata are overwritten by projection. Without Taskcli Sync, saved status edits also remain local until projection restores them. Manual Plan-body edits can refresh hashes through `sync` or `plan show`, but this provides no concurrent ownership protection and is not an agent collaboration workflow.
 
 ## 9. Extending the System for Agent Teams
 

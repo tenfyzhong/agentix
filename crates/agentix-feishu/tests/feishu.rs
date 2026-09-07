@@ -1273,3 +1273,40 @@ async fn wait_for_feishu_message_request(server: &MockFeishuApi) {
     .await
     .unwrap();
 }
+
+#[tokio::test]
+async fn feishu_reads_edited_inbox_source_with_sender_and_revision() {
+    let server = support::MockFeishuApi::start().await;
+    server.set_message("om_inbox", serde_json::json!({
+        "message_id":"om_inbox", "chat_id":"oc_test", "updated":true, "msg_type":"text", "update_time":"1788566500123",
+        "sender":{"id":"ou_owner","id_type":"open_id","sender_type":"user"},
+        "body":{"content":"{\"text\":\"/inbox Revised\"}"}
+    })).await;
+    let adapter = FeishuAdapter::with_client(
+        LarkClient::builder("mock-app", "mock-secret")
+            .base_url(server.base_url())
+            .max_retries(1)
+            .build()
+            .unwrap(),
+        ["ou_owner"],
+    );
+    let reference = MessageRef::new(
+        ConversationRef::new(ChannelKind::Feishu, "oc_test"),
+        "om_inbox",
+    );
+    let edit = adapter
+        .read_inbox_message(&reference)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(edit.owner_id, "ou_owner");
+    assert_eq!(
+        serde_json::to_value(edit.payload).unwrap(),
+        serde_json::json!({"TextEdited":{"original_event_id":"om_inbox","version":1_788_566_500_123_i64,"text":"/inbox Revised"}})
+    );
+    let forged = MessageRef::new(
+        ConversationRef::new(ChannelKind::Feishu, "wrong-chat"),
+        "om_inbox",
+    );
+    assert!(adapter.read_inbox_message(&forged).await.unwrap().is_none());
+}

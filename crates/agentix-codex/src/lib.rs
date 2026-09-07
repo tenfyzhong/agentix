@@ -10,6 +10,8 @@ mod multiplexer;
 #[cfg(unix)]
 mod process;
 mod protocol;
+#[cfg(unix)]
+mod quota;
 
 #[cfg(unix)]
 pub use client::CodexClient;

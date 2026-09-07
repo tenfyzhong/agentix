@@ -38,13 +38,156 @@ impl Service {
         &self.store
     }
 
+    /// One registered note, using indexed entity reads instead of a snapshot.
+    pub async fn obsidian_note(&self, id: &str) -> Result<Value> {
+        ensure!(
+            self.config.documents.format == DocumentFormat::Obsidian,
+            "Obsidian queries require documents.format = obsidian"
+        );
+        let Some((entity, project_key)) = self.store.obsidian_record(id).await? else {
+            return Ok(Value::Null);
+        };
+        let kind = id.split_once('_').context("invalid ID")?.0;
+        let relative = match kind {
+            "task" => {
+                let filename = crate::naming::numbered_name(
+                    entity["name"].as_str().context("missing task name")?,
+                    entity["created_at"]
+                        .as_i64()
+                        .context("missing task creation date")?,
+                    entity["sequence"]
+                        .as_u64()
+                        .context("missing task sequence")?,
+                )?;
+                format!("Projects/{project_key}/Tasks/{filename}.md")
+            }
+            "job" => entity["document_path"]
+                .as_str()
+                .context("missing job path")?
+                .to_owned(),
+            _ => format!("Projects/{project_key}/Inbox.md"),
+        };
+        self.safe_path(&relative)?;
+        let path = self
+            .config
+            .documents
+            .directory
+            .join(relative)
+            .to_string_lossy()
+            .replace('\\', "/")
+            .trim_start_matches("./")
+            .to_owned();
+        let mut properties = json!({"status":entity["status"], "revision":entity["revision"]});
+        if kind == "task" {
+            for key in ["phase", "dependencies"] {
+                properties[key] = entity[key].clone();
+            }
+        } else if kind == "job" {
+            properties["review_reason"] = entity["review_reason"].clone();
+        }
+        if kind != "inbox" {
+            for key in ["created_at", "updated_at", "completed_at"] {
+                properties[key] = optional_local_timestamp(entity[key].as_i64())?;
+            }
+            for key in if kind == "task" {
+                &["started_at"][..]
+            } else {
+                &["cancelled_at", "pending_review_at"][..]
+            } {
+                properties[*key] = optional_local_timestamp(entity[*key].as_i64())?;
+            }
+        }
+        Ok(
+            json!({"kind":kind,"id":entity["id"],"project_id":entity["project_id"],
+            "path":path,"status":entity["status"],"revision":entity["revision"],"properties":properties}),
+        )
+    }
+
+    /// Authoritative identities and status properties for the Obsidian bridge.
+    /// Paths are relative to the vault; no ownership credentials are exported.
+    pub async fn obsidian_snapshot(&self) -> Result<Value> {
+        ensure!(
+            self.config.documents.format == DocumentFormat::Obsidian,
+            "Obsidian snapshot requires documents.format = obsidian"
+        );
+        let state = self.store.snapshot().await?;
+        let mut notes = Vec::new();
+        let path = |relative: &str| -> Result<String> {
+            self.safe_path(relative)?;
+            Ok(self
+                .config
+                .documents
+                .directory
+                .join(relative)
+                .to_string_lossy()
+                .replace('\\', "/")
+                .trim_start_matches("./")
+                .to_owned())
+        };
+        for task in &state.tasks {
+            let document = self.task_document(&state, task, None, "")?;
+            let (generated, _) = split_properties(&document)?;
+            let mut properties = serde_json::Map::new();
+            for key in [
+                "status",
+                "revision",
+                "phase",
+                "dependencies",
+                "created_at",
+                "started_at",
+                "completed_at",
+                "updated_at",
+            ] {
+                properties.insert(key.into(), generated[key].clone());
+            }
+            notes.push(
+                json!({"kind":"task","id":task.id,"project_id":task.project_id,
+                "path":path(&crate::naming::task_path(&state, task)?)?,
+                "status":task.status,"revision":task.revision,"properties":properties}),
+            );
+        }
+        for job in &state.jobs {
+            notes.push(json!({"kind":"job","id":job.id,"project_id":job.project_id,
+                "path":path(&job.document_path)?,"status":job.status,"revision":job.revision,
+                "properties":{"status":job.status,"revision":job.revision,
+                    "review_reason":job.review_reason,"completed_at":optional_local_timestamp(job.completed_at)?,
+                    "cancelled_at":optional_local_timestamp(job.cancelled_at)?,
+                    "created_at":local_timestamp(job.created_at)?,
+                    "updated_at":local_timestamp(job.updated_at)?,
+                    "pending_review_at":optional_local_timestamp(job.pending_review_at)?}}));
+        }
+        for entry in state
+            .inboxes
+            .iter()
+            .filter(|entry| entry.published && !entry.deleted)
+        {
+            let project = &state.projects[state.project_index(&entry.project_id)?];
+            notes.push(
+                json!({"kind":"inbox","id":entry.id,"project_id":entry.project_id,
+                "path":path(&format!("Projects/{}/Inbox.md", project.key))?,
+                "status":entry.status,"revision":entry.revision,
+                "properties":{"status":entry.status,"revision":entry.revision}}),
+            );
+        }
+        Ok(json!({"documents":self.config.documents,"notes":notes}))
+    }
+
     pub async fn execute(&self, request: Value, options: WriteOptions) -> Result<Outcome> {
         self.store.reap_expired().await?;
         let command = required(&request, "command")?;
         if matches!(command, "plan.create" | "plan.revise") {
             return self.write_plan(request, options).await;
         }
-        let state = self.store.snapshot().await?;
+        if let Some(mut outcome) = self.store.replay(&request, &options).await? {
+            let deferred = (command == "inbox.set-status")
+                .then(|| outcome.result["id"].as_str())
+                .flatten();
+            if let Err(error) = self.sync_pending(deferred).await {
+                outcome.projection_pending = Some(error.to_string());
+            }
+            return Ok(outcome);
+        }
+        let state = self.store.request_snapshot(&request).await?;
         let projects = crate::inbox_document::request_projects(&state, &request);
         let needs_inbox = command.starts_with("inbox.")
             || state
@@ -62,11 +205,25 @@ impl Service {
             && !matches!(command, "project.delete" | "job.delete")
             && self.store.replay(&request, &options).await?.is_none()
         {
-            self.reconcile_inboxes_locked(Some(&projects)).await?;
+            // The explicit status command owns this entry's checkbox intent.
+            // Still import content, order, withdrawals and other cancellations.
+            let deferred = if command == "inbox.set-status" {
+                Some(
+                    state.inboxes[crate::inbox::index(&state, required(&request, "inbox")?)?]
+                        .id
+                        .as_str(),
+                )
+            } else {
+                None
+            };
+            // Publishing the old checkbox here would look like a second edit
+            // to the Obsidian listener while its status command is in flight.
+            self.reconcile_inboxes_locked(Some(&projects), deferred, deferred.is_none())
+                .await?;
         }
         // Replays must remain valid even if the Plan file subsequently disappears.
         if command == "task.start" && self.store.replay(&request, &options).await?.is_none() {
-            let state = self.store.snapshot().await?;
+            let state = self.store.request_snapshot(&request).await?;
             let mut preview = state.clone();
             crate::mutations::apply(&mut preview, &request, &options, self.store.now())?;
             let task = &state.tasks[state.task_index(required(&request, "task")?)?];
@@ -85,9 +242,15 @@ impl Service {
                 "invalid: current Plan is empty"
             );
         }
+        let inbox_status = command == "inbox.set-status";
         let mut outcome = self.store.execute(request, options).await?;
         drop(lock);
-        if let Err(error) = self.sync().await {
+        // A reopened entry still has its old [-] on disk until projection.
+        // Do not import that stale mark as a new cancellation of this write.
+        let deferred = inbox_status
+            .then(|| outcome.result["id"].as_str())
+            .flatten();
+        if let Err(error) = self.sync_pending(deferred).await {
             outcome.projection_pending = Some(error.to_string());
         }
         Ok(outcome)
@@ -111,10 +274,75 @@ impl Service {
     }
 
     pub async fn sync(&self) -> Result<()> {
+        self.sync_with_deferred_status(None).await
+    }
+
+    pub async fn sync_pending_documents(&self) -> Result<()> {
+        self.sync_pending(None).await
+    }
+
+    async fn sync_with_deferred_status(&self, deferred: Option<&str>) -> Result<()> {
         let _lock = self.lock_output().await?;
-        self.reconcile_inboxes_locked(None).await?;
+        self.reconcile_inboxes_locked(None, deferred, true).await?;
         self.store.reap_expired().await?;
         self.render_locked().await
+    }
+
+    async fn sync_pending(&self, deferred: Option<&str>) -> Result<()> {
+        let _lock = self.lock_output().await?;
+        self.cleanup_deleted_documents().await?;
+        if self.store.rebuild_pending().await? {
+            self.reconcile_inboxes_locked(None, deferred, true).await?;
+            return self.render_locked().await;
+        }
+        let mut error = None;
+        let mut failed_inboxes = BTreeSet::new();
+        for project in self.store.pending_inboxes().await? {
+            if let Err(failure) = self
+                .reconcile_inboxes_locked(Some(&BTreeSet::from([project.clone()])), deferred, true)
+                .await
+            {
+                failed_inboxes.insert(format!("inbox:{project}"));
+                error.get_or_insert(failure);
+            }
+        }
+        // Capture generations after import. Bound queue memory and try each
+        // document once; concurrent later generations remain durable for retry.
+        let mut cursor = String::new();
+        loop {
+            let pending = self.store.pending_batch(&cursor).await?;
+            if pending.is_empty() {
+                break;
+            }
+            for (key, generation) in pending {
+                cursor.clone_from(&key);
+                if failed_inboxes.contains(&key) {
+                    continue;
+                }
+                if let Err(failure) = self.render_pending_document(&key, generation).await {
+                    error.get_or_insert(failure);
+                }
+            }
+        }
+        error.map_or(Ok(()), Err)
+    }
+
+    async fn render_pending_document(&self, key: &str, generation: String) -> Result<()> {
+        let mut state = self.store.projection_snapshot(key).await?;
+        // Inbox publication acknowledges its own pre-render generation. A new
+        // generation arriving after that pass must wait for its next import.
+        if key.starts_with("inbox:") && !state.projects.is_empty() {
+            return Ok(());
+        }
+        if key == "dashboard" && self.config.documents.format == DocumentFormat::Markdown {
+            state.projects = self.store.projects().await?;
+        }
+        self.render_state_locked(
+            &state,
+            Some(key),
+            &BTreeMap::from([(key.to_owned(), generation)]),
+        )
+        .await
     }
 
     async fn write_plan(&self, request: Value, options: WriteOptions) -> Result<Outcome> {
@@ -123,7 +351,9 @@ impl Service {
             // An old successful request may predate the readable-path migration.
             if let Some(plan) = self
                 .store
-                .snapshot()
+                .request_snapshot(
+                    &json!({"command":"plan.revise","task":outcome.result["task_id"]}),
+                )
                 .await?
                 .plans
                 .iter()
@@ -134,15 +364,16 @@ impl Service {
             outcome.result["absolute_path"] =
                 json!(self.safe_path(required(&outcome.result, "path")?)?);
             drop(lock);
-            if let Err(error) = self.sync().await {
+            if let Err(error) = self.sync_pending(None).await {
                 outcome.projection_pending = Some(error.to_string());
             }
             return Ok(outcome);
         }
-        let state = self.store.snapshot().await?;
+        let state = self.store.request_snapshot(&request).await?;
         let projects = crate::inbox_document::request_projects(&state, &request);
-        self.reconcile_inboxes_locked(Some(&projects)).await?;
-        let state = self.store.snapshot().await?;
+        self.reconcile_inboxes_locked(Some(&projects), None, true)
+            .await?;
+        let state = self.store.request_snapshot(&request).await?;
         let task = &state.tasks[state.task_index(required(&request, "task")?)?];
         let command = required(&request, "command")?;
         ensure!(
@@ -200,7 +431,7 @@ impl Service {
             .await?;
         outcome.result["absolute_path"] = json!(path);
         drop(lock);
-        if let Err(error) = self.sync().await {
+        if let Err(error) = self.sync_pending(None).await {
             outcome.projection_pending = Some(error.to_string());
         }
         Ok(outcome)
@@ -245,8 +476,9 @@ impl Service {
         let goal = section(&document, "goal")?.unwrap_or_else(|| job.goal.clone());
         let notes = section(&document, "notes")?.unwrap_or_default();
         Ok(format!(
-            "{}## Goal\n\n{goal}\n\n## Notes\n\n{notes}",
-            prompt_markdown(&job.prompt)
+            "{}{}## Goal\n\n{goal}\n\n## Notes\n\n{notes}",
+            prompt_markdown(&job.prompt),
+            conversation_markdown(job)
         ))
     }
 
@@ -269,15 +501,36 @@ impl Service {
     #[allow(clippy::too_many_lines)]
     async fn render_locked(&self) -> Result<()> {
         self.cleanup_deleted_documents().await?;
+        let mut pending = self.store.pending_documents().await?;
+        let state = self.store.snapshot().await?;
+        pending.retain(|key, _| {
+            key.strip_prefix("inbox:")
+                .is_none_or(|id| !state.projects.iter().any(|p| p.id == id))
+        });
+        self.render_state_locked(&state, None, &pending).await
+    }
+
+    #[allow(clippy::too_many_lines)]
+    async fn render_state_locked(
+        &self,
+        state: &Snapshot,
+        selected: Option<&str>,
+        pending: &BTreeMap<String, String>,
+    ) -> Result<()> {
         // Mark only the snapshot's sequence as rendered, even if writers commit during IO.
         let sequence = self.store.latest_sequence().await?;
-        let state = self.store.snapshot().await?;
-        let previous = self
-            .store
-            .metadata("documents")
-            .await?
-            .unwrap_or_else(|| json!({}));
-        let previous: BTreeMap<String, String> = serde_json::from_value(previous)?;
+        let selected_keys = selected.map(|key| {
+            let mut keys = BTreeSet::from([key.to_owned()]);
+            if key == "dashboard" && self.config.documents.format == DocumentFormat::Obsidian {
+                keys.insert("pending-review".into());
+            }
+            if key.starts_with("task:") {
+                keys.extend(state.plans.iter().map(|p| format!("plan:{}", p.id)));
+            }
+            keys
+        });
+        let previous = self.store.document_paths(selected_keys.as_ref()).await?;
+        let includes = |key: &str| selected.is_none_or(|selected| selected == key);
         let mut paths = BTreeMap::new();
         let mut files = BTreeMap::new();
         let created = state
@@ -286,16 +539,21 @@ impl Service {
             .map(|p| p.created_at)
             .min()
             .unwrap_or(self.store.now());
-        let (dashboard_path, dashboard) = self.dashboard(&state, created)?;
         for project in &state.projects {
             let board_path = format!("Projects/{}/Board.md", project.key);
-            files.insert(
-                board_path.clone(),
-                self.tasknotes_board(project, sequence, project_activity(&state, project))?,
-            );
-            paths.insert(format!("board:{}", project.id), board_path.clone());
+            if includes(&format!("board:{}", project.id)) {
+                let (project_sequence, activity) = self.store.project_receipt(project).await?;
+                files.insert(
+                    board_path.clone(),
+                    self.tasknotes_board(project, project_sequence, activity)?,
+                );
+                paths.insert(format!("board:{}", project.id), board_path.clone());
+            }
             for job in state.jobs.iter().filter(|j| j.project_id == project.id) {
                 let key = format!("job:{}", job.id);
+                if !includes(&key) {
+                    continue;
+                }
                 let previous_path = previous.get(&key).unwrap_or(&job.document_path);
                 let source = self.safe_path(previous_path)?;
                 let source = if source.exists() {
@@ -320,37 +578,32 @@ impl Service {
                 } else {
                     goal
                 };
-                let mut properties = serde_json::to_value(job)?;
-                for field in [
-                    "created_at",
-                    "updated_at",
-                    "started_at",
-                    "completed_at",
-                    "cancelled_at",
-                    "archived_at",
-                ] {
-                    properties[field] = properties[field].as_i64().map_or(Value::Null, timestamp);
-                }
-                properties["tags"] = if job.archived_at.is_some() {
-                    json!(["agent/archived/job"])
-                } else {
-                    json!(["agent/job"])
-                };
-                for field in ["goal", "prompt", "document_path", "title", "name"] {
+                let mut properties = split_properties(&existing)?.0;
+                properties.as_object_mut().unwrap().extend(
+                    self.job_properties(job, project)?
+                        .as_object()
+                        .unwrap()
+                        .clone(),
+                );
+                for field in ["goal", "prompt", "conversation", "document_path", "name"] {
                     properties.as_object_mut().unwrap().remove(field);
+                }
+                if self.config.documents.format == DocumentFormat::Markdown {
+                    properties.as_object_mut().unwrap().remove("title");
                 }
                 let mut doc = frontmatter(properties);
                 doc.push_str(&Self::header(&job.name));
                 doc.push_str(&prompt_markdown(&job.prompt));
+                doc.push_str(&conversation_markdown(job));
                 doc.push_str(&format!("\n## {}\n\n<!-- taskcli:goal:start -->\n{}\n<!-- taskcli:goal:end -->\n\n## {}\n", "Goal", goal, "Tasks"));
-                doc.push_str(&job_dependency_graph(self, &state, &job.id)?);
+                doc.push_str(&job_dependency_graph(self, state, &job.id)?);
                 for task in state.tasks.iter().filter(|t| t.job_id == job.id) {
                     if self.config.documents.format == DocumentFormat::Markdown {
                         doc.push_str(&format!("\n<a id=\"{}\"></a>\n", task.id.replace('_', "-")));
                     }
                     doc.push_str(&format!(
                         "\n{}\n",
-                        self.task_line(&state, task, &job.document_path)?
+                        self.task_line(state, task, &job.document_path)?
                     ));
                     if self.config.documents.format == DocumentFormat::Obsidian {
                         doc.push_str(&format!("\n^{}\n", task.id.replace('_', "-")));
@@ -365,11 +618,14 @@ impl Service {
             }
         }
         for task in &state.tasks {
+            if !includes(&format!("task:{}", task.id)) {
+                continue;
+            }
             let plan = state
                 .plans
                 .iter()
                 .find(|p| Some(&p.id) == task.current_plan.as_ref());
-            let path = crate::naming::task_path(&state, task)?;
+            let path = crate::naming::task_path(state, task)?;
             let key = format!("task:{}", task.id);
             let candidates = [
                 previous.get(&key),
@@ -393,15 +649,36 @@ impl Service {
                 );
                 String::new()
             };
-            let doc = self.task_document(&state, task, plan, &existing)?;
+            let doc = self.task_document(state, task, plan, &existing)?;
             files.insert(path.clone(), doc);
             paths.insert(key, path.clone());
             if let Some(plan) = plan {
                 paths.insert(format!("plan:{}", plan.id), path);
             }
         }
-        files.insert(dashboard_path.clone(), dashboard);
-        paths.insert("dashboard".into(), dashboard_path);
+        // Bases query vault notes dynamically. Preserve registered view settings
+        // during incremental publication, even when Obsidian removed comments.
+        let preserve_base = |key: &str, path: &str| -> Result<bool> {
+            Ok(selected.is_some()
+                && self.config.documents.format == DocumentFormat::Obsidian
+                && previous.get(key).is_some_and(|old| old == path)
+                && self.safe_path(path)?.is_file())
+        };
+        if includes("dashboard") && preserve_base("dashboard", "Dashboard.base")? {
+            paths.insert("dashboard".into(), "Dashboard.base".into());
+        } else if includes("dashboard") {
+            let (dashboard_path, dashboard) = self.dashboard(state, created).await?;
+            files.insert(dashboard_path.clone(), dashboard);
+            paths.insert("dashboard".into(), dashboard_path);
+        }
+        if self.config.documents.format == DocumentFormat::Obsidian
+            && (includes("pending-review") || includes("dashboard"))
+        {
+            if !preserve_base("pending-review", "Recent Jobs.base")? {
+                files.insert("Recent Jobs.base".into(), self.recent_jobs_base()?);
+            }
+            paths.insert("pending-review".into(), "Recent Jobs.base".into());
+        }
         // Check all new destinations before publishing any file. Existing managed
         // paths can be regenerated; new paths must not clobber unrelated notes.
         for (relative, contents) in &files {
@@ -410,6 +687,8 @@ impl Service {
                 let existing = std::fs::read_to_string(&path)?;
                 let owned = if relative == "Dashboard.base" {
                     existing.starts_with("# taskcli-generated: dashboard\n")
+                } else if relative == "Recent Jobs.base" {
+                    existing.starts_with("# taskcli-generated: pending-review\n")
                 } else {
                     let (old, _) = split_properties(&existing)?;
                     let (new, _) = split_properties(contents)?;
@@ -442,6 +721,9 @@ impl Service {
             }
         }
         for plan in &state.plans {
+            if !paths.contains_key(&format!("plan:{}", plan.id)) {
+                continue;
+            }
             let bytes = std::fs::read(self.safe_path(&plan.path)?)
                 .with_context(|| format!("missing Plan {}", plan.path))?;
             self.store
@@ -449,15 +731,20 @@ impl Service {
                 .await?;
         }
         for job in &state.jobs {
+            if !paths.contains_key(&format!("job:{}", job.id)) {
+                continue;
+            }
             self.store
                 .set_metadata(&format!("goal:{}", job.id), &json!(job.goal))
                 .await?;
         }
+        let removed = previous
+            .keys()
+            .filter(|key| !paths.contains_key(*key))
+            .cloned()
+            .collect();
         self.store
-            .set_metadata("documents", &serde_json::to_value(paths)?)
-            .await?;
-        self.store
-            .set_metadata("sequence", &json!(sequence))
+            .acknowledge_documents(pending, &paths, &removed, sequence)
             .await?;
         Ok(())
     }
@@ -547,10 +834,34 @@ impl Service {
     }
 
     fn notice() -> &'static str {
-        "> GENERATED — DO NOT EDIT task fields. Use taskcli or an Agent."
+        "> GENERATED — Use taskcli for managed fields; Obsidian status edits require Taskcli Sync."
     }
 
-    fn dashboard(&self, state: &Snapshot, created: i64) -> Result<(String, String)> {
+    fn recent_jobs_base(&self) -> Result<String> {
+        let folder = self.config.documents.directory.join("Projects");
+        let folder = folder.to_string_lossy().replace('\\', "/");
+        let base = json!({
+            "filters":{"and":[
+                format!("file.inFolder({})", json!(folder.trim_start_matches("./"))),
+                "file.ext == \"md\"", "note[\"taskcli-generated\"] == true",
+                "file.hasTag(\"agent/job\")", "archived != true"
+            ]},
+            "formulas":{"name":"link(file.path, note.name)", "review_time":REVIEW_TIME_FORMULA, "updated":"date(note.updated_at).format(\"YYYY-MM-DD HH:mm:ss\")"},
+            "properties":{
+                "formula.name":{"displayName":"Job"},
+                "formula.updated":{"displayName":"Updated"},
+                "projects":{"displayName":"Project"},
+                "formula.review_time":{"displayName":"Pending review since"}
+            },
+            "views": recent_jobs_views()
+        });
+        Ok(format!(
+            "# taskcli-generated: pending-review\n{}",
+            serde_yaml::to_string(&base)?
+        ))
+    }
+
+    async fn dashboard(&self, state: &Snapshot, created: i64) -> Result<(String, String)> {
         if self.config.documents.format == DocumentFormat::Obsidian {
             let folder = self.config.documents.directory.join("Projects");
             let folder = folder.to_string_lossy().replace('\\', "/");
@@ -558,24 +869,25 @@ impl Service {
             let base = json!({
                 "filters": {"and": [
                     format!("file.inFolder({})", json!(folder)),
-                    "file.name == \"Board\"", "file.ext == \"md\"",
-                    "file.hasTag(\"agent/project\")",
-                    "note[\"taskcli-generated\"] == true", "note.status == \"ACTIVE\""
+                    "file.ext == \"md\"", "note[\"taskcli-generated\"] == true"
                 ]},
                 "formulas": {
                     "name": "link(file.path, note.name)",
-                    "status": "note.status", "updated": "date(note.updated_at)"
+                    "status": "note.status", "updated": "date(note.updated_at)",
+                    "review_time": REVIEW_TIME_FORMULA
                 },
                 "properties": {
                     "formula.name": {"displayName":"Name"},
                     "formula.status": {"displayName":"Status"},
-                    "formula.updated": {"displayName":"Updated"}
+                    "formula.updated": {"displayName":"Updated"},
+                    "formula.review_time": {"displayName":"Pending review since"}
                 },
                 "views": [{
                     "type":"table", "name":"Projects",
+                    "filters":{"and":["file.name == \"Board\"", "file.hasTag(\"agent/project\")", "note.status == \"ACTIVE\""]},
                     "order":["formula.name", "formula.status", "formula.updated"],
                     "sort":[{"column":"formula.updated","direction":"DESC"}, {"column":"formula.name","direction":"ASC"}]
-                }]
+                }, pending_review_view()]
             });
             return Ok((
                 "Dashboard.base".into(),
@@ -595,18 +907,54 @@ impl Service {
             .iter()
             .filter(|p| p.archived_at.is_none())
             .collect();
-        projects.sort_by_key(|p| (std::cmp::Reverse(project_activity(state, p)), &p.name));
+        let mut activity = BTreeMap::new();
+        for project in &projects {
+            activity.insert(&project.id, self.store.project_receipt(project).await?.1);
+        }
+        projects.sort_by_key(|p| (std::cmp::Reverse(activity[&p.id]), &p.name));
         for project in projects {
             let board = format!("Projects/{}/Board.md", project.key);
             doc.push_str(&format!(
                 "| {} | ACTIVE | {} |\n",
                 self.link("Dashboard.md", &board, None, &project.name),
-                timestamp(project_activity(state, project))
+                timestamp(activity[&project.id])
                     .as_str()
                     .unwrap_or_default()
             ));
         }
         Ok(("Dashboard.md".into(), doc))
+    }
+
+    fn job_properties(&self, job: &crate::Job, project: &crate::Project) -> Result<Value> {
+        let mut properties = serde_json::to_value(job)?;
+        for field in [
+            "created_at",
+            "updated_at",
+            "started_at",
+            "pending_review_at",
+            "completed_at",
+            "cancelled_at",
+            "archived_at",
+        ] {
+            properties[field] = optional_local_timestamp(properties[field].as_i64())?;
+        }
+        properties["tags"] = if job.archived_at.is_some() {
+            json!(["agent/archived/job"])
+        } else {
+            json!(["agent/job"])
+        };
+        if self.config.documents.format == DocumentFormat::Obsidian {
+            properties["title"] = json!(job.name);
+            properties["projects"] = json!([self.link(
+                &job.document_path,
+                &format!("Projects/{}/Board.md", project.key),
+                None,
+                &project.name,
+            )]);
+            properties["archived"] =
+                json!(job.archived_at.is_some() || project.archived_at.is_some());
+        }
+        Ok(properties)
     }
 
     fn tasknotes_board(
@@ -615,28 +963,7 @@ impl Service {
         sequence: i64,
         updated_at: i64,
     ) -> Result<String> {
-        let title = format!("{} — Task board", project.name);
-        let folder = self
-            .config
-            .documents
-            .directory
-            .join(format!("Projects/{}/Tasks", project.key));
-        let folder = folder.to_string_lossy().replace('\\', "/");
-        let folder = folder.trim_start_matches("./");
-        let mut view = json!({
-            "type": "tasknotesKanban",
-            "name": "Task board",
-            "groupBy": {"property":"status", "direction":"ASC"},
-            "order": ["status"],
-            "sort": [{"column":"file.name", "direction":"ASC"}]
-        });
-        view["columnOrder"] = json!({"status":TaskStatus::ALL});
-        view["hideEmptyColumns"] = json!(false);
-        view["columnWidth"] = json!(300);
-        let base = json!({
-            "filters": {"and": [format!("file.folder == {}", json!(folder)), "file.hasTag(\"agent/task\")", format!("project_id == {}", json!(project.id)), "archived != true"]},
-            "views": [view]
-        });
+        let title = format!("{} — Board", project.name);
         let mut doc = frontmatter(
             json!({"id":project.id,"name":project.name,"created_at":timestamp(project.created_at),"updated_at":timestamp(updated_at),"title":title,"revision":project.revision,"root":project.root,"remote":project.remote,"archived_at":optional_timestamp(project.archived_at),"status":if project.archived_at.is_some() {"ARCHIVED"} else {"ACTIVE"},"sync_status":"synced","sync_sequence":sequence,"tags":["agent/project","agent/board"]}),
         );
@@ -650,10 +977,32 @@ impl Service {
                 "Inbox"
             )
         ));
-        doc.push_str(&format!(
-            "\n```base\n{}\n```\n",
-            serde_yaml::to_string(&base)?.trim_end()
-        ));
+        for (kind, folder, statuses) in [
+            ("Job", "Jobs", json!(crate::JobStatus::ALL)),
+            ("Task", "Tasks", json!(TaskStatus::ALL)),
+        ] {
+            let folder = self
+                .config
+                .documents
+                .directory
+                .join(format!("Projects/{}/{folder}", project.key));
+            let folder = folder.to_string_lossy().replace('\\', "/");
+            let folder = folder.trim_start_matches("./");
+            let base = json!({
+                "filters": {"and": [format!("file.folder == {}", json!(folder)), format!("file.hasTag(\"agent/{}\")", kind.to_lowercase()), format!("project_id == {}", json!(project.id)), "archived != true"]},
+                "views": [{
+                    "type": "tasknotesKanban", "name": format!("{kind} board"),
+                    "groupBy": {"property": "status", "direction": "ASC"},
+                    "order": ["status"], "sort": [{"column": "updated_at", "direction": "ASC"}, {"column": "file.name", "direction": "ASC"}],
+                    "columnOrder": {"status": statuses}, "pinnedColumns": statuses,
+                    "hideEmptyColumns": true, "columnWidth": 300
+                }]
+            });
+            doc.push_str(&format!(
+                "\n## {kind} board\n\n```base\n{}\n```\n",
+                serde_yaml::to_string(&base)?.trim_end()
+            ));
+        }
         Ok(doc)
     }
 
@@ -700,7 +1049,6 @@ impl Service {
             "status":task.status,"phase":task.phase,"archived":job.archived_at.is_some() || project.archived_at.is_some(),
             "created_at":local_timestamp(task.created_at)?,"updated_at":local_timestamp(task.updated_at)?,
             "started_at":optional_local_timestamp(task.started_at)?,"completed_at":optional_local_timestamp(task.completed_at)?,
-            "dateCreated":local_timestamp(task.created_at)?,"dateModified":local_timestamp(task.updated_at)?,"completedDate":optional_local_timestamp(task.completed_at)?,
             "projects":[wiki(&format!("Projects/{}/Board.md",project.key))],"job":wiki(&job.document_path)
         });
         authored.as_object_mut().unwrap().remove("version");
@@ -814,30 +1162,12 @@ fn timestamp(value: i64) -> Value {
 }
 
 // Project activity must not change merely because projections were synchronized.
-fn project_activity(state: &Snapshot, project: &crate::Project) -> i64 {
-    state
-        .jobs
-        .iter()
-        .filter(|job| job.project_id == project.id)
-        .map(|job| job.updated_at)
-        .chain(
-            state
-                .tasks
-                .iter()
-                .filter(|task| task.project_id == project.id)
-                .map(|task| task.updated_at),
-        )
-        .chain(project.archived_at)
-        .chain(std::iter::once(project.created_at))
-        .max()
-        .unwrap_or(project.created_at)
-}
-
 fn optional_timestamp(value: Option<i64>) -> Value {
     value.map_or(Value::Null, timestamp)
 }
 
 fn frontmatter(mut properties: Value) -> String {
+    normalize_timestamp_properties(&mut properties);
     properties["taskcli-generated"] = json!(true);
     let mut result = String::from("---\n");
     for (key, value) in properties.as_object().unwrap() {
@@ -854,6 +1184,35 @@ fn frontmatter(mut properties: Value) -> String {
     }
     result.push_str("---\n\n");
     result
+}
+
+fn normalize_timestamp_properties(properties: &mut Value) -> bool {
+    let object = properties.as_object_mut().unwrap();
+    let mut changed = false;
+    for (old, canonical) in [
+        ("dateCreated", "created_at"),
+        ("created", "created_at"),
+        ("dateModified", "updated_at"),
+        ("updated", "updated_at"),
+        ("completedDate", "completed_at"),
+    ] {
+        if let Some(value) = object.remove(old) {
+            object.entry(canonical).or_insert(value);
+            changed = true;
+        }
+    }
+    changed
+}
+
+pub(crate) fn normalize_document_timestamps(source: &str) -> Result<String> {
+    let (mut properties, body) = split_properties(source)?;
+    if !normalize_timestamp_properties(&mut properties) {
+        return Ok(source.to_owned());
+    }
+    Ok(format!(
+        "{}\n{body}",
+        frontmatter(properties).trim_end_matches('\n')
+    ))
 }
 
 fn split_properties(body: &str) -> Result<(Value, &str)> {
@@ -1024,6 +1383,7 @@ fn encode(text: &str) -> String {
     result
 }
 fn prompt_markdown(prompt: &str) -> String {
+    let prompt = crate::conversation::user_text(prompt);
     if prompt.is_empty() {
         return String::new();
     }
@@ -1086,4 +1446,84 @@ pub(crate) fn atomic_write(path: &Path, body: &str) -> Result<()> {
     file.as_file().sync_all()?;
     file.persist(path).map_err(|e| e.error)?;
     Ok(())
+}
+
+const REVIEW_TIME_FORMULA: &str = "if(note.pending_review_at, date(note.pending_review_at).format(\"YYYY-MM-DD HH:mm:ss\"), \"\")";
+
+fn recent_jobs_views() -> Vec<Value> {
+    let statuses = ["ACTIVE", "PENDING_REVIEW", "COMPLETED", "CANCELLED"];
+    let sort = json!([
+        {"column":"updated_at","direction":"DESC"},
+        {"column":"file.name","direction":"ASC"}
+    ]);
+    let mut views = vec![json!({
+        "type":"taskcliRecentJobs", "name":"Recent jobs",
+        "groupBy":{"property":"status","direction":"ASC"},
+        "order":["status", "projects", "formula.updated", "formula.review_time"],
+        "sort":sort,
+        "columnOrder":{"status":statuses}, "pinnedColumns":statuses,
+        "hideEmptyColumns":true, "columnWidth":300
+    })];
+    // Native Bases limits apply to the whole view, so each status gets its
+    // own table. The Taskcli Sync Kanban adapter limits each column instead.
+    views.extend(statuses.map(|status| json!({
+        "type":"table", "name":status, "limit":10,
+        "filters":format!("note.status == {status:?}"),
+        "order":["formula.name", "projects", "status", "formula.updated", "formula.review_time"],
+        "sort":sort
+    })));
+    views
+}
+
+fn pending_review_view() -> Value {
+    json!({
+        "type":"tasknotesKanban", "name":"Pending review",
+        "filters":{"and":["file.hasTag(\"agent/job\")", "note.status == \"PENDING_REVIEW\"", "archived != true"]},
+        "groupBy":{"property":"status","direction":"ASC"},
+        "order":["status", "projects", "formula.review_time"],
+        "sort":[{"column":"pending_review_at","direction":"ASC"},{"column":"file.name","direction":"ASC"}],
+        "columnOrder":{"status":["PENDING_REVIEW"]}, "pinnedColumns":["PENDING_REVIEW"],
+        "hideEmptyColumns":true, "columnWidth":300
+    })
+}
+
+fn conversation_markdown(job: &crate::Job) -> String {
+    let mut prompts = Vec::new();
+    let mut output = Vec::new();
+    for message in &job.conversation {
+        if message.role == "user" {
+            let text = crate::conversation::user_text(&message.text);
+            if !text.trim().is_empty() && text != crate::conversation::user_text(&job.prompt) {
+                prompts.push(text);
+            }
+        } else if message.role == "assistant" && !message.text.trim().is_empty() {
+            output.push(message.text.trim_end_matches(['\r', '\n']));
+        }
+    }
+    if prompts.is_empty() && output.is_empty() {
+        return String::new();
+    }
+    let mut body = String::from("\n## Conversation\n");
+    if !prompts.is_empty() {
+        body.push_str("\n### User input\n\n");
+        for line in prompts.join("\n\n").split('\n') {
+            if !line.is_empty() {
+                body.push_str("    ");
+                body.push_str(line);
+            }
+            body.push('\n');
+        }
+    }
+    if !output.is_empty() {
+        body.push_str("\n### Agent output\n\n");
+        for line in output.join("\n\n").split('\n') {
+            body.push('>');
+            if !line.is_empty() {
+                body.push(' ');
+                body.push_str(line);
+            }
+            body.push('\n');
+        }
+    }
+    body
 }

@@ -544,7 +544,7 @@ mod unix {
             let mut websocket = tokio_tungstenite::accept_async(stream).await.unwrap();
             initialize(&mut websocket).await;
             let mut requests = Vec::new();
-            for _ in 0..20 {
+            for _ in 0..21 {
                 let request = next_json(&mut websocket).await;
                 let result = session_command_response(request["method"].as_str().unwrap());
                 send_result(&mut websocket, &request["id"], result).await;
@@ -579,6 +579,7 @@ mod unix {
         }
 
         assert_eq!(results[3].active_turn.as_deref(), Some("turn_review"));
+        assert!(results[5].body.contains("75% remaining"));
         assert_eq!(
             results[7].replacement_session.as_ref().unwrap().id.as_str(),
             "thr_fork"
@@ -601,6 +602,11 @@ mod unix {
     }
 
     fn assert_session_command_requests(requests: &[Value]) {
+        assert!(
+            requests
+                .iter()
+                .any(|request| { request["method"] == "account/rateLimits/read" })
+        );
         assert!(requests.iter().any(|request| {
             request["method"] == "thread/compact/start"
                 && request["params"]["threadId"] == "thr_commands"
@@ -682,6 +688,11 @@ mod unix {
                 }
             }),
             "thread/goal/get" => json!({"goal": null}),
+            "account/rateLimits/read" => json!({
+                "rateLimits": {
+                    "primary": {"usedPercent": 25, "windowDurationMins": 300}
+                }
+            }),
             "review/start" => json!({
                 "reviewThreadId": "thr_commands",
                 "turn": {"id": "turn_review"}

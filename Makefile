@@ -4,7 +4,7 @@ CARGO ?= cargo
 
 .DEFAULT_GOAL := build
 
-.PHONY: build release completions check fmt clippy test plugin-deps clean help
+.PHONY: build release completions check fmt clippy test plugin-deps clean help dev-test
 
 build:
 	$(CARGO) build --workspace --all-features
@@ -36,6 +36,14 @@ plugin-deps:
 test: plugin-deps
 	$(CARGO) test --workspace --all-features
 	node --test plugins/agent-task-manager/tests/*.test.mjs
+
+dev-test: build
+	cp ./target/debug/taskcli ~/.local/bin
+	taskcli obsidian setup
+	codex plugin remove agent-task-manager@agentix
+	codex plugin marketplace remove agentix
+	codex plugin marketplace add .
+	codex plugin add agent-task-manager@agentix
 
 clean:
 	$(CARGO) clean

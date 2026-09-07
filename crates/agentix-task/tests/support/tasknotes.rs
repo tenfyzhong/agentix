@@ -1,4 +1,104 @@
 use super::*;
+
+#[tokio::test]
+async fn generated_documents_migrate_duplicate_timestamps_and_keep_authored_content() {
+    for format in ["obsidian", "markdown"] {
+        let f = Fixture::new(format).await;
+        let task = f.task("Canonical dates").await;
+        let owned = f.start(&task, "canonical-dates").await;
+        f.service
+            .execute(json!({"command":"task.done","task":task}), owner(&owned))
+            .await
+            .unwrap();
+        f.approve().await;
+        f.service
+            .execute(
+                json!({"command":"job.archive","job":f.job}),
+                WriteOptions::default(),
+            )
+            .await
+            .unwrap();
+        let root = f.service.config().output_dir();
+        let state = f.service.store().snapshot().await.unwrap();
+        let paths = [
+            root.join(&state.jobs[0].document_path),
+            std::path::PathBuf::from(
+                f.service.plan(&task).await.unwrap()["absolute_path"]
+                    .as_str()
+                    .unwrap(),
+            ),
+            root.join("Projects/demo/Board.md"),
+            root.join("Projects/demo/Inbox.md"),
+        ];
+        for path in &paths {
+            let doc = std::fs::read_to_string(path).unwrap();
+            let (_, body) = doc
+                .strip_prefix("---\n")
+                .unwrap()
+                .split_once("\n---\n")
+                .unwrap();
+            let mut props = properties(&doc);
+            for key in [
+                "dateCreated",
+                "dateModified",
+                "completedDate",
+                "created",
+                "updated",
+            ] {
+                props[key] = json!("2020-01-02T03:04:05+08:00");
+            }
+            props["custom"] = json!("keep");
+            std::fs::write(
+                path,
+                format!("---\n{}---\n{body}", serde_yaml::to_string(&props).unwrap()),
+            )
+            .unwrap();
+        }
+        f.service.sync().await.unwrap();
+        for path in &paths {
+            let doc = std::fs::read_to_string(path).unwrap();
+            let props = properties(&doc);
+            for key in [
+                "dateCreated",
+                "dateModified",
+                "completedDate",
+                "created",
+                "updated",
+            ] {
+                assert!(
+                    props.get(key).is_none(),
+                    "{} still contains {key}",
+                    path.display()
+                );
+            }
+            assert!(props["created_at"].is_string());
+            assert!(props["updated_at"].is_string());
+            if path.ends_with("Inbox.md") {
+                assert_eq!(props["created_at"], "2020-01-02T03:04:05+08:00");
+                assert_eq!(props["custom"], "keep");
+            } else {
+                assert_ne!(props["created_at"], "2020-01-02T03:04:05+08:00");
+            }
+            f.service.sync().await.unwrap();
+            assert_eq!(doc, std::fs::read_to_string(path).unwrap());
+        }
+        if format != "obsidian" {
+            continue;
+        }
+        let snapshot = f.service.obsidian_snapshot().await.unwrap();
+        for note in snapshot["notes"].as_array().unwrap() {
+            for key in [
+                "dateCreated",
+                "dateModified",
+                "completedDate",
+                "created",
+                "updated",
+            ] {
+                assert!(note["properties"].get(key).is_none());
+            }
+        }
+    }
+}
 use sqlx::Connection;
 
 fn properties(document: &str) -> Value {
@@ -91,17 +191,17 @@ async fn agent_session_legacy_jobs_deserialize_and_sync_with_unknown_identity() 
     assert_eq!(props.get("session_id"), Some(&Value::Null));
 }
 
+fn named_base(document: &str, name: &str) -> Value {
+    document
+        .split("```base\n")
+        .skip(1)
+        .map(|block| serde_yaml::from_str::<Value>(block.split_once("\n```").unwrap().0).unwrap())
+        .find(|base| base["views"][0]["name"] == name)
+        .expect("named embedded TaskNotes Base")
+}
+
 fn base(document: &str) -> Value {
-    serde_yaml::from_str(
-        document
-            .split_once("```base\n")
-            .expect("embedded TaskNotes Base")
-            .1
-            .split_once("\n```")
-            .unwrap()
-            .0,
-    )
-    .unwrap()
+    named_base(document, "Task board")
 }
 
 #[tokio::test]
@@ -363,16 +463,18 @@ async fn tasks_exist_before_planning_and_jobs_reference_notes_directly() {
         assert_eq!(props["id"], id);
         assert_eq!(props["status"], "TODO");
         assert!(props.get("version").is_none());
+        assert!(props.get("completedDate").is_none());
         assert_eq!(props["tags"], json!(["agent/task", "task"]));
         assert_eq!(props["archived"], false);
         assert!(
             time::OffsetDateTime::parse(
-                props["dateCreated"].as_str().unwrap(),
+                props["created_at"].as_str().unwrap(),
                 &time::format_description::well_known::Rfc3339
             )
             .is_ok()
         );
-        assert_eq!(props["dateCreated"], props["created_at"]);
+        assert!(props.get("dateCreated").is_none());
+        assert!(props.get("dateModified").is_none());
         let state = f.service.store().snapshot().await.unwrap();
         let job = std::fs::read_to_string(output.join(&state.jobs[0].document_path)).unwrap();
         assert!(job.contains("260905-0001-Write tests"));
@@ -425,7 +527,11 @@ async fn tasknotes_views_use_scoped_frontmatter_and_preserve_every_status() {
         board["views"][0]["columnOrder"]["status"],
         json!(task_status_names())
     );
-    assert_eq!(board["views"][0]["hideEmptyColumns"], false);
+    assert_eq!(board["views"][0]["hideEmptyColumns"], true);
+    assert_eq!(
+        board["views"][0]["pinnedColumns"],
+        json!(task_status_names())
+    );
     let state = f.service.store().snapshot().await.unwrap();
     for task in &state.tasks {
         let filename = format!("260905-{:04}-{}.md", task.sequence, task.name);
@@ -435,7 +541,7 @@ async fn tasknotes_views_use_scoped_frontmatter_and_preserve_every_status() {
         assert_eq!(props["phase"], json!(task.phase));
         assert_eq!(props["archived"], false);
         if task.status == agentix_task::TaskStatus::Done {
-            assert!(!props["completedDate"].is_null());
+            assert!(props.get("completedDate").is_none());
         }
     }
 }
@@ -467,12 +573,13 @@ async fn schema_six_plans_migrate_without_losing_authored_content() {
         .unwrap();
     let documents = json!({format!("plan:{}",plan["id"].as_str().unwrap()):old});
     // Preserve other managed paths and reproduce the version-six Plan entry.
-    let previous: String =
-        sqlx::query_scalar("SELECT value FROM projection_state WHERE key='documents'")
-            .fetch_one(&mut pool)
-            .await
-            .unwrap();
-    let mut previous: Value = serde_json::from_str(&previous).unwrap();
+    let mut previous = f
+        .service
+        .store()
+        .metadata("documents")
+        .await
+        .unwrap()
+        .unwrap();
     previous
         .as_object_mut()
         .unwrap()
@@ -481,8 +588,12 @@ async fn schema_six_plans_migrate_without_losing_authored_content() {
         .as_object_mut()
         .unwrap()
         .extend(documents.as_object().unwrap().clone());
-    sqlx::query("UPDATE projection_state SET value=? WHERE key='documents'")
+    sqlx::query("INSERT INTO projection_state(key,value) VALUES ('documents',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
         .bind(previous.to_string())
+        .execute(&mut pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM document_registry")
         .execute(&mut pool)
         .await
         .unwrap();
@@ -675,9 +786,11 @@ async fn task_properties_use_local_time_and_only_task_revision() {
         .unwrap();
     let plan = f.service.plan(&id).await.unwrap();
     let path = plan["absolute_path"].as_str().unwrap();
-    let legacy = std::fs::read_to_string(path)
-        .unwrap()
-        .replacen("---\n", "---\nversion: 999\n", 1);
+    let legacy = std::fs::read_to_string(path).unwrap().replacen(
+        "---\n",
+        "---\nversion: 999\ncompletedDate: stale\n",
+        1,
+    );
     // Reproduce old version metadata without duplicate YAML keys.
     let legacy = legacy
         .lines()
@@ -688,6 +801,7 @@ async fn task_properties_use_local_time_and_only_task_revision() {
     f.service.sync().await.unwrap();
     let props = properties(&std::fs::read_to_string(path).unwrap());
     assert!(props.get("version").is_none());
+    assert!(props.get("completedDate").is_none());
     assert_eq!(
         props["revision"],
         f.service.store().snapshot().await.unwrap().tasks[0].revision
@@ -698,15 +812,7 @@ async fn task_properties_use_local_time_and_only_task_revision() {
         .to_offset(time::UtcOffset::local_offset_at(instant).unwrap())
         .format(&time::format_description::well_known::Rfc3339)
         .unwrap();
-    for field in [
-        "created_at",
-        "updated_at",
-        "started_at",
-        "completed_at",
-        "dateCreated",
-        "dateModified",
-        "completedDate",
-    ] {
+    for field in ["created_at", "updated_at", "started_at", "completed_at"] {
         assert_eq!(props[field], expected, "local timestamp in {field}");
     }
 }
@@ -749,22 +855,17 @@ async fn sync_removes_managed_task_lists_and_their_navigation_links() {
         "new projects only provide Board"
     );
     std::fs::write(root.join(relative), "# Old task list\n").unwrap();
-    let mut db = sqlx::SqliteConnection::connect(&format!(
-        "sqlite:{}",
-        f.service.config().storage.path.display()
-    ))
-    .await
-    .unwrap();
-    let raw: String =
-        sqlx::query_scalar("SELECT value FROM projection_state WHERE key='documents'")
-            .fetch_one(&mut db)
-            .await
-            .unwrap();
-    let mut documents: Value = serde_json::from_str(&raw).unwrap();
+    let mut documents = f
+        .service
+        .store()
+        .metadata("documents")
+        .await
+        .unwrap()
+        .unwrap();
     documents[format!("tasks:{}", f.project)] = json!(relative);
-    sqlx::query("UPDATE projection_state SET value=? WHERE key='documents'")
-        .bind(documents.to_string())
-        .execute(&mut db)
+    f.service
+        .store()
+        .set_metadata("documents", &documents)
         .await
         .unwrap();
     f.service.sync().await.unwrap();
@@ -781,4 +882,53 @@ async fn sync_removes_managed_task_lists_and_their_navigation_links() {
         assert!(!doc.contains("Task list"));
         assert!(!doc.contains("Tasks.md"));
     }
+}
+
+#[tokio::test]
+async fn job_board_has_four_pinned_columns_and_job_display_properties() {
+    let f = Fixture::new("obsidian").await;
+    let root = f.service.config().output_dir();
+    let board = std::fs::read_to_string(root.join("Projects/demo/Board.md")).unwrap();
+    assert_eq!(board.matches("```base\n").count(), 2);
+    assert!(board.find("name: Job board").unwrap() < board.find("name: Task board").unwrap());
+    let base = named_base(&board, "Job board");
+    let statuses = json!(["ACTIVE", "PENDING_REVIEW", "COMPLETED", "CANCELLED"]);
+    assert_eq!(base["views"][0]["type"], "tasknotesKanban");
+    assert_eq!(base["views"][0]["pinnedColumns"], statuses);
+    assert_eq!(base["views"][0]["columnOrder"]["status"], statuses);
+    assert_eq!(base["views"][0]["hideEmptyColumns"], true);
+    assert_eq!(base["views"][0]["columnWidth"], 300);
+    assert_eq!(
+        base["filters"]["and"],
+        json!([
+            "file.folder == \"Tasks ☃/Projects/demo/Jobs\"",
+            "file.hasTag(\"agent/job\")",
+            format!("project_id == {:?}", f.project),
+            "archived != true"
+        ])
+    );
+    let state = f.service.store().snapshot().await.unwrap();
+    let job = &state.jobs[0];
+    let path = root.join(&job.document_path);
+    let document = std::fs::read_to_string(&path).unwrap();
+    let props = properties(&document);
+    assert_eq!(props["title"], job.name);
+    assert_eq!(
+        props["projects"],
+        json!(["[[Tasks ☃/Projects/demo/Board|demo]]"])
+    );
+    assert_eq!(props["archived"], false);
+    assert!(props["created_at"].is_string());
+    assert!(props.get("dateCreated").is_none());
+    assert!(props["updated_at"].is_string());
+    assert!(props.get("dateModified").is_none());
+    assert!(props.get("completedDate").is_none());
+    assert!(props["completed_at"].is_null());
+    assert!(!props["tags"].as_array().unwrap().contains(&json!("task")));
+    std::fs::write(&path, document.replacen("---\n", "---\ncustom: kept\n", 1)).unwrap();
+    f.service.sync().await.unwrap();
+    assert_eq!(
+        properties(&std::fs::read_to_string(path).unwrap())["custom"],
+        "kept"
+    );
 }

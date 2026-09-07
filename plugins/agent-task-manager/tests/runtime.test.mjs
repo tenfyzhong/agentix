@@ -2,6 +2,25 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { buildArgs, runHook, registerExtension } from "../runtime.mjs";
 
+test("Job review and Inbox status commands receive idempotency keys without task lease tokens", async () => {
+    for (const hostName of ["pi", "omp"]) {
+        let tool;
+        const calls = [];
+        registerExtension({ on() {}, registerTool(value) { tool = value; } }, hostName,
+            async (args, options) => {
+                calls.push({ args, options });
+                return { schema_version: 1, ok: true, result: { task_id: "task_one", lease: { token: "private" } } };
+            });
+        for (const command of ["submit", "approve", "reject", "set-status"]) {
+            const args = command === "set-status" ? ["inbox", command, "inbox_one", "--status", "TODO"] : ["job", command, "job_one"];
+            await tool.execute(command, { args }, undefined, undefined,
+                { cwd: "/work", sessionManager: { getSessionId: () => "review" } });
+            assert.ok(calls.at(-1).options.idempotencyKey);
+            assert.equal(calls.at(-1).options.token, undefined);
+        }
+    }
+});
+
 test("task tool passes arguments without shell interpolation and fences identity", () => {
     const args = buildArgs(
         ["task", "update", "task_one", "--title", "$(touch nope); title"],

@@ -68,6 +68,11 @@ pub fn include_reply_context(input: &str, quoted: Option<&str>) -> String {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum InboundPayload {
     Text(String),
+    TextEdited {
+        original_event_id: String,
+        version: i64,
+        text: String,
+    },
     Action {
         token: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -242,6 +247,14 @@ pub trait ChannelAdapter: Send + Sync {
         message: &MessageRef,
         view: &OutboundView,
     ) -> Result<(), ChannelError>;
+
+    /// Reads a previously accepted Inbox source when the channel lacks edit events.
+    async fn read_inbox_message(
+        &self,
+        _message: &MessageRef,
+    ) -> Result<Option<InboundEnvelope>, ChannelError> {
+        Ok(None)
+    }
 
     async fn disable_actions(&self, _message: &MessageRef) -> Result<(), ChannelError> {
         Ok(())

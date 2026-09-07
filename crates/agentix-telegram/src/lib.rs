@@ -214,6 +214,92 @@ impl TelegramAdapter {
         .map_err(|error| ChannelError::Transport(error.to_string()))?;
         Ok(())
     }
+    async fn forward_message(
+        &self,
+        message: &Message,
+        username: &str,
+        inbound: &mpsc::Sender<InboundEnvelope>,
+    ) -> Result<(), teloxide::RequestError> {
+        let Some(user) = message.from.as_ref() else {
+            return Ok::<(), teloxide::RequestError>(());
+        };
+        let Some(text) = message.text() else {
+            return Ok(());
+        };
+        if let Some(code) = parse_claim_command(text) {
+            handle_owner_claim(
+                self,
+                message.chat.id,
+                user.id.0,
+                code,
+                message.chat.is_private(),
+            )
+            .await;
+            return Ok(());
+        }
+        let Some(text) =
+            self.policy
+                .accept_text(user.id.0, message.chat.is_private(), text, username)
+        else {
+            return Ok(());
+        };
+        let text = include_reply_context(&text, replied_text(message));
+        let envelope = InboundEnvelope::text(
+            format!("{}:{}", message.chat.id.0, message.id.0),
+            ConversationRef::new(ChannelKind::Telegram, message.chat.id.0.to_string()),
+            user.id.0.to_string(),
+            text,
+        );
+        if self.messages.inbound(inbound, envelope).await.is_err() {
+            tracing::warn!("Telegram inbound queue is closed");
+        }
+        Ok(())
+    }
+
+    fn edited_messages(
+        &self,
+        inbound: mpsc::Sender<InboundEnvelope>,
+        username: String,
+    ) -> teloxide::dispatching::UpdateHandler<teloxide::RequestError> {
+        let edit_adapter = self.clone();
+        let edit_inbound = inbound;
+        let edit_username = username;
+        Update::filter_edited_message().endpoint(move |message: Message, update: Update| {
+            let adapter = edit_adapter.clone();
+            let inbound = edit_inbound.clone();
+            let username = edit_username.clone();
+            async move {
+                if let (Some(user), Some(text)) = (message.from.as_ref(), message.text())
+                    && let Some(text) = adapter.policy.accept_text(
+                        user.id.0,
+                        message.chat.is_private(),
+                        text,
+                        &username,
+                    )
+                {
+                    let original = format!("{}:{}", message.chat.id.0, message.id.0);
+                    let envelope = InboundEnvelope {
+                        event_id: format!("{original}:edit:{}", update.id.0),
+                        conversation: ConversationRef::new(
+                            ChannelKind::Telegram,
+                            message.chat.id.0.to_string(),
+                        ),
+                        owner_id: user.id.0.to_string(),
+                        payload: agentix_core::InboundPayload::TextEdited {
+                            original_event_id: original,
+                            version: i64::from(update.id.0),
+                            text,
+                        },
+                    };
+                    if adapter.messages.inbound(&inbound, envelope).await.is_err() {
+                        tracing::warn!("Telegram inbound queue is closed");
+                    }
+                }
+                Ok::<(), teloxide::RequestError>(())
+            }
+        })
+    }
+
     async fn initialize_bot(&self) -> Result<String, ChannelError> {
         let started = std::time::Instant::now();
         let me = self
@@ -253,45 +339,10 @@ impl ChannelAdapter for TelegramAdapter {
             let adapter = message_adapter.clone();
             let inbound = message_inbound.clone();
             let username = message_username.clone();
-            async move {
-                let Some(user) = message.from.as_ref() else {
-                    return Ok::<(), teloxide::RequestError>(());
-                };
-                let Some(text) = message.text() else {
-                    return Ok(());
-                };
-                if let Some(code) = parse_claim_command(text) {
-                    handle_owner_claim(
-                        &adapter,
-                        message.chat.id,
-                        user.id.0,
-                        code,
-                        message.chat.is_private(),
-                    )
-                    .await;
-                    return Ok(());
-                }
-                let Some(text) = adapter.policy.accept_text(
-                    user.id.0,
-                    message.chat.is_private(),
-                    text,
-                    &username,
-                ) else {
-                    return Ok(());
-                };
-                let text = include_reply_context(&text, replied_text(&message));
-                let envelope = InboundEnvelope::text(
-                    format!("{}:{}", message.chat.id.0, message.id.0),
-                    ConversationRef::new(ChannelKind::Telegram, message.chat.id.0.to_string()),
-                    user.id.0.to_string(),
-                    text,
-                );
-                if adapter.messages.inbound(&inbound, envelope).await.is_err() {
-                    tracing::warn!("Telegram inbound queue is closed");
-                }
-                Ok(())
-            }
+            async move { adapter.forward_message(&message, &username, &inbound).await }
         });
+
+        let edit_handler = self.edited_messages(inbound.clone(), username.clone());
 
         let callback_adapter = self.clone();
         let callback_policy = self.policy.clone();
@@ -339,6 +390,7 @@ impl ChannelAdapter for TelegramAdapter {
 
         let handler = dptree::entry()
             .branch(message_handler)
+            .branch(edit_handler)
             .branch(callback_handler);
         let mut dispatcher = Dispatcher::builder(self.bot.clone(), handler).build();
         let shutdown_token = dispatcher.shutdown_token();

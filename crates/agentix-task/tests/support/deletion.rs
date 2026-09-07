@@ -12,6 +12,7 @@ async fn job_deletion_cascades_and_preserves_other_jobs() {
                 .await
                 .unwrap();
             if archived {
+                f.approve().await;
                 f.service
                     .execute(
                         json!({"command":"job.archive","job":f.job}),
@@ -284,6 +285,7 @@ async fn project_deletion_removes_its_entire_output_directory_only() {
         .execute(json!({"command":"task.done","task":task}), owner(&claim))
         .await
         .unwrap();
+    f.approve().await;
     f.service
         .execute(
             json!({"command":"job.archive","job":f.job}),

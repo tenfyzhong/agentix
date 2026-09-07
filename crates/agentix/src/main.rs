@@ -409,6 +409,22 @@ async fn run_engine_loop(
     mut inbound: mpsc::Receiver<agentix_core::InboundEnvelope>,
     shutdown: CancellationToken,
 ) {
+    let source_engine = engine.clone();
+    let source_shutdown = shutdown.clone();
+    let source_poll = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(30));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        loop {
+            tokio::select! {
+                () = source_shutdown.cancelled() => break,
+                _ = interval.tick() => {
+                    if let Err(error) = source_engine.refresh_inbox_sources().await {
+                        tracing::warn!(%error, "Inbox source refresh failed");
+                    }
+                }
+            }
+        }
+    });
     let mut events = agent.subscribe();
     let mut working_interval = tokio::time::interval(Duration::from_secs(1));
     working_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
@@ -455,6 +471,8 @@ async fn run_engine_loop(
             break;
         }
     }
+    source_poll.abort();
+    let _ = source_poll.await;
 }
 
 fn is_empty_rollout_metadata_error(error: &EngineError) -> bool {

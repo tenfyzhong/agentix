@@ -161,6 +161,24 @@ _arguments "${_arguments_options[@]}" : \
 ':id:_default' \
 && ret=0
 ;;
+(set-status)
+_arguments "${_arguments_options[@]}" : \
+'--status=[]:STATUS:(TODO ACTIVE PENDING_REVIEW COMPLETED CANCELLED IN_PROGRESS DONE)' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
 (help)
 _arguments "${_arguments_options[@]}" : \
 ":: :_taskcli__subcmd__inbox__subcmd__help_commands" \
@@ -194,6 +212,10 @@ _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
 (cancel)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(set-status)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -270,7 +292,56 @@ _arguments "${_arguments_options[@]}" : \
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:taskcli-obsidian-command-$line[1]:"
         case $line[1] in
-            (setup)
+            (connection)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(show)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(snapshot)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(setup)
 _arguments "${_arguments_options[@]}" : \
 '--plugin-dir=[Use a local \`TaskNotes\` release directory instead of downloading the bundled version]:PLUGIN_DIR:_files -/' \
 '--config=[]:CONFIG:_files' \
@@ -299,7 +370,19 @@ _arguments "${_arguments_options[@]}" : \
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:taskcli-obsidian-help-command-$line[1]:"
         case $line[1] in
-            (setup)
+            (connection)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(show)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(snapshot)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(setup)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -342,6 +425,7 @@ _arguments "${_arguments_options[@]}" : \
 '--lease-token=[]:LEASE_TOKEN:_default' \
 '--expect-revision=[]:EXPECT_REVISION:_default' \
 '--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--pending[Retry only pending document publications without a full rebuild]' \
 '--json[]' \
 '-h[Print help]' \
 '--help[Print help]' \
@@ -546,7 +630,59 @@ _arguments "${_arguments_options[@]}" : \
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:taskcli-job-command-$line[1]:"
         case $line[1] in
-            (delete)
+            (submit)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(approve)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(reject)
+_arguments "${_arguments_options[@]}" : \
+'--reason=[]:REASON:_default' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(delete)
 _arguments "${_arguments_options[@]}" : \
 '--config=[]:CONFIG:_files' \
 '--project=[]:PROJECT:_default' \
@@ -618,7 +754,8 @@ _arguments "${_arguments_options[@]}" : \
 '--lease-token=[]:LEASE_TOKEN:_default' \
 '--expect-revision=[]:EXPECT_REVISION:_default' \
 '--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
-'(--completed --archived)--active[]' \
+'(--completed --archived --pending-review)--active[]' \
+'(--completed --archived)--pending-review[]' \
 '(--archived)--completed[]' \
 '--archived[]' \
 '--json[]' \
@@ -706,7 +843,19 @@ _arguments "${_arguments_options[@]}" : \
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:taskcli-job-help-command-$line[1]:"
         case $line[1] in
-            (delete)
+            (submit)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(approve)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(reject)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(delete)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -1396,7 +1545,25 @@ _arguments "${_arguments_options[@]}" : \
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:taskcli-hook-command-$line[1]:"
         case $line[1] in
-            (stop)
+            (record)
+_arguments "${_arguments_options[@]}" : \
+'--file=[]:FILE:_files' \
+'--job=[]:JOB:_default' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(stop)
 _arguments "${_arguments_options[@]}" : \
 '--config=[]:CONFIG:_files' \
 '--project=[]:PROJECT:_default' \
@@ -1488,7 +1655,11 @@ _arguments "${_arguments_options[@]}" : \
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:taskcli-hook-help-command-$line[1]:"
         case $line[1] in
-            (stop)
+            (record)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(stop)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -1568,6 +1739,10 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
+(set-status)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
         esac
     ;;
 esac
@@ -1592,7 +1767,19 @@ _arguments "${_arguments_options[@]}" : \
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:taskcli-help-obsidian-command-$line[1]:"
         case $line[1] in
-            (setup)
+            (connection)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(show)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(snapshot)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(setup)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -1660,7 +1847,19 @@ _arguments "${_arguments_options[@]}" : \
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:taskcli-help-job-command-$line[1]:"
         case $line[1] in
-            (delete)
+            (submit)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(approve)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(reject)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(delete)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -1844,7 +2043,11 @@ _arguments "${_arguments_options[@]}" : \
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:taskcli-help-hook-command-$line[1]:"
         case $line[1] in
-            (stop)
+            (record)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(stop)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -2002,6 +2205,7 @@ _taskcli__subcmd__help__subcmd__help_commands() {
 (( $+functions[_taskcli__subcmd__help__subcmd__hook_commands] )) ||
 _taskcli__subcmd__help__subcmd__hook_commands() {
     local commands; commands=(
+'record:Record visible user/assistant messages from a JSON array in the session Job' \
 'stop:Acknowledge turn completion without claiming Inbox work' \
 'session-start:Recover the session'\''s Tasks blocked by interruption or lease expiry into planning' \
 'session-end:Record session shutdown and release its active Task leases' \
@@ -2019,6 +2223,11 @@ _taskcli__subcmd__help__subcmd__hook__subcmd__heartbeat_commands() {
 _taskcli__subcmd__help__subcmd__hook__subcmd__interrupt_commands() {
     local commands; commands=()
     _describe -t commands 'taskcli help hook interrupt commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__hook__subcmd__record_commands] )) ||
+_taskcli__subcmd__help__subcmd__hook__subcmd__record_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help hook record commands' commands "$@"
 }
 (( $+functions[_taskcli__subcmd__help__subcmd__hook__subcmd__session-end_commands] )) ||
 _taskcli__subcmd__help__subcmd__hook__subcmd__session-end_commands() {
@@ -2044,6 +2253,7 @@ _taskcli__subcmd__help__subcmd__inbox_commands() {
 'claim-next:Atomically claim the next eligible requirement and create or resume its Job' \
 'release:Release an owned Inbox lease so another agent can resume its existing Job' \
 'cancel:Cancel a requirement and its unfinished work, preserving history' \
+'set-status:Set a human Inbox status; linked completion requires a pending review' \
     )
     _describe -t commands 'taskcli help inbox commands' commands "$@"
 }
@@ -2072,6 +2282,11 @@ _taskcli__subcmd__help__subcmd__inbox__subcmd__release_commands() {
     local commands; commands=()
     _describe -t commands 'taskcli help inbox release commands' commands "$@"
 }
+(( $+functions[_taskcli__subcmd__help__subcmd__inbox__subcmd__set-status_commands] )) ||
+_taskcli__subcmd__help__subcmd__inbox__subcmd__set-status_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help inbox set-status commands' commands "$@"
+}
 (( $+functions[_taskcli__subcmd__help__subcmd__inbox__subcmd__sync_commands] )) ||
 _taskcli__subcmd__help__subcmd__inbox__subcmd__sync_commands() {
     local commands; commands=()
@@ -2085,6 +2300,9 @@ _taskcli__subcmd__help__subcmd__init_commands() {
 (( $+functions[_taskcli__subcmd__help__subcmd__job_commands] )) ||
 _taskcli__subcmd__help__subcmd__job_commands() {
     local commands; commands=(
+'submit:Submit an ACTIVE Job for review once all non-cancelled Tasks are DONE' \
+'approve:Record human acceptance of a Job awaiting review' \
+'reject:Return a Job awaiting review to ACTIVE, preserving its Tasks' \
 'delete:Delete the Job, its Tasks, and their Plan documents' \
 'create:Create a Job with a title and acceptance goal in the selected Project' \
 'update:Change a Job'\''s display name, title, acceptance goal, or original prompt' \
@@ -2095,6 +2313,11 @@ _taskcli__subcmd__help__subcmd__job_commands() {
 'unarchive:Restore an archived Job document without changing its completion status' \
     )
     _describe -t commands 'taskcli help job commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__job__subcmd__approve_commands] )) ||
+_taskcli__subcmd__help__subcmd__job__subcmd__approve_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help job approve commands' commands "$@"
 }
 (( $+functions[_taskcli__subcmd__help__subcmd__job__subcmd__archive_commands] )) ||
 _taskcli__subcmd__help__subcmd__job__subcmd__archive_commands() {
@@ -2121,10 +2344,20 @@ _taskcli__subcmd__help__subcmd__job__subcmd__list_commands() {
     local commands; commands=()
     _describe -t commands 'taskcli help job list commands' commands "$@"
 }
+(( $+functions[_taskcli__subcmd__help__subcmd__job__subcmd__reject_commands] )) ||
+_taskcli__subcmd__help__subcmd__job__subcmd__reject_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help job reject commands' commands "$@"
+}
 (( $+functions[_taskcli__subcmd__help__subcmd__job__subcmd__show_commands] )) ||
 _taskcli__subcmd__help__subcmd__job__subcmd__show_commands() {
     local commands; commands=()
     _describe -t commands 'taskcli help job show commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__job__subcmd__submit_commands] )) ||
+_taskcli__subcmd__help__subcmd__job__subcmd__submit_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help job submit commands' commands "$@"
 }
 (( $+functions[_taskcli__subcmd__help__subcmd__job__subcmd__unarchive_commands] )) ||
 _taskcli__subcmd__help__subcmd__job__subcmd__unarchive_commands() {
@@ -2139,14 +2372,32 @@ _taskcli__subcmd__help__subcmd__job__subcmd__update_commands() {
 (( $+functions[_taskcli__subcmd__help__subcmd__obsidian_commands] )) ||
 _taskcli__subcmd__help__subcmd__obsidian_commands() {
     local commands; commands=(
+'connection:Read the Obsidian connection configuration without loading task records' \
+'show:Query one registered Task, Job, or Inbox entry by its exact ID' \
+'snapshot:Query registered notes and authoritative status properties without lease credentials' \
 'setup:Install \`TaskNotes\` and configure its task statuses and Bases. Close Obsidian first' \
     )
     _describe -t commands 'taskcli help obsidian commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__obsidian__subcmd__connection_commands] )) ||
+_taskcli__subcmd__help__subcmd__obsidian__subcmd__connection_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help obsidian connection commands' commands "$@"
 }
 (( $+functions[_taskcli__subcmd__help__subcmd__obsidian__subcmd__setup_commands] )) ||
 _taskcli__subcmd__help__subcmd__obsidian__subcmd__setup_commands() {
     local commands; commands=()
     _describe -t commands 'taskcli help obsidian setup commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__obsidian__subcmd__show_commands] )) ||
+_taskcli__subcmd__help__subcmd__obsidian__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help obsidian show commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__help__subcmd__obsidian__subcmd__snapshot_commands] )) ||
+_taskcli__subcmd__help__subcmd__obsidian__subcmd__snapshot_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli help obsidian snapshot commands' commands "$@"
 }
 (( $+functions[_taskcli__subcmd__help__subcmd__plan_commands] )) ||
 _taskcli__subcmd__help__subcmd__plan_commands() {
@@ -2330,6 +2581,7 @@ _taskcli__subcmd__help__subcmd__task__subcmd__wait_commands() {
 (( $+functions[_taskcli__subcmd__hook_commands] )) ||
 _taskcli__subcmd__hook_commands() {
     local commands; commands=(
+'record:Record visible user/assistant messages from a JSON array in the session Job' \
 'stop:Acknowledge turn completion without claiming Inbox work' \
 'session-start:Recover the session'\''s Tasks blocked by interruption or lease expiry into planning' \
 'session-end:Record session shutdown and release its active Task leases' \
@@ -2347,6 +2599,7 @@ _taskcli__subcmd__hook__subcmd__heartbeat_commands() {
 (( $+functions[_taskcli__subcmd__hook__subcmd__help_commands] )) ||
 _taskcli__subcmd__hook__subcmd__help_commands() {
     local commands; commands=(
+'record:Record visible user/assistant messages from a JSON array in the session Job' \
 'stop:Acknowledge turn completion without claiming Inbox work' \
 'session-start:Recover the session'\''s Tasks blocked by interruption or lease expiry into planning' \
 'session-end:Record session shutdown and release its active Task leases' \
@@ -2371,6 +2624,11 @@ _taskcli__subcmd__hook__subcmd__help__subcmd__interrupt_commands() {
     local commands; commands=()
     _describe -t commands 'taskcli hook help interrupt commands' commands "$@"
 }
+(( $+functions[_taskcli__subcmd__hook__subcmd__help__subcmd__record_commands] )) ||
+_taskcli__subcmd__hook__subcmd__help__subcmd__record_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli hook help record commands' commands "$@"
+}
 (( $+functions[_taskcli__subcmd__hook__subcmd__help__subcmd__session-end_commands] )) ||
 _taskcli__subcmd__hook__subcmd__help__subcmd__session-end_commands() {
     local commands; commands=()
@@ -2390,6 +2648,11 @@ _taskcli__subcmd__hook__subcmd__help__subcmd__stop_commands() {
 _taskcli__subcmd__hook__subcmd__interrupt_commands() {
     local commands; commands=()
     _describe -t commands 'taskcli hook interrupt commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__hook__subcmd__record_commands] )) ||
+_taskcli__subcmd__hook__subcmd__record_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli hook record commands' commands "$@"
 }
 (( $+functions[_taskcli__subcmd__hook__subcmd__session-end_commands] )) ||
 _taskcli__subcmd__hook__subcmd__session-end_commands() {
@@ -2415,6 +2678,7 @@ _taskcli__subcmd__inbox_commands() {
 'claim-next:Atomically claim the next eligible requirement and create or resume its Job' \
 'release:Release an owned Inbox lease so another agent can resume its existing Job' \
 'cancel:Cancel a requirement and its unfinished work, preserving history' \
+'set-status:Set a human Inbox status; linked completion requires a pending review' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'taskcli inbox commands' commands "$@"
@@ -2443,6 +2707,7 @@ _taskcli__subcmd__inbox__subcmd__help_commands() {
 'claim-next:Atomically claim the next eligible requirement and create or resume its Job' \
 'release:Release an owned Inbox lease so another agent can resume its existing Job' \
 'cancel:Cancel a requirement and its unfinished work, preserving history' \
+'set-status:Set a human Inbox status; linked completion requires a pending review' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'taskcli inbox help commands' commands "$@"
@@ -2477,6 +2742,11 @@ _taskcli__subcmd__inbox__subcmd__help__subcmd__release_commands() {
     local commands; commands=()
     _describe -t commands 'taskcli inbox help release commands' commands "$@"
 }
+(( $+functions[_taskcli__subcmd__inbox__subcmd__help__subcmd__set-status_commands] )) ||
+_taskcli__subcmd__inbox__subcmd__help__subcmd__set-status_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli inbox help set-status commands' commands "$@"
+}
 (( $+functions[_taskcli__subcmd__inbox__subcmd__help__subcmd__sync_commands] )) ||
 _taskcli__subcmd__inbox__subcmd__help__subcmd__sync_commands() {
     local commands; commands=()
@@ -2492,6 +2762,11 @@ _taskcli__subcmd__inbox__subcmd__release_commands() {
     local commands; commands=()
     _describe -t commands 'taskcli inbox release commands' commands "$@"
 }
+(( $+functions[_taskcli__subcmd__inbox__subcmd__set-status_commands] )) ||
+_taskcli__subcmd__inbox__subcmd__set-status_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli inbox set-status commands' commands "$@"
+}
 (( $+functions[_taskcli__subcmd__inbox__subcmd__sync_commands] )) ||
 _taskcli__subcmd__inbox__subcmd__sync_commands() {
     local commands; commands=()
@@ -2505,6 +2780,9 @@ _taskcli__subcmd__init_commands() {
 (( $+functions[_taskcli__subcmd__job_commands] )) ||
 _taskcli__subcmd__job_commands() {
     local commands; commands=(
+'submit:Submit an ACTIVE Job for review once all non-cancelled Tasks are DONE' \
+'approve:Record human acceptance of a Job awaiting review' \
+'reject:Return a Job awaiting review to ACTIVE, preserving its Tasks' \
 'delete:Delete the Job, its Tasks, and their Plan documents' \
 'create:Create a Job with a title and acceptance goal in the selected Project' \
 'update:Change a Job'\''s display name, title, acceptance goal, or original prompt' \
@@ -2516,6 +2794,11 @@ _taskcli__subcmd__job_commands() {
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'taskcli job commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__job__subcmd__approve_commands] )) ||
+_taskcli__subcmd__job__subcmd__approve_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli job approve commands' commands "$@"
 }
 (( $+functions[_taskcli__subcmd__job__subcmd__archive_commands] )) ||
 _taskcli__subcmd__job__subcmd__archive_commands() {
@@ -2540,6 +2823,9 @@ _taskcli__subcmd__job__subcmd__delete_commands() {
 (( $+functions[_taskcli__subcmd__job__subcmd__help_commands] )) ||
 _taskcli__subcmd__job__subcmd__help_commands() {
     local commands; commands=(
+'submit:Submit an ACTIVE Job for review once all non-cancelled Tasks are DONE' \
+'approve:Record human acceptance of a Job awaiting review' \
+'reject:Return a Job awaiting review to ACTIVE, preserving its Tasks' \
 'delete:Delete the Job, its Tasks, and their Plan documents' \
 'create:Create a Job with a title and acceptance goal in the selected Project' \
 'update:Change a Job'\''s display name, title, acceptance goal, or original prompt' \
@@ -2551,6 +2837,11 @@ _taskcli__subcmd__job__subcmd__help_commands() {
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'taskcli job help commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__job__subcmd__help__subcmd__approve_commands] )) ||
+_taskcli__subcmd__job__subcmd__help__subcmd__approve_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli job help approve commands' commands "$@"
 }
 (( $+functions[_taskcli__subcmd__job__subcmd__help__subcmd__archive_commands] )) ||
 _taskcli__subcmd__job__subcmd__help__subcmd__archive_commands() {
@@ -2582,10 +2873,20 @@ _taskcli__subcmd__job__subcmd__help__subcmd__list_commands() {
     local commands; commands=()
     _describe -t commands 'taskcli job help list commands' commands "$@"
 }
+(( $+functions[_taskcli__subcmd__job__subcmd__help__subcmd__reject_commands] )) ||
+_taskcli__subcmd__job__subcmd__help__subcmd__reject_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli job help reject commands' commands "$@"
+}
 (( $+functions[_taskcli__subcmd__job__subcmd__help__subcmd__show_commands] )) ||
 _taskcli__subcmd__job__subcmd__help__subcmd__show_commands() {
     local commands; commands=()
     _describe -t commands 'taskcli job help show commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__job__subcmd__help__subcmd__submit_commands] )) ||
+_taskcli__subcmd__job__subcmd__help__subcmd__submit_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli job help submit commands' commands "$@"
 }
 (( $+functions[_taskcli__subcmd__job__subcmd__help__subcmd__unarchive_commands] )) ||
 _taskcli__subcmd__job__subcmd__help__subcmd__unarchive_commands() {
@@ -2602,10 +2903,20 @@ _taskcli__subcmd__job__subcmd__list_commands() {
     local commands; commands=()
     _describe -t commands 'taskcli job list commands' commands "$@"
 }
+(( $+functions[_taskcli__subcmd__job__subcmd__reject_commands] )) ||
+_taskcli__subcmd__job__subcmd__reject_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli job reject commands' commands "$@"
+}
 (( $+functions[_taskcli__subcmd__job__subcmd__show_commands] )) ||
 _taskcli__subcmd__job__subcmd__show_commands() {
     local commands; commands=()
     _describe -t commands 'taskcli job show commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__job__subcmd__submit_commands] )) ||
+_taskcli__subcmd__job__subcmd__submit_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli job submit commands' commands "$@"
 }
 (( $+functions[_taskcli__subcmd__job__subcmd__unarchive_commands] )) ||
 _taskcli__subcmd__job__subcmd__unarchive_commands() {
@@ -2620,18 +2931,34 @@ _taskcli__subcmd__job__subcmd__update_commands() {
 (( $+functions[_taskcli__subcmd__obsidian_commands] )) ||
 _taskcli__subcmd__obsidian_commands() {
     local commands; commands=(
+'connection:Read the Obsidian connection configuration without loading task records' \
+'show:Query one registered Task, Job, or Inbox entry by its exact ID' \
+'snapshot:Query registered notes and authoritative status properties without lease credentials' \
 'setup:Install \`TaskNotes\` and configure its task statuses and Bases. Close Obsidian first' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'taskcli obsidian commands' commands "$@"
 }
+(( $+functions[_taskcli__subcmd__obsidian__subcmd__connection_commands] )) ||
+_taskcli__subcmd__obsidian__subcmd__connection_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli obsidian connection commands' commands "$@"
+}
 (( $+functions[_taskcli__subcmd__obsidian__subcmd__help_commands] )) ||
 _taskcli__subcmd__obsidian__subcmd__help_commands() {
     local commands; commands=(
+'connection:Read the Obsidian connection configuration without loading task records' \
+'show:Query one registered Task, Job, or Inbox entry by its exact ID' \
+'snapshot:Query registered notes and authoritative status properties without lease credentials' \
 'setup:Install \`TaskNotes\` and configure its task statuses and Bases. Close Obsidian first' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'taskcli obsidian help commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__obsidian__subcmd__help__subcmd__connection_commands] )) ||
+_taskcli__subcmd__obsidian__subcmd__help__subcmd__connection_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli obsidian help connection commands' commands "$@"
 }
 (( $+functions[_taskcli__subcmd__obsidian__subcmd__help__subcmd__help_commands] )) ||
 _taskcli__subcmd__obsidian__subcmd__help__subcmd__help_commands() {
@@ -2643,10 +2970,30 @@ _taskcli__subcmd__obsidian__subcmd__help__subcmd__setup_commands() {
     local commands; commands=()
     _describe -t commands 'taskcli obsidian help setup commands' commands "$@"
 }
+(( $+functions[_taskcli__subcmd__obsidian__subcmd__help__subcmd__show_commands] )) ||
+_taskcli__subcmd__obsidian__subcmd__help__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli obsidian help show commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__obsidian__subcmd__help__subcmd__snapshot_commands] )) ||
+_taskcli__subcmd__obsidian__subcmd__help__subcmd__snapshot_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli obsidian help snapshot commands' commands "$@"
+}
 (( $+functions[_taskcli__subcmd__obsidian__subcmd__setup_commands] )) ||
 _taskcli__subcmd__obsidian__subcmd__setup_commands() {
     local commands; commands=()
     _describe -t commands 'taskcli obsidian setup commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__obsidian__subcmd__show_commands] )) ||
+_taskcli__subcmd__obsidian__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli obsidian show commands' commands "$@"
+}
+(( $+functions[_taskcli__subcmd__obsidian__subcmd__snapshot_commands] )) ||
+_taskcli__subcmd__obsidian__subcmd__snapshot_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskcli obsidian snapshot commands' commands "$@"
 }
 (( $+functions[_taskcli__subcmd__plan_commands] )) ||
 _taskcli__subcmd__plan_commands() {

@@ -13,6 +13,7 @@
     "skills/",
     "obsidian/",
     "runtime.mjs",
+    "conversation.mjs",
     "README.md"
   ],
   "dependencies": {

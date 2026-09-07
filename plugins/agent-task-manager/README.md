@@ -2,7 +2,7 @@
 
 One plugin package connects Codex, Claude Code, Pi, and Oh My Pi (OMP) to the independent `taskcli` task board. Lifecycle configuration is bundled; do not copy it into each project's settings.
 
-Job creation captures the original user request with `job create --prompt`, separately from the summarized Goal. The generated Job note displays it as literal text under **Prompt**; sync, renaming, and archival preserve it. The skill keeps the prompt in its original language and wording. Existing active Jobs can be backfilled with `job update --prompt`.
+Job creation captures the original user request with `job create --prompt`, separately from the summarized Goal. The generated Job note displays it as literal text under **Prompt**; sync, renaming, and archival preserve it. The skill keeps the prompt in its original language and wording. Existing active Jobs can be backfilled with `job update --prompt`. Host hooks also record visible user prompts and agent replies in the generated Conversation section, excluding tool calls/results, reasoning, and injected system context. Codex/Claude capture the current transcript turn on Stop; Pi/OMP capture `agent_end`. Known host-context wrappers are excluded even when carried as user messages. Agent output is displayed in one continuous blockquote without timestamp sections. Stable message IDs prevent duplicate capture. See [conversation capture](https://github.com/tenfyzhong/agentix/blob/main/docs/task-board.md#job-conversation-records).
 
 ## Bundled entrypoints
 
@@ -111,7 +111,7 @@ When updating an existing local marketplace installation, rebuild/install taskcl
 
 Humans submit requirements in each Project’s `Inbox.md` or through Agentix `/inbox <content>`; `/inboxes` browses the queue. After the agent returns its result, review it and explicitly ask the agent to take the next Job, for example “Get the next Job from the Inbox.” That request permits one `inbox claim-next`, which creates or recovers the entry’s Job. The agent then uses the normal decomposition and Task workflow, returns the result, and waits for another explicit request. Adding an entry, a successful final response, or an empty active-Job list does not authorize intake. Codex/Claude Stop and Pi/OMP completion/idle events never claim work or enqueue an Inbox follow-up. The legacy `taskcli hook stop` returns `claimed: false` with reason `manual_intake_required` so older callers cannot claim through it.
 
-Inbox leases are distinct from Task leases and renew with the session. Interruption, release, or expiry makes unfinished work available to resume the same Job. Human cancellation (`- [-]`) or deletion revokes leases, cancels unfinished work, and supplies cancellation facts at tool/heartbeat/context boundaries. Completed outcomes and documents remain. See the [Project Inbox guide](https://github.com/tenfyzhong/agentix/blob/main/docs/task-board.md#project-inbox) for the format, safety checks, and CLI commands.
+PENDING_REVIEW Jobs allow an explicitly requested next Inbox entry while awaiting verification. Other ACTIVE Jobs still block new intake. Inbox leases are distinct from Task leases and renew with the session. Interruption, release, or expiry makes unfinished work available to resume the same Job. Human cancellation (`- [-]`) or deletion revokes leases, cancels unfinished work, and supplies cancellation facts at tool/heartbeat/context boundaries. Completed outcomes and documents remain. See the [Project Inbox guide](https://github.com/tenfyzhong/agentix/blob/main/docs/task-board.md#project-inbox) for the format, safety checks, and CLI commands.
 
 ## Validation
 
@@ -132,3 +132,9 @@ These tests do not install the plugin in a user's host or invoke a live model. N
 ## Obsidian setup
 
 See the [TaskNotes setup guide](obsidian/README.md) for task identification, seven English statuses, migration, and usage. [tasknotes-settings.json](obsidian/tasknotes-settings.json) supplies the settings subset; merge it with existing vault settings. TaskNotes provides status colors. The plugin does not automatically change vault appearance.
+
+## Obsidian status editing and Job review
+
+Run `taskcli obsidian setup` to install TaskNotes and the bundled desktop Taskcli Sync plugin. Board contains a pastel Job status board above the Task board. Saved status edits are submitted through taskcli; rejected changes are restored with a notification. See [Obsidian setup and supported edits](obsidian/README.md#status-edits).
+
+Finishing all non-cancelled Tasks submits their Job to PENDING_REVIEW. Verification passes with `job approve`, or fails with `job reject --reason` to return the Job to ACTIVE while preserving Task outcomes. Use `job submit` to resubmit ready work explicitly. Update all taskcli and Agentix database writers together for schema 10.

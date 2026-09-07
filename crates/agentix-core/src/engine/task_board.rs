@@ -379,7 +379,12 @@ impl Engine {
         for event in events {
             if matches!(
                 event.event_type.as_str(),
-                "task.waiting_user" | "task.blocked" | "task.failed" | "job.completed"
+                "task.waiting_user"
+                    | "task.blocked"
+                    | "task.failed"
+                    | "job.completed"
+                    | "job.pending_review"
+                    | "job.rejected"
             ) && let Some(session) = event.session_ref.as_deref()
                 && let Some(conversation) = self
                     .sessions
@@ -390,7 +395,10 @@ impl Engine {
                     "{}\n{}\n{}",
                     event.payload["title"].as_str().unwrap_or(""),
                     event.event_type,
-                    event.payload["reason"].as_str().unwrap_or("")
+                    event.payload["reason"]
+                        .as_str()
+                        .or_else(|| event.payload["review_reason"].as_str())
+                        .unwrap_or("")
                 );
                 self.send_view(&conversation, &OutboundView::text("Task update", body))
                     .await?;
@@ -412,5 +420,68 @@ impl Engine {
             service.sync().await.map_err(error)?;
         }
         Ok(())
+    }
+}
+
+impl Engine {
+    pub(in crate::engine) async fn record_job_message(&self, event: &crate::AgentEvent) {
+        let Some(service) = &self.task_board else {
+            return;
+        };
+        match event {
+            crate::AgentEvent::ItemCompleted {
+                session_id,
+                turn_id,
+                item,
+            } => {
+                let role = match item.kind.as_str() {
+                    "userMessage" => "user",
+                    "agentMessage" => "assistant",
+                    _ => return,
+                };
+                let Some(text) = item.text.as_deref().filter(|text| !text.trim().is_empty()) else {
+                    return;
+                };
+                let mut conversations = self.job_conversations.lock().await;
+                let messages = conversations
+                    .entry((session_id.clone(), turn_id.clone()))
+                    .or_default();
+                let id = format!("{turn_id}:{}", item.id);
+                let message = json!({"id":id,"role":role,"text":text});
+                if let Some(existing) = messages.iter_mut().find(|message| message["id"] == id) {
+                    *existing = message;
+                } else {
+                    messages.push(message);
+                }
+            }
+            crate::AgentEvent::TurnCompleted {
+                session_id,
+                turn_id,
+                ..
+            } => {
+                let key = (session_id.clone(), turn_id.clone());
+                let messages = self
+                    .job_conversations
+                    .lock()
+                    .await
+                    .get(&key)
+                    .cloned()
+                    .unwrap_or_default();
+                if messages.is_empty() {
+                    return;
+                }
+                let result = service.execute(json!({"command":"session.record","session":session_id,"messages":messages}), WriteOptions {session_ref:Some(session_id.clone()), ..WriteOptions::default()}).await;
+                match result {
+                    Ok(result) => {
+                        self.job_conversations.lock().await.remove(&key);
+                        if let Some(error) = result.projection_pending {
+                            tracing::warn!(%error, "Job conversation projection pending");
+                        }
+                    }
+                    Err(error) => tracing::warn!(%error, "Job conversation recording failed"),
+                }
+            }
+            _ => (),
+        }
     }
 }

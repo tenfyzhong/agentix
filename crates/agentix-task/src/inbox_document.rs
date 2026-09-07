@@ -77,7 +77,10 @@ fn parse(source: &str, project: &str) -> Result<Vec<ParsedEntry>> {
         }
         ensure!(
             line.len() >= 6
-                && matches!(line.as_bytes()[3], b' ' | b'x' | b'X' | b'-')
+                && matches!(
+                    line.as_bytes()[3],
+                    b' ' | b'/' | b'r' | b'p' | b'x' | b'X' | b'-'
+                )
                 && &line[4..6] == "] ",
             "invalid: Inbox checkbox"
         );
@@ -122,7 +125,10 @@ fn parse(source: &str, project: &str) -> Result<Vec<ParsedEntry>> {
         result.push(ParsedEntry {
             id,
             content: content.trim_end().into(),
-            cancelled: line.as_bytes()[3] == b'-',
+            // A canonical [-] receipt can be left behind by an interrupted
+            // reopen projection. Only a changed checkbox requests cancellation.
+            cancelled: line.as_bytes()[3] == b'-'
+                && !line.contains(" <!-- taskcli:entry-state CANCELLED "),
             span: offset..end_offset,
             header_end: offset + line.trim_end_matches(['\r', '\n']).len(),
         });
@@ -148,18 +154,39 @@ impl Service {
     pub(crate) async fn reconcile_inboxes_locked(
         &self,
         projects: Option<&BTreeSet<String>>,
+        deferred_status: Option<&str>,
+        publish: bool,
     ) -> Result<()> {
-        let state = self.store().snapshot().await?;
-        for project in &state.projects {
+        let selected = if let Some(ids) = projects {
+            let mut selected = Vec::new();
+            for id in ids {
+                selected.extend(
+                    self.store()
+                        .projection_snapshot(&format!("inbox:{id}"))
+                        .await?
+                        .projects,
+                );
+            }
+            selected
+        } else {
+            self.store().projects().await?
+        };
+        for project in &selected {
             if projects.is_some_and(|ids| !ids.contains(&project.id)) {
                 continue;
             }
-            self.reconcile_inbox_locked(project).await?;
+            self.reconcile_inbox_locked(project, deferred_status, publish)
+                .await?;
         }
         Ok(())
     }
 
-    async fn reconcile_inbox_locked(&self, project: &Project) -> Result<()> {
+    async fn reconcile_inbox_locked(
+        &self,
+        project: &Project,
+        deferred_status: Option<&str>,
+        publish: bool,
+    ) -> Result<()> {
         let path = self.inbox_path(project)?;
         let key = format!("inbox_initialized:{}", project.id);
         let initialized = self.store().metadata(&key).await?.is_some();
@@ -191,7 +218,10 @@ impl Service {
         let parsed = parse(&source, &project.id)?;
         let entries: Vec<_> = parsed
             .iter()
-            .map(|e| json!({"id":e.id,"content":e.content,"cancelled":e.cancelled}))
+            .map(|e| {
+                json!({"id":e.id,"content":e.content,
+                "cancelled":e.cancelled && e.id.as_deref() != deferred_status})
+            })
             .collect();
         let options = WriteOptions {
             actor_ref: "user:inbox".into(),
@@ -204,7 +234,10 @@ impl Service {
             )
             .await?;
         self.store().set_metadata(&key, &json!(true)).await?;
-        self.render_inbox_locked(project, &source, &parsed).await
+        if publish {
+            self.render_inbox_locked(project, &source, &parsed).await?;
+        }
+        Ok(())
     }
 
     async fn render_inbox_locked(
@@ -213,7 +246,10 @@ impl Service {
         source: &str,
         parsed: &[ParsedEntry],
     ) -> Result<()> {
-        let state = self.store().snapshot().await?;
+        let key = format!("inbox:{}", project.id);
+        let generation = self.store().document_generation(&key).await?;
+        let sequence = self.store().latest_sequence().await?;
+        let state = self.store().inbox_snapshot(&project.id).await?;
         let mut rendered = source.to_owned();
         let mut published = Vec::new();
         for item in parsed.iter().rev() {
@@ -227,7 +263,16 @@ impl Service {
             } else {
                 published.push(entry.id.clone());
                 // The source remains authored by the human even after dispatch.
-                self.inbox_entry_markdown(project, entry, &item.content, &state)
+                self.inbox_entry_markdown(
+                    project,
+                    entry,
+                    if entry.content_pending {
+                        &entry.content
+                    } else {
+                        &item.content
+                    },
+                    &state,
+                )
             };
             rendered.replace_range(item.span.clone(), &replacement);
         }
@@ -245,6 +290,7 @@ impl Service {
             );
             published.push(entry.id.clone());
         }
+        let rendered = crate::projection::normalize_document_timestamps(&rendered)?;
         checked_write(&self.inbox_path(project)?, source, &rendered)?;
         self.store()
             .execute(
@@ -252,6 +298,16 @@ impl Service {
                 WriteOptions::default(),
             )
             .await?;
+        if let Some(generation) = generation {
+            self.store()
+                .acknowledge_documents(
+                    &std::collections::BTreeMap::from([(key, generation)]),
+                    &std::collections::BTreeMap::new(),
+                    &BTreeSet::new(),
+                    sequence,
+                )
+                .await?;
+        }
         Ok(())
     }
 
@@ -264,15 +320,18 @@ impl Service {
     ) -> String {
         let mut lines = content.lines();
         let check = match entry.status {
-            InboxStatus::Done => 'x',
+            InboxStatus::Active => '/',
+            InboxStatus::PendingReview => 'r',
+            InboxStatus::Completed => 'x',
             InboxStatus::Cancelled => '-',
-            _ => ' ',
+            InboxStatus::Todo => ' ',
         };
         let mut output = format!(
-            "- [{check}] {}{ID}{} -->{STATE}{} -->",
+            "- [{check}] {}{ID}{} -->{STATE}{} revision={} -->",
             lines.next().unwrap_or_default(),
             entry.id,
-            entry.status
+            entry.status,
+            entry.revision
         );
         if let Some(job) = entry
             .job_id
@@ -298,7 +357,6 @@ impl Service {
             }
             output.push('\n');
         }
-        output.push('\n');
         output
     }
 }

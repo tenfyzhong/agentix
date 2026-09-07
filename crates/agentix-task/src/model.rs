@@ -82,14 +82,30 @@ impl fmt::Display for TaskPhase {
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum JobStatus {
     Active,
+    PendingReview,
     Completed,
     Cancelled,
+}
+
+impl JobStatus {
+    pub const ALL: [Self; 4] = [
+        Self::Active,
+        Self::PendingReview,
+        Self::Completed,
+        Self::Cancelled,
+    ];
+
+    #[must_use]
+    pub const fn terminal(self) -> bool {
+        matches!(self, Self::Completed | Self::Cancelled)
+    }
 }
 
 impl fmt::Display for JobStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Self::Active => "ACTIVE",
+            Self::PendingReview => "PENDING_REVIEW",
             Self::Completed => "COMPLETED",
             Self::Cancelled => "CANCELLED",
         })
@@ -122,10 +138,16 @@ pub struct Job {
     #[serde(default)]
     pub prompt: String,
     #[serde(default)]
+    pub conversation: Vec<crate::JobMessage>,
+    #[serde(default)]
     pub agent: Option<String>,
     #[serde(default)]
     pub session_id: Option<String>,
     pub status: JobStatus,
+    #[serde(default)]
+    pub review_reason: Option<String>,
+    #[serde(default)]
+    pub pending_review_at: Option<i64>,
     pub revision: i64,
     pub created_at: i64,
     pub updated_at: i64,
@@ -193,6 +215,10 @@ pub struct Lease {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Snapshot {
+    /// Transaction-local query summaries; never serialized or persisted.
+    #[serde(skip)]
+    #[doc(hidden)]
+    pub query_context: QueryContext,
     #[serde(default)]
     pub inboxes: Vec<InboxEntry>,
     #[serde(default)]
@@ -204,12 +230,26 @@ pub struct Snapshot {
     pub leases: Vec<Lease>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct QueryContext {
+    pub(crate) cancelled_inboxes:
+        std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
+    pub(crate) names: std::collections::BTreeMap<(String, String), Vec<(String, String)>>,
+    pub(crate) sequences: std::collections::BTreeMap<(String, String), u64>,
+    pub(crate) task_count: Option<i64>,
+    /// Non-cancelled and incomplete Tasks outside the materialized subset.
+    pub(crate) job_counts: std::collections::BTreeMap<String, (u64, u64)>,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum InboxStatus {
     Todo,
-    InProgress,
-    Done,
+    #[serde(alias = "IN_PROGRESS")]
+    Active,
+    PendingReview,
+    #[serde(alias = "DONE")]
+    Completed,
     Cancelled,
 }
 
@@ -217,8 +257,9 @@ impl fmt::Display for InboxStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Self::Todo => "TODO",
-            Self::InProgress => "IN_PROGRESS",
-            Self::Done => "DONE",
+            Self::Active => "ACTIVE",
+            Self::PendingReview => "PENDING_REVIEW",
+            Self::Completed => "COMPLETED",
             Self::Cancelled => "CANCELLED",
         })
     }
@@ -237,6 +278,12 @@ pub struct InboxEntry {
     pub id: String,
     pub project_id: String,
     pub content: String,
+    #[serde(default)]
+    pub source: Option<String>,
+    #[serde(default)]
+    pub source_version: i64,
+    #[serde(default)]
+    pub content_pending: bool,
     pub position: i64,
     pub status: InboxStatus,
     pub job_id: Option<String>,

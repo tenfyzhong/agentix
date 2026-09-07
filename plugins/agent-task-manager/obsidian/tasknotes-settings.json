@@ -2,6 +2,16 @@
   "taskIdentificationMethod": "tag",
   "taskTag": "task",
   "openTaskAfterCreation": "none",
+  "singleClickAction": "openNote",
+  "fieldMapping": {
+    "title": "title",
+    "status": "status",
+    "projects": "projects",
+    "dateCreated": "created_at",
+    "dateModified": "updated_at",
+    "completedDate": "completed_at",
+    "archiveTag": "archived"
+  },
   "customStatuses": [
     {
       "id": "agent-todo",
@@ -77,6 +87,39 @@
       "isCompleted": false,
       "excludeFromCycle": false,
       "order": 6,
+      "autoArchive": false,
+      "autoArchiveDelay": 5
+    },
+    {
+      "id": "agent-job-active",
+      "value": "ACTIVE",
+      "label": "Active",
+      "color": "#bfdbfe",
+      "isCompleted": false,
+      "excludeFromCycle": true,
+      "order": 7,
+      "autoArchive": false,
+      "autoArchiveDelay": 5
+    },
+    {
+      "id": "agent-job-pending-review",
+      "value": "PENDING_REVIEW",
+      "label": "Pending Review",
+      "color": "#fed7aa",
+      "isCompleted": false,
+      "excludeFromCycle": true,
+      "order": 8,
+      "autoArchive": false,
+      "autoArchiveDelay": 5
+    },
+    {
+      "id": "agent-job-completed",
+      "value": "COMPLETED",
+      "label": "Completed",
+      "color": "#bbf7d0",
+      "isCompleted": true,
+      "excludeFromCycle": true,
+      "order": 9,
       "autoArchive": false,
       "autoArchiveDelay": 5
     }

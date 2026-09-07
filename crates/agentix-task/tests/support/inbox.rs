@@ -1,6 +1,464 @@
 use super::*;
 
+#[tokio::test]
+async fn inbox_review_marker_migration_preserves_state_and_authored_details() {
+    let mut f = fixture("obsidian").await;
+    add(&f, "Review\n\nKeep literal - [p] examples.").await;
+    let claimed = claim(&f, "worker").await;
+    f.job = claimed["job"]["id"].as_str().unwrap().into();
+    let task = f.task("Delivery").await;
+    let owned = f.start(&task, "worker").await;
+    f.service
+        .execute(json!({"command":"task.done","task":task}), owner(&owned))
+        .await
+        .unwrap();
+    let before = f.service.store().snapshot().await.unwrap().inboxes;
+    for marker in ["p", "r"] {
+        let doc = std::fs::read_to_string(path(&f)).unwrap();
+        let doc = doc
+            .replace("- [p] Review", &format!("- [{marker}] Review"))
+            .replace("- [r] Review", &format!("- [{marker}] Review"));
+        std::fs::write(path(&f), doc).unwrap();
+        f.service.sync().await.unwrap();
+        let doc = std::fs::read_to_string(path(&f)).unwrap();
+        assert!(doc.contains("- [r] Review"));
+        assert!(doc.contains("Keep literal - [p] examples."));
+        assert_eq!(f.service.store().snapshot().await.unwrap().inboxes, before);
+    }
+}
+
 const END: &str = "<!-- taskcli:inbox:end -->";
+
+#[tokio::test]
+async fn inbox_pending_review_allows_next_claim_and_rejection_blocks_it() {
+    let mut f = fixture("obsidian").await;
+    add(&f, "First").await;
+    add(&f, "Second").await;
+    add(&f, "Third").await;
+    let first = claim(&f, "one").await;
+    f.job = first["job"]["id"].as_str().unwrap().into();
+    let task = f.task("Deliver first").await;
+    let owned = f.start(&task, "one").await;
+    assert_eq!(claim(&f, "two").await["reason"], "active_jobs");
+    f.service
+        .execute(json!({"command":"task.done","task":task}), owner(&owned))
+        .await
+        .unwrap();
+    let review = f
+        .service
+        .store()
+        .snapshot()
+        .await
+        .unwrap()
+        .jobs
+        .iter()
+        .find(|job| job.id == f.job)
+        .unwrap()
+        .clone();
+    let next = claim(&f, "two").await;
+    assert_eq!(next["claimed"], true, "{next}");
+    assert_ne!(next["job"]["id"], f.job);
+    let state = f.service.store().snapshot().await.unwrap();
+    assert_eq!(
+        *state.jobs.iter().find(|job| job.id == f.job).unwrap(),
+        review
+    );
+    assert_eq!(entries(&f).await[0]["status"], "PENDING_REVIEW");
+    assert!(entries(&f).await[0]["lease"].is_null());
+    assert_eq!(claim(&f, "three").await["reason"], "active_jobs");
+    f.service
+        .execute(
+            json!({"command":"inbox.cancel","inbox":next["entry"]["id"]}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    f.service
+        .execute(
+            json!({"command":"job.reject","job":f.job,"reason":"Needs repair"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    let recovered = claim(&f, "repair").await;
+    assert_eq!(recovered["job"]["id"], f.job);
+    assert_eq!(claim(&f, "three").await["reason"], "active_jobs");
+}
+
+#[tokio::test]
+async fn inbox_aligned_preflight_does_not_publish_an_old_checkbox_before_validation() {
+    let f = fixture("obsidian").await;
+    let entry = add(&f, "No stale echo").await;
+    let source = std::fs::read_to_string(path(&f))
+        .unwrap()
+        .replace("- [ ] No stale echo", "- [x] No stale echo");
+    std::fs::write(path(&f), &source).unwrap();
+    let result = f
+        .service
+        .execute(
+            json!({"command":"inbox.set-status","inbox":entry["id"],"status":"COMPLETED"}),
+            WriteOptions {
+                expected_revision: Some(999),
+                ..WriteOptions::default()
+            },
+        )
+        .await;
+    assert!(result.unwrap_err().to_string().contains("revision"));
+    assert_eq!(
+        std::fs::read_to_string(path(&f)).unwrap(),
+        source,
+        "preflight must not echo the old checkbox while the plugin has this intent in flight"
+    );
+}
+
+#[tokio::test]
+async fn inbox_aligned_sync_repairs_reopened_cancellation_after_a_projection_interruption() {
+    let f = fixture("obsidian").await;
+    let entry = add(&f, "Recover publication").await;
+    let id = entry["id"].as_str().unwrap();
+    set_status(&f, id, "CANCELLED").await.unwrap();
+    // Simulate a committed write whose process exits before publishing Markdown.
+    f.service
+        .store()
+        .execute(
+            json!({"command":"inbox.set-status","inbox":id,"status":"TODO"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        std::fs::read_to_string(path(&f))
+            .unwrap()
+            .contains("- [-] Recover publication")
+    );
+    f.service.sync().await.unwrap();
+    assert_eq!(entries(&f).await[0]["status"], "TODO");
+    assert!(
+        std::fs::read_to_string(path(&f))
+            .unwrap()
+            .contains("- [ ] Recover publication")
+    );
+}
+
+#[tokio::test]
+async fn inbox_aligned_states_follow_job_review_and_use_distinct_checkboxes() {
+    let mut f = fixture("obsidian").await;
+    let item = add(&f, "Five states").await;
+    let id = item["id"].as_str().unwrap();
+    let active = set_status(&f, id, "ACTIVE").await.unwrap().result;
+    assert_eq!(active["status"], "ACTIVE");
+    assert!(
+        active["lease"].is_null(),
+        "manual activation must not impersonate an agent"
+    );
+    f.job = active["job_id"].as_str().unwrap().into();
+    assert!(
+        std::fs::read_to_string(path(&f))
+            .unwrap()
+            .contains("- [/] Five states")
+    );
+    assert!(set_status(&f, id, "PENDING_REVIEW").await.is_err());
+    let claimed = claim(&f, "worker").await;
+    assert_eq!(claimed["claimed"], true);
+    assert_eq!(claimed["job"]["id"], f.job);
+    let task = f.task("Delivery").await;
+    let owned = f.start(&task, "worker").await;
+    f.service
+        .execute(json!({"command":"task.done","task":task}), owner(&owned))
+        .await
+        .unwrap();
+    assert_eq!(entries(&f).await[0]["status"], "PENDING_REVIEW");
+    assert!(
+        std::fs::read_to_string(path(&f))
+            .unwrap()
+            .contains("- [r] Five states")
+    );
+    assert_eq!(
+        set_status(&f, id, "ACTIVE").await.unwrap().result["status"],
+        "ACTIVE"
+    );
+    let snapshot = f.service.store().snapshot().await.unwrap();
+    assert_eq!(snapshot.tasks[0].status.to_string(), "DONE");
+    assert_eq!(
+        snapshot
+            .jobs
+            .iter()
+            .find(|j| j.id == f.job)
+            .unwrap()
+            .status
+            .to_string(),
+        "ACTIVE"
+    );
+    let events = f
+        .service
+        .store()
+        .events(Some(&f.job), 0, 100)
+        .await
+        .unwrap();
+    assert!(
+        events
+            .iter()
+            .any(|event| event.event_type == "job.rejected")
+    );
+    assert_eq!(
+        set_status(&f, id, "PENDING_REVIEW").await.unwrap().result["status"],
+        "PENDING_REVIEW"
+    );
+    assert_eq!(
+        set_status(&f, id, "COMPLETED").await.unwrap().result["status"],
+        "COMPLETED"
+    );
+    assert!(
+        std::fs::read_to_string(path(&f))
+            .unwrap()
+            .contains("- [x] Five states")
+    );
+    set_status(&f, id, "ACTIVE").await.unwrap();
+    set_status(&f, id, "CANCELLED").await.unwrap();
+    assert!(
+        std::fs::read_to_string(path(&f))
+            .unwrap()
+            .contains("- [-] Five states")
+    );
+    set_status(&f, id, "TODO").await.unwrap();
+    assert!(
+        std::fs::read_to_string(path(&f))
+            .unwrap()
+            .contains("- [ ] Five states")
+    );
+}
+
+#[tokio::test]
+async fn inbox_aligned_schema_migrates_legacy_states_and_pending_review_idempotently() {
+    let mut f = fixture("obsidian").await;
+    let item = add(&f, "Pending").await;
+    let claimed = claim(&f, "worker").await;
+    f.job = claimed["job"]["id"].as_str().unwrap().into();
+    let task = f.task("Done work").await;
+    let owned = f.start(&task, "worker").await;
+    f.service
+        .execute(json!({"command":"task.done","task":task}), owner(&owned))
+        .await
+        .unwrap();
+    let manual = add(&f, "Finished manually").await;
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new().filename(&f.service.config().storage.path),
+        )
+        .await
+        .unwrap();
+    for (id, status) in [(&item["id"], "IN_PROGRESS"), (&manual["id"], "DONE")] {
+        sqlx::query("UPDATE inbox_entries SET data=json_set(data,'$.status',?) WHERE id=?")
+            .bind(status)
+            .bind(id.as_str().unwrap())
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    sqlx::query("PRAGMA user_version = 9")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let migrated = Store::open(&f.service.config().storage.path).await.unwrap();
+    let state = migrated.snapshot().await.unwrap();
+    let rows = serde_json::to_value(&state.inboxes).unwrap();
+    assert_eq!(rows[0]["status"], "PENDING_REVIEW");
+    assert_eq!(rows[1]["status"], "COMPLETED");
+    assert_eq!(rows[0]["job_id"], f.job);
+    let again = Store::open(&f.service.config().storage.path).await.unwrap();
+    assert_eq!(again.snapshot().await.unwrap().inboxes, state.inboxes);
+    let version: i64 = sqlx::query_scalar("PRAGMA user_version")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(version, 12);
+}
+
+#[tokio::test]
+async fn inbox_aligned_import_accepts_slash_and_review_without_replaying_status_edits() {
+    let f = fixture("obsidian").await;
+    let initial = std::fs::read_to_string(path(&f)).unwrap();
+    std::fs::write(
+        path(&f),
+        initial.replace(
+            END,
+            &format!("- [/] Example active\n- [r] Example review\n{END}"),
+        ),
+    )
+    .unwrap();
+    f.service.sync().await.unwrap();
+    let rows = entries(&f).await;
+    assert_eq!(rows.len(), 2);
+    assert!(rows.iter().all(|row| row["status"] == "TODO"));
+}
+
+async fn set_status(f: &Fixture, id: &str, status: &str) -> anyhow::Result<agentix_task::Outcome> {
+    f.service
+        .execute(
+            json!({"command":"inbox.set-status","inbox":id,"status":status}),
+            WriteOptions::default(),
+        )
+        .await
+}
+
+#[tokio::test]
+async fn inbox_status_completes_unlinked_items_and_reopens_without_creating_jobs() {
+    let f = fixture("obsidian").await;
+    let item = add(&f, "Manual work").await;
+    let id = item["id"].as_str().unwrap();
+    assert_eq!(
+        set_status(&f, id, "DONE").await.unwrap().result["status"],
+        "COMPLETED"
+    );
+    assert_eq!(
+        set_status(&f, id, "TODO").await.unwrap().result["status"],
+        "TODO"
+    );
+    assert_eq!(
+        set_status(&f, id, "CANCELLED").await.unwrap().result["status"],
+        "CANCELLED"
+    );
+    assert_eq!(
+        set_status(&f, id, "TODO").await.unwrap().result["status"],
+        "TODO"
+    );
+    assert_eq!(f.service.store().snapshot().await.unwrap().jobs.len(), 1);
+    assert!(set_status(&f, id, "UNKNOWN").await.is_err());
+    let snapshot = f.service.obsidian_snapshot().await.unwrap();
+    let note = snapshot["notes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["id"] == id)
+        .unwrap();
+    assert_eq!(note["kind"], "inbox");
+    assert!(
+        note["path"]
+            .as_str()
+            .unwrap()
+            .ends_with("Projects/demo/Inbox.md")
+    );
+    assert_eq!(note["revision"], entries(&f).await[0]["revision"]);
+    assert!(note.get("lease").is_none());
+    assert!(
+        std::fs::read_to_string(path(&f))
+            .unwrap()
+            .contains("revision=")
+    );
+}
+
+#[tokio::test]
+async fn inbox_status_requires_review_and_reopens_the_same_job_preserving_tasks() {
+    let mut f = fixture("obsidian").await;
+    let entry = add(&f, "Deliver").await;
+    let id = entry["id"].as_str().unwrap();
+    let claimed = claim(&f, "one").await;
+    f.job = claimed["job"]["id"].as_str().unwrap().into();
+    assert!(
+        set_status(&f, id, "DONE")
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("PENDING_REVIEW")
+    );
+    assert!(set_status(&f, id, "TODO").await.is_err());
+    let task = f.task("Implementation").await;
+    let owned = f.start(&task, "one").await;
+    f.service
+        .execute(json!({"command":"task.done","task":task}), owner(&owned))
+        .await
+        .unwrap();
+    assert_eq!(
+        set_status(&f, id, "DONE").await.unwrap().result["status"],
+        "COMPLETED"
+    );
+    let before = f.service.store().snapshot().await.unwrap();
+    assert_eq!(
+        set_status(&f, id, "TODO").await.unwrap().result["status"],
+        "TODO"
+    );
+    f.service.sync().await.unwrap();
+    let state = f.service.store().snapshot().await.unwrap();
+    assert_eq!(state.tasks, before.tasks);
+    let job = state.jobs.iter().find(|j| j.id == f.job).unwrap();
+    assert_eq!(job.status.to_string(), "ACTIVE");
+    assert!(job.completed_at.is_none());
+    assert_eq!(claim(&f, "two").await["job"]["id"], f.job);
+}
+
+#[tokio::test]
+async fn inbox_status_fences_checkbox_cancellation_and_replays_once() {
+    let f = fixture("obsidian").await;
+    let entry = add(&f, "Cancel me").await;
+    let row = entries(&f).await.remove(0);
+    let id = entry["id"].as_str().unwrap();
+    let source = std::fs::read_to_string(path(&f)).unwrap();
+    std::fs::write(
+        path(&f),
+        source.replace("- [ ] Cancel me", "- [-] Cancel me"),
+    )
+    .unwrap();
+    let options = WriteOptions {
+        expected_revision: row["revision"].as_i64(),
+        idempotency_key: Some("cancel-checkbox".into()),
+        ..WriteOptions::default()
+    };
+    let request = json!({"command":"inbox.set-status","inbox":id,"status":"CANCELLED"});
+    let first = f
+        .service
+        .execute(request.clone(), options.clone())
+        .await
+        .unwrap();
+    assert_eq!(first.result["status"], "CANCELLED");
+    assert_eq!(
+        f.service
+            .execute(request, options.clone())
+            .await
+            .unwrap()
+            .sequence,
+        first.sequence
+    );
+    assert!(
+        f.service
+            .execute(
+                json!({"command":"inbox.set-status","inbox":id,"status":"TODO"}),
+                WriteOptions {
+                    idempotency_key: None,
+                    ..options
+                }
+            )
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("revision")
+    );
+}
+
+#[tokio::test]
+async fn inbox_status_does_not_revive_withdrawn_or_archived_work() {
+    let f = fixture("obsidian").await;
+    let entry = add(&f, "Withdraw").await;
+    let id = entry["id"].as_str().unwrap();
+    let source = std::fs::read_to_string(path(&f)).unwrap();
+    let source = source
+        .lines()
+        .filter(|line| !line.contains(id))
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(path(&f), source).unwrap();
+    assert!(set_status(&f, id, "TODO").await.is_err());
+    let entry = add(&f, "Archive").await;
+    let id = entry["id"].as_str().unwrap();
+    set_status(&f, id, "DONE").await.unwrap();
+    f.service
+        .execute(
+            json!({"command":"project.archive","project":f.project}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    assert!(set_status(&f, id, "TODO").await.is_err());
+}
 
 #[tokio::test]
 async fn inbox_rejects_reserved_control_markers_before_committing_a_submission() {
@@ -124,8 +582,9 @@ async fn inbox_metadata_stays_on_the_header_with_status_in_a_comment() {
         let entry = add(&f, content).await;
         let id = entry["id"].as_str().unwrap();
         let source = std::fs::read_to_string(path(&f)).unwrap();
+        let revision = entries(&f).await[0]["revision"].as_i64().unwrap();
         assert!(source.contains(&format!(
-            "- [ ] Request <!-- taskcli:entry:{id} --> <!-- taskcli:entry-state TODO -->\n  Details with **Markdown**.\n  - [ ] Acceptance\n\n"
+            "- [ ] Request <!-- taskcli:entry:{id} --> <!-- taskcli:entry-state TODO revision={revision} -->\n  Details with **Markdown**.\n  - [ ] Acceptance\n"
         )));
         assert!(!source.contains("\n  <!-- taskcli:entry-state"));
         f.service.sync().await.unwrap();
@@ -137,9 +596,12 @@ async fn inbox_metadata_stays_on_the_header_with_status_in_a_comment() {
         let source = std::fs::read_to_string(path(&f)).unwrap();
         let header = source
             .lines()
-            .find(|line| line.starts_with("- [ ] Request"))
+            .find(|line| line.starts_with("- [/] Request"))
             .unwrap();
-        assert!(header.contains("<!-- taskcli:entry-state IN_PROGRESS --> · "));
+        let revision = entries(&f).await[0]["revision"].as_i64().unwrap();
+        assert!(header.contains(&format!(
+            "<!-- taskcli:entry-state ACTIVE revision={revision} --> · "
+        )));
         assert!(header.contains(if format == "obsidian" { "[[" } else { "](" }));
         assert!(header.ends_with(" · agent:one"));
         assert!(!source.contains("\n  <!-- taskcli:entry-state"));
@@ -155,8 +617,9 @@ async fn inbox_metadata_stays_on_the_header_with_status_in_a_comment() {
             .await
             .unwrap();
         let source = std::fs::read_to_string(path(&f)).unwrap();
+        let revision = entries(&f).await[0]["revision"].as_i64().unwrap();
         assert!(source.contains(&format!(
-            "- [-] Request <!-- taskcli:entry:{id} --> <!-- taskcli:entry-state CANCELLED --> · "
+            "- [-] Request <!-- taskcli:entry:{id} --> <!-- taskcli:entry-state CANCELLED revision={revision} --> · "
         )));
         assert!(!source.contains("agent:one"));
     }
@@ -178,8 +641,9 @@ async fn inbox_legacy_receipt_migrates_without_changing_identity_or_content() {
     assert_eq!(rows[0]["content"], "Request\nDetails.");
     assert_eq!(rows[0]["status"], "TODO");
     let source = std::fs::read_to_string(path(&f)).unwrap();
+    let revision = rows[0]["revision"].as_i64().unwrap();
     assert!(source.contains(&format!(
-        "- [ ] Request <!-- taskcli:entry:{id} --> <!-- taskcli:entry-state TODO -->\n  Details.\n\n"
+        "- [ ] Request <!-- taskcli:entry:{id} --> <!-- taskcli:entry-state TODO revision={revision} -->\n  Details.\n"
     )));
     f.service.sync().await.unwrap();
     assert_eq!(entries(&f).await, rows);
@@ -236,7 +700,7 @@ async fn inbox_claim_is_exclusive_and_waits_for_all_project_jobs() {
         entries(&f)
             .await
             .iter()
-            .filter(|r| r["status"] == "IN_PROGRESS")
+            .filter(|r| r["status"] == "ACTIVE")
             .count(),
         1
     );
@@ -261,7 +725,7 @@ async fn inbox_cancellation_revokes_task_ownership_and_deletion_preserves_histor
     let owned = f.claim(task_id, "one").await;
     let text = std::fs::read_to_string(path(&f))
         .unwrap()
-        .replace("- [ ] Deliver", "- [-] Deliver");
+        .replace("- [/] Deliver", "- [-] Deliver");
     std::fs::write(path(&f), text).unwrap();
     f.service.sync().await.unwrap();
     let state = f.service.store().snapshot().await.unwrap();
@@ -376,13 +840,33 @@ async fn inbox_completion_checks_the_box_and_idempotent_append_keeps_one_entry()
         .execute(json!({"command":"task.done","task":t["id"]}), owner(&owned))
         .await
         .unwrap();
-    assert_eq!(entries(&f).await[0]["status"], "DONE");
+    assert_eq!(entries(&f).await[0]["status"], "PENDING_REVIEW");
+    assert!(entries(&f).await[0]["lease"].is_null());
+    assert_eq!(claim(&f, "other").await["claimed"], false);
+    f.service.execute(json!({"command":"job.reject","job":claimed["job"]["id"],"reason":"Needs another review"}), WriteOptions::default()).await.unwrap();
+    assert_eq!(entries(&f).await[0]["status"], "ACTIVE");
+    f.service
+        .execute(
+            json!({"command":"job.submit","job":claimed["job"]["id"]}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(entries(&f).await[0]["status"], "PENDING_REVIEW");
+    f.service
+        .execute(
+            json!({"command":"job.approve","job":claimed["job"]["id"]}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(entries(&f).await[0]["status"], "COMPLETED");
     assert!(
         std::fs::read_to_string(path(&f))
             .unwrap()
             .contains(&format!(
-                "- [x] Ship <!-- taskcli:entry:{} --> <!-- taskcli:entry-state DONE --> · ",
-                first.result["id"].as_str().unwrap()
+        "- [x] Ship <!-- taskcli:entry:{} --> <!-- taskcli:entry-state COMPLETED revision={} --> · ",
+        first.result["id"].as_str().unwrap(), entries(&f).await[0]["revision"]
             ))
     );
 }
@@ -393,7 +877,7 @@ async fn inbox_deleted_active_entry_cancels_and_cannot_be_restored_by_an_old_buf
     add(&f, "Withdraw").await;
     let claimed = claim(&f, "one").await;
     let source = std::fs::read_to_string(path(&f)).unwrap();
-    let start = source.find("- [ ] Withdraw").unwrap();
+    let start = source.find("- [/] Withdraw").unwrap();
     let end = source.find(END).unwrap();
     let removed = format!("{}{}", &source[..start], &source[end..]);
     std::fs::write(path(&f), &removed).unwrap();
@@ -468,4 +952,98 @@ async fn inbox_id_reordering_keeps_identity_and_duplicate_ids_reject_sync() {
     std::fs::write(path(&f), duplicate).unwrap();
     assert!(f.service.sync().await.is_err());
     assert_eq!(entries(&f).await.len(), 2);
+}
+
+#[tokio::test]
+async fn inbox_projection_has_no_blank_lines_between_items() {
+    let f = Fixture::new("obsidian").await;
+    for content in ["First\n\nParagraph", "Second"] {
+        f.service
+            .execute(
+                json!({"command":"inbox.add","project":f.project,"content":content}),
+                WriteOptions::default(),
+            )
+            .await
+            .unwrap();
+    }
+    let path = f
+        .service
+        .config()
+        .output_dir()
+        .join("Projects/demo/Inbox.md");
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(!text.contains("\n\n- [ ] Second"), "{text}");
+    assert!(
+        text.contains("\n\n  Paragraph\n- [ ] Second"),
+        "preserve authored paragraph breaks: {text}"
+    );
+    f.service.sync().await.unwrap();
+    assert_eq!(text, std::fs::read_to_string(path).unwrap());
+}
+
+#[tokio::test]
+async fn inbox_source_edit_survives_projection_interruption_without_reverting_content() {
+    let f = Fixture::new("obsidian").await;
+    let opts = WriteOptions {
+        actor_ref: "im:owner".into(),
+        ..WriteOptions::default()
+    };
+    let added = f.service.execute(json!({"command":"inbox.add","project":f.project,"content":"Old","source":"message-key"}), opts.clone()).await.unwrap().result;
+    f.service.store().execute(json!({"command":"inbox.edit","inbox":added["id"],"content":"New\n\nParagraph","source":"message-key","version":2}), opts.clone()).await.unwrap();
+    f.service.sync().await.unwrap();
+    let entry = &f.service.store().snapshot().await.unwrap().inboxes[0];
+    assert_eq!(entry.content, "New\n\nParagraph");
+    assert_eq!(entry.id, added["id"]);
+    let text = std::fs::read_to_string(
+        f.service
+            .config()
+            .output_dir()
+            .join("Projects/demo/Inbox.md"),
+    )
+    .unwrap();
+    assert!(text.contains("- [ ] New"));
+    f.service.sync().await.unwrap();
+    assert_eq!(
+        entry,
+        &f.service.store().snapshot().await.unwrap().inboxes[0]
+    );
+    for content in ["", "<!-- taskcli:inbox:end -->"] {
+        assert!(f.service.execute(json!({"command":"inbox.edit","inbox":added["id"],"content":content,"source":"message-key","version":3}), opts.clone()).await.is_err());
+    }
+}
+
+#[tokio::test]
+async fn inbox_source_migration_recovers_legacy_im_associations() {
+    let f = Fixture::new("markdown").await;
+    let options = WriteOptions {
+        actor_ref: "im:owner".into(),
+        idempotency_key: Some("im:inbox:[\"feishu\",\"chat\",\"message\"]".into()),
+        ..WriteOptions::default()
+    };
+    f.service
+        .execute(
+            json!({"command":"inbox.add","project":f.project,"content":"Legacy"}),
+            options,
+        )
+        .await
+        .unwrap();
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new().filename(&f.service.config().storage.path),
+        )
+        .await
+        .unwrap();
+    sqlx::query("UPDATE inbox_entries SET data = json_remove(data, '$.source')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("PRAGMA user_version = 10")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let store = Store::open(&f.service.config().storage.path).await.unwrap();
+    assert_eq!(
+        serde_json::to_value(&store.snapshot().await.unwrap().inboxes[0]).unwrap()["source"],
+        "[\"feishu\",\"chat\",\"message\"]"
+    );
 }

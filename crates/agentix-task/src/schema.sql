@@ -61,5 +61,34 @@ CREATE TABLE IF NOT EXISTS inbox_entries (
     project_id TEXT GENERATED ALWAYS AS (json_extract(data, '$.project_id')) STORED REFERENCES projects(id)
 );
 CREATE INDEX IF NOT EXISTS inbox_by_project ON inbox_entries(project_id);
-PRAGMA user_version = 8;
+CREATE INDEX IF NOT EXISTS projects_by_name ON projects(json_extract(data, '$.name'));
+CREATE INDEX IF NOT EXISTS tasks_by_project ON tasks(json_extract(data, '$.project_id'));
+CREATE INDEX IF NOT EXISTS tasks_by_project_activity ON tasks(json_extract(data, '$.project_id'), json_extract(data, '$.updated_at'));
+CREATE INDEX IF NOT EXISTS jobs_by_project_activity ON jobs(project_id, json_extract(data, '$.updated_at'));
+CREATE INDEX IF NOT EXISTS tasks_by_job_status ON tasks(job_id, json_extract(data, '$.status'), id);
+CREATE INDEX IF NOT EXISTS tasks_by_project_name ON tasks(json_extract(data, '$.project_id'), id, json_extract(data, '$.name'));
+CREATE INDEX IF NOT EXISTS jobs_by_project_name ON jobs(project_id, id, json_extract(data, '$.name'));
+CREATE INDEX IF NOT EXISTS tasks_by_project_day_sequence ON tasks(json_extract(data, '$.project_id'), CAST(json_extract(data, '$.created_at')/86400 AS INTEGER), json_extract(data, '$.sequence'));
+CREATE INDEX IF NOT EXISTS jobs_by_project_day_sequence ON jobs(project_id, CAST(json_extract(data, '$.created_at')/86400 AS INTEGER), json_extract(data, '$.sequence'));
+CREATE INDEX IF NOT EXISTS tasks_by_session ON tasks(json_extract(data, '$.last_session'));
+CREATE INDEX IF NOT EXISTS tasks_by_session_job_activity ON tasks(json_extract(data, '$.last_session'), job_id, json_extract(data, '$.updated_at'));
+CREATE INDEX IF NOT EXISTS tasks_by_job_session_activity ON tasks(job_id, json_extract(data, '$.updated_at')) WHERE json_extract(data, '$.last_session') IS NOT NULL;
+CREATE INDEX IF NOT EXISTS leases_by_session ON task_leases(session_ref);
+CREATE INDEX IF NOT EXISTS jobs_by_session ON jobs(json_extract(data, '$.session_id'));
+CREATE INDEX IF NOT EXISTS inbox_by_job ON inbox_entries(json_extract(data, '$.job_id'));
+CREATE INDEX IF NOT EXISTS inbox_by_session ON inbox_entries(json_extract(data, '$.last_session'));
+CREATE INDEX IF NOT EXISTS leases_by_expiry ON task_leases(json_extract(data, '$.lease_expires_at'));
+CREATE INDEX IF NOT EXISTS inbox_by_expiry ON inbox_entries(json_extract(data, '$.lease.lease_expires_at'));
+CREATE INDEX IF NOT EXISTS dependencies_by_dependency ON task_dependencies(dependency_id, task_id);
+CREATE INDEX IF NOT EXISTS events_by_project ON task_events(json_extract(data, '$.project_id'), sequence);
+CREATE TABLE IF NOT EXISTS document_registry (
+    key TEXT PRIMARY KEY,
+    path TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS documents_by_path ON document_registry(path);
+CREATE TABLE IF NOT EXISTS pending_documents (
+    key TEXT PRIMARY KEY,
+    generation TEXT NOT NULL
+);
+PRAGMA user_version = 12;
 PRAGMA application_id = 0x4158544b;

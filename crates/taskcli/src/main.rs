@@ -67,7 +67,11 @@ enum Command {
     /// Check for missing Plan files and documents that are behind the event log.
     Doctor,
     /// Regenerate task documents from the current database state.
-    Sync,
+    Sync {
+        /// Retry only pending document publications without a full rebuild.
+        #[arg(long)]
+        pending: bool,
+    },
     /// Register, inspect, archive, or delete Projects shared across worktrees.
     Project {
         #[command(subcommand)]
@@ -109,6 +113,12 @@ enum Command {
 
 #[derive(Subcommand)]
 enum ObsidianCommand {
+    /// Read the Obsidian connection configuration without loading task records.
+    Connection,
+    /// Query one registered Task, Job, or Inbox entry by its exact ID.
+    Show { id: String },
+    /// Query registered notes and authoritative status properties without lease credentials.
+    Snapshot,
     /// Install `TaskNotes` and configure its task statuses and Bases. Close Obsidian first.
     Setup {
         /// Use a local `TaskNotes` release directory instead of downloading the bundled version.
@@ -175,12 +185,21 @@ enum InboxCommand {
     Release { id: String },
     /// Cancel a requirement and its unfinished work, preserving history.
     Cancel { id: String },
+    /// Set a human Inbox status; linked completion requires a pending review.
+    SetStatus {
+        id: String,
+        #[arg(long, value_parser = ["TODO", "ACTIVE", "PENDING_REVIEW", "COMPLETED", "CANCELLED", "IN_PROGRESS", "DONE"])]
+        status: String,
+    },
 }
 
 #[derive(Args)]
+#[allow(clippy::struct_excessive_bools)] // Independent clap filter flags with explicit conflicts.
 struct JobList {
-    #[arg(long,conflicts_with_all=["completed","archived"])]
+    #[arg(long,conflicts_with_all=["completed","archived","pending_review"])]
     active: bool,
+    #[arg(long, conflicts_with_all = ["completed", "archived"])]
+    pending_review: bool,
     #[arg(long, conflicts_with = "archived")]
     completed: bool,
     #[arg(long)]
@@ -194,6 +213,12 @@ struct JobList {
 }
 #[derive(Subcommand)]
 enum JobCommand {
+    /// Submit an ACTIVE Job for review once all non-cancelled Tasks are DONE.
+    Submit { id: String },
+    /// Record human acceptance of a Job awaiting review.
+    Approve { id: String },
+    /// Return a Job awaiting review to ACTIVE, preserving its Tasks.
+    Reject(Reason),
     /// Delete the Job, its Tasks, and their Plan documents.
     Delete { id: String },
     /// Create a Job with a title and acceptance goal in the selected Project.
@@ -338,6 +363,13 @@ enum EventCommand {
 }
 #[derive(Subcommand)]
 enum HookCommand {
+    /// Record visible user/assistant messages from a JSON array in the session Job.
+    Record {
+        #[arg(long)]
+        file: PathBuf,
+        #[arg(long)]
+        job: Option<String>,
+    },
     /// Acknowledge turn completion without claiming Inbox work.
     Stop,
     /// Recover the session's Tasks blocked by interruption or lease expiry into planning.
@@ -451,10 +483,39 @@ async fn run(cli: &Cli) -> Result<Value> {
     {
         let config = Config::load(&cli.config_path()?)?;
         return Ok(response(
-            obsidian::setup(&config, plugin_dir.as_deref()).await?,
+            obsidian::setup(&config, &cli.config_path()?, plugin_dir.as_deref()).await?,
         ));
     }
-    let service = Service::open(Config::load(&cli.config_path()?)?).await?;
+    let config = Config::load(&cli.config_path()?)?;
+    if matches!(
+        &cli.command,
+        Command::Obsidian {
+            action: ObsidianCommand::Connection
+        }
+    ) {
+        ensure!(
+            config.documents.format == DocumentFormat::Obsidian,
+            "Obsidian queries require documents.format = obsidian"
+        );
+        return Ok(response(
+            json!({"protocol_version":1,"documents":config.documents}),
+        ));
+    }
+    let service = Service::open(config).await?;
+    // Point reads must not load all entities through global lease maintenance.
+    match &cli.command {
+        Command::Task {
+            action: TaskCommand::Show(args),
+        } => {
+            return Ok(response(service.store().task_result(&args.id).await?));
+        }
+        Command::Obsidian {
+            action: ObsidianCommand::Show { id },
+        } => {
+            return Ok(response(service.obsidian_note(id).await?));
+        }
+        _ => (),
+    }
     service.store().reap_expired().await?;
     match &cli.command {
         Command::Inbox { action } => inbox(cli, &service, action).await,
@@ -473,13 +534,19 @@ async fn run(cli: &Cli) -> Result<Value> {
                 .await?
                 .and_then(|v| v.as_i64())
                 .unwrap_or(0);
-            let healthy = missing.is_empty() && rendered >= sequence;
+            let healthy = missing.is_empty()
+                && rendered >= sequence
+                && !service.store().has_pending_documents().await?;
             Ok(response(
                 json!({"healthy":healthy,"missing_plans":missing,"sequence":sequence,"rendered_sequence":rendered,"documents":service.config().documents}),
             ))
         }
-        Command::Sync => {
-            service.sync().await?;
+        Command::Sync { pending } => {
+            if *pending {
+                service.sync_pending_documents().await?;
+            } else {
+                service.sync().await?;
+            }
             Ok(response(json!({"synced":true})))
         }
         Command::Project { action } => project(cli, &service, action).await,
@@ -500,6 +567,9 @@ async fn run(cli: &Cli) -> Result<Value> {
             context(cli, &service, task.as_deref(), job.as_deref()).await
         }
         Command::Hook { action } => hook(cli, &service, action).await,
+        Command::Obsidian {
+            action: ObsidianCommand::Snapshot,
+        } => Ok(response(service.obsidian_snapshot().await?)),
         Command::Init(_) | Command::Completions { .. } | Command::Obsidian { .. } => unreachable!(),
     }
 }
@@ -607,9 +677,8 @@ async fn project(cli: &Cli, service: &Service, action: &ProjectCommand) -> Resul
 }
 
 async fn resolve_project(cli: &Cli, service: &Service) -> Result<String> {
-    let state = service.store().snapshot().await?;
     if let Some(id) = &cli.project {
-        return Ok(state.projects[state.project_index(id)?].id.clone());
+        return Ok(service.store().project_result(id).await?.id);
     }
     let cwd = std::env::current_dir()?;
     let check = Process::new("git")
@@ -623,16 +692,30 @@ async fn resolve_project(cli: &Cli, service: &Service) -> Result<String> {
     );
     let (root, _) = git_identity(&cwd)?;
     let root = root.to_string_lossy();
-    state
-        .projects
-        .iter()
-        .find(|p| p.root == root)
-        .map(|p| p.id.clone())
+    service
+        .store()
+        .project_by_root(&root)
+        .await?
+        .map(|p| p.id)
         .context("register this project first with taskcli project register, or specify --project")
 }
 
 async fn job(cli: &Cli, service: &Service, action: &JobCommand) -> Result<Value> {
     match action {
+        JobCommand::Submit { id } => {
+            mutate(cli, service, json!({"command":"job.submit","job":id})).await
+        }
+        JobCommand::Approve { id } => {
+            mutate(cli, service, json!({"command":"job.approve","job":id})).await
+        }
+        JobCommand::Reject(args) => {
+            mutate(
+                cli,
+                service,
+                json!({"command":"job.reject","job":args.id,"reason":args.reason}),
+            )
+            .await
+        }
         JobCommand::Delete { id } => {
             mutate(cli, service, json!({"command":"job.delete","job":id})).await
         }
@@ -672,42 +755,7 @@ async fn job(cli: &Cli, service: &Service, action: &JobCommand) -> Result<Value>
             }
             mutate(cli, service, request).await
         }
-        JobCommand::List(filters) => {
-            let state = service.store().snapshot().await?;
-            let pid = cli
-                .project
-                .as_ref()
-                .map(|p| state.project_index(p).map(|i| state.projects[i].id.clone()))
-                .transpose()?;
-            let from = filters.created_from.as_ref().map(|s| date(s)).transpose()?;
-            let to = filters.created_to.as_ref().map(|s| date(s)).transpose()?;
-            if let Some(period) = &filters.period {
-                ensure!(
-                    period.len() == 7 && date(&format!("{period}-01")).is_ok(),
-                    "period must be YYYY-MM"
-                );
-            }
-            let jobs: Vec<_> = state
-                .jobs
-                .into_iter()
-                .filter(|j| pid.as_ref().is_none_or(|p| *p == j.project_id))
-                .filter(|j| {
-                    !filters.active || (j.status == JobStatus::Active && j.archived_at.is_none())
-                })
-                .filter(|j| !filters.completed || j.status == JobStatus::Completed)
-                .filter(|j| !filters.archived || j.archived_at.is_some())
-                .filter(|j| {
-                    from.is_none_or(|v| j.created_at >= v)
-                        && to.is_none_or(|v| j.created_at < v + 86400)
-                })
-                .filter(|j| {
-                    filters.period.as_ref().is_none_or(|p| {
-                        j.archived_at.is_some_and(|t| format_date(t).starts_with(p))
-                    })
-                })
-                .collect();
-            Ok(response(json!(jobs)))
-        }
+        JobCommand::List(filters) => list_jobs(cli, service, filters).await,
         JobCommand::Show { id } => {
             let state = service.store().snapshot().await?;
             Ok(response(json!(state.jobs[state.job_index(id)?])))
@@ -722,6 +770,45 @@ async fn job(cli: &Cli, service: &Service, action: &JobCommand) -> Result<Value>
             mutate(cli, service, json!({"command":"job.unarchive","job":id})).await
         }
     }
+}
+
+async fn list_jobs(cli: &Cli, service: &Service, filters: &JobList) -> Result<Value> {
+    let state = service.store().snapshot().await?;
+    let pid = cli
+        .project
+        .as_ref()
+        .map(|p| state.project_index(p).map(|i| state.projects[i].id.clone()))
+        .transpose()?;
+    let from = filters.created_from.as_ref().map(|s| date(s)).transpose()?;
+    let to = filters.created_to.as_ref().map(|s| date(s)).transpose()?;
+    if let Some(period) = &filters.period {
+        ensure!(
+            period.len() == 7 && date(&format!("{period}-01")).is_ok(),
+            "period must be YYYY-MM"
+        );
+    }
+    let jobs: Vec<_> = state
+        .jobs
+        .into_iter()
+        .filter(|j| pid.as_ref().is_none_or(|p| *p == j.project_id))
+        .filter(|j| !filters.active || (j.status == JobStatus::Active && j.archived_at.is_none()))
+        .filter(|j| !filters.completed || j.status == JobStatus::Completed)
+        .filter(|j| {
+            !filters.pending_review
+                || (j.status == JobStatus::PendingReview && j.archived_at.is_none())
+        })
+        .filter(|j| !filters.archived || j.archived_at.is_some())
+        .filter(|j| {
+            from.is_none_or(|v| j.created_at >= v) && to.is_none_or(|v| j.created_at < v + 86400)
+        })
+        .filter(|j| {
+            filters
+                .period
+                .as_ref()
+                .is_none_or(|p| j.archived_at.is_some_and(|t| format_date(t).starts_with(p)))
+        })
+        .collect();
+    Ok(response(json!(jobs)))
 }
 
 async fn task(cli: &Cli, service: &Service, action: &TaskCommand) -> Result<Value> {
@@ -787,9 +874,7 @@ async fn task(cli: &Cli, service: &Service, action: &TaskCommand) -> Result<Valu
             return Ok(response(json!(tasks)));
         }
         TaskCommand::Show(args) => {
-            return Ok(response(
-                service.store().snapshot().await?.task_result(&args.id)?,
-            ));
+            return Ok(response(service.store().task_result(&args.id).await?));
         }
         TaskCommand::Depend { id, dependency } => {
             json!({"command":"task.depend","task":id,"dependency":dependency})
@@ -922,6 +1007,20 @@ async fn hook(cli: &Cli, service: &Service, action: &HookCommand) -> Result<Valu
         .or_else(|| event["session_id"].as_str())
         .context("hook requires session_id on stdin or --session")?;
     let command = match action {
+        HookCommand::Record { file, job } => {
+            let messages: Value = serde_json::from_slice(&std::fs::read(file)?)?;
+            let mut request =
+                json!({"command":"session.record","session":session,"messages":messages});
+            if let Some(job) = job {
+                request["job"] = json!(job);
+            }
+            let mut options = cli.options();
+            options.session_ref = Some(session.into());
+            let outcome = service.execute(request, options).await?;
+            return Ok(
+                json!({"schema_version":1,"ok":true,"result":outcome.result,"sequence":outcome.sequence,"projection_pending":outcome.projection_pending}),
+            );
+        }
         // Keep the legacy entrypoint safe for installed plugins that still call it.
         HookCommand::Stop => {
             return Ok(response(
@@ -938,6 +1037,9 @@ async fn hook(cli: &Cli, service: &Service, action: &HookCommand) -> Result<Valu
 
 async fn inbox(cli: &Cli, service: &Service, action: &InboxCommand) -> Result<Value> {
     let request = match action {
+        InboxCommand::SetStatus { id, status } => {
+            json!({"command":"inbox.set-status","inbox":id,"status":status})
+        }
         InboxCommand::Cancel { id } => json!({"command":"inbox.cancel","inbox":id}),
         InboxCommand::Release { id } => json!({"command":"inbox.release","inbox":id}),
         _ => {

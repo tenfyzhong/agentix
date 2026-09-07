@@ -215,12 +215,15 @@ test("npm package contains all host manifests, hooks and resources but no tests"
         "hooks/claude.json",
         "hooks/run.mjs",
         "runtime.mjs",
+        "conversation.mjs",
         "extensions/pi.ts",
         "extensions/omp.ts",
         "skills/agent-task-manager/SKILL.md",
         "skills/agent-task-manager/references/commands.md",
         "obsidian/README.md",
         "obsidian/tasknotes-settings.json",
+        "obsidian/taskcli-sync/manifest.json",
+        "obsidian/taskcli-sync/main.js",
         "README.md",
     ])
         assert.ok(files.includes(path), `missing packaged file: ${path}`);

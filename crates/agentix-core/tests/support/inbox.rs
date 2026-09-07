@@ -156,3 +156,129 @@ async fn inbox_response_retry_after_restart_does_not_append_again() {
     assert_eq!(service.store().snapshot().await.unwrap().inboxes.len(), 1);
     assert!(last(&channel).body.contains("TODO"));
 }
+
+#[tokio::test]
+async fn inbox_message_edits_update_original_entry_after_detach_and_restart() {
+    let (_dir, service, _) = task_fixture().await;
+    let state = SqliteState::in_memory().await.unwrap();
+    let channel = Arc::new(FakeChannel::default());
+    let create = || {
+        Engine::new(
+            Arc::new(FakeAgent::new()),
+            state.clone(),
+            vec![channel.clone()],
+        )
+        .with_task_board(service.clone())
+    };
+    let engine = create();
+    engine.handle_inbound(input("/attach thr_a")).await.unwrap();
+    let original = input("/inbox Original");
+    engine.handle_inbound(original.clone()).await.unwrap();
+    engine.handle_inbound(input("/detach")).await.unwrap();
+    drop(engine);
+    let engine = create();
+    let edit = |event: &str, owner: &str, version: i64, text: &str| {
+        let mut envelope = original.clone();
+        envelope.event_id = event.into();
+        envelope.owner_id = owner.into();
+        envelope.payload = serde_json::from_value(json!({"TextEdited":{"original_event_id":original.event_id,"version":version,"text":text}})).unwrap();
+        envelope
+    };
+    engine
+        .handle_inbound(edit("edit-2", "owner", 2, "/inbox Edited\nDetails"))
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(edit("edit-2-replay", "owner", 2, "/inbox Edited\nDetails"))
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(edit("edit-old", "owner", 1, "/inbox Old"))
+        .await
+        .unwrap();
+    assert!(
+        engine
+            .handle_inbound(edit("edit-forged", "stranger", 3, "/inbox Forged"))
+            .await
+            .is_err()
+    );
+    engine
+        .handle_inbound(edit("edit-command", "owner", 4, "/stop"))
+        .await
+        .unwrap();
+    let entries = service.store().snapshot().await.unwrap().inboxes;
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].content, "Edited\nDetails");
+    assert_eq!(entries[0].status.to_string(), "TODO");
+    let doc = std::fs::read_to_string(service.config().output_dir().join("Projects/demo/Inbox.md"))
+        .unwrap();
+    assert!(doc.contains("- [ ] Edited"));
+    assert!(doc.contains("  Details"));
+    assert!(!doc.contains("Original"));
+}
+
+#[tokio::test]
+async fn inbox_polling_repairs_source_edits_without_an_attachment() {
+    let (_dir, service, _) = task_fixture().await;
+    let (engine, channel) = engine(service.clone()).await;
+    engine.handle_inbound(input("/attach thr_a")).await.unwrap();
+    let original = input("/inbox Original");
+    engine.handle_inbound(original.clone()).await.unwrap();
+    engine.handle_inbound(input("/detach")).await.unwrap();
+    let mut edit = original.clone();
+    edit.event_id = "poll-edit".into();
+    edit.payload = serde_json::from_value(json!({"TextEdited":{"original_event_id":original.event_id,"version":10,"text":"/inbox Polled"}})).unwrap();
+    *channel.inbox_source.lock().unwrap() = Some(edit);
+    engine.refresh_inbox_sources().await.unwrap();
+    assert_eq!(
+        service.store().snapshot().await.unwrap().inboxes[0].content,
+        "Polled"
+    );
+    let revision = service.store().snapshot().await.unwrap().inboxes[0].revision;
+    engine.refresh_inbox_sources().await.unwrap();
+    assert_eq!(
+        service.store().snapshot().await.unwrap().inboxes[0].revision,
+        revision
+    );
+}
+
+#[tokio::test]
+async fn job_conversation_captures_completed_messages_even_without_im_binding() {
+    let (_dir, service, _) = task_fixture().await;
+    let (engine, _) = engine(service.clone()).await;
+    for (id, kind, text) in [
+        ("user", "userMessage", "Request"),
+        ("tool", "commandExecution", "secret tool result"),
+        ("reason", "reasoning", "private reasoning"),
+        ("assistant", "agentMessage", "Visible answer"),
+    ] {
+        engine
+            .handle_agent_event(AgentEvent::ItemCompleted {
+                session_id: "thr_a".into(),
+                turn_id: "turn_capture".into(),
+                item: ItemSummary {
+                    id: id.into(),
+                    kind: kind.into(),
+                    text: Some(text.into()),
+                    status: None,
+                },
+            })
+            .await
+            .unwrap();
+    }
+    // No user prompt is assigned until the turn has finished creating its Job.
+    assert!(serde_json::to_value(&service.store().snapshot().await.unwrap().jobs[0]).unwrap()["conversation"].as_array().unwrap().is_empty());
+    engine
+        .handle_agent_event(AgentEvent::TurnCompleted {
+            session_id: "thr_a".into(),
+            turn_id: "turn_capture".into(),
+            status: TurnStatus::Completed,
+            error: None,
+        })
+        .await
+        .unwrap();
+    let job = serde_json::to_value(&service.store().snapshot().await.unwrap().jobs[0]).unwrap();
+    assert_eq!(job["conversation"].as_array().unwrap().len(), 2);
+    assert_eq!(job["conversation"][1]["text"], "Visible answer");
+    assert!(!job.to_string().contains("secret tool result"));
+}
