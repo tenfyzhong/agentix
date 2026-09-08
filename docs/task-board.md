@@ -52,7 +52,7 @@ Managed metadata stays on the entry's checkbox line: the ID and status are HTML 
 - [ ] Check feature completeness <!-- taskcli:entry:inbox_01a07760d6a673f2a863e0f105eb9783 --> <!-- taskcli:entry-state TODO revision=1 -->
 ```
 
-Synchronization upgrades older receipts to this inline format with a revision, preserving entry IDs and authored details. Legacy `[p]` review markers remain readable; synchronization and status repair write the canonical `[r]` marker without changing the entry state or revision. The connected plugin maps `[ ]`, `[/]`, `[r]`, `[x]`, `[-]` to TODO, ACTIVE, PENDING_REVIEW, COMPLETED, CANCELLED through `inbox set-status`. Activating an item creates or resumes its Job without claiming an agent lease. Review submission requires ready Tasks; checking a linked item approves its pending verification. An unlinked TODO item can complete directly. Reopening preserves the Job ID and Task history. Returning to TODO requires active leases to be released first. Unsupported edits restore the checkbox and show a notification. See [Inbox checkbox edits](../plugins/agent-task-manager/obsidian/README.md#inbox-checkbox-edits).
+Synchronization upgrades older receipts to this inline format with a revision, preserving entry IDs and authored details. Legacy `[p]` review markers remain readable; synchronization and status repair write the canonical `[r]` marker without changing the entry state or revision. The connected plugin maps `[ ]`, `[/]`, `[r]`, `[x]`, `[-]` to TODO, ACTIVE, PENDING_REVIEW, COMPLETED, CANCELLED through `inbox set-status`. Manual status changes never create Jobs or claim agent leases. Unlinked items can be marked ACTIVE or PENDING_REVIEW and completed directly after reopening if cancelled. Activating a linked item resumes its existing Job. Linked review submission requires ready Tasks; checking a linked item approves its pending verification. Reopening preserves the Job ID and Task history. Returning to TODO requires active leases to be released first. Unsupported edits restore the checkbox and show a notification. See [Inbox checkbox edits](../plugins/agent-task-manager/obsidian/README.md#inbox-checkbox-edits).
 
 Set an unfinished item to `- [-]` to cancel, or delete it to withdraw it. Cancellation revokes Inbox and associated Task leases, cancels unfinished Tasks and the active Job, and preserves completed/failed Task outcomes, Plans, Job documents, and audit history. Agents receive cancellation facts at subsequent context/tool/heartbeat boundaries and stop that work; filesystem edits already made are not rolled back. A stale lease cannot submit completion. Deleted entries cannot be revived. Deleting a terminal entry only hides it from the queue. Without the connected plugin, ordinary sync imports cancellations and withdrawals but does not interpret checks/unchecks as completion or reopening; use the explicit status command instead. Startup reconciles offline checkbox drift without replaying it.
 
@@ -69,7 +69,7 @@ taskcli --executor agent:codex --session SESSION inbox claim-next --json
 taskcli --session SESSION --lease-token INBOX_LEASE inbox release inbox_ID
 taskcli inbox cancel inbox_ID
 taskcli inbox set-status inbox_ID --status TODO
-# After verifying the linked PENDING_REVIEW Job, or for an unlinked TODO item:
+# After verifying the linked PENDING_REVIEW Job, or for an unlinked non-cancelled item:
 taskcli inbox set-status inbox_ID --status COMPLETED --expect-revision REVISION --idempotency-key KEY
 ```
 

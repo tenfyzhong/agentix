@@ -97,11 +97,13 @@ stateDiagram-v2
     [*] --> TODO: submission
     TODO --> ACTIVE: explicit claim-next / set-status ACTIVE
     ACTIVE --> TODO: release / interruption / lease expiry / queue without active leases
-    ACTIVE --> PENDING_REVIEW: Tasks ready / submit ready Job
+    ACTIVE --> PENDING_REVIEW: Tasks ready / submit ready Job / mark unlinked item
     PENDING_REVIEW --> ACTIVE: verification rejected
     PENDING_REVIEW --> TODO: queue for recovery (reject review)
-    PENDING_REVIEW --> COMPLETED: verification approved
+    PENDING_REVIEW --> COMPLETED: verification approved / complete unlinked item
+    TODO --> PENDING_REVIEW: mark unlinked item
     TODO --> COMPLETED: complete an unlinked item
+    ACTIVE --> COMPLETED: complete an unlinked item
     TODO --> CANCELLED: cancellation / withdrawal
     ACTIVE --> CANCELLED: cancellation / withdrawal
     PENDING_REVIEW --> CANCELLED: cancellation / withdrawal
@@ -113,6 +115,6 @@ stateDiagram-v2
 
 The connected plugin submits checkbox edits through `inbox set-status` with revision checks and idempotency keys. Failed edits restore the matching checkbox and notify the user. Job readiness automatically sets the Inbox item PENDING_REVIEW; review rejection and approval map to ACTIVE and COMPLETED. An explicit TODO represents queued/released work, even when its existing Job remains ACTIVE.
 
-Manual activation creates or resumes the Job without claiming an agent lease. Agents still need an explicit intake request to claim unleased TODO/ACTIVE entries, then follow the Task claim/Plan/start workflow. Reopening preserves Task outcomes and does not rerun DONE Tasks. Archived work must be unarchived first; withdrawn entries cannot be revived. Cancelled entries must be reopened before completion, and completed entries before cancellation.
+Manual status changes never create Jobs or claim agent leases. Unlinked items can be marked ACTIVE or PENDING_REVIEW and completed directly. Activation resumes an existing linked Job; submitting or completing linked work retains the Job readiness and review checks. Explicit intake creates the Job for an eligible unlinked entry. Agents still need an explicit intake request to claim unleased TODO/ACTIVE entries, then follow the Task claim/Plan/start workflow. Reopening preserves Task outcomes and does not rerun DONE Tasks. Archived work must be unarchived first; withdrawn entries cannot be revived. Cancelled entries must be reopened before completion, and completed entries before cancellation.
 
 Schema 10 migrates legacy Inbox IN_PROGRESS/DONE values to ACTIVE/COMPLETED and restores pending review from the linked Job. The CLI accepts legacy names as aliases; synchronization updates receipts and checkbox symbols. Plain CLI sync retains cancellation/withdrawal import but does not replay other status changes from checkbox drift.

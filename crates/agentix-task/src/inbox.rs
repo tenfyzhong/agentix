@@ -154,7 +154,7 @@ pub(crate) fn apply(
         let i = index(state, required(request, "inbox")?)?;
         check_revision(state.inboxes[i].revision, options)?;
         if command == "inbox.set-status" {
-            set_status(state, i, required(request, "status")?, options, now)?;
+            set_status(state, i, required(request, "status")?, now)?;
         } else if command == "inbox.cancel" {
             cancel(state, i, false, now);
         } else {
@@ -381,13 +381,7 @@ fn release(state: &mut Snapshot, i: usize, now: i64) {
     changed(entry, now);
 }
 
-fn set_status(
-    state: &mut Snapshot,
-    i: usize,
-    target: &str,
-    options: &WriteOptions,
-    now: i64,
-) -> Result<()> {
+fn set_status(state: &mut Snapshot, i: usize, target: &str, now: i64) -> Result<()> {
     let target = match target {
         "TODO" => InboxStatus::Todo,
         "ACTIVE" | "IN_PROGRESS" => InboxStatus::Active,
@@ -435,19 +429,12 @@ fn set_status(
         InboxStatus::Active => {
             if let Some(j) = job_index {
                 activate_job(state, j, now)?;
-            } else {
-                let entry = &state.inboxes[i];
-                let request =
-                    json!({"project":entry.project_id,"title":entry.title(),"goal":entry.content});
-                let job = crate::mutations::create_job(state, &request, options, now)?;
-                state.inboxes[i].job_id = job["id"].as_str().map(str::to_owned);
             }
         }
         InboxStatus::PendingReview => {
-            let j = job_index.context(
-                "conflict: activate the Inbox item before submitting its Job for review",
-            )?;
-            crate::mutations::review_job(state, j, &json!({"command":"job.submit"}), now)?;
+            if let Some(j) = job_index {
+                crate::mutations::review_job(state, j, &json!({"command":"job.submit"}), now)?;
+            }
         }
         InboxStatus::Completed => {
             ensure!(
