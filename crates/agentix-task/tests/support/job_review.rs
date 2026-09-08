@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn job_review_migrates_schema_eight_without_reopening_historical_completed_jobs() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .connect_with(
             sqlx::sqlite::SqliteConnectOptions::new().filename(&f.service.config().storage.path),
@@ -52,7 +52,7 @@ async fn change(f: &Fixture, command: &str) -> Value {
 
 #[tokio::test]
 async fn job_review_requires_human_approval_and_preserves_rejected_work() {
-    let f = Fixture::new("obsidian").await;
+    let f = Fixture::new().await;
     let id = f.task("Implement").await;
     finish(&f, &id).await;
     assert_eq!(job(&f).await["status"], "PENDING_REVIEW");
@@ -105,7 +105,7 @@ async fn job_review_requires_human_approval_and_preserves_rejected_work() {
 
 #[tokio::test]
 async fn job_review_rejects_incomplete_work_and_nonterminal_archival() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     for command in ["job.submit", "job.approve", "job.reject"] {
         assert!(
             f.service
@@ -154,7 +154,7 @@ async fn job_review_rejects_incomplete_work_and_nonterminal_archival() {
 
 #[tokio::test]
 async fn job_review_rework_must_be_finished_again_and_all_cancelled_is_not_delivery() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let id = f.task("Rework").await;
     finish(&f, &id).await;
     change(&f, "job.reject").await;
@@ -198,7 +198,7 @@ async fn job_review_rework_must_be_finished_again_and_all_cancelled_is_not_deliv
 
 #[tokio::test]
 async fn job_review_serializes_competing_decisions_and_replays_approval() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let id = f.task("Review once").await;
     finish(&f, &id).await;
     let revision = job(&f).await["revision"].as_i64().unwrap();
@@ -232,7 +232,7 @@ async fn job_review_serializes_competing_decisions_and_replays_approval() {
 
 #[tokio::test]
 async fn review_time_tracks_each_submission_and_projects_local_dates() {
-    let f = Fixture::new("obsidian").await;
+    let f = Fixture::new().await;
     assert!(job(&f).await["pending_review_at"].is_null());
     let id = f.task("Timed review").await;
     finish(&f, &id).await;
@@ -298,7 +298,7 @@ async fn review_time_tracks_each_submission_and_projects_local_dates() {
 
 #[tokio::test]
 async fn review_time_migration_uses_submission_event_before_later_edits() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let id = f.task("Legacy review").await;
     finish(&f, &id).await;
     let submitted = f.clock.load(Ordering::SeqCst);
@@ -336,7 +336,7 @@ async fn review_time_migration_uses_submission_event_before_later_edits() {
 
 #[tokio::test]
 async fn followup_preserves_job_and_snapshots_previous_dependencies() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     f.service
         .execute(
             json!({"command":"job.update","job":f.job,"prompt":"Original request"}),
@@ -398,7 +398,7 @@ async fn followup_preserves_job_and_snapshots_previous_dependencies() {
 
 #[tokio::test]
 async fn review_policy_none_completes_only_finished_work() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     f.service
         .execute(
             json!({"command":"job.update","job":f.job,"review_policy":"none"}),
@@ -424,7 +424,7 @@ async fn review_policy_none_completes_only_finished_work() {
 
 #[tokio::test]
 async fn followup_cancelled_prerequisite_stays_cancelled_and_blocks_execution() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let cancelled = f.task("Cancelled work").await;
     f.service
         .execute(
@@ -465,7 +465,7 @@ async fn followup_cancelled_prerequisite_stays_cancelled_and_blocks_execution() 
 
 #[tokio::test]
 async fn review_policy_creation_validation_and_explicit_submit() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     assert_eq!(job(&f).await["review_policy"], "required");
     let created = f.service.execute(json!({"command":"job.create","project":f.project,"title":"Documentation","review_policy":"none"}), WriteOptions::default()).await.unwrap().result;
     assert_eq!(created["review_policy"], "none");
@@ -493,7 +493,7 @@ async fn review_policy_creation_validation_and_explicit_submit() {
 
 #[tokio::test]
 async fn followup_new_session_records_before_tasks_without_stealing_later_capture() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let id = f.task("Original delivery").await;
     finish(&f, &id).await;
     let options = WriteOptions {

@@ -24,7 +24,7 @@ export async function fixture(overrides = {}) {
         kind: "task", id: "task_one", project_id: "prj_one", path: "Tasks/Projects/Demo/Tasks/One.md",
         revision: 1, status: "TODO", properties: { status: "TODO", completed_at: null },
     };
-    const state = { documents: { format: "obsidian", root: "/vault", directory: "Tasks" }, notes: [row] };
+    const state = { documents: { root: "/vault", directory: "Tasks" }, notes: [row] };
     const files = new Map([[row.path, { id: row.id, task_id: row.id, revision: 1, status: "TODO", completed_at: null, custom: "keep" }]]);
     const calls = [], notices = [];
     let engine;
@@ -122,7 +122,7 @@ export async function connectionFixture(directory = "11-Agents") {
     return {
         plugin, file, notices, requests, commands, vaultEvents, metadataEvents, button: buttons[0],
         reply(error, index = requests.length - 1, result) {
-            result ??= requests[index].args.includes("show") ? null : { protocol_version: 1, documents: { format: "obsidian", root: "/vault", directory } };
+            result ??= requests[index].args.includes("show") ? null : { protocol_version: 1, documents: { root: "/vault", directory } };
             requests[index].callback(error ? new Error(error) : null, JSON.stringify(error
                 ? { schema_version: 1, ok: false, error: { message: error } }
                 : { schema_version: 1, ok: true, result }), "");

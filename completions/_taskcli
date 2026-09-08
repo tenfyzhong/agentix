@@ -250,7 +250,6 @@ _arguments "${_arguments_options[@]}" : \
 ;;
 (init)
 _arguments "${_arguments_options[@]}" : \
-'--format=[]:FORMAT:(obsidian markdown)' \
 '--root=[]:ROOT:_files -/' \
 '--directory=[]:DIRECTORY:_files -/' \
 '--database=[]:DATABASE:_files' \

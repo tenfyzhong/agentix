@@ -2,88 +2,86 @@ use super::*;
 
 #[tokio::test]
 async fn job_deletion_cascades_and_preserves_other_jobs() {
-    for format in ["markdown", "obsidian"] {
-        for archived in [false, true] {
-            let f = Fixture::new(format).await;
-            let task = f.task("Delete this plan").await;
-            let claim = f.start(&task, "delete").await;
-            f.service
-                .execute(json!({"command":"task.done","task":task}), owner(&claim))
-                .await
-                .unwrap();
-            if archived {
-                f.approve().await;
-                f.service
-                    .execute(
-                        json!({"command":"job.archive","job":f.job}),
-                        WriteOptions::default(),
-                    )
-                    .await
-                    .unwrap();
-            }
-            let other = f
-                .service
-                .execute(
-                    json!({"command":"job.create","project":f.project,"title":"Keep job"}),
-                    WriteOptions::default(),
-                )
-                .await
-                .unwrap()
-                .result;
+    for archived in [false, true] {
+        let f = Fixture::new().await;
+        let task = f.task("Delete this plan").await;
+        let claim = f.start(&task, "delete").await;
+        f.service
+            .execute(json!({"command":"task.done","task":task}), owner(&claim))
+            .await
+            .unwrap();
+        if archived {
+            f.approve().await;
             f.service
                 .execute(
-                    json!({"command":"task.add","job":other["id"],"title":"Keep task"}),
+                    json!({"command":"job.archive","job":f.job}),
                     WriteOptions::default(),
                 )
                 .await
                 .unwrap();
-            let before = f.service.store().snapshot().await.unwrap();
-            let request = json!({"command":"job.delete","job":f.job});
-            let options = WriteOptions {
-                idempotency_key: Some("delete-once".into()),
-                ..WriteOptions::default()
-            };
-            let deleted = f
-                .service
-                .execute(request.clone(), options.clone())
-                .await
-                .unwrap();
-            assert_eq!(deleted.result["deleted"], true);
-            assert!(deleted.projection_pending.is_none());
-            let after = f.service.store().snapshot().await.unwrap();
-            assert_eq!(after.jobs.len(), 1);
-            assert_eq!(after.jobs[0].id, other["id"]);
-            assert_eq!(after.tasks.len(), 1);
-            assert!(after.plans.is_empty());
-            let root = f.service.config().output_dir();
-            assert!(!root.join(&before.jobs[0].document_path).exists());
-            assert!(!root.join(&before.plans[0].path).exists());
-            assert!(root.join(&after.jobs[0].document_path).exists());
-            let board = std::fs::read_to_string(root.join("Projects/demo/Board.md")).unwrap();
-            assert!(!board.contains("Delete this plan"));
-            assert!(
-                root.join("Projects/demo/Tasks/260905-0002-Keep task.md")
-                    .exists()
-            );
-            let events = f.service.store().events(None, 0, 1000).await.unwrap();
-            assert!(
-                events
-                    .iter()
-                    .any(|e| e.event_type == "job.deleted" && e.job_id.as_deref() == Some(&f.job))
-            );
-            assert_eq!(
-                f.service.execute(request, options).await.unwrap().result,
-                deleted.result
-            );
-            assert_eq!(f.service.store().snapshot().await.unwrap(), after);
         }
+        let other = f
+            .service
+            .execute(
+                json!({"command":"job.create","project":f.project,"title":"Keep job"}),
+                WriteOptions::default(),
+            )
+            .await
+            .unwrap()
+            .result;
+        f.service
+            .execute(
+                json!({"command":"task.add","job":other["id"],"title":"Keep task"}),
+                WriteOptions::default(),
+            )
+            .await
+            .unwrap();
+        let before = f.service.store().snapshot().await.unwrap();
+        let request = json!({"command":"job.delete","job":f.job});
+        let options = WriteOptions {
+            idempotency_key: Some("delete-once".into()),
+            ..WriteOptions::default()
+        };
+        let deleted = f
+            .service
+            .execute(request.clone(), options.clone())
+            .await
+            .unwrap();
+        assert_eq!(deleted.result["deleted"], true);
+        assert!(deleted.projection_pending.is_none());
+        let after = f.service.store().snapshot().await.unwrap();
+        assert_eq!(after.jobs.len(), 1);
+        assert_eq!(after.jobs[0].id, other["id"]);
+        assert_eq!(after.tasks.len(), 1);
+        assert!(after.plans.is_empty());
+        let root = f.service.config().output_dir();
+        assert!(!root.join(&before.jobs[0].document_path).exists());
+        assert!(!root.join(&before.plans[0].path).exists());
+        assert!(root.join(&after.jobs[0].document_path).exists());
+        let board = std::fs::read_to_string(root.join("Projects/demo/Board.md")).unwrap();
+        assert!(!board.contains("Delete this plan"));
+        assert!(
+            root.join("Projects/demo/Tasks/260905-0002-Keep task.md")
+                .exists()
+        );
+        let events = f.service.store().events(None, 0, 1000).await.unwrap();
+        assert!(
+            events
+                .iter()
+                .any(|e| e.event_type == "job.deleted" && e.job_id.as_deref() == Some(&f.job))
+        );
+        assert_eq!(
+            f.service.execute(request, options).await.unwrap().result,
+            deleted.result
+        );
+        assert_eq!(f.service.store().snapshot().await.unwrap(), after);
     }
 }
 
 #[tokio::test]
 async fn deletion_and_claim_race_without_leaving_orphaned_work() {
     for _ in 0..5 {
-        let f = Fixture::new("markdown").await;
+        let f = Fixture::new().await;
         let task = f.task("Race").await;
         let clock = f.clock.clone();
         let other = Store::open_with_clock(
@@ -113,7 +111,7 @@ async fn deletion_and_claim_race_without_leaving_orphaned_work() {
 
 #[tokio::test]
 async fn deletion_checks_revisions_leases_and_external_dependencies() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let task = f.task("Owned work").await;
     let claim = f.claim(&task, "owner").await;
     let before = f.service.store().snapshot().await.unwrap();
@@ -204,7 +202,7 @@ async fn deletion_checks_revisions_leases_and_external_dependencies() {
 
 #[tokio::test]
 async fn failed_job_cleanup_retries_after_restart_without_reusing_numbers() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let task = f.task("Remove plan").await;
     let claim = f.start(&task, "delete").await;
     f.service
@@ -278,7 +276,7 @@ async fn failed_job_cleanup_retries_after_restart_without_reusing_numbers() {
 
 #[tokio::test]
 async fn project_deletion_removes_its_entire_output_directory_only() {
-    let f = Fixture::new("obsidian").await;
+    let f = Fixture::new().await;
     let task = f.task("Owned plan").await;
     let claim = f.start(&task, "delete").await;
     f.service
@@ -349,7 +347,7 @@ async fn project_deletion_removes_its_entire_output_directory_only() {
     assert!(state.tasks.is_empty());
     assert!(state.plans.is_empty());
     assert!(
-        !std::fs::read_to_string(root.join(f.dashboard_file()))
+        !std::fs::read_to_string(root.join("Dashboard.base"))
             .unwrap()
             .contains("[demo](")
     );
@@ -357,7 +355,7 @@ async fn project_deletion_removes_its_entire_output_directory_only() {
 
 #[tokio::test]
 async fn pending_project_cleanup_reserves_its_directory_until_sync() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     f.service
         .store()
         .execute(
@@ -394,7 +392,7 @@ async fn pending_project_cleanup_reserves_its_directory_until_sync() {
 #[cfg(unix)]
 #[tokio::test]
 async fn deletion_does_not_follow_directory_symlinks_within_the_output() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let root = f.service.config().output_dir();
     let project = root.join("Projects/demo");
     let saved = root.join("saved-demo");
@@ -428,77 +426,75 @@ async fn deletion_does_not_follow_directory_symlinks_within_the_output() {
 
 #[tokio::test]
 async fn deleting_after_projection_conflicts_preserves_unowned_destinations() {
-    for format in ["markdown", "obsidian"] {
-        for kind in ["new-job", "job", "task", "plan"] {
-            let f = Fixture::new(format).await;
-            let root = f.service.config().output_dir();
-            let task = f.task("Original").await;
-            if kind == "plan" {
-                let claim = f.start(&task, "delete-conflict").await;
-                f.service
-                    .execute(json!({"command":"task.done","task":task}), owner(&claim))
-                    .await
-                    .unwrap();
+    for kind in ["new-job", "job", "task", "plan"] {
+        let f = Fixture::new().await;
+        let root = f.service.config().output_dir();
+        let task = f.task("Original").await;
+        if kind == "plan" {
+            let claim = f.start(&task, "delete-conflict").await;
+            f.service
+                .execute(json!({"command":"task.done","task":task}), owner(&claim))
+                .await
+                .unwrap();
+        }
+        let before = f.service.store().snapshot().await.unwrap();
+        let relative = match kind {
+            "new-job" => "Projects/demo/Jobs/260905-0002-Collision.md".to_owned(),
+            "job" => "Projects/demo/Jobs/260905-0001-Collision.md".to_owned(),
+            _ => "Projects/demo/Tasks/260905-0001-Collision.md".to_owned(),
+        };
+        let path = root.join(relative);
+        // Even another generated entity's document is not ours to delete.
+        let innocent = "---\ntaskcli-generated: true\nid: unrelated\n---\n\nKeep this note.\n";
+        std::fs::write(&path, innocent).unwrap();
+        let request = match kind {
+            "new-job" => {
+                json!({"command":"job.create","project":f.project,"title":"Collision"})
             }
-            let before = f.service.store().snapshot().await.unwrap();
-            let relative = match kind {
-                "new-job" => "Projects/demo/Jobs/260905-0002-Collision.md".to_owned(),
-                "job" => "Projects/demo/Jobs/260905-0001-Collision.md".to_owned(),
-                _ => "Projects/demo/Tasks/260905-0001-Collision.md".to_owned(),
-            };
-            let path = root.join(relative);
-            // Even another generated entity's document is not ours to delete.
-            let innocent = "---\ntaskcli-generated: true\nid: unrelated\n---\n\nKeep this note.\n";
-            std::fs::write(&path, innocent).unwrap();
-            let request = match kind {
-                "new-job" => {
-                    json!({"command":"job.create","project":f.project,"title":"Collision"})
-                }
-                "job" => json!({"command":"job.update","job":f.job,"name":"Collision"}),
-                _ => json!({"command":"task.update","task":task,"name":"Collision"}),
-            };
-            let changed = f
-                .service
-                .execute(request, WriteOptions::default())
-                .await
-                .unwrap();
-            assert!(changed.projection_pending.is_some(), "{kind}");
-            let job = if kind == "new-job" {
-                changed.result["id"].as_str().unwrap()
-            } else {
-                &f.job
-            };
-            let deleted = f
-                .service
-                .execute(
-                    json!({"command":"job.delete","job":job}),
-                    WriteOptions::default(),
-                )
-                .await
-                .unwrap();
-            assert!(deleted.projection_pending.is_none(), "{deleted:?}");
-            assert_eq!(
-                std::fs::read_to_string(&path).ok().as_deref(),
-                Some(innocent),
-                "{kind}"
+            "job" => json!({"command":"job.update","job":f.job,"name":"Collision"}),
+            _ => json!({"command":"task.update","task":task,"name":"Collision"}),
+        };
+        let changed = f
+            .service
+            .execute(request, WriteOptions::default())
+            .await
+            .unwrap();
+        assert!(changed.projection_pending.is_some(), "{kind}");
+        let job = if kind == "new-job" {
+            changed.result["id"].as_str().unwrap()
+        } else {
+            &f.job
+        };
+        let deleted = f
+            .service
+            .execute(
+                json!({"command":"job.delete","job":job}),
+                WriteOptions::default(),
+            )
+            .await
+            .unwrap();
+        assert!(deleted.projection_pending.is_none(), "{deleted:?}");
+        assert_eq!(
+            std::fs::read_to_string(&path).ok().as_deref(),
+            Some(innocent),
+            "{kind}"
+        );
+        f.service.sync().await.unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), innocent);
+        if kind != "new-job" {
+            assert!(!root.join(&before.jobs[0].document_path).exists());
+            assert!(
+                !root
+                    .join("Projects/demo/Tasks/260905-0001-Original.md")
+                    .exists()
             );
-            f.service.sync().await.unwrap();
-            assert_eq!(std::fs::read_to_string(&path).unwrap(), innocent);
-            if kind != "new-job" {
-                assert!(!root.join(&before.jobs[0].document_path).exists());
-                assert!(
-                    !root
-                        .join("Projects/demo/Tasks/260905-0001-Original.md")
-                        .exists()
-                );
-            }
         }
     }
 }
 
 #[tokio::test]
 async fn deletion_removes_owned_documents_published_before_registration() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let task = f.task("Original").await;
     let root = f.service.config().output_dir();
     let original = root.join("Projects/demo/Tasks/260905-0001-Original.md");

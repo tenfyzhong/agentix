@@ -173,8 +173,6 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand completions" -l expect-r
 complete -c taskcli -n "__fish_taskcli_using_subcommand completions" -l idempotency-key -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand completions" -l json
 complete -c taskcli -n "__fish_taskcli_using_subcommand completions" -s h -l help -d 'Print help'
-complete -c taskcli -n "__fish_taskcli_using_subcommand init" -l format -r -f -a "obsidian\t''
-markdown\t''"
 complete -c taskcli -n "__fish_taskcli_using_subcommand init" -l root -r -f -a "(__fish_complete_directories)"
 complete -c taskcli -n "__fish_taskcli_using_subcommand init" -l directory -r -f -a "(__fish_complete_directories)"
 complete -c taskcli -n "__fish_taskcli_using_subcommand init" -l database -r -F

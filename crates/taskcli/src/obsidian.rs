@@ -1,6 +1,6 @@
 use std::{fs, io::Write, path::Path, time::Duration};
 
-use agentix_task::{Config, DocumentFormat, expand_home};
+use agentix_task::{Config, expand_home};
 use anyhow::{Context, Result, bail, ensure};
 use serde_json::{Value, json};
 
@@ -15,10 +15,6 @@ pub async fn setup(
     plugin_dir: Option<&Path>,
     no_reload: bool,
 ) -> Result<Value> {
-    ensure!(
-        config.documents.format == DocumentFormat::Obsidian,
-        "Obsidian setup requires documents.format = obsidian; run taskcli init first"
-    );
     let root = config.documents.root.canonicalize()?.join(".obsidian");
     check_path(&root, "")?;
     let mut changes = configuration_changes(&root, config_path)?;

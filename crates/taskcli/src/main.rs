@@ -5,11 +5,11 @@ use std::{
 };
 
 use agentix_task::{
-    Config, DocumentConfig, DocumentFormat, JobStatus, Service, StorageConfig, WriteOptions,
-    expand_home, git_identity,
+    Config, DocumentConfig, JobStatus, Service, StorageConfig, WriteOptions, expand_home,
+    git_identity,
 };
 use anyhow::{Context, Result, bail, ensure};
-use clap::{Args, CommandFactory, Parser, Subcommand, ValueEnum};
+use clap::{Args, CommandFactory, Parser, Subcommand};
 use clap_complete::Shell;
 use serde_json::{Value, json};
 
@@ -18,7 +18,7 @@ mod obsidian;
 #[derive(Parser)]
 #[command(
     version,
-    about = "Coordinate agent tasks with SQLite and read-only Markdown boards"
+    about = "Coordinate agent tasks with SQLite and read-only Obsidian boards"
 )]
 struct Cli {
     #[arg(long, global = true, value_hint = clap::ValueHint::FilePath)]
@@ -132,19 +132,12 @@ enum ObsidianCommand {
 
 #[derive(Args)]
 struct Init {
-    #[arg(long, value_enum)]
-    format: Format,
     #[arg(long, value_hint = clap::ValueHint::DirPath)]
     root: PathBuf,
     #[arg(long, default_value = ".", value_hint = clap::ValueHint::DirPath)]
     directory: PathBuf,
     #[arg(long, value_hint = clap::ValueHint::FilePath)]
     database: Option<PathBuf>,
-}
-#[derive(Clone, Copy, ValueEnum)]
-enum Format {
-    Obsidian,
-    Markdown,
 }
 
 #[derive(Subcommand)]
@@ -518,10 +511,6 @@ async fn run(cli: &Cli) -> Result<Value> {
             action: ObsidianCommand::Connection
         }
     ) {
-        ensure!(
-            config.documents.format == DocumentFormat::Obsidian,
-            "Obsidian queries require documents.format = obsidian"
-        );
         return Ok(response(
             json!({"protocol_version":1,"documents":config.documents}),
         ));
@@ -613,10 +602,6 @@ async fn initialize(cli: &Cli, init: &Init) -> Result<Value> {
             )?,
         },
         documents: DocumentConfig {
-            format: match init.format {
-                Format::Obsidian => DocumentFormat::Obsidian,
-                Format::Markdown => DocumentFormat::Markdown,
-            },
             root: expand_home(&init.root)?,
             directory: init.directory.clone(),
         },

@@ -56,7 +56,7 @@ async fn unreadable_other_job(f: &Fixture) {
 
 #[tokio::test]
 async fn session_project_without_context_does_not_read_records() {
-    let f = Fixture::new("obsidian").await;
+    let f = Fixture::new().await;
     unreadable_other_job(&f).await;
     for cwd in [None, Some(f.dir.path().join("missing"))] {
         let result = f.service.project_for_session(cwd.as_deref(), None).await;
@@ -67,7 +67,7 @@ async fn session_project_without_context_does_not_read_records() {
 
 #[tokio::test]
 async fn session_project_by_directory_does_not_read_job_or_task_records() {
-    let f = Fixture::new("obsidian").await;
+    let f = Fixture::new().await;
     unreadable_other_job(&f).await;
     let result = f
         .service
@@ -82,7 +82,7 @@ async fn session_project_by_directory_does_not_read_job_or_task_records() {
 
 #[tokio::test]
 async fn session_project_history_does_not_deserialize_unrelated_records() {
-    let f = Fixture::new("obsidian").await;
+    let f = Fixture::new().await;
     let task = f.task("Historical association").await;
     f.claim(&task, "target").await;
     unreadable_other_job(&f).await;
@@ -98,7 +98,7 @@ async fn session_project_history_does_not_deserialize_unrelated_records() {
 
 #[tokio::test]
 async fn session_project_history_combines_and_deduplicates_sources() {
-    let f = Fixture::new("obsidian").await;
+    let f = Fixture::new().await;
     let task = f.task("Task history").await;
     let inbox = f
         .service
@@ -166,7 +166,7 @@ async fn session_project_history_combines_and_deduplicates_sources() {
 
 #[tokio::test]
 async fn session_project_history_rejects_ambiguity_but_defers_to_directory() {
-    let f = Fixture::new("obsidian").await;
+    let f = Fixture::new().await;
     let task = f.task("Task history").await;
     f.claim(&task, "target").await;
     let other_dir = tempfile::tempdir().unwrap();
@@ -213,7 +213,7 @@ async fn session_project_history_rejects_ambiguity_but_defers_to_directory() {
 
 #[tokio::test]
 async fn session_project_directory_uses_the_closest_registered_ancestor() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let nested = f.dir.path().join("nested");
     let cwd = nested.join("working");
     fs::create_dir_all(&cwd).unwrap();
@@ -261,7 +261,7 @@ async fn session_project_directory_uses_the_closest_registered_ancestor() {
 
 #[tokio::test]
 async fn targeted_events_do_not_deserialize_unrelated_records() {
-    let f = Fixture::new("obsidian").await;
+    let f = Fixture::new().await;
     let expected = f
         .service
         .store()
@@ -279,7 +279,7 @@ async fn targeted_events_do_not_deserialize_unrelated_records() {
 
 #[tokio::test]
 async fn targeted_plan_does_not_deserialize_unrelated_records() {
-    let f = Fixture::new("obsidian").await;
+    let f = Fixture::new().await;
     let task = f.task("Target").await;
     f.start(&task, "target").await;
     let expected = f.service.plan(&task).await.unwrap();
@@ -291,7 +291,7 @@ async fn targeted_plan_does_not_deserialize_unrelated_records() {
 
 #[tokio::test]
 async fn targeted_task_markdown_does_not_deserialize_unrelated_records() {
-    let f = Fixture::new("obsidian").await;
+    let f = Fixture::new().await;
     let task = f.task("Target without a plan").await;
     let expected = f.service.task_markdown(&task).await.unwrap();
     unreadable_other_job(&f).await;
@@ -302,7 +302,7 @@ async fn targeted_task_markdown_does_not_deserialize_unrelated_records() {
 
 #[tokio::test]
 async fn targeted_job_markdown_does_not_deserialize_unrelated_records() {
-    let f = Fixture::new("obsidian").await;
+    let f = Fixture::new().await;
     let expected = f.service.job_markdown(&f.job).await.unwrap();
     unreadable_other_job(&f).await;
     let body = f.service.job_markdown(&f.job).await;
@@ -312,7 +312,7 @@ async fn targeted_job_markdown_does_not_deserialize_unrelated_records() {
 
 #[tokio::test]
 async fn targeted_reads_preserve_identifier_resolution() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let task = f.task("Target").await;
     let no_plan = f.service.plan(&task).await.unwrap_err().to_string();
     assert!(no_plan.contains("not_found: current Plan"), "{no_plan}");
@@ -369,7 +369,7 @@ async fn targeted_reads_preserve_identifier_resolution() {
 
 #[tokio::test]
 async fn targeted_event_pages_preserve_cursors_and_global_order() {
-    let f = Fixture::new("obsidian").await;
+    let f = Fixture::new().await;
     f.task("Before unrelated events").await;
     other_job(&f).await;
     f.task("After unrelated events").await;
@@ -416,7 +416,7 @@ async fn targeted_event_pages_preserve_cursors_and_global_order() {
 
 #[tokio::test]
 async fn status_write_does_not_deserialize_unrelated_records() {
-    let f = Fixture::new("obsidian").await;
+    let f = Fixture::new().await;
     let task = f.task("Target").await;
     let (job, other) = other_job(&f).await;
     let mut conn = connection(&f).await;
@@ -454,7 +454,7 @@ async fn status_write_does_not_deserialize_unrelated_records() {
 
 #[tokio::test]
 async fn status_write_leaves_unrelated_documents_and_dynamic_views_untouched() {
-    let f = Fixture::new("obsidian").await;
+    let f = Fixture::new().await;
     let task = f.task("Target").await;
     let (_, other) = other_job(&f).await;
     let note = f.service.obsidian_note(&other).await.unwrap();
@@ -506,7 +506,7 @@ async fn status_write_leaves_unrelated_documents_and_dynamic_views_untouched() {
 
 #[tokio::test]
 async fn job_approval_preserves_registered_bases_saved_without_comments() {
-    let f = Fixture::new("obsidian").await;
+    let f = Fixture::new().await;
     let task = f.task("Finish").await;
     let claim = f.start(&task, "base-review").await;
     f.service
@@ -566,7 +566,7 @@ async fn job_approval_preserves_registered_bases_saved_without_comments() {
 
 #[tokio::test]
 async fn incremental_base_sync_recreates_missing_views_and_protects_unmanaged_files() {
-    let f = Fixture::new("obsidian").await;
+    let f = Fixture::new().await;
     let task = f.task("Target").await;
     let path = f.service.config().output_dir().join("Recent Jobs.base");
     fs::remove_file(&path).unwrap();
@@ -609,7 +609,7 @@ async fn incremental_base_sync_recreates_missing_views_and_protects_unmanaged_fi
 
 #[tokio::test]
 async fn claiming_one_task_does_not_rewrite_other_leases() {
-    let f = Fixture::new("obsidian").await;
+    let f = Fixture::new().await;
     let a = f.task("A").await;
     let b = f.task("B").await;
     let held = f.claim(&a, "first").await;
@@ -632,7 +632,7 @@ async fn claiming_one_task_does_not_rewrite_other_leases() {
 
 #[tokio::test]
 async fn next_write_recovers_committed_projection_after_restart() {
-    let f = Fixture::new("obsidian").await;
+    let f = Fixture::new().await;
     let task = f.task("Target").await;
     f.service
         .store()
@@ -666,7 +666,7 @@ async fn next_write_recovers_committed_projection_after_restart() {
 
 #[tokio::test]
 async fn creation_and_rename_read_names_without_loading_unrelated_bodies() {
-    let f = Fixture::new("obsidian").await;
+    let f = Fixture::new().await;
     let task = f.task("Target").await;
     let (job, other) = other_job(&f).await;
     let mut conn = connection(&f).await;
@@ -707,7 +707,7 @@ async fn creation_and_rename_read_names_without_loading_unrelated_bodies() {
 
 #[tokio::test]
 async fn a_write_never_changes_another_projects_board_receipt() {
-    let f = Fixture::new("obsidian").await;
+    let f = Fixture::new().await;
     let task = f.task("Target").await;
     f.service
         .execute(
@@ -738,7 +738,7 @@ async fn a_write_never_changes_another_projects_board_receipt() {
 
 #[tokio::test]
 async fn failed_backlog_does_not_prevent_other_documents_from_publishing() {
-    let f = Fixture::new("obsidian").await;
+    let f = Fixture::new().await;
     let task = f.task("Target").await;
     let (job, _) = other_job(&f).await;
     let note = f.service.obsidian_note(&job).await.unwrap();
@@ -781,7 +781,7 @@ async fn failed_backlog_does_not_prevent_other_documents_from_publishing() {
 
 #[tokio::test]
 async fn acknowledging_an_older_generation_preserves_a_newer_publication() {
-    let f = Fixture::new("obsidian").await;
+    let f = Fixture::new().await;
     let task = f.task("Target").await;
     let mut conn = connection(&f).await;
     sqlx::query(&format!("CREATE TRIGGER concurrent_publication AFTER UPDATE ON document_registry WHEN NEW.key='task:{task}' BEGIN UPDATE pending_documents SET generation='newer' WHERE key=NEW.key; END"))
@@ -820,7 +820,7 @@ async fn acknowledging_an_older_generation_preserves_a_newer_publication() {
 
 #[tokio::test]
 async fn readiness_checks_do_not_deserialize_sibling_tasks() {
-    let f = Fixture::new("obsidian").await;
+    let f = Fixture::new().await;
     let task = f.task("Target").await;
     let other = f.task("Incomplete sibling").await;
     let claim = f.start(&task, "worker").await;
@@ -846,7 +846,7 @@ async fn readiness_checks_do_not_deserialize_sibling_tasks() {
 
 #[tokio::test]
 async fn job_events_keep_the_related_session_with_scoped_reads() {
-    let f = Fixture::new("obsidian").await;
+    let f = Fixture::new().await;
     let task = f.task("Target").await;
     let claim = f.start(&task, "worker").await;
     f.service
@@ -864,7 +864,7 @@ async fn job_events_keep_the_related_session_with_scoped_reads() {
 
 #[tokio::test]
 async fn session_heartbeat_does_not_reload_completed_work() {
-    let f = Fixture::new("obsidian").await;
+    let f = Fixture::new().await;
     let historical = f.task("Historical").await;
     let active = f.task("Active").await;
     let claim = f.start(&historical, "worker").await;
@@ -896,7 +896,7 @@ async fn session_heartbeat_does_not_reload_completed_work() {
 #[ignore = "explicit large-database acceptance test"]
 async fn status_write_with_one_hundred_thousand_unrelated_tasks() {
     use sqlx::Connection;
-    let f = Fixture::new("obsidian").await;
+    let f = Fixture::new().await;
     let task = f.task("Target").await;
     let mut conn = connection(&f).await;
     let mut tx = conn.begin().await.unwrap();

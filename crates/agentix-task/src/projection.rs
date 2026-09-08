@@ -9,8 +9,8 @@ use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
 
 use crate::{
-    Config, DocumentFormat, Outcome, Plan, Snapshot, Store, Task, TaskStatus, WriteOptions,
-    config::resolved_path, mutations::required, new_id, store::hash_bytes,
+    Config, Outcome, Plan, Snapshot, Store, Task, TaskStatus, WriteOptions, config::resolved_path,
+    mutations::required, new_id, store::hash_bytes,
 };
 
 #[cfg(test)]
@@ -48,10 +48,6 @@ impl Service {
 
     /// One registered note, using indexed entity reads instead of a snapshot.
     pub async fn obsidian_note(&self, id: &str) -> Result<Value> {
-        ensure!(
-            self.config.documents.format == DocumentFormat::Obsidian,
-            "Obsidian queries require documents.format = obsidian"
-        );
         let Some((entity, project_key)) = self.store.obsidian_record(id).await? else {
             return Ok(Value::Null);
         };
@@ -126,10 +122,6 @@ impl Service {
     /// Authoritative identities and status properties for the Obsidian bridge.
     /// Paths are relative to the vault; no ownership credentials are exported.
     pub async fn obsidian_snapshot(&self) -> Result<Value> {
-        ensure!(
-            self.config.documents.format == DocumentFormat::Obsidian,
-            "Obsidian snapshot requires documents.format = obsidian"
-        );
         let notes = self
             .store
             .obsidian_records()
@@ -297,14 +289,11 @@ impl Service {
     }
 
     async fn render_pending_document(&self, key: &str, generation: String) -> Result<()> {
-        let mut state = self.store.projection_snapshot(key).await?;
+        let state = self.store.projection_snapshot(key).await?;
         // Inbox publication acknowledges its own pre-render generation. A new
         // generation arriving after that pass must wait for its next import.
         if key.starts_with("inbox:") && !state.projects.is_empty() {
             return Ok(());
-        }
-        if key == "dashboard" && self.config.documents.format == DocumentFormat::Markdown {
-            state.projects = self.store.projects().await?;
         }
         self.render_state_locked(
             &state,
@@ -483,7 +472,7 @@ impl Service {
         let sequence = self.store.latest_sequence().await?;
         let selected_keys = selected.map(|key| {
             let mut keys = BTreeSet::from([key.to_owned()]);
-            if key == "dashboard" && self.config.documents.format == DocumentFormat::Obsidian {
+            if key == "dashboard" {
                 keys.insert("pending-review".into());
             }
             if key.starts_with("task:") {
@@ -508,12 +497,6 @@ impl Service {
             .await?;
         let mut paths = BTreeMap::new();
         let mut files = BTreeMap::new();
-        let created = state
-            .projects
-            .iter()
-            .map(|p| p.created_at)
-            .min()
-            .unwrap_or(self.store.now());
         for project in &state.projects {
             let board_path = format!("Projects/{}/Board.md", project.key);
             if includes(&format!("board:{}", project.id)) {
@@ -566,9 +549,6 @@ impl Service {
                 for field in ["goal", "prompt", "conversation", "document_path", "name"] {
                     properties.as_object_mut().unwrap().remove(field);
                 }
-                if self.config.documents.format == DocumentFormat::Markdown {
-                    properties.as_object_mut().unwrap().remove("title");
-                }
                 let mut doc = frontmatter(properties);
                 doc.push_str(&Self::header(&job.name));
                 doc.push_str(&format!("\n## {}\n\n<!-- taskcli:goal:start -->\n{}\n<!-- taskcli:goal:end -->\n\n## {}\n", "Goal", goal, "Tasks"));
@@ -579,16 +559,8 @@ impl Service {
                     .into_iter()
                     .flatten()
                 {
-                    if self.config.documents.format == DocumentFormat::Markdown {
-                        doc.push_str(&format!("\n<a id=\"{}\"></a>\n", task.id.replace('_', "-")));
-                    }
-                    doc.push_str(&format!(
-                        "\n{}\n",
-                        self.task_line(&index, task, &job.document_path)?
-                    ));
-                    if self.config.documents.format == DocumentFormat::Obsidian {
-                        doc.push_str(&format!("\n^{}\n", task.id.replace('_', "-")));
-                    }
+                    doc.push_str(&format!("\n{}\n", self.task_line(&index, task)?));
+                    doc.push_str(&format!("\n^{}\n", task.id.replace('_', "-")));
                     if let Some(reason) = &task.reason {
                         doc.push_str(&format!("\n  {}: {}\n", "Reason", escape(reason)));
                     }
@@ -643,20 +615,17 @@ impl Service {
         // during incremental publication, even when Obsidian removed comments.
         let preserve_base = |key: &str, path: &str| -> Result<bool> {
             Ok(selected.is_some()
-                && self.config.documents.format == DocumentFormat::Obsidian
                 && previous.get(key).is_some_and(|old| old == path)
                 && self.safe_path(path)?.is_file())
         };
         if includes("dashboard") && preserve_base("dashboard", "Dashboard.base")? {
             paths.insert("dashboard".into(), "Dashboard.base".into());
         } else if includes("dashboard") {
-            let (dashboard_path, dashboard) = self.dashboard(state, created).await?;
+            let (dashboard_path, dashboard) = self.dashboard()?;
             files.insert(dashboard_path.clone(), dashboard);
             paths.insert("dashboard".into(), dashboard_path);
         }
-        if self.config.documents.format == DocumentFormat::Obsidian
-            && (includes("pending-review") || includes("dashboard"))
-        {
+        if includes("pending-review") || includes("dashboard") {
             if !preserve_base("pending-review", "Recent Jobs.base")? {
                 files.insert("Recent Jobs.base".into(), self.recent_jobs_base()?);
             }
@@ -845,74 +814,40 @@ impl Service {
         ))
     }
 
-    async fn dashboard(&self, state: &Snapshot, created: i64) -> Result<(String, String)> {
-        if self.config.documents.format == DocumentFormat::Obsidian {
-            let folder = self.config.documents.directory.join("Projects");
-            let folder = folder.to_string_lossy().replace('\\', "/");
-            let folder = folder.trim_start_matches("./");
-            let base = json!({
-                "filters": {"and": [
-                    format!("file.inFolder({})", json!(folder)),
-                    "file.ext == \"md\"", "note[\"taskcli-generated\"] == true"
-                ]},
-                "formulas": {
-                    "name": "link(file.path, note.name)",
-                    "status": "note.status", "updated": "date(note.updated_at)",
-                    "review_time": REVIEW_TIME_FORMULA
-                },
-                "properties": {
-                    "formula.name": {"displayName":"Name"},
-                    "formula.status": {"displayName":"Status"},
-                    "formula.updated": {"displayName":"Updated"},
-                    "formula.review_time": {"displayName":"Pending review since"}
-                },
-                "views": [{
-                    "type":"table", "name":"Projects",
-                    "filters":{"and":["file.name == \"Board\"", "file.hasTag(\"agent/project\")", "note.status == \"ACTIVE\""]},
-                    "order":["formula.name", "formula.status", "formula.updated"],
-                    "sort":[{"column":"formula.updated","direction":"DESC"}, {"column":"formula.name","direction":"ASC"}]
-                }, pending_review_view()]
-            });
-            return Ok((
-                "Dashboard.base".into(),
-                format!(
-                    "# taskcli-generated: dashboard\n{}",
-                    serde_yaml::to_string(&base)?
-                ),
-            ));
-        }
-        let mut doc = frontmatter(
-            json!({"id":"dashboard", "created_at":timestamp(created), "tags":["agent/dashboard"]}),
-        );
-        doc.push_str(&Self::header("Task dashboard"));
-        doc.push_str("\n| Name | Status | Updated |\n| --- | --- | --- |\n");
-        let mut projects: Vec<_> = state
-            .projects
-            .iter()
-            .filter(|p| p.archived_at.is_none())
-            .collect();
-        let mut activity = self
-            .store
-            .project_activity(&projects.iter().map(|p| p.id.as_str()).collect())
-            .await?;
-        for project in &projects {
-            let updated = activity
-                .entry(project.id.clone())
-                .or_insert(project.created_at);
-            *updated = (*updated).max(project.created_at);
-        }
-        projects.sort_by_key(|p| (std::cmp::Reverse(activity[&p.id]), &p.name));
-        for project in projects {
-            let board = format!("Projects/{}/Board.md", project.key);
-            doc.push_str(&format!(
-                "| {} | ACTIVE | {} |\n",
-                self.link("Dashboard.md", &board, None, &project.name),
-                timestamp(activity[&project.id])
-                    .as_str()
-                    .unwrap_or_default()
-            ));
-        }
-        Ok(("Dashboard.md".into(), doc))
+    fn dashboard(&self) -> Result<(String, String)> {
+        let folder = self.config.documents.directory.join("Projects");
+        let folder = folder.to_string_lossy().replace('\\', "/");
+        let folder = folder.trim_start_matches("./");
+        let base = json!({
+            "filters": {"and": [
+                format!("file.inFolder({})", json!(folder)),
+                "file.ext == \"md\"", "note[\"taskcli-generated\"] == true"
+            ]},
+            "formulas": {
+                "name": "link(file.path, note.name)",
+                "status": "note.status", "updated": "date(note.updated_at)",
+                "review_time": REVIEW_TIME_FORMULA
+            },
+            "properties": {
+                "formula.name": {"displayName":"Name"},
+                "formula.status": {"displayName":"Status"},
+                "formula.updated": {"displayName":"Updated"},
+                "formula.review_time": {"displayName":"Pending review since"}
+            },
+            "views": [{
+                "type":"table", "name":"Projects",
+                "filters":{"and":["file.name == \"Board\"", "file.hasTag(\"agent/project\")", "note.status == \"ACTIVE\""]},
+                "order":["formula.name", "formula.status", "formula.updated"],
+                "sort":[{"column":"formula.updated","direction":"DESC"}, {"column":"formula.name","direction":"ASC"}]
+            }, pending_review_view()]
+        });
+        Ok((
+            "Dashboard.base".into(),
+            format!(
+                "# taskcli-generated: dashboard\n{}",
+                serde_yaml::to_string(&base)?
+            ),
+        ))
     }
 
     fn job_properties(&self, job: &crate::Job, project: &crate::Project) -> Result<Value> {
@@ -934,17 +869,10 @@ impl Service {
         } else {
             json!(["agent/job"])
         };
-        if self.config.documents.format == DocumentFormat::Obsidian {
-            properties["title"] = json!(job.name);
-            properties["projects"] = json!([self.link(
-                &job.document_path,
-                &format!("Projects/{}/Board.md", project.key),
-                None,
-                &project.name,
-            )]);
-            properties["archived"] =
-                json!(job.archived_at.is_some() || project.archived_at.is_some());
-        }
+        properties["title"] = json!(job.name);
+        properties["projects"] =
+            json!([self.link(&format!("Projects/{}/Board.md", project.key), &project.name,)]);
+        properties["archived"] = json!(job.archived_at.is_some() || project.archived_at.is_some());
         Ok(properties)
     }
 
@@ -961,12 +889,7 @@ impl Service {
         doc.push_str(&Self::header(&title));
         doc.push_str(&format!(
             "\n{}\n",
-            self.link(
-                &format!("Projects/{}/Board.md", project.key),
-                &format!("Projects/{}/Inbox.md", project.key),
-                None,
-                "Inbox"
-            )
+            self.link(&format!("Projects/{}/Inbox.md", project.key), "Inbox")
         ));
         for (kind, folder, statuses) in [
             ("Job", "Jobs", json!(crate::JobStatus::ALL)),
@@ -1073,52 +996,39 @@ impl Service {
         format!("# {}\n\n{}\n", escape(title), Self::notice())
     }
 
-    fn task_line(&self, index: &ProjectionIndex<'_>, task: &Task, from: &str) -> Result<String> {
+    fn task_line(&self, index: &ProjectionIndex<'_>, task: &Task) -> Result<String> {
         let path = index.task_path(task)?;
         let label = Path::new(&path)
             .file_stem()
             .and_then(|name| name.to_str())
             .context("Task path must have a UTF-8 filename")?;
-        Ok(format!("- {}", self.link(from, &path, None, label)))
+        Ok(format!("- {}", self.link(&path, label)))
     }
 
-    pub(crate) fn link(&self, from: &str, to: &str, anchor: Option<&str>, label: &str) -> String {
+    pub(crate) fn link(&self, to: &str, label: &str) -> String {
         let escaped_label = escape(label);
         let needs_plain_label = escaped_label != label;
         let label = escaped_label;
-        match self.config.documents.format {
-            DocumentFormat::Obsidian => {
-                let to = self
-                    .config
-                    .documents
-                    .directory
-                    .join(to)
-                    .to_string_lossy()
-                    .replace('\\', "/");
-                let to = to.trim_start_matches("./").trim_end_matches(".md");
-                let anchor = anchor.map_or_else(String::new, |s| format!("#^{s}"));
-                if needs_plain_label {
-                    // Obsidian aliases do not decode HTML entities. Keep labels
-                    // with reserved characters outside a stable wiki link.
-                    let label = label
-                        .replace('\\', "&#92;")
-                        .replace('*', "&#42;")
-                        .replace('_', "&#95;")
-                        .replace('`', "&#96;")
-                        .replace('~', "&#126;");
-                    format!("[[{to}{anchor}|Open]] {label}")
-                } else {
-                    format!("[[{to}{anchor}|{label}]]")
-                }
-            }
-            DocumentFormat::Markdown => {
-                let mut path = relative_url(from, to);
-                if let Some(anchor) = anchor {
-                    path.push('#');
-                    path.push_str(&encode(anchor));
-                }
-                format!("[{label}]({path})")
-            }
+        let to = self
+            .config
+            .documents
+            .directory
+            .join(to)
+            .to_string_lossy()
+            .replace('\\', "/");
+        let to = to.trim_start_matches("./").trim_end_matches(".md");
+        if needs_plain_label {
+            // Obsidian aliases do not decode HTML entities. Keep labels
+            // with reserved characters outside a stable wiki link.
+            let label = label
+                .replace('\\', "&#92;")
+                .replace('*', "&#42;")
+                .replace('_', "&#95;")
+                .replace('`', "&#96;")
+                .replace('~', "&#126;");
+            format!("[[{to}|Open]] {label}")
+        } else {
+            format!("[[{to}|{label}]]")
         }
     }
 }
@@ -1283,31 +1193,22 @@ fn job_dependency_graph(
         };
         let label = format!("{} · {}", mermaid_label(&label), task.status);
         let path = index.task_path(task)?;
-        match service.config.documents.format {
-            DocumentFormat::Obsidian => {
-                // Obsidian strips custom URI schemes from Mermaid SVG links.
-                // HTML internal links keep the file target separate from the status label.
-                let file = service
-                    .config
-                    .documents
-                    .directory
-                    .join(&path)
-                    .to_string_lossy()
-                    .replace('\\', "/");
-                let target = escape(file.trim_start_matches("./"))
-                    .replace('\'', "&#39;")
-                    .replace('"', "&quot;");
-                diagram.push_str(&format!(
-                    "    {id}[\"<a class='internal-link' data-href='{target}' href='{target}' style='color:#1f2937'>{label}</a>\"]:::status_{}\n",
-                    task.status,
-                ));
-            }
-            DocumentFormat::Markdown => {
-                let url = relative_url(&index.job(job_id)?.document_path, &path);
-                diagram.push_str(&format!("    {id}[\"{label}\"]:::status_{}\n", task.status));
-                diagram.push_str(&format!("    click {id} href \"{url}\" \"Open task\"\n"));
-            }
-        }
+        // Obsidian strips custom URI schemes from Mermaid SVG links.
+        // HTML internal links keep the file target separate from the status label.
+        let file = service
+            .config
+            .documents
+            .directory
+            .join(&path)
+            .to_string_lossy()
+            .replace('\\', "/");
+        let target = escape(file.trim_start_matches("./"))
+            .replace('\'', "&#39;")
+            .replace('"', "&quot;");
+        diagram.push_str(&format!(
+            "    {id}[\"<a class='internal-link' data-href='{target}' href='{target}' style='color:#1f2937'>{label}</a>\"]:::status_{}\n",
+            task.status,
+        ));
     }
     for task in tasks {
         let mut indirect = BTreeSet::new();
@@ -1357,22 +1258,6 @@ fn task_status_color(status: TaskStatus) -> &'static str {
     }
 }
 
-fn relative_url(from: &str, to: &str) -> String {
-    let from: Vec<_> = from.split('/').collect();
-    let to: Vec<_> = to.split('/').collect();
-    let from = &from[..from.len() - 1];
-    let common = from.iter().zip(&to).take_while(|(a, b)| a == b).count();
-    let mut path = "../".repeat(from.len() - common);
-    path.push_str(
-        &to[common..]
-            .iter()
-            .map(|s| encode(s))
-            .collect::<Vec<_>>()
-            .join("/"),
-    );
-    path
-}
-
 fn mermaid_label(text: &str) -> String {
     let mut label = String::new();
     for character in text.chars() {
@@ -1395,17 +1280,6 @@ fn escape(text: &str) -> String {
         .replace('[', "&#91;")
         .replace(']', "&#93;")
         .replace(['\r', '\n'], " ")
-}
-fn encode(text: &str) -> String {
-    let mut result = String::new();
-    for byte in text.bytes() {
-        if byte.is_ascii_alphanumeric() || b"-._~".contains(&byte) {
-            result.push(char::from(byte));
-        } else {
-            result.push_str(&format!("%{byte:02X}"));
-        }
-    }
-    result
 }
 fn prompt_markdown(prompt: &str) -> String {
     let prompt = crate::conversation::user_text(prompt);

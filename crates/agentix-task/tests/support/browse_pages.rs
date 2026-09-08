@@ -16,7 +16,7 @@ fn status_rank(status: TaskStatus) -> usize {
 
 #[tokio::test]
 async fn task_pages_match_full_scope_order_counts_and_lease_expiry() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let seed = f.task("Current task").await;
     f.claim(&seed, "target").await;
     let mut conn = connection(&f).await;
@@ -101,7 +101,7 @@ async fn task_pages_match_full_scope_order_counts_and_lease_expiry() {
 
 #[tokio::test]
 async fn task_pages_preserve_archive_visibility_empty_pages_and_resolution() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let task = f.task("Target").await;
     f.claim(&task, "target").await;
     let mut conn = connection(&f).await;
@@ -175,7 +175,7 @@ async fn task_pages_preserve_archive_visibility_empty_pages_and_resolution() {
 
 #[tokio::test]
 async fn session_job_pages_keep_insertion_order_and_only_read_selected_titles() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let seed = f.task("Target").await;
     f.claim(&seed, "target").await;
     let mut conn = connection(&f).await;
