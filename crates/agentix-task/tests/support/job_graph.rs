@@ -17,6 +17,150 @@ fn graph(document: &str) -> &str {
 }
 
 #[tokio::test]
+async fn job_graph_reduces_diamond_paths_through_local_tasks_only() {
+    for format in ["obsidian", "markdown"] {
+        let f = Fixture::new(format).await;
+        let other = f
+            .service
+            .execute(
+                json!({"command":"job.create","project":f.project,"title":"Upstream"}),
+                WriteOptions::default(),
+            )
+            .await
+            .unwrap()
+            .result["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let mut external = Vec::new();
+        for title in ["External root", "External child"] {
+            external.push(
+                f.service
+                    .execute(
+                        json!({"command":"task.add","job":other,"title":title}),
+                        WriteOptions::default(),
+                    )
+                    .await
+                    .unwrap()
+                    .result["id"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned(),
+            );
+        }
+        let root = &external[0];
+        let child = &external[1];
+        let left = f.task("Left branch").await;
+        let right = f.task("Right branch").await;
+        let end = f.task("Merge branches").await;
+        for (task, dependency) in [
+            (child, root),
+            (&left, root),
+            (&right, root),
+            (&end, &left),
+            (&end, &right),
+            (&end, root),
+            (&end, child),
+        ] {
+            f.service
+                .execute(
+                    json!({"command":"task.depend","task":task,"dependency":dependency}),
+                    WriteOptions::default(),
+                )
+                .await
+                .unwrap();
+        }
+        let document = job_document(&f).await;
+        let diagram = graph(&document);
+        assert!(!diagram.contains(&format!("{root} --> {end}")));
+        for (from, to) in [
+            (root, &left),
+            (root, &right),
+            (&left, &end),
+            (&right, &end),
+            (child, &end),
+        ] {
+            assert!(diagram.contains(&format!("{from} --> {to}")));
+        }
+        assert_eq!(diagram.matches(" --> ").count(), 5);
+        for dependency in [&left, &right] {
+            f.service
+                .execute(
+                    json!({"command":"task.undepend","task":end,"dependency":dependency}),
+                    WriteOptions::default(),
+                )
+                .await
+                .unwrap();
+        }
+        // The external child's own edges are outside this Job's diagram, so
+        // that invisible path must not hide the root's direct connection.
+        let updated = job_document(&f).await;
+        assert!(graph(&updated).contains(&format!("{root} --> {end}")));
+        assert!(graph(&updated).contains(&format!("{child} --> {end}")));
+    }
+}
+
+#[tokio::test]
+async fn job_graph_omits_transitive_edges_and_restores_them_when_paths_change() {
+    for format in ["obsidian", "markdown"] {
+        let f = Fixture::new(format).await;
+        let first = f.task("Locate performance issues").await;
+        let second = f.task("Implement optimizations").await;
+        let third = f.task("Validate optimizations").await;
+        let independent = f.task("Independent prerequisite").await;
+        let last = f.task("Supplement performance checks").await;
+        for (task, dependency) in [
+            (&second, &first),
+            (&third, &second),
+            (&last, &first),
+            (&last, &second),
+            (&last, &third),
+            (&last, &independent),
+        ] {
+            f.service
+                .execute(
+                    json!({"command":"task.depend","task":task,"dependency":dependency}),
+                    WriteOptions::default(),
+                )
+                .await
+                .unwrap();
+        }
+        let document = job_document(&f).await;
+        let diagram = graph(&document);
+        assert!(!diagram.contains(&format!("{first} --> {last}")));
+        assert!(!diagram.contains(&format!("{second} --> {last}")));
+        for (from, to) in [
+            (&first, &second),
+            (&second, &third),
+            (&third, &last),
+            (&independent, &last),
+        ] {
+            assert!(diagram.contains(&format!("{from} --> {to}")));
+        }
+        assert_eq!(diagram.matches(" --> ").count(), 4);
+        let state = f.service.store().snapshot().await.unwrap();
+        let task = state.tasks.iter().find(|task| task.id == last).unwrap();
+        assert_eq!(
+            task.dependencies.len(),
+            4,
+            "stored execution gates stay intact"
+        );
+        f.service.sync().await.unwrap();
+        assert_eq!(job_document(&f).await, document);
+        f.service
+            .execute(
+                json!({"command":"task.undepend","task":second,"dependency":first}),
+                WriteOptions::default(),
+            )
+            .await
+            .unwrap();
+        let updated = job_document(&f).await;
+        assert!(graph(&updated).contains(&format!("{first} --> {last}")));
+        assert!(!graph(&updated).contains(&format!("{second} --> {last}")));
+    }
+}
+
+#[tokio::test]
 async fn job_sync_removes_legacy_dependency_prose_and_preserves_authored_notes() {
     for format in ["obsidian", "markdown"] {
         let f = Fixture::new(format).await;
