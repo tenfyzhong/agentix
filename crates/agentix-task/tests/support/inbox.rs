@@ -1056,14 +1056,14 @@ async fn prompt_links_inbox_and_follows_job_lifecycle() {
         let doc = std::fs::read_to_string(path(&f)).unwrap();
         std::fs::write(
             path(&f),
-            doc.replace(END, &format!("- [ ] 修复登录错误\n{END}")),
+            doc.replace(END, &format!("- [ ] Fix login error\n{END}")),
         )
         .unwrap();
         let job = f
             .service
             .execute(
                 json!({"command":"job.create","project":f.project,"title":"Login fix",
-                "prompt":"请帮我修复登录错误，并添加测试", "review_policy":policy}),
+                "prompt":"Please Fix login error and add tests", "review_policy":policy}),
                 identity("worker"),
             )
             .await
@@ -1077,7 +1077,7 @@ async fn prompt_links_inbox_and_follows_job_lifecycle() {
         assert!(
             std::fs::read_to_string(path(&f))
                 .unwrap()
-                .contains("- [/] 修复登录错误")
+                .contains("- [/] Fix login error")
         );
         let task = f.task("Fix login").await;
         let owned = f.start(&task, "worker").await;
@@ -1093,7 +1093,7 @@ async fn prompt_links_inbox_and_follows_job_lifecycle() {
         assert!(
             std::fs::read_to_string(path(&f))
                 .unwrap()
-                .contains("- [x] 修复登录错误")
+                .contains("- [x] Fix login error")
         );
     }
 }
