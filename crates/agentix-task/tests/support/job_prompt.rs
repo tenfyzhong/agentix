@@ -1,7 +1,7 @@
 use super::*;
 
-async fn job_with_conversation(format: &str) -> Fixture {
-    let f = Fixture::new(format).await;
+async fn job_with_conversation() -> Fixture {
+    let f = Fixture::new().await;
     f.service
         .execute(
             json!({"command":"job.update","job":f.job,"prompt":"Original request"}),
@@ -36,102 +36,96 @@ fn job_headings(document: &str) -> Vec<&str> {
 
 #[tokio::test]
 async fn job_document_places_prompt_and_conversation_after_notes() {
-    for format in ["markdown", "obsidian"] {
-        let f = job_with_conversation(format).await;
-        let state = f.service.store().snapshot().await.unwrap();
-        let path = f
-            .service
-            .config()
-            .output_dir()
-            .join(&state.jobs[0].document_path);
-        let document = std::fs::read_to_string(&path).unwrap();
-        assert_eq!(
-            job_headings(&document),
-            ["Goal", "Tasks", "Notes", "Prompt", "Conversation"],
-            "{format}"
-        );
+    let f = job_with_conversation().await;
+    let state = f.service.store().snapshot().await.unwrap();
+    let path = f
+        .service
+        .config()
+        .output_dir()
+        .join(&state.jobs[0].document_path);
+    let document = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(
+        job_headings(&document),
+        ["Goal", "Tasks", "Notes", "Prompt", "Conversation"],
+        "Obsidian"
+    );
 
-        // Recreate the old section order with authored content before syncing.
-        let (body, history) = document.split_once("\n## Prompt\n").unwrap();
-        let (header, sections) = body.split_once("\n## Goal\n").unwrap();
-        let legacy = format!("{header}\n## Prompt\n{history}\n## Goal\n{sections}")
-            .replace("Ship it", "Authored goal.")
-            .replace(
-                "<!-- taskcli:notes:start -->",
-                "<!-- taskcli:notes:start -->\nAuthored notes.",
-            );
-        std::fs::write(&path, legacy).unwrap();
-        f.service.sync().await.unwrap();
-        let synced = std::fs::read_to_string(&path).unwrap();
-        assert_eq!(job_headings(&synced), job_headings(&document));
-        assert!(synced.contains("Authored goal."));
-        assert!(synced.contains("Authored notes."));
-        assert!(synced.contains("    Original request"));
-        assert!(synced.contains("> Delivered."));
-        f.service.sync().await.unwrap();
-        assert_eq!(synced, std::fs::read_to_string(path).unwrap());
-    }
+    // Recreate the old section order with authored content before syncing.
+    let (body, history) = document.split_once("\n## Prompt\n").unwrap();
+    let (header, sections) = body.split_once("\n## Goal\n").unwrap();
+    let legacy = format!("{header}\n## Prompt\n{history}\n## Goal\n{sections}")
+        .replace("Ship it", "Authored goal.")
+        .replace(
+            "<!-- taskcli:notes:start -->",
+            "<!-- taskcli:notes:start -->\nAuthored notes.",
+        );
+    std::fs::write(&path, legacy).unwrap();
+    f.service.sync().await.unwrap();
+    let synced = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(job_headings(&synced), job_headings(&document));
+    assert!(synced.contains("Authored goal."));
+    assert!(synced.contains("Authored notes."));
+    assert!(synced.contains("    Original request"));
+    assert!(synced.contains("> Delivered."));
+    f.service.sync().await.unwrap();
+    assert_eq!(synced, std::fs::read_to_string(path).unwrap());
 }
 
 #[tokio::test]
 async fn job_markdown_places_prompt_and_conversation_after_notes() {
-    for format in ["markdown", "obsidian"] {
-        let f = job_with_conversation(format).await;
-        let body = f.service.job_markdown(&f.job).await.unwrap();
-        assert_eq!(
-            job_headings(&body),
-            ["Goal", "Notes", "Prompt", "Conversation"],
-            "{format}"
-        );
-    }
+    let f = job_with_conversation().await;
+    let body = f.service.job_markdown(&f.job).await.unwrap();
+    assert_eq!(
+        job_headings(&body),
+        ["Goal", "Notes", "Prompt", "Conversation"],
+        "Obsidian"
+    );
 }
 
 #[tokio::test]
 async fn conversation_sync_filters_legacy_context_and_keeps_real_user_requests() {
-    for format in ["markdown", "obsidian"] {
-        let f = Fixture::new(format).await;
-        let context = "# AGENTS.md instructions\n<INSTRUCTIONS>Injected rules</INSTRUCTIONS><environment_context>cwd: /work</environment_context>";
-        let mut job =
-            serde_json::to_value(&f.service.store().snapshot().await.unwrap().jobs[0]).unwrap();
-        job["prompt"] = json!(context);
-        job["conversation"] = json!([
-            {"id":"context","session_id":"s","role":"user","text":context,"recorded_at":1},
-            {"id":"u","session_id":"s","role":"user","text":"Please update AGENTS.md.","recorded_at":2},
-            {"id":"a1","session_id":"s","role":"assistant","text":"First paragraph.\n","recorded_at":3},
-            {"id":"a2","session_id":"s","role":"assistant","text":"Second paragraph.","recorded_at":4}
-        ]);
-        let pool = sqlx::SqlitePool::connect_with(
-            sqlx::sqlite::SqliteConnectOptions::new().filename(&f.service.config().storage.path),
-        )
+    let f = Fixture::new().await;
+    let context = "# AGENTS.md instructions\n<INSTRUCTIONS>Injected rules</INSTRUCTIONS><environment_context>cwd: /work</environment_context>";
+    let mut job =
+        serde_json::to_value(&f.service.store().snapshot().await.unwrap().jobs[0]).unwrap();
+    job["prompt"] = json!(context);
+    job["conversation"] = json!([
+        {"id":"context","session_id":"s","role":"user","text":context,"recorded_at":1},
+        {"id":"u","session_id":"s","role":"user","text":"Please update AGENTS.md.","recorded_at":2},
+        {"id":"a1","session_id":"s","role":"assistant","text":"First paragraph.\n","recorded_at":3},
+        {"id":"a2","session_id":"s","role":"assistant","text":"Second paragraph.","recorded_at":4}
+    ]);
+    let pool = sqlx::SqlitePool::connect_with(
+        sqlx::sqlite::SqliteConnectOptions::new().filename(&f.service.config().storage.path),
+    )
+    .await
+    .unwrap();
+    sqlx::query("UPDATE jobs SET data = ? WHERE id = ?")
+        .bind(job.to_string())
+        .bind(&f.job)
+        .execute(&pool)
         .await
         .unwrap();
-        sqlx::query("UPDATE jobs SET data = ? WHERE id = ?")
-            .bind(job.to_string())
-            .bind(&f.job)
-            .execute(&pool)
-            .await
-            .unwrap();
-        f.service.sync().await.unwrap();
-        let body = f.service.job_markdown(&f.job).await.unwrap();
-        assert!(!body.contains("Injected rules"));
-        assert!(!body.contains("cwd: /work"));
-        assert!(body.contains("Please update AGENTS.md."));
-        assert_eq!(body.matches("### Agent output").count(), 1);
-        assert!(body.contains("> First paragraph.\n>\n> Second paragraph."));
-        let path = f
-            .service
-            .config()
-            .output_dir()
-            .join(job["document_path"].as_str().unwrap());
-        let doc = std::fs::read_to_string(&path).unwrap();
-        f.service.sync().await.unwrap();
-        assert_eq!(doc, std::fs::read_to_string(path).unwrap());
-    }
+    f.service.sync().await.unwrap();
+    let body = f.service.job_markdown(&f.job).await.unwrap();
+    assert!(!body.contains("Injected rules"));
+    assert!(!body.contains("cwd: /work"));
+    assert!(body.contains("Please update AGENTS.md."));
+    assert_eq!(body.matches("### Agent output").count(), 1);
+    assert!(body.contains("> First paragraph.\n>\n> Second paragraph."));
+    let path = f
+        .service
+        .config()
+        .output_dir()
+        .join(job["document_path"].as_str().unwrap());
+    let doc = std::fs::read_to_string(&path).unwrap();
+    f.service.sync().await.unwrap();
+    assert_eq!(doc, std::fs::read_to_string(path).unwrap());
 }
 
 #[tokio::test]
 async fn conversation_selects_new_job_in_same_second_and_can_target_previous_job() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let task = f.task("Previous work").await;
     let claim = f.start(&task, "shared").await;
     f.service
@@ -166,72 +160,70 @@ async fn conversation_selects_new_job_in_same_second_and_can_target_previous_job
 
 #[tokio::test]
 async fn job_prompt_survives_updates_sync_reopen_and_archive() {
-    for format in ["markdown", "obsidian"] {
-        let f = Fixture::new(format).await;
-        let prompt = "Please preserve **this request**.\n\n```rust\nprintln!(\"hello\");\n```\n<!-- taskcli:goal:start -->\n<!-- taskcli:notes:end -->\n";
-        let created = f.service.execute(
-            json!({"command":"job.create","project":f.project,"title":"Original request","goal":"Acceptance","prompt":prompt}),
-            WriteOptions::default(),
-        ).await.unwrap();
-        assert!(created.projection_pending.is_none(), "{created:?}");
-        assert_eq!(created.result["prompt"], prompt);
-        let id = created.result["id"].as_str().unwrap();
-        let path = f
+    let f = Fixture::new().await;
+    let prompt = "Please preserve **this request**.\n\n```rust\nprintln!(\"hello\");\n```\n<!-- taskcli:goal:start -->\n<!-- taskcli:notes:end -->\n";
+    let created = f.service.execute(
+        json!({"command":"job.create","project":f.project,"title":"Original request","goal":"Acceptance","prompt":prompt}),
+        WriteOptions::default(),
+    ).await.unwrap();
+    assert!(created.projection_pending.is_none(), "{created:?}");
+    assert_eq!(created.result["prompt"], prompt);
+    let id = created.result["id"].as_str().unwrap();
+    let path = f
+        .service
+        .config()
+        .output_dir()
+        .join(created.result["document_path"].as_str().unwrap());
+    let doc = std::fs::read_to_string(&path).unwrap();
+    assert!(doc.contains("## Prompt\n"));
+    assert!(!doc.lines().any(|line| line.starts_with("prompt:")));
+    assert!(doc.contains("    Please preserve **this request**.\n\n    ```rust\n    println!(\"hello\");\n    ```\n    <!-- taskcli:goal:start -->\n    <!-- taskcli:notes:end -->\n"));
+    std::fs::write(
+        &path,
+        doc.replace(
+            "<!-- taskcli:notes:start -->",
+            "<!-- taskcli:notes:start -->\nKeep authored notes.",
+        ),
+    )
+    .unwrap();
+    for request in [
+        json!({"command":"job.update","job":id,"name":"Renamed","goal":"Updated acceptance"}),
+        json!({"command":"job.cancel","job":id}),
+        json!({"command":"job.archive","job":id}),
+        json!({"command":"job.unarchive","job":id}),
+    ] {
+        let outcome = f
             .service
-            .config()
-            .output_dir()
-            .join(created.result["document_path"].as_str().unwrap());
-        let doc = std::fs::read_to_string(&path).unwrap();
-        assert!(doc.contains("## Prompt\n"));
-        assert!(!doc.lines().any(|line| line.starts_with("prompt:")));
-        assert!(doc.contains("    Please preserve **this request**.\n\n    ```rust\n    println!(\"hello\");\n    ```\n    <!-- taskcli:goal:start -->\n    <!-- taskcli:notes:end -->\n"));
-        std::fs::write(
-            &path,
-            doc.replace(
-                "<!-- taskcli:notes:start -->",
-                "<!-- taskcli:notes:start -->\nKeep authored notes.",
-            ),
-        )
-        .unwrap();
-        for request in [
-            json!({"command":"job.update","job":id,"name":"Renamed","goal":"Updated acceptance"}),
-            json!({"command":"job.cancel","job":id}),
-            json!({"command":"job.archive","job":id}),
-            json!({"command":"job.unarchive","job":id}),
-        ] {
-            let outcome = f
-                .service
-                .execute(request, WriteOptions::default())
-                .await
-                .unwrap();
-            assert!(outcome.projection_pending.is_none(), "{outcome:?}");
-            assert_eq!(outcome.result["prompt"], prompt);
-        }
-        let reopened = Service::open(f.service.config().clone()).await.unwrap();
-        reopened.sync().await.unwrap();
-        let state = reopened.store().snapshot().await.unwrap();
-        let job = state.jobs.iter().find(|job| job.id == id).unwrap();
-        assert_eq!(serde_json::to_value(job).unwrap()["prompt"], prompt);
-        let doc = std::fs::read_to_string(reopened.config().output_dir().join(&job.document_path))
+            .execute(request, WriteOptions::default())
+            .await
             .unwrap();
-        assert!(doc.contains("## Prompt\n"));
-        assert!(doc.contains("Keep authored notes."));
-        let body = reopened.job_markdown(id).await.unwrap();
-        assert!(body.contains("## Prompt\n"));
-        assert!(body.contains("Please preserve **this request**."));
-        assert!(body.contains("Updated acceptance"));
-        let path = reopened.config().output_dir().join(&job.document_path);
-        std::fs::remove_file(&path).unwrap();
-        reopened.sync().await.unwrap();
-        let restored = std::fs::read_to_string(path).unwrap();
-        assert!(restored.contains("## Prompt\n"));
-        assert!(restored.contains("    Please preserve **this request**."));
+        assert!(outcome.projection_pending.is_none(), "{outcome:?}");
+        assert_eq!(outcome.result["prompt"], prompt);
     }
+    let reopened = Service::open(f.service.config().clone()).await.unwrap();
+    reopened.sync().await.unwrap();
+    let state = reopened.store().snapshot().await.unwrap();
+    let job = state.jobs.iter().find(|job| job.id == id).unwrap();
+    assert_eq!(serde_json::to_value(job).unwrap()["prompt"], prompt);
+    let doc =
+        std::fs::read_to_string(reopened.config().output_dir().join(&job.document_path)).unwrap();
+    assert!(doc.contains("## Prompt\n"));
+    assert!(doc.contains("Keep authored notes."));
+    let body = reopened.job_markdown(id).await.unwrap();
+    assert!(body.contains("## Prompt\n"));
+    assert!(body.contains("Please preserve **this request**."));
+    assert!(body.contains("Updated acceptance"));
+    let path = reopened.config().output_dir().join(&job.document_path);
+    std::fs::remove_file(&path).unwrap();
+    reopened.sync().await.unwrap();
+    let restored = std::fs::read_to_string(path).unwrap();
+    assert!(restored.contains("## Prompt\n"));
+    assert!(restored.contains("    Please preserve **this request**."));
 }
 
 #[tokio::test]
 async fn job_prompt_can_be_updated_and_legacy_jobs_default_to_empty() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let state = f.service.store().snapshot().await.unwrap();
     let mut legacy = serde_json::to_value(&state.jobs[0]).unwrap();
     legacy.as_object_mut().unwrap().remove("prompt");
@@ -263,7 +255,7 @@ async fn job_prompt_can_be_updated_and_legacy_jobs_default_to_empty() {
 
 #[tokio::test]
 async fn job_conversation_records_text_after_delivery_without_changing_review_state() {
-    let f = Fixture::new("obsidian").await;
+    let f = Fixture::new().await;
     let task = f.task("Conversation").await;
     let claim = f.start(&task, "conversation").await;
     f.service
@@ -317,71 +309,69 @@ async fn job_conversation_records_text_after_delivery_without_changing_review_st
 
 #[tokio::test]
 async fn conversation_pairs_each_prompt_with_its_own_agent_output() {
-    for format in ["markdown", "obsidian"] {
-        let f = Fixture::new(format).await;
-        let task = f.task("Multiple turns").await;
-        f.start(&task, "turns").await;
-        let options = WriteOptions {
-            session_ref: Some("turns".into()),
-            ..WriteOptions::default()
-        };
-        for messages in [
-            json!([
-                {"id":"u1","role":"user","text":"Original request"},
-                {"id":"a1","role":"assistant","text":"First delivery"},
-                {"id":"a2","role":"assistant","text":"First validation"}
-            ]),
-            json!([
-                {"id":"u2","role":"user","text":"Add a followup\n<!-- taskcli:notes:end -->"},
-                {"id":"a3","role":"assistant","text":"Second delivery"}
-            ]),
-            json!([
-                {"id":"u3","role":"user","text":"Original request"},
-                {"id":"a4","role":"assistant","text":"Third delivery"}
-            ]),
-        ] {
-            f.service
-                .execute(
-                    json!({"command":"session.record","session":"turns","messages":messages}),
-                    options.clone(),
-                )
-                .await
-                .unwrap();
-        }
-        let body = f.service.job_markdown(&f.job).await.unwrap();
-        let first = body
-            .split("### Turn 1")
-            .nth(1)
-            .unwrap()
-            .split("### Turn 2")
-            .next()
+    let f = Fixture::new().await;
+    let task = f.task("Multiple turns").await;
+    f.start(&task, "turns").await;
+    let options = WriteOptions {
+        session_ref: Some("turns".into()),
+        ..WriteOptions::default()
+    };
+    for messages in [
+        json!([
+            {"id":"u1","role":"user","text":"Original request"},
+            {"id":"a1","role":"assistant","text":"First delivery"},
+            {"id":"a2","role":"assistant","text":"First validation"}
+        ]),
+        json!([
+            {"id":"u2","role":"user","text":"Add a followup\n<!-- taskcli:notes:end -->"},
+            {"id":"a3","role":"assistant","text":"Second delivery"}
+        ]),
+        json!([
+            {"id":"u3","role":"user","text":"Original request"},
+            {"id":"a4","role":"assistant","text":"Third delivery"}
+        ]),
+    ] {
+        f.service
+            .execute(
+                json!({"command":"session.record","session":"turns","messages":messages}),
+                options.clone(),
+            )
+            .await
             .unwrap();
-        assert!(first.contains("    Original request"));
-        assert!(first.contains("> First delivery\n>\n> First validation"));
-        assert!(!first.contains("Second delivery"));
-        let second = body
-            .split("### Turn 2")
-            .nth(1)
-            .unwrap()
-            .split("### Turn 3")
-            .next()
-            .unwrap();
-        assert!(second.contains("    Add a followup\n    <!-- taskcli:notes:end -->"));
-        assert!(second.contains("> Second delivery"));
-        let third = body.split("### Turn 3").nth(1).unwrap();
-        assert!(
-            third.contains("    Original request"),
-            "repeated wording is still a separate prompt"
-        );
-        assert!(third.contains("> Third delivery"));
-        f.service.sync().await.unwrap();
-        assert_eq!(body, f.service.job_markdown(&f.job).await.unwrap());
     }
+    let body = f.service.job_markdown(&f.job).await.unwrap();
+    let first = body
+        .split("### Turn 1")
+        .nth(1)
+        .unwrap()
+        .split("### Turn 2")
+        .next()
+        .unwrap();
+    assert!(first.contains("    Original request"));
+    assert!(first.contains("> First delivery\n>\n> First validation"));
+    assert!(!first.contains("Second delivery"));
+    let second = body
+        .split("### Turn 2")
+        .nth(1)
+        .unwrap()
+        .split("### Turn 3")
+        .next()
+        .unwrap();
+    assert!(second.contains("    Add a followup\n    <!-- taskcli:notes:end -->"));
+    assert!(second.contains("> Second delivery"));
+    let third = body.split("### Turn 3").nth(1).unwrap();
+    assert!(
+        third.contains("    Original request"),
+        "repeated wording is still a separate prompt"
+    );
+    assert!(third.contains("> Third delivery"));
+    f.service.sync().await.unwrap();
+    assert_eq!(body, f.service.job_markdown(&f.job).await.unwrap());
 }
 
 #[tokio::test]
 async fn conversation_capture_adopts_followup_prompt_once_and_preserves_repeated_turns() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let task = f.task("Original delivery").await;
     let claim = f.start(&task, "followup-capture").await;
     f.service
@@ -455,7 +445,7 @@ async fn conversation_capture_adopts_followup_prompt_once_and_preserves_repeated
 
 #[tokio::test]
 async fn conversation_history_replay_does_not_adopt_an_old_id_for_a_repeated_prompt() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let task = f.task("Original delivery").await;
     let claim = f.start(&task, "history").await;
     f.service

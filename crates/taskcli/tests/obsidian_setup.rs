@@ -1,6 +1,6 @@
 use std::{fs, path::Path, process::Command};
 
-use agentix_task::{Config, DocumentConfig, DocumentFormat, StorageConfig};
+use agentix_task::{Config, DocumentConfig, StorageConfig};
 use serde_json::{Value, json};
 
 struct Fixture {
@@ -24,7 +24,6 @@ impl Fixture {
                 path: f.path("tasks.sqlite3"),
             },
             documents: DocumentConfig {
-                format: DocumentFormat::Obsidian,
                 root: f.path("vault"),
                 directory: "Tasks".into(),
             },
@@ -197,16 +196,9 @@ fn invalid_or_incomplete_bundles_leave_vault_unchanged() {
 }
 
 #[test]
-fn markdown_configuration_is_rejected_without_creating_task_state() {
+fn non_vault_configuration_is_rejected_without_creating_task_state() {
     let f = Fixture::new();
-    let path = f.path("config.toml");
-    fs::write(
-        &path,
-        fs::read_to_string(&path)
-            .unwrap()
-            .replace("\"obsidian\"", "\"markdown\""),
-    )
-    .unwrap();
+    fs::remove_dir(f.path("vault/.obsidian")).unwrap();
     let result = f.run(true, false);
     assert!(
         result["error"]["message"]

@@ -3,7 +3,7 @@ use super::*;
 #[tokio::test]
 async fn job_list_filters_before_reading_excluded_bodies() {
     use sqlx::Connection;
-    let cli = Cli::new("markdown");
+    let cli = Cli::new();
     let target = cli.job("Selected");
     let other = cli.job("Excluded");
     let target_record = cli.ok(&["job", "show", &target]);
@@ -87,7 +87,7 @@ async fn job_list_filters_before_reading_excluded_bodies() {
 
 #[test]
 fn job_review_cli_routes_decisions_and_filters_pending_jobs() {
-    let cli = Cli::new("markdown");
+    let cli = Cli::new();
     let job = cli.job("Review lifecycle");
     let id = cli.task(&job, "Implement");
     let claim = cli.claim(&id, "review");
@@ -132,7 +132,7 @@ fn finish(cli: &Cli, job: &str, session: &str) -> String {
 
 #[test]
 fn followup_cli_reuses_job_and_adds_dependencies() {
-    let cli = Cli::new("markdown");
+    let cli = Cli::new();
     let job = cli.job("Original");
     let previous = finish(&cli, &job, "followup");
     assert_eq!(
@@ -148,7 +148,7 @@ fn followup_cli_reuses_job_and_adds_dependencies() {
 
 #[test]
 fn review_policy_cli_completes_simple_jobs() {
-    let cli = Cli::new("markdown");
+    let cli = Cli::new();
     let job = cli.job("Setup");
     let project = cli.ok(&["job", "show", &job])["project_id"]
         .as_str()
@@ -175,7 +175,7 @@ fn review_policy_cli_completes_simple_jobs() {
 
 #[test]
 fn context_only_offers_latest_session_job_in_current_project() {
-    let cli = Cli::new("markdown");
+    let cli = Cli::new();
     let job = cli.job("Previous");
     let task = finish(&cli, &job, "context");
     let context = cli.ok(&["context", "--session", "context"]);
@@ -211,7 +211,7 @@ fn context_only_offers_latest_session_job_in_current_project() {
 
 #[test]
 fn context_followup_activity_supersedes_older_session_job() {
-    let cli = Cli::new("markdown");
+    let cli = Cli::new();
     let original = cli.job("Original");
     finish(&cli, &original, "first-session");
     let older = cli.job("Other work");

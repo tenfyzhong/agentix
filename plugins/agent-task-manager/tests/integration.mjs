@@ -12,7 +12,7 @@ import { loadPlugin, copy } from "./support/obsidian-plugin.mjs";
 // back to a developer's installed taskcli or normal task database.
 assert.ok(process.env.TASKCLI_BIN, "Run through cargo test -p taskcli");
 
-async function fixture(t, format = "markdown") {
+async function fixture(t) {
     const dir = await mkdtemp(join(tmpdir(), "task-plugin \u{2603} "));
     const previous = process.env.TASKCLI_CONFIG;
     const cleanup = [];
@@ -29,8 +29,6 @@ async function fixture(t, format = "markdown") {
         (await runTaskcli(args, { cwd: dir, ...options })).result;
     await run([
         "init",
-        "--format",
-        format,
         "--root",
         root,
         "--directory",
@@ -58,7 +56,7 @@ async function fixture(t, format = "markdown") {
 }
 
 test("Obsidian bridge uses real CLI revisions, lease guards and manual Job review", async (t) => {
-    const f = await fixture(t, "obsidian");
+    const f = await fixture(t);
     const task = await f.run(["task", "add", "--job", f.job.id, "--title", "Bridge"]);
     const { SyncEngine, runCli } = loadPlugin();
     const execute = (args) => runCli({ cliPath: process.env.TASKCLI_BIN, configPath: process.env.TASKCLI_CONFIG, vaultPath: f.root }, args);
@@ -118,7 +116,7 @@ test("Obsidian bridge uses real CLI revisions, lease guards and manual Job revie
 });
 
 test("Inbox bridge edits real Markdown, enforces Job review and reopens completed work", async (t) => {
-    const f = await fixture(t, "obsidian");
+    const f = await fixture(t);
     await f.run(["job", "cancel", f.job.id]);
     const entry = await f.run(["inbox", "add", "--project", f.project.id, "--content", "Deliver\nPreserve these details."]);
     const claimed = await f.run(["inbox", "claim-next", "--project", f.project.id], { session: "inbox-worker", executor: "agent:test" });
@@ -213,13 +211,10 @@ async function extension(t, f, host) {
     return { invoke, handlers, ctx, messages };
 }
 
-for (const [host, format] of [
-    ["pi", "markdown"],
-    ["omp", "obsidian"],
-]) {
-    test(`${host} entrypoint uses real CLI, plans, leases and ${format} files`, async (t) => {
+for (const host of ["pi", "omp"]) {
+    test(`${host} entrypoint uses real CLI, plans, leases and Obsidian files`, async (t) => {
         taskLanguage(t, "zh-CN");
-        const f = await fixture(t, format);
+        const f = await fixture(t);
         const x = await extension(t, f, host);
         const task = await x.invoke([
             "task",
@@ -285,7 +280,7 @@ for (const [host, format] of [
         assert.equal(note.properties.status, "DONE");
         assert.equal(note.properties.id, task.id);
         assert.ok(note.path.includes("/Tasks/"));
-        assert.equal(body.includes("[["), format === "obsidian");
+        assert.equal(body.includes("[["), true);
         assert.equal((await f.run(["doctor"])).healthy, true);
     });
 }

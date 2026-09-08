@@ -10,10 +10,6 @@ use crate::{
     scoped::{Scope, ids},
 };
 
-#[cfg(test)]
-#[path = "publication_tests.rs"]
-mod tests;
-
 #[derive(Default)]
 pub(crate) struct PublicationMetadata {
     pub plans: Vec<PublishedPlan>,
@@ -26,16 +22,6 @@ pub(crate) struct PublishedPlan {
     pub version: i64,
     pub hash: String,
 }
-
-// Keep each MAX eligible for its Project/activity index instead of scanning
-// every Task inside a global GROUP BY. Batch all index seeks in one statement.
-const PROJECT_ACTIVITY_QUERY: &str = "SELECT selected.value AS project_id,
-    (SELECT MAX(updated_at) FROM (
-        SELECT MAX(json_extract(data,'$.updated_at')) AS updated_at FROM jobs WHERE project_id=selected.value
-        UNION ALL
-        SELECT MAX(json_extract(data,'$.updated_at')) FROM tasks WHERE json_extract(data,'$.project_id')=selected.value
-    )) AS updated_at
-FROM json_each(?1) AS selected";
 
 pub(crate) async fn enqueue_changes(
     conn: &mut SqliteConnection,
@@ -299,22 +285,5 @@ impl Store {
                 .max()
                 .unwrap(),
         ))
-    }
-
-    pub(crate) async fn project_activity(
-        &self,
-        projects: &BTreeSet<&str>,
-    ) -> Result<BTreeMap<String, i64>> {
-        let rows = sqlx::query(PROJECT_ACTIVITY_QUERY)
-            .bind(serde_json::to_string(projects)?)
-            .fetch_all(&self.pool)
-            .await?;
-        Ok(rows
-            .into_iter()
-            .filter_map(|row| {
-                row.get::<Option<i64>, _>("updated_at")
-                    .map(|updated| (row.get("project_id"), updated))
-            })
-            .collect())
     }
 }

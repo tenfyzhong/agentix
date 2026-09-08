@@ -483,7 +483,7 @@ class TaskcliSyncPlugin extends Plugin {
             connection: async () => {
                 const { result } = await execute(["obsidian", "connection"]);
                 if (result?.protocol_version !== 1) throw new Error("Update taskcli to support on-demand Obsidian queries.");
-                if (result?.documents?.format !== "obsidian" ||
+                if (typeof result?.documents?.root !== "string" ||
                     realpathSync(result.documents.root) !== realpathSync(settings.vaultPath)) {
                     throw new Error("taskcli must be configured for this Obsidian vault.");
                 }

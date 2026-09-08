@@ -3,7 +3,7 @@ use sqlx::{Connection, SqliteConnection, sqlite::SqliteConnectOptions};
 
 #[tokio::test]
 async fn project_and_job_reads_ignore_unrelated_entities() {
-    let cli = Cli::new("markdown");
+    let cli = Cli::new();
     let job = cli.job("Selected Job");
     let task = cli.task(&job, "Selected Task");
     let project = cli.ok(&["job", "show", &job])["project_id"]
@@ -34,7 +34,7 @@ async fn project_and_job_reads_ignore_unrelated_entities() {
 
 #[tokio::test]
 async fn filtered_task_list_ignores_unrelated_bodies_and_checks_external_dependencies() {
-    let cli = Cli::new("markdown");
+    let cli = Cli::new();
     let job = cli.job("Selected Job");
     let task = cli.task(&job, "Selected Task");
     let other_job = cli.job("Other Job");
@@ -71,7 +71,7 @@ async fn filtered_task_list_ignores_unrelated_bodies_and_checks_external_depende
 
 #[tokio::test]
 async fn context_ignores_unrelated_history_and_plan_bodies() {
-    let cli = Cli::new("markdown");
+    let cli = Cli::new();
     let old_job = cli.job("Old Job");
     let old_task = cli.task(&old_job, "Old Task");
     let old_claim = cli.claim(&old_task, "lookup");

@@ -556,11 +556,10 @@ fn inbound_as(chat: &str, owner: &str, text: &str) -> InboundEnvelope {
 }
 
 async fn task_fixture() -> (tempfile::TempDir, Arc<agentix_task::Service>, String) {
-    use agentix_task::{
-        Config, DocumentConfig, DocumentFormat, Service, StorageConfig, WriteOptions,
-    };
+    use agentix_task::{Config, DocumentConfig, Service, StorageConfig, WriteOptions};
     use serde_json::json;
     let dir = tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join(".obsidian")).unwrap();
     let service = Arc::new(
         Service::open(Config {
             schema_version: 1,
@@ -568,7 +567,6 @@ async fn task_fixture() -> (tempfile::TempDir, Arc<agentix_task::Service>, Strin
                 path: dir.path().join("tasks.sqlite3"),
             },
             documents: DocumentConfig {
-                format: DocumentFormat::Markdown,
                 root: dir.path().to_owned(),
                 directory: "docs".into(),
             },

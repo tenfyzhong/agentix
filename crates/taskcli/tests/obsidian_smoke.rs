@@ -170,7 +170,7 @@ impl Drop for DesktopFixture {
 
 #[test]
 #[ignore = "requires TASKCLI_OBSIDIAN_VAULT and enabled TaskNotes/Bases plugins in an open desktop vault"]
-fn tasknotes_renders_both_formats_and_resolves_task_note_links() {
+fn tasknotes_renders_obsidian_and_resolves_task_note_links() {
     let _guard = DESKTOP_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -189,10 +189,8 @@ fn tasknotes_renders_both_formats_and_resolves_task_note_links() {
         true,
         "Enable TaskNotes and Bases and configure the task tag and seven statuses before running this test"
     );
-    for format in ["obsidian", "markdown"] {
-        exercise_plugin_views(&vault, format, true);
-        exercise_plugin_views(&vault, format, false);
-    }
+    exercise_plugin_views(&vault, true);
+    exercise_plugin_views(&vault, false);
 }
 
 #[test]
@@ -202,9 +200,7 @@ fn taskcli_sync_and_dual_boards_in_desktop() {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let vault = std::env::var("TASKCLI_OBSIDIAN_VAULT").expect("choose the test vault");
-    for format in ["obsidian", "markdown"] {
-        exercise_plugin_views(&vault, format, false);
-    }
+    exercise_plugin_views(&vault, false);
 }
 
 #[test]
@@ -214,7 +210,7 @@ fn whitespace_job_cancellation_preserves_terminal_tasks_in_desktop() {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let vault = std::env::var("TASKCLI_OBSIDIAN_VAULT").expect("choose the test vault");
-    let (f, project) = desktop_fixture(&vault, "obsidian");
+    let (f, project) = desktop_fixture(&vault);
     let (job, _) = desktop_finished_job(&f, &project, "Whitespace cancellation");
     f.cli(&["job", "reject", &job, "--reason", "Add cancelled work"]);
     let cancelled = f.cli(&["task", "add", "--job", &job, "--title", "Cancelled work"]);
@@ -280,7 +276,7 @@ fn inbox_checkbox_sync_in_desktop() {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let vault = std::env::var("TASKCLI_OBSIDIAN_VAULT").expect("choose the test vault");
-    let (f, project) = desktop_fixture(&vault, "obsidian");
+    let (f, project) = desktop_fixture(&vault);
     load_sync_plugin(&f);
     exercise_inbox_bridge(&f, project["id"].as_str().unwrap());
 }
@@ -292,7 +288,7 @@ fn id_queries_and_status_sync_in_desktop() {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let vault = std::env::var("TASKCLI_OBSIDIAN_VAULT").expect("choose the test vault");
-    let (f, project) = desktop_fixture(&vault, "obsidian");
+    let (f, project) = desktop_fixture(&vault);
     let job = f.cli(&[
         "job",
         "create",
@@ -347,17 +343,9 @@ fn id_queries_and_status_sync_in_desktop() {
     );
 }
 
-fn exercise_dashboard(f: &mut DesktopFixture, project: &Value, format: &str) {
-    let dashboard = format!(
-        "{}/Dashboard.{}",
-        f.relative,
-        if format == "obsidian" { "base" } else { "md" }
-    );
-    let view_type = if format == "obsidian" {
-        "bases"
-    } else {
-        "markdown"
-    };
+fn exercise_dashboard(f: &mut DesktopFixture, project: &Value) {
+    let dashboard = format!("{}/Dashboard.base", f.relative);
+    let view_type = "bases";
     let board = format!(
         "{}/Projects/{}/Board.md",
         f.relative,
@@ -375,14 +363,12 @@ fn exercise_dashboard(f: &mut DesktopFixture, project: &Value, format: &str) {
                 .any(|link| link["name"] == "Rendering acceptance")
         })
     });
-    if format == "obsidian" {
-        assert!(
-            rendered["date"]
-                .as_str()
-                .is_some_and(|value| !value.is_empty()),
-            "missing activity date: {rendered}"
-        );
-    }
+    assert!(
+        rendered["date"]
+            .as_str()
+            .is_some_and(|value| !value.is_empty()),
+        "missing activity date: {rendered}"
+    );
     for header in ["Name", "Status", "Updated", "ACTIVE"] {
         assert!(
             rendered["text"].as_str().unwrap().contains(header),
@@ -434,7 +420,7 @@ fn exercise_dashboard(f: &mut DesktopFixture, project: &Value, format: &str) {
     f.leaf = obsidian(&f.vault, "app.workspace.getMostRecentLeaf()?.id");
 }
 
-fn desktop_fixture(vault: &str, format: &str) -> (DesktopFixture, Value) {
+fn desktop_fixture(vault: &str) -> (DesktopFixture, Value) {
     let info = obsidian(
         vault,
         "({root:app.vault.adapter.basePath,leaf:app.workspace.getMostRecentLeaf()?.id})",
@@ -489,8 +475,6 @@ fn desktop_fixture(vault: &str, format: &str) -> (DesktopFixture, Value) {
     );
     f.cli(&[
         "init",
-        "--format",
-        format,
         "--root",
         root.to_str().unwrap(),
         "--directory",
@@ -510,10 +494,10 @@ fn desktop_fixture(vault: &str, format: &str) -> (DesktopFixture, Value) {
 }
 
 #[allow(clippy::too_many_lines)] // Keep the opt-in desktop scenario and cleanup visible together.
-fn exercise_plugin_views(vault: &str, format: &str, dashboard_only: bool) {
-    let (mut f, project) = desktop_fixture(vault, format);
+fn exercise_plugin_views(vault: &str, dashboard_only: bool) {
+    let (mut f, project) = desktop_fixture(vault);
     if dashboard_only {
-        exercise_dashboard(&mut f, &project, format);
+        exercise_dashboard(&mut f, &project);
         return;
     }
     let job = f.cli(&[
@@ -608,9 +592,7 @@ fn exercise_plugin_views(vault: &str, format: &str, dashboard_only: bool) {
         v.as_array().is_some_and(|a| a.len() == 2)
     });
     assert!(resolved.as_array().unwrap().contains(&json!(path)));
-    if format == "obsidian" {
-        exercise_status_bridge(&f, &task, &job, &path, &job_path);
-    }
+    exercise_status_bridge(&f, &task, &job, &path, &job_path);
     let task_info = obsidian(
         &f.vault,
         &format!(
@@ -627,23 +609,21 @@ fn exercise_plugin_views(vault: &str, format: &str, dashboard_only: bool) {
         f.leaf
     );
     wait_for(&f.vault, &body, |v| v == true);
-    if format == "obsidian" {
-        std::fs::write(
-            f.output.path().join("State machines.md"),
-            include_str!("../../../docs/task-state-machines.md"),
-        )
-        .unwrap();
-        let path = format!("{}/State machines.md", f.relative);
-        f.open(&path, "markdown");
-        wait_for(
-            &f.vault,
-            &format!(
-                "app.workspace.getLeafById({}).view.contentEl.querySelectorAll('.markdown-preview-view .mermaid > svg').length",
-                f.leaf
-            ),
-            |v| v == 2,
-        );
-    }
+    std::fs::write(
+        f.output.path().join("State machines.md"),
+        include_str!("../../../docs/task-state-machines.md"),
+    )
+    .unwrap();
+    let path = format!("{}/State machines.md", f.relative);
+    f.open(&path, "markdown");
+    wait_for(
+        &f.vault,
+        &format!(
+            "app.workspace.getLeafById({}).view.contentEl.querySelectorAll('.markdown-preview-view .mermaid > svg').length",
+            f.leaf
+        ),
+        |v| v == 2,
+    );
     // Keep the TempDir alive through all app reads; Drop restores views first.
     assert!(f.output.path().exists());
 }
@@ -936,7 +916,7 @@ fn pending_review_dashboard_and_boards_sort_by_lifecycle_times() {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let vault = std::env::var("TASKCLI_OBSIDIAN_VAULT").expect("choose the test vault");
-    let (mut f, project) = desktop_fixture(&vault, "obsidian");
+    let (mut f, project) = desktop_fixture(&vault);
     let (first_job, first_task) = desktop_finished_job(&f, &project, "First");
     let (second_job, second_task) = desktop_finished_job(&f, &project, "Second");
     // Resubmitting the older file must place it after the newer file.
@@ -1034,7 +1014,7 @@ fn tasknotes_reads_and_writes_canonical_timestamps() {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let vault = std::env::var("TASKCLI_OBSIDIAN_VAULT").expect("choose the test vault");
-    let (f, project) = desktop_fixture(&vault, "obsidian");
+    let (f, project) = desktop_fixture(&vault);
     let (_job, task) = desktop_finished_job(&f, &project, "Canonical dates");
     let plan = f.cli(&["plan", "show", &task]);
     let path = format!("{}/{}", f.relative, plan["path"].as_str().unwrap());
@@ -1135,7 +1115,7 @@ fn recent_jobs_cards_show_project_and_local_review_time() {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let vault = std::env::var("TASKCLI_OBSIDIAN_VAULT").expect("choose the test vault");
-    let (mut f, project) = desktop_fixture(&vault, "obsidian");
+    let (mut f, project) = desktop_fixture(&vault);
     let (job, _) = desktop_finished_job(&f, &project, "Card fields");
     f.open(&format!("{}/Recent Jobs.base", f.relative), "bases");
     let expression = format!(
@@ -1197,7 +1177,7 @@ fn recent_jobs_limits_each_status_to_ten_cards() {
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let vault = std::env::var("TASKCLI_OBSIDIAN_VAULT").expect("choose the test vault");
-    let (mut f, project) = desktop_fixture(&vault, "obsidian");
+    let (mut f, project) = desktop_fixture(&vault);
     let statuses = ["ACTIVE", "PENDING_REVIEW", "COMPLETED", "CANCELLED"];
     let mut expected = Vec::new();
     for status in statuses {

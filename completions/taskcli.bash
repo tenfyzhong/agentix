@@ -3250,16 +3250,12 @@ _taskcli() {
             return 0
             ;;
         taskcli__subcmd__init)
-            opts="-h --format --root --directory --database --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help"
+            opts="-h --root --directory --database --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi
             case "${prev}" in
-                --format)
-                    COMPREPLY=($(compgen -W "obsidian markdown" -- "${cur}"))
-                    return 0
-                    ;;
                 --root)
                     COMPREPLY=()
                     if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then

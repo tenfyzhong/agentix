@@ -3,7 +3,7 @@ use super::*;
 #[tokio::test]
 async fn cli_writes_resolve_projects_without_loading_other_jobs() {
     use sqlx::Connection;
-    let cli = Cli::new("obsidian");
+    let cli = Cli::new();
     let job = cli.job("Target");
     let task = cli.task(&job, "Task");
     let project = cli.ok(&["job", "show", &job])["project_id"]
@@ -34,7 +34,7 @@ async fn cli_writes_resolve_projects_without_loading_other_jobs() {
 #[tokio::test]
 async fn doctor_reports_pending_documents_even_without_new_events() {
     use sqlx::Connection;
-    let cli = Cli::new("obsidian");
+    let cli = Cli::new();
     let job = cli.job("Target");
     let mut db = sqlx::SqliteConnection::connect_with(
         &sqlx::sqlite::SqliteConnectOptions::new().filename(cli.dir.path().join("state.sqlite3")),
@@ -54,7 +54,7 @@ async fn doctor_reports_pending_documents_even_without_new_events() {
 #[tokio::test]
 async fn id_queries_ignore_unrelated_records_and_preserve_task_show_contract() {
     use sqlx::Connection;
-    let cli = Cli::new("obsidian");
+    let cli = Cli::new();
     let job = cli.job("Point lookup");
     let task = cli.task(&job, "Point task");
     let project = cli.ok(&["job", "show", &job])["project_id"]
@@ -128,7 +128,7 @@ async fn id_queries_ignore_unrelated_records_and_preserve_task_show_contract() {
 
 #[test]
 fn obsidian_connection_reads_configuration_without_opening_database() {
-    let cli = Cli::new("obsidian");
+    let cli = Cli::new();
     std::fs::write(cli.dir.path().join("state.sqlite3"), b"not a database").unwrap();
     let connection = cli.ok(&["obsidian", "connection"]);
     assert_eq!(connection["protocol_version"], 1);
@@ -138,11 +138,11 @@ fn obsidian_connection_reads_configuration_without_opening_database() {
 
 #[test]
 fn obsidian_snapshot_identifies_unplanned_renamed_and_archived_notes_without_credentials() {
-    let cli = Cli::new("obsidian");
+    let cli = Cli::new();
     let job = cli.job("Status bridge");
     let task = cli.task(&job, "Unplanned");
     let before = cli.ok(&["obsidian", "snapshot"]);
-    assert_eq!(before["documents"]["format"], "obsidian");
+    assert!(before["documents"].get("format").is_none());
     let find = |snapshot: &Value, id: &str| {
         snapshot["notes"]
             .as_array()
