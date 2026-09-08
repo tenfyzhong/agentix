@@ -3,7 +3,62 @@ use super::*;
 #[path = "../../tests/support/mod.rs"]
 #[allow(dead_code)]
 mod support;
-use support::{MockCodexAppServer, MockThread};
+use support::{MockCodexAppServer, MockThread, MockTurn};
+
+#[tokio::test]
+async fn managed_session_matching_excludes_subagents_before_assigning_terminal_slots() {
+    use crate::process::{DaemonClient, RunningProcessSnapshot};
+
+    for source in [
+        json!({"subAgent": {"thread_spawn": {"parent_thread_id": "parent", "depth": 1}}}),
+        json!({"subAgent": "review"}),
+        json!({"subAgent": "compact"}),
+        json!({"subAgent": "memory_consolidation"}),
+        json!({"subAgent": {"other": "helper"}}),
+    ] {
+        let server = MockCodexAppServer::start();
+        server
+            .add_thread(MockThread::new("parent", "Parent", "/work"))
+            .await;
+        let mut child = MockThread::new("child", "Child", "/work").with_turn(
+            MockTurn::in_progress_with_output("child_turn", "Delegated work", ""),
+        );
+        child.source = source.clone();
+        server.add_thread(child).await;
+        let mut client = CodexClient::connect(server.endpoint()).await.unwrap();
+
+        // A custom socket retains the app-server's loaded-thread view.
+        assert_eq!(
+            client.list_sessions(None, 25).await.unwrap().sessions.len(),
+            2
+        );
+        let endpoint = CodexEndpoint::parse_with_codex_home(
+            "unix://",
+            Some(server.endpoint().socket_path().parent().unwrap()),
+        )
+        .unwrap();
+        client.process_discovery = CodexProcessDiscovery::for_endpoint(&endpoint);
+        let (ids, _) = client.loaded_session_ids(None, None).await.unwrap();
+        let loaded = client.read_sessions(&ids).await.unwrap();
+        let selected = resolve_running_sessions(
+            &loaded,
+            &RunningProcessSnapshot {
+                daemon_clients: vec![DaemonClient {
+                    pid: 1,
+                    cwd: "/work".into(),
+                    terminal: None,
+                }],
+                ..RunningProcessSnapshot::default()
+            },
+        );
+        assert_eq!(
+            selected.ids,
+            HashSet::from([SessionId::new("parent")]),
+            "a higher-priority subagent must not displace its parent: {source}"
+        );
+        assert_eq!(loaded.len(), 1, "subagents must be removed before matching");
+    }
+}
 
 async fn fixture() -> (MockCodexAppServer, CodexClient, SessionId) {
     let server = MockCodexAppServer::start();

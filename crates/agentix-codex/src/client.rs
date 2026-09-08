@@ -297,7 +297,9 @@ impl CodexClient {
     async fn read_sessions(&self, ids: &[SessionId]) -> Result<Vec<SessionSummary>, ClientError> {
         let sessions = try_join_all(ids.iter().map(|id| async move {
             let thread = self.read_thread(id, false).await?;
-            if !thread_has_rollout(&thread) {
+            if !thread_has_rollout(&thread)
+                || (self.process_discovery.is_some() && thread_is_subagent(&thread))
+            {
                 return Ok(None);
             }
             let mut summary = parse_session_summary(&thread)?;
@@ -1525,10 +1527,7 @@ impl AgentAdapter for CodexClient {
             .read_thread(session_id, false)
             .await
             .map_err(agent_error)?;
-        Ok(thread
-            .get("source")
-            .and_then(Value::as_object)
-            .is_some_and(|source| source.contains_key("subAgent")))
+        Ok(thread_is_subagent(&thread))
     }
 
     fn queued_prompts(&self) -> Option<&dyn QueuedPromptPort> {
@@ -2168,6 +2167,13 @@ fn kebab_case(value: &str) -> String {
         }
     }
     output
+}
+
+fn thread_is_subagent(thread: &Value) -> bool {
+    thread
+        .get("source")
+        .and_then(Value::as_object)
+        .is_some_and(|source| source.contains_key("subAgent"))
 }
 
 fn thread_has_rollout(thread: &Value) -> bool {

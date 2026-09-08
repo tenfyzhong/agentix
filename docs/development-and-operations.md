@@ -74,7 +74,7 @@ The lookup has a three-second timeout. If the account lookup or shell fails, or 
 
 An already running Codex daemon is reused and retains its existing environment. To apply this behavior to an old daemon, stop Agentix and the Codex daemon when active work has finished, then start Agentix again so it creates the daemon with the login shell environment. Custom socket endpoints remain externally managed.
 
-For the managed `unix://` endpoint, Agentix uses `ps` and `lsof` to correlate interactive Codex TUI processes with standalone writer locks and daemon-backed threads. Both commands must be available on `PATH`. Inactive sessions persisted on disk and orphaned daemon threads are not listed. Custom socket endpoints fall back to the app-server's `thread/loaded/list` view.
+For the managed `unix://` endpoint, Agentix uses `ps` and `lsof` to correlate interactive Codex TUI processes with standalone writer locks and daemon-backed threads. Both commands must be available on `PATH`. Inactive sessions persisted on disk, orphaned daemon threads, and Codex subagent threads are not listed. Subagents are excluded before matching daemon-backed clients by working directory, so they cannot displace their parent session and trigger a false exit notification. Custom socket endpoints fall back to the app-server's `thread/loaded/list` view.
 
 ### Pi
 
