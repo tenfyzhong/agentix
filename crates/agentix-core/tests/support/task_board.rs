@@ -59,6 +59,62 @@ async fn click(engine: &Engine, token: String) {
 }
 
 #[tokio::test]
+async fn browsing_ignores_unrelated_job_task_and_plan_bodies() {
+    use sqlx::Connection;
+    let (_dir, service, id) = task_fixture().await;
+    let state = service.store().snapshot().await.unwrap();
+    let other_job = write(
+        &service,
+        json!({"command":"job.create","project":state.projects[0].id,"title":"Unrelated"}),
+    )
+    .await;
+    write(
+        &service,
+        json!({"command":"task.add","job":other_job["id"],"title":"Unrelated task"}),
+    )
+    .await;
+    let (engine, channel) = engine(service.clone()).await;
+    engine.handle_inbound(input("/attach thr_a")).await.unwrap();
+    engine.handle_inbound(input("/dashboard")).await.unwrap();
+    let dashboard = last(&channel);
+    click(&engine, button(&dashboard, "demo")).await;
+    click(&engine, button(&last(&channel), "Implement task board")).await;
+    let task_view = last(&channel);
+    // The dashboard only needs counts; the session board and details do not
+    // need the unrelated Job. No browse view needs serialized Plan records.
+    let mut conn = sqlx::SqliteConnection::connect_with(
+        &sqlx::sqlite::SqliteConnectOptions::new().filename(&service.config().storage.path),
+    )
+    .await
+    .unwrap();
+    sqlx::query("UPDATE jobs SET data=json_remove(data,'$.title') WHERE id=?")
+        .bind(other_job["id"].as_str().unwrap())
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE tasks SET data=json_remove(data,'$.title') WHERE job_id=?")
+        .bind(other_job["id"].as_str().unwrap())
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE plans SET data=json_remove(data,'$.hash')")
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    for command in ["/dashboard", "/board", "/jobs"] {
+        let result = engine.handle_inbound(input(command)).await;
+        assert!(
+            result.is_ok(),
+            "{command} must read only its required data: {result:?}"
+        );
+    }
+    click(&engine, button(&task_view, "Job")).await;
+    assert!(last(&channel).body.contains("Ship"));
+    click(&engine, button(&last(&channel), "Implement task board")).await;
+    assert!(last(&channel).body.contains(&id));
+}
+
+#[tokio::test]
 async fn dashboard_project_board_task_job_roundtrip_renders_authored_markdown() {
     let (_dir, service, id) = task_fixture().await;
     service.execute(json!({"command":"plan.revise","task":id,"body":"## Implementation\n\n**Bold plan** with `code`\n\n- Test first"}), task_write_options(&service, &id).await).await.unwrap();
@@ -520,4 +576,197 @@ async fn long_task_and_job_titles_leave_room_for_paged_details() {
             click(&engine, button(&last(&channel), "Job")).await;
         }
     }
+}
+
+#[tokio::test]
+async fn legacy_task_list_reads_only_first_fifty_matches() {
+    use sqlx::Connection;
+    let (_dir, service, id) = task_fixture().await;
+    let (engine, channel) = engine(service.clone()).await;
+    let mut conn = sqlx::SqliteConnection::connect_with(
+        &sqlx::sqlite::SqliteConnectOptions::new().filename(&service.config().storage.path),
+    )
+    .await
+    .unwrap();
+    sqlx::query("WITH RECURSIVE n(v) AS (VALUES(1) UNION ALL SELECT v+1 FROM n WHERE v<50)
+        INSERT INTO tasks(id,data) SELECT 'task_extra_'||v,json_set(t.data,'$.id','task_extra_'||v,'$.title','Extra '||v) FROM n CROSS JOIN tasks t WHERE t.id=?")
+        .bind(&id).execute(&mut conn).await.unwrap();
+    sqlx::query("UPDATE tasks SET data=json_remove(data,'$.title') WHERE id='task_extra_50'")
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    engine.handle_inbound(input("/tasks")).await.unwrap();
+    let view = last(&channel);
+    assert_eq!(view.title, "Tasks");
+    assert_eq!(view.body.split("\n\n").count(), 50);
+    assert!(view.body.contains("Extra 49"));
+}
+
+#[tokio::test]
+async fn legacy_filter_and_task_action_ignore_other_jobs() {
+    use sqlx::Connection;
+    let (_dir, service, id) = task_fixture().await;
+    let state = service.store().snapshot().await.unwrap();
+    let job = &state.jobs[0].id;
+    let other = write(
+        &service,
+        json!({"command":"job.create","project":state.projects[0].id,"title":"Other Job"}),
+    )
+    .await;
+    let (engine, channel) = engine(service.clone()).await;
+    engine.handle_inbound(input("/attach thr_a")).await.unwrap();
+    let done = task_button(&engine, &channel, &id, "Done").await;
+    let mut conn = sqlx::SqliteConnection::connect_with(
+        &sqlx::sqlite::SqliteConnectOptions::new().filename(&service.config().storage.path),
+    )
+    .await
+    .unwrap();
+    sqlx::query("UPDATE jobs SET data=json_remove(data,'$.title') WHERE id=?")
+        .bind(other["id"].as_str().unwrap())
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(input(&format!("/tasks {job}")))
+        .await
+        .unwrap();
+    assert!(last(&channel).body.contains(&id));
+    click(&engine, done).await;
+    assert!(last(&channel).body.contains("DONE"));
+    assert_eq!(
+        service.store().task_result(&id).await.unwrap()["status"],
+        "DONE"
+    );
+}
+
+#[tokio::test]
+async fn start_button_checks_dependencies_outside_the_task_detail() {
+    let (_dir, service, completed) = task_fixture().await;
+    service
+        .execute(
+            json!({"command":"task.done","task":completed}),
+            task_write_options(&service, &completed).await,
+        )
+        .await
+        .unwrap();
+    let state = service.store().snapshot().await.unwrap();
+    let job = &state.jobs[0].id;
+    // Reopening the Job with a follow-up also adds the completed Task dependency.
+    write(
+        &service,
+        json!({"command":"job.followup","job":job,"prompt":"Continue","session":"thr_a"}),
+    )
+    .await;
+    let task = write(
+        &service,
+        json!({"command":"task.add","job":job,"title":"Dependent work"}),
+    )
+    .await;
+    let id = task["id"].as_str().unwrap();
+    write(
+        &service,
+        json!({"command":"task.claim","task":id,"executor":"agent:codex","session":"thr_a"}),
+    )
+    .await;
+    service
+        .execute(
+            json!({"command":"plan.create","task":id,"body":"Implement follow-up"}),
+            task_write_options(&service, id).await,
+        )
+        .await
+        .unwrap();
+    let (engine, channel) = engine(service.clone()).await;
+    engine.handle_inbound(input("/attach thr_a")).await.unwrap();
+    let start = task_button(&engine, &channel, id, "Start").await;
+    click(&engine, start).await;
+    assert!(last(&channel).body.contains("EXECUTING"));
+}
+
+async fn paged_browse_fixture() -> (tempfile::TempDir, Arc<Service>, String) {
+    use sqlx::Connection;
+    let (dir, service, id) = task_fixture().await;
+    let mut conn = sqlx::SqliteConnection::connect_with(
+        &sqlx::sqlite::SqliteConnectOptions::new().filename(&service.config().storage.path),
+    )
+    .await
+    .unwrap();
+    sqlx::query(
+        "WITH RECURSIVE n(v) AS (VALUES(1) UNION ALL SELECT v+1 FROM n WHERE v<1000)
+        INSERT INTO tasks(id,data) SELECT printf('task_page_%04d',v),
+        json_set(t.data,'$.id',printf('task_page_%04d',v),'$.title','Page task '||v,
+        '$.status','TODO','$.phase',NULL,'$.position',v,'$.current_plan',json('{}'))
+        FROM n CROSS JOIN tasks t WHERE t.id=?",
+    )
+    .bind(&id)
+    .execute(&mut conn)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE tasks SET data=json_remove(data,'$.title') WHERE id>'task_page_0005'")
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    (dir, service, id)
+}
+
+#[tokio::test]
+async fn board_page_ignores_off_page_task_bodies_and_job_content() {
+    use sqlx::Connection;
+    let (_dir, service, _) = paged_browse_fixture().await;
+    let (engine, channel) = engine(service.clone()).await;
+    engine.handle_inbound(input("/attach thr_a")).await.unwrap();
+    let mut conn = sqlx::SqliteConnection::connect_with(
+        &sqlx::sqlite::SqliteConnectOptions::new().filename(&service.config().storage.path),
+    )
+    .await
+    .unwrap();
+    sqlx::query("UPDATE jobs SET data=json_set(data,'$.goal',json('{}'))")
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    let result = engine.handle_inbound(input("/board")).await;
+    assert!(
+        result.is_ok(),
+        "board must read page summaries only: {result:?}"
+    );
+    let view = last(&channel);
+    assert!(view.body.contains("1 jobs · 1001 tasks"));
+    assert!(view.body.contains("TODO (1000)"));
+    assert!(view.body.contains("Current ·"));
+    assert_eq!(view.actions.len(), 8);
+}
+
+#[tokio::test]
+async fn session_jobs_page_ignores_task_bodies_and_job_content() {
+    use sqlx::Connection;
+    let (_dir, service, _) = paged_browse_fixture().await;
+    let (engine, channel) = engine(service.clone()).await;
+    engine.handle_inbound(input("/attach thr_a")).await.unwrap();
+    let mut conn = sqlx::SqliteConnection::connect_with(
+        &sqlx::sqlite::SqliteConnectOptions::new().filename(&service.config().storage.path),
+    )
+    .await
+    .unwrap();
+    sqlx::query("UPDATE jobs SET data=json_set(data,'$.goal',json('{}'))")
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    let result = engine.handle_inbound(input("/jobs")).await;
+    assert!(
+        result.is_ok(),
+        "job list needs summaries and counts: {result:?}"
+    );
+    assert!(last(&channel).body.contains("1001 tasks"));
+}
+
+#[tokio::test]
+async fn job_page_ignores_off_page_tasks_and_unused_task_fields() {
+    let (_dir, service, id) = paged_browse_fixture().await;
+    let (engine, channel) = engine(service).await;
+    engine
+        .handle_inbound(input(&format!("/task {id}")))
+        .await
+        .unwrap();
+    click(&engine, button(&last(&channel), "Job")).await;
+    assert!(last(&channel).body.contains("**Tasks (1001)**"));
+    assert_eq!(last(&channel).actions.len(), 8);
 }

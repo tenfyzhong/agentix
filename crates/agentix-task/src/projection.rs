@@ -13,6 +13,14 @@ use crate::{
     config::resolved_path, mutations::required, new_id, store::hash_bytes,
 };
 
+#[cfg(test)]
+#[path = "projection_tests.rs"]
+mod tests;
+
+#[path = "projection_index.rs"]
+mod index;
+use index::ProjectionIndex;
+
 #[derive(Clone)]
 pub struct Service {
     config: Config,
@@ -47,6 +55,11 @@ impl Service {
         let Some((entity, project_key)) = self.store.obsidian_record(id).await? else {
             return Ok(Value::Null);
         };
+        self.obsidian_record_note(&entity, &project_key)
+    }
+
+    fn obsidian_record_note(&self, entity: &Value, project_key: &str) -> Result<Value> {
+        let id = entity["id"].as_str().context("missing note ID")?;
         let kind = id.split_once('_').context("invalid ID")?.0;
         let relative = match kind {
             "task" => {
@@ -77,7 +90,14 @@ impl Service {
             .replace('\\', "/")
             .trim_start_matches("./")
             .to_owned();
-        let mut properties = json!({"status":entity["status"], "revision":entity["revision"]});
+        let status = if kind == "inbox" {
+            serde_json::to_value(serde_json::from_value::<crate::InboxStatus>(
+                entity["status"].clone(),
+            )?)?
+        } else {
+            entity["status"].clone()
+        };
+        let mut properties = json!({"status":status, "revision":entity["revision"]});
         if kind == "task" {
             for key in ["phase", "dependencies"] {
                 properties[key] = entity[key].clone();
@@ -99,7 +119,7 @@ impl Service {
         }
         Ok(
             json!({"kind":kind,"id":entity["id"],"project_id":entity["project_id"],
-            "path":path,"status":entity["status"],"revision":entity["revision"],"properties":properties}),
+            "path":path,"status":status,"revision":entity["revision"],"properties":properties}),
         )
     }
 
@@ -110,65 +130,13 @@ impl Service {
             self.config.documents.format == DocumentFormat::Obsidian,
             "Obsidian snapshot requires documents.format = obsidian"
         );
-        let state = self.store.snapshot().await?;
-        let mut notes = Vec::new();
-        let path = |relative: &str| -> Result<String> {
-            self.safe_path(relative)?;
-            Ok(self
-                .config
-                .documents
-                .directory
-                .join(relative)
-                .to_string_lossy()
-                .replace('\\', "/")
-                .trim_start_matches("./")
-                .to_owned())
-        };
-        for task in &state.tasks {
-            let document = self.task_document(&state, task, None, "")?;
-            let (generated, _) = split_properties(&document)?;
-            let mut properties = serde_json::Map::new();
-            for key in [
-                "status",
-                "revision",
-                "phase",
-                "dependencies",
-                "created_at",
-                "started_at",
-                "completed_at",
-                "updated_at",
-            ] {
-                properties.insert(key.into(), generated[key].clone());
-            }
-            notes.push(
-                json!({"kind":"task","id":task.id,"project_id":task.project_id,
-                "path":path(&crate::naming::task_path(&state, task)?)?,
-                "status":task.status,"revision":task.revision,"properties":properties}),
-            );
-        }
-        for job in &state.jobs {
-            notes.push(json!({"kind":"job","id":job.id,"project_id":job.project_id,
-                "path":path(&job.document_path)?,"status":job.status,"revision":job.revision,
-                "properties":{"status":job.status,"revision":job.revision,
-                    "review_reason":job.review_reason,"completed_at":optional_local_timestamp(job.completed_at)?,
-                    "cancelled_at":optional_local_timestamp(job.cancelled_at)?,
-                    "created_at":local_timestamp(job.created_at)?,
-                    "updated_at":local_timestamp(job.updated_at)?,
-                    "pending_review_at":optional_local_timestamp(job.pending_review_at)?}}));
-        }
-        for entry in state
-            .inboxes
+        let notes = self
+            .store
+            .obsidian_records()
+            .await?
             .iter()
-            .filter(|entry| entry.published && !entry.deleted)
-        {
-            let project = &state.projects[state.project_index(&entry.project_id)?];
-            notes.push(
-                json!({"kind":"inbox","id":entry.id,"project_id":entry.project_id,
-                "path":path(&format!("Projects/{}/Inbox.md", project.key))?,
-                "status":entry.status,"revision":entry.revision,
-                "properties":{"status":entry.status,"revision":entry.revision}}),
-            );
-        }
+            .map(|(entity, project_key)| self.obsidian_record_note(entity, project_key))
+            .collect::<Result<Vec<_>>>()?;
         Ok(json!({"documents":self.config.documents,"notes":notes}))
     }
 
@@ -438,19 +406,13 @@ impl Service {
     }
 
     pub async fn plan(&self, task: &str) -> Result<Value> {
-        let state = self.store.snapshot().await?;
-        let task = &state.tasks[state.task_index(task)?];
-        let plan = state
-            .plans
-            .iter()
-            .find(|p| Some(&p.id) == task.current_plan.as_ref())
-            .context("not_found: current Plan")?;
+        let plan = self.store.current_plan(task).await?;
         let path = self.safe_path(&plan.path)?;
         let body = std::fs::read_to_string(&path)?;
         self.store
             .update_plan_hash(&plan.id, &hash_bytes(body.as_bytes()))
             .await?;
-        let mut result = serde_json::to_value(plan)?;
+        let mut result = serde_json::to_value(&plan)?;
         result["hash"] = json!(hash_bytes(body.as_bytes()));
         result["absolute_path"] = json!(path);
         let (properties, content) = split_properties(&body)?;
@@ -461,7 +423,7 @@ impl Service {
 
     /// Read the authored Task body without changing its Plan hash or task state.
     pub async fn task_markdown(&self, id: &str) -> Result<String> {
-        let state = self.store.snapshot().await?;
+        let state = self.store.task_document_snapshot(id).await?;
         let task = &state.tasks[state.task_index(id)?];
         let path = self.safe_path(&crate::naming::task_path(&state, task)?)?;
         let document = std::fs::read_to_string(path)?;
@@ -470,15 +432,14 @@ impl Service {
 
     /// Read authored Job sections, excluding generated local navigation and graphs.
     pub async fn job_markdown(&self, id: &str) -> Result<String> {
-        let state = self.store.snapshot().await?;
-        let job = &state.jobs[state.job_index(id)?];
+        let job = self.store.job_record(id).await?;
         let document = std::fs::read_to_string(self.safe_path(&job.document_path)?)?;
         let goal = section(&document, "goal")?.unwrap_or_else(|| job.goal.clone());
         let notes = section(&document, "notes")?.unwrap_or_default();
         Ok(format!(
             "{}{}## Goal\n\n{goal}\n\n## Notes\n\n{notes}",
             prompt_markdown(&job.prompt),
-            conversation_markdown(job)
+            conversation_markdown(&job)
         ))
     }
 
@@ -530,7 +491,20 @@ impl Service {
             keys
         });
         let previous = self.store.document_paths(selected_keys.as_ref()).await?;
+        let previous_paths: BTreeSet<_> = previous.values().map(String::as_str).collect();
+        let index = ProjectionIndex::new(state);
         let includes = |key: &str| selected.is_none_or(|selected| selected == key);
+        let goals = self
+            .store
+            .metadata_batch(
+                &state
+                    .jobs
+                    .iter()
+                    .filter(|job| includes(&format!("job:{}", job.id)))
+                    .map(|job| format!("goal:{}", job.id))
+                    .collect(),
+            )
+            .await?;
         let mut paths = BTreeMap::new();
         let mut files = BTreeMap::new();
         let created = state
@@ -549,7 +523,12 @@ impl Service {
                 );
                 paths.insert(format!("board:{}", project.id), board_path.clone());
             }
-            for job in state.jobs.iter().filter(|j| j.project_id == project.id) {
+            for job in index
+                .jobs_by_project
+                .get(project.id.as_str())
+                .into_iter()
+                .flatten()
+            {
                 let key = format!("job:{}", job.id);
                 if !includes(&key) {
                     continue;
@@ -568,10 +547,8 @@ impl Service {
                 };
                 let notes = section(&existing, "notes")?.unwrap_or_default();
                 let goal = section(&existing, "goal")?.unwrap_or_else(|| job.goal.clone());
-                let goal = if self
-                    .store
-                    .metadata(&format!("goal:{}", job.id))
-                    .await?
+                let goal = if goals
+                    .get(&format!("goal:{}", job.id))
                     .is_some_and(|v| v.as_str() != Some(&job.goal))
                 {
                     job.goal.clone()
@@ -596,14 +573,19 @@ impl Service {
                 doc.push_str(&prompt_markdown(&job.prompt));
                 doc.push_str(&conversation_markdown(job));
                 doc.push_str(&format!("\n## {}\n\n<!-- taskcli:goal:start -->\n{}\n<!-- taskcli:goal:end -->\n\n## {}\n", "Goal", goal, "Tasks"));
-                doc.push_str(&job_dependency_graph(self, state, &job.id)?);
-                for task in state.tasks.iter().filter(|t| t.job_id == job.id) {
+                doc.push_str(&job_dependency_graph(self, &index, &job.id)?);
+                for task in index
+                    .tasks_by_job
+                    .get(job.id.as_str())
+                    .into_iter()
+                    .flatten()
+                {
                     if self.config.documents.format == DocumentFormat::Markdown {
                         doc.push_str(&format!("\n<a id=\"{}\"></a>\n", task.id.replace('_', "-")));
                     }
                     doc.push_str(&format!(
                         "\n{}\n",
-                        self.task_line(state, task, &job.document_path)?
+                        self.task_line(&index, task, &job.document_path)?
                     ));
                     if self.config.documents.format == DocumentFormat::Obsidian {
                         doc.push_str(&format!("\n^{}\n", task.id.replace('_', "-")));
@@ -621,11 +603,11 @@ impl Service {
             if !includes(&format!("task:{}", task.id)) {
                 continue;
             }
-            let plan = state
-                .plans
-                .iter()
-                .find(|p| Some(&p.id) == task.current_plan.as_ref());
-            let path = crate::naming::task_path(state, task)?;
+            let plan = task
+                .current_plan
+                .as_deref()
+                .and_then(|id| index.plans.get(id).copied());
+            let path = index.task_path(task)?;
             let key = format!("task:{}", task.id);
             let candidates = [
                 previous.get(&key),
@@ -649,7 +631,7 @@ impl Service {
                 );
                 String::new()
             };
-            let doc = self.task_document(state, task, plan, &existing)?;
+            let doc = self.task_document(&index, task, plan, &existing)?;
             files.insert(path.clone(), doc);
             paths.insert(key, path.clone());
             if let Some(plan) = plan {
@@ -683,7 +665,7 @@ impl Service {
         // paths can be regenerated; new paths must not clobber unrelated notes.
         for (relative, contents) in &files {
             let path = self.safe_path(relative)?;
-            if path.exists() && !previous.values().any(|old| old == relative) {
+            if path.exists() && !previous_paths.contains(relative.as_str()) {
                 let existing = std::fs::read_to_string(&path)?;
                 let owned = if relative == "Dashboard.base" {
                     existing.starts_with("# taskcli-generated: dashboard\n")
@@ -720,23 +702,24 @@ impl Service {
                 }
             }
         }
+        let mut metadata = crate::publication::PublicationMetadata::default();
         for plan in &state.plans {
             if !paths.contains_key(&format!("plan:{}", plan.id)) {
                 continue;
             }
             let bytes = std::fs::read(self.safe_path(&plan.path)?)
                 .with_context(|| format!("missing Plan {}", plan.path))?;
-            self.store
-                .publish_plan(&plan.id, plan.version, &hash_bytes(&bytes))
-                .await?;
+            metadata.plans.push(crate::publication::PublishedPlan {
+                id: plan.id.clone(),
+                version: plan.version,
+                hash: hash_bytes(&bytes),
+            });
         }
         for job in &state.jobs {
             if !paths.contains_key(&format!("job:{}", job.id)) {
                 continue;
             }
-            self.store
-                .set_metadata(&format!("goal:{}", job.id), &json!(job.goal))
-                .await?;
+            metadata.goals.insert(job.id.clone(), job.goal.clone());
         }
         let removed = previous
             .keys()
@@ -744,7 +727,7 @@ impl Service {
             .cloned()
             .collect();
         self.store
-            .acknowledge_documents(pending, &paths, &removed, sequence)
+            .acknowledge_documents(pending, &paths, &removed, sequence, &metadata)
             .await?;
         Ok(())
     }
@@ -907,9 +890,15 @@ impl Service {
             .iter()
             .filter(|p| p.archived_at.is_none())
             .collect();
-        let mut activity = BTreeMap::new();
+        let mut activity = self
+            .store
+            .project_activity(&projects.iter().map(|p| p.id.as_str()).collect())
+            .await?;
         for project in &projects {
-            activity.insert(&project.id, self.store.project_receipt(project).await?.1);
+            let updated = activity
+                .entry(project.id.clone())
+                .or_insert(project.created_at);
+            *updated = (*updated).max(project.created_at);
         }
         projects.sort_by_key(|p| (std::cmp::Reverse(activity[&p.id]), &p.name));
         for project in projects {
@@ -1009,7 +998,7 @@ impl Service {
 
     fn task_document(
         &self,
-        state: &Snapshot,
+        index: &ProjectionIndex<'_>,
         task: &Task,
         plan: Option<&Plan>,
         existing: &str,
@@ -1028,8 +1017,8 @@ impl Service {
         } else {
             existing_body
         };
-        let project = &state.projects[state.project_index(&task.project_id)?];
-        let job = &state.jobs[state.job_index(&task.job_id)?];
+        let project = index.project(&task.project_id)?;
+        let job = index.job(&task.job_id)?;
         let wiki = |path: &str| {
             format!(
                 "[[{}]]",
@@ -1043,15 +1032,14 @@ impl Service {
                     .trim_end_matches(".md")
             )
         };
-        let generated = json!({
+        let mut generated = task_state_properties(task)?;
+        generated.as_object_mut().unwrap().extend(json!({
             "id":task.id,"task_id":task.id,"plan_id":task.current_plan,"job_id":task.job_id,"project_id":task.project_id,
-            "sequence":task.sequence,"revision":task.revision,"dependencies":task.dependencies,
+            "sequence":task.sequence,
             "agent":task.last_executor.as_deref().and_then(crate::model::agent_name),"session_id":task.last_session,
-            "status":task.status,"phase":task.phase,"archived":job.archived_at.is_some() || project.archived_at.is_some(),
-            "created_at":local_timestamp(task.created_at)?,"updated_at":local_timestamp(task.updated_at)?,
-            "started_at":optional_local_timestamp(task.started_at)?,"completed_at":optional_local_timestamp(task.completed_at)?,
+            "archived":job.archived_at.is_some() || project.archived_at.is_some(),
             "projects":[wiki(&format!("Projects/{}/Board.md",project.key))],"job":wiki(&job.document_path)
-        });
+        }).as_object().unwrap().clone());
         authored.as_object_mut().unwrap().remove("version");
         if authored["title"].is_null() || authored["title"] == authored["name"] {
             authored["title"] = json!(task.name);
@@ -1084,8 +1072,8 @@ impl Service {
         format!("# {}\n\n{}\n", escape(title), Self::notice())
     }
 
-    fn task_line(&self, state: &Snapshot, task: &Task, from: &str) -> Result<String> {
-        let path = crate::naming::task_path(state, task)?;
+    fn task_line(&self, index: &ProjectionIndex<'_>, task: &Task, from: &str) -> Result<String> {
+        let path = index.task_path(task)?;
         let label = Path::new(&path)
             .file_stem()
             .and_then(|name| name.to_str())
@@ -1167,7 +1155,18 @@ fn optional_timestamp(value: Option<i64>) -> Value {
     value.map_or(Value::Null, timestamp)
 }
 
+fn task_state_properties(task: &Task) -> Result<Value> {
+    Ok(json!({
+        "status":task.status,"revision":task.revision,"phase":task.phase,
+        "dependencies":task.dependencies,
+        "created_at":local_timestamp(task.created_at)?,"updated_at":local_timestamp(task.updated_at)?,
+        "started_at":optional_local_timestamp(task.started_at)?,"completed_at":optional_local_timestamp(task.completed_at)?
+    }))
+}
+
 fn frontmatter(mut properties: Value) -> String {
+    #[cfg(test)]
+    tests::FRONTMATTER_CALLS.with(|calls| calls.set(calls.get() + 1));
     normalize_timestamp_properties(&mut properties);
     properties["taskcli-generated"] = json!(true);
     let mut result = String::from("---\n");
@@ -1253,17 +1252,20 @@ fn split_properties(body: &str) -> Result<(Value, &str)> {
     }
 }
 
-fn job_dependency_graph(service: &Service, state: &Snapshot, job_id: &str) -> Result<String> {
-    let tasks = state
-        .tasks
-        .iter()
-        .filter(|task| task.job_id == job_id)
-        .collect::<Vec<_>>();
+fn job_dependency_graph(
+    service: &Service,
+    index: &ProjectionIndex<'_>,
+    job_id: &str,
+) -> Result<String> {
+    let tasks = index
+        .tasks_by_job
+        .get(job_id)
+        .map_or(&[][..], Vec::as_slice);
     if tasks.is_empty() {
         return Ok(String::new());
     }
     let mut nodes = BTreeSet::new();
-    for task in &tasks {
+    for task in tasks {
         nodes.insert(task.id.as_str());
         nodes.extend(task.dependencies.iter().map(String::as_str));
     }
@@ -1271,15 +1273,15 @@ fn job_dependency_graph(service: &Service, state: &Snapshot, job_id: &str) -> Re
         "\nArrows point from prerequisites to dependent tasks.\n\n```mermaid\nflowchart TD\n",
     );
     for id in nodes {
-        let task = &state.tasks[state.task_index(id)?];
+        let task = index.task(id)?;
         let label = if task.job_id == job_id {
             task.name.clone()
         } else {
-            let job = &state.jobs[state.job_index(&task.job_id)?];
+            let job = index.job(&task.job_id)?;
             format!("{} (Job: {})", task.name, job.name)
         };
         let label = format!("{} · {}", mermaid_label(&label), task.status);
-        let path = crate::naming::task_path(state, task)?;
+        let path = index.task_path(task)?;
         match service.config.documents.format {
             DocumentFormat::Obsidian => {
                 // Obsidian strips custom URI schemes from Mermaid SVG links.
@@ -1300,7 +1302,7 @@ fn job_dependency_graph(service: &Service, state: &Snapshot, job_id: &str) -> Re
                 ));
             }
             DocumentFormat::Markdown => {
-                let url = relative_url(&state.jobs[state.job_index(job_id)?].document_path, &path);
+                let url = relative_url(&index.job(job_id)?.document_path, &path);
                 diagram.push_str(&format!("    {id}[\"{label}\"]:::status_{}\n", task.status));
                 diagram.push_str(&format!("    click {id} href \"{url}\" \"Open task\"\n"));
             }

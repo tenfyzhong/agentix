@@ -11,6 +11,12 @@ use sqlx::{
 
 use crate::{Outcome, Snapshot, TaskEvent, WriteOptions, mutations, new_id};
 
+#[cfg(test)]
+#[path = "persist_tests.rs"]
+pub(crate) mod persist_tests;
+
+const JOB_EVENTS_QUERY: &str = "SELECT sequence,data FROM task_events WHERE job_id = ? AND sequence > ? ORDER BY sequence LIMIT ?";
+
 #[derive(Clone)]
 pub struct Store {
     pub(crate) pool: SqlitePool,
@@ -127,6 +133,42 @@ impl Store {
         let state = load(&mut tx).await?;
         tx.commit().await?;
         Ok(state)
+    }
+
+    /// Read note metadata in entity order, excluding authored bodies and leases.
+    pub(crate) async fn obsidian_records(&self) -> Result<Vec<(Value, String)>> {
+        let mut tx = self.pool.begin().await?;
+        let mut records = Vec::new();
+        for (table, fields, filter) in [
+            ("tasks", "'$.title'", "1"),
+            (
+                "jobs",
+                "'$.title', '$.goal', '$.prompt', '$.conversation'",
+                "1",
+            ),
+            (
+                "inbox_entries",
+                "'$.content', '$.lease', '$.source'",
+                "json_extract(e.data, '$.published') = 1 AND json_extract(e.data, '$.deleted') IS NOT 1",
+            ),
+        ] {
+            let rows = sqlx::query(&format!(
+                "SELECT json_remove(e.data, {fields}) AS entity, json_extract(p.data, '$.key') AS project_key \
+                 FROM {table} e LEFT JOIN projects p ON p.id = json_extract(e.data, '$.project_id') \
+                 WHERE {filter} ORDER BY e.rowid"
+            ))
+            .fetch_all(&mut *tx)
+            .await?;
+            for row in rows {
+                let entity = serde_json::from_str(&row.get::<String, _>("entity"))?;
+                let key = row
+                    .get::<Option<String>, _>("project_key")
+                    .context("missing note Project")?;
+                records.push((entity, key));
+            }
+        }
+        tx.commit().await?;
+        Ok(records)
     }
 
     /// Read one Task and its lease in the same transaction. Prefix resolution
@@ -333,13 +375,26 @@ impl Store {
             after >= 0 && (1..=1000).contains(&limit),
             "invalid: event cursor or limit"
         );
-        let job = if let Some(id) = job {
-            let state = self.snapshot().await?;
-            Some(state.jobs[state.job_index(id)?].id.clone())
+        let rows = if let Some(id) = job {
+            let mut tx = self.pool.begin().await?;
+            let id = crate::scoped::resolve(&mut tx, "jobs", id).await?;
+            let rows = sqlx::query(JOB_EVENTS_QUERY)
+                .bind(id)
+                .bind(after)
+                .bind(limit)
+                .fetch_all(&mut *tx)
+                .await?;
+            tx.commit().await?;
+            rows
         } else {
-            None
+            sqlx::query(
+                "SELECT sequence,data FROM task_events WHERE sequence > ? ORDER BY sequence LIMIT ?",
+            )
+            .bind(after)
+            .bind(limit)
+            .fetch_all(&self.pool)
+            .await?
         };
-        let rows=sqlx::query("SELECT sequence,data FROM task_events WHERE sequence > ? AND (? IS NULL OR job_id = ?) ORDER BY sequence LIMIT ?").bind(after).bind(&job).bind(&job).bind(limit).fetch_all(&self.pool).await?;
         rows.into_iter()
             .map(|row| {
                 let mut event: TaskEvent = serde_json::from_str(&row.get::<String, _>("data"))?;
@@ -372,6 +427,24 @@ impl Store {
             .map(|v| serde_json::from_str(&v).map_err(Into::into))
             .transpose()
     }
+    pub(crate) async fn metadata_batch(
+        &self,
+        keys: &std::collections::BTreeSet<String>,
+    ) -> Result<std::collections::BTreeMap<String, Value>> {
+        if keys.is_empty() {
+            return Ok(std::collections::BTreeMap::new());
+        }
+        let rows: Vec<(String, String)> = sqlx::query_as(
+            "SELECT key,value FROM projection_state WHERE key IN (SELECT value FROM json_each(?))",
+        )
+        .bind(serde_json::to_string(keys)?)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(|(key, value)| Ok((key, serde_json::from_str(&value)?)))
+            .collect()
+    }
+
     pub async fn set_metadata(&self, key: &str, value: &Value) -> Result<()> {
         if key == "documents" {
             let paths: std::collections::BTreeMap<String, String> =
@@ -399,12 +472,6 @@ impl Store {
             .bind(id)
             .execute(&self.pool)
             .await?;
-        Ok(())
-    }
-
-    pub(crate) async fn publish_plan(&self, id: &str, version: i64, hash: &str) -> Result<()> {
-        sqlx::query("UPDATE plans SET data = json_remove(json_set(data, '$.hash', ?), '$.pending_body') WHERE id = ? AND version = ?")
-            .bind(hash).bind(id).bind(version).execute(&self.pool).await?;
         Ok(())
     }
 
@@ -719,8 +786,11 @@ async fn persist(
     options: &WriteOptions,
     now: i64,
 ) -> Result<()> {
+    let old = crate::state_index::StateIndex::new(before);
+    let new = crate::state_index::StateIndex::new(after);
+    let recent = crate::state_index::recent_session_tasks(after);
     for project in &after.projects {
-        if before.projects.iter().find(|p| p.id == project.id) == Some(project) {
+        if old.projects.get(project.id.as_str()).copied() == Some(project) {
             continue;
         }
         upsert(conn, "projects", &project.id, project).await?;
@@ -736,14 +806,14 @@ async fn persist(
         .await?;
     }
     for job in &after.jobs {
-        if before.jobs.iter().find(|j| j.id == job.id) == Some(job) {
+        if old.jobs.get(job.id.as_str()).copied() == Some(job) {
             continue;
         }
         upsert(conn, "jobs", &job.id, job).await?;
-        let event_type = if before
+        let event_type = if old
             .jobs
-            .iter()
-            .any(|j| j.id == job.id && j.status != job.status)
+            .get(job.id.as_str())
+            .is_some_and(|j| j.status != job.status)
         {
             match job.status {
                 crate::JobStatus::Completed => "job.completed",
@@ -751,8 +821,8 @@ async fn persist(
                 crate::JobStatus::Active
                     if command == "job.reject"
                         || (command == "inbox.set-status"
-                            && before.jobs.iter().any(|old| {
-                                old.id == job.id && old.status == crate::JobStatus::PendingReview
+                            && old.jobs.get(job.id.as_str()).is_some_and(|job| {
+                                job.status == crate::JobStatus::PendingReview
                             })) =>
                 {
                     "job.rejected"
@@ -762,11 +832,7 @@ async fn persist(
         } else {
             command
         };
-        let related = after
-            .tasks
-            .iter()
-            .filter(|t| t.job_id == job.id && t.last_session.is_some())
-            .max_by_key(|t| t.updated_at);
+        let related = recent.get(job.id.as_str()).copied();
         append_event(
             conn,
             TaskEvent {
@@ -784,14 +850,14 @@ async fn persist(
         .await?;
     }
     for task in &after.tasks {
-        if before.tasks.iter().find(|t| t.id == task.id) == Some(task) {
+        if old.tasks.get(task.id.as_str()).copied() == Some(task) {
             continue;
         }
         upsert(conn, "tasks", &task.id, task).await?;
-        let changed_status = before
+        let changed_status = old
             .tasks
-            .iter()
-            .any(|t| t.id == task.id && t.status != task.status);
+            .get(task.id.as_str())
+            .is_some_and(|t| t.status != task.status);
         let event_type = if changed_status {
             format!("task.{}", task.status.to_string().to_lowercase())
         } else {
@@ -819,12 +885,12 @@ async fn persist(
         .await?;
     }
     for plan in &after.plans {
-        if before.plans.iter().find(|p| p.id == plan.id) != Some(plan) {
+        if old.plans.get(plan.id.as_str()).copied() != Some(plan) {
             upsert(conn, "plans", &plan.id, plan).await?;
         }
     }
     for lease in &before.leases {
-        if !after.leases.iter().any(|l| l.task_id == lease.task_id) {
+        if !new.leases.contains_key(lease.task_id.as_str()) {
             sqlx::query("DELETE FROM task_leases WHERE id=?")
                 .bind(&lease.task_id)
                 .execute(&mut *conn)
@@ -832,15 +898,15 @@ async fn persist(
         }
     }
     for lease in &after.leases {
-        if before.leases.iter().find(|l| l.task_id == lease.task_id) != Some(lease) {
+        if old.leases.get(lease.task_id.as_str()).copied() != Some(lease) {
             upsert(conn, "task_leases", &lease.task_id, lease).await?;
         }
     }
     for task in &after.tasks {
-        if before
+        if old
             .tasks
-            .iter()
-            .find(|t| t.id == task.id)
+            .get(task.id.as_str())
+            .copied()
             .is_some_and(|t| t.dependencies == task.dependencies)
         {
             continue;
@@ -858,7 +924,7 @@ async fn persist(
         }
     }
     for entry in &after.inboxes {
-        if before.inboxes.iter().find(|old| old.id == entry.id) == Some(entry) {
+        if old.inboxes.get(entry.id.as_str()).copied() == Some(entry) {
             continue;
         }
         upsert(conn, "inbox_entries", &entry.id, entry).await?;
@@ -875,14 +941,14 @@ async fn persist(
         .await?;
     }
     for entry in &before.inboxes {
-        if !after.inboxes.iter().any(|e| e.id == entry.id) {
+        if !new.inboxes.contains_key(entry.id.as_str()) {
             sqlx::query("DELETE FROM inbox_entries WHERE id = ?")
                 .bind(&entry.id)
                 .execute(&mut *conn)
                 .await?;
         }
     }
-    crate::deletion::persist(conn, before, after, command, options, now).await?;
+    crate::deletion::persist(conn, before, (&old, &new), command, options, now).await?;
     crate::publication::enqueue_changes(conn, before, after, command).await?;
     if before.document_sequences != after.document_sequences {
         sqlx::query("INSERT INTO projection_state(key,value) VALUES ('document_sequences',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
@@ -944,4 +1010,35 @@ async fn max_sequence(conn: &mut SqliteConnection) -> Result<i64> {
 
 pub(crate) fn hash_bytes(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn job_event_pages_use_the_job_sequence_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("tasks.sqlite3"))
+            .await
+            .unwrap();
+        let rows = sqlx::query(&format!("EXPLAIN QUERY PLAN {JOB_EVENTS_QUERY}"))
+            .bind("job_target")
+            .bind(100)
+            .bind(10)
+            .fetch_all(&store.pool)
+            .await
+            .unwrap();
+        let details: Vec<String> = rows.iter().map(|row| row.get("detail")).collect();
+        assert!(
+            details.iter().any(|detail| {
+                detail.contains("events_by_job") && detail.contains("job_id=? AND sequence>?")
+            }),
+            "Job pages must seek by Job and cursor: {details:?}"
+        );
+        assert!(
+            details.iter().all(|detail| !detail.contains("TEMP B-TREE")),
+            "Job pages must stream in index order: {details:?}"
+        );
+    }
 }

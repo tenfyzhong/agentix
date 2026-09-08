@@ -55,33 +55,14 @@ impl Engine {
         conversation: &ConversationRef,
         filter: Option<&str>,
     ) -> Result<(), EngineError> {
-        let state = self
+        let tasks = self
             .tasks_service()?
             .store()
-            .snapshot()
+            .legacy_tasks(filter, 50)
             .await
             .map_err(error)?;
-        let mut project = None;
-        let mut job = None;
-        if let Some(filter) = filter {
-            if let Ok(i) = state.job_index(filter) {
-                job = Some(state.jobs[i].id.clone());
-            } else {
-                project = Some(
-                    state.projects[state.project_index(filter).map_err(error)?]
-                        .id
-                        .clone(),
-                );
-            }
-        }
-        let body = state
-            .tasks
+        let body = tasks
             .iter()
-            .filter(|t| {
-                job.as_ref().is_none_or(|j| *j == t.job_id)
-                    && project.as_ref().is_none_or(|p| *p == t.project_id)
-            })
-            .take(50)
             .map(|t| format!("{} · {}\n{}", t.id, t.status, t.title))
             .collect::<Vec<_>>()
             .join("\n\n");
@@ -119,7 +100,7 @@ impl Engine {
         let state = self
             .tasks_service()?
             .store()
-            .snapshot()
+            .browse_snapshot(agentix_task::BrowseScope::Task(id))
             .await
             .map_err(error)?;
         let task = &state.tasks[state.task_index(id).map_err(error)?];
@@ -213,12 +194,7 @@ impl Engine {
                         lease.is_some()
                             && task.phase == Some(TaskPhase::Planning)
                             && task.current_plan.is_some()
-                            && task.dependencies.iter().all(|d| {
-                                state
-                                    .tasks
-                                    .iter()
-                                    .any(|t| t.id == *d && t.status == TaskStatus::Done)
-                            })
+                            && state.dependencies_done(task)
                     }
                     "task.done" => lease.is_some() && task.phase == Some(TaskPhase::Executing),
                     _ => task.status.allows(target),
@@ -310,8 +286,12 @@ impl Engine {
             return Err(EngineError::InvalidAction);
         }
         let service = self.tasks_service()?;
-        let state = service.store().snapshot().await.map_err(error)?;
-        let lease = state.leases.iter().find(|l| l.task_id == action.task_id);
+        let lease = service
+            .store()
+            .task_lease(&action.task_id)
+            .await
+            .map_err(error)?;
+        let lease = lease.as_ref();
         if lease.is_some_and(|l| l.session_ref != action.session_id.as_str()) {
             return Err(EngineError::InvalidAction);
         }

@@ -94,6 +94,7 @@ pub(super) struct BackgroundNotification {
 }
 
 pub(super) struct TurnCoordinator {
+    pub(super) cold: super::cold_turns::ColdTurns,
     pub(super) active: Mutex<HashMap<SessionId, String>>,
     pub(super) buffers: Mutex<HashMap<(SessionId, String), TurnBuffer>>,
     pub(super) views: Mutex<HashMap<(SessionId, String), MessageRef>>,
@@ -105,6 +106,7 @@ pub(super) struct TurnCoordinator {
 impl Default for TurnCoordinator {
     fn default() -> Self {
         Self {
+            cold: super::cold_turns::ColdTurns::default(),
             active: Mutex::new(HashMap::new()),
             buffers: Mutex::new(HashMap::new()),
             views: Mutex::new(HashMap::new()),

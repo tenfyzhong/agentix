@@ -31,8 +31,7 @@ use tokio_tungstenite::tungstenite::Message;
 use crate::endpoint::CodexEndpoint;
 use crate::multiplexer::{RmuxManager, started_session};
 use crate::process::{
-    CodexProcessDiscovery, confirm_exited_sessions, reappeared_sessions,
-    select_running_session_ids, session_terminal_locations,
+    CodexProcessDiscovery, confirm_exited_sessions, reappeared_sessions, resolve_running_sessions,
 };
 use crate::protocol::{
     ModelDescriptor, ModelListResult, ProtocolError, QueueAddResult, QueueListResult,
@@ -217,8 +216,9 @@ impl CodexClient {
             .discover()
             .await
             .map_err(|error| ClientError::ProcessDiscovery(error.to_string()))?;
-        let selected = select_running_session_ids(&loaded, &snapshot);
-        let terminal_locations = session_terminal_locations(&loaded, &snapshot);
+        let selection = resolve_running_sessions(&loaded, &snapshot);
+        let selected = selection.ids;
+        let terminal_locations = selection.terminals;
         let loaded_ids = loaded_ids.into_iter().collect::<HashSet<_>>();
         let missing_ids = selected
             .difference(&loaded_ids)

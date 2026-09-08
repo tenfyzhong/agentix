@@ -31,6 +31,12 @@ mod job_review;
 #[path = "support/incremental.rs"]
 mod incremental;
 
+#[path = "support/browse.rs"]
+mod browse;
+
+#[path = "support/browse_pages.rs"]
+mod browse_pages;
+
 struct Fixture {
     dir: TempDir,
     service: Service,

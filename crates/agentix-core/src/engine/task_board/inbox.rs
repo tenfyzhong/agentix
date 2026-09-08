@@ -146,8 +146,11 @@ impl Engine {
             .await
             .map_err(error)?;
         let entries: Vec<InboxEntry> = serde_json::from_value(result.result).map_err(error)?;
-        let state = service.store().snapshot().await.map_err(error)?;
-        let project = &state.projects[state.project_index(project).map_err(error)?];
+        let project = service
+            .store()
+            .project_result(project)
+            .await
+            .map_err(error)?;
         let pages = page_count(entries.len());
         let page = page.min(pages - 1);
         let mut view = OutboundView::text(
@@ -206,11 +209,11 @@ impl Engine {
         page: usize,
     ) -> Result<(), EngineError> {
         let service = self.tasks_service()?;
-        let state = service.store().snapshot().await.map_err(error)?;
-        let entry = state
-            .inboxes
-            .iter()
-            .find(|e| e.id == id)
+        let entry = service
+            .store()
+            .inbox_record(id)
+            .await
+            .map_err(error)?
             .ok_or_else(|| error("Inbox entry was removed."))?;
         service
             .execute(
@@ -219,13 +222,18 @@ impl Engine {
             )
             .await
             .map_err(error)?;
-        let state = service.store().snapshot().await.map_err(error)?;
-        let entry = state
-            .inboxes
-            .iter()
-            .find(|e| e.id == id && !e.deleted)
+        let entry = service
+            .store()
+            .inbox_record(id)
+            .await
+            .map_err(error)?
+            .filter(|e| !e.deleted)
             .ok_or_else(|| error("Inbox entry was removed."))?;
-        let project = &state.projects[state.project_index(&entry.project_id).map_err(error)?];
+        let project = service
+            .store()
+            .project_result(&entry.project_id)
+            .await
+            .map_err(error)?;
         let content = markdown_pages(&entry.content);
         let page = page.min(content.len() - 1);
         let mut view = OutboundView::text(
@@ -290,15 +298,15 @@ impl Engine {
         };
         let source =
             json!([conversation.channel, conversation.conversation_id, original]).to_string();
-        let state = service.store().snapshot().await.map_err(error)?;
-        let Some(entry) = state
-            .inboxes
-            .iter()
-            .find(|e| e.source.as_deref() == Some(&source))
+        let Some(id) = service
+            .store()
+            .inbox_id_by_source(&source)
+            .await
+            .map_err(error)?
         else {
             return Ok(());
         };
-        let result = service.execute(json!({"command":"inbox.edit","inbox":entry.id,"source":source,"version":version,"content":content}), WriteOptions { actor_ref:format!("im:{owner}"), ..WriteOptions::default() }).await.map_err(error)?;
+        let result = service.execute(json!({"command":"inbox.edit","inbox":id,"source":source,"version":version,"content":content}), WriteOptions { actor_ref:format!("im:{owner}"), ..WriteOptions::default() }).await.map_err(error)?;
         if let Some(warning) = result.projection_pending {
             return Err(error(format!(
                 "Inbox saved; document synchronization is pending: {warning}"
@@ -313,22 +321,10 @@ impl Engine {
         let Some(service) = self.task_board.as_ref() else {
             return Ok(());
         };
-        let state = service.store().snapshot().await.map_err(error)?;
-        for entry in state
-            .inboxes
-            .iter()
-            .filter(|entry| !entry.deleted && entry.published)
-        {
-            if state
-                .projects
-                .iter()
-                .any(|p| p.id == entry.project_id && p.archived_at.is_some())
-            {
-                continue;
-            }
-            let Some(source) = entry.source.as_deref().and_then(|source| {
-                serde_json::from_str::<(crate::ChannelKind, String, String)>(source).ok()
-            }) else {
+        for entry in service.store().inbox_sources().await.map_err(error)? {
+            let Ok(source) =
+                serde_json::from_str::<(crate::ChannelKind, String, String)>(&entry.source)
+            else {
                 continue;
             };
             let Some(channel) = self.channels.get(&source.0) else {

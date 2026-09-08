@@ -1,6 +1,42 @@
 use super::*;
 
 #[tokio::test]
+async fn inbox_views_edits_and_polling_ignore_unrelated_entity_bodies() {
+    use sqlx::Connection;
+    let (_dir, service, _) = task_fixture().await;
+    let (engine, channel) = engine(service.clone()).await;
+    engine.handle_inbound(input("/attach thr_a")).await.unwrap();
+    let original = input("/inbox Original");
+    engine.handle_inbound(original.clone()).await.unwrap();
+    let detail = button(&last(&channel), "View inbox entry");
+    let mut db = sqlx::SqliteConnection::connect_with(
+        &sqlx::sqlite::SqliteConnectOptions::new().filename(&service.config().storage.path),
+    )
+    .await
+    .unwrap();
+    for table in ["jobs", "tasks", "plans"] {
+        sqlx::query(&format!(
+            "INSERT INTO {table}(id,data) VALUES('unrelated','{{}}')"
+        ))
+        .execute(&mut db)
+        .await
+        .unwrap();
+    }
+    engine.refresh_inbox_sources().await.unwrap();
+    click(&engine, detail).await;
+    assert!(last(&channel).body.contains("Original"));
+    engine.handle_inbound(input("/inboxes")).await.unwrap();
+    assert!(last(&channel).body.contains("Original"));
+    let mut edit = original.clone();
+    edit.event_id = "scoped-edit".into();
+    edit.payload = serde_json::from_value(json!({"TextEdited":{"original_event_id":original.event_id,"version":10,"text":"/inbox Scoped edit"}})).unwrap();
+    *channel.inbox_source.lock().unwrap() = Some(edit);
+    engine.refresh_inbox_sources().await.unwrap();
+    engine.handle_inbound(input("/inboxes")).await.unwrap();
+    assert!(last(&channel).body.contains("Scoped edit"));
+}
+
+#[tokio::test]
 async fn inbox_submission_remains_available_on_read_only_attachments() {
     let (_dir, service, _) = task_fixture().await;
     let mut agent = FakeAgent::new();

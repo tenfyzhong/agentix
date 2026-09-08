@@ -250,6 +250,7 @@ pub struct Snapshot {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct QueryContext {
+    pub(crate) done_dependencies: Option<std::collections::BTreeSet<String>>,
     pub(crate) cancelled_inboxes:
         std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
     pub(crate) names: std::collections::BTreeMap<(String, String), Vec<(String, String)>>,
@@ -324,6 +325,21 @@ impl InboxEntry {
 }
 
 impl Snapshot {
+    /// Check dependency state from the same snapshot, including scoped SQL summaries.
+    #[must_use]
+    pub fn dependencies_done(&self, task: &Task) -> bool {
+        task.dependencies.iter().all(|id| {
+            self.query_context.done_dependencies.as_ref().map_or_else(
+                || {
+                    self.tasks
+                        .iter()
+                        .any(|t| t.id == *id && t.status == TaskStatus::Done)
+                },
+                |done| done.contains(id),
+            )
+        })
+    }
+
     pub fn project_index(&self, id: &str) -> Result<usize> {
         resolve(
             self.projects
@@ -349,10 +365,17 @@ impl Snapshot {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    pub(crate) static RESOLVE_ITEMS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 fn resolve<'a>(items: impl Iterator<Item = (&'a str, &'a str)>, query: &str) -> Result<usize> {
     if query.is_empty() {
         bail!("invalid: empty identifier");
     }
+    #[cfg(test)]
+    let items = items.inspect(|_| RESOLVE_ITEMS.set(RESOLVE_ITEMS.get() + 1));
     let items: Vec<_> = items.collect();
     if let Some(index) = items.iter().position(|(id, _)| *id == query) {
         return Ok(index);

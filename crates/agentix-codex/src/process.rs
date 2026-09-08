@@ -100,74 +100,66 @@ impl CodexProcessDiscovery {
     }
 }
 
-pub(crate) fn select_running_session_ids(
-    loaded: &[SessionSummary],
-    snapshot: &RunningProcessSnapshot,
-) -> HashSet<SessionId> {
-    let mut selected = snapshot.direct_session_ids.clone();
-    let mut client_counts = HashMap::<&Path, usize>::new();
-    for client in &snapshot.daemon_clients {
-        *client_counts.entry(&client.cwd).or_default() += 1;
-    }
-    for (cwd, count) in client_counts {
-        let mut candidates = loaded
-            .iter()
-            .filter(|session| {
-                !snapshot.direct_session_ids.contains(&session.id)
-                    && session
-                        .cwd
-                        .as_deref()
-                        .is_some_and(|value| Path::new(value) == cwd)
-            })
-            .collect::<Vec<_>>();
-        candidates.sort_by(|left, right| {
-            session_priority(right)
-                .cmp(&session_priority(left))
-                .then_with(|| right.id.as_str().cmp(left.id.as_str()))
-        });
-        selected.extend(
-            candidates
-                .into_iter()
-                .take(count)
-                .map(|session| session.id.clone()),
-        );
-    }
-    selected
+pub(crate) struct RunningSessionSelection {
+    pub ids: HashSet<SessionId>,
+    pub terminals: HashMap<SessionId, TerminalLocation>,
 }
 
-pub(crate) fn session_terminal_locations(
+pub(crate) fn resolve_running_sessions(
     loaded: &[SessionSummary],
     snapshot: &RunningProcessSnapshot,
-) -> HashMap<SessionId, TerminalLocation> {
-    let mut locations = snapshot.direct_terminal_locations.clone();
+) -> RunningSessionSelection {
+    let mut result = RunningSessionSelection {
+        ids: snapshot.direct_session_ids.clone(),
+        terminals: snapshot.direct_terminal_locations.clone(),
+    };
+    if snapshot.daemon_clients.is_empty() {
+        return result;
+    }
     let mut clients_by_cwd = HashMap::<&Path, Vec<&DaemonClient>>::new();
     for client in &snapshot.daemon_clients {
         clients_by_cwd.entry(&client.cwd).or_default().push(client);
     }
+    let mut sessions_by_cwd = HashMap::<&Path, Vec<&SessionSummary>>::new();
+    for session in loaded {
+        #[cfg(test)]
+        tests::SESSION_VISITS.set(tests::SESSION_VISITS.get() + 1);
+        if snapshot.direct_session_ids.contains(&session.id) {
+            continue;
+        }
+        if let Some(cwd) = session.cwd.as_deref().map(Path::new)
+            && clients_by_cwd.contains_key(cwd)
+        {
+            sessions_by_cwd.entry(cwd).or_default().push(session);
+        }
+    }
+    let priority = |left: &&SessionSummary, right: &&SessionSummary| {
+        session_priority(right)
+            .cmp(&session_priority(left))
+            .then_with(|| right.id.as_str().cmp(left.id.as_str()))
+    };
     for (cwd, mut clients) in clients_by_cwd {
+        let Some(mut candidates) = sessions_by_cwd.remove(cwd) else {
+            continue;
+        };
         clients.sort_by_key(|client| std::cmp::Reverse(client.pid));
-        let mut candidates = loaded
-            .iter()
-            .filter(|session| {
-                !snapshot.direct_session_ids.contains(&session.id)
-                    && session
-                        .cwd
-                        .as_deref()
-                        .is_some_and(|value| Path::new(value) == cwd)
-            })
-            .collect::<Vec<_>>();
-        candidates.sort_by(|left, right| {
-            session_priority(right)
-                .cmp(&session_priority(left))
-                .then_with(|| right.id.as_str().cmp(left.id.as_str()))
-        });
+        if candidates.len() > clients.len() {
+            // Keep only the highest-priority candidates before ordering their terminals.
+            candidates.select_nth_unstable_by(clients.len(), priority);
+            candidates.truncate(clients.len());
+        }
+        candidates.sort_by(priority);
         for (session, client) in candidates.into_iter().zip(clients) {
+            result.ids.insert(session.id.clone());
+            // A client without a terminal still occupies its priority slot.
             if let Some(terminal) = &client.terminal {
-                locations.insert(session.id.clone(), terminal.clone());
+                result
+                    .terminals
+                    .insert(session.id.clone(), terminal.clone());
             }
         }
     }
-    locations
+    result
 }
 
 pub(crate) fn confirm_exited_sessions(
@@ -344,9 +336,124 @@ mod tests {
 
     use super::{
         DaemonClient, RunningProcessSnapshot, confirm_exited_sessions, parse_codex_processes,
-        parse_lock_owners, reappeared_sessions, select_running_session_ids,
-        session_terminal_locations,
+        parse_lock_owners, reappeared_sessions, resolve_running_sessions,
     };
+
+    thread_local! {
+        pub(super) static SESSION_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    #[test]
+    fn process_resolution_does_not_rescan_sessions_for_each_directory() {
+        let loaded: Vec<_> = (0..1000)
+            .map(|i| {
+                session(
+                    &format!("s{i:04}"),
+                    &format!("/work/{}", i % 100),
+                    if i % 3 == 0 {
+                        SessionStatus::Active
+                    } else {
+                        SessionStatus::Idle
+                    },
+                    i,
+                )
+            })
+            .collect();
+        let direct = SessionId::new("direct-not-loaded");
+        let snapshot = RunningProcessSnapshot {
+            direct_session_ids: HashSet::from([direct.clone()]),
+            direct_terminal_locations: HashMap::from([(
+                direct.clone(),
+                terminal("direct", "0", "shell", "0", "%0"),
+            )]),
+            daemon_clients: (0..100)
+                .map(|i| DaemonClient {
+                    pid: i,
+                    cwd: format!("/work/{i}").into(),
+                    terminal: None,
+                })
+                .collect(),
+        };
+        SESSION_VISITS.set(0);
+        let result = resolve_running_sessions(&loaded, &snapshot);
+        let selected = result.ids;
+        let locations = result.terminals;
+        let visits = SESSION_VISITS.get();
+        let mut expected: HashSet<_> = (0..100)
+            .map(|i| SessionId::new(format!("s{:04}", i + 100 * (9 - i % 3))))
+            .collect();
+        expected.insert(direct);
+        assert_eq!(selected, expected);
+        assert_eq!(locations, snapshot.direct_terminal_locations);
+        assert!(
+            visits <= loaded.len(),
+            "directory resolution visited {visits} sessions for {} inputs",
+            loaded.len()
+        );
+    }
+
+    #[test]
+    fn process_resolution_preserves_priority_and_missing_terminal_slots() {
+        let loaded = vec![
+            session("direct", "/work", SessionStatus::Active, 999),
+            session("idle", "/work", SessionStatus::Idle, 999),
+            session("a", "/work", SessionStatus::Active, 100),
+            session("z", "/work", SessionStatus::Active, 100),
+            session("unmatched", "/elsewhere", SessionStatus::Active, 1000),
+        ];
+        let low = terminal("low", "0", "shell", "0", "%1");
+        let middle = terminal("middle", "0", "shell", "0", "%5");
+        let direct = terminal("direct", "0", "shell", "0", "%9");
+        let snapshot = RunningProcessSnapshot {
+            direct_session_ids: HashSet::from([SessionId::new("direct")]),
+            direct_terminal_locations: HashMap::from([(SessionId::new("direct"), direct.clone())]),
+            daemon_clients: vec![
+                DaemonClient {
+                    pid: 1,
+                    cwd: "/work".into(),
+                    terminal: Some(low.clone()),
+                },
+                DaemonClient {
+                    pid: 9,
+                    cwd: "/work".into(),
+                    terminal: None,
+                },
+                DaemonClient {
+                    pid: 5,
+                    cwd: "/work".into(),
+                    terminal: Some(middle.clone()),
+                },
+            ],
+        };
+        assert_eq!(
+            resolve_running_sessions(&loaded, &snapshot).ids,
+            ["direct", "z", "a", "idle"]
+                .map(SessionId::new)
+                .into_iter()
+                .collect()
+        );
+        assert_eq!(
+            resolve_running_sessions(&loaded, &snapshot).terminals,
+            HashMap::from([
+                (SessionId::new("direct"), direct),
+                (SessionId::new("a"), middle),
+                (SessionId::new("idle"), low)
+            ])
+        );
+    }
+
+    #[test]
+    fn direct_only_discovery_skips_loaded_sessions() {
+        let loaded = vec![session("unneeded", "/work", SessionStatus::Active, 100)];
+        let snapshot = RunningProcessSnapshot {
+            direct_session_ids: HashSet::from([SessionId::new("direct")]),
+            ..RunningProcessSnapshot::default()
+        };
+        SESSION_VISITS.set(0);
+        let result = resolve_running_sessions(&loaded, &snapshot);
+        assert_eq!(result.ids, snapshot.direct_session_ids);
+        assert_eq!(SESSION_VISITS.get(), 0);
+    }
 
     #[test]
     fn process_snapshot_keeps_direct_sessions_and_matches_daemon_clients_by_cwd() {
@@ -369,7 +476,7 @@ mod tests {
             }],
         };
 
-        let selected = select_running_session_ids(&loaded, &snapshot);
+        let selected = resolve_running_sessions(&loaded, &snapshot).ids;
 
         assert_eq!(
             selected,
@@ -381,7 +488,7 @@ mod tests {
             ])
         );
 
-        let locations = session_terminal_locations(&loaded, &snapshot);
+        let locations = resolve_running_sessions(&loaded, &snapshot).terminals;
         assert_eq!(
             locations.get(&SessionId::new("01a0656e-current")),
             Some(&terminal("agentix", "1", "codex:agentix", "0", "%36"))
