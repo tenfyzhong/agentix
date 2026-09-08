@@ -13,6 +13,7 @@ pub async fn setup(
     config: &Config,
     config_path: &Path,
     plugin_dir: Option<&Path>,
+    no_reload: bool,
 ) -> Result<Value> {
     ensure!(
         config.documents.format == DocumentFormat::Obsidian,
@@ -20,33 +21,7 @@ pub async fn setup(
     );
     let root = config.documents.root.canonicalize()?.join(".obsidian");
     check_path(&root, "")?;
-    let mut changes = Vec::new();
-    sync_plugin(&root, config_path, &mut changes)?;
-    let (settings, settings_before) = read_json(&root, "plugins/tasknotes/data.json", json!({}))?;
-    changes.push(change(
-        "plugins/tasknotes/data.json",
-        settings_before,
-        &merge_settings(settings)?,
-    )?);
-    let (mut community, community_before) = read_json(&root, "community-plugins.json", json!([]))?;
-    enable_array(&mut community, "tasknotes")?;
-    enable_array(&mut community, "taskcli-sync")?;
-    changes.push(change(
-        "community-plugins.json",
-        community_before,
-        &community,
-    )?);
-    let (mut core, core_before) = read_json(&root, "core-plugins.json", json!({}))?;
-    if let Some(object) = core.as_object_mut() {
-        ensure!(
-            object.values().all(Value::is_boolean),
-            "invalid core plugin settings"
-        );
-        object.insert("bases".into(), json!(true));
-    } else {
-        enable_array(&mut core, "bases")?;
-    }
-    changes.push(change("core-plugins.json", core_before, &core)?);
+    let mut changes = configuration_changes(&root, config_path)?;
 
     for name in FILES {
         check_path(&root, &format!("plugins/tasknotes/{name}"))?;
@@ -86,12 +61,197 @@ pub async fn setup(
             "TaskNotes main.js is empty; reinstall using --plugin-dir"
         );
     }
-    changes.retain(|c| c.before.as_deref() != Some(c.after.as_slice()));
-    let modified = !changes.is_empty();
-    let backup = apply(&root, &changes)?;
+    let modified = changes
+        .iter()
+        .any(|c| c.before.as_deref() != Some(c.after.as_slice()));
+    let mut reload_error = None;
+    let mut connection = None;
+    if modified && !no_reload {
+        match ObsidianCli::connect(root.parent().context("missing vault")?).await {
+            Ok(mut cli) => {
+                if let Err(error) = cli.suspend().await {
+                    reload_error = Some(format!("{error:#}"));
+                }
+                connection = Some(cli);
+            }
+            Err(error) => reload_error = Some(format!("{error:#}")),
+        }
+    }
+    // Starting Obsidian and disabling plugins can save configuration. Merge
+    // the latest settings and desired enabled list before publication.
+    let publication = publish(&root, config_path, changes, connection.is_some());
+    let backup = match publication {
+        Ok(backup) => backup,
+        Err(error) => {
+            if let Some(cli) = &connection {
+                cli.restore()
+                    .await
+                    .context(format!("setup failed: {error:#}; plugin recovery failed"))?;
+            }
+            return Err(error);
+        }
+    };
+    // Re-enabling against the app's old in-memory list after publication can
+    // overwrite the installed enabled list. Leave it for the manual restart
+    // when reload fails; only restore plugins after a failed installation.
+    let reloaded = if let Some(cli) = &connection
+        && reload_error.is_none()
+    {
+        match cli.run(&["reload"]).await {
+            Ok(_) => true,
+            Err(error) => {
+                reload_error = Some(format!("{error:#}"));
+                false
+            }
+        }
+    } else {
+        false
+    };
+    let next_step = if reloaded {
+        "Obsidian reload requested. If Restricted mode is on, turn it off in Settings > Community plugins to load TaskNotes and Taskcli Sync."
+    } else {
+        "Open or restart Obsidian. If Restricted mode is on, turn it off in Settings > Community plugins to load TaskNotes and Taskcli Sync."
+    };
     Ok(
-        json!({"vault":config.documents.root,"version":version,"installed":install,"sync_plugin":"taskcli-sync","changed":modified,"backup":backup,"restart_required":true,"next_step":"Open or restart Obsidian. If Restricted mode is on, turn it off in Settings > Community plugins to load TaskNotes and Taskcli Sync."}),
+        json!({"vault":config.documents.root,"version":version,"installed":install,"sync_plugin":"taskcli-sync","changed":modified,"backup":backup,"reloaded":reloaded,"reload_error":reload_error,"restart_required":!reloaded,"next_step":next_step}),
     )
+}
+
+fn publish(
+    root: &Path,
+    config_path: &Path,
+    mut changes: Vec<Change>,
+    refresh_configuration: bool,
+) -> Result<Option<std::path::PathBuf>> {
+    if refresh_configuration {
+        changes.retain(|c| {
+            c.relative.starts_with("plugins/tasknotes/") && !c.relative.ends_with("data.json")
+        });
+        changes.extend(configuration_changes(root, config_path)?);
+    }
+    changes.retain(|c| c.before.as_deref() != Some(c.after.as_slice()));
+    apply(root, &changes)
+}
+
+fn configuration_changes(root: &Path, config_path: &Path) -> Result<Vec<Change>> {
+    let mut changes = Vec::new();
+    sync_plugin(root, config_path, &mut changes)?;
+    let (settings, settings_before) = read_json(root, "plugins/tasknotes/data.json", json!({}))?;
+    changes.push(change(
+        "plugins/tasknotes/data.json",
+        settings_before,
+        &merge_settings(settings)?,
+    )?);
+    let (mut community, community_before) = read_json(root, "community-plugins.json", json!([]))?;
+    enable_array(&mut community, "tasknotes")?;
+    enable_array(&mut community, "taskcli-sync")?;
+    changes.push(change(
+        "community-plugins.json",
+        community_before,
+        &community,
+    )?);
+    let (mut core, core_before) = read_json(root, "core-plugins.json", json!({}))?;
+    if let Some(object) = core.as_object_mut() {
+        ensure!(
+            object.values().all(Value::is_boolean),
+            "invalid core plugin settings"
+        );
+        object.insert("bases".into(), json!(true));
+    } else {
+        enable_array(&mut core, "bases")?;
+    }
+    changes.push(change("core-plugins.json", core_before, &core)?);
+
+    Ok(changes)
+}
+
+/// Use an explicit vault selector and verify its path before any mutations.
+/// A same-named vault or an old CLI that ignores targeting must not reload the
+/// user's currently focused, unrelated vault.
+struct ObsidianCli {
+    vault: std::path::PathBuf,
+    selector: String,
+    suspended: Vec<String>,
+}
+
+impl ObsidianCli {
+    async fn connect(vault: &Path) -> Result<Self> {
+        let name = vault
+            .file_name()
+            .and_then(|name| name.to_str())
+            .context("invalid vault name")?;
+        let cli = Self {
+            vault: vault.to_owned(),
+            selector: format!("vault={name}"),
+            suspended: Vec::new(),
+        };
+        let reported = cli.run(&["vault", "info=path"]).await?;
+        ensure!(
+            Path::new(reported.trim()).canonicalize().ok().as_deref() == Some(vault),
+            "Obsidian CLI selected a different or unavailable vault"
+        );
+        Ok(cli)
+    }
+
+    async fn run(&self, args: &[&str]) -> Result<String> {
+        let output = tokio::time::timeout(Duration::from_secs(10), tokio::process::Command::new("obsidian")
+            .current_dir(&self.vault)
+            .arg(&self.selector)
+            .args(args)
+            .kill_on_drop(true)
+            .output()).await.context("Obsidian CLI timed out after 10 seconds")?
+            .context("could not run Obsidian CLI; enable it in Settings > General and ensure obsidian is on PATH")?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        ensure!(
+            output.status.success()
+                && !stdout
+                    .lines()
+                    .chain(stderr.lines())
+                    .any(|line| line.trim_start().to_ascii_lowercase().starts_with("error:")),
+            "Obsidian CLI {} failed: {} {}",
+            args[0],
+            stdout.trim(),
+            stderr.trim()
+        );
+        Ok(stdout.into_owned())
+    }
+
+    async fn suspend(&mut self) -> Result<()> {
+        let enabled: Value = serde_json::from_str(
+            &self
+                .run(&["plugins:enabled", "filter=community", "format=json"])
+                .await?,
+        )
+        .context("invalid Obsidian enabled plugin response")?;
+        let enabled = enabled
+            .as_array()
+            .context("invalid Obsidian enabled plugin list")?;
+        // Stop the dependent plugin first. Record attempted disables too: a CLI
+        // timeout can arrive after the app already disabled the plugin.
+        for id in ["taskcli-sync", "tasknotes"] {
+            if enabled.iter().any(|plugin| plugin["id"] == id) {
+                self.suspended.push(id.into());
+                self.run(&["plugin:disable", &format!("id={id}"), "filter=community"])
+                    .await?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn restore(&self) -> Result<()> {
+        let mut failures = Vec::new();
+        for id in self.suspended.iter().rev() {
+            if let Err(error) = self
+                .run(&["plugin:enable", &format!("id={id}"), "filter=community"])
+                .await
+            {
+                failures.push(format!("{id}: {error:#}"));
+            }
+        }
+        ensure!(failures.is_empty(), "{}", failures.join("; "));
+        Ok(())
+    }
 }
 
 fn sync_plugin(root: &Path, config_path: &Path, changes: &mut Vec<Change>) -> Result<()> {

@@ -3,6 +3,9 @@ use std::{fs, path::Path, process::Command};
 use agentix_task::{Config, DocumentConfig, DocumentFormat, StorageConfig};
 use serde_json::{Value, json};
 
+#[path = "support/obsidian_cli.rs"]
+mod obsidian_cli;
+
 struct Fixture {
     dir: tempfile::TempDir,
 }
@@ -44,6 +47,15 @@ impl Fixture {
         serde_json::from_slice(&fs::read(self.path(name)).unwrap()).unwrap()
     }
     fn run(&self, bundle: bool, success: bool) -> Value {
+        self.run_with(bundle, success, &[], None)
+    }
+    fn run_with(
+        &self,
+        bundle: bool,
+        success: bool,
+        args: &[&str],
+        scenario: Option<&str>,
+    ) -> Value {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_taskcli"));
         cmd.arg("--config")
             .arg(self.path("config.toml"))
@@ -51,6 +63,14 @@ impl Fixture {
         if bundle {
             cmd.arg("--plugin-dir").arg(self.path("bundle"));
         }
+        let bin = self.path("bin");
+        fs::create_dir_all(&bin).unwrap();
+        if let Some(scenario) = scenario {
+            obsidian_cli::install(&bin);
+            cmd.env("OBSIDIAN_TEST_SCENARIO", scenario);
+        }
+        // Never contact the developer's running Obsidian instance.
+        cmd.env("PATH", &bin).args(args);
         let output = cmd.output().unwrap();
         assert_eq!(
             output.status.success(),
@@ -312,4 +332,160 @@ fn installs_sync_plugin_with_absolute_paths_and_preserves_user_configuration() {
         assert_eq!(status["excludeFromCycle"], true);
         assert_eq!(status["autoArchive"], false);
     }
+}
+
+#[test]
+fn setup_reloads_the_configured_vault_after_installing_files() {
+    let f = Fixture::new();
+    let result = f.run_with(true, true, &[], Some("success"))["result"].clone();
+    assert_eq!(result["reloaded"], true);
+    assert_eq!(result["restart_required"], false);
+    assert!(result["reload_error"].is_null());
+    assert!(f.path("vault/reloaded").exists());
+    let calls = fs::read_to_string(f.path("vault/cli-calls")).unwrap();
+    assert!(calls.contains("vault=vault"));
+    assert!(calls.contains("info=path"));
+    assert!(calls.ends_with("reload\n"));
+    fs::remove_file(f.path("vault/cli-calls")).unwrap();
+    let repeat = f.run_with(false, true, &[], Some("success"));
+    assert_eq!(repeat["result"]["changed"], false);
+    assert_eq!(repeat["result"]["reloaded"], false);
+    assert!(!f.path("vault/cli-calls").exists());
+}
+
+#[test]
+fn setup_no_reload_does_not_contact_obsidian() {
+    let f = Fixture::new();
+    let result = f.run_with(true, true, &["--no-reload"], Some("success"));
+    assert_eq!(result["result"]["reloaded"], false);
+    assert_eq!(result["result"]["restart_required"], true);
+    assert!(!f.path("vault/cli-calls").exists());
+}
+
+#[test]
+fn setup_reload_failures_keep_the_installation_and_explain_manual_recovery() {
+    for scenario in [
+        None,
+        Some("wrong-vault"),
+        Some("reload-fails"),
+        Some("reload-error-output"),
+    ] {
+        let f = Fixture::new();
+        let result = f.run_with(true, true, &[], scenario)["result"].clone();
+        assert_eq!(result["reloaded"], false, "{scenario:?}: {result}");
+        assert_eq!(result["restart_required"], true);
+        assert!(
+            result["reload_error"]
+                .as_str()
+                .is_some_and(|s| !s.is_empty())
+        );
+        assert!(
+            result["next_step"]
+                .as_str()
+                .unwrap()
+                .contains("restart Obsidian")
+        );
+        assert!(
+            f.path("vault/.obsidian/plugins/taskcli-sync/main.js")
+                .exists()
+        );
+        assert!(f.path("vault/.obsidian/plugins/tasknotes/main.js").exists());
+        if scenario == Some("wrong-vault") {
+            let calls = fs::read_to_string(f.path("vault/cli-calls")).unwrap();
+            assert!(!calls.contains("plugin:disable"));
+            assert!(!calls.contains("reload"));
+        }
+    }
+}
+
+#[test]
+fn setup_preserves_settings_saved_during_plugin_shutdown() {
+    let f = Fixture::new();
+    f.write(
+        "vault/.obsidian/community-plugins.json",
+        &json!(["other", "tasknotes", "taskcli-sync"]),
+    );
+    let result = f.run_with(true, true, &[], Some("loaded"))["result"].clone();
+    assert_eq!(result["reloaded"], true);
+    let settings = f.read("vault/.obsidian/plugins/tasknotes/data.json");
+    assert_eq!(settings["calendarView"], "month");
+    assert_eq!(settings["taskTag"], "task");
+    assert_eq!(
+        f.read("vault/.obsidian/community-plugins.json"),
+        json!(["other", "tasknotes", "taskcli-sync"])
+    );
+    let backup = Path::new(result["backup"].as_str().unwrap());
+    assert_eq!(
+        serde_json::from_slice::<Value>(
+            &fs::read(backup.join("plugins/tasknotes/data.json")).unwrap()
+        )
+        .unwrap()["taskTag"],
+        "old"
+    );
+}
+
+#[test]
+fn setup_restores_disabled_plugins_if_publication_fails() {
+    let f = Fixture::new();
+    f.run_with(true, false, &[], Some("publication-fails"));
+    let calls = fs::read_to_string(f.path("vault/cli-calls")).unwrap();
+    assert!(calls.contains("plugin:enable"));
+    assert!(!calls.contains("reload"));
+}
+
+#[test]
+fn setup_reload_timeout_keeps_installed_files() {
+    let f = Fixture::new();
+    let result = f.run_with(true, true, &[], Some("reload-timeout"))["result"].clone();
+    assert_eq!(result["restart_required"], true);
+    assert!(
+        result["reload_error"]
+            .as_str()
+            .unwrap()
+            .contains("timed out")
+    );
+    assert!(f.path("vault/.obsidian/plugins/tasknotes/main.js").exists());
+}
+
+#[test]
+fn setup_retains_desired_enabled_list_when_reload_or_shutdown_fails() {
+    for scenario in ["loaded-reload-fails", "disable-fails"] {
+        let f = Fixture::new();
+        let result = f.run_with(true, true, &[], Some(scenario))["result"].clone();
+        assert_eq!(result["restart_required"], true);
+        assert!(result["reload_error"].is_string());
+        assert_eq!(
+            f.read("vault/.obsidian/community-plugins.json"),
+            json!(["other", "tasknotes", "taskcli-sync"])
+        );
+    }
+}
+
+#[test]
+fn setup_passes_vault_names_with_spaces_as_one_argument() {
+    let f = Fixture::new();
+    let renamed = f.path("vault with spaces");
+    fs::rename(f.path("vault"), &renamed).unwrap();
+    let config_path = f.path("config.toml");
+    let mut config: Config = toml::from_str(&fs::read_to_string(&config_path).unwrap()).unwrap();
+    config.documents.root = renamed.clone();
+    fs::write(config_path, toml::to_string(&config).unwrap()).unwrap();
+    let result = f.run_with(true, true, &[], Some("success"))["result"].clone();
+    assert_eq!(result["reloaded"], true);
+    assert!(renamed.join("reloaded").exists());
+}
+
+#[test]
+fn setup_merges_configuration_initialized_when_the_cli_launches_obsidian() {
+    let f = Fixture::new();
+    let result = f.run_with(true, true, &[], Some("startup-settings"))["result"].clone();
+    assert_eq!(result["reloaded"], true);
+    assert_eq!(
+        f.read("vault/.obsidian/core-plugins.json"),
+        json!({"graph":true,"bases":true})
+    );
+    assert_eq!(
+        f.read("vault/.obsidian/community-plugins.json"),
+        json!(["other", "tasknotes", "taskcli-sync"])
+    );
 }

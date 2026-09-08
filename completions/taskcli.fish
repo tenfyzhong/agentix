@@ -203,7 +203,7 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish
 complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show snapshot setup help" -f -a "connection" -d 'Read the Obsidian connection configuration without loading task records'
 complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show snapshot setup help" -f -a "show" -d 'Query one registered Task, Job, or Inbox entry by its exact ID'
 complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show snapshot setup help" -f -a "snapshot" -d 'Query registered notes and authoritative status properties without lease credentials'
-complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show snapshot setup help" -f -a "setup" -d 'Install `TaskNotes` and configure its task statuses and Bases. Close Obsidian first'
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show snapshot setup help" -f -a "setup" -d 'Install task views and reload the configured Obsidian vault when files change'
 complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show snapshot setup help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
 complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from connection" -l config -r -F
 complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from connection" -l project -r
@@ -248,12 +248,13 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_see
 complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from setup" -l lease-token -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from setup" -l expect-revision -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from setup" -l idempotency-key -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from setup" -l no-reload -d 'Skip Obsidian CLI calls; close Obsidian before setup and reopen it afterward'
 complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from setup" -l json
 complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from setup" -s h -l help -d 'Print help'
 complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from help" -f -a "connection" -d 'Read the Obsidian connection configuration without loading task records'
 complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from help" -f -a "show" -d 'Query one registered Task, Job, or Inbox entry by its exact ID'
 complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from help" -f -a "snapshot" -d 'Query registered notes and authoritative status properties without lease credentials'
-complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from help" -f -a "setup" -d 'Install `TaskNotes` and configure its task statuses and Bases. Close Obsidian first'
+complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from help" -f -a "setup" -d 'Install task views and reload the configured Obsidian vault when files change'
 complete -c taskcli -n "__fish_taskcli_using_subcommand obsidian; and __fish_seen_subcommand_from help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
 complete -c taskcli -n "__fish_taskcli_using_subcommand doctor" -l config -r -F
 complete -c taskcli -n "__fish_taskcli_using_subcommand doctor" -l project -r
@@ -1024,7 +1025,7 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_su
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from obsidian" -f -a "connection" -d 'Read the Obsidian connection configuration without loading task records'
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from obsidian" -f -a "show" -d 'Query one registered Task, Job, or Inbox entry by its exact ID'
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from obsidian" -f -a "snapshot" -d 'Query registered notes and authoritative status properties without lease credentials'
-complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from obsidian" -f -a "setup" -d 'Install `TaskNotes` and configure its task statuses and Bases. Close Obsidian first'
+complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from obsidian" -f -a "setup" -d 'Install task views and reload the configured Obsidian vault when files change'
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from project" -f -a "delete" -d 'Delete the Project, its work, and its entire generated document directory'
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from project" -f -a "register" -d 'Register a Project using its root directory and Git identity when available'
 complete -c taskcli -n "__fish_taskcli_using_subcommand help; and __fish_seen_subcommand_from project" -f -a "list" -d 'List unarchived Projects, or archived Projects with --archived'
