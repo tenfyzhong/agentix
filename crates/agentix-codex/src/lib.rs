@@ -6,6 +6,8 @@ mod client;
 mod client_unsupported;
 mod endpoint;
 #[cfg(unix)]
+mod login_environment;
+#[cfg(unix)]
 mod multiplexer;
 #[cfg(unix)]
 mod process;

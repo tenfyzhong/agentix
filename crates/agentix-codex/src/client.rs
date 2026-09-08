@@ -1,6 +1,9 @@
 mod background;
 mod observed;
 
+#[cfg(test)]
+mod daemon_tests;
+
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
@@ -1411,6 +1414,7 @@ async fn connect_managed_socket(
 
 async fn start_daemon(command: &Path) -> Result<(), ClientError> {
     let mut process = Command::new(command);
+    crate::login_environment::apply(&mut process).await;
     process
         .args(["app-server", "daemon", "start"])
         .kill_on_drop(true);

@@ -62,7 +62,17 @@ Agentix starts the managed daemon automatically when the default control socket 
 agentix doctor
 ```
 
-`endpoint = "unix://"` resolves to the current Codex home control socket. `command = "codex"` selects the executable used for `codex app-server daemon start`; use an absolute or `~/...` path when the service environment has a restricted `PATH`. A custom endpoint must resolve to an absolute Unix socket path, for example `unix://~/.codex/custom.sock`, and is never auto-started. TCP WebSocket endpoints are intentionally rejected by this release.
+`endpoint = "unix://"` resolves to the current Codex home control socket. `command = "codex"` selects the executable used for `codex app-server daemon start`; it is resolved using the login shell PATH described below. An absolute or `~/...` path is also supported. A custom endpoint must resolve to an absolute Unix socket path, for example `unix://~/.codex/custom.sock`, and is never auto-started. TCP WebSocket endpoints are intentionally rejected by this release.
+
+### Login shell environment
+
+Before starting the managed Codex daemon, Agentix looks up the effective user's login shell in the system account database and runs it with `-lc` to read all exported environment variables. The complete snapshot becomes the Codex startup command's environment, including PATH, newly exported variables, overridden values, and removals made with `unset`. Agentix's own environment is unchanged. The Homebrew formula can continue to run `agentix serve` directly, without a fish dependency or a fixed user-specific PATH.
+
+Shell configuration must export variables for noninteractive login shells (for example, `set -gx` in fish). Shell-local variables are not inherited. For fish, keep these settings outside `if status is-interactive` blocks. Variables set temporarily in a terminal are not recovered. To select a different shell, set `AGENTIX_LOGIN_SHELL` to its absolute executable path in Agentix's service environment. This override must support `-lc` and the environment snapshot command (for example fish, bash, or zsh).
+
+The lookup has a three-second timeout. If the account lookup or shell fails, or the environment output is malformed, Agentix logs a warning and starts Codex with its original inherited environment. No partial snapshot is applied. NUL-delimited entries preserve empty values, spaces, newlines, equals signs, and non-UTF-8 bytes; shell startup output is separated from the snapshot. Environment values are not written to logs.
+
+An already running Codex daemon is reused and retains its existing environment. To apply this behavior to an old daemon, stop Agentix and the Codex daemon when active work has finished, then start Agentix again so it creates the daemon with the login shell environment. Custom socket endpoints remain externally managed.
 
 For the managed `unix://` endpoint, Agentix uses `ps` and `lsof` to correlate interactive Codex TUI processes with standalone writer locks and daemon-backed threads. Both commands must be available on `PATH`. Inactive sessions persisted on disk and orphaned daemon threads are not listed. Custom socket endpoints fall back to the app-server's `thread/loaded/list` view.
 

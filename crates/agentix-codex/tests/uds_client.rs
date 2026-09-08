@@ -16,6 +16,31 @@ mod unix {
 
     #[tokio::test]
     async fn managed_endpoint_starts_daemon_and_waits_for_socket() {
+        // Keep login shell initialization independent of the developer's account
+        // without mutating the parallel test runner's process environment.
+        if std::env::var_os("AGENTIX_TEST_MANAGED_DAEMON").is_none() {
+            let fixture = tempdir().unwrap();
+            let shell = fixture.path().join("shell");
+            std::fs::write(&shell, "#!/bin/sh\nexec /bin/sh -c \"$2\"\n").unwrap();
+            std::fs::set_permissions(&shell, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let output = tokio::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "unix::managed_endpoint_starts_daemon_and_waits_for_socket",
+                    "--nocapture",
+                ])
+                .env("AGENTIX_TEST_MANAGED_DAEMON", "1")
+                .env("AGENTIX_LOGIN_SHELL", shell)
+                .output()
+                .await
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
         let directory = tempfile::Builder::new()
             .prefix("agentix-")
             .tempdir_in("/tmp")

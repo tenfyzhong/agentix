@@ -205,6 +205,8 @@ Non-final event rendering uses the channel update interval: five seconds for Tel
 
 Agentix connects to `unix://`, `unix:///absolute/path`, or a home-relative endpoint such as `unix://~/.codex/custom.sock` using WebSocket framing over a Unix stream. Configuration parsing expands the home-relative form before transport initialization. If the managed `unix://` socket is missing or refusing connections at startup, Agentix runs the configured Codex executable with `app-server daemon start`, waits up to five seconds for the socket, and retries the handshake. Custom socket paths remain externally managed and are never auto-started. After connecting, Agentix performs `initialize`, advertises `experimentalApi`, sends `initialized`, and then uses app-server JSON RPC methods.
 
+Managed daemon startup first reads the effective user's exported login shell environment (with an optional `AGENTIX_LOGIN_SHELL` override) under a three-second timeout. It replaces only the Codex child process environment with the complete snapshot, honoring overrides and removals without changing Agentix's environment. Failed or malformed lookups retain the original inherited environment and emit a warning without logging variable values. Existing daemons and custom endpoints do not run this lookup.
+
 On disconnect it:
 
 1. fails pending request waiters;
