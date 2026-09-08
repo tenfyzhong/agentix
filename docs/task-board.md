@@ -247,7 +247,7 @@ When upgrading, rename the host environment variable to `AGENT_TASK_LANG`, remov
 
 ### Obsidian plugin setup
 
-After `taskcli init`, close the vault in Obsidian and run:
+After `taskcli init`, run:
 
 ```sh
 taskcli obsidian setup
@@ -257,7 +257,11 @@ taskcli --config /path/to/taskcli.toml obsidian setup --json
 
 The command uses `documents.root` from the selected configuration. It installs the tested TaskNotes 4.12.5 release from its official GitHub repository when the plugin is missing, installs/enables the embedded desktop Taskcli Sync plugin and enables TaskNotes and Bases in the vault configuration, and merges task identification, required field mappings, the seven Task statuses, three additional Job statuses, and the default `TODO` status. It preserves unrelated settings, custom status values, and other plugins. An existing compatible TaskNotes 4.x installation (4.12.5 or newer) is retained without a download. No task database is opened or modified.
 
-Restart or reopen Obsidian afterward. If Restricted mode is enabled, turn it off in **Settings → Community plugins** to allow TaskNotes and Taskcli Sync to load; this app-local permission is not changed by writing vault settings. Obsidian and other tools must not edit the same configuration during setup.
+When files change, setup automatically reloads the configured vault window through [Obsidian CLI](https://help.obsidian.md/cli). Enable **Settings → General → Command line interface** and make `obsidian` available on `PATH`. The CLI may launch Obsidian if it is not running. Setup explicitly selects the vault and verifies its canonical path before making app changes; it will not reload a different vault with the same name. Each CLI call has a ten-second timeout.
+
+Before publishing files, setup temporarily disables already-enabled Taskcli Sync and TaskNotes, then rereads configuration to preserve settings written during app startup or plugin shutdown. If installation fails, it attempts to re-enable those plugins. If reload fails after installation, it keeps the installed files and enabled list intact for a manual restart; suspended plugins may remain inactive until then. The result includes `reloaded`, `reload_error`, and `restart_required`. A successful reload command sets `reloaded: true` and `restart_required: false`; this confirms the request was accepted, not that every plugin finished loading. Otherwise `restart_required` remains true because the running app state is unconfirmed, including when unchanged files cause setup to skip CLI calls.
+
+If the CLI is missing or fails, setup still installs the files and reports the reason with instructions to restart Obsidian. For offline setup, close Obsidian first and run `taskcli obsidian setup --no-reload`, then reopen it; this flag skips all Obsidian CLI calls. If Restricted mode is enabled, turn it off in **Settings → Community plugins** to allow TaskNotes and Taskcli Sync to load; setup does not change this app-local permission. Avoid editing the same configuration through Obsidian or other tools during setup.
 
 For offline installation or an explicit plugin replacement, download `manifest.json`, `main.js`, and `styles.css` from a compatible [official TaskNotes release](https://github.com/callumalpass/tasknotes/releases) into one directory:
 

@@ -4595,7 +4595,7 @@ _taskcli() {
             return 0
             ;;
         taskcli__subcmd__obsidian__subcmd__setup)
-            opts="-h --plugin-dir --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help"
+            opts="-h --plugin-dir --no-reload --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
