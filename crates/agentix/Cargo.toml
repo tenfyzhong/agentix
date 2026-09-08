@@ -11,7 +11,7 @@ agentix-task = { path = "../agentix-task" }
 agentix-codex = { path = "../agentix-codex" }
 agentix-core = { path = "../agentix-core" }
 agentix-feishu = { path = "../agentix-feishu" }
-agentix-pi = { path = "../agentix-pi" }
+agentix-bridge = { path = "../agentix-bridge" }
 agentix-telegram = { path = "../agentix-telegram" }
 anyhow.workspace = true
 async-trait.workspace = true

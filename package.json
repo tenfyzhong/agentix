@@ -4,17 +4,32 @@
   "private": true,
   "description": "Agentix extensions installed directly from GitHub with Pi and OMP.",
   "license": "MIT",
-  "keywords": ["pi-package"],
+  "keywords": [
+    "pi-package"
+  ],
   "dependencies": {
     "@sinclair/typebox": "^0.34.0"
   },
-  "workspaces": ["plugins/agent-task-manager"],
+  "workspaces": [
+    "plugins/agent-task-manager",
+    "plugins/agentix-bridge"
+  ],
   "pi": {
-    "extensions": ["./plugins/agent-task-manager/extensions/pi.ts"],
-    "skills": ["./plugins/agent-task-manager/skills"]
+    "extensions": [
+      "./plugins/agent-task-manager/extensions/pi.ts",
+      "./plugins/agentix-bridge/extensions/pi.ts"
+    ],
+    "skills": [
+      "./plugins/agent-task-manager/skills"
+    ]
   },
   "omp": {
-    "extensions": ["./plugins/agent-task-manager/extensions/omp.ts"],
-    "skills": ["./plugins/agent-task-manager/skills"]
+    "extensions": [
+      "./plugins/agent-task-manager/extensions/omp.ts",
+      "./plugins/agentix-bridge/extensions/omp.ts"
+    ],
+    "skills": [
+      "./plugins/agent-task-manager/skills"
+    ]
   }
 }

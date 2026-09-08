@@ -16,6 +16,7 @@ pub struct CapturedRequest {
 
 #[derive(Debug)]
 struct PlannedFailure {
+    release: Option<tokio::sync::oneshot::Receiver<()>>,
     method: String,
     description: String,
     retry_after: Option<u32>,
@@ -68,6 +69,7 @@ impl MockTelegramApi {
 
     pub async fn fail_next(&self, method: &str, description: &str) {
         self.failures.lock().await.push_back(PlannedFailure {
+            release: None,
             method: method.to_ascii_lowercase(),
             description: description.into(),
             retry_after: None,
@@ -76,10 +78,22 @@ impl MockTelegramApi {
 
     pub async fn rate_limit_next(&self, method: &str, seconds: u32) {
         self.failures.lock().await.push_back(PlannedFailure {
+            release: None,
             method: method.to_ascii_lowercase(),
             description: format!("Too Many Requests: retry after {seconds}"),
             retry_after: Some(seconds),
         });
+    }
+
+    pub async fn hold_next(&self, target: &str) -> tokio::sync::oneshot::Sender<()> {
+        let (release, wait) = tokio::sync::oneshot::channel();
+        self.failures.lock().await.push_back(PlannedFailure {
+            release: Some(wait),
+            method: target.to_ascii_lowercase(),
+            description: String::new(),
+            retry_after: None,
+        });
+        release
     }
 
     pub async fn requests(&self) -> Vec<CapturedRequest> {
@@ -119,6 +133,16 @@ async fn serve_request(
             .front()
             .is_some_and(|failure| failure.method == api_method)
             .then(|| failures.pop_front().unwrap())
+    };
+    let failure = if let Some(mut failure) = failure {
+        if let Some(wait) = failure.release.take() {
+            let _ = wait.await;
+            None
+        } else {
+            Some(failure)
+        }
+    } else {
+        None
     };
     let body = if let Some(failure) = failure {
         let mut response = json!({

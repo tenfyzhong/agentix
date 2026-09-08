@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::time::Duration;
 
-use agentix_core::{
+use agentix_domain::{
     AgentAdapter, AgentError, AgentEvent, GoalCommand, HistoryPage, InteractionDecision,
     MultiplexerMutation, MultiplexerMutationResult, MultiplexerSnapshot, QueuedPrompt,
     QueuedPromptPort, SessionCommand, SessionCommandChoice, SessionCommandResult,
@@ -307,11 +307,11 @@ impl CodexClient {
                 match self.latest_stored_turn(id).await {
                     Ok(Some(turn)) => {
                         summary.status = match turn.status {
-                            agentix_core::TurnStatus::InProgress => SessionStatus::Active,
-                            agentix_core::TurnStatus::Completed
-                            | agentix_core::TurnStatus::Interrupted
-                            | agentix_core::TurnStatus::Failed => SessionStatus::Idle,
-                            agentix_core::TurnStatus::Unknown => SessionStatus::Unknown,
+                            agentix_domain::TurnStatus::InProgress => SessionStatus::Active,
+                            agentix_domain::TurnStatus::Completed
+                            | agentix_domain::TurnStatus::Interrupted
+                            | agentix_domain::TurnStatus::Failed => SessionStatus::Idle,
+                            agentix_domain::TurnStatus::Unknown => SessionStatus::Unknown,
                         };
                     }
                     Ok(None) => {}
@@ -490,7 +490,7 @@ impl CodexClient {
         }
         let response = tokio::time::timeout(Duration::from_secs(30), receiver)
             .await
-            .map_err(|_| ClientError::Timeout)?
+            .map_err(|_| request_timeout(method))?
             .map_err(|_| ClientError::ResponseClosed)?;
         response.map_err(|error| ClientError::Rpc {
             code: error.code,
@@ -508,7 +508,7 @@ impl CodexClient {
             let generation = self.connection.generation.load(Ordering::Acquire);
             let result = tokio::time::timeout_at(deadline, self.request(method, params.clone()))
                 .await
-                .map_err(|_| ClientError::Timeout)?;
+                .map_err(|_| request_timeout(method))?;
             match result {
                 Err(ClientError::ResponseClosed | ClientError::WebSocket(_)) => {
                     self.wait_for_reconnect(generation, deadline).await?;
@@ -533,7 +533,7 @@ impl CodexClient {
             }
         })
         .await
-        .map_err(|_| ClientError::Timeout)
+        .map_err(|_| request_timeout("reconnect"))
     }
 
     pub async fn respond(&self, id: Value, result: Value) -> Result<(), ClientError> {
@@ -1641,6 +1641,16 @@ impl AgentAdapter for CodexClient {
         Ok(())
     }
 
+    async fn session_access(&self, session: &SessionId) -> agentix_domain::SessionAccess {
+        if self.is_read_only(session).await {
+            agentix_domain::SessionAccess::ReadOnly(
+                agentix_domain::ReadOnlyReason::OwnedByOtherProcess,
+            )
+        } else {
+            agentix_domain::SessionAccess::Writable
+        }
+    }
+
     async fn is_read_only(&self, session_id: &SessionId) -> bool {
         self.observed.lock().await.contains_key(session_id)
     }
@@ -1816,8 +1826,8 @@ impl WorkspaceRuntimePort for CodexClient {
         let prepared = RmuxManager::prepare(mutation)
             .await
             .map_err(|error| AgentError::Rejected(error.to_string()))?;
-        let launch_codex = prepared.mutation.launch_codex;
-        let known_sessions = if launch_codex {
+        let launch_agent = prepared.mutation.launch_agent;
+        let known_sessions = if launch_agent {
             self.loaded_session_ids(None, None)
                 .await
                 .map_err(agent_error)?
@@ -1832,7 +1842,7 @@ impl WorkspaceRuntimePort for CodexClient {
             .execute(&prepared)
             .await
             .map_err(|error| AgentError::Rejected(error.to_string()))?;
-        let session = if launch_codex {
+        let session = if launch_agent {
             let session = self
                 .wait_for_rmux_session(&outcome.location, &known_sessions, &prepared.cwd)
                 .await?;
@@ -2266,6 +2276,12 @@ fn parse_turn_summary(value: &Value) -> Result<TurnSummary, ClientError> {
     })
 }
 
+fn request_timeout(method: &str) -> ClientError {
+    tracing::warn!(target: "agentix::telemetry", backend = "codex", method,
+        "backend request timed out");
+    ClientError::Timeout
+}
+
 fn agent_error(error: ClientError) -> AgentError {
     match error {
         ClientError::Connect(error) => AgentError::Unavailable(error.to_string()),
@@ -2279,9 +2295,26 @@ fn agent_error(error: ClientError) -> AgentError {
 
 #[cfg(all(test, unix))]
 mod tests {
+    #[test]
+    fn request_timeout_records_backend_and_method_without_payload() {
+        let output = tempfile::NamedTempFile::new().unwrap();
+        let writer = output.reopen().unwrap();
+        let subscriber = tracing_subscriber::fmt()
+            .without_time()
+            .with_ansi(false)
+            .with_writer(move || writer.try_clone().unwrap())
+            .finish();
+        let error =
+            tracing::subscriber::with_default(subscriber, || super::request_timeout("turn/start"));
+        assert!(matches!(error, super::ClientError::Timeout));
+        let log = std::fs::read_to_string(output.path()).unwrap();
+        assert!(log.contains("backend request timed out"), "{log}");
+        assert!(log.contains("backend=\"codex\""), "{log}");
+        assert!(log.contains("method=\"turn/start\""), "{log}");
+    }
     use std::time::Duration;
 
-    use agentix_core::{AgentAdapter, AgentEvent, SessionId};
+    use agentix_domain::{AgentAdapter, AgentEvent, SessionId};
     use futures_util::{SinkExt, StreamExt};
     use serde_json::{Value, json};
     use tempfile::tempdir;

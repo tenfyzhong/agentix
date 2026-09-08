@@ -1,4 +1,4 @@
-use agentix_core::{
+use agentix_domain::{
     AgentEvent, InteractionKind, InteractionRequest, ItemSummary, SessionStatus, TurnStatus,
 };
 use serde::Deserialize;

@@ -15,8 +15,409 @@ use async_trait::async_trait;
 use tempfile::tempdir;
 use tokio::sync::broadcast;
 
+#[tokio::test]
+async fn disconnect_invalidates_listed_idle_sessions_even_after_they_disappear() {
+    use agentix_core::{AgentKind, AgentRegistry};
+    let pi = Arc::new(FakeAgent::new());
+    let registry = AgentRegistry::new(vec![(AgentKind::Pi, pi.clone())]).unwrap();
+    registry.list_sessions(None, 10).await.unwrap();
+    let mut events = registry.subscribe();
+    pi.sessions.lock().unwrap().clear();
+    pi.events
+        .send(AgentEvent::Disconnected {
+            generation: 1,
+            reason: "disappeared".into(),
+        })
+        .unwrap();
+    let event = tokio::time::timeout(std::time::Duration::from_secs(2), events.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(
+        event,
+        AgentEvent::SessionStatusChanged {
+            status: SessionStatus::Offline,
+            ..
+        }
+    ));
+}
+
+#[tokio::test]
+async fn unavailable_native_session_notice_names_the_original_host() {
+    use agentix_core::{AgentKind, AgentRegistry};
+    let mut pi = FakeAgent::new();
+    pi.read_only = true;
+    let registry = AgentRegistry::new(vec![(AgentKind::Pi, Arc::new(pi))]).unwrap();
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        Arc::new(registry),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/attach pi:thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound("chat-a", "hello"))
+        .await
+        .unwrap();
+    let body = channel.sent().last().unwrap().1.body.clone();
+    assert!(body.contains("Pi"));
+    assert!(!body.contains("Codex"));
+}
+
+#[tokio::test]
+async fn backend_disconnect_expires_only_its_own_interaction_tokens() {
+    for transport in [true, false] {
+        use agentix_core::{AgentKind, AgentRegistry};
+        let pi = Arc::new(FakeAgent::new());
+        let omp = Arc::new(FakeAgent::new());
+        let registry = AgentRegistry::new(vec![
+            (AgentKind::Pi, pi.clone()),
+            (AgentKind::Omp, omp.clone()),
+        ])
+        .unwrap();
+        let mut events = registry.subscribe();
+        for source in [&pi, &omp] {
+            source
+                .events
+                .send(AgentEvent::InteractionRequested(user_input_request(
+                    "same-rpc-id",
+                    &serde_json::json!([]),
+                )))
+                .unwrap();
+        }
+        let mut tokens = HashMap::new();
+        while tokens.len() < 2 {
+            if let AgentEvent::InteractionRequested(request) =
+                tokio::time::timeout(std::time::Duration::from_secs(2), events.recv())
+                    .await
+                    .unwrap()
+                    .unwrap()
+            {
+                tokens.insert(request.session_id, request.rpc_id);
+            }
+        }
+        assert_ne!(tokens["pi:thr_a"], tokens["omp:thr_a"]);
+        let disconnect = if transport {
+            AgentEvent::Disconnected {
+                generation: 1,
+                reason: "lost Pi".into(),
+            }
+        } else {
+            AgentEvent::SessionStatusChanged {
+                session_id: "thr_a".into(),
+                status: SessionStatus::Offline,
+            }
+        };
+        pi.events.send(disconnect).unwrap();
+        loop {
+            let event = tokio::time::timeout(std::time::Duration::from_secs(2), events.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            if matches!(
+                event,
+                AgentEvent::SessionStatusChanged {
+                    status: SessionStatus::Offline,
+                    ..
+                }
+            ) {
+                break;
+            }
+        }
+        assert!(
+            registry
+                .resolve_interaction(InteractionDecision {
+                    rpc_id: tokens["pi:thr_a"].clone(),
+                    response: serde_json::json!({})
+                })
+                .await
+                .is_err()
+        );
+        registry
+            .resolve_interaction(InteractionDecision {
+                rpc_id: tokens["omp:thr_a"].clone(),
+                response: serde_json::json!({}),
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            omp.interaction_decisions.lock().unwrap()[0].rpc_id,
+            serde_json::json!("same-rpc-id")
+        );
+        assert!(pi.interaction_decisions.lock().unwrap().is_empty());
+    }
+}
+
+#[tokio::test]
+async fn session_picker_filters_by_backend() {
+    use agentix_core::{AgentKind, AgentRegistry};
+    let registry = AgentRegistry::new(vec![
+        (AgentKind::Codex, Arc::new(FakeAgent::new())),
+        (AgentKind::Pi, Arc::new(FakeAgent::new())),
+    ])
+    .unwrap();
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        Arc::new(registry),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/sessions pi"))
+        .await
+        .unwrap();
+    let view = channel.sent().last().unwrap().1.clone();
+    assert_eq!(view.actions.len(), 2);
+    assert!(!view.body.contains("Codex ·"));
+    assert!(view.body.contains("Pi ·"));
+}
+
+#[tokio::test]
+async fn resumed_bridge_reconciles_a_completion_missed_during_disconnect() {
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::TurnStarted {
+            session_id: "thr_a".into(),
+            turn_id: "turn_history".into(),
+        })
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::SessionStatusChanged {
+            session_id: "thr_a".into(),
+            status: SessionStatus::Offline,
+        })
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::SessionResumed {
+            session_id: "thr_a".into(),
+        })
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound("chat-a", "after reconnect"))
+        .await
+        .unwrap();
+    assert!(
+        agent
+            .calls()
+            .iter()
+            .any(|call| call.starts_with("start:thr_a:after reconnect")),
+        "{:?}",
+        agent.calls()
+    );
+}
+
+#[tokio::test]
+async fn unavailable_backend_does_not_block_healthy_sessions_and_recovers() {
+    use agentix_core::{AgentKind, AgentRegistry, DeferredAgent};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let ready = Arc::new(AtomicBool::new(false));
+    let mut fake = FakeAgent::new();
+    fake.subagent = true;
+    let source = Arc::new(fake);
+    let gate = ready.clone();
+    let deferred = DeferredAgent::new("Codex", "/tmp".into(), move || {
+        let ready = gate.clone();
+        let source = source.clone();
+        async move {
+            if ready.load(Ordering::Acquire) {
+                Ok(source as Arc<dyn AgentAdapter>)
+            } else {
+                Err(AgentError::Unavailable("offline".into()))
+            }
+        }
+    });
+    let registry = AgentRegistry::new(vec![
+        (AgentKind::Codex, Arc::new(deferred)),
+        (AgentKind::Pi, Arc::new(FakeAgent::new())),
+    ])
+    .unwrap();
+    let first = registry.list_sessions(None, 20).await.unwrap();
+    assert!(
+        first
+            .sessions
+            .iter()
+            .all(|s| s.id.as_str().starts_with("pi:"))
+    );
+    assert!(!first.sessions.is_empty());
+    ready.store(true, Ordering::Release);
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            if registry
+                .list_sessions(None, 20)
+                .await
+                .unwrap()
+                .sessions
+                .iter()
+                .any(|s| s.id.as_str() == "codex:thr_a")
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(
+        registry
+            .is_subagent(&SessionId::new("codex:thr_a"))
+            .await
+            .unwrap()
+    );
+}
+
+#[tokio::test]
+async fn registry_isolates_same_native_session_and_interaction_ids() {
+    use agentix_core::{AgentKind, AgentRegistry, SessionKey};
+    let pi = FakeAgent::new();
+    let omp = FakeAgent::new();
+    {
+        let mut sessions = pi.sessions.lock().unwrap();
+        sessions[0].name = None;
+        sessions[0].preview = Some("Pi native preview".into());
+    }
+    let registry = AgentRegistry::new(vec![
+        (AgentKind::Pi, Arc::new(pi.clone())),
+        (AgentKind::Omp, Arc::new(omp.clone())),
+    ])
+    .unwrap();
+    let page = registry.list_sessions(None, 20).await.unwrap();
+    assert!(page.sessions.iter().any(|s| {
+        s.name
+            .as_deref()
+            .is_some_and(|name| name.contains("Pi native preview"))
+    }));
+    assert_eq!(page.sessions.len(), 4);
+    let ids: std::collections::HashSet<_> = page.sessions.iter().map(|s| &s.id).collect();
+    assert_eq!(ids.len(), 4);
+    assert!(registry.attach(&SessionId::new("thr_a")).await.is_err());
+    let key = SessionKey::new(AgentKind::Pi, SessionId::new("thr_a")).encode();
+    registry.attach(&key).await.unwrap();
+    assert!(pi.calls.lock().unwrap().iter().any(|c| c.contains("thr_a")));
+    assert!(omp.calls.lock().unwrap().is_empty());
+    let mut events = registry.subscribe();
+    pi.events
+        .send(AgentEvent::AgentMessageDelta {
+            session_id: "thr_a".into(),
+            turn_id: "turn".into(),
+            item_id: "item".into(),
+            delta: "pi".into(),
+        })
+        .unwrap();
+    let event = tokio::time::timeout(std::time::Duration::from_secs(2), events.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(event.session_id(), Some(key.as_str()));
+}
+
+#[tokio::test]
+async fn rmux_selects_backend_before_launch_and_keeps_chats_independent() {
+    use agentix_core::{AgentKind, AgentRegistry};
+    let codex = Arc::new(FakeAgent::new());
+    let pi = Arc::new(FakeAgent::new());
+    let registry = AgentRegistry::new(vec![
+        (AgentKind::Codex, codex.clone()),
+        (AgentKind::Pi, pi.clone()),
+    ])
+    .unwrap();
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        Arc::new(registry),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/rmux"))
+        .await
+        .unwrap();
+    assert!(
+        channel
+            .sent()
+            .last()
+            .unwrap()
+            .1
+            .actions
+            .iter()
+            .any(|a| a.label == "Pi")
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/rmux pi"))
+        .await
+        .unwrap();
+    assert!(pi.calls().iter().any(|c| c == "mux-snapshot:auto"));
+    assert!(codex.calls().is_empty());
+    engine
+        .handle_inbound(inbound("chat-b", "/rmux codex"))
+        .await
+        .unwrap();
+    assert!(codex.calls().iter().any(|c| c == "mux-snapshot:auto"));
+}
+
+#[tokio::test]
+async fn registry_workspace_routes_and_qualifies_native_results() {
+    use agentix_core::{AgentKind, AgentRegistry};
+    let codex = Arc::new(FakeAgent::new());
+    let pi = Arc::new(FakeAgent::new());
+    let registry = AgentRegistry::new(vec![
+        (AgentKind::Codex, codex.clone()),
+        (AgentKind::Pi, pi.clone()),
+    ])
+    .unwrap();
+    let workspace = registry.workspace_for(Some(AgentKind::Pi)).unwrap();
+    let result = workspace
+        .mutate(MultiplexerMutation {
+            target: agentix_core::MultiplexerTarget::NewSession {
+                name: "test".into(),
+                cwd: "/tmp".into(),
+            },
+            launch_agent: true,
+        })
+        .await
+        .unwrap();
+    assert_eq!(result.session.unwrap().id.as_str(), "pi:thr_mux_new");
+    assert!(codex.calls().is_empty());
+    assert_eq!(pi.calls().len(), 1);
+    assert_eq!(
+        workspace.snapshot().await.unwrap().unwrap().sessions[0].windows[0].panes[0]
+            .agent_session
+            .as_ref()
+            .unwrap()
+            .as_str(),
+        "pi:thr_a"
+    );
+}
+
+#[tokio::test]
+async fn registry_rejects_duplicate_backends() {
+    use agentix_core::{AgentKind, AgentRegistry};
+    assert!(
+        AgentRegistry::new(vec![
+            (AgentKind::Pi, Arc::new(FakeAgent::new())),
+            (AgentKind::Pi, Arc::new(FakeAgent::new())),
+        ])
+        .is_err()
+    );
+}
+
 #[derive(Clone)]
 struct FakeAgent {
+    refresh_count: Arc<std::sync::atomic::AtomicUsize>,
     calls: Arc<Mutex<Vec<String>>>,
     interaction_decisions: Arc<Mutex<Vec<InteractionDecision>>>,
     history_cursors: Arc<Mutex<Vec<Option<String>>>>,
@@ -25,8 +426,10 @@ struct FakeAgent {
     queued_prompts: Arc<Mutex<Vec<QueuedPrompt>>>,
     queue_supported: bool,
     read_only: bool,
+    subagent: bool,
     sessions: Arc<Mutex<Vec<SessionSummary>>>,
     rejected_attachments: Arc<Mutex<Vec<SessionId>>>,
+    unavailable_attachments: Arc<Mutex<Vec<SessionId>>>,
     start_failures: Arc<Mutex<usize>>,
     events: broadcast::Sender<AgentEvent>,
 }
@@ -35,6 +438,7 @@ impl FakeAgent {
     fn new() -> Self {
         let (events, _) = broadcast::channel(32);
         Self {
+            refresh_count: Arc::default(),
             calls: Arc::new(Mutex::new(Vec::new())),
             interaction_decisions: Arc::new(Mutex::new(Vec::new())),
             history_cursors: Arc::new(Mutex::new(Vec::new())),
@@ -54,6 +458,7 @@ impl FakeAgent {
             queued_prompts: Arc::new(Mutex::new(Vec::new())),
             queue_supported: false,
             read_only: false,
+            subagent: false,
             sessions: Arc::new(Mutex::new(
                 [
                     ("thr_a", "Parser cleanup", "/work/parser"),
@@ -72,6 +477,7 @@ impl FakeAgent {
                 .collect(),
             )),
             rejected_attachments: Arc::new(Mutex::new(Vec::new())),
+            unavailable_attachments: Arc::default(),
             start_failures: Arc::new(Mutex::new(0)),
             events,
         }
@@ -132,6 +538,12 @@ impl FakeAgent {
 
 #[async_trait]
 impl AgentAdapter for FakeAgent {
+    async fn refresh(&self) -> Result<(), AgentError> {
+        self.refresh_count
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Ok(())
+    }
+
     fn display_name(&self) -> &'static str {
         "Codex"
     }
@@ -159,6 +571,9 @@ impl AgentAdapter for FakeAgent {
         })
     }
 
+    async fn is_subagent(&self, _session: &SessionId) -> Result<bool, AgentError> {
+        Ok(self.subagent)
+    }
     async fn is_read_only(&self, _session: &SessionId) -> bool {
         self.read_only
     }
@@ -189,6 +604,14 @@ impl AgentAdapter for FakeAgent {
             .lock()
             .unwrap()
             .push(format!("attach:{session_id}"));
+        if self
+            .unavailable_attachments
+            .lock()
+            .unwrap()
+            .contains(session_id)
+        {
+            return Err(AgentError::Unavailable("session bridge is offline".into()));
+        }
         if self
             .rejected_attachments
             .lock()
@@ -311,12 +734,12 @@ impl WorkspaceRuntimePort for FakeAgent {
             .unwrap()
             .push(format!("mux-mutate:{mutation:?}"));
         Ok(MultiplexerMutationResult {
-            message: if mutation.launch_codex {
+            message: if mutation.launch_agent {
                 "Codex started in the target pane.".into()
             } else {
                 "Shell created.".into()
             },
-            session: mutation.launch_codex.then(|| SessionSummary {
+            session: mutation.launch_agent.then(|| SessionSummary {
                 id: SessionId::new("thr_mux_new"),
                 name: None,
                 preview: None,
@@ -399,6 +822,14 @@ struct FakeChannel {
     inbox_send_failures: Arc<Mutex<usize>>,
     inbox_source: Arc<Mutex<Option<InboundEnvelope>>>,
     reject_unchanged_updates: bool,
+    next_send_gate: Arc<
+        Mutex<
+            Option<(
+                tokio_util::sync::CancellationToken,
+                tokio_util::sync::CancellationToken,
+            )>,
+        >,
+    >,
     next_menu_gate: Arc<
         Mutex<
             Option<(
@@ -453,6 +884,11 @@ impl ChannelAdapter for FakeChannel {
         conversation: &ConversationRef,
         view: &OutboundView,
     ) -> Result<MessageRef, ChannelError> {
+        let gate = self.next_send_gate.lock().unwrap().take();
+        if let Some((entered, release)) = gate {
+            entered.cancel();
+            release.cancelled().await;
+        }
         if view.title == "Inbox submission" {
             let mut failures = self.inbox_send_failures.lock().unwrap();
             if *failures > 0 {
@@ -617,6 +1053,61 @@ async fn task_fixture() -> (tempfile::TempDir, Arc<agentix_task::Service>, Strin
 }
 
 #[tokio::test]
+async fn qualified_task_sessions_use_native_ids_and_filter_host() {
+    use agentix_task::BrowseScope;
+    let (_dir, service, _) = task_fixture().await;
+    let codex = service
+        .store()
+        .browse_snapshot(BrowseScope::Session("codex:thr_a"))
+        .await
+        .unwrap();
+    assert_eq!(codex.jobs.len(), 1);
+    let pi = service
+        .store()
+        .browse_snapshot(BrowseScope::Session("pi:thr_a"))
+        .await
+        .unwrap();
+    assert!(pi.jobs.is_empty());
+    let page = service
+        .store()
+        .session_job_page("codex:thr_a", 0, 6)
+        .await
+        .unwrap();
+    assert_eq!(page.jobs.len(), 1);
+}
+
+#[tokio::test]
+async fn qualified_session_exit_blocks_only_its_native_tasks() {
+    let (_dir, service, _) = task_fixture().await;
+    let engine = Engine::new(
+        Arc::new(FakeAgent::new()),
+        SqliteState::in_memory().await.unwrap(),
+        vec![],
+    )
+    .with_task_board(service.clone());
+    engine
+        .handle_agent_event(AgentEvent::SessionExited {
+            session_id: "pi:thr_a".into(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        service.store().snapshot().await.unwrap().tasks[0].status,
+        agentix_task::TaskStatus::InProgress
+    );
+    engine
+        .handle_agent_event(AgentEvent::SessionExited {
+            session_id: "codex:thr_a".into(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        service.store().snapshot().await.unwrap().tasks[0].status,
+        agentix_task::TaskStatus::Blocked
+    );
+}
+
+#[tokio::test]
 async fn task_buttons_follow_claim_plan_start_done_phases() {
     use agentix_task::WriteOptions;
     use serde_json::json;
@@ -751,7 +1242,7 @@ async fn task_board_commands_reasons_and_notifications_follow_bound_session() {
     let task = &service.store().snapshot().await.unwrap().tasks[0];
     assert_eq!(task.status.to_string(), "BLOCKED");
     assert_eq!(task.reason.as_deref(), Some("Need upstream API"));
-    engine.refresh_task_board().await.unwrap();
+    refresh_and_deliver_tasks(&engine).await.unwrap();
     let notifications: Vec<_> = channel
         .sent()
         .into_iter()
@@ -760,7 +1251,7 @@ async fn task_board_commands_reasons_and_notifications_follow_bound_session() {
     assert_eq!(notifications.len(), 1);
     assert_eq!(notifications[0].0.conversation_id, "chat-a");
     let count = channel.sent().len();
-    engine.refresh_task_board().await.unwrap();
+    refresh_and_deliver_tasks(&engine).await.unwrap();
     assert_eq!(channel.sent().len(), count);
 }
 
@@ -1004,7 +1495,7 @@ async fn task_wait_fail_and_job_completion_notify_only_the_bound_session() {
                 .to_string(),
             status
         );
-        engine.refresh_task_board().await.unwrap();
+        refresh_and_deliver_tasks(&engine).await.unwrap();
         let messages: Vec<_> = channel
             .sent()
             .into_iter()
@@ -1016,7 +1507,7 @@ async fn task_wait_fail_and_job_completion_notify_only_the_bound_session() {
         if button != "Done" {
             assert!(messages[0].1.body.contains("Specific acceptance reason"));
         }
-        engine.refresh_task_board().await.unwrap();
+        refresh_and_deliver_tasks(&engine).await.unwrap();
         assert_eq!(
             channel
                 .sent()
@@ -1029,13 +1520,58 @@ async fn task_wait_fail_and_job_completion_notify_only_the_bound_session() {
 }
 
 #[tokio::test]
+async fn task_refresh_persists_notifications_without_waiting_for_im_delivery() {
+    let (_dir, service, id) = task_fixture().await;
+    let channel = Arc::new(FakeChannel::default());
+    let state = SqliteState::in_memory().await.unwrap();
+    let engine = Engine::new(
+        Arc::new(FakeAgent::new()),
+        state.clone(),
+        vec![channel.clone()],
+    )
+    .with_task_board(service.clone());
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    service
+        .execute(
+            serde_json::json!({"command":"task.wait","task":id,"reason":"durable"}),
+            task_write_options(&service, &id).await,
+        )
+        .await
+        .unwrap();
+    *channel.task_send_failures.lock().unwrap() = 1;
+    engine.refresh_task_board().await.unwrap();
+    assert!(
+        !channel
+            .sent()
+            .iter()
+            .any(|(_, view)| view.title == "Task update")
+    );
+    assert_eq!(
+        state.notification_cursor("default", 0).await.unwrap(),
+        service.store().latest_sequence().await.unwrap()
+    );
+    let deliveries = engine.claim_task_notifications(10).await.unwrap();
+    assert_eq!(deliveries.len(), 1);
+    assert!(
+        engine
+            .deliver_task_notification(deliveries.into_iter().next().unwrap())
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
 async fn task_notification_send_failure_retries_after_restart_and_persists_cursor() {
     let (dir, service, id) = task_fixture().await;
     let path = dir.path().join("runtime.sqlite3");
     let channel = Arc::new(FakeChannel::default());
+    let runtime_state = SqliteState::open(&path).await.unwrap();
     let engine = Engine::new(
         Arc::new(FakeAgent::new()),
-        SqliteState::open(&path).await.unwrap(),
+        runtime_state.clone(),
         vec![channel.clone()],
     )
     .with_task_board(service.clone())
@@ -1048,7 +1584,7 @@ async fn task_notification_send_failure_retries_after_restart_and_persists_curso
         .handle_inbound(inbound("chat-b", "/attach thr_b"))
         .await
         .unwrap();
-    engine.refresh_task_board().await.unwrap();
+    refresh_and_deliver_tasks(&engine).await.unwrap();
     service
         .execute(
             serde_json::json!({"command":"task.wait","task":id,"reason":"Notify after restart"}),
@@ -1057,17 +1593,13 @@ async fn task_notification_send_failure_retries_after_restart_and_persists_curso
         .await
         .unwrap();
     *channel.task_send_failures.lock().unwrap() = 1;
-    assert!(engine.refresh_task_board().await.is_err());
+    assert!(refresh_and_deliver_tasks(&engine).await.is_err());
     assert!(!channel.sent().iter().any(|(_, v)| v.title == "Task update"));
-    let cursor = service
-        .store()
-        .metadata("agentix:cursor:restart-test")
+    let cursor = runtime_state
+        .notification_cursor("restart-test", 0)
         .await
-        .unwrap()
-        .unwrap()
-        .as_i64()
         .unwrap();
-    assert!(cursor < service.store().latest_sequence().await.unwrap());
+    assert_eq!(cursor, service.store().latest_sequence().await.unwrap());
     drop(engine);
     let reopened = Arc::new(
         agentix_task::Service::open(service.config().clone())
@@ -1075,15 +1607,34 @@ async fn task_notification_send_failure_retries_after_restart_and_persists_curso
             .unwrap(),
     );
     let channel = Arc::new(FakeChannel::default());
+    let runtime_state = SqliteState::open(&path).await.unwrap();
     let engine = Engine::new(
         Arc::new(FakeAgent::new()),
-        SqliteState::open(&path).await.unwrap(),
+        runtime_state.clone(),
         vec![channel.clone()],
     )
     .with_task_board(reopened.clone())
     .with_task_consumer("restart-test".into());
     engine.restore_bindings().await.unwrap();
-    engine.refresh_task_board().await.unwrap();
+    let retry_at = i64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs(),
+    )
+    .unwrap()
+        + 2;
+    for notification in runtime_state
+        .claim_notifications("restart-test", retry_at, 60, 32)
+        .await
+        .unwrap()
+    {
+        engine
+            .deliver_task_notification(notification)
+            .await
+            .unwrap();
+    }
+    refresh_and_deliver_tasks(&engine).await.unwrap();
     let sent: Vec<_> = channel
         .sent()
         .into_iter()
@@ -1094,15 +1645,16 @@ async fn task_notification_send_failure_retries_after_restart_and_persists_curso
     assert!(sent[0].1.body.contains("Notify after restart"));
     drop(engine);
     let channel = Arc::new(FakeChannel::default());
+    let runtime_state = SqliteState::open(&path).await.unwrap();
     let engine = Engine::new(
         Arc::new(FakeAgent::new()),
-        SqliteState::open(&path).await.unwrap(),
+        runtime_state.clone(),
         vec![channel.clone()],
     )
     .with_task_board(reopened)
     .with_task_consumer("restart-test".into());
     engine.restore_bindings().await.unwrap();
-    engine.refresh_task_board().await.unwrap();
+    refresh_and_deliver_tasks(&engine).await.unwrap();
     assert!(!channel.sent().iter().any(|(_, v)| v.title == "Task update"));
 }
 
@@ -1110,9 +1662,10 @@ async fn task_notification_send_failure_retries_after_restart_and_persists_curso
 async fn task_notifications_cross_event_pages_without_skipping_the_final_event() {
     let (_dir, service, id) = task_fixture().await;
     let channel = Arc::new(FakeChannel::default());
+    let runtime_state = SqliteState::in_memory().await.unwrap();
     let engine = Engine::new(
         Arc::new(FakeAgent::new()),
-        SqliteState::in_memory().await.unwrap(),
+        runtime_state.clone(),
         vec![channel.clone()],
     )
     .with_task_board(service.clone());
@@ -1133,7 +1686,7 @@ async fn task_notifications_cross_event_pages_without_skipping_the_final_event()
         .await
         .unwrap();
     for _ in 0..4 {
-        engine.refresh_task_board().await.unwrap();
+        refresh_and_deliver_tasks(&engine).await.unwrap();
     }
     let sent: Vec<_> = channel
         .sent()
@@ -1143,13 +1696,9 @@ async fn task_notifications_cross_event_pages_without_skipping_the_final_event()
     assert_eq!(sent.len(), 1);
     assert!(sent[0].1.body.contains("Last event"));
     assert_eq!(
-        service
-            .store()
-            .metadata("agentix:cursor:default")
+        runtime_state
+            .notification_cursor("default", 0)
             .await
-            .unwrap()
-            .unwrap()
-            .as_i64()
             .unwrap(),
         service.store().latest_sequence().await.unwrap()
     );
@@ -1202,7 +1751,7 @@ async fn cancel_task_reason_does_not_change_task_and_unbound_events_are_skipped(
         )
         .await
         .unwrap();
-    engine.refresh_task_board().await.unwrap();
+    refresh_and_deliver_tasks(&engine).await.unwrap();
     assert!(!channel.sent().iter().any(|(_, v)| v.title == "Task update"));
 }
 
@@ -1250,7 +1799,7 @@ fn multiplexer_snapshot() -> MultiplexerSnapshot {
                         active: false,
                         current_command: "codex".into(),
                         cwd: "/work/parser".into(),
-                        codex_session: Some(SessionId::new("thr_a")),
+                        agent_session: Some(SessionId::new("thr_a")),
                     },
                     MultiplexerPane {
                         id: "%2".into(),
@@ -1258,7 +1807,7 @@ fn multiplexer_snapshot() -> MultiplexerSnapshot {
                         active: true,
                         current_command: "fish".into(),
                         cwd: "/work/parser".into(),
-                        codex_session: None,
+                        agent_session: None,
                     },
                     MultiplexerPane {
                         id: "%3".into(),
@@ -1266,7 +1815,7 @@ fn multiplexer_snapshot() -> MultiplexerSnapshot {
                         active: false,
                         current_command: "cargo".into(),
                         cwd: "/work/parser".into(),
-                        codex_session: None,
+                        agent_session: None,
                     },
                 ],
             }],
@@ -1447,7 +1996,7 @@ async fn multiplexer_browser_auto_selects_one_backend_and_navigates_to_panes() {
         call.contains("SplitPane")
             && call.contains("%2")
             && call.contains("cwd: \"/work/multiplexer\"")
-            && call.contains("launch_codex: true")
+            && call.contains("launch_agent: true")
     }));
 }
 
@@ -1491,7 +2040,7 @@ async fn multiplexer_creation_can_start_codex_and_attach_the_new_thread() {
         call.contains("NewSession")
             && call.contains("name: \"codex\"")
             && call.contains("cwd: \"/work/multiplexer\"")
-            && call.contains("launch_codex: true")
+            && call.contains("launch_agent: true")
     }));
 }
 
@@ -1553,7 +2102,7 @@ async fn multiplexer_window_creation_uses_defaults_and_starts_codex_immediately(
             && call.contains("session_id: \"$1\"")
             && call.contains("name: \"codex\"")
             && call.contains("cwd: \"/work/multiplexer\"")
-            && call.contains("launch_codex: true")
+            && call.contains("launch_agent: true")
     }));
     assert_eq!(
         channel.sent().last().unwrap().1.subtitle.as_deref(),
@@ -2989,6 +3538,78 @@ async fn external_plan_resolution_clears_buttons_and_pending_text_reply() {
 }
 
 #[tokio::test]
+async fn restore_preserves_offline_bindings_and_turns_until_reconnect() {
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel::default());
+    let state = SqliteState::in_memory().await.unwrap();
+    let conversation = ConversationRef::new(ChannelKind::Telegram, "chat-a");
+    let engine = Engine::new(agent.clone(), state.clone(), vec![channel.clone()]);
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::AgentMessageDelta {
+            session_id: "thr_a".into(),
+            turn_id: "turn_live".into(),
+            item_id: "item".into(),
+            delta: "saved response".into(),
+        })
+        .await
+        .unwrap();
+    drop(engine);
+
+    agent
+        .unavailable_attachments
+        .lock()
+        .unwrap()
+        .push(SessionId::new("thr_a"));
+    let restarted = Engine::new(agent.clone(), state.clone(), vec![channel.clone()]);
+    assert_eq!(restarted.restore_bindings().await.unwrap(), 1);
+    assert_eq!(
+        state.current_session(&conversation).await.unwrap(),
+        Some(SessionId::new("thr_a"))
+    );
+    assert!(
+        channel
+            .sent()
+            .iter()
+            .any(|(_, view)| view.subtitle.as_deref() == Some("Online · Waiting for agent"))
+    );
+    assert!(!agent.calls().iter().any(|call| call.starts_with("start:")));
+
+    agent.unavailable_attachments.lock().unwrap().clear();
+    *agent.history_turns.lock().unwrap() = vec![TurnSummary {
+        id: "turn_live".into(),
+        status: TurnStatus::Completed,
+        user_text: None,
+        agent_text: Some("finished while disconnected".into()),
+        tools: Vec::new(),
+        items: Vec::new(),
+    }];
+    restarted
+        .handle_agent_event(AgentEvent::SessionResumed {
+            session_id: "thr_a".into(),
+        })
+        .await
+        .unwrap();
+    assert!(
+        channel
+            .updated()
+            .last()
+            .unwrap()
+            .1
+            .body
+            .contains("finished while disconnected")
+    );
+    restarted
+        .handle_inbound(inbound("chat-a", "continue"))
+        .await
+        .unwrap();
+    assert!(agent.calls().contains(&"start:thr_a:continue".to_string()));
+}
+
+#[tokio::test]
 async fn restore_reopens_persisted_agent_subscriptions() {
     let agent = Arc::new(FakeAgent::new());
     let channel = Arc::new(FakeChannel::default());
@@ -3219,7 +3840,13 @@ async fn shutdown_skips_disabled_channels_and_preserves_their_state() {
         vec![channel.clone()],
     );
 
-    assert_eq!(engine.prepare_shutdown().await.unwrap(), 0);
+    assert!(
+        engine
+            .prepare_shutdown_notifications()
+            .await
+            .unwrap()
+            .is_empty()
+    );
     assert!(channel.sent().is_empty());
     assert!(channel.updated().is_empty());
     assert_eq!(state.list_bindings().await.unwrap().len(), 1);
@@ -3247,7 +3874,12 @@ async fn graceful_shutdown_persists_the_binding_and_detaches_the_im() {
         .unwrap();
     assert_eq!(channel.sent().last().unwrap().1.actions.len(), 1);
 
-    assert_eq!(engine.prepare_shutdown().await.unwrap(), 1);
+    let mut notifications = engine.prepare_shutdown_notifications().await.unwrap();
+    assert_eq!(notifications.len(), 1);
+    engine
+        .send_shutdown_notification(notifications.pop().unwrap())
+        .await
+        .unwrap();
     assert_eq!(
         state.current_session(&conversation).await.unwrap(),
         Some(SessionId::new("thr_a"))
@@ -4061,3 +4693,418 @@ async fn stream_and_working_timer_share_the_channel_interval_but_completion_flus
 
 #[path = "support/task_board.rs"]
 mod task_board;
+
+#[tokio::test]
+async fn registry_attachment_persists_qualified_identity_for_unambiguous_input() {
+    let pi = Arc::new(FakeAgent::new());
+    let registry = Arc::new(
+        agentix_core::AgentRegistry::new(vec![(agentix_core::AgentKind::Pi, pi)]).unwrap(),
+    );
+    let state = SqliteState::in_memory().await.unwrap();
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(registry, state.clone(), vec![channel]);
+    engine
+        .handle_inbound(inbound("chat", "/attach thr_a"))
+        .await
+        .unwrap();
+    assert_eq!(
+        state.list_bindings().await.unwrap()[0].1.as_str(),
+        "pi:thr_a"
+    );
+}
+
+#[tokio::test]
+async fn legacy_bindings_migrate_atomically_and_require_an_owner() {
+    let state = SqliteState::in_memory().await.unwrap();
+    let chat = ConversationRef::new(ChannelKind::Telegram, "chat");
+    state
+        .attach(&chat, &SessionId::new("native"))
+        .await
+        .unwrap();
+    assert!(state.qualify_sessions(None).await.is_err());
+    assert_eq!(state.list_bindings().await.unwrap()[0].1.as_str(), "native");
+    state
+        .qualify_sessions(Some(agentix_core::AgentKind::Pi))
+        .await
+        .unwrap();
+    state.qualify_sessions(None).await.unwrap();
+    assert_eq!(
+        state.list_bindings().await.unwrap()[0].1.as_str(),
+        "pi:native"
+    );
+}
+
+#[tokio::test]
+async fn session_operations_reject_mutations_but_allow_history_for_read_only_hosts() {
+    use agentix_core::SessionOperations;
+    let mut agent = FakeAgent::new();
+    agent.read_only = true;
+    let agent = Arc::new(agent);
+    let operations = SessionOperations::new(agent.clone());
+    let session = SessionId::new("thr_a");
+    assert!(operations.send(&session, "hello", None).await.is_err());
+    assert!(operations.stop(&session, "turn").await.is_err());
+    assert!(
+        operations
+            .command(&session, SessionCommand::Compact)
+            .await
+            .is_err()
+    );
+    assert!(agent.calls().is_empty());
+    assert_eq!(
+        operations
+            .history(&session, None, 5)
+            .await
+            .unwrap()
+            .turns
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn session_operation_results_remain_typed_until_the_control_boundary() {
+    use agentix_core::{SessionOperation, SessionOperationResult, SessionOperations};
+    let agent = Arc::new(FakeAgent::new());
+    let operations = SessionOperations::new(agent.clone());
+    let result = operations
+        .execute(SessionOperation::Send {
+            session: SessionId::new("thr_a"),
+            text: "hello".into(),
+            expected_turn: None,
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        result,
+        SessionOperationResult::Started {
+            turn_id: "turn_new".into()
+        }
+    );
+    assert_eq!(agent.calls(), ["start:thr_a:hello"]);
+    assert_eq!(
+        serde_json::to_value(result).unwrap(),
+        serde_json::json!({"turn_id":"turn_new"})
+    );
+}
+
+#[tokio::test]
+async fn registry_routes_events_without_polling_host_lifecycle() {
+    let agent = Arc::new(FakeAgent::new());
+    let _registry =
+        agentix_core::AgentRegistry::new(vec![(agentix_core::AgentKind::Pi, agent.clone())])
+            .unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    assert_eq!(
+        agent
+            .refresh_count
+            .load(std::sync::atomic::Ordering::Relaxed),
+        0
+    );
+}
+
+#[tokio::test]
+async fn an_event_gap_expires_old_actions_and_recovers_the_latest_bound_history() {
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound_as("chat-a", "owner-42", "/attach thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::AgentMessageDelta {
+            session_id: "thr_a".into(),
+            turn_id: "turn_live".into(),
+            item_id: "item".into(),
+            delta: "old partial output".into(),
+        })
+        .await
+        .unwrap();
+    let old_token = channel.sent().last().unwrap().1.actions[0].token.clone();
+    {
+        let mut history = agent.history_turns.lock().unwrap();
+        history[0].id = "turn_live".into();
+        history[0].agent_text = Some("recovered final output".into());
+        history[0].status = TurnStatus::Completed;
+    }
+    engine.recover_event_gap().await.unwrap();
+    let result = engine
+        .handle_inbound(InboundEnvelope::action(
+            "stale",
+            ConversationRef::new(ChannelKind::Telegram, "chat-a"),
+            "owner-42",
+            old_token,
+        ))
+        .await;
+    assert!(matches!(result, Err(EngineError::InvalidAction)));
+    assert!(
+        channel
+            .updated()
+            .iter()
+            .any(|(_, view)| view.body.contains("recovered final output"))
+    );
+}
+
+#[tokio::test]
+async fn pending_session_input_does_not_lock_other_conversations_during_delivery() {
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Arc::new(Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    ));
+    for (chat, session) in [("chat-a", "thr_a"), ("chat-b", "thr_b")] {
+        engine
+            .handle_inbound(inbound(chat, &format!("/attach {session}")))
+            .await
+            .unwrap();
+        engine
+            .handle_inbound(inbound(chat, "/rename"))
+            .await
+            .unwrap();
+    }
+    let entered = tokio_util::sync::CancellationToken::new();
+    let release = tokio_util::sync::CancellationToken::new();
+    *channel.next_send_gate.lock().unwrap() = Some((entered.clone(), release.clone()));
+    let first = tokio::spawn({
+        let engine = engine.clone();
+        async move { engine.handle_inbound(inbound("chat-a", "First name")).await }
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(2), entered.cancelled())
+        .await
+        .unwrap();
+    let independent = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        engine.handle_inbound(inbound("chat-b", "Second name")),
+    )
+    .await;
+    release.cancel();
+    first.await.unwrap().unwrap();
+    independent
+        .expect("pending input state must not be held across IM delivery")
+        .unwrap();
+    assert!(
+        agent
+            .calls()
+            .contains(&"command:thr_b:Rename(Some(\"Second name\"))".to_owned())
+    );
+}
+
+#[tokio::test]
+async fn dispatch_recomputes_bindings_between_consecutive_transfers() {
+    use agentix_core::{DispatchQueue, EngineWork};
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        Arc::new(FakeAgent::new()),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel],
+    );
+    for (chat, command) in [("chat-a", "/attach thr_a"), ("chat-b", "/attach thr_b")] {
+        engine.handle_inbound(inbound(chat, command)).await.unwrap();
+    }
+    let mut queue = DispatchQueue::new(8, 4);
+    for (chat, command) in [
+        ("chat-a", "/attach thr_b"),
+        ("chat-a", "/attach thr_a"),
+        ("chat-b", "/current"),
+    ] {
+        queue
+            .try_push(EngineWork::Inbound(inbound(chat, command)))
+            .unwrap();
+    }
+    queue
+        .try_push(EngineWork::Event(AgentEvent::QueueChanged {
+            session_id: "thr_a".into(),
+        }))
+        .unwrap();
+    let snapshot = engine.dispatch_snapshot().await;
+    let first = queue.next_ready(|work| snapshot.scope(work)).unwrap();
+    assert!(
+        queue.next_ready(|work| snapshot.scope(work)).is_none(),
+        "transfer must fence old and new sessions and displaced chat"
+    );
+    engine.execute_work(first.work).await.unwrap();
+    queue.finish(first.id);
+    let snapshot = engine.dispatch_snapshot().await;
+    let second = queue.next_ready(|work| snapshot.scope(work)).unwrap();
+    let detached = queue
+        .next_ready(|work| snapshot.scope(work))
+        .expect("displaced chat no longer owns the transferred session");
+    assert!(
+        matches!(detached.work, EngineWork::Inbound(ref envelope) if envelope.conversation.conversation_id == "chat-b")
+    );
+    assert!(
+        queue.next_ready(|work| snapshot.scope(work)).is_none(),
+        "event for the second attachment must wait for its binding"
+    );
+    engine.execute_work(second.work).await.unwrap();
+    queue.finish(second.id);
+    let snapshot = engine.dispatch_snapshot().await;
+    assert!(matches!(
+        queue.next_ready(|work| snapshot.scope(work)).unwrap().work,
+        EngineWork::Event(_)
+    ));
+}
+
+#[tokio::test]
+async fn dispatch_fork_fences_early_new_session_events_only_on_its_backend() {
+    use agentix_core::{AgentKind, AgentRegistry, DispatchQueue, EngineWork};
+    let registry = AgentRegistry::new(vec![
+        (
+            AgentKind::Pi,
+            Arc::new(FakeAgent::new()) as Arc<dyn AgentAdapter>,
+        ),
+        (
+            AgentKind::Omp,
+            Arc::new(FakeAgent::new()) as Arc<dyn AgentAdapter>,
+        ),
+    ])
+    .unwrap();
+    let engine = Engine::new(
+        Arc::new(registry),
+        SqliteState::in_memory().await.unwrap(),
+        vec![Arc::new(FakeChannel::default())],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/attach pi:thr_a"))
+        .await
+        .unwrap();
+    let mut queue = DispatchQueue::new(4, 4);
+    queue
+        .try_push(EngineWork::Inbound(inbound("chat-a", "/fork")))
+        .unwrap();
+    for session in ["pi:unknown-replacement", "omp:independent"] {
+        queue
+            .try_push(EngineWork::Event(AgentEvent::QueueChanged {
+                session_id: session.into(),
+            }))
+            .unwrap();
+    }
+    let snapshot = engine.dispatch_snapshot().await;
+    let fork = queue.next_ready(|work| snapshot.scope(work)).unwrap();
+    let independent = queue.next_ready(|work| snapshot.scope(work)).unwrap();
+    assert!(
+        matches!(independent.work, EngineWork::Event(AgentEvent::QueueChanged { ref session_id }) if session_id == "omp:independent")
+    );
+    assert!(queue.next_ready(|work| snapshot.scope(work)).is_none());
+    queue.finish(fork.id);
+    assert!(queue.next_ready(|work| snapshot.scope(work)).is_some());
+}
+
+#[tokio::test]
+async fn dispatch_scopes_opaque_attach_actions_without_consuming_their_authorization() {
+    use agentix_core::{DispatchQueue, EngineWork};
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        Arc::new(FakeAgent::new()),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound("chat-b", "/attach thr_b"))
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound("chat-a", "/sessions"))
+        .await
+        .unwrap();
+    let token = channel.sent().last().unwrap().1.actions[1].token.clone();
+    let mut queue = DispatchQueue::new(4, 4);
+    queue
+        .try_push(EngineWork::Event(AgentEvent::QueueChanged {
+            session_id: "thr_b".into(),
+        }))
+        .unwrap();
+    queue
+        .try_push(EngineWork::Inbound(InboundEnvelope::action(
+            "attach-button",
+            ConversationRef::new(ChannelKind::Telegram, "chat-a"),
+            "owner",
+            token,
+        )))
+        .unwrap();
+    queue
+        .try_push(EngineWork::Inbound(inbound("chat-b", "/current")))
+        .unwrap();
+    queue
+        .try_push(EngineWork::Event(AgentEvent::QueueChanged {
+            session_id: "thr_a".into(),
+        }))
+        .unwrap();
+    let snapshot = engine.dispatch_snapshot().await;
+    let old = queue.next_ready(|work| snapshot.scope(work)).unwrap();
+    assert!(
+        matches!(queue.next_ready(|work| snapshot.scope(work)).unwrap().work, EngineWork::Event(AgentEvent::QueueChanged { ref session_id }) if session_id == "thr_a")
+    );
+    assert!(queue.next_ready(|work| snapshot.scope(work)).is_none());
+    queue.finish(old.id);
+    let action = queue.next_ready(|work| snapshot.scope(work)).unwrap();
+    assert!(
+        queue.next_ready(|work| snapshot.scope(work)).is_none(),
+        "button must reserve the displaced conversation"
+    );
+    engine
+        .execute_work(action.work)
+        .await
+        .expect("routing inspection must not consume the action token");
+}
+
+#[tokio::test]
+async fn shutdown_preparation_finishes_all_local_state_before_any_im_io() {
+    use tokio_util::sync::CancellationToken;
+    let state = SqliteState::in_memory().await.unwrap();
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        Arc::new(FakeAgent::new()),
+        state.clone(),
+        vec![channel.clone()],
+    );
+    for (chat, session) in [("chat-a", "thr_a"), ("chat-b", "thr_b")] {
+        engine
+            .handle_inbound(inbound(chat, &format!("/attach {session}")))
+            .await
+            .unwrap();
+    }
+    let entered = CancellationToken::new();
+    let release = CancellationToken::new();
+    *channel.next_menu_gate.lock().unwrap() = Some((entered.clone(), release.clone()));
+    let prepared = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        engine.prepare_shutdown_notifications(),
+    )
+    .await;
+    release.cancel();
+    let notifications = prepared
+        .expect("local shutdown preparation waited for IM")
+        .unwrap();
+    assert_eq!(notifications.len(), 2);
+    assert!(!entered.is_cancelled());
+    assert_eq!(state.list_bindings().await.unwrap().len(), 2);
+    // The durable bindings survive, but every in-memory route is detached even
+    // when no shutdown notification can be delivered.
+    for chat in ["chat-a", "chat-b"] {
+        assert!(matches!(
+            engine.handle_inbound(inbound(chat, "/current")).await,
+            Err(EngineError::NoCurrentSession)
+        ));
+    }
+}
+
+async fn refresh_and_deliver_tasks(engine: &Engine) -> Result<(), agentix_core::EngineError> {
+    engine.refresh_task_board().await?;
+    loop {
+        let batch = engine.claim_task_notifications(32).await?;
+        if batch.is_empty() {
+            return Ok(());
+        }
+        for notification in batch {
+            engine.deliver_task_notification(notification).await?;
+        }
+    }
+}

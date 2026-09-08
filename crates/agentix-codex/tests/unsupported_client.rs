@@ -1,6 +1,6 @@
 // Exercise the non-Unix implementation on every CI host to catch API drift.
 // The compatibility methods must retain the Unix client's async signatures.
-#[allow(clippy::unused_async)]
+#[allow(unknown_lints, clippy::unused_async, clippy::unused_async_trait_impl)]
 #[path = "../src/client_unsupported.rs"]
 mod unsupported;
 

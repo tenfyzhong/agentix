@@ -3,90 +3,11 @@ use std::time::{Duration, Instant};
 
 use tokio::sync::Mutex;
 
-use super::{
-    HistoryCursors, InteractionKey, PendingInteractionView, PendingSessionInput, TurnBuffer,
-    UiAction,
-};
+use super::{InteractionKey, PendingInteractionView, PendingSessionInput, TurnBuffer, UiAction};
 use crate::{
-    ActionButton, ActionRegistry, AgentAdapter, AttachOutcome, BindingTable, ConversationRef,
-    DeliveryClass, EventImportance, MessageRef, SessionId, SessionSummary, WorkspaceRuntimePort,
+    ActionButton, ActionRegistry, AgentAdapter, ConversationRef, MessageRef, SessionId,
+    WorkspaceRuntimePort,
 };
-
-pub(super) struct SessionCoordinator {
-    pub(super) bindings: Mutex<BindingTable>,
-    pub(super) cache: Mutex<HashMap<SessionId, SessionSummary>>,
-    pub(super) history_cursors: Mutex<HashMap<ConversationRef, HistoryCursors>>,
-}
-
-impl Default for SessionCoordinator {
-    fn default() -> Self {
-        Self {
-            bindings: Mutex::new(BindingTable::default()),
-            cache: Mutex::new(HashMap::new()),
-            history_cursors: Mutex::new(HashMap::new()),
-        }
-    }
-}
-
-impl SessionCoordinator {
-    pub(super) async fn current(&self, conversation: &ConversationRef) -> Option<SessionId> {
-        self.bindings
-            .lock()
-            .await
-            .current_session(conversation)
-            .cloned()
-    }
-
-    pub(super) async fn bound_conversation(&self, session: &SessionId) -> Option<ConversationRef> {
-        self.bindings
-            .lock()
-            .await
-            .bound_conversation(session)
-            .cloned()
-    }
-
-    pub(super) async fn attach_at_epoch(
-        &self,
-        conversation: ConversationRef,
-        session: SessionId,
-        previous_session_active: bool,
-        epoch: u64,
-    ) -> AttachOutcome {
-        self.bindings.lock().await.attach_at_epoch(
-            conversation,
-            session,
-            previous_session_active,
-            epoch,
-        )
-    }
-
-    pub(super) async fn detach(
-        &self,
-        conversation: &ConversationRef,
-        keep_draining: bool,
-    ) -> Option<SessionId> {
-        self.bindings
-            .lock()
-            .await
-            .detach(conversation, keep_draining)
-    }
-
-    pub(super) async fn epoch(&self, conversation: &ConversationRef) -> u64 {
-        self.bindings.lock().await.epoch(conversation)
-    }
-
-    pub(super) async fn route(
-        &self,
-        session: &SessionId,
-        importance: EventImportance,
-    ) -> Option<(ConversationRef, DeliveryClass)> {
-        self.bindings.lock().await.route(session, importance)
-    }
-
-    pub(super) async fn finish_draining(&self, session: &SessionId) {
-        self.bindings.lock().await.finish_draining(session);
-    }
-}
 
 pub(super) struct BackgroundNotification {
     pub(super) turn_id: String,
@@ -224,29 +145,57 @@ impl Default for InteractionCoordinator {
     }
 }
 
+impl InteractionCoordinator {
+    /// Return owned state so a caller's `if let` cannot retain the shared mutex
+    /// while it awaits an agent command or an IM response.
+    pub(super) async fn take_session_input(
+        &self,
+        conversation: &ConversationRef,
+    ) -> Option<PendingSessionInput> {
+        self.session_inputs.lock().await.remove(conversation)
+    }
+
+    pub(super) async fn take_reply_mode(
+        &self,
+        conversation: &ConversationRef,
+    ) -> Option<InteractionKey> {
+        self.reply_modes.lock().await.remove(conversation)
+    }
+}
+
 #[derive(Debug)]
 pub(super) struct RmuxController {
     enabled: bool,
+    pub(super) selected: Mutex<HashMap<ConversationRef, crate::AgentKind>>,
 }
 
 impl RmuxController {
     pub(super) fn new(enabled: bool) -> Self {
-        Self { enabled }
+        Self {
+            enabled,
+            selected: Mutex::default(),
+        }
     }
 
-    pub(super) fn runtime<'a>(
+    pub(super) async fn runtime<'a>(
         &self,
         agent: &'a dyn AgentAdapter,
+        conversation: &ConversationRef,
     ) -> Option<&'a dyn WorkspaceRuntimePort> {
         if self.enabled {
-            agent.workspace_runtime()
+            agent.workspace_for(self.selected.lock().await.get(conversation).copied())
         } else {
             None
         }
     }
 
-    pub(super) fn default_directory(&self, agent: &dyn AgentAdapter) -> String {
-        self.runtime(agent)
+    pub(super) async fn default_directory(
+        &self,
+        agent: &dyn AgentAdapter,
+        conversation: &ConversationRef,
+    ) -> String {
+        self.runtime(agent, conversation)
+            .await
             .map_or_else(|| "~".into(), WorkspaceRuntimePort::default_directory)
     }
 }

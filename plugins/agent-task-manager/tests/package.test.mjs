@@ -19,7 +19,10 @@ test("Pi and OMP remote packages discover their adapters and install runtime dep
         for (const kind of ["extensions", "skills"]) {
             assert.deepEqual(
                 pkg[host][kind],
-                plugin[host][kind].map(path => `./plugins/agent-task-manager/${path.replace(/^\.\//, "")}`),
+                [
+                    ...plugin[host][kind].map(path => `./plugins/agent-task-manager/${path.replace(/^\.\//, "")}`),
+                    ...(kind === "extensions" ? [`./plugins/agentix-bridge/extensions/${host}.ts`] : []),
+                ],
             );
         }
     }
@@ -28,7 +31,7 @@ test("Pi and OMP remote packages discover their adapters and install runtime dep
     const npmCache = await mkdtemp(`${tmpdir()}/agentix-npm-cache-`);
     try {
         await mkdir(`${directory}/plugins/agent-task-manager`, { recursive: true });
-        for (const path of ["package.json", "package-lock.json", "plugins/agent-task-manager"]) {
+        for (const path of ["package.json", "package-lock.json", "plugins/agent-task-manager", "plugins/agentix-bridge"]) {
             await cp(new URL(path, repository), `${directory}/${path}`, {
                 recursive: true,
                 filter: source => !/[\\/](node_modules|tests)([\\/]|$)/.test(source),
@@ -82,6 +85,12 @@ test("Pi and OMP remote packages discover their adapters and install runtime dep
             });
             assert.equal(events.includes("agent_settled"), host === "pi", `load the ${host} lifecycle adapter`);
             assert.deepEqual(tools, ["taskcli"]);
+            let bridgeEntry = join(installedRoot, pkg[host].extensions[1]);
+            if (host === "omp") { await cp(bridgeEntry, `${bridgeEntry}.mjs`); bridgeEntry += ".mjs"; }
+            const { default: installBridge } = await import(pathToFileURL(bridgeEntry));
+            const bridge = installBridge({ on: event => events.push(event) });
+            assert.equal(typeof bridge.close, "function");
+            await bridge.close();
             for (const path of pkg[host].skills) {
                 await readFile(`${installedRoot}/${path}/agent-task-manager/SKILL.md`, "utf8");
             }
@@ -100,8 +109,8 @@ test("repository marketplaces resolve the same complete host plugin", async () =
     assert.equal(codex.interface.displayName, "Agentix");
     assert.equal(claude.owner.name, "tenfyzhong");
     for (const [host, marketplace] of [["codex", codex], ["claude", claude]]) {
-        assert.equal(marketplace.plugins.length, 1);
-        const entry = marketplace.plugins[0];
+        assert.ok(marketplace.plugins.length >= 1);
+        const entry = marketplace.plugins.find(plugin => plugin.name === "agent-task-manager");
         assert.equal(entry.name, "agent-task-manager");
         const source = host === "codex" ? entry.source.path : entry.source;
         assert.equal(source, "./plugins/agent-task-manager");

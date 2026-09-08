@@ -1,0 +1,21 @@
+[package]
+name = "agentix-rmux"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+agentix-domain = { path = "../agentix-domain" }
+dirs.workspace = true
+rmux-sdk.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+
+[dev-dependencies]
+rmux-proto.workspace = true
+tempfile.workspace = true
+
+[lints]
+workspace = true

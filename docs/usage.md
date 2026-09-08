@@ -17,16 +17,16 @@ In group chats, mention the bot. Direct messages are accepted only from configur
 These commands are available according to the conversation's current attachment state:
 
 - `/help` — show the commands currently available
-- `/sessions` — list running sessions with their title, status, workspace, and rmux location; use an item's action to attach it
-- `/rmux` — browse rmux sessions, windows, and panes, or create a workspace and launch Codex
+- `/sessions [codex|pi|omp|claude]` — list running sessions with their title, status, workspace, and rmux location; use an item's action to attach it
+- `/rmux` — browse rmux sessions, windows, and panes, or create a workspace and launch the selected agent
 - `/attach <session-id>` — attach the conversation to a running session
 - `/current` — show the attached session and running turn
 - `/history`, `/history older`, `/history newer` — browse turns with separate user and agent sections
-- `/queue` — inspect the attached Codex session's persistent FIFO follow-up queue
-- `/stop` — interrupt the current turn
+- `/queue` — inspect a supported follow-up queue, or unresolved delivery receipts for Claude
+- `/stop` — interrupt the current turn when supported (Codex, Pi, OMP)
 - `/detach` — remove the current binding without stopping the coding-agent session
 - `/cancel` — leave a pending free-text input flow
-- any other text — start a turn; while Codex is active, add a follow-up turn to its Agentix queue; other backends steer the active turn
+- any other text — start a turn; while a queue-capable agent is active, add a follow-up turn to its Agentix queue; use `/steer <text>` when steering is supported
 
 Unknown or malformed slash commands return a parsing error and the same state-aware command list shown by `/help`.
 
@@ -74,11 +74,19 @@ The following commands are available only while a Codex session is attached:
 
 `/status` reads the [Codex account quota endpoint](https://learn.chatgpt.com/docs/app-server#6-rate-limits-chatgpt). A missing quota response is shown as unavailable or not reported; it does not hide other session details.
 
-These extended controls use the Codex adapter; Pi and Oh My Pi report them as unsupported.
+Pi and OMP expose `/model`, `/reasoning`, `/compact`, `/rename`, `/status`, `/skills`, `/diff`, and `/exit` according to the live host's capabilities. Model lists come from the host; reasoning changes report the level the host actually applies. They do not expose clear, fork, plan, goal, review, Fast mode, or MCP management. Third-party extension dialogs and approvals stay in the original terminal.
+
+See the [bridge installation and capabilities](../plugins/agentix-bridge/README.md) for supported host versions, multiple-backend configuration, and diagnostics. Session IDs include their backend (`pi:<id>`, `omp:<id>`, `claude:<id>`, `codex:<id>`); bare IDs must resolve uniquely. Existing unqualified bindings require one startup with their original single-backend configuration before enabling multiple backends.
+
+### Claude Code controls
+
+Claude supports prompts, `/history`, `/status`, and `/queue` receipt recovery. `/detach` leaves Claude running. It does not expose remote stop, steering, model controls, or FIFO prompt submission; a busy session rejects another prompt. Handle permissions and interruptions locally. Default non-Channel input requires installing rmux and starting Claude inside rmux; [the Claude guide](claude-code.md) also documents optional Channel delivery.
 
 ## Prompts, queues, and replies
 
 An ordinary message starts a turn when the attached session is idle. While Codex is active, Agentix places new messages in its persistent app-server FIFO queue and immediately reports their positions. `/queue` shows this queue.
+
+For Pi/OMP, `/stop` also pauses pending work. `/queue resume` continues it, while `/queue clear` discards pending items without stopping an active delivery. The extension persists queue state and request IDs in the native session log. Reloading never silently repeats an uncertain delivery; inspect history before clearing and submitting again. Queue entries do not transfer into forks. `/steer <text>` explicitly injects text into the active turn.
 
 Codex CLI's Tab queue is private to the TUI and does not synchronize or deduplicate with the Agentix app-server queue. If both contain input, each queue may submit its next item when a turn finishes, producing back-to-back turns with no shared ordering guarantee. Avoid using both queue mechanisms for the same session at the same time.
 
@@ -102,7 +110,7 @@ Other attachment errors appear in IM with their cause and a new Retry attach but
 
 Agentix creates a turn message immediately with `Working 0s`, edits it at most once every five seconds on Telegram (once per second on Feishu) while the turn runs, and preserves its Stop action. Completion, interruption, or failure leaves the final elapsed time in the status line. After an Agentix restart, a restored running turn begins a new locally observed duration because the agent protocol does not expose its original monotonic start time.
 
-When a turn finishes in a session that is not attached to an IM conversation, Agentix notifies authenticated conversations known to the running service and includes the completed turn's prompt and response plus a single-use Attach action. Background notices use a purple Feishu header and a tinted quote area; Telegram uses a ⚫ Background marker with blockquotes because its Markdown message format cannot set quote colors. Codex subagent sessions do not generate these standalone notices; parent sessions and existing attached or draining turn cards continue updating normally. Repeated delivery of the latest completed turn does not create duplicate notices. For Codex, the service discovers running sessions and reads their turn status every ten seconds, even when no IM conversation is attached. `/detach` removes the IM binding; a running session is rediscovered for background notifications. Background monitoring uses read-only queries and leaves existing writers alone. Historical completions from before service startup are skipped, and completed, failed, or interrupted turns detected between polls are reported once. Send `/help` to the bot after starting the service if you have no restored binding and want to receive these notifications.
+When a turn finishes in a session that is not attached to an IM conversation, Agentix notifies authenticated conversations known to the running service and includes the completed turn's prompt and response plus a single-use Attach action. Background notices use a purple Feishu header and a grey quote area; Telegram uses a ⚫ Background marker with blockquotes because its Markdown message format cannot set quote colors. Codex subagent sessions do not generate these standalone notices; parent sessions and existing attached or draining turn cards continue updating normally. Repeated delivery of the latest completed turn does not create duplicate notices. For Codex, the service discovers running sessions and reads their turn status every ten seconds, even when no IM conversation is attached. `/detach` removes the IM binding; a running session is rediscovered for background notifications. Background monitoring uses read-only queries and leaves existing writers alone. Historical completions from before service startup are skipped, and completed, failed, or interrupted turns detected between polls are reported once. Send `/help` to the bot after starting the service if you have no restored binding and want to receive these notifications.
 
 Set `[notifications] background_turns = false` in `config.toml` and restart the service to disable unattached completion notices and background turn polling. With no attached sessions to monitor, automatic session discovery also stops. Attached-session exit/resume monitoring remains active. The setting defaults to `true`; existing attached and draining turn cards continue updating to their final status. When enabled, the engine reads the completed turn by ID so a newer turn cannot replace its content. If history is unavailable, the completion notice still shows its outcome and Attach action.
 
@@ -110,9 +118,9 @@ Telegram uses native command menus that change with attachment state. Feishu sen
 
 ## rmux workspaces
 
-`/rmux` connects to the local rmux daemon and starts it when needed. You can attach an existing Codex pane or replace an idle shell pane with a new Codex session. Agentix can also create a session, window, or split in `agent.rmux_directory`, which defaults to the current user's home directory.
+`/rmux` connects to the local rmux daemon and starts it when needed. Choose a backend with `/rmux codex`, `/rmux pi`, or `/rmux omp`. An unbound chat with several configured backends gets a picker. You can attach an existing agent pane or replace an idle shell pane with a new session. Agentix can also create a session, window, or split in `agent.rmux_directory`, which defaults to the current user's home directory.
 
-Before replacing an existing shell pane, Agentix sends `Ctrl-C` to discard any unsubmitted command line. It refuses to replace a pane running a non-shell process. New panes remain visible after Codex exits. Agentix waits for the real Codex session before attaching; if Codex exits early or discovery times out, it reports an error instead of attaching a placeholder.
+Before replacing an existing shell pane, Agentix sends `Ctrl-C` to discard any unsubmitted command line. It refuses to replace a pane running a non-shell process. New panes remain visible after the agent exits. Agentix waits for the real session before attaching. Pi/OMP must register a live bridge on the Agentix control socket associated with the new pane; if registration fails or times out, Agentix reports the error and leaves the terminal open. Configure `bridge_extension` when the host does not already discover the installed extension.
 
 ## Local client
 
@@ -121,11 +129,17 @@ Every `agentix client` command connects to the control endpoint of the running `
 ```sh
 agentix client sessions
 agentix client sessions --limit 10
+agentix client send pi:native-id "Continue the task"
+agentix client stop omp:native-id turn-id
+agentix client history pi:native-id --limit 20
+agentix client command omp:native-id '{"command":"model","params":null}'
 agentix client call thread/read --params '{"threadId":"019...","includeTurns":false}'
 agentix client claim --ttl-minutes 10
 ```
 
 `client sessions` emits normalized JSON for available sessions. With managed Codex, it includes running standalone and daemon-backed TUI sessions and their rmux locations while excluding stored sessions and orphaned daemon threads. `client call` sends raw Codex JSON RPC through the server's existing app-server connection for protocol diagnostics; JSON goes to stdout and logs go to stderr. `client claim` creates a temporary in-memory owner claim and is not an IM command.
+
+The backend-neutral commands use the same access and capability policy as IM. Raw `client call` remains Codex-specific. See [local control and host protocol](host-protocol.md) for payloads and native extension interfaces.
 
 ## Restarts and process exits
 

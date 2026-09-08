@@ -52,10 +52,20 @@ pub struct ProjectSummary {
     pub task_count: usize,
 }
 
-pub(super) const SESSION_JOBS: &str = "WITH related(job_id) AS (
-    SELECT job_id FROM tasks WHERE json_extract(data,'$.last_session')=?1
+pub(super) const SESSION_JOBS: &str = "WITH identity(native,host) AS (
+    SELECT CASE WHEN substr(?1,1,instr(?1,':')-1) IN ('codex','pi','omp')
+        THEN substr(?1,instr(?1,':')+1) ELSE ?1 END,
+        CASE WHEN substr(?1,1,instr(?1,':')-1) IN ('codex','pi','omp')
+        THEN 'agent:' || substr(?1,1,instr(?1,':')-1) ELSE NULL END
+), related(job_id) AS (
+    SELECT job_id FROM tasks WHERE json_extract(data,'$.last_session')=(SELECT native FROM identity)
+        AND ((SELECT host FROM identity) IS NULL OR json_extract(data,'$.last_executor')=(SELECT host FROM identity)
+            OR json_extract(data,'$.last_executor') LIKE (SELECT host || ':%' FROM identity))
     UNION
-    SELECT tasks.job_id FROM task_leases JOIN tasks ON tasks.id=task_leases.id WHERE session_ref=?1
+    SELECT tasks.job_id FROM task_leases JOIN tasks ON tasks.id=task_leases.id
+        WHERE session_ref=(SELECT native FROM identity)
+        AND ((SELECT host FROM identity) IS NULL OR executor_ref=(SELECT host FROM identity)
+            OR executor_ref LIKE (SELECT host || ':%' FROM identity))
 ) SELECT jobs.id FROM related JOIN jobs ON jobs.id=related.job_id
 JOIN projects ON projects.id=jobs.project_id
 WHERE json_extract(jobs.data,'$.archived_at') IS NULL AND json_extract(projects.data,'$.archived_at') IS NULL";

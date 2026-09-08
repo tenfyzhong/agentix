@@ -43,7 +43,12 @@ pub struct JobBrowsePage {
 }
 
 const CURRENT: &str = "EXISTS(SELECT 1 FROM task_leases l WHERE l.id=t.id
-    AND l.session_ref=?2 AND json_extract(l.data,'$.lease_expires_at')>?3)";
+    AND l.session_ref=CASE WHEN substr(?2,1,instr(?2,':')-1) IN ('codex','pi','omp')
+        THEN substr(?2,instr(?2,':')+1) ELSE ?2 END
+    AND (substr(?2,1,instr(?2,':')-1) NOT IN ('codex','pi','omp')
+        OR l.executor_ref='agent:' || substr(?2,1,instr(?2,':')-1)
+        OR l.executor_ref LIKE 'agent:' || substr(?2,1,instr(?2,':')-1) || ':%')
+    AND json_extract(l.data,'$.lease_expires_at')>?3)";
 const STATUS_ORDER: &str = "CASE json_extract(t.data,'$.status')
     WHEN 'IN_PROGRESS' THEN 0 WHEN 'BLOCKED' THEN 1 WHEN 'WAITING_USER' THEN 2
     WHEN 'TODO' THEN 3 WHEN 'FAILED' THEN 4 WHEN 'DONE' THEN 5 ELSE 6 END";

@@ -22,6 +22,7 @@ pub struct CapturedRequest {
 
 #[derive(Debug)]
 struct PlannedFailure {
+    release: Option<tokio::sync::oneshot::Receiver<()>>,
     target: String,
     code: i64,
     message: String,
@@ -113,6 +114,7 @@ impl MockFeishuApi {
 
     pub async fn fail_next(&self, target: &str, code: i64, message: &str) {
         self.failures.lock().await.push_back(PlannedFailure {
+            release: None,
             target: target.into(),
             code,
             message: message.into(),
@@ -122,11 +124,36 @@ impl MockFeishuApi {
 
     pub async fn rate_limit_next(&self, target: &str) {
         self.failures.lock().await.push_back(PlannedFailure {
+            release: None,
             target: target.into(),
             code: 99_991_400,
             message: "Too Many Requests".into(),
             http_status: 429,
         });
+    }
+
+    pub async fn hold_next(&self, target: &str) -> tokio::sync::oneshot::Sender<()> {
+        let (release, wait) = tokio::sync::oneshot::channel();
+        self.failures.lock().await.push_back(PlannedFailure {
+            release: Some(wait),
+            target: target.into(),
+            code: 0,
+            message: String::new(),
+            http_status: 200,
+        });
+        release
+    }
+
+    pub async fn hold_invalid_token_response(&self) -> tokio::sync::oneshot::Sender<()> {
+        let (release, wait) = tokio::sync::oneshot::channel();
+        self.failures.lock().await.push_back(PlannedFailure {
+            target: "/open-apis/im/v1/messages?".into(),
+            code: 99_991_663,
+            message: "Invalid tenant_access_token".into(),
+            http_status: 200,
+            release: Some(wait),
+        });
+        release
     }
 
     pub async fn requests(&self) -> Vec<CapturedRequest> {
@@ -186,6 +213,20 @@ async fn serve_request(
             .front()
             .is_some_and(|failure| target.contains(&failure.target))
             .then(|| failures.pop_front().unwrap())
+    };
+    let failure = if let Some(mut failure) = failure {
+        if let Some(wait) = failure.release.take() {
+            let _ = wait.await;
+            if failure.code == 0 {
+                None
+            } else {
+                Some(failure)
+            }
+        } else {
+            Some(failure)
+        }
+    } else {
+        None
     };
     let status = failure.as_ref().map_or(200, |failure| failure.http_status);
     let body = if let Some(failure) = failure {

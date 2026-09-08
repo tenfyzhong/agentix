@@ -581,13 +581,20 @@ pub(crate) fn refresh(state: &mut Snapshot, now: i64) {
     }
 }
 
-pub(crate) fn session(state: &mut Snapshot, session: &str, command: &str, now: i64) {
+pub(crate) fn session(
+    state: &mut Snapshot,
+    session: &str,
+    executor: Option<&str>,
+    command: &str,
+    now: i64,
+) {
     for i in 0..state.inboxes.len() {
-        if state.inboxes[i]
-            .lease
-            .as_ref()
-            .is_none_or(|l| l.session_ref != session)
-        {
+        if state.inboxes[i].lease.as_ref().is_none_or(|l| {
+            l.session_ref != session
+                || executor.is_some_and(|host| {
+                    l.executor_ref != host && !l.executor_ref.starts_with(&format!("{host}:"))
+                })
+        }) {
             continue;
         }
         if command == "session.heartbeat" {

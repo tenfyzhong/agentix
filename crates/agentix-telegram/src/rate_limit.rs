@@ -31,30 +31,19 @@ impl RateLimiter {
         R: Request<Err = teloxide::RequestError>,
     {
         loop {
-            let mut state = self.state.lock().await;
-            let now = Instant::now();
-            let mut deadline = state
-                .next_request
-                .unwrap_or(now)
-                .max(state.blocked_until.unwrap_or(now));
-            if let Some(next) = chat.and_then(|chat| state.next_chat.get(&chat)) {
-                deadline = deadline.max(*next);
-            }
-            tokio::time::sleep_until(deadline).await;
+            self.reserve(chat).await;
             let result = request.send_ref().await;
             let now = Instant::now();
-            state.next_request = Some(now + Duration::from_millis(50));
-            state.next_chat.retain(|_, next| *next > now);
-            if let Some(chat) = chat {
-                let interval = if chat.0 < 0 { 3_100 } else { 1_100 };
-                state
-                    .next_chat
-                    .insert(chat, now + Duration::from_millis(interval));
-            }
             match result {
                 Err(teloxide::RequestError::RetryAfter(delay)) => {
                     // Keep the deadline in shared state even if this future is cancelled.
-                    state.blocked_until = Some(now + delay.duration() + Duration::from_millis(100));
+                    let mut state = self.state.lock().await;
+                    let deadline = now + delay.duration() + Duration::from_millis(100);
+                    state.blocked_until = Some(
+                        state
+                            .blocked_until
+                            .map_or(deadline, |current| current.max(deadline)),
+                    );
                     tracing::warn!(
                         api_method = method,
                         chat_id = chat.map(|chat| chat.0),
@@ -64,6 +53,37 @@ impl RateLimiter {
                 }
                 result => return result,
             }
+        }
+    }
+
+    /// Reserve pacing before sending; neither chat waits nor HTTP retain the lock.
+    async fn reserve(&self, chat: Option<ChatId>) {
+        loop {
+            let deadline = {
+                let mut state = self.state.lock().await;
+                let now = Instant::now();
+                let mut deadline = state
+                    .next_request
+                    .unwrap_or(now)
+                    .max(state.blocked_until.unwrap_or(now));
+                if let Some(next) = chat.and_then(|chat| state.next_chat.get(&chat)) {
+                    deadline = deadline.max(*next);
+                }
+                if deadline <= now {
+                    state.next_request = Some(now + Duration::from_millis(50));
+                    state.next_chat.retain(|_, next| *next > now);
+                    if let Some(chat) = chat {
+                        let interval = if chat.0 < 0 { 3_100 } else { 1_100 };
+                        state
+                            .next_chat
+                            .insert(chat, now + Duration::from_millis(interval));
+                    }
+                    return;
+                }
+                deadline
+            };
+            tokio::time::sleep_until(deadline).await;
+            // A concurrent 429 may have extended the global cooldown while asleep.
         }
     }
 }
@@ -76,7 +96,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::task::Poll;
 
-    use agentix_core::MessageCenter;
+    use agentix_domain::MessageCenter;
     use teloxide::payloads::LogOut;
     use teloxide::requests::HasPayload;
     use teloxide::types::{Seconds, True};
@@ -136,7 +156,7 @@ mod tests {
             payload: LogOut::new(),
             attempts: attempts.clone(),
         };
-        let mut head = Box::pin(center.outbound(limiter.send(request(), "mock", None)));
+        let mut head = Box::pin(center.outbound(None, limiter.send(request(), "mock", None)));
         // The mock response is ready in the same poll that increments attempts,
         // so a pending poll after that increment has entered the cooldown wait.
         while attempts.load(Ordering::SeqCst) == 0 {
@@ -146,12 +166,42 @@ mod tests {
         drop(head);
         let deadline = limiter.state.lock().await.blocked_until.unwrap();
         assert!(deadline > Instant::now());
-        let mut next = Box::pin(center.outbound(limiter.send(request(), "mock", None)));
+        let other =
+            agentix_domain::ConversationRef::new(agentix_domain::ChannelKind::Telegram, "42");
+        let mut next = Box::pin(center.outbound(
+            Some(&other),
+            limiter.send(request(), "mock", Some(ChatId(42))),
+        ));
         assert_pending(&mut next).await;
         assert_eq!(attempts.load(Ordering::SeqCst), 1);
         assert_eq!(next.await.unwrap(), True);
         assert!(Instant::now() >= deadline);
         assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn chat_pacing_does_not_block_unrelated_chats() {
+        let limiter = RateLimiter::default();
+        let attempts = Arc::new(AtomicUsize::new(1));
+        let request = || RetryOnce {
+            payload: LogOut::new(),
+            attempts: attempts.clone(),
+        };
+        limiter
+            .send(request(), "mock", Some(ChatId(-1)))
+            .await
+            .unwrap();
+        let mut paced = Box::pin(limiter.send(request(), "mock", Some(ChatId(-1))));
+        assert_pending(&mut paced).await;
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            limiter.send(request(), "mock", Some(ChatId(-2))),
+        )
+        .await
+        .expect("another group only waits for global pacing")
+        .unwrap();
+        assert_pending(&mut paced).await;
+        assert_eq!(attempts.load(Ordering::SeqCst), 3);
     }
 
     async fn assert_pending(future: &mut (impl Future + Unpin)) {

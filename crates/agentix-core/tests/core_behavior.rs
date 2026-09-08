@@ -110,3 +110,39 @@ fn finishing_a_draining_session_removes_its_route() {
 
     assert_eq!(bindings.route(&old, EventImportance::Critical), None);
 }
+
+#[test]
+fn explicit_steering_and_queue_controls_are_not_model_prompts() {
+    use agentix_core::{AgentCommand, ParsedInput, parse_input};
+    assert!(
+        matches!(parse_input("/steer focus on tests").unwrap(), ParsedInput::Command(AgentCommand::Steer(text)) if text == "focus on tests")
+    );
+    assert!(
+        matches!(parse_input("/queue resume").unwrap(), ParsedInput::Command(AgentCommand::QueueControl(action)) if action == "resume")
+    );
+    assert!(
+        matches!(parse_input("/queue clear").unwrap(), ParsedInput::Command(AgentCommand::QueueControl(action)) if action == "clear")
+    );
+    assert!(parse_input("/steer").is_err());
+    assert!(parse_input("/queue nonsense").is_err());
+}
+
+#[test]
+fn native_identifiers_remain_opaque_inside_typed_session_references() {
+    use agentix_core::{AgentKind, NativeSessionId, SessionRef};
+    let native = NativeSessionId::new("pi:literal:会话");
+    let session = SessionRef::from_native(AgentKind::Omp, native.clone());
+    assert_eq!(session.native_id, native);
+    assert_eq!(session.encode().as_str(), "omp:pi:literal:会话");
+    assert_eq!(SessionRef::decode(&session.encode()), Some(session));
+}
+
+#[test]
+fn capability_names_are_parsed_only_at_the_external_boundary() {
+    use agentix_core::{SessionCapabilities, SessionCapability};
+    let capabilities =
+        SessionCapabilities::from_names(["prompt", "queue_control", "future_host_feature"]);
+    assert!(capabilities.supports(SessionCapability::Prompt));
+    assert!(capabilities.supports(SessionCapability::QueueControl));
+    assert!(!capabilities.supports(SessionCapability::Model));
+}

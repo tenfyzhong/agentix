@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use agentix_core::{
+use agentix_domain::{
     AgentAdapter, AgentError, AgentEvent, HistoryPage, InteractionDecision, SessionId, SessionPage,
 };
 use async_trait::async_trait;

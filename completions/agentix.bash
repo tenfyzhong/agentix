@@ -37,11 +37,23 @@ _agentix() {
             agentix__subcmd__client,claim)
                 cmd="agentix__subcmd__client__subcmd__claim"
                 ;;
+            agentix__subcmd__client,command)
+                cmd="agentix__subcmd__client__subcmd__command"
+                ;;
             agentix__subcmd__client,help)
                 cmd="agentix__subcmd__client__subcmd__help"
                 ;;
+            agentix__subcmd__client,history)
+                cmd="agentix__subcmd__client__subcmd__history"
+                ;;
+            agentix__subcmd__client,send)
+                cmd="agentix__subcmd__client__subcmd__send"
+                ;;
             agentix__subcmd__client,sessions)
                 cmd="agentix__subcmd__client__subcmd__sessions"
+                ;;
+            agentix__subcmd__client,stop)
+                cmd="agentix__subcmd__client__subcmd__stop"
                 ;;
             agentix__subcmd__client__subcmd__help,call)
                 cmd="agentix__subcmd__client__subcmd__help__subcmd__call"
@@ -49,11 +61,23 @@ _agentix() {
             agentix__subcmd__client__subcmd__help,claim)
                 cmd="agentix__subcmd__client__subcmd__help__subcmd__claim"
                 ;;
+            agentix__subcmd__client__subcmd__help,command)
+                cmd="agentix__subcmd__client__subcmd__help__subcmd__command"
+                ;;
             agentix__subcmd__client__subcmd__help,help)
                 cmd="agentix__subcmd__client__subcmd__help__subcmd__help"
                 ;;
+            agentix__subcmd__client__subcmd__help,history)
+                cmd="agentix__subcmd__client__subcmd__help__subcmd__history"
+                ;;
+            agentix__subcmd__client__subcmd__help,send)
+                cmd="agentix__subcmd__client__subcmd__help__subcmd__send"
+                ;;
             agentix__subcmd__client__subcmd__help,sessions)
                 cmd="agentix__subcmd__client__subcmd__help__subcmd__sessions"
+                ;;
+            agentix__subcmd__client__subcmd__help,stop)
+                cmd="agentix__subcmd__client__subcmd__help__subcmd__stop"
                 ;;
             agentix__subcmd__help,client)
                 cmd="agentix__subcmd__help__subcmd__client"
@@ -76,8 +100,20 @@ _agentix() {
             agentix__subcmd__help__subcmd__client,claim)
                 cmd="agentix__subcmd__help__subcmd__client__subcmd__claim"
                 ;;
+            agentix__subcmd__help__subcmd__client,command)
+                cmd="agentix__subcmd__help__subcmd__client__subcmd__command"
+                ;;
+            agentix__subcmd__help__subcmd__client,history)
+                cmd="agentix__subcmd__help__subcmd__client__subcmd__history"
+                ;;
+            agentix__subcmd__help__subcmd__client,send)
+                cmd="agentix__subcmd__help__subcmd__client__subcmd__send"
+                ;;
             agentix__subcmd__help__subcmd__client,sessions)
                 cmd="agentix__subcmd__help__subcmd__client__subcmd__sessions"
+                ;;
+            agentix__subcmd__help__subcmd__client,stop)
+                cmd="agentix__subcmd__help__subcmd__client__subcmd__stop"
                 ;;
             *)
                 ;;
@@ -130,7 +166,7 @@ _agentix() {
             return 0
             ;;
         agentix__subcmd__client)
-            opts="-h --help claim sessions call help"
+            opts="-h --help claim sessions send stop history command call help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -179,8 +215,22 @@ _agentix() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
+        agentix__subcmd__client__subcmd__command)
+            opts="-h --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
         agentix__subcmd__client__subcmd__help)
-            opts="claim sessions call help"
+            opts="claim sessions send stop history command call help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -221,7 +271,49 @@ _agentix() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
+        agentix__subcmd__client__subcmd__help__subcmd__command)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
         agentix__subcmd__client__subcmd__help__subcmd__help)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        agentix__subcmd__client__subcmd__help__subcmd__history)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        agentix__subcmd__client__subcmd__help__subcmd__send)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -249,6 +341,60 @@ _agentix() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
+        agentix__subcmd__client__subcmd__help__subcmd__stop)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        agentix__subcmd__client__subcmd__history)
+            opts="-h --cursor --limit --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --cursor)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --limit)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        agentix__subcmd__client__subcmd__send)
+            opts="-h --turn --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --turn)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
         agentix__subcmd__client__subcmd__sessions)
             opts="-h --cursor --limit --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
@@ -264,6 +410,20 @@ _agentix() {
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        agentix__subcmd__client__subcmd__stop)
+            opts="-h --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
                 *)
                     COMPREPLY=()
                     ;;
@@ -314,7 +474,7 @@ _agentix() {
             return 0
             ;;
         agentix__subcmd__help__subcmd__client)
-            opts="claim sessions call"
+            opts="claim sessions send stop history command call"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -355,7 +515,63 @@ _agentix() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
+        agentix__subcmd__help__subcmd__client__subcmd__command)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        agentix__subcmd__help__subcmd__client__subcmd__history)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        agentix__subcmd__help__subcmd__client__subcmd__send)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
         agentix__subcmd__help__subcmd__client__subcmd__sessions)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        agentix__subcmd__help__subcmd__client__subcmd__stop)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )

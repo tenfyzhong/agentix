@@ -1,0 +1,16 @@
+{
+  "arch": "aarch64",
+  "connections": 32,
+  "median_ms": 86.919292,
+  "ms": [
+    106.45150000000001,
+    103.515,
+    86.919292,
+    85.347875,
+    84.923958
+  ],
+  "platform": "macos",
+  "profile": "release",
+  "response_delay_ms": 10,
+  "samples": 5
+}

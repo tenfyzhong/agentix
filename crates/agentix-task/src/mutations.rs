@@ -785,10 +785,19 @@ fn aggregate_job(state: &mut Snapshot, index: usize, was_ready: bool, now: i64) 
 fn session(state: &mut Snapshot, request: &Value, now: i64) -> Result<Value> {
     let session = required(request, "session")?;
     let command = required(request, "command")?;
-    crate::inbox::session(state, session, command, now);
+    crate::inbox::session(state, session, request["executor"].as_str(), command, now);
     let mut changed = Vec::new();
     for i in 0..state.tasks.len() {
-        if state.tasks[i].last_session.as_deref() != Some(session) {
+        if state.tasks[i].last_session.as_deref() != Some(session)
+            || request["executor"].as_str().is_some_and(|host| {
+                state.tasks[i]
+                    .last_executor
+                    .as_deref()
+                    .is_none_or(|executor| {
+                        executor != host && !executor.starts_with(&format!("{host}:"))
+                    })
+            })
+        {
             continue;
         }
         if matches!(command, "session.end" | "session.interrupt")

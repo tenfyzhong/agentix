@@ -1,17 +1,19 @@
 # Agentix
 
-Agentix connects local Codex, Pi, and Oh My Pi sessions to Telegram or Feishu. Attach a session from chat, send prompts, and follow the agent's replies.
+Agentix connects local Codex, Pi, Oh My Pi, and Claude Code sessions to Telegram or Feishu. Attach a session from chat, send prompts, and follow the agent's replies.
 
 ## Features
 
 - Browse local agent sessions, attach from chat, and follow streamed replies and history.
 - Control Codex models, reasoning, plans, and reviews, and respond to approvals in IM.
 - Restore session bindings after restarts and receive background completion notifications.
-- Create Codex sessions from chat with optional rmux integration.
+- Create Codex, Pi, OMP, and Claude Code sessions from chat with optional rmux integration.
 - Coordinate work with standalone `taskcli` and browse project, Job, and Task boards in IM or Obsidian.
 - Verify Jobs before completion and synchronize Obsidian status edits with automatic rollback on failure.
 
 Install Agent Task Manager from GitHub using the [host-specific installation guide](plugins/agent-task-manager/README.md#prerequisites-and-activation). Codex and Claude Code use the `agentix` marketplace; Pi and OMP install the repository as an extension package with their own entrypoints and shared runtime dependencies.
+
+Claude Code IM access uses the [Agentix bridge plugin](docs/claude-code.md), installed from the same `agentix` marketplace.
 
 ## Install
 
@@ -30,7 +32,7 @@ curl -fsSL https://chatgpt.com/codex/install.sh | sh
 
 ### Windows (x86_64)
 
-Download and extract `agentix-<version>-x86_64-pc-windows-msvc.zip` from the [latest release](https://github.com/tenfyzhong/agentix/releases/latest), then add the extracted directory to `PATH`. Use Pi or Oh My Pi; the Codex backend is not available on Windows.
+Download and extract `agentix-<version>-x86_64-pc-windows-msvc.zip` from the [latest release](https://github.com/tenfyzhong/agentix/releases/latest), then add the extracted directory to `PATH`. Native IM backends currently require macOS/Linux; the standalone taskcli and task plugins remain available on Windows.
 
 For checksums, other release archives, or building from source, see the [installation guide](docs/guide.md#install).
 
@@ -53,7 +55,7 @@ Copy-Item .\agentix\agentix.example.toml "$HOME\.config\agentix\config.toml"
 
 Edit `~/.config/agentix/config.toml`:
 
-1. Select `codex`, `pi`, or `oh-my-pi` in `[agent]` and set its executable path using the examples in the file.
+1. Enable one or more of `[agent.codex]`, `[agent.pi]`, `[agent.omp]`, and `[agent.claude]`; each table selects its backend without a `kind` field. For Pi/OMP, install the [live-session bridge](plugins/agentix-bridge/README.md) in the original terminal. For Claude Code, install the [bridge plugin](docs/claude-code.md); the default non-Channel mode requires installing rmux and starting Claude inside an rmux terminal.
 2. Select `telegram` or `feishu` in `[channel].kind`.
 3. Fill in the Telegram bot `token`, or the Feishu `app_id` and `app_secret`, in the matching channel table.
 4. Leave the selected channel's owner list empty for first-time claiming.
@@ -81,6 +83,42 @@ agentix client claim
 
 Send the printed `/claim <code>` command to the bot in a private chat. Skip this step if your owner ID is already configured.
 
+## Pi and OMP
+
+Install the extensions, then restart the host:
+
+```sh
+pi install git:github.com/tenfyzhong/agentix
+omp install github:tenfyzhong/agentix
+```
+
+Configure `[agent.pi]` or `[agent.omp]`, start `agentix serve`, and keep the original terminal session running. The extension connects to `~/.local/share/agentix/control.sock`; select it with `/sessions pi` or `/sessions omp`. `/detach` leaves the terminal running. See [bridge setup](plugins/agentix-bridge/README.md) for multiple backends and custom endpoints. Live bridging requires macOS/Linux.
+
+## Claude Code
+
+From the Agentix checkout, install the bridge plugin:
+
+```sh
+claude plugin marketplace add .
+claude plugin install agentix-bridge@agentix
+```
+
+Add the backend to your Agentix configuration:
+
+```toml
+[agent.claude]
+command = "claude"
+session_dir = "~/.claude/projects"
+```
+
+Start or restart the current Agentix build. In an rmux terminal, change to your project directory and launch Claude:
+
+```sh
+claude
+```
+
+Keep the terminal running and idle, and select the session with `/sessions claude` in IM. The plugin clears any terminal draft before sending IM prompts through rmux and reports replies through hooks; Channel flags are not required, including when using third-party API providers. `/rmux claude` creates a suitable terminal from IM. Channel delivery remains available through explicit configuration. See the [Claude startup guide](docs/claude-code.md#start-claude-code) for local build commands, setup, and terminal delivery limitations.
+
 ## Basic use
 
 1. Start a coding-agent session locally.
@@ -91,7 +129,7 @@ Send the printed `/claim <code>` command to the bot in a private chat. Skip this
 
 Mention the bot in group chats. If another Codex process owns the session's writer, Agentix attaches read-only; send prompts through that original process.
 
-To create Codex sessions from chat, install optional rmux and use `/rmux`; see [rmux workspaces](docs/usage.md#rmux-workspaces). Connecting to existing Codex sessions does not require rmux.
+To create sessions from chat, install optional rmux and use `/rmux` (or `/rmux pi`, `/rmux omp`, `/rmux codex`); see [rmux workspaces](docs/usage.md#rmux-workspaces). Connecting to existing sessions does not require rmux. Pi and OMP attachments control the original process through the shared, owner-only Unix control socket.
 
 With [task boards configured](docs/guide.md#im-task-boards), use `/dashboard`, `/board`, and `/jobs` to browse work. Use `/inboxes` to view the current project's human queue and `/inbox <content>` to append a requirement; explicitly ask the agent to take the next Job after reviewing its current result. See [Project inbox](docs/task-board.md#project-inbox) for document submission and cancellation.
 

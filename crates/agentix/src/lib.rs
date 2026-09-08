@@ -1,5 +1,9 @@
 //! Agentix configuration and runtime assembly.
 
+mod config_file;
+mod engine_runtime;
+mod notification_runtime;
+pub use engine_runtime::{run_engine_loop, shutdown_engine};
 mod network;
 
 pub use network::NetworkConfig;
@@ -12,7 +16,7 @@ use serde::Deserialize;
 use toml_edit::{Array, DocumentMut, Item, Table, Value};
 
 #[derive(Debug, Clone, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(try_from = "config_file::ConfigFile")]
 pub struct Config {
     #[serde(default)]
     pub network: NetworkConfig,
@@ -23,7 +27,10 @@ pub struct Config {
     #[serde(default)]
     pub notifications: NotificationConfig,
     pub channel: ChannelConfig,
-    pub agent: AgentConfig,
+    #[serde(default)]
+    pub agent: Option<AgentConfig>,
+    #[serde(default)]
+    pub agents: Vec<AgentConfig>,
     pub storage: StorageConfig,
     #[serde(default)]
     pub task_board: Option<TaskBoardConfig>,
@@ -134,8 +141,15 @@ pub enum ImChannel {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-#[serde(tag = "kind", rename_all = "kebab-case")]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum AgentConfig {
+    Claude {
+        #[serde(default = "default_claude_command")]
+        command: PathBuf,
+        session_dir: PathBuf,
+        #[serde(default = "default_rmux_directory")]
+        rmux_directory: PathBuf,
+    },
     Codex {
         #[serde(default = "default_codex_endpoint")]
         endpoint: String,
@@ -148,11 +162,20 @@ pub enum AgentConfig {
         #[serde(default = "default_pi_command")]
         command: PathBuf,
         session_dir: PathBuf,
+        #[serde(default)]
+        bridge_extension: Option<PathBuf>,
+        #[serde(default = "default_rmux_directory")]
+        rmux_directory: PathBuf,
     },
+    #[serde(alias = "omp")]
     OhMyPi {
         #[serde(default = "default_omp_command")]
         command: PathBuf,
         session_dir: PathBuf,
+        #[serde(default)]
+        bridge_extension: Option<PathBuf>,
+        #[serde(default = "default_rmux_directory")]
+        rmux_directory: PathBuf,
     },
 }
 
@@ -182,7 +205,24 @@ pub struct FeishuConfig {
     pub owner_open_ids: Vec<String>,
 }
 
+impl AgentConfig {
+    #[must_use]
+    pub const fn kind(&self) -> agentix_core::AgentKind {
+        match self {
+            Self::Claude { .. } => agentix_core::AgentKind::Claude,
+            Self::Codex { .. } => agentix_core::AgentKind::Codex,
+            Self::Pi { .. } => agentix_core::AgentKind::Pi,
+            Self::OhMyPi { .. } => agentix_core::AgentKind::Omp,
+        }
+    }
+}
+
 impl Config {
+    #[must_use]
+    pub fn selected_agents(&self) -> Vec<&AgentConfig> {
+        self.agent.iter().chain(self.agents.iter()).collect()
+    }
+
     #[must_use]
     pub fn enabled_task_board(&self) -> Option<&TaskBoardConfig> {
         self.task_board
@@ -205,6 +245,20 @@ impl Config {
 
     pub fn validate(&self) -> Result<()> {
         self.network.validate()?;
+        if self.agent.is_some() && !self.agents.is_empty() {
+            bail!("use either [agent] or [[agents]], not both");
+        }
+        let selected = self.selected_agents();
+        if selected.is_empty() {
+            bail!("configure at least one agent backend");
+        }
+        let mut kinds = std::collections::HashSet::new();
+        for agent in selected {
+            if !kinds.insert(agent.kind()) {
+                bail!("duplicate agent backend");
+            }
+        }
+
         match self.channel.kind {
             ImChannel::Telegram => {
                 let telegram = self.channel.telegram.as_ref().context(
@@ -255,29 +309,47 @@ impl Config {
         self.server.endpoint =
             expand_home_in_unix_endpoint(&self.server.endpoint, home.as_deref())?;
 
-        match &mut self.agent {
-            AgentConfig::Codex {
-                endpoint,
-                command,
-                rmux_directory,
-            } => {
-                *command = expand_home_path(command, home.as_deref())?;
-                *rmux_directory = expand_home_path(rmux_directory, home.as_deref())?;
-                *endpoint = expand_home_in_unix_endpoint(endpoint, home.as_deref())?;
-            }
-            AgentConfig::Pi {
-                command,
-                session_dir,
-            }
-            | AgentConfig::OhMyPi {
-                command,
-                session_dir,
-            } => {
-                *command = expand_home_path(command, home.as_deref())?;
-                *session_dir = expand_home_path(session_dir, home.as_deref())?;
+        for agent in self.agent.iter_mut().chain(self.agents.iter_mut()) {
+            match agent {
+                AgentConfig::Claude {
+                    command,
+                    session_dir,
+                    rmux_directory,
+                } => {
+                    *command = expand_home_path(command, home.as_deref())?;
+                    *session_dir = expand_home_path(session_dir, home.as_deref())?;
+                    *rmux_directory = expand_home_path(rmux_directory, home.as_deref())?;
+                }
+                AgentConfig::Codex {
+                    endpoint,
+                    command,
+                    rmux_directory,
+                } => {
+                    *command = expand_home_path(command, home.as_deref())?;
+                    *rmux_directory = expand_home_path(rmux_directory, home.as_deref())?;
+                    *endpoint = expand_home_in_unix_endpoint(endpoint, home.as_deref())?;
+                }
+                AgentConfig::Pi {
+                    command,
+                    session_dir,
+                    bridge_extension,
+                    rmux_directory,
+                }
+                | AgentConfig::OhMyPi {
+                    command,
+                    session_dir,
+                    bridge_extension,
+                    rmux_directory,
+                } => {
+                    *command = expand_home_path(command, home.as_deref())?;
+                    *session_dir = expand_home_path(session_dir, home.as_deref())?;
+                    *rmux_directory = expand_home_path(rmux_directory, home.as_deref())?;
+                    if let Some(path) = bridge_extension {
+                        *path = expand_home_path(path, home.as_deref())?;
+                    }
+                }
             }
         }
-
         Ok(())
     }
 }
@@ -434,4 +506,8 @@ fn default_log_file_path() -> PathBuf {
 
 const fn default_max_log_files() -> usize {
     7
+}
+
+fn default_claude_command() -> PathBuf {
+    PathBuf::from("claude")
 }

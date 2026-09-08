@@ -1,0 +1,42 @@
+{
+  "name": "agentix-bridge",
+  "version": "0.1.0",
+  "description": "Connect live Pi, OMP, and Claude Code terminals to Agentix",
+  "type": "module",
+  "license": "MIT",
+  "keywords": [
+    "pi-package"
+  ],
+  "files": [
+    "runtime.mjs",
+    "extensions/",
+    "README.md",
+    "protocol/",
+    "queue.mjs",
+    "transport.mjs",
+    "framing.mjs",
+    "host.mjs",
+    "session.mjs",
+    "claude/",
+    ".claude-plugin/",
+    ".mcp.json",
+    "hooks/"
+  ],
+  "scripts": {
+    "test": "node --test tests/*.test.mjs"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions/pi.ts"
+    ]
+  },
+  "omp": {
+    "extensions": [
+      "./extensions/omp.ts"
+    ]
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "esbuild": "0.28.2"
+  }
+}

@@ -8,16 +8,16 @@ The first release supports:
 
 | Area | Included | Deferred |
 | --- | --- | --- |
-| IM agent backends | Codex, Pi, Oh My Pi | Claude Code transport |
+| IM agent backends | Codex, Pi, Oh My Pi, Claude Code plugin with rmux input | Claude native stop, steering, model control, and approval relay |
 | Standalone task coordination | taskcli and the Codex, Claude Code, Pi, and OMP plugin | automatic team scheduling |
 | IM channels | Telegram, Feishu | Slack, Discord, others |
 | Session operations | discover, attach, current, detach, history, create, fork, compact | archive/delete |
-| Turn operations | start, persistent Codex follow-up queue, steer, stream, stop, model and reasoning settings | sandbox configuration |
+| Turn operations | start, persistent Codex/Pi/OMP follow-up queues, steer, stream, stop, model and reasoning settings | sandbox configuration |
 | Human input | approvals, confirmation, free text, structured multi-question input with an `Other…` path | richer native form layouts |
 
 ## 2. Core user model
 
-An Agentix instance selects one agent backend and exactly one IM channel. Running Telegram and Feishu together requires separate configuration/state instances. The same backend can have many concurrent sessions.
+An Agentix instance selects one or more distinct agent backends and exactly one IM channel. Running Telegram and Feishu together requires separate configuration/state instances. The same backend can have many concurrent sessions.
 
 The core invariant is deliberately strict:
 
@@ -106,7 +106,7 @@ The old session becomes draining and the new session becomes current. Old stream
 
 Telegram converts agent Markdown to MarkdownV2 in bounded UTF-8 text messages, registers a native command menu, and uses two-column inline keyboards. Feishu uses shared Card JSON 2.0 documents with a status-colored header, title/subtitle, Markdown body, and callback buttons. Because Feishu has no runtime API for per-conversation native bot menus, an interactive command card is sent after attachment and updated in place when attachment state changes. Both presentations are generated from the same channel-neutral `OutboundView` and `CommandMenu` models.
 
-Status colors are semantic: blue for running, orange for waiting/warning, green for success, red for error, and grey for muted information, and purple for background turns. Feishu also gives background quoted content a tinted container; Telegram adds a ⚫ Background marker.
+Status colors are semantic: blue for running, orange for waiting/warning, green for success, red for error, and grey for muted information, and purple for background turns. Feishu also gives background quoted content a grey container; Telegram adds a ⚫ Background marker.
 
 ## 6. Security and privacy
 
