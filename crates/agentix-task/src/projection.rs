@@ -1309,8 +1309,29 @@ fn job_dependency_graph(
         }
     }
     for task in tasks {
+        let mut indirect = BTreeSet::new();
+        if task.dependencies.len() > 1 {
+            let mut pending: Vec<_> = task.dependencies.iter().map(String::as_str).collect();
+            let mut visited = BTreeSet::new();
+            while let Some(id) = pending.pop() {
+                if !visited.insert(id) {
+                    continue;
+                }
+                let ancestor = index.task(id)?;
+                // Other Jobs' incoming edges are not drawn. Only reduce paths
+                // that remain visible in this diagram.
+                if ancestor.job_id == job_id {
+                    for prerequisite in &ancestor.dependencies {
+                        indirect.insert(prerequisite.as_str());
+                        pending.push(prerequisite.as_str());
+                    }
+                }
+            }
+        }
         for prerequisite in &task.dependencies {
-            diagram.push_str(&format!("    {prerequisite} --> {}\n", task.id));
+            if !indirect.contains(prerequisite.as_str()) {
+                diagram.push_str(&format!("    {prerequisite} --> {}\n", task.id));
+            }
         }
     }
     for status in TaskStatus::ALL {
