@@ -71,6 +71,8 @@ agentix serve
 
 On Windows, use `agentix.exe doctor` and `agentix.exe serve`. To run a Homebrew installation in the background, use `brew services start tenfyzhong/tap/agentix`.
 
+Before starting a managed Codex daemon, Agentix loads the exported environment from the current user's login shell, so Homebrew services pass configured paths and other variables to Codex. Put fish environment settings outside `status is-interactive` blocks. See [login shell environment](docs/development-and-operations.md#login-shell-environment) for overrides and existing daemons.
+
 Keep the service running and claim the bot from another local terminal:
 
 ```sh
