@@ -4,7 +4,7 @@ CARGO ?= cargo
 
 .DEFAULT_GOAL := build
 
-.PHONY: build release completions check fmt clippy test plugin-deps clean help dev-test
+.PHONY: build release completions check fmt clippy test plugin-deps clean help dev-test prod-test
 
 build:
 	$(CARGO) build --workspace --all-features
@@ -43,6 +43,14 @@ dev-test: build
 	codex plugin remove agent-task-manager@agentix
 	codex plugin marketplace remove agentix
 	codex plugin marketplace add .
+	codex plugin add agent-task-manager@agentix
+
+prod-test:
+	rm -f ~/.local/bin/taskcli
+	taskcli obsidian setup
+	codex plugin remove agent-task-manager@agentix
+	codex plugin marketplace remove agentix
+	codex plugin marketplace add tenfyzhong/agentix
 	codex plugin add agent-task-manager@agentix
 
 clean:
