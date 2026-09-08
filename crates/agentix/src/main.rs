@@ -1596,12 +1596,13 @@ owner_open_ids = ["ou_owner"]
             &path,
             format!(
                 "schema_version=1\n[storage]\npath='{}'\n\
-                 [documents]\nformat='markdown'\nroot='{}'\ndirectory='Tasks'\n",
+                 [documents]\nroot='{}'\ndirectory='Tasks'\n",
                 database.display(),
                 directory.path().display(),
             ),
         )
         .unwrap();
+        std::fs::create_dir(directory.path().join(".obsidian")).unwrap();
         let service = super::build_task_board(&config).await.unwrap().unwrap();
         assert_eq!(service.config().storage.path, database);
         assert!(database.is_file());

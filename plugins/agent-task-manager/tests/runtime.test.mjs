@@ -45,7 +45,7 @@ test("skill language is injected by hooks and extensions independently of taskcl
         else process.env.TASKCLI_LANGUAGE = legacy;
     });
     process.env.TASKCLI_LANGUAGE = "zh-CN";
-    const context = { job_id: "job_one", documents: { format: "markdown" } };
+    const context = { job_id: "job_one", documents: { root: "/vault", directory: "Tasks" } };
     const runner = async () => ({ schema_version: 1, ok: true, result: context });
     for (const [setting, expected] of [[undefined,"en"],["  ","en"],[" zh-CN ","zh-CN"],["ja","ja"]]) {
         if (setting === undefined) delete process.env.AGENT_TASK_LANG;
@@ -115,7 +115,7 @@ test("Pi and OMP tool reuses current lease, injects context and cancels heartbea
                     job_id: "job_one",
                     task_id: "task_one",
                     lease: { token: "lease_one" },
-                    documents: { format: "markdown" },
+                    documents: { root: "/vault", directory: "Tasks" },
                 },
             };
         return { schema_version: 1, ok: true, result: {} };

@@ -55,22 +55,14 @@ impl Fixture {
             .await
             .unwrap();
     }
-    fn dashboard_file(&self) -> &'static str {
-        match self.service.config().documents.format {
-            agentix_task::DocumentFormat::Obsidian => "Dashboard.base",
-            agentix_task::DocumentFormat::Markdown => "Dashboard.md",
-        }
-    }
 
-    async fn new(format: &str) -> Self {
+    async fn new() -> Self {
         let dir = TempDir::new().unwrap();
         let root = dir.path().join("documents");
         std::fs::create_dir_all(&root).unwrap();
-        if format == "obsidian" {
-            std::fs::create_dir_all(root.join(".obsidian")).unwrap();
-        }
+        std::fs::create_dir_all(root.join(".obsidian")).unwrap();
         let config: Config = toml::from_str(&format!(
-            "schema_version = 1\n[storage]\npath = {:?}\n[documents]\nformat = {format:?}\nroot = {:?}\ndirectory = 'Tasks \u{2603}'\n",
+            "schema_version = 1\n[storage]\npath = {:?}\n[documents]\nroot = {:?}\ndirectory = 'Tasks \u{2603}'\n",
             dir.path().join("tasks.sqlite3").to_str().unwrap(), root.to_str().unwrap()
         )).unwrap();
         let clock = Arc::new(AtomicI64::new(1_788_566_400));
@@ -205,7 +197,7 @@ async fn populate_board_states(f: &Fixture) {
 
 #[tokio::test]
 async fn start_waits_for_plan_writes_and_rechecks_ownership_before_committing() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let task = f.task("serialize start with Plan").await;
     let claim = f.claim(&task, "locking").await;
     f.plan(&task).await;
@@ -251,7 +243,7 @@ async fn start_waits_for_plan_writes_and_rechecks_ownership_before_committing() 
 
 #[tokio::test]
 async fn rejected_start_does_not_refresh_plan_metadata() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let task = f.task("unauthorized start").await;
     let claim = f.claim(&task, "owner").await;
     let plan = f.plan(&task).await;
@@ -280,7 +272,7 @@ async fn rejected_start_does_not_refresh_plan_metadata() {
 
 #[tokio::test]
 async fn task_note_shows_planning_and_executing_in_frontmatter() {
-    let f = Fixture::new("obsidian").await;
+    let f = Fixture::new().await;
     let id = f.task("Visible phase").await;
     let claim = f.claim(&id, "visible").await;
     let plan = f.plan(&id).await;
@@ -298,7 +290,7 @@ async fn task_note_shows_planning_and_executing_in_frontmatter() {
 
 #[tokio::test]
 async fn planning_claim_excludes_other_writers_and_start_keeps_the_same_lease() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let task = f.task("Plan after ownership").await;
     let plan = json!({"command":"plan.create","task":task,"body":"# Owned Plan"});
     assert!(
@@ -359,7 +351,7 @@ async fn planning_claim_excludes_other_writers_and_start_keeps_the_same_lease() 
 
 #[tokio::test]
 async fn planning_is_allowed_before_dependencies_finish_but_execution_is_not() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let dependency = f.task("Prerequisite").await;
     let task = f.task("Dependent planning").await;
     f.service
@@ -418,7 +410,7 @@ async fn planning_is_allowed_before_dependencies_finish_but_execution_is_not() {
 #[tokio::test]
 async fn interruption_releases_only_its_session_and_allows_reclaim_or_deletion() {
     for executing in [false, true] {
-        let f = Fixture::new("markdown").await;
+        let f = Fixture::new().await;
         let task = f.task("Interrupted task").await;
         let other = f.task("Other session").await;
         let other_claim = f.claim(&other, "other").await;
@@ -520,7 +512,7 @@ async fn interruption_releases_only_its_session_and_allows_reclaim_or_deletion()
 
 #[tokio::test]
 async fn a_planning_lease_recovers_without_a_plan_and_fences_the_old_owner() {
-    let f = Fixture::new("obsidian").await;
+    let f = Fixture::new().await;
     let task = f.task("Interrupted planning").await;
     let claim = f.claim(&task, "planner").await;
     f.service
@@ -564,7 +556,7 @@ async fn a_planning_lease_recovers_without_a_plan_and_fences_the_old_owner() {
 
 #[tokio::test]
 async fn start_rejects_a_missing_or_empty_plan_file_without_consuming_the_lease() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let task = f.task("Plan validation").await;
     let claim = f.claim(&task, "planner").await;
     let plan = f
@@ -602,7 +594,7 @@ async fn start_rejects_a_missing_or_empty_plan_file_without_consuming_the_lease(
 async fn legacy_executing_tasks_migrate_without_losing_their_lease_or_history() {
     use sqlx::Connection;
     use sqlx::sqlite::SqliteConnectOptions;
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let task = f.task("Legacy execution").await;
     let path = &f.service.config().storage.path;
     let mut db = sqlx::SqliteConnection::connect_with(&SqliteConnectOptions::new().filename(path))
@@ -644,7 +636,7 @@ async fn legacy_executing_tasks_migrate_without_losing_their_lease_or_history() 
 
 #[tokio::test]
 async fn starts_require_dependencies_and_claims_require_exclusive_ownership() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let a = f.task("database").await;
     let b = f.task("client").await;
     let cmd = json!({"command":"task.claim","task":a,"executor":"agent:a","session":"a"});
@@ -711,7 +703,7 @@ async fn starts_require_dependencies_and_claims_require_exclusive_ownership() {
 
 #[tokio::test]
 async fn independent_connections_racing_to_claim_have_one_winner() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let id = f.task("exclusive").await;
     let now = f.clock.clone();
     let other = Store::open_with_clock(
@@ -735,7 +727,7 @@ async fn independent_connections_racing_to_claim_have_one_winner() {
 
 #[tokio::test]
 async fn stale_lease_cannot_heartbeat_or_complete_after_reclaim() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let task = f.task("leased").await;
     let old = f.start(&task, "old").await;
     f.clock.fetch_add(3600, Ordering::SeqCst);
@@ -769,7 +761,7 @@ async fn stale_lease_cannot_heartbeat_or_complete_after_reclaim() {
 
 #[tokio::test]
 async fn idempotency_and_revisions_prevent_replay_and_lost_updates() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let cmd = json!({"command":"task.add","job":f.job,"title":"once"});
     let options = WriteOptions {
         idempotency_key: Some("create-once".into()),
@@ -830,7 +822,7 @@ async fn idempotency_and_revisions_prevent_replay_and_lost_updates() {
 
 #[tokio::test]
 async fn session_resume_only_recovers_system_blocks_and_preserves_team_origin() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let id = f.task("resume").await;
     f.start(&id, "codex:one").await;
     f.service
@@ -888,7 +880,7 @@ async fn session_resume_only_recovers_system_blocks_and_preserves_team_origin() 
 
 #[tokio::test]
 async fn cancelled_only_jobs_are_not_completed_and_finished_jobs_reject_new_tasks() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let id = f.task("cancelled").await;
     f.service
         .execute(
@@ -928,96 +920,94 @@ async fn cancelled_only_jobs_are_not_completed_and_finished_jobs_reject_new_task
 
 #[tokio::test]
 async fn projections_are_read_only_preserve_notes_and_archive_links() {
-    for format in ["markdown", "obsidian"] {
-        let f = Fixture::new(format).await;
-        let id = f.task("Task | Unicode \u{2603} [x]").await;
-        let claim = f.claim(&id, "archive").await;
-        let plan = f.plan(&id).await;
-        let state = f.service.store().snapshot().await.unwrap();
-        let project = &state.projects[0];
-        let output = f.service.config().output_dir();
-        let job_path = output.join(&state.jobs[0].document_path);
-        let job = std::fs::read_to_string(&job_path).unwrap();
-        assert!(job.contains("GENERATED"));
-        let changed = job.replace(
-            "<!-- taskcli:notes:start -->",
-            "<!-- taskcli:notes:start -->\nMy persistent note.",
-        );
-        std::fs::write(&job_path, changed).unwrap();
-        let board_path = output.join(format!("Projects/{}/Board.md", project.key));
-        std::fs::write(&board_path, "manual state edit DONE").unwrap();
-        f.service.sync().await.unwrap();
-        let board = std::fs::read_to_string(&board_path).unwrap();
-        assert!(!board.contains("manual state edit"));
-        assert!(board.contains("tasknotesKanban"));
-        assert!(!board.contains("|Project]]") && !board.contains("[Project]("));
-        assert!(
-            std::fs::read_to_string(&job_path)
-                .unwrap()
-                .contains("My persistent note.")
-        );
-        let plan_path = std::path::PathBuf::from(plan["absolute_path"].as_str().unwrap());
-        std::fs::write(&plan_path, "# My revised plan\n").unwrap();
-        f.service.sync().await.unwrap();
-        let before = f.service.store().snapshot().await.unwrap().plans[0]
-            .hash
-            .clone();
-        let revised = f
-            .service
-            .execute(
-                json!({"command":"plan.revise","task":id,"body":"# Second version\n"}),
-                owner(&claim),
-            )
-            .await
-            .unwrap();
-        assert_eq!(revised.result["version"], 2);
-        assert!(
-            std::fs::read_to_string(&plan_path)
-                .unwrap()
-                .ends_with("# Second version\n")
-        );
-        assert_eq!(revised.result["absolute_path"], plan["absolute_path"]);
-        assert!(!before.is_empty());
-        f.service
-            .execute(json!({"command":"task.start","task":id}), owner(&claim))
-            .await
-            .unwrap();
-        f.service
-            .execute(json!({"command":"task.done","task":id}), owner(&claim))
-            .await
-            .unwrap();
-        f.approve().await;
-        f.service
-            .execute(
-                json!({"command":"job.archive","job":f.job}),
-                WriteOptions::default(),
-            )
-            .await
-            .unwrap();
-        let archived = f.service.store().snapshot().await.unwrap().jobs[0]
-            .document_path
-            .clone();
-        assert!(archived.contains("/Jobs/Archived/"));
-        assert!(!job_path.exists());
-        assert!(
-            std::fs::read_to_string(output.join(archived))
-                .unwrap()
-                .contains("My persistent note.")
-        );
-        f.service
-            .execute(
-                json!({"command":"job.unarchive","job":f.job}),
-                WriteOptions::default(),
-            )
-            .await
-            .unwrap();
-        assert!(job_path.exists());
-    }
+    let f = Fixture::new().await;
+    let id = f.task("Task | Unicode \u{2603} [x]").await;
+    let claim = f.claim(&id, "archive").await;
+    let plan = f.plan(&id).await;
+    let state = f.service.store().snapshot().await.unwrap();
+    let project = &state.projects[0];
+    let output = f.service.config().output_dir();
+    let job_path = output.join(&state.jobs[0].document_path);
+    let job = std::fs::read_to_string(&job_path).unwrap();
+    assert!(job.contains("GENERATED"));
+    let changed = job.replace(
+        "<!-- taskcli:notes:start -->",
+        "<!-- taskcli:notes:start -->\nMy persistent note.",
+    );
+    std::fs::write(&job_path, changed).unwrap();
+    let board_path = output.join(format!("Projects/{}/Board.md", project.key));
+    std::fs::write(&board_path, "manual state edit DONE").unwrap();
+    f.service.sync().await.unwrap();
+    let board = std::fs::read_to_string(&board_path).unwrap();
+    assert!(!board.contains("manual state edit"));
+    assert!(board.contains("tasknotesKanban"));
+    assert!(!board.contains("|Project]]") && !board.contains("[Project]("));
+    assert!(
+        std::fs::read_to_string(&job_path)
+            .unwrap()
+            .contains("My persistent note.")
+    );
+    let plan_path = std::path::PathBuf::from(plan["absolute_path"].as_str().unwrap());
+    std::fs::write(&plan_path, "# My revised plan\n").unwrap();
+    f.service.sync().await.unwrap();
+    let before = f.service.store().snapshot().await.unwrap().plans[0]
+        .hash
+        .clone();
+    let revised = f
+        .service
+        .execute(
+            json!({"command":"plan.revise","task":id,"body":"# Second version\n"}),
+            owner(&claim),
+        )
+        .await
+        .unwrap();
+    assert_eq!(revised.result["version"], 2);
+    assert!(
+        std::fs::read_to_string(&plan_path)
+            .unwrap()
+            .ends_with("# Second version\n")
+    );
+    assert_eq!(revised.result["absolute_path"], plan["absolute_path"]);
+    assert!(!before.is_empty());
+    f.service
+        .execute(json!({"command":"task.start","task":id}), owner(&claim))
+        .await
+        .unwrap();
+    f.service
+        .execute(json!({"command":"task.done","task":id}), owner(&claim))
+        .await
+        .unwrap();
+    f.approve().await;
+    f.service
+        .execute(
+            json!({"command":"job.archive","job":f.job}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    let archived = f.service.store().snapshot().await.unwrap().jobs[0]
+        .document_path
+        .clone();
+    assert!(archived.contains("/Jobs/Archived/"));
+    assert!(!job_path.exists());
+    assert!(
+        std::fs::read_to_string(output.join(archived))
+            .unwrap()
+            .contains("My persistent note.")
+    );
+    f.service
+        .execute(
+            json!({"command":"job.unarchive","job":f.job}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    assert!(job_path.exists());
 }
 
 #[tokio::test]
 async fn concurrent_jobs_are_independent_and_cross_project_dependencies_are_rejected() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let a = f.task("a").await;
     let j = f.service.execute(json!({"command":"job.create","project":f.project,"title":"Next requirement","goal":"Independent"}), WriteOptions::default()).await.unwrap().result["id"].as_str().unwrap().to_owned();
     let b = f
@@ -1077,270 +1067,247 @@ async fn concurrent_jobs_are_independent_and_cross_project_dependencies_are_reje
 
 #[tokio::test]
 async fn dashboard_stays_project_only_as_jobs_grow() {
-    for format in ["markdown", "obsidian"] {
-        let f = Fixture::new(format).await;
-        let output = f.service.config().output_dir();
-        let before = std::fs::read_to_string(output.join(f.dashboard_file())).unwrap();
-        for index in 0..20 {
-            f.service
-                .store()
-                .execute(
-                    json!({"command":"job.create", "project":f.project,
-                        "title":format!("Extra job {index}"), "goal":"Ship it"}),
-                    WriteOptions::default(),
-                )
-                .await
-                .unwrap();
-        }
-        f.service.sync().await.unwrap();
-        let dashboard = std::fs::read_to_string(output.join(f.dashboard_file())).unwrap();
-        assert_eq!(
-            dashboard, before,
-            "Job count must not change {format} Dashboard"
-        );
-        if format == "markdown" {
-            assert!(dashboard.contains("| [demo](Projects/demo/Board.md) | ACTIVE |"));
-        } else {
-            assert!(dashboard.contains("link(file.path, note.name)"));
-            assert!(dashboard.contains("file.hasTag(\"agent/project\")"));
-        }
-        assert!(!dashboard.contains("Kanban board"));
-        assert!(!dashboard.contains("Projects/demo/meta"));
-        assert!(!dashboard.contains("Feature"));
-        assert!(!dashboard.contains("Jobs/"));
-        for job in f.service.store().snapshot().await.unwrap().jobs {
-            assert!(output.join(job.document_path).is_file());
-        }
+    let f = Fixture::new().await;
+    let output = f.service.config().output_dir();
+    let before = std::fs::read_to_string(output.join("Dashboard.base")).unwrap();
+    for index in 0..20 {
+        f.service
+            .store()
+            .execute(
+                json!({"command":"job.create", "project":f.project,
+                    "title":format!("Extra job {index}"), "goal":"Ship it"}),
+                WriteOptions::default(),
+            )
+            .await
+            .unwrap();
+    }
+    f.service.sync().await.unwrap();
+    let dashboard = std::fs::read_to_string(output.join("Dashboard.base")).unwrap();
+    assert_eq!(
+        dashboard, before,
+        "Job count must not change Obsidian Dashboard"
+    );
+    assert!(dashboard.contains("link(file.path, note.name)"));
+    assert!(dashboard.contains("file.hasTag(\"agent/project\")"));
+    assert!(!dashboard.contains("Kanban board"));
+    assert!(!dashboard.contains("Projects/demo/meta"));
+    assert!(!dashboard.contains("Feature"));
+    assert!(!dashboard.contains("Jobs/"));
+    for job in f.service.store().snapshot().await.unwrap().jobs {
+        assert!(output.join(job.document_path).is_file());
     }
 }
 
 #[tokio::test]
 async fn job_type_tags_switch_exclusively_on_archive_and_restore() {
-    for format in ["markdown", "obsidian"] {
-        let f = Fixture::new(format).await;
-        for (command, tag) in [
-            ("job.cancel", "agent/job"),
-            ("job.archive", "agent/archived/job"),
-            ("job.unarchive", "agent/job"),
-        ] {
-            let job = f
-                .service
-                .execute(
-                    json!({"command":command,"job":f.job}),
-                    WriteOptions::default(),
-                )
-                .await
-                .unwrap()
-                .result;
-            let path = f
-                .service
-                .config()
-                .output_dir()
-                .join(job["document_path"].as_str().unwrap());
-            for repair in [false, true] {
-                if repair {
-                    let old = std::fs::read_to_string(&path).unwrap();
-                    let old = old
-                        .lines()
-                        .map(|line| {
-                            if line.starts_with("tags:") {
-                                "tags: [agent/job, agent/archived/job]"
-                            } else {
-                                line
-                            }
-                        })
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    std::fs::write(&path, old).unwrap();
-                    f.service.sync().await.unwrap();
-                }
-                let doc = std::fs::read_to_string(&path).unwrap();
-                let yaml = doc
-                    .strip_prefix("---\n")
-                    .unwrap()
-                    .split_once("\n---\n")
-                    .unwrap()
-                    .0;
-                let properties: Value = serde_yaml::from_str(yaml).unwrap();
-                assert_eq!(properties["tags"], json!([tag]), "{format}: {command}");
+    let f = Fixture::new().await;
+    for (command, tag) in [
+        ("job.cancel", "agent/job"),
+        ("job.archive", "agent/archived/job"),
+        ("job.unarchive", "agent/job"),
+    ] {
+        let job = f
+            .service
+            .execute(
+                json!({"command":command,"job":f.job}),
+                WriteOptions::default(),
+            )
+            .await
+            .unwrap()
+            .result;
+        let path = f
+            .service
+            .config()
+            .output_dir()
+            .join(job["document_path"].as_str().unwrap());
+        for repair in [false, true] {
+            if repair {
+                let old = std::fs::read_to_string(&path).unwrap();
+                let old = old
+                    .lines()
+                    .map(|line| {
+                        if line.starts_with("tags:") {
+                            "tags: [agent/job, agent/archived/job]"
+                        } else {
+                            line
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                std::fs::write(&path, old).unwrap();
+                f.service.sync().await.unwrap();
             }
+            let doc = std::fs::read_to_string(&path).unwrap();
+            let yaml = doc
+                .strip_prefix("---\n")
+                .unwrap()
+                .split_once("\n---\n")
+                .unwrap()
+                .0;
+            let properties: Value = serde_yaml::from_str(yaml).unwrap();
+            assert_eq!(properties["tags"], json!([tag]), "Obsidian: {command}");
         }
     }
 }
 
 #[tokio::test]
 async fn job_frontmatter_omits_internal_fields_and_keeps_obsidian_display_title() {
-    for format in ["markdown", "obsidian"] {
-        let f = Fixture::new(format).await;
-        f.task("Visible task").await;
-        for archived in [false, true] {
-            if archived {
-                for command in ["job.cancel", "job.archive"] {
-                    f.service
-                        .execute(
-                            json!({"command":command,"job":f.job}),
-                            WriteOptions::default(),
-                        )
-                        .await
-                        .unwrap();
-                }
-            }
-            let state = f.service.store().snapshot().await.unwrap();
-            let job = &state.jobs[0];
-            let doc =
-                std::fs::read_to_string(f.service.config().output_dir().join(&job.document_path))
+    let f = Fixture::new().await;
+    f.task("Visible task").await;
+    for archived in [false, true] {
+        if archived {
+            for command in ["job.cancel", "job.archive"] {
+                f.service
+                    .execute(
+                        json!({"command":command,"job":f.job}),
+                        WriteOptions::default(),
+                    )
+                    .await
                     .unwrap();
-            let (_, rest) = doc.split_once("---\n").unwrap();
-            let (yaml, body) = rest.split_once("---\n").unwrap();
-            let properties: Value = serde_yaml::from_str(yaml).unwrap();
-            if format == "obsidian" {
-                assert_eq!(properties["title"], job.name);
-                assert_eq!(properties["archived"], archived);
-            } else {
-                assert!(properties.get("title").is_none());
             }
-            for field in ["document_path", "task", "tasks", "name"] {
-                assert!(
-                    properties.get(field).is_none(),
-                    "{field} must be absent in {format} Job properties"
-                );
-            }
-            for field in [
-                "id",
-                "project_id",
-                "status",
-                "revision",
-                "sequence",
-                "created_at",
-                "updated_at",
-                "started_at",
-                "completed_at",
-                "cancelled_at",
-                "archived_at",
-                "tags",
-            ] {
-                assert!(properties.get(field).is_some(), "{field} must remain");
-            }
-            assert_eq!(properties["id"], f.job);
-            assert_eq!(properties["archived_at"].is_null(), !archived);
-            assert!(body.contains("# Feature"));
-            assert!(body.contains("Visible task"));
-            assert_eq!(job.name, "Feature");
-            assert_eq!(job.title, "Feature");
-            assert_eq!(state.tasks.len(), 1);
         }
+        let state = f.service.store().snapshot().await.unwrap();
+        let job = &state.jobs[0];
+        let doc = std::fs::read_to_string(f.service.config().output_dir().join(&job.document_path))
+            .unwrap();
+        let (_, rest) = doc.split_once("---\n").unwrap();
+        let (yaml, body) = rest.split_once("---\n").unwrap();
+        let properties: Value = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(properties["title"], job.name);
+        assert_eq!(properties["archived"], archived);
+        for field in ["document_path", "task", "tasks", "name"] {
+            assert!(
+                properties.get(field).is_none(),
+                "{field} must be absent in Obsidian Job properties"
+            );
+        }
+        for field in [
+            "id",
+            "project_id",
+            "status",
+            "revision",
+            "sequence",
+            "created_at",
+            "updated_at",
+            "started_at",
+            "completed_at",
+            "cancelled_at",
+            "archived_at",
+            "tags",
+        ] {
+            assert!(properties.get(field).is_some(), "{field} must remain");
+        }
+        assert_eq!(properties["id"], f.job);
+        assert_eq!(properties["archived_at"].is_null(), !archived);
+        assert!(body.contains("# Feature"));
+        assert!(body.contains("Visible task"));
+        assert_eq!(job.name, "Feature");
+        assert_eq!(job.title, "Feature");
+        assert_eq!(state.tasks.len(), 1);
     }
 }
 
 #[tokio::test]
 async fn job_tasks_reference_notes_and_sync_removes_legacy_checkboxes() {
-    for format in ["markdown", "obsidian"] {
-        let f = Fixture::new(format).await;
-        f.task("Tagged task").await;
-        for archived in [false, true] {
-            if archived {
-                for command in ["job.cancel", "job.archive"] {
-                    f.service
-                        .execute(
-                            json!({"command":command,"job":f.job}),
-                            WriteOptions::default(),
-                        )
-                        .await
-                        .unwrap();
-                }
+    let f = Fixture::new().await;
+    f.task("Tagged task").await;
+    for archived in [false, true] {
+        if archived {
+            for command in ["job.cancel", "job.archive"] {
+                f.service
+                    .execute(
+                        json!({"command":command,"job":f.job}),
+                        WriteOptions::default(),
+                    )
+                    .await
+                    .unwrap();
             }
-            let state = f.service.store().snapshot().await.unwrap();
-            let path = f
-                .service
-                .config()
-                .output_dir()
-                .join(&state.jobs[0].document_path);
-            // Simulate a Job generated by an older taskcli installation.
-            let old = std::fs::read_to_string(&path)
-                .unwrap()
-                .replace("- [[", "- [ ] #task [[")
-                .replace("- [260", "- [ ] #task [260");
-            std::fs::write(&path, old).unwrap();
-            f.service.sync().await.unwrap();
-            let document = std::fs::read_to_string(&path).unwrap();
-            let tasks: Vec<_> = document
-                .lines()
-                .filter(|line| line.starts_with("- ["))
-                .collect();
-            assert_eq!(tasks.len(), 1);
-            assert!(!tasks[0].contains("#task"));
-            assert!(!tasks[0].contains("#agent/task"));
-            assert!(tasks[0].contains("Tasks/"));
         }
+        let state = f.service.store().snapshot().await.unwrap();
+        let path = f
+            .service
+            .config()
+            .output_dir()
+            .join(&state.jobs[0].document_path);
+        // Simulate a Job generated by an older taskcli installation.
+        let old = std::fs::read_to_string(&path)
+            .unwrap()
+            .replace("- [[", "- [ ] #task [[")
+            .replace("- [260", "- [ ] #task [260");
+        std::fs::write(&path, old).unwrap();
+        f.service.sync().await.unwrap();
+        let document = std::fs::read_to_string(&path).unwrap();
+        let tasks: Vec<_> = document
+            .lines()
+            .filter(|line| line.starts_with("- ["))
+            .collect();
+        assert_eq!(tasks.len(), 1);
+        assert!(!tasks[0].contains("#task"));
+        assert!(!tasks[0].contains("#agent/task"));
+        assert!(tasks[0].contains("Tasks/"));
     }
 }
 
 #[tokio::test]
 async fn job_task_references_display_plan_filenames_after_rename_and_archive() {
-    for format in ["markdown", "obsidian"] {
-        let f = Fixture::new(format).await;
-        let task = f.task("迁移语言配置").await;
-        let claim = f.claim(&task, "filename-label").await;
-        f.plan(&task).await;
-        for step in 0..3 {
-            if step == 1 {
-                f.service
-                    .execute(
-                        json!({"command":"task.update","task":task,"name":"更新语言配置"}),
-                        owner(&claim),
-                    )
-                    .await
-                    .unwrap();
-            } else if step == 2 {
-                f.service
-                    .execute(
-                        json!({"command":"task.release","task":task,"reason":"Archive fixture"}),
-                        owner(&claim),
-                    )
-                    .await
-                    .unwrap();
-                for command in ["job.cancel", "job.archive"] {
-                    f.service
-                        .execute(json!({"command":command,"job":f.job}), owner(&claim))
-                        .await
-                        .unwrap();
-                }
-            }
-            let state = f.service.store().snapshot().await.unwrap();
-            let plan = &state.plans[0];
-            let filename = std::path::Path::new(&plan.path)
-                .file_stem()
-                .unwrap()
-                .to_str()
-                .unwrap();
-            let document = std::fs::read_to_string(
-                f.service
-                    .config()
-                    .output_dir()
-                    .join(&state.jobs[0].document_path),
-            )
-            .unwrap();
-            let expected = if format == "obsidian" {
-                format!(
-                    "[[Tasks ☃/{}|{filename}]]",
-                    plan.path.trim_end_matches(".md")
+    let f = Fixture::new().await;
+    let task = f.task("迁移语言配置").await;
+    let claim = f.claim(&task, "filename-label").await;
+    f.plan(&task).await;
+    for step in 0..3 {
+        if step == 1 {
+            f.service
+                .execute(
+                    json!({"command":"task.update","task":task,"name":"更新语言配置"}),
+                    owner(&claim),
                 )
-            } else {
-                format!("[{filename}](")
-            };
-            assert!(
-                document.contains(&expected),
-                "{format}, step {step}: {document}"
-            );
-            assert!(!document.contains("|Plan]]"));
-            assert!(!document.contains("![Plan]("));
+                .await
+                .unwrap();
+        } else if step == 2 {
+            f.service
+                .execute(
+                    json!({"command":"task.release","task":task,"reason":"Archive fixture"}),
+                    owner(&claim),
+                )
+                .await
+                .unwrap();
+            for command in ["job.cancel", "job.archive"] {
+                f.service
+                    .execute(json!({"command":command,"job":f.job}), owner(&claim))
+                    .await
+                    .unwrap();
+            }
         }
+        let state = f.service.store().snapshot().await.unwrap();
+        let plan = &state.plans[0];
+        let filename = std::path::Path::new(&plan.path)
+            .file_stem()
+            .unwrap()
+            .to_str()
+            .unwrap();
+        let document = std::fs::read_to_string(
+            f.service
+                .config()
+                .output_dir()
+                .join(&state.jobs[0].document_path),
+        )
+        .unwrap();
+        let expected = format!(
+            "[[Tasks ☃/{}|{filename}]]",
+            plan.path.trim_end_matches(".md")
+        );
+        assert!(
+            document.contains(&expected),
+            "Obsidian, step {step}: {document}"
+        );
+        assert!(!document.contains("|Plan]]"));
+        assert!(!document.contains("![Plan]("));
     }
 }
 
 #[tokio::test]
 async fn obsidian_alias_separators_are_not_table_escaped_in_task_links() {
-    let f = Fixture::new("obsidian").await;
+    let f = Fixture::new().await;
     let task = f.task("Linked task").await;
     f.claim(&task, "links").await;
     f.plan(&task).await;
@@ -1353,7 +1320,7 @@ async fn obsidian_alias_separators_are_not_table_escaped_in_task_links() {
 
 #[tokio::test]
 async fn special_obsidian_titles_keep_entities_outside_wikilink_aliases() {
-    let f = Fixture::new("obsidian").await;
+    let f = Fixture::new().await;
     let task = f
         .task("Render | Unicode \u{2603} [link] & <tag> [[injection]]")
         .await;
@@ -1377,7 +1344,7 @@ async fn special_obsidian_titles_keep_entities_outside_wikilink_aliases() {
 
 #[tokio::test]
 async fn plan_idempotent_replay_returns_the_same_result_and_path() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let task = f.task("idempotent plan").await;
     let claim = f.claim(&task, "idempotent").await;
     let request = json!({"command":"plan.create","task":task,"body":"# Plan"});
@@ -1397,7 +1364,7 @@ async fn plan_idempotent_replay_returns_the_same_result_and_path() {
 
 #[tokio::test]
 async fn direct_store_calls_also_reject_expired_lease_tokens() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let task = f.task("expired").await;
     let claim = f.start(&task, "expired").await;
     f.clock.fetch_add(3600, Ordering::SeqCst);
@@ -1412,7 +1379,7 @@ async fn direct_store_calls_also_reject_expired_lease_tokens() {
 
 #[tokio::test]
 async fn missing_plan_allows_planning_resume_but_prevents_execution() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let task = f.task("missing plan").await;
     let claim = f.claim(&task, "missing").await;
     let plan = f.plan(&task).await;
@@ -1458,14 +1425,14 @@ async fn missing_plan_allows_planning_resume_but_prevents_execution() {
 
 #[tokio::test]
 async fn projection_failure_does_not_lose_committed_task_and_sync_repairs_it() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let output = f.service.config().output_dir();
     std::fs::rename(
-        output.join(f.dashboard_file()),
+        output.join("Dashboard.base"),
         f.dir.path().join("saved-dashboard.md"),
     )
     .unwrap();
-    std::fs::create_dir(output.join(f.dashboard_file())).unwrap();
+    std::fs::create_dir(output.join("Dashboard.base")).unwrap();
     let result = f
         .service
         .execute(
@@ -1476,14 +1443,14 @@ async fn projection_failure_does_not_lose_committed_task_and_sync_repairs_it() {
         .unwrap();
     assert!(result.projection_pending.is_some());
     assert_eq!(f.service.store().snapshot().await.unwrap().tasks.len(), 1);
-    std::fs::remove_dir(output.join(f.dashboard_file())).unwrap();
+    std::fs::remove_dir(output.join("Dashboard.base")).unwrap();
     f.service.sync().await.unwrap();
-    assert!(output.join(f.dashboard_file()).is_file());
+    assert!(output.join("Dashboard.base").is_file());
 }
 
 #[tokio::test]
 async fn concurrent_projections_keep_all_tasks_and_editable_notes() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let job_path = f
         .service
         .config()
@@ -1590,7 +1557,7 @@ async fn every_task_state_accepts_only_its_documented_commands_without_partial_w
             "retry",
             "reopen",
         ] {
-            let f = Fixture::new("markdown").await;
+            let f = Fixture::new().await;
             let id = task_in_state(&f, status).await;
             let before = f.service.store().snapshot().await.unwrap();
             let sequence = f.service.store().latest_sequence().await.unwrap();
@@ -1631,7 +1598,7 @@ async fn every_task_state_accepts_only_its_documented_commands_without_partial_w
 
 #[tokio::test]
 async fn same_executor_session_cannot_claim_two_ready_tasks_and_heartbeat_extends_lease() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let a = f.task("a").await;
     let b = f.task("b").await;
     let claim = f.claim(&a, "one").await;
@@ -1673,7 +1640,7 @@ async fn same_executor_session_cannot_claim_two_ready_tasks_and_heartbeat_extend
 
 #[tokio::test]
 async fn plan_revision_requires_current_owner_and_rejected_writes_leave_no_file() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let id = f.task("owned plan").await;
     let claim = f.claim(&id, "owner").await;
     let plan = f.plan(&id).await;
@@ -1704,7 +1671,7 @@ async fn plan_revision_requires_current_owner_and_rejected_writes_leave_no_file(
 #[tokio::test]
 async fn missing_or_duplicate_editable_markers_fail_without_overwriting_notes() {
     for duplicate in [false, true] {
-        let f = Fixture::new("markdown").await;
+        let f = Fixture::new().await;
         let state = f.service.store().snapshot().await.unwrap();
         let path = f
             .service
@@ -1727,7 +1694,7 @@ async fn missing_or_duplicate_editable_markers_fail_without_overwriting_notes() 
 
 #[tokio::test]
 async fn state_machine_rejects_skipped_work_and_requires_explicit_retry_and_reopen() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let task = f.task("workflow").await;
     assert!(
         f.service
@@ -1783,7 +1750,7 @@ async fn state_machine_rejects_skipped_work_and_requires_explicit_retry_and_reop
 
 #[tokio::test]
 async fn archive_repair_preserves_notes_after_old_file_was_removed() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let task = f.task("archive recovery").await;
     let claim = f.start(&task, "archive-recovery").await;
     f.service
@@ -1831,27 +1798,22 @@ async fn archive_repair_preserves_notes_after_old_file_was_removed() {
 
 #[tokio::test]
 async fn dependency_projection_has_no_trailing_whitespace() {
-    for format in ["markdown", "obsidian"] {
-        let f = Fixture::new(format).await;
-        let first = f.task("prerequisite").await;
-        let second = f.task("dependent").await;
-        f.service
-            .execute(
-                json!({"command":"task.depend","task":second,"dependency":first}),
-                WriteOptions::default(),
-            )
-            .await
-            .unwrap();
-        let job = f.service.store().snapshot().await.unwrap().jobs[0].clone();
-        let body = std::fs::read_to_string(f.service.config().output_dir().join(job.document_path))
-            .unwrap();
-        if format == "markdown" {
-            assert!(body.contains(&format!("<a id=\"{}\"></a>", first.replace('_', "-"))));
-        }
-        assert!(body.contains(&format!("{first} --> {second}")));
-        assert!(!body.contains("Dependencies:"));
-        assert!(body.lines().all(|line| line == line.trim_end()));
-    }
+    let f = Fixture::new().await;
+    let first = f.task("prerequisite").await;
+    let second = f.task("dependent").await;
+    f.service
+        .execute(
+            json!({"command":"task.depend","task":second,"dependency":first}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    let job = f.service.store().snapshot().await.unwrap().jobs[0].clone();
+    let body =
+        std::fs::read_to_string(f.service.config().output_dir().join(job.document_path)).unwrap();
+    assert!(body.contains(&format!("{first} --> {second}")));
+    assert!(!body.contains("Dependencies:"));
+    assert!(body.lines().all(|line| line == line.trim_end()));
 }
 
 #[tokio::test]
@@ -1876,7 +1838,7 @@ async fn task_database_rejects_an_unrelated_sqlite_database() {
 
 #[tokio::test]
 async fn invalid_document_configuration_is_rejected_before_writing() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let mut config = f.service.config().clone();
     config.documents.directory = "../outside".into();
     assert!(config.validate().is_err());
@@ -1890,7 +1852,7 @@ async fn invalid_document_configuration_is_rejected_before_writing() {
 
 #[tokio::test]
 async fn dependencies_can_cross_jobs_but_cannot_change_after_execution_starts() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let a = f.task("upstream").await;
     let job = f
         .service
@@ -1955,7 +1917,7 @@ async fn dependencies_can_cross_jobs_but_cannot_change_after_execution_starts() 
 
 #[tokio::test]
 async fn newer_database_schema_is_rejected_without_changing_its_version() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .connect_with(
             sqlx::sqlite::SqliteConnectOptions::new().filename(&f.service.config().storage.path),
@@ -1977,7 +1939,7 @@ async fn newer_database_schema_is_rejected_without_changing_its_version() {
 #[cfg(unix)]
 #[tokio::test]
 async fn symlinks_cannot_redirect_document_output_or_managed_files_outside_the_root() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let outside = f.dir.path().join("outside");
     std::fs::create_dir(&outside).unwrap();
     let link = f.service.config().documents.root.join("escape");
@@ -1987,7 +1949,7 @@ async fn symlinks_cannot_redirect_document_output_or_managed_files_outside_the_r
     assert!(config.validate().is_err());
     let target = outside.join("Dashboard.md");
     std::fs::write(&target, "Outside content must survive").unwrap();
-    let board = f.service.config().output_dir().join(f.dashboard_file());
+    let board = f.service.config().output_dir().join("Dashboard.base");
     std::fs::rename(&board, f.dir.path().join("original-dashboard.md")).unwrap();
     std::os::unix::fs::symlink(&target, &board).unwrap();
     assert!(f.service.sync().await.is_err());
@@ -1999,7 +1961,7 @@ async fn symlinks_cannot_redirect_document_output_or_managed_files_outside_the_r
 
 #[tokio::test]
 async fn numbered_filenames_use_creation_day_and_project_scoped_daily_sequences() {
-    let f = Fixture::new("obsidian").await;
+    let f = Fixture::new().await;
     let task = f.task("First task").await;
     for index in 2..=11 {
         let job = f.service.execute(
@@ -2075,7 +2037,7 @@ async fn numbered_filenames_use_creation_day_and_project_scoped_daily_sequences(
 
 #[tokio::test]
 async fn numbered_filenames_are_allocated_atomically_and_survive_archive() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let now = f.clock.clone();
     let other = Store::open_with_clock(
         &f.service.config().storage.path,
@@ -2148,131 +2110,129 @@ async fn numbered_filenames_are_allocated_atomically_and_survive_archive() {
 }
 
 #[tokio::test]
-#[allow(clippy::too_many_lines)] // Build legacy active/archive files and verify metadata, content, and links in both formats.
+#[allow(clippy::too_many_lines)] // Build legacy active/archive files and verify metadata, content, and links in Obsidian.
 async fn jobs_layout_migrates_v4_active_and_archived_documents() {
     use sqlx::Connection;
-    for format in ["markdown", "obsidian"] {
-        let f = Fixture::new(format).await;
-        let archived = f
-            .service
+    let f = Fixture::new().await;
+    let archived = f
+        .service
+        .execute(
+            json!({"command":"job.create", "project":f.project, "title":"Old work"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap()
+        .result;
+    for command in ["job.cancel", "job.archive"] {
+        f.service
             .execute(
-                json!({"command":"job.create", "project":f.project, "title":"Old work"}),
+                json!({"command":command,"job":archived["id"]}),
                 WriteOptions::default(),
             )
             .await
-            .unwrap()
-            .result;
-        for command in ["job.cancel", "job.archive"] {
-            f.service
-                .execute(
-                    json!({"command":command,"job":archived["id"]}),
-                    WriteOptions::default(),
-                )
-                .await
-                .unwrap();
-        }
-        f.task("Linked task").await;
-        let before = f.service.store().snapshot().await.unwrap();
-        let root = f.service.config().output_dir();
-        let mut db = sqlx::SqliteConnection::connect(&format!(
-            "sqlite:{}",
-            f.service.config().storage.path.display()
-        ))
+            .unwrap();
+    }
+    f.task("Linked task").await;
+    let before = f.service.store().snapshot().await.unwrap();
+    let root = f.service.config().output_dir();
+    let mut db = sqlx::SqliteConnection::connect(&format!(
+        "sqlite:{}",
+        f.service.config().storage.path.display()
+    ))
+    .await
+    .unwrap();
+    let mut documents = f
+        .service
+        .store()
+        .metadata("documents")
         .await
+        .unwrap()
         .unwrap();
-        let mut documents = f
-            .service
-            .store()
-            .metadata("documents")
-            .await
+    for job in &before.jobs {
+        let folder = if job.archived_at.is_some() {
+            "Archive/2026/09"
+        } else {
+            "Active"
+        };
+        let filename = job.document_path.rsplit('/').next().unwrap();
+        let legacy = format!("Projects/demo/Jobs/{folder}/{filename}");
+        let body = std::fs::read_to_string(root.join(&job.document_path))
             .unwrap()
-            .unwrap();
-        for job in &before.jobs {
-            let folder = if job.archived_at.is_some() {
-                "Archive/2026/09"
-            } else {
-                "Active"
-            };
-            let filename = job.document_path.rsplit('/').next().unwrap();
-            let legacy = format!("Projects/demo/Jobs/{folder}/{filename}");
-            let body = std::fs::read_to_string(root.join(&job.document_path))
-                .unwrap()
-                .replace(
-                    "<!-- taskcli:notes:start -->",
-                    "<!-- taskcli:notes:start -->\nPreserve notes.",
-                );
-            std::fs::remove_file(root.join(&job.document_path)).unwrap();
-            std::fs::create_dir_all(root.join(&legacy).parent().unwrap()).unwrap();
-            std::fs::write(root.join(&legacy), body).unwrap();
-            sqlx::query("UPDATE jobs SET data = json_set(data, '$.document_path', ?) WHERE id = ?")
-                .bind(&legacy)
-                .bind(&job.id)
-                .execute(&mut db)
-                .await
-                .unwrap();
-            documents[format!("job:{}", job.id)] = json!(legacy);
-        }
-        f.service
-            .store()
-            .set_metadata("documents", &documents)
-            .await
-            .unwrap();
-        sqlx::query("PRAGMA user_version = 4")
+            .replace(
+                "<!-- taskcli:notes:start -->",
+                "<!-- taskcli:notes:start -->\nPreserve notes.",
+            );
+        std::fs::remove_file(root.join(&job.document_path)).unwrap();
+        std::fs::create_dir_all(root.join(&legacy).parent().unwrap()).unwrap();
+        std::fs::write(root.join(&legacy), body).unwrap();
+        sqlx::query("UPDATE jobs SET data = json_set(data, '$.document_path', ?) WHERE id = ?")
+            .bind(&legacy)
+            .bind(&job.id)
             .execute(&mut db)
             .await
             .unwrap();
-        let service = Service::open(f.service.config().clone()).await.unwrap();
-        service.sync().await.unwrap();
-        let after = service.store().snapshot().await.unwrap();
-        for (old, job) in before.jobs.iter().zip(&after.jobs) {
-            let folder = if job.archived_at.is_some() {
-                "Archived/"
-            } else {
-                ""
-            };
-            let filename = old.document_path.rsplit('/').next().unwrap();
-            assert_eq!(
-                job.document_path,
-                format!("Projects/demo/Jobs/{folder}{filename}")
-            );
-            assert_eq!(
-                (
-                    job.sequence,
-                    job.created_at,
-                    job.archived_at,
-                    job.status,
-                    job.revision
-                ),
-                (
-                    old.sequence,
-                    old.created_at,
-                    old.archived_at,
-                    old.status,
-                    old.revision
-                )
-            );
-            let text = std::fs::read_to_string(root.join(&job.document_path)).unwrap();
-            assert!(text.contains("Preserve notes."));
-            assert_eq!(
-                text.contains("agent/archived/job"),
-                job.archived_at.is_some()
-            );
-        }
-        assert!(!root.join("Projects/demo/Jobs/Active").exists());
-        assert!(!root.join("Projects/demo/Jobs/Archive").exists());
-        let board = std::fs::read_to_string(root.join("Projects/demo/Board.md")).unwrap();
-        assert!(board.contains("tasknotesKanban"));
-        assert!(!board.contains("Jobs/Active/"));
-        service.sync().await.unwrap();
-        assert_eq!(service.store().snapshot().await.unwrap().jobs, after.jobs);
+        documents[format!("job:{}", job.id)] = json!(legacy);
     }
+    f.service
+        .store()
+        .set_metadata("documents", &documents)
+        .await
+        .unwrap();
+    sqlx::query("PRAGMA user_version = 4")
+        .execute(&mut db)
+        .await
+        .unwrap();
+    let service = Service::open(f.service.config().clone()).await.unwrap();
+    service.sync().await.unwrap();
+    let after = service.store().snapshot().await.unwrap();
+    for (old, job) in before.jobs.iter().zip(&after.jobs) {
+        let folder = if job.archived_at.is_some() {
+            "Archived/"
+        } else {
+            ""
+        };
+        let filename = old.document_path.rsplit('/').next().unwrap();
+        assert_eq!(
+            job.document_path,
+            format!("Projects/demo/Jobs/{folder}{filename}")
+        );
+        assert_eq!(
+            (
+                job.sequence,
+                job.created_at,
+                job.archived_at,
+                job.status,
+                job.revision
+            ),
+            (
+                old.sequence,
+                old.created_at,
+                old.archived_at,
+                old.status,
+                old.revision
+            )
+        );
+        let text = std::fs::read_to_string(root.join(&job.document_path)).unwrap();
+        assert!(text.contains("Preserve notes."));
+        assert_eq!(
+            text.contains("agent/archived/job"),
+            job.archived_at.is_some()
+        );
+    }
+    assert!(!root.join("Projects/demo/Jobs/Active").exists());
+    assert!(!root.join("Projects/demo/Jobs/Archive").exists());
+    let board = std::fs::read_to_string(root.join("Projects/demo/Board.md")).unwrap();
+    assert!(board.contains("tasknotesKanban"));
+    assert!(!board.contains("Jobs/Active/"));
+    service.sync().await.unwrap();
+    assert_eq!(service.store().snapshot().await.unwrap().jobs, after.jobs);
 }
 
 #[tokio::test]
 #[allow(clippy::too_many_lines)] // Exercise legacy files, failed migration publication, and restart recovery together.
 async fn numbered_filenames_migrate_v3_and_recover_after_a_destination_conflict() {
     use sqlx::Connection;
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let task = f.task("Keep plan").await;
     let claim = f.claim(&task, "migration").await;
     f.plan(&task).await;
@@ -2376,7 +2336,7 @@ async fn numbered_filenames_migrate_v3_and_recover_after_a_destination_conflict(
             root.join(&service.store().snapshot().await.unwrap().jobs[0].document_path)
         )
         .unwrap()
-        .contains("260905-0001-Keep%20plan.md")
+        .contains("260905-0001-Keep plan")
     );
     assert!(!root.join(old_job).exists());
     assert!(!root.join(old_plan).exists());
@@ -2390,7 +2350,7 @@ async fn numbered_filenames_migrate_v3_and_recover_after_a_destination_conflict(
 
 #[tokio::test]
 async fn readable_names_only_gain_suffixes_on_collision() {
-    let f = Fixture::new("obsidian").await;
+    let f = Fixture::new().await;
     let state = f.service.store().snapshot().await.unwrap();
     assert_eq!(state.projects[0].key, "demo");
     assert_eq!(
@@ -2437,7 +2397,7 @@ async fn readable_names_only_gain_suffixes_on_collision() {
 
 #[tokio::test]
 async fn plan_revisions_replace_one_file_and_keep_lifecycle_properties() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let task = f.task("Short task").await;
     let claim = f.claim(&task, "writer").await;
     let first = f.plan(&task).await;
@@ -2496,90 +2456,87 @@ async fn plan_revisions_replace_one_file_and_keep_lifecycle_properties() {
 
 #[tokio::test]
 async fn metadata_and_status_checklists_include_completed_jobs_until_archived() {
-    for format in ["obsidian", "markdown"] {
-        let f = Fixture::new(format).await;
-        let task = f.task("Short task").await;
-        let claim = f.start(&task, "complete").await;
-        f.service
-            .execute(json!({"command":"task.done","task":task}), owner(&claim))
-            .await
-            .unwrap();
-        let state = f.service.store().snapshot().await.unwrap();
-        let root = f.service.config().output_dir();
-        let board = std::fs::read_to_string(
-            root.join(format!("Projects/{}/Board.md", state.projects[0].key)),
-        )
+    let f = Fixture::new().await;
+    let task = f.task("Short task").await;
+    let claim = f.start(&task, "complete").await;
+    f.service
+        .execute(json!({"command":"task.done","task":task}), owner(&claim))
+        .await
         .unwrap();
-        assert!(board.contains("DONE"));
-        let task_path = root.join(&state.plans[0].path);
-        let task_doc = std::fs::read_to_string(&task_path).unwrap();
-        assert!(task_doc.contains("status: \"DONE\""));
-        assert!(task_doc.contains("archived: false"));
-        let fm = board
-            .strip_prefix("---\n")
-            .unwrap()
-            .split_once("\n---\n")
-            .unwrap()
-            .0;
-        for field in [
-            "agent/project",
-            "agent/board",
-            "id:",
-            "created_at:",
-            "root:",
-            "remote:",
-        ] {
-            assert!(fm.contains(field));
-        }
-        let properties: Value = serde_yaml::from_str(fm).unwrap();
-        assert_eq!(properties["sync_status"], "synced");
-        assert!(properties["sync_sequence"].is_number());
-        let path = root.join(&state.jobs[0].document_path);
-        let body = std::fs::read_to_string(&path).unwrap();
-        let (fm, body) = body
-            .strip_prefix("---\n")
-            .unwrap()
-            .split_once("\n---\n")
+    let state = f.service.store().snapshot().await.unwrap();
+    let root = f.service.config().output_dir();
+    let board =
+        std::fs::read_to_string(root.join(format!("Projects/{}/Board.md", state.projects[0].key)))
             .unwrap();
-        for key in [
-            "id:",
-            "status:",
-            "revision:",
-            "created_at:",
-            "started_at:",
-            "completed_at:",
-            "agent/job",
-        ] {
-            assert!(fm.contains(key), "{fm}");
-        }
-        assert!(!body.contains(&f.job));
-        assert!(body.contains("260905-0001-Short task"), "{body}");
-        assert!(body.contains(if format == "obsidian" { "[[" } else { "[" }));
-        f.approve().await;
-        f.service
-            .execute(
-                json!({"command":"job.archive","job":f.job}),
-                WriteOptions::default(),
-            )
-            .await
-            .unwrap();
-        let job = &f.service.store().snapshot().await.unwrap().jobs[0];
-        assert!(
-            std::fs::read_to_string(root.join(&job.document_path))
-                .unwrap()
-                .contains("agent/archived/job")
-        );
-        assert!(
-            std::fs::read_to_string(&task_path)
-                .unwrap()
-                .contains("archived: true")
-        );
+    assert!(board.contains("DONE"));
+    let task_path = root.join(&state.plans[0].path);
+    let task_doc = std::fs::read_to_string(&task_path).unwrap();
+    assert!(task_doc.contains("status: \"DONE\""));
+    assert!(task_doc.contains("archived: false"));
+    let fm = board
+        .strip_prefix("---\n")
+        .unwrap()
+        .split_once("\n---\n")
+        .unwrap()
+        .0;
+    for field in [
+        "agent/project",
+        "agent/board",
+        "id:",
+        "created_at:",
+        "root:",
+        "remote:",
+    ] {
+        assert!(fm.contains(field));
     }
+    let properties: Value = serde_yaml::from_str(fm).unwrap();
+    assert_eq!(properties["sync_status"], "synced");
+    assert!(properties["sync_sequence"].is_number());
+    let path = root.join(&state.jobs[0].document_path);
+    let body = std::fs::read_to_string(&path).unwrap();
+    let (fm, body) = body
+        .strip_prefix("---\n")
+        .unwrap()
+        .split_once("\n---\n")
+        .unwrap();
+    for key in [
+        "id:",
+        "status:",
+        "revision:",
+        "created_at:",
+        "started_at:",
+        "completed_at:",
+        "agent/job",
+    ] {
+        assert!(fm.contains(key), "{fm}");
+    }
+    assert!(!body.contains(&f.job));
+    assert!(body.contains("260905-0001-Short task"), "{body}");
+    assert!(body.contains("[["));
+    f.approve().await;
+    f.service
+        .execute(
+            json!({"command":"job.archive","job":f.job}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    let job = &f.service.store().snapshot().await.unwrap().jobs[0];
+    assert!(
+        std::fs::read_to_string(root.join(&job.document_path))
+            .unwrap()
+            .contains("agent/archived/job")
+    );
+    assert!(
+        std::fs::read_to_string(&task_path)
+            .unwrap()
+            .contains("archived: true")
+    );
 }
 
 #[tokio::test]
 async fn project_archive_requires_closed_work_and_can_be_reversed() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let request = json!({"command":"project.archive","project":f.project});
     assert!(
         f.service
@@ -2601,8 +2558,9 @@ async fn project_archive_requires_closed_work_and_can_be_reversed() {
         .unwrap();
     assert!(archived.result["archived_at"].is_number());
     let dashboard =
-        std::fs::read_to_string(f.service.config().output_dir().join(f.dashboard_file())).unwrap();
-    assert!(!dashboard.contains("[demo]("));
+        std::fs::read_to_string(f.service.config().output_dir().join("Dashboard.base")).unwrap();
+    assert!(dashboard.contains("note.status == \"ACTIVE\""));
+    assert_eq!(dashboard::board_properties(&f)["status"], "ARCHIVED");
     assert!(
         f.service
             .execute(
@@ -2620,15 +2578,16 @@ async fn project_archive_requires_closed_work_and_can_be_reversed() {
         .await
         .unwrap();
     let dashboard =
-        std::fs::read_to_string(f.service.config().output_dir().join(f.dashboard_file())).unwrap();
-    assert!(dashboard.contains("[demo]("));
+        std::fs::read_to_string(f.service.config().output_dir().join("Dashboard.base")).unwrap();
+    assert!(dashboard.contains("note.status == \"ACTIVE\""));
+    assert_eq!(dashboard::board_properties(&f)["status"], "ACTIVE");
 }
 
 #[tokio::test]
 #[allow(clippy::too_many_lines)] // Arrange an actual legacy database and verify recovered files.
 async fn legacy_layout_migrates_without_losing_notes_or_latest_plan() {
     use sqlx::Connection;
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let task = f.task("Read logs").await;
     f.claim(&task, "migration").await;
     f.plan(&task).await;
@@ -2735,7 +2694,7 @@ async fn legacy_layout_migrates_without_losing_notes_or_latest_plan() {
 
 #[tokio::test]
 async fn short_names_can_be_improved_after_completion_without_new_plan_versions() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let task = f.task("A long implementation task").await;
     let claim = f.start(&task, "rename").await;
     f.service
@@ -2785,7 +2744,7 @@ async fn short_names_can_be_improved_after_completion_without_new_plan_versions(
 
 #[tokio::test]
 async fn plans_merge_authored_properties_and_reject_metadata_only_execution() {
-    let f = Fixture::new("obsidian").await;
+    let f = Fixture::new().await;
     let task = f.task("Authored properties").await;
     let claim = f.claim(&task, "properties").await;
     let plan = f.service.execute(json!({"command":"plan.create","task":task,"body":"---\ntitle: Authored title\ntags:\n  - custom/plan\nowner: Alice\n---\n\n# Acceptance\nVerify the result."}),owner(&claim)).await.unwrap().result;
@@ -2815,7 +2774,7 @@ async fn plans_merge_authored_properties_and_reject_metadata_only_execution() {
 
 #[tokio::test]
 async fn pending_plan_publication_survives_failure_and_rejected_writers() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let task = f.task("Recover publication").await;
     let claim = f.claim(&task, "publication").await;
     let plan = f.plan(&task).await;
@@ -2852,7 +2811,7 @@ async fn pending_plan_publication_survives_failure_and_rejected_writers() {
 
 #[tokio::test]
 async fn a_renamed_plan_never_overwrites_an_unmanaged_note() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let task = f.task("Original").await;
     let claim = f.claim(&task, "collision").await;
     let plan = f.plan(&task).await;
@@ -2887,49 +2846,47 @@ async fn a_renamed_plan_never_overwrites_an_unmanaged_note() {
 
 #[tokio::test]
 async fn im_markdown_reads_authored_sections_without_mutating_state() {
-    for format in ["markdown", "obsidian"] {
-        let f = Fixture::new(format).await;
-        let task = f.task("Read details").await;
-        f.claim(&task, "reader").await;
-        let plan = f.plan(&task).await;
-        let task_path = std::path::Path::new(plan["absolute_path"].as_str().unwrap());
-        let task_doc = std::fs::read_to_string(task_path).unwrap();
-        std::fs::write(
-            task_path,
-            format!("{task_doc}\n## Notes\n\n**Handwritten** `details`\n"),
-        )
-        .unwrap();
-        let state = f.service.store().snapshot().await.unwrap();
-        let job_path = f
-            .service
-            .config()
-            .output_dir()
-            .join(&state.jobs[0].document_path);
-        let doc = std::fs::read_to_string(&job_path)
-            .unwrap()
-            .replace("Ship it", "**Authored goal**")
-            .replace(
-                "<!-- taskcli:notes:start -->",
-                "<!-- taskcli:notes:start -->\n- Keep this note",
-            );
-        std::fs::write(job_path, doc).unwrap();
-        let before = f.service.store().snapshot().await.unwrap();
-        let task_body = f.service.task_markdown(&task).await.unwrap();
-        assert!(task_body.contains("**Handwritten** `details`"));
-        assert!(!task_body.contains("taskcli-generated:"));
-        let job_body = f.service.job_markdown(&f.job).await.unwrap();
-        assert!(job_body.contains("**Authored goal**"));
-        assert!(job_body.contains("- Keep this note"));
-        assert!(!job_body.contains("<!-- taskcli:"));
-        assert!(!job_body.contains("```mermaid"));
-        assert_eq!(before, f.service.store().snapshot().await.unwrap());
-    }
+    let f = Fixture::new().await;
+    let task = f.task("Read details").await;
+    f.claim(&task, "reader").await;
+    let plan = f.plan(&task).await;
+    let task_path = std::path::Path::new(plan["absolute_path"].as_str().unwrap());
+    let task_doc = std::fs::read_to_string(task_path).unwrap();
+    std::fs::write(
+        task_path,
+        format!("{task_doc}\n## Notes\n\n**Handwritten** `details`\n"),
+    )
+    .unwrap();
+    let state = f.service.store().snapshot().await.unwrap();
+    let job_path = f
+        .service
+        .config()
+        .output_dir()
+        .join(&state.jobs[0].document_path);
+    let doc = std::fs::read_to_string(&job_path)
+        .unwrap()
+        .replace("Ship it", "**Authored goal**")
+        .replace(
+            "<!-- taskcli:notes:start -->",
+            "<!-- taskcli:notes:start -->\n- Keep this note",
+        );
+    std::fs::write(job_path, doc).unwrap();
+    let before = f.service.store().snapshot().await.unwrap();
+    let task_body = f.service.task_markdown(&task).await.unwrap();
+    assert!(task_body.contains("**Handwritten** `details`"));
+    assert!(!task_body.contains("taskcli-generated:"));
+    let job_body = f.service.job_markdown(&f.job).await.unwrap();
+    assert!(job_body.contains("**Authored goal**"));
+    assert!(job_body.contains("- Keep this note"));
+    assert!(!job_body.contains("<!-- taskcli:"));
+    assert!(!job_body.contains("```mermaid"));
+    assert_eq!(before, f.service.store().snapshot().await.unwrap());
 }
 
 #[cfg(unix)]
 #[tokio::test]
 async fn im_markdown_rejects_notes_that_escape_the_document_root() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let task = f.task("Read details").await;
     f.claim(&task, "reader").await;
     let plan = f.plan(&task).await;
@@ -2950,41 +2907,39 @@ async fn im_markdown_rejects_notes_that_escape_the_document_root() {
 
 #[tokio::test]
 async fn crlf_frontmatter_preserves_properties_and_body_during_publication_and_sync() {
-    for format in ["markdown", "obsidian"] {
-        let f = Fixture::new(format).await;
-        let task = f.task("Windows note").await;
-        let claim = f.claim(&task, "windows").await;
-        let body = "# Plan\r\n\r\nKeep authored line endings.\r\n";
-        let created = f.service.execute(json!({"command":"plan.create","task":task,"body":format!("---\r\nowner: Alice\r\n---\r\n\r\n{body}")}), owner(&claim)).await.unwrap();
-        assert!(created.projection_pending.is_none());
-        let plan = f.service.plan(&task).await.unwrap();
-        assert_eq!(plan["properties"]["owner"], "Alice");
-        assert_eq!(plan["body"], body);
-        let path = plan["absolute_path"].as_str().unwrap();
-        // A Windows editor rewrites generated metadata as CRLF too.
-        let text = std::fs::read_to_string(path)
+    let f = Fixture::new().await;
+    let task = f.task("Windows note").await;
+    let claim = f.claim(&task, "windows").await;
+    let body = "# Plan\r\n\r\nKeep authored line endings.\r\n";
+    let created = f.service.execute(json!({"command":"plan.create","task":task,"body":format!("---\r\nowner: Alice\r\n---\r\n\r\n{body}")}), owner(&claim)).await.unwrap();
+    assert!(created.projection_pending.is_none());
+    let plan = f.service.plan(&task).await.unwrap();
+    assert_eq!(plan["properties"]["owner"], "Alice");
+    assert_eq!(plan["body"], body);
+    let path = plan["absolute_path"].as_str().unwrap();
+    // A Windows editor rewrites generated metadata as CRLF too.
+    let text = std::fs::read_to_string(path)
+        .unwrap()
+        .replace("\r\n", "\n")
+        .replace('\n', "\r\n");
+    std::fs::write(path, text).unwrap();
+    f.service.sync().await.unwrap();
+    let plan = f.service.plan(&task).await.unwrap();
+    assert_eq!(plan["properties"]["owner"], "Alice");
+    assert_eq!(plan["body"], body);
+    assert_eq!(
+        std::fs::read_to_string(path)
             .unwrap()
-            .replace("\r\n", "\n")
-            .replace('\n', "\r\n");
-        std::fs::write(path, text).unwrap();
-        f.service.sync().await.unwrap();
-        let plan = f.service.plan(&task).await.unwrap();
-        assert_eq!(plan["properties"]["owner"], "Alice");
-        assert_eq!(plan["body"], body);
-        assert_eq!(
-            std::fs::read_to_string(path)
-                .unwrap()
-                .lines()
-                .filter(|line| *line == "---")
-                .count(),
-            2
-        );
-    }
+            .lines()
+            .filter(|line| *line == "---")
+            .count(),
+        2
+    );
 }
 
 #[tokio::test]
 async fn crlf_metadata_only_plan_cannot_start() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let task = f.task("Metadata only").await;
     let claim = f.claim(&task, "metadata").await;
     let plan = f.plan(&task).await;
@@ -3004,35 +2959,33 @@ async fn crlf_metadata_only_plan_cannot_start() {
 
 #[tokio::test]
 async fn quoted_authored_frontmatter_keys_round_trip_through_publication_and_sync() {
-    for format in ["markdown", "obsidian"] {
-        let f = Fixture::new(format).await;
-        let task = f.task("Quoted keys").await;
-        let claim = f.claim(&task, "keys").await;
-        let custom = json!({"review: notes":"pending", "# comment":"value", "true":"string key", " spaced ": ["one", "two"], "line\nbreak":"multiline key", "quote\"key": {"nested":"value"}});
-        let body = format!(
-            "---\n{}---\n\n# Plan\n",
-            serde_yaml::to_string(&custom).unwrap()
-        );
-        let result = f
+    let f = Fixture::new().await;
+    let task = f.task("Quoted keys").await;
+    let claim = f.claim(&task, "keys").await;
+    let custom = json!({"review: notes":"pending", "# comment":"value", "true":"string key", " spaced ": ["one", "two"], "line\nbreak":"multiline key", "quote\"key": {"nested":"value"}});
+    let body = format!(
+        "---\n{}---\n\n# Plan\n",
+        serde_yaml::to_string(&custom).unwrap()
+    );
+    let result = f
+        .service
+        .execute(
+            json!({"command":"plan.create","task":task,"body":body}),
+            owner(&claim),
+        )
+        .await
+        .unwrap();
+    assert!(result.projection_pending.is_none(), "{result:?}");
+    for _ in 0..2 {
+        let plan = f
             .service
-            .execute(
-                json!({"command":"plan.create","task":task,"body":body}),
-                owner(&claim),
-            )
+            .plan(&task)
             .await
-            .unwrap();
-        assert!(result.projection_pending.is_none(), "{result:?}");
-        for _ in 0..2 {
-            let plan = f
-                .service
-                .plan(&task)
-                .await
-                .expect("published YAML must be parseable");
-            for (key, value) in custom.as_object().unwrap() {
-                assert_eq!(&plan["properties"][key], value, "{key}");
-            }
-            assert_eq!(plan["body"], "# Plan\n");
-            f.service.sync().await.unwrap();
+            .expect("published YAML must be parseable");
+        for (key, value) in custom.as_object().unwrap() {
+            assert_eq!(&plan["properties"][key], value, "{key}");
         }
+        assert_eq!(plan["body"], "# Plan\n");
+        f.service.sync().await.unwrap();
     }
 }

@@ -20,16 +20,8 @@ pub struct StorageConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DocumentConfig {
-    pub format: DocumentFormat,
     pub root: PathBuf,
     pub directory: PathBuf,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum DocumentFormat {
-    Obsidian,
-    Markdown,
 }
 
 impl Config {
@@ -39,13 +31,14 @@ impl Config {
             &std::fs::read_to_string(&path)
                 .with_context(|| format!("read task config {}", path.display()))?,
         )?;
-        // Older releases stored a template locale here. Language now belongs to
-        // the agent skill; tolerate the obsolete key without exposing or using it.
+        // Older releases stored a template locale and output format here.
+        // Tolerate obsolete keys without exposing them; all output is Obsidian.
         if let Some(documents) = value
             .get_mut("documents")
             .and_then(toml::Value::as_table_mut)
         {
             documents.remove("language");
+            documents.remove("format");
         }
         let mut config: Self = value.try_into()?;
         config.storage.path = expand_home(&config.storage.path)?;
@@ -87,12 +80,10 @@ impl Config {
             resolved_path(&self.output_dir())?.starts_with(self.documents.root.canonicalize()?),
             "document output escapes its root"
         );
-        if self.documents.format == DocumentFormat::Obsidian {
-            ensure!(
-                self.documents.root.join(".obsidian").is_dir(),
-                "Obsidian root must contain .obsidian"
-            );
-        }
+        ensure!(
+            self.documents.root.join(".obsidian").is_dir(),
+            "Obsidian root must contain .obsidian"
+        );
         Ok(())
     }
     pub fn default_path() -> Result<PathBuf> {

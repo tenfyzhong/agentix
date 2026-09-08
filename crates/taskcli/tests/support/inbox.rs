@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn inbox_cli_sets_status_with_revision_and_idempotency() {
-    let cli = Cli::new("obsidian");
+    let cli = Cli::new();
     let project = project(&cli);
     let entry = cli.ok(&["inbox", "add", "--project", &project, "--content", "Manual"]);
     let id = entry["id"].as_str().unwrap();
@@ -44,7 +44,7 @@ fn project(cli: &Cli) -> String {
 
 #[test]
 fn inbox_cli_preserves_content_claims_releases_and_cancels() {
-    let cli = Cli::new("markdown");
+    let cli = Cli::new();
     let project = project(&cli);
     let body = "Request title\n\nDescription with  two spaces.\n- [ ] Acceptance";
     let entry = cli.ok(&["inbox", "add", "--project", &project, "--content", body]);
@@ -102,7 +102,7 @@ fn inbox_cli_preserves_content_claims_releases_and_cancels() {
 
 #[test]
 fn inbox_cancellation_is_reported_to_a_different_task_executor() {
-    let cli = Cli::new("markdown");
+    let cli = Cli::new();
     let project = project(&cli);
     let entry = cli.ok(&[
         "inbox",
@@ -151,7 +151,7 @@ fn inbox_cancellation_is_reported_to_a_different_task_executor() {
 
 #[test]
 fn inbox_cli_processes_racing_to_claim_have_one_winner() {
-    let cli = Cli::new("markdown");
+    let cli = Cli::new();
     let project = project(&cli);
     for title in ["One", "Two"] {
         cli.ok(&["inbox", "add", "--project", &project, "--content", title]);
@@ -198,7 +198,7 @@ fn inbox_cli_processes_racing_to_claim_have_one_winner() {
 
 #[test]
 fn inbox_stop_never_claims_and_explicit_intake_still_works() {
-    let cli = Cli::new("markdown");
+    let cli = Cli::new();
     let project = project(&cli);
     cli.ok(&[
         "inbox",
@@ -291,7 +291,7 @@ fn inbox_stop_never_claims_and_explicit_intake_still_works() {
 
 #[test]
 fn inbox_context_prefers_current_directory_over_ambiguous_session_history() {
-    let cli = Cli::new("markdown");
+    let cli = Cli::new();
     let first = project(&cli);
     let other = cli.dir.path().join("other");
     std::fs::create_dir(&other).unwrap();

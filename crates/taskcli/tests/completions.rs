@@ -14,7 +14,6 @@ fn completions_skip_configuration_and_task_state_and_match_checked_in_files() {
             path: database.clone(),
         },
         documents: agentix_task::DocumentConfig {
-            format: agentix_task::DocumentFormat::Markdown,
             root: directory.path().to_owned(),
             directory: "documents".into(),
         },
@@ -117,7 +116,7 @@ fn completions_require_a_supported_shell() {
 
 #[test]
 #[cfg(unix)]
-fn bash_completes_nested_commands_options_formats_and_paths() {
+fn bash_completes_nested_commands_options_and_paths() {
     let directory = tempfile::tempdir().unwrap();
     std::fs::write(directory.path().join("example config.toml"), "").unwrap();
     std::fs::write(directory.path().join("plan draft.md"), "").unwrap();
@@ -128,7 +127,6 @@ fn bash_completes_nested_commands_options_formats_and_paths() {
         ("taskcli task start --le", "3", "--lease-token"),
         ("taskcli plan create --fi", "3", "--file"),
         ("taskcli job list --ar", "3", "--archived"),
-        ("taskcli init --format obs", "3", "obsidian"),
         ("taskcli completions fi", "2", "fish"),
         ("taskcli --config ex", "2", "example config.toml"),
         (

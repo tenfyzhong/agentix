@@ -2,7 +2,7 @@ use super::*;
 
 #[tokio::test]
 async fn inbox_review_marker_migration_preserves_state_and_authored_details() {
-    let mut f = fixture("obsidian").await;
+    let mut f = fixture().await;
     add(&f, "Review\n\nKeep literal - [p] examples.").await;
     let claimed = claim(&f, "worker").await;
     f.job = claimed["job"]["id"].as_str().unwrap().into();
@@ -31,7 +31,7 @@ const END: &str = "<!-- taskcli:inbox:end -->";
 
 #[tokio::test]
 async fn inbox_pending_review_allows_next_claim_and_rejection_blocks_it() {
-    let mut f = fixture("obsidian").await;
+    let mut f = fixture().await;
     add(&f, "First").await;
     add(&f, "Second").await;
     add(&f, "Third").await;
@@ -87,7 +87,7 @@ async fn inbox_pending_review_allows_next_claim_and_rejection_blocks_it() {
 
 #[tokio::test]
 async fn inbox_aligned_preflight_does_not_publish_an_old_checkbox_before_validation() {
-    let f = fixture("obsidian").await;
+    let f = fixture().await;
     let entry = add(&f, "No stale echo").await;
     let source = std::fs::read_to_string(path(&f))
         .unwrap()
@@ -113,7 +113,7 @@ async fn inbox_aligned_preflight_does_not_publish_an_old_checkbox_before_validat
 
 #[tokio::test]
 async fn inbox_aligned_sync_repairs_reopened_cancellation_after_a_projection_interruption() {
-    let f = fixture("obsidian").await;
+    let f = fixture().await;
     let entry = add(&f, "Recover publication").await;
     let id = entry["id"].as_str().unwrap();
     set_status(&f, id, "CANCELLED").await.unwrap();
@@ -142,7 +142,7 @@ async fn inbox_aligned_sync_repairs_reopened_cancellation_after_a_projection_int
 
 #[tokio::test]
 async fn inbox_aligned_states_follow_job_review_and_use_distinct_checkboxes() {
-    let mut f = fixture("obsidian").await;
+    let mut f = fixture().await;
     let item = add(&f, "Five states").await;
     let id = item["id"].as_str().unwrap();
     let active = set_status(&f, id, "ACTIVE").await.unwrap().result;
@@ -230,7 +230,7 @@ async fn inbox_aligned_states_follow_job_review_and_use_distinct_checkboxes() {
 
 #[tokio::test]
 async fn inbox_aligned_schema_migrates_legacy_states_and_pending_review_idempotently() {
-    let mut f = fixture("obsidian").await;
+    let mut f = fixture().await;
     let item = add(&f, "Pending").await;
     let claimed = claim(&f, "worker").await;
     f.job = claimed["job"]["id"].as_str().unwrap().into();
@@ -276,7 +276,7 @@ async fn inbox_aligned_schema_migrates_legacy_states_and_pending_review_idempote
 
 #[tokio::test]
 async fn inbox_aligned_import_accepts_slash_and_review_without_replaying_status_edits() {
-    let f = fixture("obsidian").await;
+    let f = fixture().await;
     let initial = std::fs::read_to_string(path(&f)).unwrap();
     std::fs::write(
         path(&f),
@@ -303,7 +303,7 @@ async fn set_status(f: &Fixture, id: &str, status: &str) -> anyhow::Result<agent
 
 #[tokio::test]
 async fn inbox_manual_status_changes_do_not_create_jobs() {
-    let f = fixture("obsidian").await;
+    let f = fixture().await;
     let item = add(&f, "Manual states").await;
     let id = item["id"].as_str().unwrap();
     let jobs = f.service.store().snapshot().await.unwrap().jobs;
@@ -345,7 +345,7 @@ async fn inbox_manual_status_changes_do_not_create_jobs() {
 
 #[tokio::test]
 async fn inbox_status_completes_unlinked_items_and_reopens_without_creating_jobs() {
-    let f = fixture("obsidian").await;
+    let f = fixture().await;
     let item = add(&f, "Manual work").await;
     let id = item["id"].as_str().unwrap();
     assert_eq!(
@@ -391,7 +391,7 @@ async fn inbox_status_completes_unlinked_items_and_reopens_without_creating_jobs
 
 #[tokio::test]
 async fn inbox_status_requires_review_and_reopens_the_same_job_preserving_tasks() {
-    let mut f = fixture("obsidian").await;
+    let mut f = fixture().await;
     let entry = add(&f, "Deliver").await;
     let id = entry["id"].as_str().unwrap();
     let claimed = claim(&f, "one").await;
@@ -430,7 +430,7 @@ async fn inbox_status_requires_review_and_reopens_the_same_job_preserving_tasks(
 
 #[tokio::test]
 async fn inbox_status_fences_checkbox_cancellation_and_replays_once() {
-    let f = fixture("obsidian").await;
+    let f = fixture().await;
     let entry = add(&f, "Cancel me").await;
     let row = entries(&f).await.remove(0);
     let id = entry["id"].as_str().unwrap();
@@ -478,7 +478,7 @@ async fn inbox_status_fences_checkbox_cancellation_and_replays_once() {
 
 #[tokio::test]
 async fn inbox_status_does_not_revive_withdrawn_or_archived_work() {
-    let f = fixture("obsidian").await;
+    let f = fixture().await;
     let entry = add(&f, "Withdraw").await;
     let id = entry["id"].as_str().unwrap();
     let source = std::fs::read_to_string(path(&f)).unwrap();
@@ -504,7 +504,7 @@ async fn inbox_status_does_not_revive_withdrawn_or_archived_work() {
 
 #[tokio::test]
 async fn inbox_rejects_reserved_control_markers_before_committing_a_submission() {
-    let f = fixture("markdown").await;
+    let f = fixture().await;
     let before = entries(&f).await;
     for content in [
         "Request\n<!-- taskcli:inbox:end -->",
@@ -529,7 +529,7 @@ async fn inbox_rejects_reserved_control_markers_before_committing_a_submission()
 
 #[tokio::test]
 async fn inbox_session_project_does_not_guess_an_outer_project_for_a_nested_repository() {
-    let f = fixture("markdown").await;
+    let f = fixture().await;
     let state = f.service.store().snapshot().await.unwrap();
     let root = std::path::Path::new(&state.projects[0].root);
     let nested = root.join("nested");
@@ -560,8 +560,8 @@ async fn inbox_session_project_does_not_guess_an_outer_project_for_a_nested_repo
     );
 }
 
-async fn fixture(format: &str) -> Fixture {
-    let f = Fixture::new(format).await;
+async fn fixture() -> Fixture {
+    let f = Fixture::new().await;
     f.service
         .execute(
             json!({"command":"job.cancel","job":f.job}),
@@ -618,58 +618,56 @@ async fn claim(f: &Fixture, session: &str) -> Value {
 
 #[tokio::test]
 async fn inbox_metadata_stays_on_the_header_with_status_in_a_comment() {
-    for format in ["markdown", "obsidian"] {
-        let f = fixture(format).await;
-        let content = "Request\nDetails with **Markdown**.\n- [ ] Acceptance";
-        let entry = add(&f, content).await;
-        let id = entry["id"].as_str().unwrap();
-        let source = std::fs::read_to_string(path(&f)).unwrap();
-        let revision = entries(&f).await[0]["revision"].as_i64().unwrap();
-        assert!(source.contains(&format!(
-            "- [ ] Request <!-- taskcli:entry:{id} --> <!-- taskcli:entry-state TODO revision={revision} -->\n  Details with **Markdown**.\n  - [ ] Acceptance\n"
-        )));
-        assert!(!source.contains("\n  <!-- taskcli:entry-state"));
-        f.service.sync().await.unwrap();
-        assert_eq!(std::fs::read_to_string(path(&f)).unwrap(), source);
-        assert_eq!(entries(&f).await[0]["content"], content);
+    let f = fixture().await;
+    let content = "Request\nDetails with **Markdown**.\n- [ ] Acceptance";
+    let entry = add(&f, content).await;
+    let id = entry["id"].as_str().unwrap();
+    let source = std::fs::read_to_string(path(&f)).unwrap();
+    let revision = entries(&f).await[0]["revision"].as_i64().unwrap();
+    assert!(source.contains(&format!(
+        "- [ ] Request <!-- taskcli:entry:{id} --> <!-- taskcli:entry-state TODO revision={revision} -->\n  Details with **Markdown**.\n  - [ ] Acceptance\n"
+    )));
+    assert!(!source.contains("\n  <!-- taskcli:entry-state"));
+    f.service.sync().await.unwrap();
+    assert_eq!(std::fs::read_to_string(path(&f)).unwrap(), source);
+    assert_eq!(entries(&f).await[0]["content"], content);
 
-        let claimed = claim(&f, "one").await;
-        assert_eq!(claimed["claimed"], true);
-        let source = std::fs::read_to_string(path(&f)).unwrap();
-        let header = source
-            .lines()
-            .find(|line| line.starts_with("- [/] Request"))
-            .unwrap();
-        let revision = entries(&f).await[0]["revision"].as_i64().unwrap();
-        assert!(header.contains(&format!(
-            "<!-- taskcli:entry-state ACTIVE revision={revision} --> · "
-        )));
-        assert!(header.contains(if format == "obsidian" { "[[" } else { "](" }));
-        assert!(header.ends_with(" · agent:one"));
-        assert!(!source.contains("\n  <!-- taskcli:entry-state"));
-        f.service.sync().await.unwrap();
-        assert_eq!(std::fs::read_to_string(path(&f)).unwrap(), source);
-        assert_eq!(entries(&f).await[0]["content"], content);
+    let claimed = claim(&f, "one").await;
+    assert_eq!(claimed["claimed"], true);
+    let source = std::fs::read_to_string(path(&f)).unwrap();
+    let header = source
+        .lines()
+        .find(|line| line.starts_with("- [/] Request"))
+        .unwrap();
+    let revision = entries(&f).await[0]["revision"].as_i64().unwrap();
+    assert!(header.contains(&format!(
+        "<!-- taskcli:entry-state ACTIVE revision={revision} --> · "
+    )));
+    assert!(header.contains("[["));
+    assert!(header.ends_with(" · agent:one"));
+    assert!(!source.contains("\n  <!-- taskcli:entry-state"));
+    f.service.sync().await.unwrap();
+    assert_eq!(std::fs::read_to_string(path(&f)).unwrap(), source);
+    assert_eq!(entries(&f).await[0]["content"], content);
 
-        f.service
-            .execute(
-                json!({"command":"inbox.cancel","inbox":id}),
-                WriteOptions::default(),
-            )
-            .await
-            .unwrap();
-        let source = std::fs::read_to_string(path(&f)).unwrap();
-        let revision = entries(&f).await[0]["revision"].as_i64().unwrap();
-        assert!(source.contains(&format!(
-            "- [-] Request <!-- taskcli:entry:{id} --> <!-- taskcli:entry-state CANCELLED revision={revision} --> · "
-        )));
-        assert!(!source.contains("agent:one"));
-    }
+    f.service
+        .execute(
+            json!({"command":"inbox.cancel","inbox":id}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    let source = std::fs::read_to_string(path(&f)).unwrap();
+    let revision = entries(&f).await[0]["revision"].as_i64().unwrap();
+    assert!(source.contains(&format!(
+        "- [-] Request <!-- taskcli:entry:{id} --> <!-- taskcli:entry-state CANCELLED revision={revision} --> · "
+    )));
+    assert!(!source.contains("agent:one"));
 }
 
 #[tokio::test]
 async fn inbox_legacy_receipt_migrates_without_changing_identity_or_content() {
-    let f = fixture("markdown").await;
+    let f = fixture().await;
     let initial = std::fs::read_to_string(path(&f)).unwrap();
     let id = "inbox_01a07760d6a673f2a863e0f105eb9783";
     let legacy = format!(
@@ -694,36 +692,34 @@ async fn inbox_legacy_receipt_migrates_without_changing_identity_or_content() {
 
 #[tokio::test]
 async fn inbox_import_preserves_markdown_and_ignores_nested_and_fenced_checklists() {
-    for format in ["markdown", "obsidian"] {
-        let f = fixture(format).await;
-        let initial = std::fs::read_to_string(path(&f)).unwrap();
-        let authored = "- [ ] First\n  Details with **Markdown**.\n  - [ ] Nested acceptance\n\n```md\n- [ ] Example only\n```\n\n- [ ] First\n";
-        std::fs::write(
-            path(&f),
-            initial.replace(END, &format!("{authored}\n{END}")),
-        )
-        .unwrap();
-        f.service.sync().await.unwrap();
-        let rows = entries(&f).await;
-        assert_eq!(rows.len(), 2);
-        assert_ne!(rows[0]["id"], rows[1]["id"]);
-        assert!(
-            rows[0]["content"]
-                .as_str()
-                .unwrap()
-                .contains("- [ ] Nested acceptance")
-        );
-        let rendered = std::fs::read_to_string(path(&f)).unwrap();
-        assert!(rendered.contains("```md\n- [ ] Example only\n```"));
-        f.service.sync().await.unwrap();
-        assert_eq!(entries(&f).await, rows);
-        assert_eq!(std::fs::read_to_string(path(&f)).unwrap(), rendered);
-    }
+    let f = fixture().await;
+    let initial = std::fs::read_to_string(path(&f)).unwrap();
+    let authored = "- [ ] First\n  Details with **Markdown**.\n  - [ ] Nested acceptance\n\n```md\n- [ ] Example only\n```\n\n- [ ] First\n";
+    std::fs::write(
+        path(&f),
+        initial.replace(END, &format!("{authored}\n{END}")),
+    )
+    .unwrap();
+    f.service.sync().await.unwrap();
+    let rows = entries(&f).await;
+    assert_eq!(rows.len(), 2);
+    assert_ne!(rows[0]["id"], rows[1]["id"]);
+    assert!(
+        rows[0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("- [ ] Nested acceptance")
+    );
+    let rendered = std::fs::read_to_string(path(&f)).unwrap();
+    assert!(rendered.contains("```md\n- [ ] Example only\n```"));
+    f.service.sync().await.unwrap();
+    assert_eq!(entries(&f).await, rows);
+    assert_eq!(std::fs::read_to_string(path(&f)).unwrap(), rendered);
 }
 
 #[tokio::test]
 async fn inbox_claim_is_exclusive_and_waits_for_all_project_jobs() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     add(&f, "First").await;
     add(&f, "Second").await;
     assert_eq!(claim(&f, "one").await["reason"], "active_jobs");
@@ -750,7 +746,7 @@ async fn inbox_claim_is_exclusive_and_waits_for_all_project_jobs() {
 
 #[tokio::test]
 async fn inbox_cancellation_revokes_task_ownership_and_deletion_preserves_history() {
-    let f = fixture("markdown").await;
+    let f = fixture().await;
     let entry = add(&f, "Deliver feature\nKeep this description.").await;
     let claimed = claim(&f, "one").await;
     let job = claimed["job"]["id"].as_str().unwrap();
@@ -810,7 +806,7 @@ async fn inbox_cancellation_revokes_task_ownership_and_deletion_preserves_histor
 
 #[tokio::test]
 async fn inbox_expiry_resumes_the_same_job_and_never_revives_cancellation() {
-    let f = fixture("markdown").await;
+    let f = fixture().await;
     add(&f, "Resume me").await;
     let first = claim(&f, "one").await;
     f.clock.fetch_add(901, Ordering::SeqCst);
@@ -836,7 +832,7 @@ async fn inbox_expiry_resumes_the_same_job_and_never_revives_cancellation() {
 
 #[tokio::test]
 async fn inbox_missing_or_invalid_document_does_not_cancel_all_entries() {
-    let f = fixture("markdown").await;
+    let f = fixture().await;
     add(&f, "Keep me").await;
     let source = std::fs::read_to_string(path(&f)).unwrap();
     for text in ["", "# Not an Inbox"] {
@@ -853,7 +849,7 @@ async fn inbox_missing_or_invalid_document_does_not_cancel_all_entries() {
 
 #[tokio::test]
 async fn inbox_completion_checks_the_box_and_idempotent_append_keeps_one_entry() {
-    let f = fixture("obsidian").await;
+    let f = fixture().await;
     let request = json!({"command":"inbox.add","project":f.project,"content":"Ship\n\n  Preserve indentation"});
     let options = WriteOptions {
         idempotency_key: Some("im:message:1".into()),
@@ -915,7 +911,7 @@ async fn inbox_completion_checks_the_box_and_idempotent_append_keeps_one_entry()
 
 #[tokio::test]
 async fn inbox_deleted_active_entry_cancels_and_cannot_be_restored_by_an_old_buffer() {
-    let f = fixture("markdown").await;
+    let f = fixture().await;
     add(&f, "Withdraw").await;
     let claimed = claim(&f, "one").await;
     let source = std::fs::read_to_string(path(&f)).unwrap();
@@ -942,7 +938,7 @@ async fn inbox_deleted_active_entry_cancels_and_cannot_be_restored_by_an_old_buf
 
 #[tokio::test]
 async fn inbox_unpublished_append_survives_restart_and_manual_append() {
-    let f = fixture("markdown").await;
+    let f = fixture().await;
     let pending = f
         .service
         .store()
@@ -973,7 +969,7 @@ async fn inbox_unpublished_append_survives_restart_and_manual_append() {
 
 #[tokio::test]
 async fn inbox_id_reordering_keeps_identity_and_duplicate_ids_reject_sync() {
-    let f = fixture("markdown").await;
+    let f = fixture().await;
     let a = add(&f, "Alpha").await;
     let b = add(&f, "Beta").await;
     let source = std::fs::read_to_string(path(&f)).unwrap();
@@ -998,7 +994,7 @@ async fn inbox_id_reordering_keeps_identity_and_duplicate_ids_reject_sync() {
 
 #[tokio::test]
 async fn inbox_projection_has_no_blank_lines_between_items() {
-    let f = Fixture::new("obsidian").await;
+    let f = Fixture::new().await;
     for content in ["First\n\nParagraph", "Second"] {
         f.service
             .execute(
@@ -1025,7 +1021,7 @@ async fn inbox_projection_has_no_blank_lines_between_items() {
 
 #[tokio::test]
 async fn inbox_source_edit_survives_projection_interruption_without_reverting_content() {
-    let f = Fixture::new("obsidian").await;
+    let f = Fixture::new().await;
     let opts = WriteOptions {
         actor_ref: "im:owner".into(),
         ..WriteOptions::default()
@@ -1056,7 +1052,7 @@ async fn inbox_source_edit_survives_projection_interruption_without_reverting_co
 
 #[tokio::test]
 async fn inbox_source_migration_recovers_legacy_im_associations() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let options = WriteOptions {
         actor_ref: "im:owner".into(),
         idempotency_key: Some("im:inbox:[\"feishu\",\"chat\",\"message\"]".into()),
@@ -1093,7 +1089,7 @@ async fn inbox_source_migration_recovers_legacy_im_associations() {
 #[tokio::test]
 async fn prompt_links_inbox_and_follows_job_lifecycle() {
     for policy in ["none", "required"] {
-        let mut f = fixture("obsidian").await;
+        let mut f = fixture().await;
         // A fresh human entry must be imported before matching the prompt.
         let doc = std::fs::read_to_string(path(&f)).unwrap();
         std::fs::write(
@@ -1142,7 +1138,7 @@ async fn prompt_links_inbox_and_follows_job_lifecycle() {
 
 #[tokio::test]
 async fn prompt_links_only_available_complete_matches_in_its_project() {
-    let f = fixture("markdown").await;
+    let f = fixture().await;
     let matched = add(&f, "Fix login").await;
     add(&f, "Fix login and logout").await;
     let cancelled = add(&f, "Cancelled work").await;
@@ -1191,7 +1187,7 @@ async fn prompt_links_only_available_complete_matches_in_its_project() {
 
 #[tokio::test]
 async fn prompt_links_on_backfill_and_followup() {
-    let mut f = fixture("markdown").await;
+    let mut f = fixture().await;
     f.job = f
         .service
         .execute(

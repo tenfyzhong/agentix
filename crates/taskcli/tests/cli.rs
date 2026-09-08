@@ -22,17 +22,13 @@ struct Cli {
     dir: TempDir,
 }
 impl Cli {
-    fn new(format: &str) -> Self {
+    fn new() -> Self {
         let dir = TempDir::new().unwrap();
         std::fs::create_dir_all(dir.path().join("vault")).unwrap();
-        if format == "obsidian" {
-            std::fs::create_dir_all(dir.path().join("vault/.obsidian")).unwrap();
-        }
+        std::fs::create_dir_all(dir.path().join("vault/.obsidian")).unwrap();
         let cli = Self { dir };
         cli.ok(&[
             "init",
-            "--format",
-            format,
             "--root",
             cli.dir.path().join("vault").to_str().unwrap(),
             "--directory",
@@ -119,7 +115,7 @@ impl Cli {
 
 #[test]
 fn cli_deletes_jobs_and_projects_with_their_documents() {
-    let cli = Cli::new("markdown");
+    let cli = Cli::new();
     let job = cli.job("Remove me");
     let task = cli.task(&job, "Remove plan");
     let claim = cli.claim(&task, "delete");
@@ -150,7 +146,7 @@ fn cli_deletes_jobs_and_projects_with_their_documents() {
 
 #[test]
 fn cli_claim_plan_start_done_requires_ownership_and_preserves_lease() {
-    let cli = Cli::new("markdown");
+    let cli = Cli::new();
     let job = cli.job("Owned planning");
     let id = cli.task(&job, "Plan safely");
     assert_eq!(
@@ -283,7 +279,7 @@ impl Drop for RunningCli {
 
 #[test]
 fn separate_cli_processes_racing_to_claim_have_exactly_one_winner() {
-    let cli = Cli::new("markdown");
+    let cli = Cli::new();
     let job = cli.job("Race");
     let task = cli.task(&job, "Exclusive");
     let mut children: Vec<_> = (0..8)
@@ -320,88 +316,86 @@ fn separate_cli_processes_racing_to_claim_have_exactly_one_winner() {
 
 #[test]
 fn concurrent_cli_jobs_preserve_notes_and_all_projections() {
-    for format in ["markdown", "obsidian"] {
-        let cli = Cli::new(format);
-        let jobs: Vec<_> = (0..4)
-            .map(|i| cli.job(&format!("Requirement {i}")))
-            .collect();
-        let tasks: Vec<_> = jobs
-            .iter()
-            .enumerate()
-            .map(|(i, j)| cli.task(j, &format!("Parallel {i}")))
-            .collect();
-        let output = cli.dir.path().join("vault/Tasks \u{2603}");
-        let paths: Vec<_> = jobs
-            .iter()
-            .map(|j| {
-                output.join(
-                    cli.ok(&["job", "show", j])["document_path"]
-                        .as_str()
-                        .unwrap(),
-                )
-            })
-            .collect();
-        for path in &paths {
-            let body = std::fs::read_to_string(path).unwrap().replace(
-                "<!-- taskcli:notes:start -->",
-                "<!-- taskcli:notes:start -->\nKeep my notes.",
-            );
-            std::fs::write(path, body).unwrap();
-        }
-        let mut children: Vec<_> = tasks
-            .iter()
-            .enumerate()
-            .map(|(i, t)| {
-                RunningCli::start(
-                    &cli,
-                    &[
-                        "task",
-                        "claim",
-                        t,
-                        "--executor",
-                        &format!("agent:{i}"),
-                        "--session",
-                        &format!("session:{i}"),
-                    ],
-                )
-            })
-            .collect();
-        for child in &mut children {
-            let result = child.output();
-            assert!(
-                result.status.success(),
-                "{}",
-                String::from_utf8_lossy(&result.stdout)
-            );
-            let value: Value = serde_json::from_slice(&result.stdout).unwrap();
-            assert!(value["projection_pending"].is_null(), "{value}");
-        }
-        for (path, task) in paths.iter().zip(&tasks) {
-            let body = std::fs::read_to_string(path).unwrap();
-            assert_eq!(body.matches("Keep my notes.").count(), 1);
-            assert!(body.contains("Tasks/") && body.contains(&task.replace('_', "-")));
-            let folder = path.parent().unwrap().parent().unwrap().join("Tasks");
-            let note = std::fs::read_dir(folder)
-                .unwrap()
-                .map(|e| std::fs::read_to_string(e.unwrap().path()).unwrap())
-                .find(|s| s.contains(task))
-                .unwrap();
-            assert!(note.contains("status: \"IN_PROGRESS\""));
-        }
-        assert_eq!(
-            cli.ok(&["task", "list", "--status", "IN_PROGRESS"])
-                .as_array()
-                .unwrap()
-                .len(),
-            4
+    let cli = Cli::new();
+    let jobs: Vec<_> = (0..4)
+        .map(|i| cli.job(&format!("Requirement {i}")))
+        .collect();
+    let tasks: Vec<_> = jobs
+        .iter()
+        .enumerate()
+        .map(|(i, j)| cli.task(j, &format!("Parallel {i}")))
+        .collect();
+    let output = cli.dir.path().join("vault/Tasks \u{2603}");
+    let paths: Vec<_> = jobs
+        .iter()
+        .map(|j| {
+            output.join(
+                cli.ok(&["job", "show", j])["document_path"]
+                    .as_str()
+                    .unwrap(),
+            )
+        })
+        .collect();
+    for path in &paths {
+        let body = std::fs::read_to_string(path).unwrap().replace(
+            "<!-- taskcli:notes:start -->",
+            "<!-- taskcli:notes:start -->\nKeep my notes.",
         );
-        assert_eq!(cli.ok(&["doctor"])["healthy"], true);
+        std::fs::write(path, body).unwrap();
     }
+    let mut children: Vec<_> = tasks
+        .iter()
+        .enumerate()
+        .map(|(i, t)| {
+            RunningCli::start(
+                &cli,
+                &[
+                    "task",
+                    "claim",
+                    t,
+                    "--executor",
+                    &format!("agent:{i}"),
+                    "--session",
+                    &format!("session:{i}"),
+                ],
+            )
+        })
+        .collect();
+    for child in &mut children {
+        let result = child.output();
+        assert!(
+            result.status.success(),
+            "{}",
+            String::from_utf8_lossy(&result.stdout)
+        );
+        let value: Value = serde_json::from_slice(&result.stdout).unwrap();
+        assert!(value["projection_pending"].is_null(), "{value}");
+    }
+    for (path, task) in paths.iter().zip(&tasks) {
+        let body = std::fs::read_to_string(path).unwrap();
+        assert_eq!(body.matches("Keep my notes.").count(), 1);
+        assert!(body.contains("Tasks/") && body.contains(&task.replace('_', "-")));
+        let folder = path.parent().unwrap().parent().unwrap().join("Tasks");
+        let note = std::fs::read_dir(folder)
+            .unwrap()
+            .map(|e| std::fs::read_to_string(e.unwrap().path()).unwrap())
+            .find(|s| s.contains(task))
+            .unwrap();
+        assert!(note.contains("status: \"IN_PROGRESS\""));
+    }
+    assert_eq!(
+        cli.ok(&["task", "list", "--status", "IN_PROGRESS"])
+            .as_array()
+            .unwrap()
+            .len(),
+        4
+    );
+    assert_eq!(cli.ok(&["doctor"])["healthy"], true);
 }
 
 #[tokio::test]
 async fn killed_cli_after_database_commit_replays_without_duplicates_and_repairs_files() {
-    let cli = Cli::new("markdown");
+    let cli = Cli::new();
     let job = cli.job("Crash recovery");
     let store = agentix_task::Store::open(&cli.dir.path().join("state.sqlite3"))
         .await
@@ -483,7 +477,7 @@ fn plugin_entrypoints_execute_the_compiled_taskcli() {
 
 #[test]
 fn cli_rejects_invalid_inputs_and_preserves_configuration_and_state() {
-    let cli = Cli::new("markdown");
+    let cli = Cli::new();
     let job = cli.job("Validation");
     let task = cli.task(&job, "Check inputs");
     let before = cli.ok(&["task", "show", &task]);
@@ -524,8 +518,6 @@ fn cli_rejects_invalid_inputs_and_preserves_configuration_and_state() {
     assert_eq!(
         cli.run(&[
             "init",
-            "--format",
-            "markdown",
             "--root",
             cli.dir.path().join("vault").to_str().unwrap()
         ])
@@ -541,7 +533,7 @@ fn cli_rejects_invalid_inputs_and_preserves_configuration_and_state() {
 
 #[test]
 fn cli_dependency_edits_filters_plan_files_and_archive_round_trip() {
-    let cli = Cli::new("markdown");
+    let cli = Cli::new();
     let job = cli.job("First requirement");
     let a = cli.task(&job, "prerequisite");
     let b = cli.task(&job, "dependent");
@@ -640,7 +632,7 @@ fn cli_dependency_edits_filters_plan_files_and_archive_round_trip() {
 
 #[test]
 fn inline_plan_bodies_accept_yaml_frontmatter_and_merge_properties() {
-    let cli = Cli::new("obsidian");
+    let cli = Cli::new();
     let job = cli.job("Frontmatter");
     let task = cli.ok(&[
         "task",
@@ -682,141 +674,137 @@ fn inline_plan_bodies_accept_yaml_frontmatter_and_merge_properties() {
 
 #[test]
 fn cli_creates_and_repairs_plugin_views_without_installing_obsidian_plugins() {
-    for format in ["markdown", "obsidian"] {
-        let cli = Cli::new(format);
-        let job = cli.job("Plugin-compatible views");
-        let task = cli.task(&job, "Visible card");
-        let project = cli.ok(&["project", "list"])[0].clone();
-        let output = cli.dir.path().join("vault/Tasks \u{2603}");
-        let directory = output.join(format!("Projects/{}", project["key"].as_str().unwrap()));
-        let board = std::fs::read_to_string(directory.join("Board.md")).unwrap();
-        assert!(!directory.join("Tasks.md").exists());
-        assert!(board.starts_with("---\n"));
-        assert!(board.contains("tasknotesKanban"));
-        assert!(!board.contains("kanban-plugin:"));
-        assert!(
-            std::fs::read_dir(directory.join("Tasks"))
+    let cli = Cli::new();
+    let job = cli.job("Plugin-compatible views");
+    let task = cli.task(&job, "Visible card");
+    let project = cli.ok(&["project", "list"])[0].clone();
+    let output = cli.dir.path().join("vault/Tasks \u{2603}");
+    let directory = output.join(format!("Projects/{}", project["key"].as_str().unwrap()));
+    let board = std::fs::read_to_string(directory.join("Board.md")).unwrap();
+    assert!(!directory.join("Tasks.md").exists());
+    assert!(board.starts_with("---\n"));
+    assert!(board.contains("tasknotesKanban"));
+    assert!(!board.contains("kanban-plugin:"));
+    assert!(
+        std::fs::read_dir(directory.join("Tasks"))
+            .unwrap()
+            .any(|e| e
                 .unwrap()
-                .any(|e| e
-                    .unwrap()
-                    .file_name()
-                    .to_string_lossy()
-                    .contains("Visible card"))
-        );
-        assert!(!board.contains("|Project]]") && !board.contains("[Project]("));
-        assert!(!directory.join("meta.md").exists());
-        assert!(!board.contains("Task list"));
-        let before = cli.ok(&["task", "show", &task]);
-        std::fs::write(directory.join("Board.md"), "# Old table or manual edit\n").unwrap();
-        cli.ok(&["sync"]);
-        assert_eq!(
-            std::fs::read_to_string(directory.join("Board.md")).unwrap(),
-            board
-        );
-        assert!(!directory.join("Tasks.md").exists());
-        assert_eq!(cli.ok(&["task", "show", &task]), before);
-        let settings = cli.dir.path().join("vault/.obsidian");
-        assert_eq!(settings.exists(), format == "obsidian");
-        if settings.exists() {
-            assert_eq!(std::fs::read_dir(settings).unwrap().count(), 0);
-        }
+                .file_name()
+                .to_string_lossy()
+                .contains("Visible card"))
+    );
+    assert!(!board.contains("|Project]]") && !board.contains("[Project]("));
+    assert!(!directory.join("meta.md").exists());
+    assert!(!board.contains("Task list"));
+    let before = cli.ok(&["task", "show", &task]);
+    std::fs::write(directory.join("Board.md"), "# Old table or manual edit\n").unwrap();
+    cli.ok(&["sync"]);
+    assert_eq!(
+        std::fs::read_to_string(directory.join("Board.md")).unwrap(),
+        board
+    );
+    assert!(!directory.join("Tasks.md").exists());
+    assert_eq!(cli.ok(&["task", "show", &task]), before);
+    let settings = cli.dir.path().join("vault/.obsidian");
+    assert!(settings.exists());
+    if settings.exists() {
+        assert_eq!(std::fs::read_dir(settings).unwrap().count(), 0);
     }
 }
 
 #[test]
-fn standalone_json_workflow_in_both_document_formats() {
-    for format in ["markdown", "obsidian"] {
-        let cli = Cli::new(format);
-        let project = cli.ok(&[
-            "project",
-            "register",
-            "--name",
-            "Demo",
-            "--root",
-            cli.dir.path().to_str().unwrap(),
-        ]);
-        let pid = project["id"].as_str().unwrap();
-        let job = cli.ok(&[
-            "job",
-            "create",
-            "--project",
-            pid,
-            "--title",
-            "Deliver task board",
-            "--goal",
-            "CLI works standalone",
-        ]);
-        let jid = job["id"].as_str().unwrap();
-        let task = cli.ok(&["task", "add", "--job", jid, "--title", "Build"]);
-        let tid = task["id"].as_str().unwrap();
-        let claim = cli.ok(&[
-            "task",
-            "claim",
-            tid,
-            "--executor",
-            "agent:test",
-            "--session",
-            "session:test",
-            "--delegated-by",
-            "team:test",
-        ]);
-        let token = claim["lease"]["token"].as_str().unwrap();
-        cli.ok(&[
-            "plan",
-            "create",
-            tid,
-            "--body",
-            "# Build\nRun tests.",
-            "--session",
-            "session:test",
-            "--lease-token",
-            token,
-        ]);
-        cli.ok(&[
-            "task",
-            "start",
-            tid,
-            "--session",
-            "session:test",
-            "--lease-token",
-            token,
-        ]);
-        let context = cli.ok(&["context", "--session", "session:test"]);
-        assert_eq!(context["job_id"], jid);
-        assert_eq!(context["documents"]["format"], format);
-        cli.ok(&[
-            "task",
-            "done",
-            tid,
-            "--session",
-            "session:test",
-            "--lease-token",
-            token,
-        ]);
-        assert_eq!(cli.ok(&["job", "show", jid])["status"], "PENDING_REVIEW");
-        cli.ok(&["job", "approve", jid]);
-        cli.ok(&["job", "archive", jid]);
-        assert_eq!(
-            cli.ok(&["job", "list", "--archived"])
-                .as_array()
-                .unwrap()
-                .len(),
-            1
-        );
-        assert!(
-            !cli.ok(&["event", "list", "--job", jid])["events"]
-                .as_array()
-                .unwrap()
-                .is_empty()
-        );
-        assert_eq!(cli.ok(&["doctor"])["healthy"], true);
-        cli.ok(&["sync"]);
-    }
+fn standalone_json_workflow_in_obsidian() {
+    let cli = Cli::new();
+    let project = cli.ok(&[
+        "project",
+        "register",
+        "--name",
+        "Demo",
+        "--root",
+        cli.dir.path().to_str().unwrap(),
+    ]);
+    let pid = project["id"].as_str().unwrap();
+    let job = cli.ok(&[
+        "job",
+        "create",
+        "--project",
+        pid,
+        "--title",
+        "Deliver task board",
+        "--goal",
+        "CLI works standalone",
+    ]);
+    let jid = job["id"].as_str().unwrap();
+    let task = cli.ok(&["task", "add", "--job", jid, "--title", "Build"]);
+    let tid = task["id"].as_str().unwrap();
+    let claim = cli.ok(&[
+        "task",
+        "claim",
+        tid,
+        "--executor",
+        "agent:test",
+        "--session",
+        "session:test",
+        "--delegated-by",
+        "team:test",
+    ]);
+    let token = claim["lease"]["token"].as_str().unwrap();
+    cli.ok(&[
+        "plan",
+        "create",
+        tid,
+        "--body",
+        "# Build\nRun tests.",
+        "--session",
+        "session:test",
+        "--lease-token",
+        token,
+    ]);
+    cli.ok(&[
+        "task",
+        "start",
+        tid,
+        "--session",
+        "session:test",
+        "--lease-token",
+        token,
+    ]);
+    let context = cli.ok(&["context", "--session", "session:test"]);
+    assert_eq!(context["job_id"], jid);
+    assert!(context["documents"].get("format").is_none());
+    cli.ok(&[
+        "task",
+        "done",
+        tid,
+        "--session",
+        "session:test",
+        "--lease-token",
+        token,
+    ]);
+    assert_eq!(cli.ok(&["job", "show", jid])["status"], "PENDING_REVIEW");
+    cli.ok(&["job", "approve", jid]);
+    cli.ok(&["job", "archive", jid]);
+    assert_eq!(
+        cli.ok(&["job", "list", "--archived"])
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(
+        !cli.ok(&["event", "list", "--job", jid])["events"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(cli.ok(&["doctor"])["healthy"], true);
+    cli.ok(&["sync"]);
 }
 
 #[test]
 fn invalid_arguments_and_business_errors_have_distinct_exit_codes() {
-    let cli = Cli::new("markdown");
+    let cli = Cli::new();
     assert_eq!(cli.run(&["watch"]).status.code(), Some(2));
     let out = cli.run(&["task", "show", "task_missing"]);
     assert_eq!(out.status.code(), Some(1));
@@ -833,7 +821,7 @@ fn invalid_arguments_and_business_errors_have_distinct_exit_codes() {
 #[test]
 fn hooks_consume_host_json_and_do_not_require_a_job() {
     use std::io::Write;
-    let cli = Cli::new("markdown");
+    let cli = Cli::new();
     let mut child = Command::new(env!("CARGO_BIN_EXE_taskcli"))
         .arg("--config")
         .arg(cli.dir.path().join("config.toml"))
@@ -851,7 +839,7 @@ fn hooks_consume_host_json_and_do_not_require_a_job() {
 
 #[test]
 fn git_worktrees_share_one_project() {
-    let cli = Cli::new("markdown");
+    let cli = Cli::new();
     let repo = cli.dir.path().join("repo");
     std::fs::create_dir(&repo).unwrap();
     for args in [
@@ -900,7 +888,7 @@ fn git_worktrees_share_one_project() {
 
 #[test]
 fn legacy_document_language_is_ignored_without_accepting_other_unknown_fields() {
-    let cli = Cli::new("markdown");
+    let cli = Cli::new();
     let path = cli.dir.path().join("config.toml");
     let mut config: toml::Value = toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
     config["documents"]
@@ -920,7 +908,7 @@ fn legacy_document_language_is_ignored_without_accepting_other_unknown_fields() 
 
 #[test]
 fn taskcli_preserves_authored_language_without_language_configuration() {
-    let cli = Cli::new("markdown");
+    let cli = Cli::new();
     let job = cli.job("Long requirement");
     let task = cli.ok(&[
         "task",
@@ -945,8 +933,8 @@ fn taskcli_preserves_authored_language_without_language_configuration() {
         String::from_utf8_lossy(&output.stdout)
     );
     let dashboard =
-        std::fs::read_to_string(cli.dir.path().join("vault/Tasks ☃/Dashboard.md")).unwrap();
-    assert!(dashboard.contains("Task dashboard"), "{dashboard}");
+        std::fs::read_to_string(cli.dir.path().join("vault/Tasks ☃/Dashboard.base")).unwrap();
+    assert!(dashboard.contains("Projects"), "{dashboard}");
     assert!(
         std::fs::read_dir(cli.dir.path().join("vault/Tasks ☃/Projects/Demo/Tasks"))
             .unwrap()
@@ -980,12 +968,10 @@ fn initialization_ignores_language_environment_and_omits_language_configuration(
         dir: TempDir::new().unwrap(),
     };
     let root = cli.dir.path().join("documents");
-    std::fs::create_dir(&root).unwrap();
+    std::fs::create_dir_all(root.join(".obsidian")).unwrap();
     let output = cli
         .command(&[
             "init",
-            "--format",
-            "markdown",
             "--root",
             root.to_str().unwrap(),
             "--database",
@@ -997,9 +983,9 @@ fn initialization_ignores_language_environment_and_omits_language_configuration(
         .unwrap();
     assert!(output.status.success());
     assert!(
-        std::fs::read_to_string(root.join("Dashboard.md"))
+        std::fs::read_to_string(root.join("Dashboard.base"))
             .unwrap()
-            .contains("Task dashboard")
+            .contains("Projects")
     );
     let config = std::fs::read_to_string(cli.dir.path().join("config.toml")).unwrap();
     assert!(!config.contains("language"));
@@ -1008,7 +994,7 @@ fn initialization_ignores_language_environment_and_omits_language_configuration(
 
 #[test]
 fn task_note_timestamps_follow_the_system_local_zone() {
-    let cli = Cli::new("markdown");
+    let cli = Cli::new();
     let job = cli.job("System local time projection");
     let id = cli.task(&job, "System time zone");
     let created = time::OffsetDateTime::from_unix_timestamp(
@@ -1031,7 +1017,7 @@ fn task_note_timestamps_follow_the_system_local_zone() {
 #[cfg(unix)]
 #[test]
 fn task_note_timestamps_follow_the_process_local_zone() {
-    let cli = Cli::new("markdown");
+    let cli = Cli::new();
     let job = cli.job("Local time projection");
     let id = cli.task(&job, "Time zones");
     for (zone, hours) in [("Asia/Tokyo", 9), ("Etc/GMT+5", -5), ("UTC", 0)] {
@@ -1078,7 +1064,7 @@ fn assert_task_note_timestamps(cli: &Cli, id: &str, offset: time::UtcOffset) {
 
 #[test]
 fn cli_creates_and_updates_job_prompt_verbatim() {
-    let cli = Cli::new("markdown");
+    let cli = Cli::new();
     let existing = cli.job("Existing");
     let project = cli.ok(&["job", "show", &existing])["project_id"]
         .as_str()
@@ -1105,7 +1091,7 @@ fn cli_creates_and_updates_job_prompt_verbatim() {
 
 #[test]
 fn hook_record_persists_only_text_in_its_sessions_job() {
-    let cli = Cli::new("markdown");
+    let cli = Cli::new();
     let project = cli.ok(&["project", "register", "--name", "demo"])["id"]
         .as_str()
         .unwrap()

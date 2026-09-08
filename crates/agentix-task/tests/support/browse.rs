@@ -4,7 +4,7 @@ use agentix_task::BrowseScope;
 
 #[tokio::test]
 async fn project_and_detail_scopes_ignore_other_projects_and_plan_bodies() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let task = f.task("Target").await;
     f.start(&task, "target").await;
     let sibling = f.task("Sibling").await;
@@ -84,7 +84,7 @@ async fn project_and_detail_scopes_ignore_other_projects_and_plan_bodies() {
 
 #[tokio::test]
 async fn session_board_keeps_expired_lease_associations_and_excludes_archives() {
-    let f = Fixture::new("obsidian").await;
+    let f = Fixture::new().await;
     let task = f.task("Target").await;
     f.claim(&task, "lease-session").await;
     let mut conn = connection(&f).await;
@@ -170,7 +170,7 @@ async fn session_board_keeps_expired_lease_associations_and_excludes_archives() 
 
 #[tokio::test]
 async fn task_detail_reads_dependency_status_without_dependency_bodies() {
-    let f = Fixture::new("markdown").await;
+    let f = Fixture::new().await;
     let dependency = f.task("Dependency").await;
     let task = f.task("Dependent").await;
     f.service

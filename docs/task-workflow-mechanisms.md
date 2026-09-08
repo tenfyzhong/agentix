@@ -13,7 +13,7 @@ First decompose the requirement into a Task DAG, create or resolve every node’
 | Hook / Extension | Handle session events, inject task context, renew leases, and handle exits and resumption | Does not decompose work, generate Plans, or automatically call start or done |
 | taskcli / agentix-task | Validate state transitions, ownership, dependencies, revisions, and idempotency; persist changes | Does not judge business correctness or run acceptance commands from a Plan |
 | SQLite | Store Project, Inbox, Job, Task, and Plan metadata, leases, and events | Does not store complete Plan bodies or isolate code workspaces |
-| Markdown / Obsidian files | Store Plans, Goal/Notes, and the human Project Inbox; display generated boards | Inbox imports human requests; Taskcli Sync submits supported Obsidian status edits through taskcli |
+| Obsidian files | Store Plans, Goal/Notes, and the human Project Inbox; display generated boards | Inbox imports human requests; Taskcli Sync submits supported Obsidian status edits through taskcli |
 
 The Skill defines working instructions, hooks adapt host events, and taskcli provides validated task operations. None replaces the others.
 
@@ -248,18 +248,17 @@ This distinction prevents a session restart from being mistaken for confirmation
 
 SQLite is authoritative for task status, dependencies, revisions, ownership, and other metadata. Board, Dashboard, and Job task sections are logically read-only views generated from those facts. The optional desktop Taskcli Sync plugin listens to saved status edits and submits supported changes through taskcli.
 
-Obsidian uses a native `Dashboard.base` table with clickable Name, Status, and Updated formula columns, filtered to active generated project Boards and sorted by recent activity. Markdown uses a compact `Dashboard.md` table. Board contains project metadata; there is no separate meta note or Project link on Board. Sync safely migrates registered legacy files after publishing replacements. Job task sections render dependency arrows, seven statuses, and task links in Mermaid, without repeating Dependencies prose.
+Obsidian uses a native `Dashboard.base` table with clickable Name, Status, and Updated formula columns, filtered to active generated project Boards and sorted by recent activity. Board contains project metadata; there is no separate meta note or Project link on Board. Sync safely migrates registered legacy files after publishing replacements. Job task sections render dependency arrows, seven statuses, and task links in Mermaid, without repeating Dependencies prose.
 
-Both output formats generate `Board.md` with a Job Base above a Task Base. Each `tasknotesKanban` view selects its exact project folder, entity tag, project ID, and unarchived notes. Pinned status columns remain visible while unrelated empty statuses are hidden. Each Task has one file under `Tasks/`, whose frontmatter records status and metadata and whose body contains the Plan. Jobs link these notes directly, so their checklists and authored Plan checklists do not duplicate task cards. Link syntax remains format-specific: wikilinks for Obsidian and relative Markdown links for ordinary directories. Rendering requires TaskNotes and Bases; generating Markdown does not modify vault settings.
+`taskcli` generates `Board.md` with a Job Base above a Task Base. Each `tasknotesKanban` view selects its exact project folder, entity tag, project ID, and unarchived notes. Pinned status columns remain visible while unrelated empty statuses are hidden. Each Task has one file under `Tasks/`, whose frontmatter records status and metadata and whose body contains the Plan. Jobs link these notes directly, so their checklists and authored Plan checklists do not duplicate task cards. Internal note links use Obsidian wikilinks. Rendering requires TaskNotes and Bases; generating notes does not modify vault settings.
 
-Obsidian with both plugins enabled is the recommended viewing environment; use `--format obsidian` when initializing against a vault. Plain Markdown mode remains available for CLI-only workflows and other editors. This recommendation changes neither SQLite ownership rules nor the requirement to route task-state changes through taskcli or Agentix.
+Task boards require an Obsidian vault with TaskNotes and Bases enabled. Initialize against the vault with `taskcli init --root /existing/vault`. SQLite retains ownership of task state, and state changes must go through taskcli or Agentix.
 
 Taskcli Sync debounces saved status changes, verifies the registered note identity and revision, and serializes CLI writes with idempotency keys. It never obtains or borrows leases. Unsupported transitions and ownership conflicts restore authoritative properties and show a Notice. Startup drift is reconciled without replaying offline edits. See the [supported status edits](../plugins/agent-task-manager/obsidian/README.md#status-edits).
 
 Plan bodies live in the Task notes, alongside frontmatter properties. Projection preserves editable Goal/Notes sections, while an explicit `job update --goal` replaces the Goal. Agents must publish Plans through `plan create/revise`, not overwrite registered files directly.
 
-- For Obsidian, agents use the separate Obsidian Skill to author bodies with `[[wikilinks]]`. If a temporary draft is needed, use a session-specific path and publish through taskcli with the lease.
-- For plain Markdown, use relative `[label](path.md)` links; the directory need not be an Obsidian vault.
+- Agents use the separate Obsidian Skill to author bodies with `[[wikilinks]]`. If a temporary draft is needed, use a session-specific path and publish through taskcli with the lease.
 - taskcli generates directories and projections deterministically. It does not start a model or automatically invoke the Obsidian Skill.
 
 Task-state writes normally commit to the database before updating projections. A projection failure returns `projection_pending`, meaning the state change succeeded and `sync` should repair the view; do not recreate the Task. Plan publication validates and writes the file before registering metadata transactionally. The filesystem and SQLite do not share one atomic transaction, so an interruption can leave an unregistered file. The implementation checks existing content at that path instead of blindly overwriting it.

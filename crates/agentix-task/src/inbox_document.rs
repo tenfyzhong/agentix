@@ -264,7 +264,6 @@ impl Service {
                 published.push(entry.id.clone());
                 // The source remains authored by the human even after dispatch.
                 self.inbox_entry_markdown(
-                    project,
                     entry,
                     if entry.content_pending {
                         &entry.content
@@ -286,7 +285,7 @@ impl Service {
             let position = rendered.find(END).context("missing Inbox end marker")?;
             rendered.insert_str(
                 position,
-                &self.inbox_entry_markdown(project, entry, &entry.content, &state),
+                &self.inbox_entry_markdown(entry, &entry.content, &state),
             );
             published.push(entry.id.clone());
         }
@@ -312,13 +311,7 @@ impl Service {
         Ok(())
     }
 
-    fn inbox_entry_markdown(
-        &self,
-        project: &Project,
-        entry: &InboxEntry,
-        content: &str,
-        state: &Snapshot,
-    ) -> String {
+    fn inbox_entry_markdown(&self, entry: &InboxEntry, content: &str, state: &Snapshot) -> String {
         let mut lines = content.lines();
         let check = match entry.status {
             InboxStatus::Active => '/',
@@ -340,12 +333,7 @@ impl Service {
             .and_then(|id| state.jobs.iter().find(|j| &j.id == id))
         {
             output.push_str(" · ");
-            output.push_str(&self.link(
-                &format!("Projects/{}/Inbox.md", project.key),
-                &job.document_path,
-                None,
-                &job.name,
-            ));
+            output.push_str(&self.link(&job.document_path, &job.name));
         }
         if let Some(lease) = &entry.lease {
             output.push_str(&format!(" · {}", lease.executor_ref));

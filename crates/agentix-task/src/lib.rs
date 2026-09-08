@@ -24,7 +24,7 @@ pub use scoped::JobFilter;
 mod state_index;
 mod store;
 
-pub use config::{Config, DocumentConfig, DocumentFormat, StorageConfig, expand_home};
+pub use config::{Config, DocumentConfig, StorageConfig, expand_home};
 pub use model::*;
 pub use project::git_identity;
 pub use projection::Service;
