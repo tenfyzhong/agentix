@@ -52,6 +52,53 @@ fn changed(entry: &mut InboxEntry, now: i64) {
     entry.updated_at = now;
 }
 
+/// Only authored Job prompts authorize matching Inbox intake.
+pub(crate) fn has_job_prompt(request: &Value) -> bool {
+    matches!(
+        request["command"].as_str(),
+        Some("job.create" | "job.update" | "job.followup")
+    ) && request["prompt"]
+        .as_str()
+        .is_some_and(|prompt| !prompt.trim().is_empty())
+}
+
+pub(crate) fn link_prompt(
+    state: &mut Snapshot,
+    job_id: &str,
+    prompt: &str,
+    options: &WriteOptions,
+    now: i64,
+) -> Result<()> {
+    let job = &state.jobs[state.job_index(job_id)?];
+    for entry in &mut state.inboxes {
+        if entry.project_id != job.project_id
+            || entry.deleted
+            || !entry.published
+            || entry.content_pending
+            || entry.status != InboxStatus::Todo
+            || entry.job_id.is_some()
+            || entry.lease.is_some()
+            || entry.content.trim().is_empty()
+            || !prompt.contains(entry.content.trim())
+        {
+            continue;
+        }
+        entry.job_id = Some(job.id.clone());
+        entry.status = InboxStatus::Active;
+        entry.last_session.clone_from(&options.session_ref);
+        if options.actor_ref.starts_with("agent:") {
+            entry.lease = options.session_ref.as_ref().map(|session| InboxLease {
+                executor_ref: options.actor_ref.clone(),
+                session_ref: session.clone(),
+                token: new_id("lease"),
+                lease_expires_at: now + DEFAULT_LEASE_SECONDS,
+            });
+        }
+        changed(entry, now);
+    }
+    Ok(())
+}
+
 fn insert(
     state: &mut Snapshot,
     project: &str,

@@ -1047,3 +1047,148 @@ async fn inbox_source_migration_recovers_legacy_im_associations() {
         "[\"feishu\",\"chat\",\"message\"]"
     );
 }
+
+#[tokio::test]
+async fn prompt_links_inbox_and_follows_job_lifecycle() {
+    for policy in ["none", "required"] {
+        let mut f = fixture("obsidian").await;
+        // A fresh human entry must be imported before matching the prompt.
+        let doc = std::fs::read_to_string(path(&f)).unwrap();
+        std::fs::write(
+            path(&f),
+            doc.replace(END, &format!("- [ ] Fix login error\n{END}")),
+        )
+        .unwrap();
+        let job = f
+            .service
+            .execute(
+                json!({"command":"job.create","project":f.project,"title":"Login fix",
+                "prompt":"Please Fix login error and add tests", "review_policy":policy}),
+                identity("worker"),
+            )
+            .await
+            .unwrap()
+            .result;
+        f.job = job["id"].as_str().unwrap().into();
+        let linked = entries(&f).await;
+        assert_eq!(linked[0]["job_id"], f.job);
+        assert_eq!(linked[0]["status"], "ACTIVE");
+        assert_eq!(linked[0]["last_session"], "worker");
+        assert!(
+            std::fs::read_to_string(path(&f))
+                .unwrap()
+                .contains("- [/] Fix login error")
+        );
+        let task = f.task("Fix login").await;
+        let owned = f.start(&task, "worker").await;
+        f.service
+            .execute(json!({"command":"task.done","task":task}), owner(&owned))
+            .await
+            .unwrap();
+        if policy == "required" {
+            assert_eq!(entries(&f).await[0]["status"], "PENDING_REVIEW");
+            f.approve().await;
+        }
+        assert_eq!(entries(&f).await[0]["status"], "COMPLETED");
+        assert!(
+            std::fs::read_to_string(path(&f))
+                .unwrap()
+                .contains("- [x] Fix login error")
+        );
+    }
+}
+
+#[tokio::test]
+async fn prompt_links_only_available_complete_matches_in_its_project() {
+    let f = fixture("markdown").await;
+    let matched = add(&f, "Fix login").await;
+    add(&f, "Fix login and logout").await;
+    let cancelled = add(&f, "Cancelled work").await;
+    set_status(&f, cancelled["id"].as_str().unwrap(), "CANCELLED")
+        .await
+        .unwrap();
+    let completed = add(&f, "Completed work").await;
+    set_status(&f, completed["id"].as_str().unwrap(), "COMPLETED")
+        .await
+        .unwrap();
+    let other = f
+        .service
+        .execute(
+            json!({"command":"project.register","name":"other","root":f.dir.path().join("other")}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap()
+        .result;
+    f.service
+        .execute(
+            json!({"command":"inbox.add","project":other["id"],"content":"Fix login"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    let request = json!({"command":"job.create","project":f.project,"title":"Delivery",
+        "prompt":"Please Fix login; Cancelled work; Completed work"});
+    let first = f
+        .service
+        .execute(request.clone(), identity("one"))
+        .await
+        .unwrap()
+        .result;
+    let before = entries(&f).await;
+    let linked = before.iter().find(|e| e["id"] == matched["id"]).unwrap();
+    assert_eq!(linked["job_id"], first["id"]);
+    assert_eq!(before.iter().filter(|e| !e["job_id"].is_null()).count(), 1);
+    f.service.execute(request, identity("two")).await.unwrap();
+    assert_eq!(
+        entries(&f).await,
+        before,
+        "must not steal or relink an owned entry"
+    );
+}
+
+#[tokio::test]
+async fn prompt_links_on_backfill_and_followup() {
+    let mut f = fixture("markdown").await;
+    f.job = f
+        .service
+        .execute(
+            json!({"command":"job.create","project":f.project,"title":"Work"}),
+            identity("worker"),
+        )
+        .await
+        .unwrap()
+        .result["id"]
+        .as_str()
+        .unwrap()
+        .into();
+    add(&f, "First request").await;
+    f.service
+        .execute(
+            json!({"command":"job.update","job":f.job,"prompt":"Please handle First request"}),
+            identity("worker"),
+        )
+        .await
+        .unwrap();
+    assert_eq!(entries(&f).await[0]["job_id"], f.job);
+    let task = f.task("First delivery").await;
+    let owned = f.start(&task, "worker").await;
+    f.service
+        .execute(json!({"command":"task.done","task":task}), owner(&owned))
+        .await
+        .unwrap();
+    add(&f, "Second request").await;
+    f.service
+        .execute(
+            json!({"command":"job.followup","job":f.job,"prompt":"Also handle Second request"}),
+            identity("worker"),
+        )
+        .await
+        .unwrap();
+    let linked = entries(&f).await;
+    assert!(
+        linked
+            .iter()
+            .all(|e| e["job_id"] == f.job && e["status"] == "ACTIVE")
+    );
+}

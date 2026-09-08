@@ -30,7 +30,7 @@ pub(crate) fn apply(
     now: i64,
 ) -> Result<Value> {
     let command = required(request, "command")?;
-    match command {
+    let result = match command {
         _ if command.starts_with("inbox.") => crate::inbox::apply(state, request, options, now),
         "project.register" => register_project(state, request, now),
         "project.delete" | "job.delete" => crate::deletion::apply(state, request, options),
@@ -47,7 +47,17 @@ pub(crate) fn apply(
             update_task(state, request, options, now)
         }
         _ => bail!("invalid: unknown command {command}"),
+    }?;
+    if crate::inbox::has_job_prompt(request) {
+        crate::inbox::link_prompt(
+            state,
+            required(&result, "id")?,
+            required(request, "prompt")?,
+            options,
+            now,
+        )?;
     }
+    Ok(result)
 }
 
 pub(crate) fn create_job(
