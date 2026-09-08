@@ -1,5 +1,91 @@
 use super::*;
 
+async fn job_with_conversation(format: &str) -> Fixture {
+    let f = Fixture::new(format).await;
+    f.service
+        .execute(
+            json!({"command":"job.update","job":f.job,"prompt":"Original request"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    let task = f.task("Conversation order").await;
+    f.start(&task, "section-order").await;
+    f.service
+        .execute(
+            json!({"command":"session.record","session":"section-order","job":f.job,"messages":[
+                {"id":"u","role":"user","text":"Original request"},
+                {"id":"a","role":"assistant","text":"Delivered."}
+            ]}),
+            WriteOptions {
+                session_ref: Some("section-order".into()),
+                ..WriteOptions::default()
+            },
+        )
+        .await
+        .unwrap();
+    f
+}
+
+fn job_headings(document: &str) -> Vec<&str> {
+    document
+        .lines()
+        .filter_map(|line| line.strip_prefix("## "))
+        .collect()
+}
+
+#[tokio::test]
+async fn job_document_places_prompt_and_conversation_after_notes() {
+    for format in ["markdown", "obsidian"] {
+        let f = job_with_conversation(format).await;
+        let state = f.service.store().snapshot().await.unwrap();
+        let path = f
+            .service
+            .config()
+            .output_dir()
+            .join(&state.jobs[0].document_path);
+        let document = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            job_headings(&document),
+            ["Goal", "Tasks", "Notes", "Prompt", "Conversation"],
+            "{format}"
+        );
+
+        // Recreate the old section order with authored content before syncing.
+        let (body, history) = document.split_once("\n## Prompt\n").unwrap();
+        let (header, sections) = body.split_once("\n## Goal\n").unwrap();
+        let legacy = format!("{header}\n## Prompt\n{history}\n## Goal\n{sections}")
+            .replace("Ship it", "Authored goal.")
+            .replace(
+                "<!-- taskcli:notes:start -->",
+                "<!-- taskcli:notes:start -->\nAuthored notes.",
+            );
+        std::fs::write(&path, legacy).unwrap();
+        f.service.sync().await.unwrap();
+        let synced = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(job_headings(&synced), job_headings(&document));
+        assert!(synced.contains("Authored goal."));
+        assert!(synced.contains("Authored notes."));
+        assert!(synced.contains("    Original request"));
+        assert!(synced.contains("> Delivered."));
+        f.service.sync().await.unwrap();
+        assert_eq!(synced, std::fs::read_to_string(path).unwrap());
+    }
+}
+
+#[tokio::test]
+async fn job_markdown_places_prompt_and_conversation_after_notes() {
+    for format in ["markdown", "obsidian"] {
+        let f = job_with_conversation(format).await;
+        let body = f.service.job_markdown(&f.job).await.unwrap();
+        assert_eq!(
+            job_headings(&body),
+            ["Goal", "Notes", "Prompt", "Conversation"],
+            "{format}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn conversation_sync_filters_legacy_context_and_keeps_real_user_requests() {
     for format in ["markdown", "obsidian"] {

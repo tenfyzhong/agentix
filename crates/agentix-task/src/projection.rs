@@ -438,7 +438,7 @@ impl Service {
         let goal = section(&document, "goal")?.unwrap_or_else(|| job.goal.clone());
         let notes = section(&document, "notes")?.unwrap_or_default();
         Ok(format!(
-            "{}{}## Goal\n\n{goal}\n\n## Notes\n\n{notes}",
+            "## Goal\n\n{goal}\n\n## Notes\n\n{notes}\n{}{}",
             prompt_markdown(&job.prompt),
             conversation_markdown(&job)
         ))
@@ -571,8 +571,6 @@ impl Service {
                 }
                 let mut doc = frontmatter(properties);
                 doc.push_str(&Self::header(&job.name));
-                doc.push_str(&prompt_markdown(&job.prompt));
-                doc.push_str(&conversation_markdown(job));
                 doc.push_str(&format!("\n## {}\n\n<!-- taskcli:goal:start -->\n{}\n<!-- taskcli:goal:end -->\n\n## {}\n", "Goal", goal, "Tasks"));
                 doc.push_str(&job_dependency_graph(self, &index, &job.id)?);
                 for task in index
@@ -596,6 +594,8 @@ impl Service {
                     }
                 }
                 doc.push_str(&format!("\n## {}\n\n<!-- taskcli:notes:start -->\n{notes}\n<!-- taskcli:notes:end -->\n", "Notes"));
+                doc.push_str(&prompt_markdown(&job.prompt));
+                doc.push_str(&conversation_markdown(job));
                 files.insert(job.document_path.clone(), doc);
                 paths.insert(key, job.document_path.clone());
             }
