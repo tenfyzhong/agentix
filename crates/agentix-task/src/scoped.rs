@@ -220,7 +220,7 @@ pub(crate) async fn request_scope(conn: &mut SqliteConnection, request: &Value) 
         "project.archive" | "project.unarchive" | "project.delete"
     );
     let inbox_wide = command.starts_with("inbox.");
-    if project_wide || inbox_wide {
+    if project_wide || inbox_wide || crate::inbox::has_job_prompt(request) {
         if project_wide || command == "inbox.claim-next" {
             scope.jobs.extend(
                 ids(
