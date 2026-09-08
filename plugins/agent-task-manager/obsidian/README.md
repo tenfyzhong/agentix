@@ -148,12 +148,12 @@ Taskcli Sync also monitors registered top-level items in `Projects/<project>/Inb
 | Checkbox | Inbox / CLI status | Effect |
 | --- | --- | --- |
 | `- [ ]` | TODO | Queue the item. Reopens a terminal Job to ACTIVE or rejects a pending review while preserving Tasks. Active Inbox/Task leases must be released first. |
-| `- [/]` | ACTIVE | In progress, matching an ACTIVE Job. Creates its Job if absent, reopens terminal work or rejects pending verification; does not claim an agent lease. |
-| `- [r]` | PENDING_REVIEW | Submit its ACTIVE Job when all non-cancelled Tasks are DONE and at least one exists. |
-| `- [x]` | COMPLETED | Approve a PENDING_REVIEW Job. An unlinked TODO item can complete directly. |
+| `- [/]` | ACTIVE | Mark the item in progress without creating a Job or claiming an agent lease. If linked, reopen terminal work or reject pending verification. |
+| `- [r]` | PENDING_REVIEW | Mark an unlinked item pending review. If linked, submit its ACTIVE Job when all non-cancelled Tasks are DONE and at least one exists. |
+| `- [x]` | COMPLETED | Approve a PENDING_REVIEW Job. An unlinked item can complete directly after reopening if cancelled. |
 | `- [-]` | CANCELLED | Cancel unfinished work and revoke its leases. Reopen completed items before cancelling. |
 
-Task completion automatically moves the Inbox item to `[r]` with its Job. Verification rejection returns both to ACTIVE (`[/]`); approval produces COMPLETED (`[x]`). A human can activate an item without impersonating an agent. An unleased ACTIVE entry is eligible for an explicit `inbox claim-next`; lease release/expiry returns it to TODO for recovery of the same Job. Cancelled entries must be reopened before completion. Deleted entries cannot be revived, and archived Projects/Jobs must be unarchived first. Invalid edits restore the checkbox and report the CLI error. Deletion retains the existing withdrawal behavior.
+Task completion automatically moves the Inbox item to `[r]` with its Job. Verification rejection returns both to ACTIVE (`[/]`); approval produces COMPLETED (`[x]`). Manual checkbox changes never create Jobs. Unlinked items retain their own status; an explicit `inbox claim-next` creates a Job for an eligible unlinked entry. An unleased ACTIVE entry is eligible for an explicit `inbox claim-next`; lease release/expiry returns it to TODO for recovery of the same Job. Cancelled entries must be reopened before completion. Deleted entries cannot be revived, and archived Projects/Jobs must be unarchived first. Invalid edits restore the checkbox and report the CLI error. Deletion retains the existing withdrawal behavior.
 
 Schema 10 migrates old Inbox `IN_PROGRESS` / `DONE` values to `ACTIVE` / `COMPLETED`, recovering PENDING_REVIEW from the linked Job. The CLI still accepts the old names as aliases. Upgrade all database writers together; `sync` updates old receipts and checkbox symbols. Task states remain unchanged.
 

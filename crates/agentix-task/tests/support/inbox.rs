@@ -151,16 +151,16 @@ async fn inbox_aligned_states_follow_job_review_and_use_distinct_checkboxes() {
         active["lease"].is_null(),
         "manual activation must not impersonate an agent"
     );
-    f.job = active["job_id"].as_str().unwrap().into();
+    assert!(active["job_id"].is_null());
     assert!(
         std::fs::read_to_string(path(&f))
             .unwrap()
             .contains("- [/] Five states")
     );
-    assert!(set_status(&f, id, "PENDING_REVIEW").await.is_err());
     let claimed = claim(&f, "worker").await;
     assert_eq!(claimed["claimed"], true);
-    assert_eq!(claimed["job"]["id"], f.job);
+    f.job = claimed["job"]["id"].as_str().unwrap().into();
+    assert!(set_status(&f, id, "PENDING_REVIEW").await.is_err());
     let task = f.task("Delivery").await;
     let owned = f.start(&task, "worker").await;
     f.service
@@ -299,6 +299,48 @@ async fn set_status(f: &Fixture, id: &str, status: &str) -> anyhow::Result<agent
             WriteOptions::default(),
         )
         .await
+}
+
+#[tokio::test]
+async fn inbox_manual_status_changes_do_not_create_jobs() {
+    let f = fixture("obsidian").await;
+    let item = add(&f, "Manual states").await;
+    let id = item["id"].as_str().unwrap();
+    let jobs = f.service.store().snapshot().await.unwrap().jobs;
+    for (status, marker) in [
+        ("ACTIVE", '/'),
+        ("PENDING_REVIEW", 'r'),
+        ("COMPLETED", 'x'),
+        ("ACTIVE", '/'),
+        ("CANCELLED", '-'),
+        ("ACTIVE", '/'),
+        ("TODO", ' '),
+        ("IN_PROGRESS", '/'),
+    ] {
+        let entry = set_status(&f, id, status).await.unwrap().result;
+        let expected = if status == "IN_PROGRESS" {
+            "ACTIVE"
+        } else {
+            status
+        };
+        assert_eq!(entry["status"], expected);
+        assert!(entry["job_id"].is_null(), "manual {status} created a Job");
+        assert!(entry["lease"].is_null());
+        f.service.sync().await.unwrap();
+        let state = f.service.store().snapshot().await.unwrap();
+        assert_eq!(state.jobs, jobs);
+        assert_eq!(state.inboxes[0].status.to_string(), expected);
+        let doc = std::fs::read_to_string(path(&f)).unwrap();
+        assert!(doc.contains(&format!("- [{marker}] Manual states")));
+    }
+    let claimed = claim(&f, "worker").await;
+    assert_eq!(claimed["claimed"], true);
+    assert_eq!(claimed["entry"]["id"], id);
+    assert_eq!(claimed["entry"]["job_id"], claimed["job"]["id"]);
+    assert_eq!(
+        f.service.store().snapshot().await.unwrap().jobs.len(),
+        jobs.len() + 1
+    );
 }
 
 #[tokio::test]
