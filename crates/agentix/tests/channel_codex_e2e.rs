@@ -1,6 +1,9 @@
 // These end-to-end fixtures use Codex's Unix-domain socket transport.
 #![cfg(unix)]
 
+#[path = "../../agentix-bridge/tests/support/control.rs"]
+mod bridge_control;
+
 #[path = "../../agentix-codex/tests/support/mod.rs"]
 #[allow(dead_code)]
 mod codex_support;
@@ -140,15 +143,207 @@ async fn feishu_message_traverses_channel_engine_and_codex_then_updates_feishu()
     join_stack(tasks).await;
 }
 
+async fn native_bridge(
+    kind: agentix_core::AgentKind,
+) -> (
+    tempfile::TempDir,
+    tokio::process::Child,
+    Arc<dyn AgentAdapter>,
+    bridge_control::TestControl,
+) {
+    use tokio::io::{AsyncBufReadExt, BufReader};
+    let directory = tempfile::tempdir().unwrap();
+    let server = bridge_control::TestControl::bind(directory.path()).unwrap();
+    let claude = kind == agentix_core::AgentKind::Claude;
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(if claude {
+        "../../plugins/agentix-bridge/tests/claude-host.mjs"
+    } else {
+        "../../plugins/agentix-bridge/tests/host.mjs"
+    });
+    let mut host = tokio::process::Command::new("node")
+        .arg(fixture)
+        .arg(&server.endpoint)
+        .arg(if claude {
+            directory.path().as_os_str()
+        } else {
+            std::ffi::OsStr::new(kind.as_str())
+        })
+        .stdout(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let mut lines = BufReader::new(host.stdout.take().unwrap()).lines();
+    assert_eq!(lines.next_line().await.unwrap().as_deref(), Some("ready"));
+    let bridge = Arc::new(agentix_bridge::BridgeAdapter::new(
+        kind,
+        server.hub.clone(),
+        if claude {
+            directory.path()
+        } else {
+            std::path::Path::new("/tmp")
+        },
+    ));
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while bridge
+            .list_sessions(None, 10)
+            .await
+            .unwrap()
+            .sessions
+            .is_empty()
+        {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let registry = agentix_core::AgentRegistry::new(vec![(kind, bridge)]).unwrap();
+    (directory, host, Arc::new(registry), server)
+}
+
+#[tokio::test]
+async fn telegram_round_trip_reaches_original_native_bridges() {
+    for kind in [
+        agentix_core::AgentKind::Pi,
+        agentix_core::AgentKind::Omp,
+        agentix_core::AgentKind::Claude,
+    ] {
+        let (native, answer) = if kind == agentix_core::AgentKind::Claude {
+            ("native-claude", "Claude reply")
+        } else {
+            ("native-id", "bridge answer")
+        };
+        let (_directory, mut host, client, _server) = native_bridge(kind).await;
+        let api = MockTelegramApi::start().await;
+        api.push_updates(vec![
+            telegram_message(100, 10, &format!("/attach {}:{native}", kind.as_str())),
+            telegram_message(101, 11, "bridge integration"),
+        ])
+        .await;
+        let bot = Bot::new("test-token").set_api_url(api.api_url().parse().unwrap());
+        let channel = Arc::new(TelegramAdapter::with_bot(bot, TelegramPolicy::new([42])));
+        let shutdown = CancellationToken::new();
+        let stack = run_stack(client, channel, shutdown.clone()).await;
+        wait_until(|| async { api.requests().await.iter().any(|r| r.body.contains(answer)) }).await;
+        api.push_updates(vec![
+            telegram_message(102, 12, "/status"),
+            telegram_message(103, 13, "/queue"),
+            telegram_message(104, 14, "/fork"),
+        ])
+        .await;
+        wait_until(|| async {
+            api.requests()
+                .await
+                .iter()
+                .any(|r| r.body.contains("This command is not supported"))
+        })
+        .await;
+        let requests = api.requests().await;
+        assert!(requests.iter().any(|r| r.body.contains("Workspace:")));
+        assert!(
+            requests
+                .iter()
+                .any(|r| r.body.contains("The queue is empty"))
+        );
+        assert!(host.try_wait().unwrap().is_none());
+        shutdown.cancel();
+        join_stack(stack).await;
+        tokio::process::Command::new("kill")
+            .args(["-TERM", &host.id().unwrap().to_string()])
+            .status()
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), host.wait())
+            .await
+            .unwrap()
+            .unwrap();
+    }
+}
+
+#[tokio::test]
+async fn feishu_round_trip_reaches_original_native_bridges() {
+    for kind in [
+        agentix_core::AgentKind::Pi,
+        agentix_core::AgentKind::Omp,
+        agentix_core::AgentKind::Claude,
+    ] {
+        let (native, answer) = if kind == agentix_core::AgentKind::Claude {
+            ("native-claude", "Claude reply")
+        } else {
+            ("native-id", "bridge answer")
+        };
+        let (_directory, mut host, client, _server) = native_bridge(kind).await;
+        let api = MockFeishuApi::start().await;
+        let timestamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis()
+            .to_string();
+        api.push_event(feishu_message(
+            "bridge_attach",
+            &timestamp,
+            &format!("/attach {}:{native}", kind.as_str()),
+        ))
+        .await;
+        api.push_event(feishu_message(
+            "bridge_prompt",
+            &timestamp,
+            "bridge integration",
+        ))
+        .await;
+        let lark = LarkClient::builder("mock-app", "mock-secret")
+            .base_url(api.base_url())
+            .max_retries(1)
+            .build()
+            .unwrap();
+        let channel = Arc::new(FeishuAdapter::with_client(lark, ["ou_owner"]));
+        let shutdown = CancellationToken::new();
+        let stack = run_stack(client, channel, shutdown.clone()).await;
+        wait_until(|| async { api.requests().await.iter().any(|r| r.body.contains(answer)) }).await;
+        for (id, command) in [
+            ("bridge_status", "/status"),
+            ("bridge_queue", "/queue"),
+            ("bridge_unsupported", "/fork"),
+        ] {
+            api.push_event(feishu_message(id, &timestamp, command))
+                .await;
+        }
+        wait_until(|| async {
+            api.requests()
+                .await
+                .iter()
+                .any(|r| r.body.contains("This command is not supported"))
+        })
+        .await;
+        let requests = api.requests().await;
+        assert!(requests.iter().any(|r| r.body.contains("Workspace:")));
+        assert!(
+            requests
+                .iter()
+                .any(|r| r.body.contains("The queue is empty"))
+        );
+        assert!(host.try_wait().unwrap().is_none());
+        shutdown.cancel();
+        join_stack(stack).await;
+        tokio::process::Command::new("kill")
+            .args(["-TERM", &host.id().unwrap().to_string()])
+            .status()
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), host.wait())
+            .await
+            .unwrap()
+            .unwrap();
+    }
+}
+
 struct StackTasks {
     engine: Arc<Engine>,
     channel: tokio::task::JoinHandle<Result<(), agentix_core::ChannelError>>,
-    inbound: tokio::task::JoinHandle<()>,
-    events: tokio::task::JoinHandle<()>,
+    runtime: tokio::task::JoinHandle<()>,
 }
 
 async fn run_stack<C>(
-    client: Arc<CodexClient>,
+    client: Arc<dyn AgentAdapter>,
     channel: Arc<C>,
     shutdown: CancellationToken,
 ) -> StackTasks
@@ -159,7 +354,7 @@ where
 }
 
 async fn run_stack_with_tasks<C>(
-    client: Arc<CodexClient>,
+    client: Arc<dyn AgentAdapter>,
     channel: Arc<C>,
     shutdown: CancellationToken,
     task_board: Option<Arc<agentix_task::Service>>,
@@ -177,48 +372,21 @@ where
         engine = engine.with_task_board(service);
     }
     let engine = Arc::new(engine);
-    let (inbound_tx, mut inbound_rx) = mpsc::channel(32);
+    let (inbound_tx, inbound_rx) = mpsc::channel(32);
     let channel_task = tokio::spawn({
         let shutdown = shutdown.clone();
         async move { channel.run(inbound_tx, shutdown).await }
     });
-    let inbound_task = tokio::spawn({
-        let engine = engine.clone();
-        let shutdown = shutdown.clone();
-        async move {
-            loop {
-                tokio::select! {
-                    () = shutdown.cancelled() => break,
-                    inbound = inbound_rx.recv() => match inbound {
-                        Some(inbound) => engine.handle_inbound(inbound).await.unwrap(),
-                        None => break,
-                    }
-                }
-            }
-        }
-    });
-    let mut agent_events = client.subscribe();
-    let event_task = tokio::spawn({
-        let shutdown = shutdown.clone();
-        let engine = engine.clone();
-        async move {
-            loop {
-                tokio::select! {
-                    () = shutdown.cancelled() => break,
-                    event = agent_events.recv() => match event {
-                        Ok(event) => engine.handle_agent_event(event).await.unwrap(),
-                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
-                        Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                    }
-                }
-            }
-        }
-    });
+    let runtime = tokio::spawn(agentix::run_engine_loop(
+        engine.clone(),
+        client,
+        inbound_rx,
+        shutdown,
+    ));
     StackTasks {
         engine,
         channel: channel_task,
-        inbound: inbound_task,
-        events: event_task,
+        runtime,
     }
 }
 
@@ -355,12 +523,15 @@ async fn telegram_task_button_reason_database_projection_and_notification_round_
     })
     .await;
     stack.engine.refresh_task_board().await.unwrap();
-    let requests = server.requests().await;
-    assert!(
-        requests
+    wait_until(|| async {
+        server
+            .requests()
+            .await
             .iter()
             .any(|r| r.body.contains("Task update") && r.body.contains("Task channel reason"))
-    );
+    })
+    .await;
+    let requests = server.requests().await;
     assert!(requests.iter().any(|r| r.body.contains("task-callback")));
     assert_task_projection(&service, "Task channel reason").await;
     shutdown.cancel();
@@ -431,13 +602,14 @@ async fn feishu_task_card_reason_database_projection_and_notification_round_trip
     })
     .await;
     stack.engine.refresh_task_board().await.unwrap();
-    assert!(
+    wait_until(|| async {
         server
             .requests()
             .await
             .iter()
             .any(|r| r.body.contains("Task update") && r.body.contains("Task channel reason"))
-    );
+    })
+    .await;
     server.wait_for_acknowledgements(4).await;
     assert_task_projection(&service, "Task channel reason").await;
     shutdown.cancel();
@@ -469,8 +641,7 @@ async fn join_stack(tasks: StackTasks) {
         .unwrap()
         .unwrap()
         .unwrap();
-    tasks.inbound.await.unwrap();
-    tasks.events.await.unwrap();
+    tasks.runtime.await.unwrap();
 }
 
 async fn wait_for_value<F, Fut>(mut read: F) -> String

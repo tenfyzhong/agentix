@@ -1,15 +1,19 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
+
+use async_trait::async_trait;
+use tokio::sync::Mutex;
 
 use agentix_task::{JobStatus, Service, Snapshot, Task, TaskPhase, TaskStatus, WriteOptions};
 
 mod browse;
 mod inbox;
+#[cfg(test)]
+mod tests;
 pub(super) use browse::TaskBrowse;
 use serde_json::json;
 
 use super::{
-    ActionButton, ActionStyle, ConversationRef, Engine, EngineError, OutboundView, SessionId,
-    UiAction,
+    ActionButton, ActionStyle, ConversationRef, EngineError, OutboundView, SessionId, UiAction,
 };
 
 #[derive(Debug, Clone)]
@@ -31,21 +35,71 @@ fn error(error: impl std::fmt::Display) -> EngineError {
     EngineError::InvalidInput(error.to_string())
 }
 
-impl Engine {
-    #[must_use]
-    pub fn with_task_board(mut self, service: Arc<Service>) -> Self {
-        self.task_board = Some(service);
-        self
+/// Owns task-board state independently of the IM engine.
+pub(super) struct TaskBoardService {
+    pub(super) backend: Option<Arc<Service>>,
+    conversations: Mutex<HashMap<(String, String), Vec<serde_json::Value>>>,
+    inputs: Mutex<HashMap<ConversationRef, PendingTaskInput>>,
+    refresh: Mutex<()>,
+    state: crate::SqliteState,
+    pub(super) consumer: String,
+}
+
+/// The application facilities used by task views. No host or storage implementation
+/// is exposed through this port.
+#[async_trait]
+pub(super) trait TaskBoardUi: Send + Sync {
+    fn agent(&self) -> &dyn crate::AgentAdapter;
+    fn sessions(&self) -> &super::SessionService;
+    fn channels(&self) -> &HashMap<crate::ChannelKind, Arc<dyn crate::ChannelAdapter>>;
+    async fn send_view(
+        &self,
+        conversation: &ConversationRef,
+        view: &OutboundView,
+    ) -> Result<crate::MessageRef, EngineError>;
+    async fn issue_action(
+        &self,
+        conversation: &ConversationRef,
+        owner: &str,
+        group: &str,
+        action: UiAction,
+    ) -> String;
+    async fn update_command_menu_best_effort(&self, conversation: &ConversationRef, attached: bool);
+}
+
+pub(super) struct TaskBoardView<'a> {
+    service: &'a TaskBoardService,
+    ui: &'a dyn TaskBoardUi,
+}
+
+impl TaskBoardService {
+    pub(super) fn new(backend: Option<Arc<Service>>, state: crate::SqliteState) -> Self {
+        Self {
+            backend,
+            state,
+            conversations: Mutex::new(HashMap::new()),
+            inputs: Mutex::new(HashMap::new()),
+            refresh: Mutex::new(()),
+            consumer: "default".into(),
+        }
     }
 
-    #[must_use]
-    pub fn with_task_consumer(mut self, consumer: String) -> Self {
-        self.task_consumer = consumer;
-        self
+    pub(super) async fn take_input(
+        &self,
+        conversation: &ConversationRef,
+    ) -> Option<PendingTaskInput> {
+        self.inputs.lock().await.remove(conversation)
     }
 
+    pub(super) fn view<'a>(&'a self, ui: &'a dyn TaskBoardUi) -> TaskBoardView<'a> {
+        TaskBoardView { service: self, ui }
+    }
+}
+
+impl TaskBoardView<'_> {
     fn tasks_service(&self) -> Result<&Service, EngineError> {
-        self.task_board
+        self.service
+            .backend
             .as_deref()
             .ok_or_else(|| error("Task board is not configured."))
     }
@@ -66,18 +120,19 @@ impl Engine {
             .map(|t| format!("{} · {}\n{}", t.id, t.status, t.title))
             .collect::<Vec<_>>()
             .join("\n\n");
-        self.send_view(
-            conversation,
-            &OutboundView::text(
-                "Tasks",
-                if body.is_empty() {
-                    "No matching tasks.".into()
-                } else {
-                    body
-                },
-            ),
-        )
-        .await?;
+        self.ui
+            .send_view(
+                conversation,
+                &OutboundView::text(
+                    "Tasks",
+                    if body.is_empty() {
+                        "No matching tasks.".into()
+                    } else {
+                        body
+                    },
+                ),
+            )
+            .await?;
         Ok(())
     }
 
@@ -154,7 +209,7 @@ impl Engine {
         .await;
         self.add_task_mutations(conversation, owner_id, &state, task, &mut view)
             .await;
-        self.send_view(conversation, &view).await?;
+        self.ui.send_view(conversation, &view).await?;
         Ok(())
     }
 
@@ -168,10 +223,10 @@ impl Engine {
     ) {
         let job = &state.jobs[state.job_index(&task.job_id).expect("task Job")];
         let lease = state.leases.iter().find(|l| l.task_id == task.id);
-        if let Some(session_id) = self.sessions.current(conversation).await
+        if let Some(session_id) = self.ui.sessions().current(conversation).await
             && job.status != JobStatus::Cancelled
             && job.archived_at.is_none()
-            && lease.is_none_or(|l| l.session_ref == session_id.as_str())
+            && lease.is_none_or(|l| session_id.matches_task_lease(&l.session_ref, &l.executor_ref))
         {
             let group = format!("task:{}:{}", task.id, uuid::Uuid::new_v4());
             for (label, command, target) in [
@@ -203,6 +258,7 @@ impl Engine {
                     continue;
                 }
                 let token = self
+                    .ui
                     .issue_action(
                         conversation,
                         owner_id,
@@ -230,27 +286,28 @@ impl Engine {
         owner_id: &str,
         action: TaskAction,
     ) -> Result<(), EngineError> {
-        if self.sessions.current(conversation).await.as_ref() != Some(&action.session_id) {
+        if self.ui.sessions().current(conversation).await.as_ref() != Some(&action.session_id) {
             return Err(EngineError::InvalidAction);
         }
         if matches!(
             action.command.as_str(),
             "task.block" | "task.wait" | "task.fail"
         ) {
-            self.task_inputs.lock().await.insert(
+            self.service.inputs.lock().await.insert(
                 conversation.clone(),
                 PendingTaskInput {
                     action,
                     owner_id: owner_id.into(),
-                    generation: self.agent.generation(),
-                    epoch: self.sessions.epoch(conversation).await,
+                    generation: self.ui.agent().generation(),
+                    epoch: self.ui.sessions().epoch(conversation).await,
                 },
             );
-            self.send_view(
-                conversation,
-                &OutboundView::text("Task reason", "Reply with a reason, or use /cancel."),
-            )
-            .await?;
+            self.ui
+                .send_view(
+                    conversation,
+                    &OutboundView::text("Task reason", "Reply with a reason, or use /cancel."),
+                )
+                .await?;
             Ok(())
         } else {
             self.apply_task_action(conversation, owner_id, action, None)
@@ -266,8 +323,8 @@ impl Engine {
         reason: &str,
     ) -> Result<(), EngineError> {
         if pending.owner_id != owner_id
-            || pending.generation != self.agent.generation()
-            || pending.epoch != self.sessions.epoch(conversation).await
+            || pending.generation != self.ui.agent().generation()
+            || pending.epoch != self.ui.sessions().epoch(conversation).await
         {
             return Err(EngineError::InvalidAction);
         }
@@ -282,7 +339,7 @@ impl Engine {
         action: TaskAction,
         reason: Option<&str>,
     ) -> Result<(), EngineError> {
-        if self.sessions.current(conversation).await.as_ref() != Some(&action.session_id) {
+        if self.ui.sessions().current(conversation).await.as_ref() != Some(&action.session_id) {
             return Err(EngineError::InvalidAction);
         }
         let service = self.tasks_service()?;
@@ -292,33 +349,41 @@ impl Engine {
             .await
             .map_err(error)?;
         let lease = lease.as_ref();
-        if lease.is_some_and(|l| l.session_ref != action.session_id.as_str()) {
+        if lease.is_some_and(|l| {
+            !action
+                .session_id
+                .matches_task_lease(&l.session_ref, &l.executor_ref)
+        }) {
             return Err(EngineError::InvalidAction);
         }
         let options = WriteOptions {
             actor_ref: format!("im:{owner_id}"),
-            session_ref: Some(action.session_id.to_string()),
+            session_ref: Some(action.session_id.native_str().to_owned()),
             lease_token: lease.map(|l| l.token.clone()),
             expected_revision: Some(action.revision),
             ..WriteOptions::default()
         };
-        let result=service.execute(json!({"command":action.command,"task":action.task_id,"reason":reason,"session":action.session_id.to_string(),"executor":format!("agent:{}",action.session_id)}),options).await.map_err(error)?;
+        let result=service.execute(json!({"command":action.command,"task":action.task_id,"reason":reason,"session":action.session_id.native_str(),"executor":action.session_id.task_executor()}),options).await.map_err(error)?;
         if let Some(warning) = result.projection_pending {
-            self.send_view(
-                conversation,
-                &OutboundView::text("Projection pending", warning),
-            )
-            .await?;
+            self.ui
+                .send_view(
+                    conversation,
+                    &OutboundView::text("Projection pending", warning),
+                )
+                .await?;
         }
         self.show_task(conversation, owner_id, &action.task_id)
             .await
     }
 
     pub(super) async fn task_session_event(&self, command: &str, session: &str) {
-        if let Some(service) = &self.task_board {
+        if let Some(service) = &self.service.backend {
+            let key = SessionId::new(session);
+            let session = key.native_str();
+            let executor = crate::SessionKey::decode(&key).map(|_| key.task_executor());
             if let Err(error) = service
                 .execute(
-                    json!({"command":command,"session":session}),
+                    json!({"command":command,"session":session,"executor":executor}),
                     WriteOptions {
                         actor_ref: "system:agentix".into(),
                         session_ref: Some(session.into()),
@@ -338,26 +403,31 @@ impl Engine {
     }
 
     pub async fn refresh_task_board(&self) -> Result<(), EngineError> {
-        let Some(service) = &self.task_board else {
+        let Some(service) = &self.service.backend else {
             return Ok(());
         };
-        let _guard = self.task_refresh.lock().await;
+        let _guard = self.service.refresh.lock().await;
         service.store().reap_expired().await.map_err(error)?;
-        let key = format!("agentix:cursor:{}", self.task_consumer);
-        let cursor = service
+        let key = format!("agentix:cursor:{}", self.service.consumer);
+        let legacy = service
             .store()
             .metadata(&key)
             .await
             .map_err(error)?
             .and_then(|v| v.as_i64())
             .unwrap_or(0);
+        let cursor = self
+            .service
+            .state
+            .notification_cursor(&self.service.consumer, legacy)
+            .await?;
         let events = service
             .store()
             .events(None, cursor, 100)
             .await
             .map_err(error)?;
         for event in events {
-            if matches!(
+            let notification = if matches!(
                 event.event_type.as_str(),
                 "task.waiting_user"
                     | "task.blocked"
@@ -366,10 +436,12 @@ impl Engine {
                     | "job.pending_review"
                     | "job.rejected"
             ) && let Some(session) = event.session_ref.as_deref()
-                && let Some(conversation) = self
-                    .sessions
-                    .bound_conversation(&SessionId::new(session))
+                && let Ok(session) = self
+                    .ui
+                    .agent()
+                    .canonical_session(&SessionId::new(session))
                     .await
+                && let Some(conversation) = self.ui.sessions().bound_conversation(&session).await
             {
                 let body = format!(
                     "{}\n{}\n{}",
@@ -380,14 +452,20 @@ impl Engine {
                         .or_else(|| event.payload["review_reason"].as_str())
                         .unwrap_or("")
                 );
-                self.send_view(&conversation, &OutboundView::text("Task update", body))
-                    .await?;
-            }
-            service
-                .store()
-                .set_metadata(&key, &json!(event.sequence))
-                .await
-                .map_err(error)?;
+                Some((conversation, OutboundView::text("Task update", body)))
+            } else {
+                None
+            };
+            self.service
+                .state
+                .stage_notification(
+                    &self.service.consumer,
+                    event.sequence,
+                    notification
+                        .as_ref()
+                        .map(|(conversation, view)| (conversation, view)),
+                )
+                .await?;
         }
         let rendered = service
             .store()
@@ -403,9 +481,9 @@ impl Engine {
     }
 }
 
-impl Engine {
+impl TaskBoardService {
     pub(in crate::engine) async fn record_job_message(&self, event: &crate::AgentEvent) {
-        let Some(service) = &self.task_board else {
+        let Some(service) = &self.backend else {
             return;
         };
         match event {
@@ -422,7 +500,7 @@ impl Engine {
                 let Some(text) = item.text.as_deref().filter(|text| !text.trim().is_empty()) else {
                     return;
                 };
-                let mut conversations = self.job_conversations.lock().await;
+                let mut conversations = self.conversations.lock().await;
                 let messages = conversations
                     .entry((session_id.clone(), turn_id.clone()))
                     .or_default();
@@ -441,7 +519,7 @@ impl Engine {
             } => {
                 let key = (session_id.clone(), turn_id.clone());
                 let messages = self
-                    .job_conversations
+                    .conversations
                     .lock()
                     .await
                     .get(&key)
@@ -450,10 +528,29 @@ impl Engine {
                 if messages.is_empty() {
                     return;
                 }
-                let result = service.execute(json!({"command":"session.record","session":session_id,"messages":messages}), WriteOptions {session_ref:Some(session_id.clone()), ..WriteOptions::default()}).await;
+                let native = SessionId::new(session_id);
+                let job = if crate::SessionKey::decode(&native).is_some() {
+                    match service.store().session_job_page(session_id, 0, 1).await {
+                        Ok(page) => {
+                            if let Some(job) = page.jobs.first() {
+                                Some(job.id.clone())
+                            } else {
+                                self.conversations.lock().await.remove(&key);
+                                return;
+                            }
+                        }
+                        Err(error) => {
+                            tracing::warn!(%error, "task association failed");
+                            return;
+                        }
+                    }
+                } else {
+                    None
+                };
+                let result = service.execute(json!({"command":"session.record","session":native.native_str(),"job":job,"messages":messages}), WriteOptions {session_ref:Some(native.native_str().to_owned()), ..WriteOptions::default()}).await;
                 match result {
                     Ok(result) => {
-                        self.job_conversations.lock().await.remove(&key);
+                        self.conversations.lock().await.remove(&key);
                         if let Some(error) = result.projection_pending {
                             tracing::warn!(%error, "Job conversation projection pending");
                         }

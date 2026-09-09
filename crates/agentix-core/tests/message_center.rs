@@ -21,12 +21,12 @@ async fn outbound_queue_preserves_admission_order_across_clones() {
     let clone = center.clone();
     let completed = Mutex::new(Vec::new());
     let (release, ready) = oneshot::channel();
-    let mut first = pin!(center.outbound(async {
+    let mut first = pin!(center.outbound(None, async {
         ready.await.unwrap();
         completed.lock().unwrap().push(1);
     }));
-    let mut second = pin!(clone.outbound(async { completed.lock().unwrap().push(2) }));
-    let mut third = pin!(center.outbound(async { completed.lock().unwrap().push(3) }));
+    let mut second = pin!(clone.outbound(None, async { completed.lock().unwrap().push(2) }));
+    let mut third = pin!(center.outbound(None, async { completed.lock().unwrap().push(3) }));
     assert_pending(&mut first).await;
     assert_pending(&mut second).await;
     assert_pending(&mut third).await;
@@ -43,7 +43,7 @@ async fn outbound_queue_preserves_admission_order_across_clones() {
 #[tokio::test]
 async fn inbound_progresses_in_fifo_order_while_outbound_is_blocked() {
     let center = MessageCenter::default();
-    let mut blocked = pin!(center.outbound(pending::<()>()));
+    let mut blocked = pin!(center.outbound(None, pending::<()>()));
     assert_pending(&mut blocked).await;
     let (sender, mut receiver) = mpsc::channel(1);
     let conversation = ConversationRef::new(ChannelKind::Telegram, "42");
@@ -67,10 +67,10 @@ async fn inbound_progresses_in_fifo_order_while_outbound_is_blocked() {
 #[tokio::test]
 async fn cancelling_queued_or_active_outbound_work_releases_the_queue() {
     let center = MessageCenter::default();
-    let mut head = Box::pin(center.outbound(pending::<()>()));
+    let mut head = Box::pin(center.outbound(None, pending::<()>()));
     assert_pending(&mut head).await;
-    let mut cancelled = Box::pin(center.outbound(async { panic!("cancelled work ran") }));
-    let mut next = pin!(center.outbound(async { 42 }));
+    let mut cancelled = Box::pin(center.outbound(None, async { panic!("cancelled work ran") }));
+    let mut next = pin!(center.outbound(None, async { 42 }));
     assert_pending(&mut cancelled).await;
     assert_pending(&mut next).await;
     drop(cancelled);
@@ -87,10 +87,12 @@ async fn cancelling_queued_or_active_outbound_work_releases_the_queue() {
 async fn errors_release_the_head_and_closed_inbound_returns_the_envelope() {
     let center = MessageCenter::default();
     assert_eq!(
-        center.outbound(async { Err::<(), _>("rejected") }).await,
+        center
+            .outbound(None, async { Err::<(), _>("rejected") })
+            .await,
         Err("rejected")
     );
-    assert_eq!(center.outbound(async { "next" }).await, "next");
+    assert_eq!(center.outbound(None, async { "next" }).await, "next");
     let (sender, receiver) = mpsc::channel(1);
     drop(receiver);
     let envelope = InboundEnvelope::text(
@@ -107,4 +109,31 @@ async fn errors_release_the_head_and_closed_inbound_returns_the_envelope() {
             .0,
         envelope
     );
+}
+
+#[tokio::test]
+async fn outbound_conversations_are_independent_and_preserve_their_own_fifo() {
+    let center = MessageCenter::default();
+    let first_chat = ConversationRef::new(ChannelKind::Feishu, "first");
+    let other_chat = ConversationRef::new(ChannelKind::Feishu, "other");
+    let (release, ready) = oneshot::channel();
+    let mut slow = Box::pin(center.outbound(Some(&first_chat), async {
+        ready.await.unwrap();
+    }));
+    let mut same_chat = Box::pin(center.outbound(Some(&first_chat), async { 2 }));
+    assert_pending(&mut slow).await;
+    assert_pending(&mut same_chat).await;
+    assert_eq!(
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            center.outbound(Some(&other_chat), async { 3 })
+        )
+        .await
+        .unwrap(),
+        3
+    );
+    assert_pending(&mut same_chat).await;
+    release.send(()).unwrap();
+    slow.await;
+    assert_eq!(same_chat.await, 2);
 }

@@ -7,8 +7,8 @@ use rate_limit::RateLimiter;
 use std::collections::HashSet;
 use std::sync::{Arc, RwLock};
 
-pub use agentix_core::include_reply_context;
-use agentix_core::{
+pub use agentix_domain::include_reply_context;
+use agentix_domain::{
     ActionButton, ChannelAdapter, ChannelError, ChannelKind, CommandMenu, ConversationRef,
     InboundEnvelope, MessageCenter, MessageRef, OutboundView, ViewStatus,
 };
@@ -179,7 +179,7 @@ impl TelegramAdapter {
         self
     }
 
-    /// All Bot API operations, including callbacks and enrollment, share this queue.
+    /// Bot API operations share rate limits and preserve order within each chat.
     async fn request<R>(
         &self,
         request: R,
@@ -189,8 +189,13 @@ impl TelegramAdapter {
     where
         R: Request<Err = teloxide::RequestError>,
     {
+        let conversation =
+            chat.map(|chat| ConversationRef::new(ChannelKind::Telegram, chat.0.to_string()));
         self.messages
-            .outbound(self.rate_limiter.send(request, method, chat))
+            .outbound(
+                conversation.as_ref(),
+                self.rate_limiter.send(request, method, chat),
+            )
             .await
     }
 
@@ -285,7 +290,7 @@ impl TelegramAdapter {
                             message.chat.id.0.to_string(),
                         ),
                         owner_id: user.id.0.to_string(),
-                        payload: agentix_core::InboundPayload::TextEdited {
+                        payload: agentix_domain::InboundPayload::TextEdited {
                             original_event_id: original,
                             version: i64::from(update.id.0),
                             text,

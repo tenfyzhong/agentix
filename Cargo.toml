@@ -1,10 +1,13 @@
 [workspace]
 members = [
   "crates/agentix",
+  "crates/agentix-bridge",
   "crates/agentix-codex",
   "crates/agentix-core",
+  "crates/agentix-domain",
+  "crates/agentix-storage",
   "crates/agentix-feishu",
-  "crates/agentix-pi",
+  "crates/agentix-rmux",
   "crates/agentix-telegram",
   "crates/agentix-task",
   "crates/taskcli",

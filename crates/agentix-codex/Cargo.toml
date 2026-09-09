@@ -7,7 +7,8 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-agentix-core = { path = "../agentix-core" }
+agentix-rmux = { path = "../agentix-rmux" }
+agentix-domain = { path = "../agentix-domain" }
 anyhow.workspace = true
 async-trait.workspace = true
 dirs.workspace = true
@@ -26,6 +27,7 @@ url.workspace = true
 nix = { version = "0.31", default-features = false, features = ["user"] }
 
 [dev-dependencies]
+agentix-core = { path = "../agentix-core" }
 rmux-proto.workspace = true
 tempfile = "3.23"
 tracing-subscriber.workspace = true

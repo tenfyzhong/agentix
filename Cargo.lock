@@ -23,10 +23,10 @@ dependencies = [
 name = "agentix"
 version = "0.0.0-dev"
 dependencies = [
+ "agentix-bridge",
  "agentix-codex",
  "agentix-core",
  "agentix-feishu",
- "agentix-pi",
  "agentix-task",
  "agentix-telegram",
  "anyhow",
@@ -56,10 +56,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "agentix-bridge"
+version = "0.0.0-dev"
+dependencies = [
+ "agentix-domain",
+ "agentix-rmux",
+ "async-trait",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "agentix-codex"
 version = "0.0.0-dev"
 dependencies = [
  "agentix-core",
+ "agentix-domain",
+ "agentix-rmux",
  "anyhow",
  "async-trait",
  "dirs",
@@ -83,6 +101,8 @@ dependencies = [
 name = "agentix-core"
 version = "0.0.0-dev"
 dependencies = [
+ "agentix-domain",
+ "agentix-storage",
  "agentix-task",
  "async-trait",
  "serde",
@@ -97,10 +117,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "agentix-domain"
+version = "0.0.0-dev"
+dependencies = [
+ "async-trait",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tokio-util",
+ "uuid",
+]
+
+[[package]]
 name = "agentix-feishu"
 version = "0.0.0-dev"
 dependencies = [
- "agentix-core",
+ "agentix-domain",
  "async-trait",
  "futures-util",
  "larksuite-oapi-sdk-rs",
@@ -113,18 +146,27 @@ dependencies = [
 ]
 
 [[package]]
-name = "agentix-pi"
+name = "agentix-rmux"
 version = "0.0.0-dev"
 dependencies = [
- "agentix-core",
- "async-trait",
- "serde_json",
+ "agentix-domain",
+ "dirs",
+ "rmux-proto",
+ "rmux-sdk",
  "tempfile",
  "thiserror",
  "tokio",
- "tracing",
- "uuid",
- "walkdir",
+]
+
+[[package]]
+name = "agentix-storage"
+version = "0.0.0-dev"
+dependencies = [
+ "agentix-domain",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tokio",
 ]
 
 [[package]]
@@ -150,6 +192,7 @@ name = "agentix-telegram"
 version = "0.0.0-dev"
 dependencies = [
  "agentix-core",
+ "agentix-domain",
  "async-trait",
  "serde_json",
  "telegram-markdown-v2",
@@ -2752,15 +2795,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9774ba4a74de5f7b1c1451ed6cd5285a32eddb5cccb8cc655a4e50009e06477f"
 
 [[package]]
-name = "same-file"
-version = "1.0.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "93fc1dc3aaa9bfed95e02e6eadabb4baf7e3078b0bd1b4d7b6b0b68378900502"
-dependencies = [
- "winapi-util",
-]
-
-[[package]]
 name = "schannel"
 version = "0.1.29"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3985,16 +4019,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
-name = "walkdir"
-version = "2.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "29790946404f91d9c5d06f9874efddea1dc06c5efe94541a7d6863108e3a5e4b"
-dependencies = [
- "same-file",
- "winapi-util",
-]
-
-[[package]]
 name = "want"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4138,15 +4162,6 @@ checksum = "5d4a4db5077702ca3015d3d02d74974948aba2ad9e12ab7df718ee64ccd7e97d"
 dependencies = [
  "libredox",
  "wasite",
-]
-
-[[package]]
-name = "winapi-util"
-version = "0.1.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
-dependencies = [
- "windows-sys 0.61.2",
 ]
 
 [[package]]

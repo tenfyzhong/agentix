@@ -1,8 +1,8 @@
 use agentix_task::{BrowseScope, TaskListItem, TaskStatus};
 
 use super::{
-    ActionButton, ActionStyle, ConversationRef, Engine, EngineError, OutboundView, SessionId,
-    UiAction, error,
+    ActionButton, ActionStyle, ConversationRef, EngineError, OutboundView, SessionId,
+    TaskBoardView, UiAction, error,
 };
 
 pub(super) const PAGE_SIZE: usize = 6;
@@ -62,17 +62,18 @@ impl TaskBrowse {
     }
 }
 
-impl Engine {
+impl TaskBoardView<'_> {
     pub(in crate::engine) async fn open_dashboard(
         &self,
         conversation: &ConversationRef,
         owner: &str,
     ) -> Result<(), EngineError> {
-        self.update_command_menu_best_effort(
-            conversation,
-            self.sessions.current(conversation).await.is_some(),
-        )
-        .await;
+        self.ui
+            .update_command_menu_best_effort(
+                conversation,
+                self.ui.sessions().current(conversation).await.is_some(),
+            )
+            .await;
         self.show_dashboard(conversation, owner, 0).await
     }
 
@@ -121,6 +122,7 @@ impl Engine {
         let group = format!("task-browse:{}", uuid::Uuid::new_v4());
         for (label, target) in buttons {
             let token = self
+                .ui
                 .issue_action(conversation, owner, &group, UiAction::TaskBrowse(target))
                 .await;
             view.actions.push(ActionButton {
@@ -181,7 +183,7 @@ impl Engine {
             buttons,
         )
         .await;
-        self.send_view(conversation, &view).await?;
+        self.ui.send_view(conversation, &view).await?;
         Ok(())
     }
 
@@ -190,9 +192,9 @@ impl Engine {
         conversation: &ConversationRef,
     ) -> Result<Option<SessionId>, EngineError> {
         self.tasks_service()?;
-        let session = self.sessions.current(conversation).await;
+        let session = self.ui.sessions().current(conversation).await;
         if session.is_none() {
-            self.send_view(conversation, &OutboundView::text("Task board", "Attach a session first with /sessions or /attach <thread-id>. Use /dashboard to browse projects.")).await?;
+            self.ui.send_view(conversation, &OutboundView::text("Task board", "Attach a session first with /sessions or /attach <thread-id>. Use /dashboard to browse projects.")).await?;
         }
         Ok(session)
     }
@@ -210,7 +212,7 @@ impl Engine {
             };
             Some(session)
         } else {
-            self.sessions.current(conversation).await
+            self.ui.sessions().current(conversation).await
         };
         let service = self.tasks_service()?;
         let selection = if let Some(project) = &project {
@@ -280,7 +282,7 @@ impl Engine {
             buttons,
         )
         .await;
-        self.send_view(conversation, &view).await?;
+        self.ui.send_view(conversation, &view).await?;
         Ok(())
     }
 
@@ -334,7 +336,7 @@ impl Engine {
             buttons,
         )
         .await;
-        self.send_view(conversation, &view).await?;
+        self.ui.send_view(conversation, &view).await?;
         Ok(())
     }
 
@@ -407,7 +409,7 @@ impl Engine {
             buttons,
         )
         .await;
-        self.send_view(conversation, &view).await?;
+        self.ui.send_view(conversation, &view).await?;
         Ok(())
     }
 }

@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { join, posix } from "node:path";
+import { dirname, join, posix } from "node:path";
 import { tmpdir } from "node:os";
 
 const root = new URL("../", import.meta.url);
@@ -19,7 +19,10 @@ test("Pi and OMP remote packages discover their adapters and install runtime dep
         for (const kind of ["extensions", "skills"]) {
             assert.deepEqual(
                 pkg[host][kind],
-                plugin[host][kind].map(path => `./plugins/agent-task-manager/${path.replace(/^\.\//, "")}`),
+                [
+                    ...plugin[host][kind].map(path => `./plugins/agent-task-manager/${path.replace(/^\.\//, "")}`),
+                    ...(kind === "extensions" ? [`./plugins/agentix-bridge/extensions/${host}.ts`] : []),
+                ],
             );
         }
     }
@@ -28,21 +31,23 @@ test("Pi and OMP remote packages discover their adapters and install runtime dep
     const npmCache = await mkdtemp(`${tmpdir()}/agentix-npm-cache-`);
     try {
         await mkdir(`${directory}/plugins/agent-task-manager`, { recursive: true });
-        for (const path of ["package.json", "package-lock.json", "plugins/agent-task-manager"]) {
+        for (const path of ["package.json", "package-lock.json", "plugins/agent-task-manager", "plugins/agentix-bridge"]) {
             await cp(new URL(path, repository), `${directory}/${path}`, {
                 recursive: true,
                 filter: source => !/[\\/](node_modules|tests)([\\/]|$)/.test(source),
             });
         }
         const runNpm = (command, cwd) => execFileSync(
-            process.platform === "win32" ? "cmd.exe" : "/bin/sh",
+            process.platform === "win32" ? process.execPath : "/bin/sh",
             process.platform === "win32"
-                ? ["/d", "/s", "/c", command]
-                : ["-c", command],
+                ? [join(dirname(process.execPath), "node_modules/npm/bin/npm-cli.js"), ...command.split(" ").slice(1)]
+                : ["-c", `exec ${command}`],
             {
                 cwd,
                 encoding: "utf8",
-                timeout: 30000,
+                // A cold cache downloads dependencies on CI. Run npm directly so
+                // a timeout cannot leave a shell child holding the consumer directory.
+                timeout: 120000,
                 env: { ...process.env, npm_config_cache: npmCache },
             },
         );
@@ -82,13 +87,19 @@ test("Pi and OMP remote packages discover their adapters and install runtime dep
             });
             assert.equal(events.includes("agent_settled"), host === "pi", `load the ${host} lifecycle adapter`);
             assert.deepEqual(tools, ["taskcli"]);
+            let bridgeEntry = join(installedRoot, pkg[host].extensions[1]);
+            if (host === "omp") { await cp(bridgeEntry, `${bridgeEntry}.mjs`); bridgeEntry += ".mjs"; }
+            const { default: installBridge } = await import(pathToFileURL(bridgeEntry));
+            const bridge = installBridge({ on: event => events.push(event) });
+            assert.equal(typeof bridge.close, "function");
+            await bridge.close();
             for (const path of pkg[host].skills) {
                 await readFile(`${installedRoot}/${path}/agent-task-manager/SKILL.md`, "utf8");
             }
         }
     } finally {
-        await rm(directory, { recursive: true, force: true });
-        await rm(npmCache, { recursive: true, force: true });
+        await rm(directory, { recursive: true, force: true, maxRetries: 10 });
+        await rm(npmCache, { recursive: true, force: true, maxRetries: 10 });
     }
 });
 
@@ -100,8 +111,8 @@ test("repository marketplaces resolve the same complete host plugin", async () =
     assert.equal(codex.interface.displayName, "Agentix");
     assert.equal(claude.owner.name, "tenfyzhong");
     for (const [host, marketplace] of [["codex", codex], ["claude", claude]]) {
-        assert.equal(marketplace.plugins.length, 1);
-        const entry = marketplace.plugins[0];
+        assert.ok(marketplace.plugins.length >= 1);
+        const entry = marketplace.plugins.find(plugin => plugin.name === "agent-task-manager");
         assert.equal(entry.name, "agent-task-manager");
         const source = host === "codex" ? entry.source.path : entry.source;
         assert.equal(source, "./plugins/agent-task-manager");

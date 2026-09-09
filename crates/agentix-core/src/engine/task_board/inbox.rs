@@ -4,9 +4,11 @@ use agentix_task::{InboxEntry, Project, WriteOptions};
 use serde_json::json;
 
 use super::browse::{PAGE_SIZE, escape, markdown_pages, page_count, short};
-use super::{ConversationRef, Engine, EngineError, OutboundView, SessionId, TaskBrowse, error};
+use super::{
+    ConversationRef, EngineError, OutboundView, SessionId, TaskBoardView, TaskBrowse, error,
+};
 
-impl Engine {
+impl TaskBoardView<'_> {
     pub(in crate::engine) async fn show_current_inboxes(
         &self,
         conversation: &ConversationRef,
@@ -30,7 +32,7 @@ impl Engine {
         let mut seen = HashSet::new();
         let mut cwd = None;
         loop {
-            let page = self.agent.list_sessions(cursor, 100).await?;
+            let page = self.ui.agent().list_sessions(cursor, 100).await?;
             if let Some(summary) = page.sessions.iter().find(|s| s.id == session) {
                 cwd = summary.cwd.clone();
                 break;
@@ -42,16 +44,16 @@ impl Engine {
         }
         let project = self
             .tasks_service()?
-            .project_for_session(cwd.as_deref().map(Path::new), Some(session.as_str()))
+            .project_for_session(cwd.as_deref().map(Path::new), Some(session.native_str()))
             .await
             .map_err(error)?;
         let Some(project) = project.filter(|p| p.archived_at.is_none()) else {
-            self.send_view(conversation, &OutboundView::text("Project inbox", "This session has no active registered project. Attach a session in a registered project directory.")).await?;
+            self.ui.send_view(conversation, &OutboundView::text("Project inbox", "This session has no active registered project. Attach a session in a registered project directory.")).await?;
             return Ok(None);
         };
         // Session enumeration can await a remote adapter. Do not submit to a
         // directory resolved for an attachment that has since changed.
-        if self.sessions.current(conversation).await.as_ref() != Some(&session) {
+        if self.ui.sessions().current(conversation).await.as_ref() != Some(&session) {
             return Err(error("The attached session changed; retry the command."));
         }
         Ok(Some((session, project)))
@@ -73,7 +75,7 @@ impl Engine {
                 json!({"command":"inbox.add","project":project.id,"content":content}),
                 WriteOptions {
                     actor_ref: format!("im:{owner}"),
-                    session_ref: Some(session.to_string()),
+                    session_ref: Some(session.native_str().to_owned()),
                     idempotency_key: Some(format!(
                         "im:inbox:{}",
                         json!([conversation.channel, conversation.conversation_id, event_id])
@@ -126,7 +128,7 @@ impl Engine {
             ],
         )
         .await;
-        self.send_view(conversation, &view).await?;
+        self.ui.send_view(conversation, &view).await?;
         Ok(())
     }
 
@@ -197,7 +199,7 @@ impl Engine {
             buttons,
         )
         .await;
-        self.send_view(conversation, &view).await?;
+        self.ui.send_view(conversation, &view).await?;
         Ok(())
     }
 
@@ -274,12 +276,12 @@ impl Engine {
             buttons,
         )
         .await;
-        self.send_view(conversation, &view).await?;
+        self.ui.send_view(conversation, &view).await?;
         Ok(())
     }
 }
 
-impl Engine {
+impl TaskBoardView<'_> {
     pub(in crate::engine) async fn edit_inbox_message(
         &self,
         conversation: &ConversationRef,
@@ -288,7 +290,7 @@ impl Engine {
         version: i64,
         text: &str,
     ) -> Result<(), EngineError> {
-        let Some(service) = self.task_board.as_ref() else {
+        let Some(service) = self.service.backend.as_ref() else {
             return Ok(());
         };
         let Ok(crate::ParsedInput::Command(crate::AgentCommand::Inbox(content))) =
@@ -316,32 +318,32 @@ impl Engine {
     }
 }
 
-impl Engine {
-    pub async fn refresh_inbox_sources(&self) -> Result<(), EngineError> {
-        let Some(service) = self.task_board.as_ref() else {
-            return Ok(());
+impl TaskBoardView<'_> {
+    pub async fn poll_inbox_sources(&self) -> Result<Vec<crate::InboundEnvelope>, EngineError> {
+        let Some(service) = self.service.backend.as_ref() else {
+            return Ok(Vec::new());
         };
+        let mut edits = Vec::new();
         for entry in service.store().inbox_sources().await.map_err(error)? {
             let Ok(source) =
                 serde_json::from_str::<(crate::ChannelKind, String, String)>(&entry.source)
             else {
                 continue;
             };
-            let Some(channel) = self.channels.get(&source.0) else {
+            let Some(channel) = self.ui.channels().get(&source.0) else {
                 continue;
             };
             let reference =
                 crate::MessageRef::new(ConversationRef::new(source.0, source.1), source.2);
             match channel.read_inbox_message(&reference).await {
-                Ok(Some(envelope)) if matches!(&envelope.payload, crate::InboundPayload::TextEdited { version, .. } if *version > entry.source_version) => {
-                    if let Err(error) = self.handle_inbound(envelope).await {
-                        tracing::warn!(%error, inbox = %entry.id, "Inbox source synchronization failed");
-                    }
+                Ok(Some(envelope)) if matches!(&envelope.payload, crate::InboundPayload::TextEdited { version, .. } if *version > entry.source_version) =>
+                {
+                    edits.push(envelope);
                 }
                 Err(error) => tracing::warn!(%error, inbox = %entry.id, "Inbox source read failed"),
                 _ => (),
             }
         }
-        Ok(())
+        Ok(edits)
     }
 }

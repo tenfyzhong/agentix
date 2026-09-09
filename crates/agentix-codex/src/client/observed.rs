@@ -1,4 +1,4 @@
-use agentix_core::{AgentEvent, ItemSummary, SessionId, TurnStatus, TurnSummary};
+use agentix_domain::{AgentEvent, ItemSummary, SessionId, TurnStatus, TurnSummary};
 
 use super::{ClientError, CodexClient};
 

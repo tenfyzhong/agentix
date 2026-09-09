@@ -1,0 +1,50 @@
+{
+  "instance": "contract-instance",
+  "seq": 3,
+  "session": {
+    "id": "native-id",
+    "name": "Contract",
+    "preview": "hello",
+    "cwd": "/tmp",
+    "updatedAt": 1788880000,
+    "status": "idle"
+  },
+  "capabilities": [
+    "prompt",
+    "history",
+    "queue"
+  ],
+  "turns": [
+    {
+      "id": "turn-1",
+      "status": "completed",
+      "user_text": "hello",
+      "agent_text": "world",
+      "tools": [
+        {
+          "kind": "bash",
+          "label": "bash",
+          "status": "completed"
+        }
+      ],
+      "items": [
+        {
+          "id": "tool-1",
+          "kind": "bash",
+          "text": "ok",
+          "status": "completed"
+        }
+      ]
+    }
+  ],
+  "queue": {
+    "items": [
+      {
+        "id": "request-2",
+        "text": "next"
+      }
+    ],
+    "paused": true,
+    "uncertain": null
+  }
+}

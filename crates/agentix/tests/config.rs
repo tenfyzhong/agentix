@@ -2,6 +2,37 @@ use std::path::Path;
 
 use agentix::{AgentConfig, Config, ImChannel, LogRotation, add_feishu_owner, add_telegram_owner};
 
+#[test]
+fn multi_backend_configuration_expands_paths_and_rejects_ambiguity() {
+    let base = "[channel]\nkind='telegram'\n[channel.telegram]\ntoken='test'\n[storage]\npath='~/state.db'\n";
+    let agents = "[[agents]]\nkind='codex'\n[[agents]]\nkind='pi'\ncommand='~/bin/pi'\nsession_dir='~/.pi/agent/sessions'\n[[agents]]\nkind='omp'\nsession_dir='~/.omp/agent/sessions'\n";
+    let config = Config::from_toml(&format!("{base}{agents}")).unwrap();
+    assert_eq!(config.selected_agents().len(), 3);
+    assert!(Config::from_toml(&format!("{base}{agents}[agent]\nkind='codex'\n")).is_err());
+    assert!(
+        Config::from_toml(&format!(
+            "{base}{agents}[[agents]]\nkind='pi'\nsession_dir='/tmp'\n"
+        ))
+        .is_err()
+    );
+    assert!(Config::from_toml(base).is_err());
+}
+
+#[test]
+fn native_backends_accept_explicit_bridge_and_rmux_directory() {
+    let text = "[channel]\nkind='telegram'\n[channel.telegram]\ntoken='test'\n[storage]\npath='/tmp/state'\n[agent]\nkind='pi'\nsession_dir='/tmp/sessions'\nbridge_extension='~/bridge/pi.ts'\nrmux_directory='~/work'\n";
+    let AgentConfig::Pi {
+        bridge_extension,
+        rmux_directory,
+        ..
+    } = Config::from_toml(text).unwrap().agent.unwrap()
+    else {
+        panic!("Pi config");
+    };
+    assert!(bridge_extension.unwrap().ends_with("bridge/pi.ts"));
+    assert!(rmux_directory.ends_with("work"));
+}
+
 fn credential_config(kind: &str, tables: &str) -> String {
     format!(
         r#"[channel]
@@ -265,7 +296,7 @@ owner_user_ids = [42]
         command,
         rmux_directory,
         ..
-    } = config.agent
+    } = config.agent.unwrap()
     else {
         panic!("expected Codex configuration");
     };
@@ -295,7 +326,7 @@ owner_user_ids = [42]
     )
     .unwrap();
 
-    let AgentConfig::Codex { command, .. } = config.agent else {
+    let AgentConfig::Codex { command, .. } = config.agent.unwrap() else {
         panic!("expected Codex configuration");
     };
     assert_eq!(command, Path::new("/opt/codex/bin/codex"));
@@ -329,7 +360,7 @@ owner_user_ids = [42]
         command,
         endpoint,
         rmux_directory,
-    } = config.agent
+    } = config.agent.unwrap()
     else {
         panic!("expected Codex configuration");
     };
@@ -366,7 +397,7 @@ owner_user_ids = [42]
     )
     .unwrap();
 
-    let AgentConfig::Codex { rmux_directory, .. } = config.agent else {
+    let AgentConfig::Codex { rmux_directory, .. } = config.agent.unwrap() else {
         panic!("expected Codex configuration");
     };
     assert_eq!(rmux_directory, dirs::home_dir().unwrap().join("workspace"));
@@ -400,16 +431,20 @@ owner_user_ids = [42]
         ))
         .unwrap();
 
-        let (actual_command, actual_session_dir) = match config.agent {
+        let (actual_command, actual_session_dir) = match config.agent.unwrap() {
             AgentConfig::Pi {
                 command,
                 session_dir,
+                ..
             }
             | AgentConfig::OhMyPi {
                 command,
                 session_dir,
+                ..
             } => (command, session_dir),
-            AgentConfig::Codex { .. } => panic!("expected a Pi-compatible configuration"),
+            AgentConfig::Codex { .. } | AgentConfig::Claude { .. } => {
+                panic!("expected a Pi-compatible configuration")
+            }
         };
         assert_eq!(actual_command, home.join(command.trim_start_matches("~/")));
         assert_eq!(
@@ -468,7 +503,7 @@ owner_user_ids = [42]
 
     let AgentConfig::Codex {
         command, endpoint, ..
-    } = config.agent
+    } = config.agent.unwrap()
     else {
         panic!("expected Codex configuration");
     };
@@ -774,4 +809,62 @@ fn background_turn_notifications_default_to_enabled() {
         .unwrap();
         assert!(config.notifications.background_turns);
     }
+}
+
+#[test]
+fn named_backends_infer_kind_and_expand_paths() {
+    let base = "[channel]\nkind='telegram'\n[channel.telegram]\ntoken='test'\n[storage]\npath='~/state.db'\n";
+    let text = format!(
+        "{base}[agent.codex]\n[agent.omp]\nsession_dir='~/.omp/agent/sessions'\n[agent.pi]\nsession_dir='~/.pi/agent/sessions'\nbridge_extension='~/bridge/pi.ts'\n"
+    );
+    let config = Config::from_toml(&text).unwrap();
+    assert_eq!(
+        config
+            .selected_agents()
+            .iter()
+            .map(|a| a.kind().as_str())
+            .collect::<Vec<_>>(),
+        ["codex", "omp", "pi"]
+    );
+    let AgentConfig::Pi {
+        session_dir,
+        bridge_extension,
+        ..
+    } = config.selected_agents()[2]
+    else {
+        panic!("expected Pi")
+    };
+    assert!(session_dir.is_absolute());
+    assert!(bridge_extension.as_ref().unwrap().is_absolute());
+    assert_eq!(
+        Config::from_toml(&format!("{base}[agent.codex]\n"))
+            .unwrap()
+            .selected_agents()
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn named_backends_reject_typos_kind_and_mixed_formats() {
+    let base = "[channel]\nkind='telegram'\n[channel.telegram]\ntoken='test'\n[storage]\npath='/tmp/state.db'\n";
+    for agent in [
+        "[agent.unknown]\n",
+        "[agent.codex]\nkind='pi'\n",
+        "[agent.codex]\ncommmand='codex'\n",
+        "[agent.codex]\n[[agents]]\nkind='pi'\nsession_dir='/tmp'\n",
+        "[agent]\nkind='codex'\n[agent.pi]\nsession_dir='/tmp'\n",
+        "[agent]\n",
+    ] {
+        assert!(
+            Config::from_toml(&format!("{base}{agent}")).is_err(),
+            "accepted {agent}"
+        );
+    }
+}
+
+#[test]
+fn claude_named_backend_uses_plugin_bridge() {
+    let config = Config::from_toml("[channel]\nkind='telegram'\n[channel.telegram]\ntoken='test'\n[storage]\npath='/tmp/state.db'\n[agent.claude]\nsession_dir='~/.claude/projects'\n").unwrap();
+    assert_eq!(config.selected_agents()[0].kind().as_str(), "claude");
 }

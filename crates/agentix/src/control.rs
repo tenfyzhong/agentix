@@ -1,6 +1,8 @@
+use agentix_bridge::BridgeHub;
 use std::net::SocketAddr;
 #[cfg(unix)]
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
@@ -18,6 +20,7 @@ const MAX_CONTROL_MESSAGE_BYTES: u64 = 16 * 1024 * 1024;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "params", rename_all = "snake_case")]
 pub enum ControlRequest {
+    Session(agentix_core::SessionOperation),
     Sessions {
         cursor: Option<String>,
         limit: u32,
@@ -103,16 +106,35 @@ pub async fn request(endpoint: &str, request: &ControlRequest) -> Result<Value> 
     }
 }
 
+#[cfg(test)]
 pub async fn serve(
     endpoint: &str,
     calls: mpsc::Sender<ControlCall>,
     shutdown: CancellationToken,
 ) -> Result<()> {
-    match ControlEndpoint::parse(endpoint)? {
+    serve_with_bridge(endpoint, calls, shutdown, None).await
+}
+
+pub async fn serve_with_bridge(
+    endpoint: &str,
+    calls: mpsc::Sender<ControlCall>,
+    shutdown: CancellationToken,
+    bridge: Option<Arc<BridgeHub>>,
+) -> Result<()> {
+    let result = match ControlEndpoint::parse(endpoint)? {
         #[cfg(unix)]
-        ControlEndpoint::Unix(path) => serve_unix(&path, calls, shutdown).await,
-        ControlEndpoint::Tcp(address) => serve_tcp(address, calls, shutdown).await,
+        ControlEndpoint::Unix(path) => serve_unix(&path, calls, shutdown, bridge.clone()).await,
+        ControlEndpoint::Tcp(address) => {
+            if bridge.is_some() {
+                bail!("Pi/OMP bridges require a Unix server.endpoint");
+            }
+            serve_tcp(address, calls, shutdown).await
+        }
+    };
+    if let Some(bridge) = bridge {
+        bridge.shutdown().await;
     }
+    result
 }
 
 async fn exchange<S>(stream: S, request: &ControlRequest) -> Result<Value>
@@ -153,6 +175,7 @@ async fn serve_unix(
     path: &Path,
     calls: mpsc::Sender<ControlCall>,
     shutdown: CancellationToken,
+    bridge: Option<Arc<BridgeHub>>,
 ) -> Result<()> {
     use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 
@@ -183,7 +206,7 @@ async fn serve_unix(
     let listener = UnixListener::bind(path)
         .with_context(|| format!("failed to bind Agentix control socket {}", path.display()))?;
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
-    let result = accept_unix(&listener, calls, shutdown).await;
+    let result = accept_unix(&listener, calls, shutdown, bridge).await;
     if let Err(error) = std::fs::remove_file(path)
         && error.kind() != std::io::ErrorKind::NotFound
     {
@@ -197,13 +220,14 @@ async fn accept_unix(
     listener: &UnixListener,
     calls: mpsc::Sender<ControlCall>,
     shutdown: CancellationToken,
+    bridge: Option<Arc<BridgeHub>>,
 ) -> Result<()> {
     loop {
         tokio::select! {
             () = shutdown.cancelled() => return Ok(()),
             accepted = listener.accept() => {
                 let (stream, _) = accepted.context("Agentix control socket accept failed")?;
-                spawn_connection(stream, calls.clone(), shutdown.clone());
+                spawn_connection(stream, calls.clone(), shutdown.clone(), bridge.clone());
             }
         }
     }
@@ -222,18 +246,22 @@ async fn serve_tcp(
             () = shutdown.cancelled() => return Ok(()),
             accepted = listener.accept() => {
                 let (stream, _) = accepted.context("Agentix control TCP accept failed")?;
-                spawn_connection(stream, calls.clone(), shutdown.clone());
+                spawn_connection(stream, calls.clone(), shutdown.clone(), None);
             }
         }
     }
 }
 
-fn spawn_connection<S>(stream: S, calls: mpsc::Sender<ControlCall>, shutdown: CancellationToken)
-where
+fn spawn_connection<S>(
+    stream: S,
+    calls: mpsc::Sender<ControlCall>,
+    shutdown: CancellationToken,
+    bridge: Option<Arc<BridgeHub>>,
+) where
     S: tokio::io::AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
     tokio::spawn(async move {
-        if let Err(error) = serve_connection(stream, calls, shutdown).await {
+        if let Err(error) = serve_connection(stream, calls, shutdown, bridge).await {
             tracing::debug!(%error, "Agentix control connection failed");
         }
     });
@@ -243,9 +271,10 @@ async fn serve_connection<S>(
     stream: S,
     calls: mpsc::Sender<ControlCall>,
     shutdown: CancellationToken,
+    bridge: Option<Arc<BridgeHub>>,
 ) -> Result<()>
 where
-    S: tokio::io::AsyncRead + AsyncWrite + Unpin,
+    S: tokio::io::AsyncRead + AsyncWrite + Unpin + Send + 'static,
 {
     let mut stream = BufReader::new(stream);
     let mut request = String::new();
@@ -253,10 +282,22 @@ where
         let mut limited = (&mut stream).take(MAX_CONTROL_MESSAGE_BYTES);
         tokio::select! {
             () = shutdown.cancelled() => return Ok(()),
+            () = tokio::time::sleep(std::time::Duration::from_secs(3)), if bridge.is_some() => bail!("control handshake timed out"),
             result = limited.read_line(&mut request) => {
                 result?;
             }
         }
+    }
+    if request.ends_with('\n')
+        && request.len() <= agentix_bridge::wire::MAX_FRAME_BYTES
+        && let Ok(frame) = serde_json::from_str::<Value>(&request)
+        && matches!(frame["method"].as_str(), Some("register" | "inspect"))
+    {
+        let bridge = bridge.context("native bridging is not enabled on this control endpoint")?;
+        return tokio::select! {
+            () = shutdown.cancelled() => Ok(()),
+            result = bridge.accept(frame, stream) => result.map_err(Into::into),
+        };
     }
     let response = if request.len() as u64 >= MAX_CONTROL_MESSAGE_BYTES && !request.ends_with('\n')
     {
@@ -321,6 +362,155 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn unix_control_socket_serves_cli_and_native_registration_together() {
+        use agentix_bridge::{BridgeAdapter, BridgeHub, BridgeKind};
+        use agentix_core::AgentAdapter;
+        use std::sync::Arc;
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("control.sock");
+        let endpoint = format!("unix://{}", path.display());
+        let hub = Arc::new(BridgeHub::new());
+        let adapter = Arc::new(BridgeAdapter::new(
+            BridgeKind::Pi,
+            hub.clone(),
+            Path::new("/tmp"),
+        ));
+        let mut events = adapter.subscribe();
+        let (tx, mut rx) = mpsc::channel::<ControlCall>(4);
+        let shutdown = CancellationToken::new();
+        let task = tokio::spawn({
+            let endpoint = endpoint.clone();
+            let shutdown = shutdown.clone();
+            async move { serve_with_bridge(&endpoint, tx, shutdown, Some(hub)).await }
+        });
+        let mut socket = loop {
+            if let Ok(socket) = UnixStream::connect(&path).await {
+                break socket;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        };
+        let register = json!({"id":"register","method":"register","params":{"version":2,"agent":"pi","pid":42,"cwd":"/tmp","session_id":"native","session_file":"/tmp/session.jsonl","instance":"one","snapshot":{"instance":"one","seq":0,"session":{"id":"native","name":null,"preview":null,"cwd":"/tmp","status":"idle","updatedAt":1},"capabilities":["prompt"],"turns":[],"queue":{"items":[],"paused":false,"uncertain":null}}}});
+        let event = json!({"instance":"one","seq":1,"event":{"AgentMessageDelta":{"session_id":"native","turn_id":"t","item_id":"i","delta":"buffered"}}});
+        socket
+            .write_all(format!("{register}\n{event}\n").as_bytes())
+            .await
+            .unwrap();
+        let mut extension = BufReader::new(socket);
+        let mut response = String::new();
+        extension.read_line(&mut response).await.unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&response).unwrap()["ok"],
+            true
+        );
+        adapter
+            .attach(&agentix_core::SessionId::new("native"))
+            .await
+            .unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            loop { if matches!(events.recv().await.unwrap(), agentix_core::AgentEvent::AgentMessageDelta { delta, .. } if delta == "buffered") { break; } }
+        }).await.unwrap();
+        check_cli_session_request(&endpoint, &mut rx).await;
+        assert_eq!(
+            BridgeHub::live_count(&endpoint, BridgeKind::Pi, Path::new("/tmp"))
+                .await
+                .unwrap(),
+            1
+        );
+        let (prompt, handler) = start_cli_prompt(&endpoint, &mut rx, adapter.clone()).await;
+        response.clear();
+        extension.read_line(&mut response).await.unwrap();
+        let request: Value = serde_json::from_str(&response).unwrap();
+        assert_eq!(request["method"], "prompt");
+        extension
+            .get_mut()
+            .write_all(
+                format!(
+                    "{}\n",
+                    json!({"id":request["id"],"ok":true,"result":{"turn_id":"reply"}})
+                )
+                .as_bytes(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(prompt.await.unwrap().unwrap()["turn_id"], "reply");
+        handler.await.unwrap();
+        assert!(!directory.path().join("bridge").exists());
+        shutdown.cancel();
+        task.await.unwrap().unwrap();
+        assert!(!path.exists());
+        response.clear();
+        assert_eq!(
+            tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                extension.read_line(&mut response)
+            )
+            .await
+            .unwrap()
+            .unwrap(),
+            0
+        );
+    }
+
+    #[cfg(unix)]
+    async fn start_cli_prompt(
+        endpoint: &str,
+        rx: &mut mpsc::Receiver<ControlCall>,
+        adapter: Arc<dyn agentix_core::AgentAdapter>,
+    ) -> (
+        tokio::task::JoinHandle<Result<Value>>,
+        tokio::task::JoinHandle<()>,
+    ) {
+        let prompt = tokio::spawn({
+            let endpoint = endpoint.to_owned();
+            async move {
+                request(
+                    &endpoint,
+                    &ControlRequest::Session(agentix_core::SessionOperation::Send {
+                        session: agentix_core::SessionId::new("native"),
+                        text: "hello".into(),
+                        expected_turn: None,
+                    }),
+                )
+                .await
+            }
+        });
+        let call = rx.recv().await.unwrap();
+        let ControlRequest::Session(operation) = call.request.clone() else {
+            panic!("expected generic session operation")
+        };
+        let operations = agentix_core::SessionOperations::new(adapter);
+        let handler = tokio::spawn(async move {
+            let result = operations
+                .execute(operation)
+                .await
+                .map(|result| serde_json::to_value(result).unwrap())
+                .map_err(|error| error.to_string());
+            call.respond(result);
+        });
+        (prompt, handler)
+    }
+
+    #[cfg(unix)]
+    async fn check_cli_session_request(endpoint: &str, rx: &mut mpsc::Receiver<ControlCall>) {
+        let caller = tokio::spawn({
+            let endpoint = endpoint.to_owned();
+            async move {
+                request(
+                    &endpoint,
+                    &ControlRequest::Sessions {
+                        cursor: None,
+                        limit: 10,
+                    },
+                )
+                .await
+            }
+        });
+        rx.recv().await.unwrap().respond(Ok(json!({"sessions":[]})));
+        assert_eq!(caller.await.unwrap().unwrap()["sessions"], json!([]));
+    }
 
     #[test]
     fn tcp_control_endpoints_are_restricted_to_loopback_addresses() {

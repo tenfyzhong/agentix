@@ -1,4 +1,9 @@
 mod control;
+mod control_runtime;
+use agentix::run_engine_loop;
+use control_runtime::run_control_handler;
+#[cfg(all(test, unix))]
+mod native_control_tests;
 #[cfg(test)]
 mod proxy_tests;
 
@@ -11,10 +16,10 @@ use agentix::{
     AgentConfig, Config, ImChannel, LogRotation, LoggingConfig, NetworkConfig, TelegramConfig,
     add_feishu_owner, add_telegram_owner,
 };
+use agentix_bridge::{BridgeAdapter, BridgeHub, BridgeKind};
 use agentix_codex::{CodexClient, CodexEndpoint};
-use agentix_core::{AgentAdapter, AgentError, ChannelAdapter, Engine, EngineError, SqliteState};
+use agentix_core::{AgentAdapter, AgentError, ChannelAdapter, Engine, SqliteState};
 use agentix_feishu::{FeishuAdapter, FeishuOwnerClaimer};
-use agentix_pi::{PiFlavor, PiRpcAdapter};
 use agentix_telegram::{TelegramAdapter, TelegramOwnerClaimer, TelegramPolicy};
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
@@ -71,6 +76,29 @@ enum ClientCommand {
         cursor: Option<String>,
         #[arg(long, default_value_t = 25)]
         limit: u32,
+    },
+    /// Send a prompt to an original session, or steer its active turn.
+    Send {
+        session: String,
+        text: String,
+        #[arg(long)]
+        turn: Option<String>,
+    },
+    /// Stop a turn in an original session.
+    Stop { session: String, turn: String },
+    /// Read a session's conversation history.
+    History {
+        session: String,
+        #[arg(long)]
+        cursor: Option<String>,
+        #[arg(long, default_value_t = 20)]
+        limit: u32,
+    },
+    /// Run a typed session command supplied as JSON.
+    Command {
+        session: String,
+        #[arg(value_name = "JSON")]
+        command: String,
     },
     /// Ask the server to send a raw JSON RPC request to Codex.
     Call {
@@ -187,6 +215,58 @@ async fn client(endpoint: &str, command: ClientCommand) -> Result<()> {
             .await?;
             print_json(&result)
         }
+        ClientCommand::Send {
+            session,
+            text,
+            turn,
+        } => {
+            session_request(
+                endpoint,
+                agentix_core::SessionOperation::Send {
+                    session: agentix_core::SessionId::new(session),
+                    text,
+                    expected_turn: turn,
+                },
+            )
+            .await
+        }
+        ClientCommand::Stop { session, turn } => {
+            session_request(
+                endpoint,
+                agentix_core::SessionOperation::Stop {
+                    session: agentix_core::SessionId::new(session),
+                    turn,
+                },
+            )
+            .await
+        }
+        ClientCommand::History {
+            session,
+            cursor,
+            limit,
+        } => {
+            session_request(
+                endpoint,
+                agentix_core::SessionOperation::History {
+                    session: agentix_core::SessionId::new(session),
+                    cursor,
+                    limit,
+                },
+            )
+            .await
+        }
+        ClientCommand::Command { session, command } => {
+            let command = serde_json::from_str(&command)
+                .context("command must be a valid session command JSON object")?;
+            session_request(
+                endpoint,
+                agentix_core::SessionOperation::Command {
+                    session: agentix_core::SessionId::new(session),
+                    command,
+                },
+            )
+            .await
+        }
         ClientCommand::Call { method, params } => {
             let params: Value =
                 serde_json::from_str(&params).with_context(|| "--params must be valid JSON")?;
@@ -196,6 +276,11 @@ async fn client(endpoint: &str, command: ClientCommand) -> Result<()> {
             print_json(&result)
         }
     }
+}
+
+async fn session_request(endpoint: &str, operation: agentix_core::SessionOperation) -> Result<()> {
+    let result = control::request(endpoint, &control::ControlRequest::Session(operation)).await?;
+    print_json(&result)
 }
 
 fn unix_timestamp() -> Result<u64> {
@@ -222,8 +307,65 @@ async fn build_task_board(config: &Config) -> Result<Option<Arc<agentix_task::Se
 
 async fn serve(config: Config, config_path: &Path) -> Result<()> {
     let started = Instant::now();
-    let BuiltAgent { adapter, codex } =
-        build_agent(&config.agent, config.notifications.background_turns).await?;
+    let bridge_hub = if config
+        .selected_agents()
+        .iter()
+        .any(|agent| !matches!(agent, AgentConfig::Codex { .. }))
+    {
+        Some(Arc::new(BridgeHub::new()))
+    } else {
+        None
+    };
+    let mut agents = Vec::new();
+    let mut codex = None;
+    for agent in config.selected_agents() {
+        let built = match build_agent(
+            agent,
+            config.notifications.background_turns,
+            bridge_hub.clone(),
+        )
+        .await
+        {
+            Ok(built) => built,
+            Err(error) => {
+                tracing::warn!(%error, backend = agent.kind().as_str(), "backend startup failed; continuing with retries");
+                let retry = agent.clone();
+                let bridge_hub = bridge_hub.clone();
+                let background = config.notifications.background_turns;
+                let directory = match agent {
+                    AgentConfig::Codex { rmux_directory, .. }
+                    | AgentConfig::Claude { rmux_directory, .. }
+                    | AgentConfig::Pi { rmux_directory, .. }
+                    | AgentConfig::OhMyPi { rmux_directory, .. } => {
+                        rmux_directory.to_string_lossy().into_owned()
+                    }
+                };
+                let adapter = agentix_core::DeferredAgent::new(
+                    agent.kind().display_name(),
+                    directory,
+                    move || {
+                        let retry = retry.clone();
+                        let bridge_hub = bridge_hub.clone();
+                        async move {
+                            build_agent(&retry, background, bridge_hub)
+                                .await
+                                .map(|built| built.adapter)
+                                .map_err(|error| AgentError::Unavailable(error.to_string()))
+                        }
+                    },
+                );
+                BuiltAgent {
+                    adapter: Arc::new(adapter),
+                    codex: None,
+                }
+            }
+        };
+        if built.codex.is_some() {
+            codex = built.codex;
+        }
+        agents.push((agent.kind(), built.adapter));
+    }
+    let adapter: Arc<dyn AgentAdapter> = Arc::new(agentix_core::AgentRegistry::new(agents)?);
     tracing::info!(
         phase = "agent_connection",
         elapsed_ms = started.elapsed().as_millis(),
@@ -245,6 +387,7 @@ async fn serve(config: Config, config_path: &Path) -> Result<()> {
         task_board,
         config.storage.path,
         config.server.endpoint,
+        bridge_hub,
         config_path.to_owned(),
         claims,
         config.notifications.background_turns,
@@ -266,6 +409,7 @@ async fn run_service_until_shutdown<F>(
     task_board: Option<Arc<agentix_task::Service>>,
     state_path: PathBuf,
     control_endpoint: String,
+    bridge: Option<Arc<BridgeHub>>,
     config_path: PathBuf,
     claims: Arc<ClaimRegistry>,
     background_turn_notifications: bool,
@@ -282,6 +426,12 @@ where
             .with_context(|| format!("failed to create state directory {}", parent.display()))?;
     }
     let state = SqliteState::open(&state_path).await?;
+    let backends = adapter.session_backends();
+    if !backends.is_empty() {
+        state
+            .qualify_sessions((backends.len() == 1).then(|| backends[0]))
+            .await?;
+    }
     tracing::info!(
         phase = "state_storage",
         elapsed_ms = started.elapsed().as_millis(),
@@ -309,7 +459,7 @@ where
     let advertised_control_endpoint = control_endpoint.clone();
     let control_shutdown = shutdown.clone();
     let mut control_task = tokio::spawn(async move {
-        control::serve(&control_endpoint, control_tx, control_shutdown).await
+        control::serve_with_bridge(&control_endpoint, control_tx, control_shutdown, bridge).await
     });
     let control_handler_task = tokio::spawn(run_control_handler(
         control_rx,
@@ -317,6 +467,7 @@ where
         codex,
         claims,
         config_path,
+        shutdown.clone(),
     ));
     let (inbound_tx, inbound_rx) = mpsc::channel(256);
     let mut channel_tasks = Vec::new();
@@ -357,7 +508,7 @@ where
     startup_task.abort();
     let _ = startup_task.await;
     let _ = engine_task.await;
-    match engine.prepare_shutdown().await {
+    match agentix::shutdown_engine(engine.clone(), channel_shutdown_grace).await {
         Ok(notified) => tracing::info!(notified, "saved bindings and notified IM conversations"),
         Err(error) => tracing::error!(%error, "failed to finish graceful shutdown preparation"),
     }
@@ -403,88 +554,6 @@ async fn wait_for_channel_shutdown(
     }
 }
 
-async fn run_engine_loop(
-    engine: Arc<Engine>,
-    agent: Arc<dyn AgentAdapter>,
-    mut inbound: mpsc::Receiver<agentix_core::InboundEnvelope>,
-    shutdown: CancellationToken,
-) {
-    let source_engine = engine.clone();
-    let source_shutdown = shutdown.clone();
-    let source_poll = tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(30));
-        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        loop {
-            tokio::select! {
-                () = source_shutdown.cancelled() => break,
-                _ = interval.tick() => {
-                    if let Err(error) = source_engine.refresh_inbox_sources().await {
-                        tracing::warn!(%error, "Inbox source refresh failed");
-                    }
-                }
-            }
-        }
-    });
-    let mut events = agent.subscribe();
-    let mut working_interval = tokio::time::interval(Duration::from_secs(1));
-    working_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    working_interval.tick().await;
-    let mut inbound_open = true;
-    let mut events_open = true;
-    loop {
-        tokio::select! {
-            () = shutdown.cancelled() => break,
-            _ = working_interval.tick() => {
-                engine.refresh_working_turns().await;
-                if let Err(error) = engine.refresh_task_board().await {
-                    tracing::warn!(%error, "task board refresh failed");
-                }
-            }
-            envelope = inbound.recv(), if inbound_open => {
-                let Some(envelope) = envelope else {
-                    inbound_open = false;
-                    continue;
-                };
-                if let Err(error) = engine.handle_inbound(envelope).await {
-                    if is_empty_rollout_metadata_error(&error) {
-                        tracing::debug!(%error, "inbound IM request failed");
-                    } else {
-                        tracing::warn!(%error, "inbound IM request failed");
-                    }
-                }
-            }
-            event = events.recv(), if events_open => match event {
-                Ok(event) => {
-                    if let Err(error) = engine.handle_agent_event(event).await {
-                        tracing::warn!(%error, "agent event failed");
-                    }
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(count)) => {
-                    tracing::warn!(count, "agent event consumer lagged");
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                    events_open = false;
-                }
-            }
-        }
-        if !inbound_open && !events_open {
-            break;
-        }
-    }
-    source_poll.abort();
-    let _ = source_poll.await;
-}
-
-fn is_empty_rollout_metadata_error(error: &EngineError) -> bool {
-    matches!(
-        error,
-        EngineError::Agent(AgentError::Rejected(message))
-            if message.contains("failed to read session metadata")
-                && message.contains("rollout at ")
-                && message.ends_with(" is empty")
-    )
-}
-
 async fn doctor(config: &Config) -> Result<()> {
     config.validate()?;
     println!("ok: configuration and selected-channel owner policy");
@@ -497,34 +566,67 @@ async fn doctor(config: &Config) -> Result<()> {
     }
     println!("ok: state path {}", config.storage.path.display());
 
-    match &config.agent {
-        AgentConfig::Codex {
-            endpoint,
-            command,
-            rmux_directory,
-        } => {
-            let endpoint = CodexEndpoint::parse(endpoint)?;
-            let client = CodexClient::connect_with_background_turn_notifications(
+    for agent in config.selected_agents() {
+        match agent {
+            AgentConfig::Claude {
+                command,
+                session_dir,
+                ..
+            } => {
+                doctor_pi(
+                    BridgeKind::Claude,
+                    command,
+                    session_dir,
+                    &config.server.endpoint,
+                )
+                .await?;
+            }
+            AgentConfig::Codex {
                 endpoint,
                 command,
                 rmux_directory,
-                false,
-            )
-            .await?;
-            let page = client.list_sessions(None, 1).await?;
-            println!(
-                "ok: Codex WebSocket-over-UDS handshake ({} loaded session sample)",
-                page.sessions.len()
-            );
+            } => {
+                let endpoint = CodexEndpoint::parse(endpoint)?;
+                let client = CodexClient::connect_with_background_turn_notifications(
+                    endpoint,
+                    command,
+                    rmux_directory,
+                    false,
+                )
+                .await?;
+                let page = client.list_sessions(None, 1).await?;
+                println!(
+                    "ok: Codex WebSocket-over-UDS handshake ({} loaded session sample)",
+                    page.sessions.len()
+                );
+            }
+            AgentConfig::Pi {
+                command,
+                session_dir,
+                ..
+            } => {
+                doctor_pi(
+                    BridgeKind::Pi,
+                    command,
+                    session_dir,
+                    &config.server.endpoint,
+                )
+                .await?;
+            }
+            AgentConfig::OhMyPi {
+                command,
+                session_dir,
+                ..
+            } => {
+                doctor_pi(
+                    BridgeKind::Omp,
+                    command,
+                    session_dir,
+                    &config.server.endpoint,
+                )
+                .await?;
+            }
         }
-        AgentConfig::Pi {
-            command,
-            session_dir,
-        } => doctor_pi(PiFlavor::Pi, command, session_dir)?,
-        AgentConfig::OhMyPi {
-            command,
-            session_dir,
-        } => doctor_pi(PiFlavor::OhMyPi, command, session_dir)?,
     }
     tracing::info!("Agentix diagnostics completed");
     Ok(())
@@ -535,11 +637,32 @@ struct BuiltAgent {
     codex: Option<CodexClient>,
 }
 
+fn claude_workspace_args() -> Vec<String> {
+    // Prompts use rmux input; ordinary plugin loading supplies the bridge hooks.
+    Vec::new()
+}
+
 async fn build_agent(
     config: &AgentConfig,
     background_turn_notifications: bool,
+    bridge_hub: Option<Arc<BridgeHub>>,
 ) -> Result<BuiltAgent> {
     match config {
+        AgentConfig::Claude {
+            command,
+            session_dir,
+            rmux_directory,
+        } => Ok(BuiltAgent {
+            adapter: Arc::new(
+                BridgeAdapter::new(
+                    BridgeKind::Claude,
+                    bridge_hub.context("native bridge hub is not configured")?,
+                    session_dir,
+                )
+                .with_workspace(command, claude_workspace_args(), rmux_directory),
+            ),
+            codex: None,
+        }),
         AgentConfig::Codex {
             endpoint,
             command,
@@ -561,17 +684,39 @@ async fn build_agent(
         AgentConfig::Pi {
             command,
             session_dir,
-        } => Ok(BuiltAgent {
-            adapter: Arc::new(PiRpcAdapter::new(PiFlavor::Pi, command, session_dir)),
-            codex: None,
-        }),
-        AgentConfig::OhMyPi {
+            bridge_extension,
+            rmux_directory,
+        }
+        | AgentConfig::OhMyPi {
             command,
             session_dir,
-        } => Ok(BuiltAgent {
-            adapter: Arc::new(PiRpcAdapter::new(PiFlavor::OhMyPi, command, session_dir)),
-            codex: None,
-        }),
+            bridge_extension,
+            rmux_directory,
+        } => {
+            let flavor = if matches!(config, AgentConfig::Pi { .. }) {
+                BridgeKind::Pi
+            } else {
+                BridgeKind::Omp
+            };
+            let mut args = vec![
+                "--session-dir".into(),
+                session_dir.to_string_lossy().into_owned(),
+            ];
+            if let Some(extension) = bridge_extension {
+                args.extend(["-e".into(), extension.to_string_lossy().into_owned()]);
+            }
+            Ok(BuiltAgent {
+                adapter: Arc::new(
+                    BridgeAdapter::new(
+                        flavor,
+                        bridge_hub.context("native bridge hub is not configured")?,
+                        session_dir,
+                    )
+                    .with_workspace(command, args, rmux_directory),
+                ),
+                codex: None,
+            })
+        }
     }
 }
 
@@ -695,26 +840,6 @@ impl FeishuOwnerClaimer for MemoryFeishuOwnerClaimer {
     }
 }
 
-async fn run_control_handler(
-    mut calls: mpsc::Receiver<control::ControlCall>,
-    agent: Arc<dyn AgentAdapter>,
-    codex: Option<CodexClient>,
-    claims: Arc<ClaimRegistry>,
-    config_path: PathBuf,
-) {
-    while let Some(call) = calls.recv().await {
-        let response = handle_control_request(
-            call.request.clone(),
-            &agent,
-            codex.as_ref(),
-            &claims,
-            &config_path,
-        )
-        .await;
-        call.respond(response);
-    }
-}
-
 async fn handle_control_request(
     request: control::ControlRequest,
     agent: &Arc<dyn AgentAdapter>,
@@ -723,6 +848,13 @@ async fn handle_control_request(
     config_path: &Path,
 ) -> std::result::Result<Value, String> {
     match request {
+        control::ControlRequest::Session(operation) => {
+            agentix_core::SessionOperations::new(agent.clone())
+                .execute(operation)
+                .await
+                .map_err(|error| error.to_string())
+                .and_then(|result| serde_json::to_value(result).map_err(|error| error.to_string()))
+        }
         control::ControlRequest::Sessions { cursor, limit } => agent
             .list_sessions(cursor, limit)
             .await
@@ -837,22 +969,32 @@ fn build_telegram_bot(telegram: &TelegramConfig, network: &NetworkConfig) -> Res
     Ok(teloxide::Bot::with_client(telegram.token.clone(), client))
 }
 
-fn doctor_pi(flavor: PiFlavor, command: &Path, session_dir: &Path) -> Result<()> {
+async fn doctor_pi(
+    flavor: BridgeKind,
+    command: &Path,
+    session_dir: &Path,
+    endpoint: &str,
+) -> Result<()> {
     let executable = resolve_executable(command)
-        .with_context(|| format!("{} command was not found", flavor.default_command()))?;
-    if !session_dir.is_dir() {
-        bail!(
-            "session directory does not exist: {}",
-            session_dir.display()
-        );
-    }
-    let count = agentix_pi::discover_sessions(session_dir)?.len();
+        .with_context(|| format!("{} command was not found", flavor.as_str()))?;
+    let count = match BridgeHub::live_count(endpoint, flavor, session_dir).await {
+        Ok(count) => count,
+        Err(error) => {
+            println!("note: Agentix bridge listener unavailable: {error}");
+            0
+        }
+    };
     println!(
-        "ok: {} at {} with {} discoverable sessions",
-        flavor.default_command(),
+        "ok: {} at {} with {} live bridges",
+        flavor.as_str(),
         executable.display(),
         count
     );
+    if count == 0 {
+        println!(
+            "note: start agentix serve, load agentix-bridge in the original terminal, and check session_dir and AGENTIX_CONTROL_ENDPOINT"
+        );
+    }
     Ok(())
 }
 
@@ -877,14 +1019,19 @@ fn default_config_path() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn claude_terminal_launch_does_not_require_channels() {
+        assert!(super::claude_workspace_args().is_empty());
+    }
+
     use std::path::Path;
     use std::sync::{Arc, Mutex as StdMutex};
 
     use agentix::{Config, ImChannel};
     use agentix_core::{
         AgentAdapter, AgentError, AgentEvent, ChannelAdapter, ChannelError, ChannelKind,
-        ConversationRef, EngineError, HistoryPage, InteractionDecision, MessageRef, OutboundView,
-        SessionId, SessionPage, SessionStatus, SessionSummary,
+        ConversationRef, HistoryPage, InteractionDecision, MessageRef, OutboundView, SessionId,
+        SessionPage, SessionStatus, SessionSummary,
     };
     use async_trait::async_trait;
     use time::format_description::well_known::Rfc3339;
@@ -895,6 +1042,9 @@ mod tests {
     struct LifecycleAgent {
         events: broadcast::Sender<AgentEvent>,
         attached: StdMutex<Vec<String>>,
+        turn_blocked: CancellationToken,
+        blocked_calls: std::sync::atomic::AtomicUsize,
+        turn_release: CancellationToken,
     }
 
     impl LifecycleAgent {
@@ -903,6 +1053,9 @@ mod tests {
             Self {
                 events,
                 attached: StdMutex::new(Vec::new()),
+                turn_blocked: CancellationToken::new(),
+                blocked_calls: std::sync::atomic::AtomicUsize::new(0),
+                turn_release: CancellationToken::new(),
             }
         }
     }
@@ -964,8 +1117,14 @@ mod tests {
         async fn start_turn(
             &self,
             _session_id: &SessionId,
-            _text: &str,
+            text: &str,
         ) -> Result<String, AgentError> {
+            if text == "blocked-prompt" {
+                self.blocked_calls
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                self.turn_blocked.cancel();
+                self.turn_release.cancelled().await;
+            }
             Ok("turn_test".into())
         }
 
@@ -1010,9 +1169,13 @@ mod tests {
 
     struct LifecycleChannel {
         views: StdMutex<Vec<OutboundView>>,
+        deliveries: StdMutex<Vec<String>>,
         stop_on_shutdown: bool,
         started: CancellationToken,
         blocked_operation: Option<StartupOperation>,
+        blocked_working_conversation: Option<String>,
+        blocked_offline_conversation: Option<String>,
+        blocked_task_conversation: Option<String>,
         blocked: CancellationToken,
         unblock: CancellationToken,
     }
@@ -1021,9 +1184,13 @@ mod tests {
         fn new() -> Self {
             Self {
                 views: StdMutex::new(Vec::new()),
+                deliveries: StdMutex::new(Vec::new()),
                 stop_on_shutdown: true,
                 started: CancellationToken::new(),
                 blocked_operation: None,
+                blocked_working_conversation: None,
+                blocked_offline_conversation: None,
+                blocked_task_conversation: None,
                 blocked: CancellationToken::new(),
                 unblock: CancellationToken::new(),
             }
@@ -1069,10 +1236,32 @@ mod tests {
             conversation: &ConversationRef,
             view: &OutboundView,
         ) -> Result<MessageRef, ChannelError> {
+            if self.blocked_task_conversation.as_deref() == Some(&conversation.conversation_id)
+                && view.title == "Task update"
+            {
+                self.blocked.cancel();
+                self.unblock.cancelled().await;
+            }
             if view.subtitle.as_deref() == Some("Online · Reattached") {
                 self.block_startup(StartupOperation::Notice).await;
             }
+            if self.blocked_offline_conversation.as_deref() == Some(&conversation.conversation_id)
+                && view.subtitle.as_deref() == Some("Offline · Detached")
+            {
+                self.blocked.cancel();
+                self.unblock.cancelled().await;
+            }
+            if self.blocked_working_conversation.as_deref() == Some(&conversation.conversation_id)
+                && view.status == agentix_core::ViewStatus::Running
+            {
+                self.blocked.cancel();
+                self.unblock.cancelled().await;
+            }
             self.views.lock().unwrap().push(view.clone());
+            self.deliveries
+                .lock()
+                .unwrap()
+                .push(conversation.conversation_id.clone());
             Ok(MessageRef::new(conversation.clone(), "message-test"))
         }
 
@@ -1096,6 +1285,689 @@ mod tests {
             }
             Ok(())
         }
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)] // One production-runtime admission and recovery scenario.
+    async fn engine_runtime_conversation_flood_preserves_capacity_for_other_conversations() {
+        use agentix_core::{Engine, InboundEnvelope, SqliteState};
+        use std::time::Duration;
+        let agent = Arc::new(LifecycleAgent::new());
+        let channel = Arc::new(LifecycleChannel::new());
+        let state = SqliteState::in_memory().await.unwrap();
+        let engine = Arc::new(Engine::new(
+            agent.clone(),
+            state.clone(),
+            vec![channel.clone()],
+        ));
+        let slow = ConversationRef::new(ChannelKind::Telegram, "flood");
+        engine
+            .handle_inbound(InboundEnvelope::text(
+                "attach",
+                slow.clone(),
+                "owner",
+                "/attach thr_saved",
+            ))
+            .await
+            .unwrap();
+        channel.deliveries.lock().unwrap().clear();
+        channel.views.lock().unwrap().clear();
+        let (sender, inbound) = tokio::sync::mpsc::channel(8);
+        let shutdown = CancellationToken::new();
+        let runtime = tokio::spawn(super::run_engine_loop(
+            engine.clone(),
+            agent.clone(),
+            inbound,
+            shutdown.clone(),
+        ));
+        let result = tokio::time::timeout(Duration::from_secs(5), async {
+            sender
+                .send(InboundEnvelope::text(
+                    "blocked",
+                    slow.clone(),
+                    "owner",
+                    "blocked-prompt",
+                ))
+                .await
+                .unwrap();
+            agent.turn_blocked.cancelled().await;
+            for i in 0..300 {
+                sender
+                    .send(InboundEnvelope::text(
+                        format!("flood-{i}"),
+                        slow.clone(),
+                        "owner",
+                        "/help",
+                    ))
+                    .await
+                    .unwrap();
+            }
+            sender
+                .send(InboundEnvelope::text(
+                    "flood-0",
+                    slow.clone(),
+                    "owner",
+                    "/help",
+                ))
+                .await
+                .unwrap();
+            sender
+                .send(InboundEnvelope::text(
+                    "fast",
+                    ConversationRef::new(ChannelKind::Telegram, "fast"),
+                    "owner",
+                    "/help",
+                ))
+                .await
+                .unwrap();
+            loop {
+                if channel
+                    .deliveries
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .any(|chat| chat == "fast")
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            // Quota includes the blocked prompt: only the first 15 help requests
+            // were accepted. Rejected requests must never run on replay.
+            assert!(
+                !state
+                    .claim_event(ChannelKind::Telegram, "flood-299")
+                    .await
+                    .unwrap()
+            );
+            agent.turn_release.cancel();
+            loop {
+                if channel
+                    .views
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .filter(|view| view.title == "Agentix commands")
+                    .count()
+                    == 16
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            sender
+                .send(InboundEnvelope::text("after-drain", slow, "owner", "/help"))
+                .await
+                .unwrap();
+            loop {
+                let finished = {
+                    let views = channel.views.lock().unwrap();
+                    views
+                        .iter()
+                        .filter(|view| view.title == "Agentix commands")
+                        .count()
+                        == 17
+                        && views.iter().any(|view| view.title == "Session busy")
+                };
+                if finished {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await;
+        agent.turn_release.cancel();
+        shutdown.cancel();
+        tokio::time::timeout(Duration::from_secs(3), runtime)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            result.is_ok(),
+            "one conversation exhausted admission or lost quota after completion"
+        );
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)] // One production-runtime durable delivery scenario.
+    async fn engine_runtime_delivers_task_outbox_per_conversation_while_one_im_send_is_blocked() {
+        use agentix_core::{Engine, SqliteState};
+        use std::time::Duration;
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join(".obsidian")).unwrap();
+        let service = Arc::new(
+            agentix_task::Service::open(agentix_task::Config {
+                schema_version: 1,
+                storage: agentix_task::StorageConfig {
+                    path: dir.path().join("tasks.sqlite3"),
+                },
+                documents: agentix_task::DocumentConfig {
+                    root: dir.path().into(),
+                    directory: "Tasks".into(),
+                },
+            })
+            .await
+            .unwrap(),
+        );
+        let agent = Arc::new(LifecycleAgent::new());
+        let channel = Arc::new(LifecycleChannel {
+            blocked_task_conversation: Some("slow".into()),
+            ..LifecycleChannel::new()
+        });
+        let state = SqliteState::in_memory().await.unwrap();
+        state.notification_cursor("default", 0).await.unwrap();
+        for (sequence, chat) in [(1, "slow"), (2, "slow"), (3, "fast")] {
+            state
+                .stage_notification(
+                    "default",
+                    sequence,
+                    Some((
+                        &ConversationRef::new(ChannelKind::Telegram, chat),
+                        &OutboundView::text("Task update", sequence.to_string()),
+                    )),
+                )
+                .await
+                .unwrap();
+        }
+        let engine = Arc::new(
+            Engine::new(agent.clone(), state.clone(), vec![channel.clone()])
+                .with_task_board(service),
+        );
+        let (_tx, rx) = tokio::sync::mpsc::channel(8);
+        let shutdown = CancellationToken::new();
+        let worker = tokio::spawn(agentix::run_engine_loop(
+            engine,
+            agent,
+            rx,
+            shutdown.clone(),
+        ));
+        let result = tokio::time::timeout(Duration::from_secs(3), async {
+            channel.blocked.cancelled().await;
+            loop {
+                if channel
+                    .deliveries
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .any(|chat| chat == "fast")
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            state
+                .stage_notification(
+                    "default",
+                    4,
+                    Some((
+                        &ConversationRef::new(ChannelKind::Telegram, "later"),
+                        &OutboundView::text("Task update", "4"),
+                    )),
+                )
+                .await
+                .unwrap();
+            loop {
+                if channel
+                    .deliveries
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .any(|chat| chat == "later")
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            assert!(
+                !channel
+                    .deliveries
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .any(|chat| chat == "slow")
+            );
+            channel.unblock.cancel();
+            loop {
+                if channel
+                    .deliveries
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .filter(|chat| *chat == "slow")
+                    .count()
+                    == 2
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await;
+        shutdown.cancel();
+        tokio::time::timeout(Duration::from_secs(3), worker)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            result.is_ok(),
+            "task delivery must progress independently of a stalled conversation"
+        );
+        let views = channel.views.lock().unwrap();
+        let order: Vec<_> = views
+            .iter()
+            .filter(|view| view.body == "1" || view.body == "2")
+            .map(|view| view.body.as_str())
+            .collect();
+        assert_eq!(order, ["1", "2"]);
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn engine_runtime_slow_prompt_keeps_other_conversations_live_and_own_requests_ordered() {
+        use agentix_core::{Engine, InboundEnvelope, SqliteState};
+        use std::time::Duration;
+        let agent = Arc::new(LifecycleAgent::new());
+        let channel = Arc::new(LifecycleChannel::new());
+        let engine = Arc::new(Engine::new(
+            agent.clone(),
+            SqliteState::in_memory().await.unwrap(),
+            vec![channel.clone()],
+        ));
+        let slow = ConversationRef::new(ChannelKind::Telegram, "slow");
+        let fast = ConversationRef::new(ChannelKind::Telegram, "fast");
+        engine
+            .handle_inbound(InboundEnvelope::text(
+                "attach",
+                slow.clone(),
+                "owner",
+                "/attach thr_saved",
+            ))
+            .await
+            .unwrap();
+        engine
+            .handle_inbound(InboundEnvelope::text(
+                "attach-fast",
+                fast.clone(),
+                "owner",
+                "/attach thr_fast",
+            ))
+            .await
+            .unwrap();
+        channel.deliveries.lock().unwrap().clear();
+        let (sender, inbound) = tokio::sync::mpsc::channel(8);
+        let shutdown = CancellationToken::new();
+        let runtime = tokio::spawn(super::run_engine_loop(
+            engine,
+            agent.clone(),
+            inbound,
+            shutdown.clone(),
+        ));
+        sender
+            .send(InboundEnvelope::text(
+                "slow-prompt",
+                slow.clone(),
+                "owner",
+                "blocked-prompt",
+            ))
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(2), agent.turn_blocked.cancelled())
+            .await
+            .unwrap();
+        sender
+            .send(InboundEnvelope::text("slow-help", slow, "owner", "/help"))
+            .await
+            .unwrap();
+        sender
+            .send(InboundEnvelope::text(
+                "fast-prompt",
+                fast,
+                "owner",
+                "independent prompt",
+            ))
+            .await
+            .unwrap();
+        let fast_result = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if channel
+                    .deliveries
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .any(|id| id == "fast")
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        let before_release = channel.deliveries.lock().unwrap().clone();
+        agent.turn_release.cancel();
+        let ordered = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if channel
+                    .deliveries
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .filter(|id| *id == "slow")
+                    .count()
+                    >= 2
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        shutdown.cancel();
+        runtime.await.unwrap();
+        assert!(
+            fast_result.is_ok(),
+            "another conversation waited for a slow prompt acknowledgement"
+        );
+        assert!(
+            !before_release.iter().any(|id| id == "slow"),
+            "same-conversation request overtook its prompt"
+        );
+        assert!(ordered.is_ok(), "ordered request did not resume");
+    }
+
+    #[tokio::test]
+    async fn engine_runtime_shutdown_bounds_waits_and_fences_only_started_inputs() {
+        use agentix_core::{Engine, InboundEnvelope, SqliteState};
+        use std::time::Duration;
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("state.sqlite3");
+        let state = SqliteState::open(&path).await.unwrap();
+        let agent = Arc::new(LifecycleAgent::new());
+        let engine = Arc::new(Engine::new(
+            agent.clone(),
+            state.clone(),
+            vec![Arc::new(LifecycleChannel::new())],
+        ));
+        let conversation = ConversationRef::new(ChannelKind::Telegram, "slow");
+        engine
+            .handle_inbound(InboundEnvelope::text(
+                "attach",
+                conversation.clone(),
+                "owner",
+                "/attach thr_saved",
+            ))
+            .await
+            .unwrap();
+        let (sender, inbound) = tokio::sync::mpsc::channel(8);
+        let shutdown = CancellationToken::new();
+        let mut runtime = tokio::spawn(super::run_engine_loop(
+            engine,
+            agent.clone(),
+            inbound,
+            shutdown.clone(),
+        ));
+        sender
+            .send(InboundEnvelope::text(
+                "started",
+                conversation.clone(),
+                "owner",
+                "blocked-prompt",
+            ))
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(2), agent.turn_blocked.cancelled())
+            .await
+            .unwrap();
+        sender
+            .send(InboundEnvelope::text(
+                "pending",
+                conversation,
+                "owner",
+                "never started",
+            ))
+            .await
+            .unwrap();
+        shutdown.cancel();
+        let stopped = tokio::time::timeout(Duration::from_secs(2), &mut runtime).await;
+        if stopped.is_err() {
+            runtime.abort();
+            let _ = runtime.await;
+        }
+        assert!(
+            stopped.is_ok(),
+            "shutdown waited indefinitely for a host acknowledgement"
+        );
+        assert!(
+            !state
+                .claim_event(ChannelKind::Telegram, "started")
+                .await
+                .unwrap()
+        );
+        assert!(
+            state
+                .claim_event(ChannelKind::Telegram, "pending")
+                .await
+                .unwrap()
+        );
+        drop(state);
+        let state = SqliteState::open(&path).await.unwrap();
+        assert!(
+            !state
+                .claim_event(ChannelKind::Telegram, "started")
+                .await
+                .unwrap(),
+            "restart replays a possibly accepted prompt"
+        );
+        agent.turn_release.cancel();
+    }
+
+    #[tokio::test]
+    async fn engine_runtime_working_refreshes_do_not_wait_for_a_slow_conversation() {
+        use agentix_core::{Engine, InboundEnvelope, SqliteState};
+        use std::time::Duration;
+        let agent = Arc::new(LifecycleAgent::new());
+        let channel = Arc::new(LifecycleChannel {
+            blocked_working_conversation: Some("slow".into()),
+            ..LifecycleChannel::new()
+        });
+        let engine = Arc::new(Engine::new(
+            agent.clone(),
+            SqliteState::in_memory().await.unwrap(),
+            vec![channel.clone()],
+        ));
+        for (chat, session) in [("slow", "thr_a"), ("fast", "thr_b")] {
+            engine
+                .handle_inbound(InboundEnvelope::text(
+                    format!("attach-{chat}"),
+                    ConversationRef::new(ChannelKind::Telegram, chat),
+                    "owner",
+                    format!("/attach {session}"),
+                ))
+                .await
+                .unwrap();
+            engine
+                .handle_agent_event(AgentEvent::TurnStarted {
+                    session_id: session.into(),
+                    turn_id: "running".into(),
+                })
+                .await
+                .unwrap();
+        }
+        channel.deliveries.lock().unwrap().clear();
+        let (_sender, inbound) = tokio::sync::mpsc::channel(8);
+        let shutdown = CancellationToken::new();
+        let runtime = tokio::spawn(super::run_engine_loop(
+            engine,
+            agent,
+            inbound,
+            shutdown.clone(),
+        ));
+        let refreshed = tokio::time::timeout(Duration::from_secs(3), async {
+            channel.blocked.cancelled().await;
+            loop {
+                if channel
+                    .deliveries
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .any(|id| id == "fast")
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        channel.unblock.cancel();
+        shutdown.cancel();
+        runtime.await.unwrap();
+        assert!(
+            refreshed.is_ok(),
+            "one slow working card blocked other sessions' timers"
+        );
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn engine_runtime_fixed_load_preserves_isolation_and_admission_bounds() {
+        use agentix_core::{Engine, InboundEnvelope, SqliteState};
+        use std::{
+            sync::atomic::{AtomicUsize, Ordering},
+            time::{Duration, Instant},
+        };
+        let agent = Arc::new(LifecycleAgent::new());
+        let channel = Arc::new(LifecycleChannel::new());
+        let engine = Arc::new(Engine::new(
+            agent.clone(),
+            SqliteState::in_memory().await.unwrap(),
+            vec![channel.clone()],
+        ));
+        let slow = |index| ConversationRef::new(ChannelKind::Telegram, format!("slow-{index}"));
+        for index in 0..32 {
+            engine
+                .handle_inbound(InboundEnvelope::text(
+                    format!("attach-{index}"),
+                    slow(index),
+                    "owner",
+                    format!("/attach thr_{index}"),
+                ))
+                .await
+                .unwrap();
+        }
+        channel.deliveries.lock().unwrap().clear();
+        let (sender, inbound) = tokio::sync::mpsc::channel(8);
+        let shutdown = CancellationToken::new();
+        let runtime = tokio::spawn(super::run_engine_loop(
+            engine,
+            agent.clone(),
+            inbound,
+            shutdown.clone(),
+        ));
+        for index in 0..31 {
+            sender
+                .send(InboundEnvelope::text(
+                    format!("blocked-{index}"),
+                    slow(index),
+                    "owner",
+                    "blocked-prompt",
+                ))
+                .await
+                .unwrap();
+        }
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while agent.blocked_calls.load(Ordering::SeqCst) != 31 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let started = Instant::now();
+        for index in 0..64 {
+            sender
+                .send(InboundEnvelope::text(
+                    format!("fast-{index}"),
+                    ConversationRef::new(ChannelKind::Telegram, format!("fast-{index}")),
+                    "owner",
+                    "/help",
+                ))
+                .await
+                .unwrap();
+        }
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while channel.deliveries.lock().unwrap().len() != 64 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("31 waiting hosts prevented independent conversations from completing");
+        let independent_elapsed = started.elapsed();
+        assert!(
+            channel
+                .deliveries
+                .lock()
+                .unwrap()
+                .iter()
+                .all(|chat| chat.starts_with("fast-"))
+        );
+        sender
+            .send(InboundEnvelope::text(
+                "blocked-31",
+                slow(31),
+                "owner",
+                "blocked-prompt",
+            ))
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while agent.blocked_calls.load(Ordering::SeqCst) != 32 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let admitted = Arc::new(AtomicUsize::new(0));
+        let producer = tokio::spawn({
+            let admitted = admitted.clone();
+            async move {
+                for index in 0..300 {
+                    if sender
+                        .send(InboundEnvelope::text(
+                            format!("pending-{index}"),
+                            slow(index % 32),
+                            "owner",
+                            "/help",
+                        ))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                    admitted.fetch_add(1, Ordering::SeqCst);
+                }
+            }
+        });
+        // 32 active workers + 224 pending operations fill runtime capacity;
+        // another eight envelopes fit in the caller's channel. No next send
+        // can complete until one of those owned operations is released.
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while admitted.load(Ordering::SeqCst) < 232 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        for _ in 0..16 {
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(admitted.load(Ordering::SeqCst), 232);
+        assert!(!producer.is_finished());
+        assert_eq!(agent.blocked_calls.load(Ordering::SeqCst), 32);
+        shutdown.cancel();
+        agent.turn_release.cancel();
+        runtime.await.unwrap();
+        producer.await.unwrap();
+        eprintln!(
+            "Engine fixed load: 31 held prompts, 64 independent replies in {independent_elapsed:?}; 32-worker / 256-operation bounds verified"
+        );
     }
 
     #[tokio::test]
@@ -1186,6 +2058,7 @@ mod tests {
             None,
             state_path,
             endpoint.clone(),
+            None,
             directory.path().join("config.toml"),
             Arc::new(super::ClaimRegistry::default()),
             true,
@@ -1219,6 +2092,172 @@ mod tests {
         assert_eq!(timestamp.offset(), local_offset);
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn service_starts_with_offline_native_binding_and_serves_control_requests() {
+        let directory = tempfile::tempdir().unwrap();
+        let state_path = directory.path().join("agentix.sqlite3");
+        let conversation = ConversationRef::new(ChannelKind::Telegram, "chat-saved");
+        let state = agentix_core::SqliteState::open(&state_path).await.unwrap();
+        state
+            .attach(&conversation, &SessionId::new("thr_saved"))
+            .await
+            .unwrap();
+        let hub = Arc::new(super::BridgeHub::new());
+        let agent = Arc::new(super::BridgeAdapter::new(
+            super::BridgeKind::Claude,
+            hub.clone(),
+            directory.path(),
+        ));
+        let channel = Arc::new(LifecycleChannel::new());
+        let endpoint = format!("unix://{}", directory.path().join("control.sock").display());
+        let shutdown = CancellationToken::new();
+        let service = tokio::spawn(super::run_service_until_shutdown(
+            agent,
+            None,
+            vec![channel.clone()],
+            None,
+            state_path,
+            endpoint.clone(),
+            Some(hub),
+            directory.path().join("config.toml"),
+            Arc::new(super::ClaimRegistry::default()),
+            true,
+            std::time::Duration::from_secs(1),
+            {
+                let shutdown = shutdown.clone();
+                async move {
+                    shutdown.cancelled().await;
+                    Ok(())
+                }
+            },
+        ));
+        let ready = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            channel.started.cancelled().await;
+            loop {
+                if let Ok(page) = super::control::request(
+                    &endpoint,
+                    &super::control::ControlRequest::Sessions {
+                        cursor: None,
+                        limit: 1,
+                    },
+                )
+                .await
+                {
+                    assert!(page["sessions"].as_array().unwrap().is_empty());
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        shutdown.cancel();
+        service.await.unwrap().unwrap();
+        assert!(
+            ready.is_ok(),
+            "offline bridge prevented control listener startup"
+        );
+        assert_eq!(
+            state.current_session(&conversation).await.unwrap(),
+            Some(SessionId::new("thr_saved"))
+        );
+    }
+
+    #[tokio::test]
+    async fn shutdown_notifications_isolate_a_slow_conversation_after_local_preparation() {
+        use agentix_core::{Engine, InboundEnvelope, SqliteState};
+        let channel = Arc::new(LifecycleChannel {
+            blocked_offline_conversation: Some("slow".into()),
+            ..LifecycleChannel::new()
+        });
+        let state = SqliteState::in_memory().await.unwrap();
+        let engine = Arc::new(Engine::new(
+            Arc::new(LifecycleAgent::new()),
+            state.clone(),
+            vec![channel.clone()],
+        ));
+        for (chat, session) in [("slow", "thr_a"), ("fast", "thr_b")] {
+            engine
+                .handle_inbound(InboundEnvelope::text(
+                    format!("attach-{chat}"),
+                    ConversationRef::new(ChannelKind::Telegram, chat),
+                    "owner",
+                    format!("/attach {session}"),
+                ))
+                .await
+                .unwrap();
+        }
+        channel.deliveries.lock().unwrap().clear();
+        let notified = agentix::shutdown_engine(engine, std::time::Duration::from_millis(100))
+            .await
+            .unwrap();
+        assert!(channel.blocked.is_cancelled());
+        assert_eq!(notified, 1);
+        assert_eq!(*channel.deliveries.lock().unwrap(), ["fast"]);
+        assert_eq!(state.list_bindings().await.unwrap().len(), 2);
+        channel.unblock.cancel();
+    }
+
+    #[tokio::test]
+    async fn service_shutdown_does_not_wait_indefinitely_for_an_offline_notice() {
+        use std::time::Duration;
+        let directory = tempfile::tempdir().unwrap();
+        let state_path = directory.path().join("state.sqlite3");
+        let conversation = ConversationRef::new(ChannelKind::Telegram, "saved");
+        let state = agentix_core::SqliteState::open(&state_path).await.unwrap();
+        state
+            .attach(&conversation, &SessionId::new("thr_saved"))
+            .await
+            .unwrap();
+        drop(state);
+        let channel = Arc::new(LifecycleChannel {
+            blocked_offline_conversation: Some("saved".into()),
+            ..LifecycleChannel::new()
+        });
+        let shutdown = CancellationToken::new();
+        let mut service = tokio::spawn(super::run_service_until_shutdown(
+            Arc::new(LifecycleAgent::new()),
+            None,
+            vec![channel.clone()],
+            None,
+            state_path.clone(),
+            format!("tcp://{}", unused_loopback_address()),
+            None,
+            directory.path().join("config.toml"),
+            Arc::new(super::ClaimRegistry::default()),
+            true,
+            Duration::from_millis(50),
+            {
+                let shutdown = shutdown.clone();
+                async move {
+                    shutdown.cancelled().await;
+                    Ok(())
+                }
+            },
+        ));
+        tokio::time::timeout(Duration::from_secs(2), channel.started.cancelled())
+            .await
+            .unwrap();
+        shutdown.cancel();
+        tokio::time::timeout(Duration::from_secs(2), channel.blocked.cancelled())
+            .await
+            .unwrap();
+        let stopped = tokio::time::timeout(Duration::from_secs(1), &mut service).await;
+        channel.unblock.cancel();
+        if stopped.is_err() {
+            service.await.unwrap().unwrap();
+        }
+        assert!(
+            stopped.is_ok(),
+            "offline notification blocked service shutdown"
+        );
+        let state = agentix_core::SqliteState::open(&state_path).await.unwrap();
+        assert_eq!(
+            state.current_session(&conversation).await.unwrap(),
+            Some(SessionId::new("thr_saved"))
+        );
+    }
+
     #[tokio::test]
     async fn service_lifecycle_restores_persisted_bindings_and_notifies_on_shutdown() {
         let directory = tempfile::tempdir().unwrap();
@@ -1244,6 +2283,7 @@ mod tests {
                 None,
                 state_path.clone(),
                 format!("tcp://{}", unused_loopback_address()),
+                None,
                 config_path.clone(),
                 Arc::new(super::ClaimRegistry::default()),
                 true,
@@ -1364,6 +2404,7 @@ mod tests {
             None,
             directory.path().join("agentix.sqlite3"),
             format!("tcp://{}", unused_loopback_address()),
+            None,
             directory.path().join("config.toml"),
             Arc::new(super::ClaimRegistry::default()),
             true,
@@ -1498,19 +2539,6 @@ path = "/tmp/agentix-test.sqlite3"
         assert!(!persisted.contains("claim_code"));
         assert!(!persisted.contains("claim_expires"));
         assert!(!claims.matches(&code, now).await);
-    }
-
-    #[test]
-    fn empty_rollout_metadata_errors_are_low_priority() {
-        let empty = EngineError::Agent(AgentError::Rejected(
-            "-32603: failed to read thread: thread-store internal error: failed to read session metadata /tmp/rollout.jsonl: rollout at /tmp/rollout.jsonl is empty".into(),
-        ));
-        let other = EngineError::Agent(AgentError::Rejected(
-            "-32603: database connection failed".into(),
-        ));
-
-        assert!(super::is_empty_rollout_metadata_error(&empty));
-        assert!(!super::is_empty_rollout_metadata_error(&other));
     }
 
     #[test]

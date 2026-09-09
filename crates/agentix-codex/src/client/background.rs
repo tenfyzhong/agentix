@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use agentix_core::{AgentEvent, SessionId, TurnStatus};
+use agentix_domain::{AgentEvent, SessionId, TurnStatus};
 use serde_json::{Value, json};
 
 use super::{ClientError, CodexClient, is_thread_unmaterialized};

@@ -1,34 +1,19 @@
-//! Platform-neutral Agentix domain model and orchestration primitives.
-
-mod action;
-mod agent;
-mod binding;
-mod channel;
+//! Agentix application services, backend routing and orchestration.
 mod command;
+mod deferred;
+mod dispatch;
 mod engine;
-mod message_center;
-mod model;
-mod render;
-mod state;
+mod registry;
+mod session;
 
-pub use action::{ActionRegistry, ActionScope, ActionTokenError};
-pub use agent::{
-    AgentAdapter, AgentCapabilities, AgentError, AgentEvent, GoalCommand, HistoryPage,
-    InteractionDecision, InteractionKind, InteractionRequest, ItemSummary, MultiplexerMutation,
-    MultiplexerMutationResult, MultiplexerPane, MultiplexerSession, MultiplexerSnapshot,
-    MultiplexerTarget, MultiplexerWindow, PaneSplitDirection, QueuedPrompt, QueuedPromptPort,
-    SessionCommand, SessionCommandChoice, SessionCommandResult, SessionControlPort, SessionPage,
-    SessionStatus, SessionSummary, TerminalLocation, ToolSummary, TurnStatus, TurnSummary,
-    WorkspaceRuntimePort,
-};
-pub use binding::{AttachOutcome, BindingTable, DeliveryClass, EventImportance};
-pub use channel::{
-    ActionButton, ActionStyle, ChannelAdapter, ChannelCommand, ChannelError, CommandMenu,
-    InboundEnvelope, InboundPayload, MessageRef, OutboundView, ViewStatus, include_reply_context,
-};
+pub use agentix_domain::*;
+pub use agentix_storage::{SqliteState, TaskNotification};
 pub use command::{AgentCommand, InputParseError, ParsedInput, parse_input};
-pub use engine::{Engine, EngineError, RestoredBindings};
-pub use message_center::MessageCenter;
-pub use model::{ChannelKind, ConversationRef, SessionId};
-pub use render::{HistoryWatermark, RenderKey, chunk_text};
-pub use state::SqliteState;
+pub use deferred::DeferredAgent;
+pub use dispatch::{DispatchId, DispatchQueue, DispatchScope, DispatchStatistics, Dispatched};
+pub use engine::{
+    Engine, EngineDispatchSnapshot, EngineError, EngineResource, EngineWork, RestoredBindings,
+    ShutdownNotification,
+};
+pub use registry::AgentRegistry;
+pub use session::SessionOperations;

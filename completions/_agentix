@@ -71,6 +71,40 @@ _arguments "${_arguments_options[@]}" : \
 '--help[Print help]' \
 && ret=0
 ;;
+(send)
+_arguments "${_arguments_options[@]}" : \
+'--turn=[]:TURN:_default' \
+'-h[Print help]' \
+'--help[Print help]' \
+':session:_default' \
+':text:_default' \
+&& ret=0
+;;
+(stop)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+':session:_default' \
+':turn:_default' \
+&& ret=0
+;;
+(history)
+_arguments "${_arguments_options[@]}" : \
+'--cursor=[]:CURSOR:_default' \
+'--limit=[]:LIMIT:_default' \
+'-h[Print help]' \
+'--help[Print help]' \
+':session:_default' \
+&& ret=0
+;;
+(command)
+_arguments "${_arguments_options[@]}" : \
+'-h[Print help]' \
+'--help[Print help]' \
+':session:_default' \
+':command:_default' \
+&& ret=0
+;;
 (call)
 _arguments "${_arguments_options[@]}" : \
 '--params=[]:JSON:_default' \
@@ -96,6 +130,22 @@ _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
 (sessions)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(send)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(stop)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(history)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(command)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -162,6 +212,22 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
+(send)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(stop)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(history)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(command)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
 (call)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
@@ -203,6 +269,10 @@ _agentix__subcmd__client_commands() {
     local commands; commands=(
 'claim:Generate a temporary in-memory owner claim code for the selected IM channel' \
 'sessions:List sessions available through the running Agentix server' \
+'send:Send a prompt to an original session, or steer its active turn' \
+'stop:Stop a turn in an original session' \
+'history:Read a session'\''s conversation history' \
+'command:Run a typed session command supplied as JSON' \
 'call:Ask the server to send a raw JSON RPC request to Codex' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
@@ -218,11 +288,20 @@ _agentix__subcmd__client__subcmd__claim_commands() {
     local commands; commands=()
     _describe -t commands 'agentix client claim commands' commands "$@"
 }
+(( $+functions[_agentix__subcmd__client__subcmd__command_commands] )) ||
+_agentix__subcmd__client__subcmd__command_commands() {
+    local commands; commands=()
+    _describe -t commands 'agentix client command commands' commands "$@"
+}
 (( $+functions[_agentix__subcmd__client__subcmd__help_commands] )) ||
 _agentix__subcmd__client__subcmd__help_commands() {
     local commands; commands=(
 'claim:Generate a temporary in-memory owner claim code for the selected IM channel' \
 'sessions:List sessions available through the running Agentix server' \
+'send:Send a prompt to an original session, or steer its active turn' \
+'stop:Stop a turn in an original session' \
+'history:Read a session'\''s conversation history' \
+'command:Run a typed session command supplied as JSON' \
 'call:Ask the server to send a raw JSON RPC request to Codex' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
@@ -238,20 +317,55 @@ _agentix__subcmd__client__subcmd__help__subcmd__claim_commands() {
     local commands; commands=()
     _describe -t commands 'agentix client help claim commands' commands "$@"
 }
+(( $+functions[_agentix__subcmd__client__subcmd__help__subcmd__command_commands] )) ||
+_agentix__subcmd__client__subcmd__help__subcmd__command_commands() {
+    local commands; commands=()
+    _describe -t commands 'agentix client help command commands' commands "$@"
+}
 (( $+functions[_agentix__subcmd__client__subcmd__help__subcmd__help_commands] )) ||
 _agentix__subcmd__client__subcmd__help__subcmd__help_commands() {
     local commands; commands=()
     _describe -t commands 'agentix client help help commands' commands "$@"
+}
+(( $+functions[_agentix__subcmd__client__subcmd__help__subcmd__history_commands] )) ||
+_agentix__subcmd__client__subcmd__help__subcmd__history_commands() {
+    local commands; commands=()
+    _describe -t commands 'agentix client help history commands' commands "$@"
+}
+(( $+functions[_agentix__subcmd__client__subcmd__help__subcmd__send_commands] )) ||
+_agentix__subcmd__client__subcmd__help__subcmd__send_commands() {
+    local commands; commands=()
+    _describe -t commands 'agentix client help send commands' commands "$@"
 }
 (( $+functions[_agentix__subcmd__client__subcmd__help__subcmd__sessions_commands] )) ||
 _agentix__subcmd__client__subcmd__help__subcmd__sessions_commands() {
     local commands; commands=()
     _describe -t commands 'agentix client help sessions commands' commands "$@"
 }
+(( $+functions[_agentix__subcmd__client__subcmd__help__subcmd__stop_commands] )) ||
+_agentix__subcmd__client__subcmd__help__subcmd__stop_commands() {
+    local commands; commands=()
+    _describe -t commands 'agentix client help stop commands' commands "$@"
+}
+(( $+functions[_agentix__subcmd__client__subcmd__history_commands] )) ||
+_agentix__subcmd__client__subcmd__history_commands() {
+    local commands; commands=()
+    _describe -t commands 'agentix client history commands' commands "$@"
+}
+(( $+functions[_agentix__subcmd__client__subcmd__send_commands] )) ||
+_agentix__subcmd__client__subcmd__send_commands() {
+    local commands; commands=()
+    _describe -t commands 'agentix client send commands' commands "$@"
+}
 (( $+functions[_agentix__subcmd__client__subcmd__sessions_commands] )) ||
 _agentix__subcmd__client__subcmd__sessions_commands() {
     local commands; commands=()
     _describe -t commands 'agentix client sessions commands' commands "$@"
+}
+(( $+functions[_agentix__subcmd__client__subcmd__stop_commands] )) ||
+_agentix__subcmd__client__subcmd__stop_commands() {
+    local commands; commands=()
+    _describe -t commands 'agentix client stop commands' commands "$@"
 }
 (( $+functions[_agentix__subcmd__completions_commands] )) ||
 _agentix__subcmd__completions_commands() {
@@ -279,6 +393,10 @@ _agentix__subcmd__help__subcmd__client_commands() {
     local commands; commands=(
 'claim:Generate a temporary in-memory owner claim code for the selected IM channel' \
 'sessions:List sessions available through the running Agentix server' \
+'send:Send a prompt to an original session, or steer its active turn' \
+'stop:Stop a turn in an original session' \
+'history:Read a session'\''s conversation history' \
+'command:Run a typed session command supplied as JSON' \
 'call:Ask the server to send a raw JSON RPC request to Codex' \
     )
     _describe -t commands 'agentix help client commands' commands "$@"
@@ -293,10 +411,30 @@ _agentix__subcmd__help__subcmd__client__subcmd__claim_commands() {
     local commands; commands=()
     _describe -t commands 'agentix help client claim commands' commands "$@"
 }
+(( $+functions[_agentix__subcmd__help__subcmd__client__subcmd__command_commands] )) ||
+_agentix__subcmd__help__subcmd__client__subcmd__command_commands() {
+    local commands; commands=()
+    _describe -t commands 'agentix help client command commands' commands "$@"
+}
+(( $+functions[_agentix__subcmd__help__subcmd__client__subcmd__history_commands] )) ||
+_agentix__subcmd__help__subcmd__client__subcmd__history_commands() {
+    local commands; commands=()
+    _describe -t commands 'agentix help client history commands' commands "$@"
+}
+(( $+functions[_agentix__subcmd__help__subcmd__client__subcmd__send_commands] )) ||
+_agentix__subcmd__help__subcmd__client__subcmd__send_commands() {
+    local commands; commands=()
+    _describe -t commands 'agentix help client send commands' commands "$@"
+}
 (( $+functions[_agentix__subcmd__help__subcmd__client__subcmd__sessions_commands] )) ||
 _agentix__subcmd__help__subcmd__client__subcmd__sessions_commands() {
     local commands; commands=()
     _describe -t commands 'agentix help client sessions commands' commands "$@"
+}
+(( $+functions[_agentix__subcmd__help__subcmd__client__subcmd__stop_commands] )) ||
+_agentix__subcmd__help__subcmd__client__subcmd__stop_commands() {
+    local commands; commands=()
+    _describe -t commands 'agentix help client stop commands' commands "$@"
 }
 (( $+functions[_agentix__subcmd__help__subcmd__completions_commands] )) ||
 _agentix__subcmd__help__subcmd__completions_commands() {

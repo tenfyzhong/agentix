@@ -3,7 +3,7 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use agentix_core::{SessionId, SessionStatus, SessionSummary, TerminalLocation};
+use agentix_domain::{SessionId, SessionStatus, SessionSummary, TerminalLocation};
 use thiserror::Error;
 
 use crate::{CodexEndpoint, multiplexer::rmux_process_locations};
@@ -332,7 +332,7 @@ fn parse_process_paths(output: &str) -> HashMap<u32, PathBuf> {
 mod tests {
     use std::collections::{HashMap, HashSet};
 
-    use agentix_core::{SessionId, SessionStatus, SessionSummary, TerminalLocation};
+    use agentix_domain::{SessionId, SessionStatus, SessionSummary, TerminalLocation};
 
     use super::{
         DaemonClient, RunningProcessSnapshot, confirm_exited_sessions, parse_codex_processes,

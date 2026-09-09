@@ -12,7 +12,7 @@ For a short installation and first-session walkthrough, start with the [README](
 - [Development and contributing](../CONTRIBUTING.md)
 - [Further documentation](#documentation)
 
-Agentix connects the coding agents already running on your computer to Telegram or Feishu, so you can monitor and continue local sessions when you step away from the terminal or IDE. It is a local-first Rust bridge for Codex, Pi, and Oh My Pi. Claude Code can use the standalone task plugin; its IM transport is outside this release.
+Agentix connects the coding agents already running on your computer to Telegram or Feishu, so you can monitor and continue local sessions when you step away from the terminal or IDE. It is a local-first Rust bridge for Codex, Pi, Oh My Pi, and Claude Code. Claude Code uses the [plugin with rmux input](claude-code.md).
 
 Each IM conversation maps explicitly and durably to an agent session. Messages include a readable session title, short session ID, and turn identifier so concurrent sessions remain unambiguous.
 
@@ -48,7 +48,7 @@ Expand-Archive $archive.FullName -DestinationPath .\agentix
 $env:Path = "$(Resolve-Path .\agentix);$env:Path"
 ```
 
-Keep the extracted directory in a stable location and add it to your user `PATH`. Windows supports the Pi and Oh My Pi backends; the Codex backend is not available on Windows because its transport requires a Unix-domain socket.
+Keep the extracted directory in a stable location and add it to your user `PATH`. The current native IM backends require macOS/Linux and a Unix socket. Windows packages remain useful for standalone taskcli and task plugins; they do not provide native IM bridging for Codex, Pi, OMP, or Claude.
 
 #### Separate release archives
 
@@ -150,7 +150,7 @@ Copy-Item .\agentix\agentix.example.toml "$HOME\.config\agentix\config.toml"
 
 In `config.toml`:
 
-1. Select one backend in `[agent]`: `codex`, `pi`, or `oh-my-pi`.
+1. Enable one or more named backend tables: `[agent.codex]`, `[agent.pi]`, `[agent.omp]`, `[agent.claude]`. No agent `kind` field is needed.
 2. Select one IM transport with `[channel].kind`: `telegram` or `feishu`.
 3. Configure the matching `[channel.telegram]` or `[channel.feishu]` table.
 4. Leave the selected channel's owner list empty for first-time claiming, or add the owner IDs directly.
@@ -158,8 +158,7 @@ In `config.toml`:
 For Codex, keep the standalone binary path explicit:
 
 ```toml
-[agent]
-kind = "codex"
+[agent.codex]
 command = "~/.codex/packages/standalone/current/codex"
 endpoint = "unix://"
 ```
@@ -211,20 +210,20 @@ If the selected channel has no configured owner, keep `agentix serve` running, e
 ## Capabilities and session behavior
 
 
-- Native Codex app-server integration plus isolated Pi and Oh My Pi RPC transports
+- Native Codex app-server integration plus Pi and OMP bridges inside the original host processes
 - Telegram long polling and Feishu long-connection support with interactive actions
 - A duplex FIFO message center for IM traffic, with ordered retries at the outbound queue head
 - A global HTTP/HTTPS/SOCKS5 proxy configured in TOML, including for Homebrew services
 - Running-session discovery, attachment, history, prompts, queues, steering, stopping, approvals, and user-input round trips
 - Codex controls for models, reasoning, Fast mode, plans, goals, reviews, diffs, forks, compaction, skills, and MCP servers
-- Interactive rmux workspace browsing and safe Codex session creation from IM
+- Interactive rmux workspace browsing and safe Codex, Pi, and OMP session creation from IM
 - Owner allowlists, one-time owner claiming, group mention requirements, event deduplication, and single-use actions
 - Durable bindings, restart recovery, process-exit notifications, and automatic Codex reattachment
 - Streamed in-place responses, background completion notifications, and reply context
 - Standalone `taskcli`: SQLite jobs with dependencies displayed as Mermaid graphs showing seven task statuses in a light palette shared with TaskNotes and clickable note links, concurrent task claims with lease release on supported host interruptions and session shutdown, task notes tagged `task` and `agent/task` with prerequisite and revision metadata, audit events, a compact clickable project Dashboard Base, and generated TaskNotes boards containing project metadata in Obsidian vaults
 - Optional IM task controls and a shared Codex, Claude, Pi, and OMP plugin, with stable interfaces for future Agent Team orchestration
 
-While `agentix serve` is running, Agentix checks running Codex sessions for completed turns every ten seconds using read-only history queries, including sessions that have never been attached or were detached from IM. Background monitoring does not resume sessions or acquire their writer locks. New completions include the completed turn's prompt and response, a Background label, and an Attach button. Feishu uses a purple header and a tinted quote area; Telegram uses a ⚫ Background marker and blockquotes. Notifications go to authenticated IM conversations known to the service. Codex subagent sessions do not generate standalone completion notices; parent sessions and existing attached or draining turn cards continue updating normally. Send the bot `/help` once to register a conversation for these notifications; attaching a session is optional.
+While `agentix serve` is running, Agentix checks running Codex sessions for completed turns every ten seconds using read-only history queries, including sessions that have never been attached or were detached from IM. Background monitoring does not resume sessions or acquire their writer locks. New completions include the completed turn's prompt and response, a Background label, and an Attach button. Feishu uses a purple header and a grey quote area; Telegram uses a ⚫ Background marker and blockquotes. Notifications go to authenticated IM conversations known to the service. Codex subagent sessions do not generate standalone completion notices; parent sessions and existing attached or draining turn cards continue updating normally. Send the bot `/help` once to register a conversation for these notifications; attaching a session is optional.
 
 Before a Codex session's first user message, background history reads may report that the thread is not materialized yet. Agentix logs this expected condition at debug level and keeps polling; other background read errors remain warnings.
 
@@ -279,3 +278,7 @@ Browsing reads current task data without changing task state or Plan hashes. Nav
 - [Task board, standalone CLI, and agent plugin](task-board.md)
 - [Task workflow responsibilities and lifecycle](task-workflow-mechanisms.md)
 - [Integration coverage and live acceptance boundaries](integration-coverage.md)
+
+## Live Pi and OMP sessions
+
+Install the [Agentix bridge](../plugins/agentix-bridge/README.md) in the original terminal before attaching. Pi/OMP extensions connect to the Unix socket owned by `agentix serve` and retry in the background if it is unavailable. A service can enable `[agent.codex]`, `[agent.pi]`, `[agent.omp]`, and `[agent.claude]` together. Sessions use backend-qualified IDs, while native task leases keep their original IDs. Commands reflect each host's available capabilities; Pi/OMP busy-session messages enter FIFO and `/steer` explicitly steers. Claude Code connects through `[agent.claude]` and the [plugin with rmux input](claude-code.md), with prompt, history, and status capabilities.

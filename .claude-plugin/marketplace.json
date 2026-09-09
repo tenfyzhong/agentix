@@ -11,6 +11,11 @@
       "name": "agent-task-manager",
       "source": "./plugins/agent-task-manager",
       "description": "Coordinate tracked work with taskcli and read-only Markdown boards."
+    },
+    {
+      "name": "agentix-bridge",
+      "source": "./plugins/agentix-bridge",
+      "description": "Connect the original Claude Code session to Agentix over its Unix socket."
     }
   ]
 }

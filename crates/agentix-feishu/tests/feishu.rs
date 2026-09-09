@@ -2,7 +2,7 @@ mod support;
 
 use std::sync::{Arc, Mutex};
 
-use agentix_core::{
+use agentix_domain::{
     ActionButton, ActionStyle, ChannelAdapter, ChannelCommand, ChannelError, ChannelKind,
     CommandMenu, ConversationRef, MessageRef, OutboundView, ViewStatus,
 };
@@ -661,7 +661,7 @@ async fn private_claim_persists_the_owner_and_authorizes_follow_up_messages() {
     assert_eq!(message.owner_id, "ou_claimed");
     assert_eq!(
         message.payload,
-        agentix_core::InboundPayload::Text("/sessions".into())
+        agentix_domain::InboundPayload::Text("/sessions".into())
     );
     server.wait_for_acknowledgements(3).await;
     assert_eq!(
@@ -855,7 +855,7 @@ async fn feishu_reply_message_is_included_as_quoted_prompt_context() {
         .unwrap();
     assert_eq!(
         message.payload,
-        agentix_core::InboundPayload::Text(
+        agentix_domain::InboundPayload::Text(
             "**Quoted message**\n\n> earlier line\n> second line\n\ncontinue with this".into()
         )
     );
@@ -922,7 +922,7 @@ async fn feishu_reply_lookup_refreshes_an_invalid_tenant_token() {
         .unwrap();
     assert_eq!(
         message.payload,
-        agentix_core::InboundPayload::Text(
+        agentix_domain::InboundPayload::Text(
             "**Quoted message**\n\n> fresh context\n\ncontinue".into()
         )
     );
@@ -979,7 +979,7 @@ async fn feishu_reply_lookup_failure_keeps_the_new_prompt() {
         .unwrap();
     assert_eq!(
         message.payload,
-        agentix_core::InboundPayload::Text("keep going".into())
+        agentix_domain::InboundPayload::Text("keep going".into())
     );
 
     shutdown.cancel();
@@ -1037,7 +1037,7 @@ async fn feishu_reply_to_card_quotes_visible_text_without_button_labels() {
         .unwrap();
     assert_eq!(
         message.payload,
-        agentix_core::InboundPayload::Text(
+        agentix_domain::InboundPayload::Text(
             "**Quoted message**\n\n> Codex · session\n> Agent output\n\ncontinue".into()
         )
     );
@@ -1080,7 +1080,7 @@ async fn feishu_slash_commands_ignore_reply_context() {
         .unwrap();
     assert_eq!(
         message.payload,
-        agentix_core::InboundPayload::Text("/status".into())
+        agentix_domain::InboundPayload::Text("/status".into())
     );
     assert!(!server.requests().await.iter().any(|request| {
         request.method == "GET" && request.target.contains("/im/v1/messages/om_parent")
@@ -1126,7 +1126,7 @@ async fn feishu_mock_long_connection_forwards_messages_and_card_actions() {
     assert_eq!(message.owner_id, "ou_owner");
     assert_eq!(
         message.payload,
-        agentix_core::InboundPayload::Text("/sessions".into())
+        agentix_domain::InboundPayload::Text("/sessions".into())
     );
     let action = tokio::time::timeout(std::time::Duration::from_secs(2), receiver.recv())
         .await
@@ -1135,7 +1135,7 @@ async fn feishu_mock_long_connection_forwards_messages_and_card_actions() {
     assert_eq!(action.event_id, "card:om_card:opaque-action-token");
     assert_eq!(
         action.payload,
-        agentix_core::InboundPayload::Action {
+        agentix_domain::InboundPayload::Action {
             token: "opaque-action-token".into(),
             message: Some(MessageRef::new(
                 ConversationRef::new(ChannelKind::Feishu, "oc_mock_chat"),
@@ -1150,7 +1150,7 @@ async fn feishu_mock_long_connection_forwards_messages_and_card_actions() {
     assert_eq!(command.event_id, "card:om_menu:/status");
     assert_eq!(
         command.payload,
-        agentix_core::InboundPayload::Text("/status".into())
+        agentix_domain::InboundPayload::Text("/status".into())
     );
     server.wait_for_acknowledgements(3).await;
 
@@ -1179,7 +1179,7 @@ async fn feishu_mock_long_connection_forwards_messages_and_card_actions() {
 }
 
 #[test]
-fn background_turn_cards_use_purple_quoted_content_and_keep_actions() {
+fn background_turn_cards_use_supported_background_style_and_keep_actions() {
     let view = OutboundView {
         title: "Codex · Background task".into(),
         subtitle: Some("Background turn 12345678 · Completed".into()),
@@ -1194,7 +1194,7 @@ fn background_turn_cards_use_purple_quoted_content_and_keep_actions() {
     let value = render_card(&view).unwrap().card().to_json().into_value();
     assert_eq!(value["header"]["template"], "purple");
     let quote = &value["body"]["elements"][0]["columns"][0];
-    assert_eq!(quote["background_style"], "rgba(128,64,192,0.12)");
+    assert_eq!(quote["background_style"], "grey");
     assert!(
         quote["elements"][0]["content"]
             .as_str()
@@ -1205,7 +1205,7 @@ fn background_turn_cards_use_purple_quoted_content_and_keep_actions() {
 }
 
 #[tokio::test]
-async fn feishu_rate_limited_head_retries_before_later_operations() {
+async fn feishu_rate_limited_head_preserves_same_conversation_order() {
     let server = MockFeishuApi::start().await;
     server.rate_limit_next("/open-apis/im/v1/messages?").await;
     server.rate_limit_next("/open-apis/im/v1/messages?").await;
@@ -1229,7 +1229,7 @@ async fn feishu_rate_limited_head_retries_before_later_operations() {
     tokio::time::timeout(std::time::Duration::from_secs(8), async {
         adapter
             .set_command_menu(
-                &ConversationRef::new(ChannelKind::Feishu, "oc_later"),
+                &ConversationRef::new(ChannelKind::Feishu, "oc_first"),
                 &CommandMenu::default(),
             )
             .await
@@ -1252,7 +1252,20 @@ async fn feishu_rate_limited_head_retries_before_later_operations() {
         .collect::<Vec<_>>();
     assert_eq!(
         destinations,
-        ["oc_first", "oc_first", "oc_first", "oc_later"]
+        ["oc_first", "oc_first", "oc_first", "oc_first"]
+    );
+    let contents = requests
+        .iter()
+        .filter(|request| request.target.starts_with("/open-apis/im/v1/messages?"))
+        .map(|request| {
+            serde_json::from_str::<serde_json::Value>(&request.body).unwrap()["content"].clone()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(contents[0], contents[1]);
+    assert_eq!(contents[1], contents[2]);
+    assert_ne!(
+        contents[2], contents[3],
+        "menu follows successful delivery of the retried card"
     );
 }
 
@@ -1309,4 +1322,122 @@ async fn feishu_reads_edited_inbox_source_with_sender_and_revision() {
         "om_inbox",
     );
     assert!(adapter.read_inbox_message(&forged).await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn slow_feishu_send_or_menu_does_not_block_another_conversation() {
+    for menu in [false, true] {
+        let server = MockFeishuApi::start().await;
+        let release = server.hold_next("/open-apis/im/v1/messages?").await;
+        let client = LarkClient::builder("mock-isolation-app", "mock-secret")
+            .base_url(server.base_url())
+            .max_retries(1)
+            .build()
+            .unwrap();
+        let adapter = FeishuAdapter::with_client(client, ["ou_owner"]);
+        let slow_adapter = adapter.clone();
+        let slow = tokio::spawn(async move {
+            let conversation = ConversationRef::new(ChannelKind::Feishu, "slow");
+            if menu {
+                slow_adapter
+                    .set_command_menu(&conversation, &CommandMenu::default())
+                    .await
+            } else {
+                slow_adapter
+                    .send(&conversation, &OutboundView::text("Slow", "waiting"))
+                    .await
+                    .map(|_| ())
+            }
+        });
+        wait_for_feishu_message_request(&server).await;
+        let other = ConversationRef::new(ChannelKind::Feishu, "other");
+        let independent = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            if menu {
+                adapter
+                    .set_command_menu(&other, &CommandMenu::default())
+                    .await
+            } else {
+                adapter
+                    .send(&other, &OutboundView::text("Other", "independent"))
+                    .await
+                    .map(|_| ())
+            }
+        })
+        .await;
+        assert!(!slow.is_finished());
+        release.send(()).unwrap();
+        slow.await.unwrap().unwrap();
+        independent
+            .expect("another conversation must not wait for the slow Feishu response")
+            .unwrap();
+    }
+}
+
+#[tokio::test]
+async fn stale_invalid_token_response_does_not_discard_a_concurrently_refreshed_token() {
+    let server = MockFeishuApi::start().await;
+    let client = LarkClient::builder("mock-token-race", "mock-secret")
+        .base_url(server.base_url())
+        .max_retries(1)
+        .build()
+        .unwrap();
+    let adapter = FeishuAdapter::with_client(client, ["ou_owner"]);
+    let view = OutboundView::text("Token", "test");
+    adapter
+        .send(&ConversationRef::new(ChannelKind::Feishu, "warmup"), &view)
+        .await
+        .unwrap();
+    let release = server.hold_invalid_token_response().await;
+    let first = tokio::spawn({
+        let adapter = adapter.clone();
+        let view = view.clone();
+        async move {
+            adapter
+                .send(&ConversationRef::new(ChannelKind::Feishu, "first"), &view)
+                .await
+        }
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        while server
+            .requests()
+            .await
+            .iter()
+            .filter(|request| request.target.starts_with("/open-apis/im/v1/messages?"))
+            .count()
+            < 2
+        {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    server
+        .fail_next(
+            "/open-apis/im/v1/messages?",
+            99_991_663,
+            "Invalid tenant_access_token",
+        )
+        .await;
+    let refreshed = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        adapter.send(&ConversationRef::new(ChannelKind::Feishu, "second"), &view),
+    )
+    .await;
+    release.send(()).unwrap();
+    first.await.unwrap().unwrap();
+    refreshed
+        .expect("refresh proceeds without the older HTTP response")
+        .unwrap();
+    assert_eq!(
+        server
+            .requests()
+            .await
+            .iter()
+            .filter(|request| request
+                .target
+                .starts_with("/open-apis/auth/v3/tenant_access_token/internal"))
+            .count(),
+        2,
+        "a late error for the old token must reuse the already refreshed token"
+    );
 }

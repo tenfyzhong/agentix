@@ -11,6 +11,105 @@ mod unix {
     use tokio_tungstenite::tungstenite::Message;
 
     #[tokio::test]
+    async fn client_session_operations_use_backend_neutral_control_requests() {
+        for session in ["codex:native", "pi:native", "omp:native", "claude:native"] {
+            for (args, expected) in [
+                (
+                    vec!["send", session, "hello"],
+                    json!({"operation":"send","session":session,"text":"hello","expected_turn":null}),
+                ),
+                (
+                    vec!["send", session, "hello", "--turn", "turn-1"],
+                    json!({"operation":"send","session":session,"text":"hello","expected_turn":"turn-1"}),
+                ),
+                (
+                    vec![
+                        "history",
+                        session,
+                        "--cursor",
+                        "opaque:cursor",
+                        "--limit",
+                        "2",
+                    ],
+                    json!({"operation":"history","session":session,"cursor":"opaque:cursor","limit":2}),
+                ),
+                (
+                    vec!["stop", session, "turn-1"],
+                    json!({"operation":"stop","session":session,"turn":"turn-1"}),
+                ),
+                (
+                    vec!["history", session],
+                    json!({"operation":"history","session":session,"cursor":null,"limit":20}),
+                ),
+                (
+                    vec!["command", session, r#"{"command":"model","params":null}"#],
+                    json!({"operation":"command","session":session,"command":{"command":"model","params":null}}),
+                ),
+            ] {
+                let directory = tempdir().unwrap();
+                let socket = directory.path().join("control.sock");
+                let config = write_control_config(directory.path(), &socket);
+                let listener = UnixListener::bind(&socket).unwrap();
+                let server = tokio::spawn(async move {
+                    let (request, mut stream) = next_control_request(&listener).await;
+                    assert_eq!(request, json!({"method":"session","params":expected}));
+                    stream
+                        .write_all(b"{\"ok\":true,\"result\":{}}\n")
+                        .await
+                        .unwrap();
+                });
+                let output = Command::new(env!("CARGO_BIN_EXE_agentix"))
+                    .arg("--config")
+                    .arg(&config)
+                    .arg("client")
+                    .args(args)
+                    .output()
+                    .await
+                    .unwrap();
+                assert!(
+                    output.status.success(),
+                    "{}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                server.await.unwrap();
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn client_reports_control_errors_without_printing_success_json() {
+        for error in [
+            "Operation is not supported by this session",
+            "session bridge is offline",
+            "Delivery uncertain: inspect history",
+        ] {
+            let directory = tempdir().unwrap();
+            let socket = directory.path().join("control.sock");
+            let config = write_control_config(directory.path(), &socket);
+            let listener = UnixListener::bind(&socket).unwrap();
+            let server = tokio::spawn(async move {
+                let (request, mut stream) = next_control_request(&listener).await;
+                assert_eq!(request["params"]["session"], "claude:native");
+                stream
+                    .write_all(format!("{}\n", json!({"ok":false,"error":error})).as_bytes())
+                    .await
+                    .unwrap();
+            });
+            let output = Command::new(env!("CARGO_BIN_EXE_agentix"))
+                .arg("--config")
+                .arg(config)
+                .args(["client", "send", "claude:native", "hello"])
+                .output()
+                .await
+                .unwrap();
+            assert!(!output.status.success());
+            assert!(output.stdout.is_empty());
+            assert!(String::from_utf8_lossy(&output.stderr).contains(error));
+            server.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
     async fn client_claim_prints_the_code_returned_by_agentix_control() {
         let directory = tempdir().unwrap();
         let control_socket = directory.path().join("control.sock");
@@ -178,6 +277,30 @@ owner_user_ids = []
         assert_eq!(page["sessions"][0]["name"], "Mock session");
         assert_eq!(page["sessions"][0]["cwd"], "/work/mock");
         server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn doctor_reports_live_bridges_instead_of_saved_transcripts() {
+        for kind in ["pi", "omp", "claude"] {
+            let directory = tempdir().unwrap();
+            let config = directory.path().join("config.toml");
+            std::fs::write(&config, format!("[channel]\nkind='telegram'\n[channel.telegram]\ntoken='test'\n[agent.{kind}]\ncommand='{}'\nsession_dir='{}'\n[storage]\npath='{}'\n[server]\nendpoint='unix://{}'\n[logging.file]\nenabled=false\n", env!("CARGO_BIN_EXE_agentix"), directory.path().display(), directory.path().join("state").display(), directory.path().join("control.sock").display())).unwrap();
+            let output = Command::new(env!("CARGO_BIN_EXE_agentix"))
+                .arg("--config")
+                .arg(config)
+                .arg("doctor")
+                .output()
+                .await
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            assert!(stdout.contains("0 live bridges"), "{stdout}");
+            assert!(stdout.contains("agentix-bridge"));
+        }
     }
 
     #[tokio::test]

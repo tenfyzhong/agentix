@@ -573,5 +573,5 @@ fn readme_documents_installation_on_all_supported_platforms() {
     assert!(readme.contains("agentix-<version>-x86_64-pc-windows-msvc.zip"));
     assert!(readme.contains("New-Item -ItemType Directory -Force \"$HOME\\.config\\agentix\""));
     assert!(readme.contains("agentix.exe doctor"));
-    assert!(readme.contains("Codex backend is not available on Windows"));
+    assert!(readme.contains("Native IM backends currently require macOS/Linux"));
 }

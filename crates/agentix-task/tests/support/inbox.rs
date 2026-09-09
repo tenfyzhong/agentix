@@ -1230,3 +1230,50 @@ async fn prompt_links_on_backfill_and_followup() {
             .all(|e| e["job_id"] == f.job && e["status"] == "ACTIVE")
     );
 }
+
+#[tokio::test]
+async fn session_exit_keeps_another_hosts_same_id_inbox_lease() {
+    let f = fixture().await;
+    add(&f, "Keep the Codex claim").await;
+    let options = WriteOptions {
+        actor_ref: "agent:codex".into(),
+        session_ref: Some("same-id".into()),
+        ..WriteOptions::default()
+    };
+    f.service
+        .execute(
+            json!({"command":"inbox.claim-next","project":f.project}),
+            options,
+        )
+        .await
+        .unwrap();
+    assert!(
+        f.service.store().snapshot().await.unwrap().inboxes[0]
+            .lease
+            .is_some()
+    );
+    f.service
+        .execute(
+            json!({"command":"session.end","session":"same-id","executor":"agent:pi"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        f.service.store().snapshot().await.unwrap().inboxes[0]
+            .lease
+            .is_some()
+    );
+    f.service
+        .execute(
+            json!({"command":"session.end","session":"same-id","executor":"agent:codex"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        f.service.store().snapshot().await.unwrap().inboxes[0]
+            .lease
+            .is_none()
+    );
+}

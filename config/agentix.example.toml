@@ -24,8 +24,7 @@ path = "~/.local/state/agentix/agentix.log"
 rotation = "daily"
 max_files = 7
 
-[agent]
-kind = "codex"
+[agent.codex]
 # Agentix requires Codex CLI 0.153.0+ from the official standalone installer.
 # Homebrew does not install the managed app-server layout.
 command = "~/.codex/packages/standalone/current/codex"
@@ -33,17 +32,22 @@ endpoint = "unix://"
 # Used by /rmux when creating a session, window, or pane. Defaults to Home.
 rmux_directory = "~"
 
-# To use Pi instead:
-# [agent]
-# kind = "pi"
+# Enable Pi by uncommenting this table:
+# [agent.pi]
 # command = "pi"
 # session_dir = "~/.pi/agent/sessions"
 
-# To use Oh My Pi instead:
-# [agent]
-# kind = "oh-my-pi"
+# Enable Oh My Pi by uncommenting this table:
+# [agent.omp]
 # command = "omp"
 # session_dir = "~/.omp/agent/sessions"
+
+# Enable Claude Code by uncommenting this table (see docs/claude-code.md):
+# [agent.claude]
+# command = "claude"
+# session_dir = "~/.claude/projects"
+# Install agentix-bridge@agentix. Default IM input requires rmux on PATH
+# and Claude running inside rmux. Channel delivery is an explicit alternative.
 
 [storage]
 path = "~/.local/share/agentix/state.sqlite3"
@@ -71,3 +75,12 @@ owner_user_ids = []
 # Initialize taskcli before enabling this integration.
 # enable = false
 # config = "~/.config/taskcli/config.toml"
+
+# Enable any combination of [agent.codex], [agent.pi], [agent.omp], and [agent.claude].
+# The table name selects the backend; do not add a kind field.
+# Pi/OMP require agentix-bridge in the original process.
+# Optional Pi/OMP fields (place inside the corresponding backend table):
+# rmux_directory = "~/work"
+# bridge_extension = "/path/to/agentix/plugins/agentix-bridge/extensions/omp.ts"
+# Legacy [agent] + kind and [[agents]] remain accepted, but cannot be mixed
+# with the named backend tables.

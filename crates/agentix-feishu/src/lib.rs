@@ -5,14 +5,14 @@ use std::future::Future;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
-use agentix_core::{
+use agentix_domain::{
     ActionStyle, ChannelAdapter, ChannelError, ChannelKind, CommandMenu, ConversationRef,
     InboundEnvelope, MessageCenter, MessageRef, OutboundView, ViewStatus, include_reply_context,
 };
 use async_trait::async_trait;
 use larksuite_oapi_sdk_rs::card::v2::{
-    BackgroundStyle, Behavior, Body, Button, ButtonType, Card, CardDocument, Column, ColumnSet,
-    Config, Element, Header, Markdown, TemplateColor, Text,
+    BackgroundStyle, Behavior, Body, Button, ButtonType, Card, CardDocument, Color, Column,
+    ColumnSet, Config, Element, Header, Markdown, TemplateColor, Text,
 };
 use larksuite_oapi_sdk_rs::channel::{
     Channel, ChannelPolicy, DmMode, NormalizedMessage, SendInput,
@@ -108,15 +108,18 @@ impl OwnerClaim {
     }
 }
 
+type CommandMenuState = Arc<Mutex<Option<MessageRef>>>;
+
 #[derive(Clone)]
 pub struct FeishuAdapter {
     client: LarkClient,
     policy: FeishuPolicy,
     owner_claim: Option<OwnerClaim>,
     views: Arc<Mutex<HashMap<String, OutboundView>>>,
-    command_menu_messages: Arc<Mutex<HashMap<ConversationRef, MessageRef>>>,
+    command_menu_messages: Arc<Mutex<HashMap<ConversationRef, CommandMenuState>>>,
     messages: MessageCenter,
     cooldown: Arc<Mutex<Option<tokio::time::Instant>>>,
+    token_generation: Arc<Mutex<u64>>,
 }
 
 impl FeishuAdapter {
@@ -150,6 +153,7 @@ impl FeishuAdapter {
             command_menu_messages: Arc::new(Mutex::new(HashMap::new())),
             messages: MessageCenter::default(),
             cooldown: Arc::new(Mutex::new(None)),
+            token_generation: Arc::new(Mutex::new(0)),
         }
     }
 
@@ -170,7 +174,7 @@ impl ChannelAdapter for FeishuAdapter {
         reference: &MessageRef,
     ) -> Result<Option<InboundEnvelope>, ChannelError> {
         let option = RequestOption::default();
-        let response = with_tenant_token_refresh(self, || async {
+        let response = with_tenant_token_refresh(self, Some(&reference.conversation), || async {
             self.client
                 .im()
                 .message
@@ -229,7 +233,7 @@ impl ChannelAdapter for FeishuAdapter {
             event_id: format!("{}:edit:{version}", reference.message_id),
             conversation: reference.conversation.clone(),
             owner_id: owner.into(),
-            payload: agentix_core::InboundPayload::TextEdited {
+            payload: agentix_domain::InboundPayload::TextEdited {
                 original_event_id: reference.message_id.clone(),
                 version,
                 text,
@@ -339,7 +343,7 @@ impl ChannelAdapter for FeishuAdapter {
             ..SendInput::default()
         };
         let option = RequestOption::default();
-        let result = with_tenant_token_refresh(self, || async {
+        let result = with_tenant_token_refresh(self, Some(conversation), || async {
             self.client.channel_messaging().send(&input, &option).await
         })
         .await
@@ -362,7 +366,7 @@ impl ChannelAdapter for FeishuAdapter {
         ensure_feishu(conversation)?;
         let card = render_card(view)?;
         let option = RequestOption::default();
-        with_tenant_token_refresh(self, || async {
+        with_tenant_token_refresh(self, Some(conversation), || async {
             self.client
                 .channel_messaging()
                 .edit_card(&message.message_id, &card, &option)
@@ -386,7 +390,7 @@ impl ChannelAdapter for FeishuAdapter {
         };
         let card = render_card_with_disabled_actions(&view)?;
         let option = RequestOption::default();
-        with_tenant_token_refresh(self, || async {
+        with_tenant_token_refresh(self, Some(&message.conversation), || async {
             self.client
                 .channel_messaging()
                 .edit_card(&message.message_id, &card, &option)
@@ -404,10 +408,17 @@ impl ChannelAdapter for FeishuAdapter {
     ) -> Result<(), ChannelError> {
         ensure_feishu(conversation)?;
         let card = render_command_menu(menu)?;
-        let mut messages = self.command_menu_messages.lock().await;
-        if let Some(message) = messages.get(conversation) {
+        let state = {
+            let mut messages = self.command_menu_messages.lock().await;
+            messages
+                .entry(conversation.clone())
+                .or_insert_with(|| Arc::new(Mutex::new(None)))
+                .clone()
+        };
+        let mut stored = state.lock().await;
+        if let Some(message) = stored.as_ref() {
             let option = RequestOption::default();
-            with_tenant_token_refresh(self, || async {
+            with_tenant_token_refresh(self, Some(conversation), || async {
                 self.client
                     .channel_messaging()
                     .edit_card(&message.message_id, &card, &option)
@@ -425,15 +436,12 @@ impl ChannelAdapter for FeishuAdapter {
             ..SendInput::default()
         };
         let option = RequestOption::default();
-        let result = with_tenant_token_refresh(self, || async {
+        let result = with_tenant_token_refresh(self, Some(conversation), || async {
             self.client.channel_messaging().send(&input, &option).await
         })
         .await
         .map_err(|error| ChannelError::Transport(error.to_string()))?;
-        messages.insert(
-            conversation.clone(),
-            MessageRef::new(conversation.clone(), result.message_id),
-        );
+        *stored = Some(MessageRef::new(conversation.clone(), result.message_id));
         Ok(())
     }
 }
@@ -469,10 +477,11 @@ async fn handle_message(
     {
         return;
     }
+    let conversation = ConversationRef::new(ChannelKind::Feishu, message.chat_id.clone());
     let text = if message.parent_id.is_empty() || text.trim_start().starts_with('/') {
         text
     } else {
-        match fetch_message_text(adapter, &message.parent_id).await {
+        match fetch_message_text(adapter, &conversation, &message.parent_id).await {
             Ok(quoted) => include_reply_context(&text, quoted.as_deref()),
             Err(error) => {
                 tracing::debug!(
@@ -489,12 +498,7 @@ async fn handle_message(
             .messages
             .inbound(
                 &inbound,
-                InboundEnvelope::text(
-                    message.message_id,
-                    ConversationRef::new(ChannelKind::Feishu, message.chat_id),
-                    owner_id,
-                    text,
-                ),
+                InboundEnvelope::text(message.message_id, conversation, owner_id, text),
             )
             .await
             .is_err()
@@ -505,10 +509,11 @@ async fn handle_message(
 
 async fn fetch_message_text(
     adapter: &FeishuAdapter,
+    conversation: &ConversationRef,
     message_id: &str,
 ) -> Result<Option<String>, String> {
     let option = RequestOption::default();
-    let response = with_tenant_token_refresh(adapter, || async {
+    let response = with_tenant_token_refresh(adapter, Some(conversation), || async {
         adapter
             .client
             .im()
@@ -633,13 +638,14 @@ fn parse_claim_command(input: &str) -> Option<&str> {
 }
 
 async fn send_claim_response(adapter: &FeishuAdapter, chat_id: &str, text: &str) {
+    let conversation = ConversationRef::new(ChannelKind::Feishu, chat_id);
     let input = SendInput {
         chat_id: Some(chat_id.to_owned()),
         text: Some(text.to_owned()),
         ..SendInput::default()
     };
     let option = RequestOption::default();
-    if let Err(error) = with_tenant_token_refresh(adapter, || async {
+    if let Err(error) = with_tenant_token_refresh(adapter, Some(&conversation), || async {
         adapter
             .client
             .channel_messaging()
@@ -654,6 +660,7 @@ async fn send_claim_response(adapter: &FeishuAdapter, chat_id: &str, text: &str)
 
 async fn with_tenant_token_refresh<T, F, Fut>(
     adapter: &FeishuAdapter,
+    conversation: Option<&ConversationRef>,
     mut operation: F,
 ) -> Result<T, LarkError>
 where
@@ -662,19 +669,29 @@ where
 {
     adapter
         .messages
-        .outbound(async {
-            let mut cooldown = adapter.cooldown.lock().await;
+        .outbound(conversation, async {
             let mut retry_delay = Duration::from_secs(1);
             let mut token_refreshed = false;
             loop {
-                if let Some(deadline) = *cooldown {
-                    tokio::time::sleep_until(deadline).await;
+                loop {
+                    let deadline = *adapter.cooldown.lock().await;
+                    if let Some(deadline) =
+                        deadline.filter(|deadline| *deadline > tokio::time::Instant::now())
+                    {
+                        tokio::time::sleep_until(deadline).await;
+                    } else {
+                        break;
+                    }
                 }
+                let attempted_generation = *adapter.token_generation.lock().await;
                 match operation().await {
                     Err(LarkError::RateLimited(error)) => {
                         // SDK 0.3.11 drops Retry-After, so use capped backoff.
                         // Keep the deadline shared even if this head is cancelled.
-                        *cooldown = Some(tokio::time::Instant::now() + retry_delay);
+                        let mut cooldown = adapter.cooldown.lock().await;
+                        let deadline = tokio::time::Instant::now() + retry_delay;
+                        *cooldown =
+                            Some(cooldown.map_or(deadline, |current| current.max(deadline)));
                         tracing::warn!(
                             %error,
                             retry_after_seconds = retry_delay.as_secs(),
@@ -688,7 +705,13 @@ where
                             app_id = adapter.client.config().app_id(),
                             "refreshing an invalid Feishu tenant access token"
                         );
-                        invalidate_tenant_access_token(&adapter.client).await?;
+                        // Late failures for the previous token must not discard a
+                        // token another conversation has already refreshed.
+                        let mut generation = adapter.token_generation.lock().await;
+                        if *generation == attempted_generation {
+                            invalidate_tenant_access_token(&adapter.client).await?;
+                            *generation = generation.saturating_add(1);
+                        }
                     }
                     result => return result,
                 }
@@ -762,7 +785,8 @@ fn render_card_with_action_state(
     let content = Element::Markdown(Markdown::new(truncate_utf8(&view.body, CARD_BODY_LIMIT)));
     let content = if view.status == ViewStatus::Background {
         let mut quote = Column::new().element(content);
-        quote.background_style = Some(BackgroundStyle::Rgba("rgba(128,64,192,0.12)".into()));
+        // Feishu rejects CSS RGBA strings here; use a predefined palette color.
+        quote.background_style = Some(BackgroundStyle::Color(Color::Grey));
         quote.padding = Some("12px".into());
         Element::ColumnSet(ColumnSet::new().column(quote))
     } else {
@@ -849,7 +873,7 @@ mod tests {
     async fn cancelling_rate_limited_head_preserves_feishu_cooldown() {
         let adapter = FeishuAdapter::new("unused-app", "unused-secret", ["owner"]).unwrap();
         let attempts = AtomicUsize::new(0);
-        let mut head = Box::pin(with_tenant_token_refresh(&adapter, || {
+        let mut head = Box::pin(with_tenant_token_refresh(&adapter, None, || {
             attempts.fetch_add(1, Ordering::SeqCst);
             ready(Err::<(), _>(LarkError::RateLimited("mock 429".into())))
         }));
@@ -861,7 +885,8 @@ mod tests {
         assert_eq!(attempts.load(Ordering::SeqCst), 1);
         drop(head);
         let deadline = adapter.cooldown.lock().await.unwrap();
-        let mut next = Box::pin(with_tenant_token_refresh(&adapter, || {
+        let other = ConversationRef::new(ChannelKind::Feishu, "other");
+        let mut next = Box::pin(with_tenant_token_refresh(&adapter, Some(&other), || {
             attempts.fetch_add(1, Ordering::SeqCst);
             ready(Ok::<_, LarkError>(42))
         }));

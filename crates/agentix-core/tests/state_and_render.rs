@@ -4,6 +4,42 @@ use agentix_core::{
 };
 
 #[tokio::test]
+async fn uncertain_event_count_excludes_completed_and_retryable_inputs_and_survives_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("runtime.sqlite3");
+    let state = SqliteState::open(&path).await.unwrap();
+    assert_eq!(state.uncertain_event_count().await.unwrap(), 0);
+    state
+        .fence_event(ChannelKind::Telegram, "interrupted")
+        .await
+        .unwrap();
+    state
+        .fence_event(ChannelKind::Telegram, "interrupted")
+        .await
+        .unwrap();
+    state
+        .claim_event(ChannelKind::Telegram, "done")
+        .await
+        .unwrap();
+    state
+        .complete_event(ChannelKind::Telegram, "done")
+        .await
+        .unwrap();
+    state
+        .claim_event(ChannelKind::Telegram, "retry")
+        .await
+        .unwrap();
+    state
+        .release_event(ChannelKind::Telegram, "retry")
+        .await
+        .unwrap();
+    assert_eq!(state.uncertain_event_count().await.unwrap(), 1);
+    drop(state);
+    let state = SqliteState::open(&path).await.unwrap();
+    assert_eq!(state.uncertain_event_count().await.unwrap(), 1);
+}
+
+#[tokio::test]
 async fn runtime_state_rejects_a_task_database_without_adding_tables() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("tasks.sqlite3");
@@ -242,5 +278,71 @@ async fn sqlite_state_suspends_a_binding_without_forgetting_its_session() {
     assert_eq!(
         state.current_session(&conversation).await.unwrap(),
         Some(SessionId::new("thr-a"))
+    );
+}
+
+#[tokio::test]
+async fn cancelled_inbound_events_remain_fenced_after_restart_without_losing_completed_state() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("state.sqlite3");
+    let channel = ChannelKind::Telegram;
+    let state = SqliteState::open(&path).await.unwrap();
+    assert!(state.claim_event(channel, "uncertain").await.unwrap());
+    state.fence_event(channel, "uncertain").await.unwrap();
+    state.release_event(channel, "uncertain").await.unwrap();
+    // Cancellation can interrupt the first SQLite await before the caller sees
+    // its result. The fence must also work when no claim row is visible yet.
+    state
+        .fence_event(channel, "claim-interrupted")
+        .await
+        .unwrap();
+    assert!(state.claim_event(channel, "completed").await.unwrap());
+    state.complete_event(channel, "completed").await.unwrap();
+    state.fence_event(channel, "completed").await.unwrap();
+    assert!(state.claim_event(channel, "failed").await.unwrap());
+    state.release_event(channel, "failed").await.unwrap();
+    drop(state);
+    let state = SqliteState::open(&path).await.unwrap();
+    for id in ["uncertain", "claim-interrupted", "completed"] {
+        assert!(
+            !state.claim_event(channel, id).await.unwrap(),
+            "must not automatically replay {id}"
+        );
+    }
+    assert!(state.claim_event(channel, "failed").await.unwrap());
+    assert!(state.claim_event(channel, "not-started").await.unwrap());
+}
+
+#[tokio::test]
+async fn checkpoint_does_not_wait_for_an_active_reader_and_preserves_bindings() {
+    use sqlx::Connection;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("checkpoint.sqlite3");
+    let state = SqliteState::open(&path).await.unwrap();
+    let options = sqlx::sqlite::SqliteConnectOptions::new().filename(&path);
+    let mut reader = sqlx::SqliteConnection::connect_with(&options)
+        .await
+        .unwrap();
+    let mut snapshot = reader.begin().await.unwrap();
+    sqlx::query("SELECT * FROM bindings")
+        .fetch_all(&mut *snapshot)
+        .await
+        .unwrap();
+    let conversation = ConversationRef::new(ChannelKind::Telegram, "checkpoint");
+    state
+        .attach(&conversation, &SessionId::new("saved"))
+        .await
+        .unwrap();
+    let result = tokio::time::timeout(std::time::Duration::from_secs(1), state.checkpoint()).await;
+    snapshot.rollback().await.unwrap();
+    result
+        .expect("checkpoint must not wait for readers")
+        .unwrap();
+    drop(reader);
+    drop(state);
+    let restored = SqliteState::open(&path).await.unwrap();
+    assert_eq!(
+        restored.current_session(&conversation).await.unwrap(),
+        Some(SessionId::new("saved"))
     );
 }

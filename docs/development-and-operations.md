@@ -2,7 +2,7 @@
 
 ## Configuration
 
-Copy `config/agentix.example.toml` to `$HOME/.config/agentix/config.toml` and select exactly one agent backend. This is the default path when `--config` is omitted. The required `[channel].kind` field selects exactly one active IM transport: `telegram` or `feishu`. Its matching `[channel.telegram]` or `[channel.feishu]` table must exist. Either channel may start with an empty owner list so its one-time claim flow can initialize the allowlist. The inactive nested channel table may remain in the file, but Agentix does not validate its owner list, read its credentials, or start its adapter.
+Copy `config/agentix.example.toml` to `$HOME/.config/agentix/config.toml` and enable one or more named backend tables: `[agent.codex]`, `[agent.pi]`, `[agent.omp]`, `[agent.claude]`. The table name selects the backend, so omit its `kind` field. This is the default path when `--config` is omitted. The required `[channel].kind` field selects exactly one active IM transport: `telegram` or `feishu`. Its matching `[channel.telegram]` or `[channel.feishu]` table must exist. Either channel may start with an empty owner list so its one-time claim flow can initialize the allowlist. The inactive nested channel table may remain in the file, but Agentix does not validate its owner list, read its credentials, or start its adapter.
 
 Store the actual credentials in TOML: `channel.telegram.token` for Telegram, or `channel.feishu.app_id` and `channel.feishu.app_secret` for Feishu. The selected channel's credentials must be present and nonblank. Agentix reads them directly from the file, so Homebrew services need no credential environment variables. Restrict the file to your user (`chmod 600 ~/.config/agentix/config.toml` on macOS/Linux).
 
@@ -25,7 +25,7 @@ The configured proxy takes precedence over environment proxy settings, including
 
 The Feishu SDK does not use `network.proxy`. Its token requests, OpenAPI calls, WebSocket bootstrap, and WebSocket connections retain their existing network behavior.
 
-Local control connections, Codex Unix sockets, and Pi/Oh My Pi RPC pipes remain local. Coding agents already running on your computer retain their own provider-network settings.
+Local control connections, Codex Unix sockets, and Pi/Oh My Pi extension sockets remain local. Coding agents already running on your computer retain their own provider-network settings.
 
 Homebrew services read the same configuration file and need no shell proxy variables. After editing the file, restart the service:
 
@@ -42,7 +42,7 @@ brew services restart tenfyzhong/tap/agentix
 
 Override the endpoint with `[server].endpoint`. Explicit TCP endpoints are accepted on every platform but must use a numeric loopback address; remote binds are rejected. On Unix, Agentix creates parent directories, sets the socket mode to `0600`, rejects a live duplicate server, removes a stale socket, and removes its socket on graceful shutdown.
 
-The control protocol handles one request and one response per connection. `client sessions` goes through the running adapter, `client call` is passed through the server's existing Codex app-server connection, and `client claim` creates claim state inside the running server. Consequently, all client commands require `agentix serve` to be running and use the same backend state as the IM channel.
+Ordinary control clients exchange one request and one response per connection. Native extensions register on the same Unix listener and retain a bidirectional connection. `client send`, `stop`, `history`, and `command` use shared session operations; `client sessions` goes through the running adapter, `client call` is passed through the server's existing Codex app-server connection, and `client claim` creates claim state inside the running server. Consequently, all client commands require `agentix serve` to be running and use the same backend state as the IM channel.
 
 ### Codex
 
@@ -78,11 +78,37 @@ For the managed `unix://` endpoint, Agentix uses `ps` and `lsof` to correlate in
 
 ### Pi
 
-Configure the executable and session root, normally `~/.pi/agent/sessions`. The executable must support `--mode rpc` and `--session <path|id>`.
+Configure the executable and session root, normally `~/.pi/agent/sessions`, and load the [Agentix bridge extension](../plugins/agentix-bridge/README.md) in Pi. The extension connects to the Unix socket owned by `agentix serve` and controls the original running session through native APIs.
 
 ### Oh My Pi
 
-Configure `kind = "oh-my-pi"`, the `omp` executable, and its JSONL session root. Agentix resumes each file with `--resume` and uses protocol-v1 JSONL framing for compatibility.
+Configure `[agent.omp]`, the `omp` executable, and its session root. Load the OMP bridge extension; it connects to the same Agentix Unix listener as Pi. Attaching does not spawn or resume another process. Extensions reconnect in the background after service restart.
+
+### Claude Code
+
+Configure `[agent.claude]` and install `agentix-bridge@agentix`. For default IM input, install rmux on PATH and run Claude inside it. The optional Channel mode requires its environment selection and startup flag. Both use the existing Unix control socket; see [Claude setup and delivery modes](claude-code.md).
+
+### Named backend configuration
+
+```toml
+[agent.codex]
+command = "~/.codex/packages/standalone/current/codex"
+endpoint = "unix://"
+
+[agent.omp]
+command = "omp"
+session_dir = "~/.omp/agent/sessions"
+
+[agent.pi]
+command = "pi"
+session_dir = "~/.pi/agent/sessions"
+
+[agent.claude]
+command = "claude"
+session_dir = "~/.claude/projects"
+```
+
+Omit a backend table to disable it. Existing backend-specific fields retain their meanings and defaults; Pi/OMP still require `session_dir`. Unknown names, unknown backend fields, and a `kind` field inside a named table are rejected. Legacy `[agent]` with `kind` and `[[agents]]` arrays remain accepted for migration, but cannot be mixed with named tables. Restart `agentix serve` after changing configuration. An old unqualified binding database must first be opened with its original single backend so migration does not guess ownership.
 
 ## Optional task coordination
 
@@ -136,9 +162,9 @@ Without `RUST_LOG`, `[logging].level` supplies the tracing filter. `[logging.fil
 
 Use the operating system's user service manager for production. Run the process as the same user that owns the coding-agent session files and Codex socket. Restrict the configuration file containing credentials to that user.
 
-Graceful shutdown cancels channel listeners, stops inbound/event loops, checkpoints SQLite WAL state, removes live turn controls, restores detached IM menus, and sends an offline notification. Durable bindings are retained without stopping the coding-agent session. Channel adapters share one five-second shutdown deadline, so multiple adapters do not multiply the wait. Active turn text, status, owner context, and IM message references are checkpointed so a restart refreshes the existing Stop action and later completion edits the original message instead of creating a duplicate.
+Graceful shutdown cancels channel listeners, stops inbound/event loops, checkpoints SQLite WAL state, removes live turn controls, restores detached IM menus, and sends an offline notification. Durable bindings are retained without stopping the coding-agent session. Channel adapters share one five-second shutdown deadline, so multiple adapters do not multiply the wait. Active turn text, status, owner context, and IM message references are checkpointed so a restart refreshes the existing Stop action where the host supports it and later completion edits the original message instead of creating a duplicate.
 
-Agentix restores durable bindings and turn state before starting its control and IM tasks. Menu updates, online notices, and restored turn displays run in the background, so slow IM requests do not delay `Agentix is running`. Pending startup updates are cancelled before shutdown notices, and updates for bindings that changed are skipped. The running log does not mean the IM connection is ready; Telegram logs separately when initialization finishes and polling starts.
+Agentix restores durable bindings and turn state before starting its control and IM tasks. Temporarily offline clients retain their bindings and do not prevent startup; the service opens its socket so extensions can reconnect. Only permanently rejected stale bindings are removed. Menu updates, online notices, and restored turn displays run in the background, so slow IM requests do not delay `Agentix is running`. Pending startup updates are cancelled before shutdown notices, and updates for bindings that changed are skipped. The running log does not mean the IM connection is ready; Telegram logs separately when initialization finishes and polling starts.
 
 If the agent rejects a saved session because it is no longer attachable, Agentix removes that stale binding, keeps the IM detached, and reports the result.
 
@@ -154,7 +180,7 @@ Startup logs include `phase` and `elapsed_ms` for the agent connection, channel/
 - required credentials in the configuration file without printing values
 - global proxy URL validity (proxy connectivity is exercised when the service connects)
 - state directory existence
-- Codex managed-daemon startup plus initialize/list handshake, or Pi/OMP executable and session discovery
+- Codex managed-daemon startup plus initialize/list handshake, or Pi/OMP/Claude executable checks and live registration discovery
 
 Useful operational checks:
 
@@ -176,11 +202,11 @@ Tracing timestamps use RFC 3339 in the computer's local time zone and include it
 
 - Rust 1.95 or newer is required by the pinned Feishu SDK.
 - The Codex backend requires the official standalone Codex CLI 0.153.0 or newer. Homebrew installations do not include the managed app-server layout required by Agentix.
-- One service process selects one agent backend and one IM channel. Run separate config/state instances to expose different backends or channels at the same time.
+- One service process selects one IM channel and one or more distinct backends using `[agent.codex]`, `[agent.pi]`, `[agent.omp]`, and `[agent.claude]`. Run separate config/state instances for different channels.
 - Telegram converts standard Markdown in quoted agent replies to MarkdownV2 for sends and streamed edits, preserving paragraph and list boundaries inside the quote. Automatic link previews are disabled to keep structured bot responses free of unrelated webpage cards. Rendered output is conservatively bounded to 4,096 UTF-8 bytes.
 - Feishu card body output is bounded before transport.
-- Pi/OMP session listing scans JSONL files recursively; very large stores should be indexed in a later release.
+- Pi/OMP/Claude session listing queries live registered bridges using metadata-only RPCs. It does not discover offline JSONL files or spawn resumed RPC agents. Native bridging requires a Unix control endpoint.
 - Codex's persistent queue API is experimental. External queue entries execute automatically, but Codex CLI 0.153.0 keeps Tab-submitted follow-ups in a private, in-process TUI queue and ignores `thread/queue/changed`. That local queue and the app-server queue used by Agentix do not synchronize or deduplicate through the official protocol. The TUI may not show an Agentix queue entry until its turn starts, and Agentix cannot list a Tab-queued TUI entry; `/queue` is authoritative only for the app-server queue. If both queues contain input when a turn ends, each owner may try to submit its next item, producing back-to-back turns with no shared ordering guarantee. Do not use both queues concurrently for the same session.
-- Claude Code IM support is deferred until a stable, authenticated control transport and approval protocol are selected. Claude Code can already use the standalone task plugin.
+- Claude Code IM support uses the [plugin with rmux input](claude-code.md) with the existing Agentix bridge protocol. Native stop, steering, model controls, and approval relay are not advertised; terminal permissions remain local.
 
 For the development workflow, test architecture, CI, and release process, see [Contributing to Agentix](../CONTRIBUTING.md).

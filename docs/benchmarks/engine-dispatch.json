@@ -1,0 +1,22 @@
+{
+  "date": "2026-09-09",
+  "platform": "Darwin arm64",
+  "rustc": "1.95.0 (59807616e 2026-04-14)",
+  "command": "cargo test -p agentix --bin agentix engine_runtime_ --all-features -- --nocapture",
+  "fixture": {
+    "runtime": "production run_engine_loop",
+    "storage": "in-memory SQLite",
+    "agent": "local gated AgentAdapter",
+    "channel": "local recording ChannelAdapter",
+    "held_prompts": 31,
+    "independent_conversations": 64
+  },
+  "observed": {
+    "independent_replies_ms": 15.656209,
+    "maximum_active_workers": 32,
+    "maximum_admitted_operations": 256,
+    "upstream_channel_capacity": 8,
+    "additional_envelopes_before_backpressure_with_32_workers_held": 232
+  },
+  "scope": "One deterministic regression run. No model, external IM API, or provider latency is measured."
+}

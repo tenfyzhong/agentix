@@ -1,10 +1,11 @@
+use agentix_core::parse_input;
 mod support;
 
 use std::sync::{Arc, Mutex};
 
-use agentix_core::{
+use agentix_domain::{
     ActionButton, ActionStyle, ChannelAdapter, ChannelCommand, ChannelKind, CommandMenu,
-    ConversationRef, MessageRef, OutboundView, ViewStatus, parse_input,
+    ConversationRef, MessageRef, OutboundView, ViewStatus,
 };
 use agentix_telegram::{
     TelegramAdapter, TelegramOwnerClaimer, TelegramPolicy, attached_menu_commands,
@@ -457,7 +458,7 @@ async fn telegram_mock_long_polling_forwards_only_authorized_messages() {
     assert_eq!(envelope.owner_id, "42");
     assert_eq!(
         envelope.payload,
-        agentix_core::InboundPayload::Text("/sessions".into())
+        agentix_domain::InboundPayload::Text("/sessions".into())
     );
 
     shutdown.cancel();
@@ -556,7 +557,7 @@ async fn private_claim_persists_the_telegram_owner_and_authorizes_follow_up_mess
     assert_eq!(message.owner_id, "7");
     assert_eq!(
         message.payload,
-        agentix_core::InboundPayload::Text("/sessions".into())
+        agentix_domain::InboundPayload::Text("/sessions".into())
     );
     assert_eq!(
         claimer.claims.lock().unwrap().as_slice(),
@@ -620,7 +621,7 @@ async fn telegram_mock_long_polling_answers_callbacks_and_forwards_actions() {
     assert_eq!(envelope.event_id, "callback-1");
     assert_eq!(
         envelope.payload,
-        agentix_core::InboundPayload::Action {
+        agentix_domain::InboundPayload::Action {
             token: "opaque-action-token".into(),
             message: Some(MessageRef::new(
                 ConversationRef::new(ChannelKind::Telegram, "42"),
@@ -737,7 +738,7 @@ async fn telegram_mock_api_errors_are_channel_transport_errors() {
         .unwrap_err();
 
     assert!(
-        matches!(error, agentix_core::ChannelError::Transport(message) if message.contains("mock Telegram send failure"))
+        matches!(error, agentix_domain::ChannelError::Transport(message) if message.contains("mock Telegram send failure"))
     );
 }
 
@@ -905,7 +906,7 @@ async fn telegram_spaces_sends_and_edits_in_the_same_chat() {
 }
 
 #[tokio::test]
-async fn telegram_rate_limited_head_is_retried_before_later_requests() {
+async fn telegram_rate_limited_head_preserves_same_chat_order() {
     let server = MockTelegramApi::start().await;
     server.rate_limit_next("sendmessage", 1).await;
     server.rate_limit_next("sendmessage", 1).await;
@@ -924,7 +925,7 @@ async fn telegram_rate_limited_head_is_retried_before_later_requests() {
     tokio::time::timeout(std::time::Duration::from_secs(6), async {
         adapter
             .set_command_menu(
-                &ConversationRef::new(ChannelKind::Telegram, "43"),
+                &ConversationRef::new(ChannelKind::Telegram, "42"),
                 &CommandMenu::default(),
             )
             .await
@@ -990,7 +991,7 @@ async fn telegram_inbound_action_does_not_wait_for_rate_limited_acknowledgement(
     assert_eq!(envelope.event_id, "callback-1");
     assert_eq!(
         envelope.payload,
-        agentix_core::InboundPayload::Action {
+        agentix_domain::InboundPayload::Action {
             token: "opaque-action-token".into(),
             message: Some(MessageRef::new(
                 ConversationRef::new(ChannelKind::Telegram, "42"),
@@ -1076,4 +1077,36 @@ async fn telegram_forwards_authorized_message_edits_with_original_identity() {
         serde_json::to_value(envelope.payload).unwrap(),
         serde_json::json!({"TextEdited":{"original_event_id":"42:11","version":301,"text":"/inbox Revised"}})
     );
+}
+
+#[tokio::test]
+async fn slow_telegram_response_does_not_block_another_conversation() {
+    let server = MockTelegramApi::start().await;
+    let release = server.hold_next("sendmessage").await;
+    let bot = Bot::new("test-token").set_api_url(server.api_url().parse().unwrap());
+    let adapter = TelegramAdapter::with_bot(bot, TelegramPolicy::new([42]));
+    let slow_adapter = adapter.clone();
+    let slow = tokio::spawn(async move {
+        slow_adapter
+            .send(
+                &ConversationRef::new(ChannelKind::Telegram, "42"),
+                &OutboundView::text("Slow", "waiting"),
+            )
+            .await
+    });
+    wait_for_api_method(&server, "sendmessage").await;
+    let independent = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        adapter.send(
+            &ConversationRef::new(ChannelKind::Telegram, "43"),
+            &OutboundView::text("Other", "independent"),
+        ),
+    )
+    .await;
+    assert!(!slow.is_finished());
+    release.send(()).unwrap();
+    slow.await.unwrap().unwrap();
+    independent
+        .expect("another chat must not wait for the slow HTTP response")
+        .unwrap();
 }

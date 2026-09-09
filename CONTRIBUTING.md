@@ -87,7 +87,7 @@ GitHub Actions keeps formatting and Clippy in `ci.yml`. The `tests.yml` workflow
 
 ## Workspace architecture
 
-The main crates are `agentix-core`, `agentix-codex`, `agentix-pi`, `agentix-telegram`, `agentix-feishu`, the independent `agentix-task` library, and the `agentix` / `taskcli` executables. See [task board design and usage](docs/task-board.md) for the task database and document projection boundary.
+The main crates are `agentix-domain` (contracts), `agentix-storage` (runtime persistence), `agentix-core` (application services), `agentix-codex`, `agentix-bridge`, `agentix-telegram`, `agentix-feishu`, the independent `agentix-task` library, and the `agentix` / `taskcli` executables. See [task board design and usage](docs/task-board.md) for the task database and document projection boundary.
 
 The core exposes a small common agent interface plus optional queue, attached-session control, and workspace-runtime ports. A serialized runtime loop feeds IM and agent events into coordinator-owned session, turn, interaction, and rmux state. See the [architecture document](docs/architecture.md) for the state/effect and retry boundaries.
 

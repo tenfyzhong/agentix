@@ -1,0 +1,687 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentix.local/bridge-v2.schema.json",
+  "title": "Agentix bridge v2 wire contract",
+  "$defs": {
+    "SessionStatus": {
+      "type": "string",
+      "enum": [
+        "notLoaded",
+        "idle",
+        "active",
+        "systemError",
+        "offline",
+        "unknown"
+      ]
+    },
+    "TurnStatus": {
+      "type": "string",
+      "enum": [
+        "inProgress",
+        "completed",
+        "interrupted",
+        "failed",
+        "unknown"
+      ]
+    },
+    "ErrorCode": {
+      "type": "string",
+      "enum": [
+        "invalid_request",
+        "unsupported_method",
+        "unsupported_command",
+        "busy",
+        "delivery_uncertain",
+        "host_error",
+        "frame_too_large",
+        "session_changed"
+      ]
+    },
+    "Session": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "preview": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cwd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "updatedAt": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "status": {
+          "$ref": "#/$defs/SessionStatus"
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "preview",
+        "cwd",
+        "updatedAt",
+        "status"
+      ]
+    },
+    "Tool": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "label",
+        "status"
+      ]
+    },
+    "Item": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "text": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "status": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "text",
+        "status"
+      ]
+    },
+    "Turn": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/TurnStatus"
+        },
+        "user_text": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "agent_text": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Tool"
+          }
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Item"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "status",
+        "user_text",
+        "agent_text",
+        "tools",
+        "items"
+      ]
+    },
+    "QueueItem": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "text"
+      ]
+    },
+    "QueueState": {
+      "type": "object",
+      "properties": {
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/QueueItem"
+          }
+        },
+        "paused": {
+          "type": "boolean"
+        },
+        "uncertain": {
+          "type": [
+            "object",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "items",
+        "paused",
+        "uncertain"
+      ]
+    },
+    "Snapshot": {
+      "type": "object",
+      "properties": {
+        "instance": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "session": {
+          "$ref": "#/$defs/Session"
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "turns": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Turn"
+          }
+        },
+        "queue": {
+          "$ref": "#/$defs/QueueState"
+        }
+      },
+      "required": [
+        "instance",
+        "seq",
+        "session",
+        "capabilities",
+        "turns",
+        "queue"
+      ]
+    },
+    "Registration": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "agent": {
+          "type": "string"
+        },
+        "instance": {
+          "type": "string"
+        },
+        "pid": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "session_file": {
+          "type": "string"
+        },
+        "snapshot": {
+          "$ref": "#/$defs/SessionInfo"
+        }
+      },
+      "required": [
+        "version",
+        "agent",
+        "instance",
+        "pid",
+        "session_id",
+        "cwd",
+        "session_file",
+        "snapshot"
+      ]
+    },
+    "History": {
+      "type": "object",
+      "properties": {
+        "turns": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Turn"
+          }
+        },
+        "older_cursor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "newer_cursor": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "turns",
+        "older_cursor",
+        "newer_cursor"
+      ]
+    },
+    "Prompt": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "request_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "text",
+        "request_id"
+      ]
+    },
+    "PromptResult": {
+      "type": "object",
+      "properties": {
+        "turn_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "turn_id"
+      ]
+    },
+    "Choice": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "label",
+        "value"
+      ]
+    },
+    "CommandResult": {
+      "type": "object",
+      "properties": {
+        "body": {
+          "type": "string"
+        },
+        "choices": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Choice"
+          }
+        }
+      },
+      "required": [
+        "body",
+        "choices"
+      ]
+    },
+    "Request": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "method": {
+          "type": "string"
+        },
+        "params": {
+          "type": "object"
+        }
+      },
+      "required": [
+        "id",
+        "method",
+        "params"
+      ]
+    },
+    "Failure": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "error": {
+          "type": "string"
+        },
+        "code": {
+          "$ref": "#/$defs/ErrorCode"
+        }
+      },
+      "required": [
+        "id",
+        "ok",
+        "error",
+        "code"
+      ]
+    },
+    "SessionExited": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id"
+      ]
+    },
+    "QueueChanged": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id"
+      ]
+    },
+    "TurnStarted": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string"
+        },
+        "turn_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "turn_id"
+      ]
+    },
+    "AgentMessageDelta": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string"
+        },
+        "turn_id": {
+          "type": "string"
+        },
+        "item_id": {
+          "type": "string"
+        },
+        "delta": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "turn_id",
+        "item_id",
+        "delta"
+      ]
+    },
+    "ItemStarted": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string"
+        },
+        "turn_id": {
+          "type": "string"
+        },
+        "item_id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "turn_id",
+        "item_id",
+        "kind",
+        "label"
+      ]
+    },
+    "ItemCompleted": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string"
+        },
+        "turn_id": {
+          "type": "string"
+        },
+        "item": {
+          "$ref": "#/$defs/Item"
+        }
+      },
+      "required": [
+        "session_id",
+        "turn_id",
+        "item"
+      ]
+    },
+    "TurnCompleted": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string"
+        },
+        "turn_id": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/TurnStatus"
+        },
+        "error": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "session_id",
+        "turn_id",
+        "status",
+        "error"
+      ]
+    },
+    "Event": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "SessionExited": {
+              "$ref": "#/$defs/SessionExited"
+            }
+          },
+          "required": [
+            "SessionExited"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "QueueChanged": {
+              "$ref": "#/$defs/QueueChanged"
+            }
+          },
+          "required": [
+            "QueueChanged"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "TurnStarted": {
+              "$ref": "#/$defs/TurnStarted"
+            }
+          },
+          "required": [
+            "TurnStarted"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "AgentMessageDelta": {
+              "$ref": "#/$defs/AgentMessageDelta"
+            }
+          },
+          "required": [
+            "AgentMessageDelta"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "ItemStarted": {
+              "$ref": "#/$defs/ItemStarted"
+            }
+          },
+          "required": [
+            "ItemStarted"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "ItemCompleted": {
+              "$ref": "#/$defs/ItemCompleted"
+            }
+          },
+          "required": [
+            "ItemCompleted"
+          ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "TurnCompleted": {
+              "$ref": "#/$defs/TurnCompleted"
+            }
+          },
+          "required": [
+            "TurnCompleted"
+          ]
+        }
+      ]
+    },
+    "EventFrame": {
+      "type": "object",
+      "properties": {
+        "instance": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "event": {
+          "$ref": "#/$defs/Event"
+        }
+      },
+      "required": [
+        "instance",
+        "seq",
+        "event"
+      ]
+    },
+    "SessionInfo": {
+      "type": "object",
+      "properties": {
+        "instance": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "session": {
+          "$ref": "#/$defs/Session"
+        },
+        "capabilities": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "instance",
+        "seq",
+        "session",
+        "capabilities"
+      ]
+    }
+  },
+  "x-agentix": {
+    "version": 2,
+    "maxFrameBytes": 8388608
+  }
+}

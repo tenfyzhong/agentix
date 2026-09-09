@@ -13,12 +13,16 @@ pub enum AgentCommand {
     Tasks(Option<String>),
     Task(String),
     Sessions,
+    SessionsBackend(String),
     Multiplexer,
+    MultiplexerBackend(String),
     Attach(String),
     Current,
     Detach,
     Stop,
     Queue,
+    QueueControl(String),
+    Steer(String),
     Cancel,
     HistoryRecent,
     HistoryOlder,
@@ -82,8 +86,12 @@ pub fn parse_input(input: &str) -> Result<ParsedInput, InputParseError> {
                 .ok_or(InputParseError::MissingArgument("/task <id>"))?
                 .to_owned(),
         ),
-        "/sessions" => AgentCommand::Sessions,
-        "/rmux" => AgentCommand::Multiplexer,
+        "/sessions" => parts.next().map_or(AgentCommand::Sessions, |kind| {
+            AgentCommand::SessionsBackend(kind.into())
+        }),
+        "/rmux" => parts.next().map_or(AgentCommand::Multiplexer, |kind| {
+            AgentCommand::MultiplexerBackend(kind.into())
+        }),
         "/attach" => AgentCommand::Attach(
             parts
                 .next()
@@ -93,7 +101,14 @@ pub fn parse_input(input: &str) -> Result<ParsedInput, InputParseError> {
         "/current" => AgentCommand::Current,
         "/detach" => AgentCommand::Detach,
         "/stop" => AgentCommand::Stop,
-        "/queue" => AgentCommand::Queue,
+        "/steer" => AgentCommand::Steer(
+            optional_remainder(parts).ok_or(InputParseError::MissingArgument("/steer <text>"))?,
+        ),
+        "/queue" => match parts.next() {
+            None => AgentCommand::Queue,
+            Some(action @ ("resume" | "clear")) => AgentCommand::QueueControl(action.into()),
+            Some(value) => return Err(InputParseError::UnknownCommand(format!("/queue {value}"))),
+        },
         "/cancel" => AgentCommand::Cancel,
         "/compact" => AgentCommand::Session(SessionCommand::Compact),
         "/fork" => AgentCommand::Session(SessionCommand::Fork),
@@ -112,26 +127,8 @@ pub fn parse_input(input: &str) -> Result<ParsedInput, InputParseError> {
             AgentCommand::Session(SessionCommand::Reasoning(parts.next().map(str::to_owned)))
         }
         "/skills" => AgentCommand::Session(SessionCommand::Skills),
-        "/plan" => {
-            let argument = parts.collect::<Vec<_>>().join(" ");
-            let (enabled, prompt) = match argument.as_str() {
-                "" | "on" | "plan" => (true, None),
-                "off" | "default" => (false, None),
-                prompt => (true, Some(prompt.to_owned())),
-            };
-            AgentCommand::Session(SessionCommand::Plan { enabled, prompt })
-        }
-        "/goal" => {
-            let argument = parts.collect::<Vec<_>>().join(" ");
-            let command = match argument.as_str() {
-                "" => GoalCommand::Show,
-                "pause" => GoalCommand::Pause,
-                "resume" => GoalCommand::Resume,
-                "clear" => GoalCommand::Clear,
-                objective => GoalCommand::Set(objective.to_owned()),
-            };
-            AgentCommand::Session(SessionCommand::Goal(command))
-        }
+        "/plan" => parse_plan(&parts.collect::<Vec<_>>().join(" ")),
+        "/goal" => parse_goal(&parts.collect::<Vec<_>>().join(" ")),
         "/review" => AgentCommand::Session(SessionCommand::Review),
         "/status" => AgentCommand::Session(SessionCommand::Status),
         "/mcp" => AgentCommand::Session(SessionCommand::Mcp),
@@ -153,4 +150,23 @@ pub fn parse_input(input: &str) -> Result<ParsedInput, InputParseError> {
 fn optional_remainder<'a>(parts: impl Iterator<Item = &'a str>) -> Option<String> {
     let value = parts.collect::<Vec<_>>().join(" ");
     (!value.is_empty()).then_some(value)
+}
+
+fn parse_plan(argument: &str) -> AgentCommand {
+    let (enabled, prompt) = match argument {
+        "" | "on" | "plan" => (true, None),
+        "off" | "default" => (false, None),
+        prompt => (true, Some(prompt.to_owned())),
+    };
+    AgentCommand::Session(SessionCommand::Plan { enabled, prompt })
+}
+fn parse_goal(argument: &str) -> AgentCommand {
+    let command = match argument {
+        "" => GoalCommand::Show,
+        "pause" => GoalCommand::Pause,
+        "resume" => GoalCommand::Resume,
+        "clear" => GoalCommand::Clear,
+        objective => GoalCommand::Set(objective.to_owned()),
+    };
+    AgentCommand::Session(SessionCommand::Goal(command))
 }
