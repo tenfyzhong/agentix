@@ -56,17 +56,26 @@ test("Homebrew formulas belong exclusively to the tap", async () => {
 });
 
 function job(workflow, name) {
-    const body = workflow.split(`\n  ${name}:\n`)[1];
+    const body = workflow.replace(/\r\n/g, "\n").split(`\n  ${name}:\n`)[1];
     assert.ok(body, `missing job ${name}`);
     return body.split(/\n  [a-z][\w-]*:\n/)[0];
 }
 
 function stepScript(workflow, name) {
-    const step = workflow.split(`      - name: ${name}\n`)[1];
+    const step = workflow.replace(/\r\n/g, "\n").split(`      - name: ${name}\n`)[1];
     assert.ok(step, `missing step ${name}`);
     return step.split(/\n      - /)[0].split("        run: |\n")[1]
         .split("\n").map(line => line.replace(/^          /, "")).join("\n");
 }
+
+test("Homebrew workflow parsing handles Windows checkout line endings", async () => {
+    const workflow = (await readFile(new URL(".github/workflows/homebrew.yml", repository), "utf8")).replace(/\r\n/g, "\n");
+    const windowsWorkflow = workflow.replace(/\n/g, "\r\n");
+    for (const name of ["prepare-homebrew", "build-bottles", "publish-homebrew"]) {
+        assert.equal(job(windowsWorkflow, name), job(workflow, name));
+    }
+    assert.equal(stepScript(windowsWorkflow, "Add bottle metadata to formula"), stepScript(workflow, "Add bottle metadata to formula"));
+});
 
 test("Homebrew builds both formulas on three platforms before publishing one PR per formula", async () => {
     const workflow = await readFile(new URL(".github/workflows/homebrew.yml", repository), "utf8");
