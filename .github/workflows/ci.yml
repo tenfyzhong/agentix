@@ -19,6 +19,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: |
+          # Chrome is not used by CI; its third-party index can block apt updates.
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources
           sudo apt-get update
           sudo apt-get install --yes protobuf-compiler
       - uses: dtolnay/rust-toolchain@master

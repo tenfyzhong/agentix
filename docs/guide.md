@@ -29,7 +29,7 @@ brew tap tenfyzhong/tap
 brew install agentix
 ```
 
-The Homebrew formulae for Agentix and the standalone task manager, taskix, are maintained in [tenfyzhong/homebrew-tap](https://github.com/tenfyzhong/homebrew-tap). Release automation updates both formulae and publishes macOS arm64 bottles. Install taskix with `brew install tenfyzhong/tap/taskix`. The Homebrew workflow can also be run manually for an existing release tag, selecting `agentix`, `taskix`, or `all` (the default) to publish the corresponding bottles and formula pull requests.
+The Homebrew formulae for Agentix and the standalone task manager, taskix, are maintained in [tenfyzhong/homebrew-tap](https://github.com/tenfyzhong/homebrew-tap). Release automation updates both formulae and publishes macOS arm64, Linux x86_64, and Linux arm64 bottles. All platforms build the same prepared formula; after every bottle build succeeds, automation merges their metadata into one pull request per formula. Install taskix with `brew install tenfyzhong/tap/taskix`. The Homebrew workflow can also be run manually for an existing release tag, selecting `agentix`, `taskix`, or `all` (the default) to publish the corresponding bottles and formula pull requests.
 
 The Codex backend requires Codex CLI 0.153.0 or newer from the official standalone installer. The Homebrew Codex package does not include the managed app-server layout Agentix needs.
 

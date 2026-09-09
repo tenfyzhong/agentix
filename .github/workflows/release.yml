@@ -76,6 +76,8 @@ jobs:
       - name: Install protobuf compiler on Linux
         if: runner.os == 'Linux'
         run: |
+          # Chrome is not used by release builds; its index can block apt updates.
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources
           sudo apt-get update
           sudo apt-get install --yes protobuf-compiler
       - name: Install protobuf compiler on macOS
