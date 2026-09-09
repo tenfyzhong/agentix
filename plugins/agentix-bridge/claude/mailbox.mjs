@@ -24,6 +24,9 @@ export class Mailbox {
     constructor(root = dataRoot(), key = hostKey()) {
         this.path = join(root, 'hosts', createHash('sha256').update(key).digest('hex'));
         mkdirSync(this.path, { recursive: true, mode: 0o700 });
+        // Native realpath expands Windows 8.3 names as well as symlinks.
+        // Use one canonical path for publishing and watching libuv events.
+        this.path = realpathSync.native(this.path);
     }
     identity() { return readJson(join(this.path, 'identity.json')); }
     publish(event) {
@@ -43,8 +46,7 @@ export class Mailbox {
         let watcher, pending, closed = false;
         const stop = () => { closed = true; clearImmediate(pending); watcher?.close(); };
         try {
-            // Resolve aliases (including Windows 8.3 temp paths) before libuv watches.
-            watcher = watch(realpathSync(this.path), (_event, name) => {
+            watcher = watch(this.path, (_event, name) => {
                 if (closed || pending || (name && name !== 'identity.json' && !String(name).endsWith('.event.json'))) return;
                 pending = setImmediate(() => { pending = undefined; if (!closed) wake(); });
             });

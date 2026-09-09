@@ -64,6 +64,7 @@ test('Claude mailbox watches the canonical directory behind aliases', t => {
     const alias = join(root, 'alias');
     symlinkSync(actual, alias, process.platform === 'win32' ? 'junction' : 'dir');
     const box = new Mailbox(alias, 'host');
+    assert.equal(box.path, realpathSync.native(box.path), 'reads, writes and watches must share the canonical path');
     let watched;
     t.mock.method(fs, 'watch', path => {
         watched = path;
