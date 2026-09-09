@@ -68,6 +68,18 @@ impl fmt::Display for SessionId {
 pub enum ChannelKind {
     Telegram,
     Feishu,
+    Slack,
+}
+
+impl ChannelKind {
+    #[must_use]
+    pub const fn display_name(self) -> &'static str {
+        match self {
+            Self::Telegram => "Telegram",
+            Self::Feishu => "Feishu",
+            Self::Slack => "Slack",
+        }
+    }
 }
 
 impl fmt::Display for ChannelKind {
@@ -75,6 +87,7 @@ impl fmt::Display for ChannelKind {
         formatter.write_str(match self {
             Self::Telegram => "telegram",
             Self::Feishu => "feishu",
+            Self::Slack => "slack",
         })
     }
 }
@@ -86,6 +99,7 @@ impl FromStr for ChannelKind {
         match value {
             "telegram" => Ok(Self::Telegram),
             "feishu" => Ok(Self::Feishu),
+            "slack" => Ok(Self::Slack),
             _ => Err(format!("unsupported channel kind: {value}")),
         }
     }

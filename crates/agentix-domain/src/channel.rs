@@ -227,6 +227,12 @@ pub trait ChannelAdapter: Send + Sync {
 
     fn kind(&self) -> ChannelKind;
 
+    /// Stable, non-secret bot identity. Credential rotation must not change it.
+    /// Resolve before restoring durable routes. None is for identity-free adapters.
+    async fn identity(&self) -> Result<Option<String>, ChannelError> {
+        Ok(None)
+    }
+
     async fn run(
         &self,
         _inbound: mpsc::Sender<InboundEnvelope>,
@@ -267,4 +273,11 @@ pub trait ChannelAdapter: Send + Sync {
     ) -> Result<(), ChannelError> {
         Ok(())
     }
+}
+
+/// Persists an owner after validating a one-time bootstrap code. String-based
+/// channel adapters share this boundary; platform IDs remain opaque to the core.
+#[async_trait]
+pub trait OwnerClaimer: Send + Sync {
+    async fn claim(&self, code: &str, owner_id: &str) -> Result<bool, String>;
 }

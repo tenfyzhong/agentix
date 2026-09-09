@@ -83,10 +83,7 @@ impl FeishuPolicy {
     }
 }
 
-#[async_trait]
-pub trait FeishuOwnerClaimer: Send + Sync {
-    async fn claim(&self, code: &str, owner_open_id: &str) -> Result<bool, String>;
-}
+pub use agentix_domain::OwnerClaimer as FeishuOwnerClaimer;
 
 #[derive(Clone)]
 struct OwnerClaim {
@@ -169,6 +166,11 @@ impl FeishuAdapter {
 
 #[async_trait]
 impl ChannelAdapter for FeishuAdapter {
+    async fn identity(&self) -> Result<Option<String>, ChannelError> {
+        // App secrets can rotate without changing the bot's application identity.
+        Ok(Some(self.client.config().app_id().to_owned()))
+    }
+
     async fn read_inbox_message(
         &self,
         reference: &MessageRef,

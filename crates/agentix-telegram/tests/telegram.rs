@@ -1110,3 +1110,13 @@ async fn slow_telegram_response_does_not_block_another_conversation() {
         .expect("another chat must not wait for the slow HTTP response")
         .unwrap();
 }
+
+#[tokio::test]
+async fn identity_survives_telegram_token_rotation() {
+    let server = MockTelegramApi::start().await;
+    for token in ["old-token", "rotated-token"] {
+        let bot = Bot::new(token).set_api_url(server.api_url().parse().unwrap());
+        let adapter = TelegramAdapter::with_bot(bot, TelegramPolicy::new([42]));
+        assert_eq!(adapter.identity().await.unwrap().as_deref(), Some("9001"));
+    }
+}

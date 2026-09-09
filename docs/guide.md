@@ -12,7 +12,7 @@ For a short installation and first-session walkthrough, start with the [README](
 - [Development and contributing](../CONTRIBUTING.md)
 - [Further documentation](#documentation)
 
-Agentix connects the coding agents already running on your computer to Telegram or Feishu, so you can monitor and continue local sessions when you step away from the terminal or IDE. It is a local-first Rust bridge for Codex, Pi, Oh My Pi, and Claude Code. Claude Code uses the [plugin with rmux input](claude-code.md).
+Agentix connects the coding agents already running on your computer to Telegram, Feishu, or Slack, so you can monitor and continue local sessions when you step away from the terminal or IDE. It is a local-first Rust bridge for Codex, Pi, Oh My Pi, and Claude Code. Claude Code uses the [plugin with rmux input](claude-code.md).
 
 Each IM conversation maps explicitly and durably to an agent session. Messages include a readable session title, short session ID, and turn identifier so concurrent sessions remain unambiguous.
 
@@ -73,7 +73,7 @@ The binaries are written to `target/release/agentix` and `target/release/taskix`
 
 ### rmux (optional)
 
-Install rmux to create new Codex sessions directly from Telegram or Feishu. Send `/rmux` to the bot to browse workspaces and launch Codex in a session, window, or split. Agentix connects to the local rmux daemon and starts it when needed. rmux is optional for connecting to existing Codex sessions.
+Install rmux to create new Codex sessions directly from Telegram, Feishu, or Slack. Send `/rmux` to the bot to browse workspaces and launch Codex in a session, window, or split. Agentix connects to the local rmux daemon and starts it when needed. rmux is optional for connecting to existing Codex sessions.
 
 See [rmux workspaces](usage.md#rmux-workspaces) for details.
 
@@ -151,8 +151,8 @@ Copy-Item .\agentix\agentix.example.toml "$HOME\.config\agentix\config.toml"
 In `config.toml`:
 
 1. Enable one or more named backend tables: `[agent.codex]`, `[agent.pi]`, `[agent.omp]`, `[agent.claude]`. No agent `kind` field is needed.
-2. Select one IM transport with `[channel].kind`: `telegram` or `feishu`.
-3. Configure the matching `[channel.telegram]` or `[channel.feishu]` table.
+2. Select one IM transport with `[channel].kind`: `telegram`, `feishu`, or `slack`.
+3. Configure the matching `[channel.telegram]`, `[channel.feishu]`, or `[channel.slack]` table.
 4. Leave the selected channel's owner list empty for first-time claiming, or add the owner IDs directly.
 
 For Codex, keep the standalone binary path explicit:
@@ -184,7 +184,7 @@ To configure the global outbound proxy, add a separate top-level table:
 proxy = "http://127.0.0.1:7890"
 ```
 
-Use your proxy's actual address and port. HTTP, HTTPS, SOCKS5, and SOCKS5h proxies are supported. The setting covers all Telegram requests and works without shell proxy variables. The Feishu SDK does not use this setting and retains its existing network behavior. After changing it, restart a running Homebrew service with `brew services restart tenfyzhong/tap/agentix`.
+Use your proxy's actual address and port. HTTP, HTTPS, SOCKS5, and SOCKS5h proxies are supported. The setting covers all Telegram requests and Slack HTTP/Socket Mode connections and works without shell proxy variables. The Feishu SDK does not use this setting and retains its existing network behavior. After changing it, restart a running Homebrew service with `brew services restart tenfyzhong/tap/agentix`.
 
 See [Configuration and operations](development-and-operations.md) for backend details, Feishu permissions, logging, service management, and diagnostics.
 
@@ -211,7 +211,7 @@ If the selected channel has no configured owner, keep `agentix serve` running, e
 
 
 - Native Codex app-server integration plus Pi and OMP bridges inside the original host processes
-- Telegram long polling and Feishu long-connection support with interactive actions
+- Telegram long polling, Feishu long connections, and Slack Socket Mode with interactive actions
 - A duplex FIFO message center for IM traffic, with ordered retries at the outbound queue head
 - A global HTTP/HTTPS/SOCKS5 proxy configured in TOML, including for Homebrew services
 - Running-session discovery, attachment, history, prompts, queues, steering, stopping, approvals, and user-input round trips
@@ -246,7 +246,7 @@ The default is `true`. Disabling notifications also stops automatic background t
 
 Task document cleanup preserves unrelated files at destinations where projection failed. Authored Plan frontmatter supports LF and CRLF delimiters and quoted YAML keys. Pi/OMP lease injection accepts full Task IDs and unambiguous Task prefixes.
 
-Add the following to `~/.config/agentix/config.toml`, then restart Agentix to browse work in Telegram or Feishu:
+Add the following to `~/.config/agentix/config.toml`, then restart Agentix to browse work in Telegram, Feishu, or Slack:
 
 ```toml
 [task_board]

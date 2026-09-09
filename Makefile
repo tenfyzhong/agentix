@@ -4,7 +4,7 @@ CARGO ?= cargo
 
 .DEFAULT_GOAL := build
 
-.PHONY: build release completions check fmt clippy test plugin-deps clean help dev-test prod-test
+.PHONY: build release completions check fmt clippy test plugin-deps clean help remove-plugin dev-test prod-test
 
 build:
 	$(CARGO) build --workspace --all-features
@@ -37,28 +37,28 @@ test: plugin-deps
 	$(CARGO) test --workspace --all-features
 	node --test plugins/taskix-manager/tests/*.test.mjs plugins/agentix-bridge/tests/*.test.mjs
 
-dev-test: build
-	cp ./target/debug/taskix ~/.local/bin
-	taskix obsidian setup || true
+remove-plugin:
 	codex plugin remove taskix-manager@agentix || true
 	codex plugin marketplace remove agentix || true
-	codex plugin marketplace add . || true
-	codex plugin add taskix-manager@agentix || true
+	claude plugin uninstall taskix-manager@agentix || true
+	claude plugin uninstall agentix-bridge@agentix || true
 	claude plugin marketplace remove agentix || true
-	claude plugin marketplace add ./ || true
-	claude plugin install taskix-manager@agentix || true
-	claude plugin install agentix-bridge@agentix || true
-	pi install . || true
-	omp install . || true
+	pi remove . || true
+	pi remove git:github.com/tenfyzhong/agentix || true
+	omp plugin uninstall agentix-plugins
 
-prod-test:
-	rm -f ~/.local/bin/taskix
-	taskix obsidian setup
-	codex plugin remove taskix-manager@agentix
-	codex plugin marketplace remove agentix
+dev-test: remove-plugin
+	codex plugin marketplace add .
+	codex plugin add taskix-manager@agentix
+	claude plugin marketplace add .
+	claude plugin install taskix-manager@agentix
+	claude plugin install agentix-bridge@agentix
+	pi install .
+	omp install .
+
+prod-test: remove-plugin
 	codex plugin marketplace add tenfyzhong/agentix
 	codex plugin add taskix-manager@agentix
-	claude plugin marketplace remove agentix || true
 	claude plugin marketplace add tenfyzhong/agentix
 	claude plugin install taskix-manager@agentix
 	claude plugin install agentix-bridge@agentix
@@ -75,5 +75,6 @@ help:
 		'make completions  Regenerate bash, zsh, and fish completions for both CLIs' \
 		'make check    Run formatting, lint, and tests' \
 		'make dev-test  Install local plugins for Codex, Claude Code, Pi, and OMP' \
+		'make remove-plugin  Remove Agentix marketplaces, plugins, and extensions' \
 		'make prod-test  Install GitHub plugins for Codex, Claude Code, Pi, and OMP' \
 		'make clean    Remove Cargo build artifacts'

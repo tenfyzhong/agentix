@@ -45,6 +45,27 @@ Documentation-only and configuration-only changes do not require a failing test 
 
 After changing CLI commands or options, run `make completions` and commit the updated files for both CLIs. Tests verify that the checked-in completions match their CLI and that taskix generation does not read configuration or create task state. Checked-in shell completions retain LF line endings on every platform through `.gitattributes`.
 
+## Installing local plugins
+
+Run `make dev-test` to install plugins from the current checkout, or
+`make prod-test` to install them from GitHub. Both targets depend on
+`remove-plugin`, which first removes the Agentix Codex and Claude Code plugins
+and marketplaces, Pi's local and GitHub extension sources, and the OMP package.
+Run `make remove-plugin` separately to perform only this cleanup. Other
+marketplaces and plugins are not targeted.
+
+The installation recipes only add marketplaces, plugins, and extensions. They do
+not build the workspace, copy or delete the `taskix` binary, or configure Obsidian.
+Run the build and Obsidian setup separately when needed. Installation failures
+make the target fail. Codex, Claude Code, and Pi cleanup is best-effort so missing
+installations do not prevent setup; OMP uninstall failures stop the target.
+
+Uninstalling the OMP package before linking a checkout avoids
+`EPERM: operation not permitted, unlink` when a previous GitHub installation is a
+regular directory. Uninstalling also removes OMP's saved configuration for this
+plugin; reapply any custom plugin settings afterward. Repeated local installations
+are supported.
+
 ## Tests and external dependencies
 
 Place tests near the boundary they exercise:

@@ -322,6 +322,16 @@ impl TelegramAdapter {
 
 #[async_trait]
 impl ChannelAdapter for TelegramAdapter {
+    async fn identity(&self) -> Result<Option<String>, ChannelError> {
+        let me = self
+            .request(self.bot.get_me(), "getMe", None)
+            .await
+            .map_err(|_| {
+                ChannelError::Transport("Telegram getMe failed while resolving bot identity".into())
+            })?;
+        Ok(Some(me.user.id.0.to_string()))
+    }
+
     fn streaming_update_interval(&self) -> std::time::Duration {
         std::time::Duration::from_secs(5)
     }

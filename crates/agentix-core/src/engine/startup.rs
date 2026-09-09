@@ -6,6 +6,27 @@ use super::{
 };
 
 impl Engine {
+    async fn reconcile_channel_identities(&self) -> Result<(), EngineError> {
+        // Resolve every identity before mutating persistence. Authentication failure
+        // must not adopt stale destinations or partially migrate other channels.
+        let mut identities = Vec::new();
+        for (kind, channel) in &self.channels {
+            if let Some(identity) = channel.identity().await? {
+                identities.push((*kind, identity));
+            }
+        }
+        for (kind, identity) in identities {
+            let detached = self
+                .state
+                .reconcile_channel_identity(kind, &identity)
+                .await?;
+            if detached > 0 {
+                tracing::warn!(channel = %kind, detached, "bot identity changed or was unknown; old IM bindings disabled; use /sessions to attach again");
+            }
+        }
+        Ok(())
+    }
+
     /// Restores durable conversation bindings and their upstream subscriptions.
     pub async fn restore_bindings(&self) -> Result<usize, EngineError> {
         let updates = self.restore_bindings_deferred().await?;
@@ -14,8 +35,9 @@ impl Engine {
         Ok(restored)
     }
 
-    /// Restore bindings and turn state without making any IM requests.
+    /// Resolve bot identities, then restore bindings without sending IM messages.
     pub async fn restore_bindings_deferred(&self) -> Result<RestoredBindings, EngineError> {
+        self.reconcile_channel_identities().await?;
         let persisted = self.state.list_bindings().await?;
         let mut updates = RestoredBindings {
             bindings: Vec::new(),

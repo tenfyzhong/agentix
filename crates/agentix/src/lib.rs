@@ -19,6 +19,8 @@ use toml_edit::{Array, DocumentMut, Item, Table, Value};
 #[serde(try_from = "config_file::ConfigFile")]
 pub struct Config {
     #[serde(default)]
+    pub slack_cli_path: Option<PathBuf>,
+    #[serde(default)]
     pub network: NetworkConfig,
     #[serde(default)]
     pub server: ServerConfig,
@@ -131,14 +133,10 @@ pub struct ChannelConfig {
     pub kind: ImChannel,
     pub telegram: Option<TelegramConfig>,
     pub feishu: Option<FeishuConfig>,
+    pub slack: Option<SlackConfig>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ImChannel {
-    Telegram,
-    Feishu,
-}
+pub use agentix_core::ChannelKind as ImChannel;
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
@@ -205,6 +203,31 @@ pub struct FeishuConfig {
     pub owner_open_ids: Vec<String>,
 }
 
+#[derive(Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SlackConfig {
+    #[serde(default)]
+    pub app_id: Option<String>,
+    #[serde(default)]
+    pub bot_token: String,
+    #[serde(default)]
+    pub app_token: String,
+    #[serde(default)]
+    pub owner_user_ids: Vec<String>,
+}
+
+impl std::fmt::Debug for SlackConfig {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("SlackConfig")
+            .field("app_id", &self.app_id)
+            .field("bot_token", &"[redacted]")
+            .field("app_token", &"[redacted]")
+            .field("owner_user_ids", &self.owner_user_ids)
+            .finish()
+    }
+}
+
 impl AgentConfig {
     #[must_use]
     pub const fn kind(&self) -> agentix_core::AgentKind {
@@ -245,6 +268,13 @@ impl Config {
 
     pub fn validate(&self) -> Result<()> {
         self.network.validate()?;
+        if self
+            .slack_cli_path
+            .as_ref()
+            .is_some_and(|path| !path.is_absolute())
+        {
+            bail!("slack_cli_path must be an absolute executable path");
+        }
         if self.agent.is_some() && !self.agents.is_empty() {
             bail!("use either [agent] or [[agents]], not both");
         }
@@ -260,6 +290,33 @@ impl Config {
         }
 
         match self.channel.kind {
+            ImChannel::Slack => {
+                let slack = self
+                    .channel
+                    .slack
+                    .as_ref()
+                    .context("selected slack channel requires [channel.slack] configuration")?;
+                if slack.app_id.as_ref().is_some_and(|id| {
+                    !id.starts_with('A')
+                        || id.len() < 2
+                        || !id.bytes().all(|c| c.is_ascii_alphanumeric())
+                }) {
+                    bail!("channel.slack.app_id must be a Slack app ID starting with A");
+                }
+                if slack.bot_token.trim().is_empty() {
+                    bail!("channel.slack.bot_token must not be missing or blank");
+                }
+                if slack.app_token.trim().is_empty() {
+                    bail!("channel.slack.app_token must not be missing or blank");
+                }
+                if slack
+                    .owner_user_ids
+                    .iter()
+                    .any(|owner| owner.trim().is_empty())
+                {
+                    bail!("channel.slack.owner_user_ids must not contain blank IDs");
+                }
+            }
             ImChannel::Telegram => {
                 let telegram = self.channel.telegram.as_ref().context(
                     "selected telegram channel requires [channel.telegram] configuration",
@@ -352,6 +409,28 @@ impl Config {
         }
         Ok(())
     }
+}
+
+pub fn add_slack_owner(path: &Path, owner_user_id: &str) -> Result<()> {
+    if owner_user_id.trim().is_empty() {
+        bail!("Slack owner user ID must not be blank");
+    }
+    let mut document = read_config_document(path)?;
+    let slack = channel_table_mut(&mut document, "slack")?;
+    if !slack.contains_key("owner_user_ids") {
+        slack.insert("owner_user_ids", Item::Value(Value::Array(Array::new())));
+    }
+    let owners = slack
+        .get_mut("owner_user_ids")
+        .and_then(Item::as_array_mut)
+        .context("channel.slack.owner_user_ids must be an array")?;
+    if !owners
+        .iter()
+        .any(|owner| owner.as_str() == Some(owner_user_id))
+    {
+        owners.push(owner_user_id);
+    }
+    persist_config_document(path, &document)
 }
 
 pub fn add_feishu_owner(path: &Path, owner_open_id: &str) -> Result<()> {

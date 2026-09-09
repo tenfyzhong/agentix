@@ -106,6 +106,8 @@ impl SqliteState {
             .execute(&self.pool)
             .await?;
         self.migrate_notification_outbox().await?;
+        sqlx::query("CREATE TABLE IF NOT EXISTS channel_identities (channel TEXT PRIMARY KEY, identity TEXT NOT NULL)")
+            .execute(&self.pool).await?;
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS binding_epochs (\
                 channel TEXT NOT NULL, \

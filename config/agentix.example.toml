@@ -1,9 +1,13 @@
+# Optional absolute path to Slack CLI; otherwise resolved from PATH.
+# Global option: keep before all tables. See docs/slack-initialization.md.
+# slack_cli_path = "/opt/homebrew/bin/slack"
+
 # Defaults to unix://~/.local/share/agentix/control.sock on macOS/Linux and
 # tcp://127.0.0.1:32198 on Windows. TCP must use a numeric loopback address.
 # [server]
 # endpoint = "unix://~/.local/share/agentix/control.sock"
 
-# Global outbound proxy: covers all Telegram requests; the Feishu SDK does not use it.
+# Global outbound proxy: covers Telegram and Slack HTTP/WebSocket requests; the Feishu SDK does not use it.
 # Supported schemes: http, https, socks5, socks5h (proxy-side DNS).
 # [network]
 # proxy = "http://127.0.0.1:7890"
@@ -84,3 +88,12 @@ owner_user_ids = []
 # bridge_extension = "/path/to/agentix/plugins/agentix-bridge/extensions/omp.ts"
 # Legacy [agent] + kind and [[agents]] remain accepted, but cannot be mixed
 # with the named backend tables.
+
+# To use Slack, set channel.kind = "slack" and configure this section.
+# See docs/slack-initialization.md for app setup and CLI login.
+# [channel.slack]
+# app_id = "A0123456789" # Enables startup slash-command sync through logged-in Slack CLI.
+# bot_token = "xoxb-..."
+# app_token = "xapp-..."
+# Run `agentix client claim`, then send `/agentix /claim <code>` in the bot DM.
+# owner_user_ids = []

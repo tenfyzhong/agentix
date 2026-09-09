@@ -13,6 +13,7 @@ mod dispatch;
 pub use dispatch::{EngineDispatchSnapshot, EngineResource, EngineWork};
 mod interaction_flows;
 mod presentation;
+pub use presentation::command_menu;
 mod session_flows;
 mod session_service;
 mod startup;
@@ -21,12 +22,12 @@ mod turn_flows;
 mod workspace_flows;
 
 use presentation::{
-    background_completion_body, command_menu, completed_input_body, decision_label,
-    display_workspace, history_views, input_progress_body, input_questions, input_response,
-    is_shell_command, live_turn_view, markdown_quote, multiplexer_root_body,
-    multiplexer_session_body, multiplexer_session_contains, multiplexer_window_body,
-    multiplexer_window_contains, plural, session_display_label, session_status_label,
-    session_title, short_identifier, turn_conversation_body, turn_status_label,
+    background_completion_body, completed_input_body, decision_label, display_workspace,
+    history_views, input_progress_body, input_questions, input_response, is_shell_command,
+    live_turn_view, markdown_quote, multiplexer_root_body, multiplexer_session_body,
+    multiplexer_session_contains, multiplexer_window_body, multiplexer_window_contains, plural,
+    session_display_label, session_status_label, session_title, short_identifier,
+    turn_conversation_body, turn_status_label,
 };
 use session_service::{RestoredBindingStatus, SessionService};
 

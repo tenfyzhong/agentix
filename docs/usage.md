@@ -1,6 +1,6 @@
 # Using Agentix
 
-Agentix exposes local coding-agent sessions through Telegram or Feishu. Start `agentix serve`, open the configured bot, and use `/sessions` to find a running session. Select its Attach action, then send ordinary chat messages to prompt the agent.
+Agentix exposes local coding-agent sessions through Telegram, Feishu, or Slack. Start `agentix serve`, open the configured bot, and use `/sessions` to find a running session. Select its Attach action, then send ordinary chat messages to prompt the agent.
 
 ## Core workflow
 
@@ -98,7 +98,9 @@ Agentix renders Codex approval and plan-input requests as separate actionable me
 
 For multi-question input, Agentix presents one question at a time with option buttons and an `Other…` free-text path. It submits all answers together and replaces the controls with an answer summary. If the request is resolved in Codex CLI, Agentix marks the IM request as resolved outside the chat because the app-server notification does not include the selected decision or answers.
 
-Every action token is single-use. Telegram removes a consumed inline keyboard; Feishu leaves the buttons visible but disabled.
+Slack uses native `/agentix-sessions` commands synchronized at startup, as well as `/agentix /sessions` and other `/agentix <command>` invocations, or bot mentions inside threads; see [Slack usage and setup](slack.md).
+
+Every action token is single-use. Telegram and Slack remove consumed controls; Feishu leaves the buttons visible but disabled.
 
 ## Session and message behavior
 
@@ -108,13 +110,13 @@ If another Codex process already owns a session's writer, selecting it connects 
 
 Other attachment errors appear in IM with their cause and a new Retry attach button. The previous binding remains available after a failed selection. A read-only connection stays read-only until detached; after the original writer releases the session, detach and select it again to try a writable attachment.
 
-Agentix creates a turn message immediately with `Working 0s`, edits it at most once every five seconds on Telegram (once per second on Feishu) while the turn runs, and preserves its Stop action. Completion, interruption, or failure leaves the final elapsed time in the status line. After an Agentix restart, a restored running turn begins a new locally observed duration because the agent protocol does not expose its original monotonic start time.
+Agentix creates a turn message immediately with `Working 0s`, edits it at most once every five seconds on Telegram (once per second on Feishu and every two seconds on Slack) while the turn runs, and preserves its Stop action. Completion, interruption, or failure leaves the final elapsed time in the status line. After an Agentix restart, a restored running turn begins a new locally observed duration because the agent protocol does not expose its original monotonic start time.
 
 When a turn finishes in a session that is not attached to an IM conversation, Agentix notifies authenticated conversations known to the running service and includes the completed turn's prompt and response plus a single-use Attach action. Background notices use a purple Feishu header and a grey quote area; Telegram uses a ⚫ Background marker with blockquotes because its Markdown message format cannot set quote colors. Codex subagent sessions do not generate these standalone notices; parent sessions and existing attached or draining turn cards continue updating normally. Repeated delivery of the latest completed turn does not create duplicate notices. For Codex, the service discovers running sessions and reads their turn status every ten seconds, even when no IM conversation is attached. `/detach` removes the IM binding; a running session is rediscovered for background notifications. Background monitoring uses read-only queries and leaves existing writers alone. Historical completions from before service startup are skipped, and completed, failed, or interrupted turns detected between polls are reported once. Send `/help` to the bot after starting the service if you have no restored binding and want to receive these notifications.
 
 Set `[notifications] background_turns = false` in `config.toml` and restart the service to disable unattached completion notices and background turn polling. With no attached sessions to monitor, automatic session discovery also stops. Attached-session exit/resume monitoring remains active. The setting defaults to `true`; existing attached and draining turn cards continue updating to their final status. When enabled, the engine reads the completed turn by ID so a newer turn cannot replace its content. If history is unavailable, the completion notice still shows its outcome and Attach action.
 
-Telegram uses native command menus that change with attachment state. Feishu sends an interactive command card and updates it as the state changes. Contextual commands use a `✌️` marker. `/attach` remains available as typed input, but the normal path is the Attach action returned by `/sessions`.
+Slack synchronizes an app-wide slash-command menu through Slack CLI at startup and publishes a contextual command reference in chat. See [initialization](slack-initialization.md). Telegram uses native command menus that change with attachment state. Feishu sends an interactive command card and updates it as the state changes. Contextual commands use a `✌️` marker. `/attach` remains available as typed input, but the normal path is the Attach action returned by `/sessions`.
 
 ## rmux workspaces
 
@@ -148,3 +150,19 @@ During graceful shutdown, Agentix checkpoints bindings, removes live controls, r
 With managed Codex, exiting an attached Codex process temporarily detaches the IM conversation and starts watching for the same session ID. Running `codex resume` for that session restores the app-server subscription and binding automatically. Manually detaching or attaching another session cancels the watch.
 
 For setup, logging, service management, and troubleshooting, see [Configuration and operations](development-and-operations.md).
+
+## Changing the configured bot
+
+Before restoring bindings, Agentix compares the configured bot with the identity stored in SQLite. This applies to Telegram, Feishu, and Slack:
+
+| Channel | Stable identity |
+| --- | --- |
+| Telegram | Bot user ID returned by `getMe` |
+| Feishu | Configured App ID |
+| Slack | Workspace ID and bot user ID returned by `auth.test` |
+
+Restarting with the same bot preserves bindings. Rotating its token or app secret also preserves bindings when its identity stays the same. If a remote identity lookup fails, startup fails before identity reconciliation changes any channel's state; fix authentication or connectivity and restart.
+
+Changing bots clears that channel's old bindings, saved message views, pending interactions, event deduplication records, and queued notifications in one transaction. Binding epochs remain monotonic, and notification cursors are retained. Other channels and upstream agent sessions are preserved. Switching back to the previous bot does not revive its old routes. Open the new bot's conversation, run `/sessions`, and attach the desired session again.
+
+Old IM routing data without a stored bot identity is unsupported in both development and released versions. On startup, Agentix deletes that data for each configured channel instead of migrating it or adopting it for the current bot. Use `/sessions` to reattach. No manual database edits or identity configuration are needed.

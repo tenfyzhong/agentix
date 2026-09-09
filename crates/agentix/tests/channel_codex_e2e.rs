@@ -721,3 +721,9 @@ fn feishu_message(message_id: &str, timestamp: &str, text: &str) -> serde_json::
 
 #[path = "support/task_browse.rs"]
 mod task_browse;
+
+#[path = "support/slack_e2e.rs"]
+mod slack_e2e;
+#[path = "../../agentix-slack/tests/support/mod.rs"]
+#[allow(dead_code)]
+mod slack_support;

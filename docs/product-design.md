@@ -10,14 +10,14 @@ The first release supports:
 | --- | --- | --- |
 | IM agent backends | Codex, Pi, Oh My Pi, Claude Code plugin with rmux input | Claude native stop, steering, model control, and approval relay |
 | Standalone task coordination | taskix and the Codex, Claude Code, Pi, and OMP plugin | automatic team scheduling |
-| IM channels | Telegram, Feishu | Slack, Discord, others |
+| IM channels | Telegram, Feishu, Slack | Discord and others |
 | Session operations | discover, attach, current, detach, history, create, fork, compact | archive/delete |
 | Turn operations | start, persistent Codex/Pi/OMP follow-up queues, steer, stream, stop, model and reasoning settings | sandbox configuration |
 | Human input | approvals, confirmation, free text, structured multi-question input with an `Other…` path | richer native form layouts |
 
 ## 2. Core user model
 
-An Agentix instance selects one or more distinct agent backends and exactly one IM channel. Running Telegram and Feishu together requires separate configuration/state instances. The same backend can have many concurrent sessions.
+An Agentix instance selects one or more distinct agent backends and exactly one IM channel. Running multiple IM transports together requires separate configuration/state instances. The same backend can have many concurrent sessions.
 
 The core invariant is deliberately strict:
 
@@ -56,7 +56,7 @@ Turn 019d… · Working 12s     short turn label, state, and elapsed time
 
 Each turn owns a separate IM message/card that is updated in place. Live turns, attach hydration, and `/history` share the same one-message-per-turn layout, with the user input and Markdown agent response shown in separate quoted sections beneath their respective headings. Only a short turn ID and a human-readable status appear in the header. Tool execution events and tool summaries are omitted from both live cards and history views so the conversation remains concise. Approval requests remain visible because they require an owner decision. A second session therefore updates a different message, even if events arrive simultaneously. Background completion and approval cards explicitly identify their background state.
 
-Running turn status includes a working duration that advances every five seconds on Telegram and every second on Feishu, even when no agent delta arrives. The refresh edits the existing message/card and reuses its Stop action rather than issuing a new token. Terminal states stop refreshing and retain the final elapsed duration. Restored running turns measure elapsed time from the point Agentix observes them again.
+Running turn status includes a working duration that advances every five seconds on Telegram and every second on Feishu, and every two seconds on Slack, even when no agent delta arrives. The refresh edits the existing message/card and reuses its Stop action rather than issuing a new token. Terminal states stop refreshing and retain the final elapsed duration. Restored running turns measure elapsed time from the point Agentix observes them again.
 
 ## 4. Main flows
 
@@ -85,7 +85,7 @@ When a turn finishes outside the currently attached session, Agentix identifies 
 - The Codex CLI Tab queue is independent from the app-server queue. Neither side synchronizes or deduplicates the other. When both contain pending input, they may both submit after the active turn ends, producing back-to-back turns with no shared ordering guarantee; users should not operate both queues concurrently for one session.
 - Backends without persistent queue support continue to send ordinary text through their steering operation while a turn is active.
 - Codex automatically starts the next queued message after a completed or failed turn. Interrupting a turn leaves its queue paused until Codex resumes it.
-- During streaming, the turn card is updated at most once every five seconds on Telegram and once per second on Feishu. Completion bypasses that refresh interval; Telegram outbound pacing and cooldowns still apply.
+- During streaming, the turn card is updated at most once every five seconds on Telegram and once per second on Feishu, and once every two seconds on Slack. Completion bypasses that refresh interval; Telegram outbound pacing and cooldowns still apply.
 
 ### Approval and input
 
@@ -104,7 +104,7 @@ The old session becomes draining and the new session becomes current. Old stream
 
 ## 5. Channel presentation
 
-Telegram converts agent Markdown to MarkdownV2 in bounded UTF-8 text messages, registers a native command menu, and uses two-column inline keyboards. Feishu uses shared Card JSON 2.0 documents with a status-colored header, title/subtitle, Markdown body, and callback buttons. Because Feishu has no runtime API for per-conversation native bot menus, an interactive command card is sent after attachment and updated in place when attachment state changes. Both presentations are generated from the same channel-neutral `OutboundView` and `CommandMenu` models.
+Telegram converts agent Markdown to MarkdownV2 in bounded UTF-8 text messages, registers a native command menu, and uses two-column inline keyboards. Feishu uses shared Card JSON 2.0 documents with a status-colored header, title/subtitle, Markdown body, and callback buttons. Because Feishu has no runtime API for per-conversation native bot menus, an interactive command card is sent after attachment and updated in place when attachment state changes. Slack uses bounded Block Kit sections and buttons, with an editable command message and app-wide slash commands synchronized through Slack CLI during adapter initialization. All presentations are generated from the same channel-neutral `OutboundView` and `CommandMenu` models.
 
 Status colors are semantic: blue for running, orange for waiting/warning, green for success, red for error, and grey for muted information, and purple for background turns. Feishu also gives background quoted content a grey container; Telegram adds a ⚫ Background marker.
 
