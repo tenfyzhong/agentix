@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import fs, { mkdtempSync, rmSync, mkdirSync, symlinkSync, realpathSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Mailbox } from '../claude/mailbox.mjs';
@@ -53,4 +54,24 @@ test('Claude mailbox watcher wakes on new hooks and stops on shutdown', async t 
     box.publish({ ...box.identity(), hook_event_name: 'Stop' });
     await new Promise(resolve => setTimeout(resolve, 30));
     assert.equal(calls, previous);
+});
+
+test('Claude mailbox watches the canonical directory behind aliases', t => {
+    const root = mkdtempSync(join(tmpdir(), 'ax-watch-alias-'));
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const actual = join(root, 'actual');
+    mkdirSync(actual);
+    const alias = join(root, 'alias');
+    symlinkSync(actual, alias, process.platform === 'win32' ? 'junction' : 'dir');
+    const box = new Mailbox(alias, 'host');
+    let watched;
+    t.mock.method(fs, 'watch', path => {
+        watched = path;
+        return { on() {}, close() {} };
+    });
+    syncBuiltinESMExports();
+    t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
+    const stop = box.watch(() => {});
+    stop();
+    assert.equal(watched, realpathSync(box.path));
 });

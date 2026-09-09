@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 import { validate } from '../protocol/validate.mjs';
 const sample = () => JSON.parse(readFileSync(new URL('../protocol/snapshot.json', import.meta.url)));
@@ -14,5 +15,5 @@ test('shared snapshot contract preserves time, history and queue', () => {
     assert.equal(validate('Snapshot', invalid), false);
 });
 test('generated protocol bindings are current', () => {
-    execFileSync(process.execPath, [new URL('../protocol/generate.mjs', import.meta.url).pathname, '--check']);
+    execFileSync(process.execPath, [fileURLToPath(new URL('../protocol/generate.mjs', import.meta.url)), '--check']);
 });

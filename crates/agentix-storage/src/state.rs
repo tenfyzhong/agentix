@@ -338,7 +338,9 @@ impl SqliteState {
     }
 
     pub async fn checkpoint(&self) -> Result<(), sqlx::Error> {
-        sqlx::query("PRAGMA wal_checkpoint(FULL)")
+        // Committed WAL records are already durable. Do not wait for readers
+        // or cancelled background queries before sending shutdown notices.
+        sqlx::query("PRAGMA wal_checkpoint(PASSIVE)")
             .fetch_all(&self.pool)
             .await?;
         Ok(())

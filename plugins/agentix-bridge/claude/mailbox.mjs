@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, writeFileSync, renameSync, readdirSync, unlinkSync, watch } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync, renameSync, readdirSync, unlinkSync, realpathSync, watch } from 'node:fs';
 import { join } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
@@ -43,7 +43,8 @@ export class Mailbox {
         let watcher, pending, closed = false;
         const stop = () => { closed = true; clearImmediate(pending); watcher?.close(); };
         try {
-            watcher = watch(this.path, (_event, name) => {
+            // Resolve aliases (including Windows 8.3 temp paths) before libuv watches.
+            watcher = watch(realpathSync(this.path), (_event, name) => {
                 if (closed || pending || (name && name !== 'identity.json' && !String(name).endsWith('.event.json'))) return;
                 pending = setImmediate(() => { pending = undefined; if (!closed) wake(); });
             });

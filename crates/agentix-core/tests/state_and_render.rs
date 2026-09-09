@@ -312,3 +312,37 @@ async fn cancelled_inbound_events_remain_fenced_after_restart_without_losing_com
     assert!(state.claim_event(channel, "failed").await.unwrap());
     assert!(state.claim_event(channel, "not-started").await.unwrap());
 }
+
+#[tokio::test]
+async fn checkpoint_does_not_wait_for_an_active_reader_and_preserves_bindings() {
+    use sqlx::Connection;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("checkpoint.sqlite3");
+    let state = SqliteState::open(&path).await.unwrap();
+    let options = sqlx::sqlite::SqliteConnectOptions::new().filename(&path);
+    let mut reader = sqlx::SqliteConnection::connect_with(&options)
+        .await
+        .unwrap();
+    let mut snapshot = reader.begin().await.unwrap();
+    sqlx::query("SELECT * FROM bindings")
+        .fetch_all(&mut *snapshot)
+        .await
+        .unwrap();
+    let conversation = ConversationRef::new(ChannelKind::Telegram, "checkpoint");
+    state
+        .attach(&conversation, &SessionId::new("saved"))
+        .await
+        .unwrap();
+    let result = tokio::time::timeout(std::time::Duration::from_secs(1), state.checkpoint()).await;
+    snapshot.rollback().await.unwrap();
+    result
+        .expect("checkpoint must not wait for readers")
+        .unwrap();
+    drop(reader);
+    drop(state);
+    let restored = SqliteState::open(&path).await.unwrap();
+    assert_eq!(
+        restored.current_session(&conversation).await.unwrap(),
+        Some(SessionId::new("saved"))
+    );
+}

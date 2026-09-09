@@ -43,3 +43,9 @@ The standard Rust suite retains 11 existing opt-in/helper exclusions: nine requi
 The Claude smoke fixture now stops its isolated process group before removing temporary files, fixing a cleanup race found during verification. Performance evidence describes the stated fixtures and bounds; external host and IM latency remains subject to their own protocols and limits.
 
 Final follow-up validation: `make check` passed formatting, strict workspace Clippy, 725 Rust tests (11 existing opt-in/helper exclusions), and 190 Node tests (four native opt-in skips). The native control fixtures now allow at most two simultaneous three-host stacks, avoiding unbounded child-process contention while retaining each test's concurrent backend requests and original watchdog deadlines. Both IM integration tests wait for actual notification API delivery after durable staging. `git diff --check` passed.
+
+## Cross-platform CI follow-up
+
+Shutdown uses a passive WAL checkpoint so an active reader or a cancelled background query cannot make checkpointing wait before offline notifications. Committed WAL records remain durable and are recovered on reopen; a regression holds a read snapshot while verifying checkpoint completion and persisted bindings.
+
+Claude mailbox watchers resolve directory aliases before invoking libuv, including Windows short temporary paths. Protocol checks convert file URLs to native paths and generated contracts retain LF line endings. Cold-cache package installation tests allow two minutes per npm command and avoid shell descendants that can keep temporary directories locked after timeout.

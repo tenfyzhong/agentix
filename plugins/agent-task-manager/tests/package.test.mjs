@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { join, posix } from "node:path";
+import { dirname, join, posix } from "node:path";
 import { tmpdir } from "node:os";
 
 const root = new URL("../", import.meta.url);
@@ -38,14 +38,16 @@ test("Pi and OMP remote packages discover their adapters and install runtime dep
             });
         }
         const runNpm = (command, cwd) => execFileSync(
-            process.platform === "win32" ? "cmd.exe" : "/bin/sh",
+            process.platform === "win32" ? process.execPath : "/bin/sh",
             process.platform === "win32"
-                ? ["/d", "/s", "/c", command]
-                : ["-c", command],
+                ? [join(dirname(process.execPath), "node_modules/npm/bin/npm-cli.js"), ...command.split(" ").slice(1)]
+                : ["-c", `exec ${command}`],
             {
                 cwd,
                 encoding: "utf8",
-                timeout: 30000,
+                // A cold cache downloads dependencies on CI. Run npm directly so
+                // a timeout cannot leave a shell child holding the consumer directory.
+                timeout: 120000,
                 env: { ...process.env, npm_config_cache: npmCache },
             },
         );
@@ -96,8 +98,8 @@ test("Pi and OMP remote packages discover their adapters and install runtime dep
             }
         }
     } finally {
-        await rm(directory, { recursive: true, force: true });
-        await rm(npmCache, { recursive: true, force: true });
+        await rm(directory, { recursive: true, force: true, maxRetries: 10 });
+        await rm(npmCache, { recursive: true, force: true, maxRetries: 10 });
     }
 });
 
