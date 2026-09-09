@@ -3276,55 +3276,72 @@ async fn interaction_action_is_bound_to_the_conversation_owner() {
 
 #[tokio::test]
 async fn external_approval_resolution_clears_buttons_without_inventing_a_decision() {
-    let agent = Arc::new(FakeAgent::new());
-    let channel = Arc::new(FakeChannel::default());
-    let state = SqliteState::in_memory().await.unwrap();
-    let engine = Engine::new(agent, state, vec![channel.clone()]);
+    for (kind, label) in [
+        (ChannelKind::Telegram, "Telegram"),
+        (ChannelKind::Feishu, "Feishu"),
+    ] {
+        let agent = Arc::new(FakeAgent::new());
+        let channel = Arc::new(FakeChannel {
+            channel_kind: Some(kind),
+            ..FakeChannel::default()
+        });
+        let state = SqliteState::in_memory().await.unwrap();
+        let engine = Engine::new(agent, state, vec![channel.clone()]);
 
-    engine
-        .handle_inbound(inbound_as("chat-a", "owner-42", "/attach thr_a"))
-        .await
-        .unwrap();
-    engine
-        .handle_agent_event(AgentEvent::InteractionRequested(InteractionRequest {
-            rpc_id: serde_json::json!(91),
-            method: "item/commandExecution/requestApproval".into(),
-            session_id: "thr_a".into(),
-            turn_id: "turn-1".into(),
-            item_id: Some("item-1".into()),
-            kind: InteractionKind::CommandApproval,
-            title: "Command approval".into(),
-            detail: "cargo test".into(),
-            available_decisions: vec!["accept".into(), "decline".into()],
-            payload: serde_json::json!({}),
-            auto_resolution_ms: None,
-        }))
-        .await
-        .unwrap();
-    let old_token = channel.sent().last().unwrap().1.actions[0].token.clone();
+        engine
+            .handle_inbound(InboundEnvelope::text(
+                "attach",
+                ConversationRef::new(kind, "chat-a"),
+                "owner-42",
+                "/attach thr_a",
+            ))
+            .await
+            .unwrap();
+        engine
+            .handle_agent_event(AgentEvent::InteractionRequested(InteractionRequest {
+                rpc_id: serde_json::json!(91),
+                method: "item/commandExecution/requestApproval".into(),
+                session_id: "thr_a".into(),
+                turn_id: "turn-1".into(),
+                item_id: Some("item-1".into()),
+                kind: InteractionKind::CommandApproval,
+                title: "Command approval".into(),
+                detail: "cargo test".into(),
+                available_decisions: vec!["accept".into(), "decline".into()],
+                payload: serde_json::json!({}),
+                auto_resolution_ms: None,
+            }))
+            .await
+            .unwrap();
+        let old_token = channel.sent().last().unwrap().1.actions[0].token.clone();
 
-    engine
-        .handle_agent_event(AgentEvent::InteractionResolved {
-            session_id: "thr_a".into(),
-            request_id: "91".into(),
-        })
-        .await
-        .unwrap();
+        engine
+            .handle_agent_event(AgentEvent::InteractionResolved {
+                session_id: "thr_a".into(),
+                request_id: "91".into(),
+            })
+            .await
+            .unwrap();
 
-    let resolved = channel.updated().last().unwrap().1.clone();
-    assert!(resolved.actions.is_empty());
-    assert_eq!(resolved.status, agentix_core::ViewStatus::Muted);
-    assert!(resolved.body.contains("**Resolved:** Outside Telegram"));
-    let error = engine
-        .handle_inbound(InboundEnvelope::action(
-            "stale-approval",
-            ConversationRef::new(ChannelKind::Telegram, "chat-a"),
-            "owner-42",
-            old_token,
-        ))
-        .await
-        .unwrap_err();
-    assert!(matches!(error, EngineError::InvalidAction));
+        let resolved = channel.updated().last().unwrap().1.clone();
+        assert!(resolved.actions.is_empty());
+        assert_eq!(resolved.status, agentix_core::ViewStatus::Muted);
+        assert!(
+            resolved
+                .body
+                .contains(&format!("**Resolved:** Outside {label}"))
+        );
+        let error = engine
+            .handle_inbound(InboundEnvelope::action(
+                "stale-approval",
+                ConversationRef::new(kind, "chat-a"),
+                "owner-42",
+                old_token,
+            ))
+            .await
+            .unwrap_err();
+        assert!(matches!(error, EngineError::InvalidAction));
+    }
 }
 
 #[tokio::test]
@@ -3482,59 +3499,89 @@ async fn cancel_leaves_custom_plan_input_and_restores_its_choices() {
 
 #[tokio::test]
 async fn external_plan_resolution_clears_buttons_and_pending_text_reply() {
-    let agent = Arc::new(FakeAgent::new());
-    let channel = Arc::new(FakeChannel::default());
-    let state = SqliteState::in_memory().await.unwrap();
-    let engine = Engine::new(agent.clone(), state, vec![channel.clone()]);
+    for (kind, label) in [
+        (ChannelKind::Telegram, "Telegram"),
+        (ChannelKind::Feishu, "Feishu"),
+    ] {
+        let agent = Arc::new(FakeAgent::new());
+        let channel = Arc::new(FakeChannel {
+            channel_kind: Some(kind),
+            ..FakeChannel::default()
+        });
+        let state = SqliteState::in_memory().await.unwrap();
+        let engine = Engine::new(agent.clone(), state, vec![channel.clone()]);
 
-    engine
-        .handle_inbound(inbound_as("chat-a", "owner-42", "/attach thr_a"))
-        .await
-        .unwrap();
-    engine
-        .handle_agent_event(AgentEvent::InteractionRequested(user_input_request(
-            "input-external",
-            &serde_json::json!([{
-                "id": "approach",
-                "header": "Approach",
-                "question": "Which approach?",
-                "options": [{"label": "Fast", "description": "Small change."}]
-            }]),
-        )))
-        .await
-        .unwrap();
-    let initial = channel.sent().last().unwrap().1.clone();
-    let other = initial
-        .actions
-        .iter()
-        .find(|action| action.label == "Other…")
-        .unwrap()
-        .token
-        .clone();
-    click_action(&engine, "choose-other", other).await;
+        engine
+            .handle_inbound(InboundEnvelope::text(
+                "attach",
+                ConversationRef::new(kind, "chat-a"),
+                "owner-42",
+                "/attach thr_a",
+            ))
+            .await
+            .unwrap();
+        engine
+            .handle_agent_event(AgentEvent::InteractionRequested(user_input_request(
+                "input-external",
+                &serde_json::json!([{
+                    "id": "approach",
+                    "header": "Approach",
+                    "question": "Which approach?",
+                    "options": [{"label": "Fast", "description": "Small change."}]
+                }]),
+            )))
+            .await
+            .unwrap();
+        let initial = channel.sent().last().unwrap().1.clone();
+        let other = initial
+            .actions
+            .iter()
+            .find(|action| action.label == "Other…")
+            .unwrap()
+            .token
+            .clone();
+        engine
+            .handle_inbound(InboundEnvelope::action(
+                "choose-other",
+                ConversationRef::new(kind, "chat-a"),
+                "owner-42",
+                other,
+            ))
+            .await
+            .unwrap();
 
-    engine
-        .handle_agent_event(AgentEvent::InteractionResolved {
-            session_id: "thr_a".into(),
-            request_id: "input-external".into(),
-        })
-        .await
-        .unwrap();
-    let resolved = channel.updated().last().unwrap().1.clone();
-    assert!(resolved.actions.is_empty());
-    assert_eq!(resolved.status, agentix_core::ViewStatus::Muted);
-    assert!(resolved.body.contains("**Resolved:** Outside Telegram"));
+        engine
+            .handle_agent_event(AgentEvent::InteractionResolved {
+                session_id: "thr_a".into(),
+                request_id: "input-external".into(),
+            })
+            .await
+            .unwrap();
+        let resolved = channel.updated().last().unwrap().1.clone();
+        assert!(resolved.actions.is_empty());
+        assert_eq!(resolved.status, agentix_core::ViewStatus::Muted);
+        assert!(
+            resolved
+                .body
+                .contains(&format!("**Resolved:** Outside {label}"))
+        );
 
-    engine
-        .handle_inbound(inbound_as("chat-a", "owner-42", "ordinary prompt"))
-        .await
-        .unwrap();
-    assert!(
-        agent
-            .calls()
-            .contains(&"start:thr_a:ordinary prompt".to_owned())
-    );
-    assert!(agent.interaction_decisions().is_empty());
+        engine
+            .handle_inbound(InboundEnvelope::text(
+                "prompt",
+                ConversationRef::new(kind, "chat-a"),
+                "owner-42",
+                "ordinary prompt",
+            ))
+            .await
+            .unwrap();
+        assert!(
+            agent
+                .calls()
+                .contains(&"start:thr_a:ordinary prompt".to_owned())
+        );
+        assert!(agent.interaction_decisions().is_empty());
+    }
 }
 
 #[tokio::test]

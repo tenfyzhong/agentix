@@ -1,10 +1,10 @@
 //! Scoped IM actions and human reply workflows.
 use super::{
-    ActionButton, ActionScope, ActionStyle, ConversationRef, DeliveryClass, Engine, EngineError,
-    InputProgress, InteractionDecision, InteractionKey, InteractionKind, InteractionRequest,
-    MessageRef, OutboundView, PendingInteractionView, SessionId, UiAction, Uuid, Value, ViewStatus,
-    completed_input_body, decision_label, input_progress_body, input_questions, input_response,
-    interaction_key, json,
+    ActionButton, ActionScope, ActionStyle, ChannelKind, ConversationRef, DeliveryClass, Engine,
+    EngineError, InputProgress, InteractionDecision, InteractionKey, InteractionKind,
+    InteractionRequest, MessageRef, OutboundView, PendingInteractionView, SessionId, UiAction,
+    Uuid, Value, ViewStatus, completed_input_body, decision_label, input_progress_body,
+    input_questions, input_response, interaction_key, json,
 };
 
 impl Engine {
@@ -506,10 +506,15 @@ impl Engine {
             .lock()
             .await
             .retain(|_, pending| pending != interaction);
+        let channel_name = match conversation.channel {
+            ChannelKind::Telegram => "Telegram",
+            ChannelKind::Feishu => "Feishu",
+        };
+        let resolution = format!("**Resolved:** Outside {channel_name}");
         pending.view.body = if pending.view.body.is_empty() {
-            "**Resolved:** Outside Telegram".into()
+            resolution
         } else {
-            format!("{}\n\n**Resolved:** Outside Telegram", pending.view.body)
+            format!("{}\n\n{resolution}", pending.view.body)
         };
         pending.view.status = ViewStatus::Muted;
         pending.view.actions.clear();
