@@ -633,6 +633,7 @@ _arguments "${_arguments_options[@]}" : \
             (followup)
 _arguments "${_arguments_options[@]}" : \
 '--prompt=[]:PROMPT:_default' \
+'*--inbox=[Inbox TODO IDs selected by the agent through semantic matching; repeat for multiple entries]:INBOX_IDS:_default' \
 '--config=[]:CONFIG:_files' \
 '--project=[]:PROJECT:_default' \
 '--actor=[]:ACTOR:_default' \
@@ -723,6 +724,7 @@ _arguments "${_arguments_options[@]}" : \
 '--title=[]:TITLE:_default' \
 '--goal=[]:GOAL:_default' \
 '--prompt=[Original user prompt, preserved verbatim in the Job document]:PROMPT:_default' \
+'*--inbox=[Inbox TODO IDs selected by the agent through semantic matching; repeat for multiple entries]:INBOX_IDS:_default' \
 '--review-policy=[]:REVIEW_POLICY:(required none)' \
 '--config=[]:CONFIG:_files' \
 '--project=[]:PROJECT:_default' \
@@ -744,6 +746,7 @@ _arguments "${_arguments_options[@]}" : \
 '--title=[]:TITLE:_default' \
 '--goal=[]:GOAL:_default' \
 '--prompt=[Replace the original user prompt; an empty string clears it]:PROMPT:_default' \
+'*--inbox=[Inbox TODO IDs selected by the agent through semantic matching; repeat for multiple entries]:INBOX_IDS:_default' \
 '--review-policy=[]:REVIEW_POLICY:(required none)' \
 '--config=[]:CONFIG:_files' \
 '--project=[]:PROJECT:_default' \

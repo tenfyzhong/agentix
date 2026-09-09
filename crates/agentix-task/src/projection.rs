@@ -149,7 +149,7 @@ impl Service {
         }
         let state = self.store.request_snapshot(&request).await?;
         let projects = crate::inbox_document::request_projects(&state, &request);
-        let needs_inbox = crate::inbox::has_job_prompt(&request)
+        let needs_inbox = crate::inbox::needs_job_inbox(&request)
             || command.starts_with("inbox.")
             || state
                 .inboxes

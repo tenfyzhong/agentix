@@ -214,6 +214,9 @@ enum JobCommand {
         id: String,
         #[arg(long)]
         prompt: String,
+        /// Inbox TODO IDs selected by the agent through semantic matching; repeat for multiple entries.
+        #[arg(long = "inbox")]
+        inbox_ids: Vec<String>,
     },
     /// Submit an ACTIVE Job for review once all non-cancelled Tasks are DONE.
     Submit { id: String },
@@ -234,6 +237,9 @@ enum JobCommand {
         /// Original user prompt, preserved verbatim in the Job document.
         #[arg(long, default_value = "")]
         prompt: String,
+        /// Inbox TODO IDs selected by the agent through semantic matching; repeat for multiple entries.
+        #[arg(long = "inbox")]
+        inbox_ids: Vec<String>,
         #[arg(long, value_parser = ["required", "none"], default_value = "required")]
         review_policy: String,
     },
@@ -249,6 +255,9 @@ enum JobCommand {
         /// Replace the original user prompt; an empty string clears it.
         #[arg(long)]
         prompt: Option<String>,
+        /// Inbox TODO IDs selected by the agent through semantic matching; repeat for multiple entries.
+        #[arg(long = "inbox")]
+        inbox_ids: Vec<String>,
         #[arg(long, value_parser = ["required", "none"])]
         review_policy: Option<String>,
     },
@@ -710,11 +719,15 @@ async fn resolve_project(cli: &Cli, service: &Service) -> Result<String> {
 
 async fn job(cli: &Cli, service: &Service, action: &JobCommand) -> Result<Value> {
     match action {
-        JobCommand::Followup { id, prompt } => {
+        JobCommand::Followup {
+            id,
+            prompt,
+            inbox_ids,
+        } => {
             mutate(
                 cli,
                 service,
-                json!({"command":"job.followup","job":id,"prompt":prompt}),
+                json!({"command":"job.followup","job":id,"prompt":prompt,"inbox_ids":inbox_ids}),
             )
             .await
         }
@@ -740,13 +753,14 @@ async fn job(cli: &Cli, service: &Service, action: &JobCommand) -> Result<Value>
             goal,
             name,
             prompt,
+            inbox_ids,
             review_policy,
         } => {
             let project = resolve_project(cli, service).await?;
             mutate(
                 cli,
                 service,
-                json!({"command":"job.create","project":project,"title":title,"goal":goal,"name":name,"prompt":prompt,"review_policy":review_policy}),
+                json!({"command":"job.create","project":project,"title":title,"goal":goal,"name":name,"prompt":prompt,"inbox_ids":inbox_ids,"review_policy":review_policy}),
             )
             .await
         }
@@ -756,9 +770,13 @@ async fn job(cli: &Cli, service: &Service, action: &JobCommand) -> Result<Value>
             goal,
             name,
             prompt,
+            inbox_ids,
             review_policy,
         } => {
             let mut request = json!({"command":"job.update","job":id});
+            if !inbox_ids.is_empty() {
+                request["inbox_ids"] = json!(inbox_ids);
+            }
             if let Some(review_policy) = review_policy {
                 request["review_policy"] = json!(review_policy);
             }
@@ -930,6 +948,41 @@ async fn plan(cli: &Cli, service: &Service, action: &PlanCommand) -> Result<Valu
 }
 
 async fn context(
+    cli: &Cli,
+    service: &Service,
+    task: Option<&str>,
+    job: Option<&str>,
+) -> Result<Value> {
+    let mut value = context_snapshot(cli, service, task, job).await?;
+    let mut todos = Vec::new();
+    if let Some(project) = value["result"]["project_id"].as_str() {
+        let outcome = service
+            .execute(
+                json!({"command":"inbox.list","project":project}),
+                WriteOptions::default(),
+            )
+            .await?;
+        ensure!(
+            outcome.projection_pending.is_none(),
+            "Inbox synchronization pending: {:?}",
+            outcome.projection_pending
+        );
+        todos = outcome
+            .result
+            .as_array()
+            .context("invalid: Inbox list response")?
+            .iter()
+            .filter(|entry| entry["status"] == "TODO")
+            .cloned()
+            .collect();
+        // Import can cancel work and revoke leases; return the refreshed assignment.
+        value = context_snapshot(cli, service, task, job).await?;
+    }
+    value["result"]["inbox_todos"] = json!(todos);
+    Ok(value)
+}
+
+async fn context_snapshot(
     cli: &Cli,
     service: &Service,
     task: Option<&str>,

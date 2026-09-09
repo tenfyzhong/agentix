@@ -48,14 +48,8 @@ pub(crate) fn apply(
         }
         _ => bail!("invalid: unknown command {command}"),
     }?;
-    if crate::inbox::has_job_prompt(request) {
-        crate::inbox::link_prompt(
-            state,
-            required(&result, "id")?,
-            required(request, "prompt")?,
-            options,
-            now,
-        )?;
+    if crate::inbox::needs_job_inbox(request) {
+        crate::inbox::link_selected(state, required(&result, "id")?, request, options, now)?;
     }
     Ok(result)
 }

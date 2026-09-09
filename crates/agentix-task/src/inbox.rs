@@ -52,37 +52,63 @@ fn changed(entry: &mut InboxEntry, now: i64) {
     entry.updated_at = now;
 }
 
-/// Only authored Job prompts authorize matching Inbox intake.
-pub(crate) fn has_job_prompt(request: &Value) -> bool {
+/// Prompt intake and explicit AI selections must observe current Inbox edits.
+pub(crate) fn needs_job_inbox(request: &Value) -> bool {
     matches!(
         request["command"].as_str(),
         Some("job.create" | "job.update" | "job.followup")
-    ) && request["prompt"]
-        .as_str()
-        .is_some_and(|prompt| !prompt.trim().is_empty())
+    ) && (request.get("inbox_ids").is_some()
+        || request["prompt"]
+            .as_str()
+            .is_some_and(|prompt| !prompt.trim().is_empty()))
 }
 
-pub(crate) fn link_prompt(
+pub(crate) fn link_selected(
     state: &mut Snapshot,
     job_id: &str,
-    prompt: &str,
+    request: &Value,
     options: &WriteOptions,
     now: i64,
 ) -> Result<()> {
+    let Some(selected) = request.get("inbox_ids") else {
+        return Ok(());
+    };
+    let selected = selected
+        .as_array()
+        .context("invalid: inbox_ids must be an array")?;
+    if selected.is_empty() {
+        return Ok(());
+    }
     let job = &state.jobs[state.job_index(job_id)?];
-    for entry in &mut state.inboxes {
-        if entry.project_id != job.project_id
-            || entry.deleted
-            || !entry.published
-            || entry.content_pending
-            || entry.status != InboxStatus::Todo
-            || entry.job_id.is_some()
-            || entry.lease.is_some()
-            || entry.content.trim().is_empty()
-            || !prompt.contains(entry.content.trim())
-        {
-            continue;
-        }
+    ensure!(
+        job.status == JobStatus::Active && job.archived_at.is_none(),
+        "conflict: Job is closed"
+    );
+    let mut indices = std::collections::BTreeSet::new();
+    // Validate the complete AI selection before changing any Inbox entry.
+    for id in selected {
+        let id = id.as_str().context("invalid: Inbox ID must be a string")?;
+        let i = state
+            .inboxes
+            .iter()
+            .position(|entry| entry.id == id)
+            .with_context(|| format!("not_found: Inbox entry {id}"))?;
+        let entry = &state.inboxes[i];
+        ensure!(
+            entry.project_id == job.project_id
+                && !entry.deleted
+                && entry.published
+                && !entry.content_pending
+                && entry.status == InboxStatus::Todo
+                && entry.job_id.is_none()
+                && entry.lease.is_none()
+                && !entry.content.trim().is_empty(),
+            "conflict: Inbox entry {id} is not an available TODO in this Project"
+        );
+        indices.insert(i);
+    }
+    for i in indices {
+        let entry = &mut state.inboxes[i];
         entry.job_id = Some(job.id.clone());
         entry.status = InboxStatus::Active;
         entry.last_session.clone_from(&options.session_ref);

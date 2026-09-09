@@ -68,3 +68,18 @@ for (const host of ["pi", "omp"]) {
         assert.equal(calls[0].idempotencyKey, calls[1].idempotencyKey);
     });
 }
+
+test("prompt hooks expose TODO candidates and instruct AI semantic selection", async () => {
+    const todos = [{ id: "inbox_one", content: "Fix login", status: "TODO" }, { id: "inbox_two", content: "Add tests", status: "TODO" }];
+    const calls = [];
+    const runner = async args => {
+        calls.push(args);
+        return { result: args[0] === "context" ? { inbox_todos: todos } : {} };
+    };
+    const result = await runHook({ hook_event_name: "PreToolUse", session_id: "session", cwd: "/work" }, runner);
+    const context = result.hookSpecificOutput.additionalContext;
+    assert.match(context, /semantic/i);
+    assert.match(context, /--inbox/);
+    for (const entry of todos) assert.ok(context.includes(entry.content));
+    assert.ok(!calls.some(args => args[0] === "job" || args[1] === "claim-next"));
+});
