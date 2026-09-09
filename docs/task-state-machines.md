@@ -1,6 +1,6 @@
 # Task, Job and Inbox state machines
 
-SQLite enforces these transitions. The desktop Taskcli Sync plugin submits saved Obsidian `status` edits through the same CLI; a rejected edit is restored and produces a notification. See [Obsidian setup and supported edits](../plugins/agent-task-manager/obsidian/README.md#status-edits).
+SQLite enforces these transitions. The desktop Taskix Sync plugin submits saved Obsidian `status` edits through the same CLI; a rejected edit is restored and produces a notification. See [Obsidian setup and supported edits](../plugins/taskix-manager/obsidian/README.md#status-edits).
 
 ## Task
 

@@ -1,0 +1,9 @@
+{
+  "id": "taskix-sync",
+  "name": "Taskix Sync",
+  "version": "0.1.0",
+  "minAppVersion": "1.10.1",
+  "description": "Synchronize Task and Job status edits with taskix, restoring rejected changes.",
+  "author": "tenfyzhong",
+  "isDesktopOnly": true
+}

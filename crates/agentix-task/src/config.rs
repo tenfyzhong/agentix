@@ -87,7 +87,7 @@ impl Config {
         Ok(())
     }
     pub fn default_path() -> Result<PathBuf> {
-        expand_home(Path::new("~/.config/taskcli/config.toml"))
+        expand_home(Path::new("~/.config/taskix/config.toml"))
     }
 }
 

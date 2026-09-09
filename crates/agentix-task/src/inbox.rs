@@ -213,8 +213,8 @@ pub(crate) fn apply(
         "inbox.add" => {
             let content = required(request, "content")?;
             ensure!(
-                !content.contains("<!-- taskcli:"),
-                "invalid: Inbox content contains reserved taskcli control markers"
+                !content.contains("<!-- taskix:"),
+                "invalid: Inbox content contains reserved taskix control markers"
             );
             let mut entry = insert(
                 state,
@@ -651,8 +651,8 @@ fn edit(state: &mut Snapshot, request: &Value, options: &WriteOptions, now: i64)
     );
     let content = required(request, "content")?;
     ensure!(
-        !content.contains("<!-- taskcli:"),
-        "invalid: Inbox content contains reserved taskcli control markers"
+        !content.contains("<!-- taskix:"),
+        "invalid: Inbox content contains reserved taskix control markers"
     );
     let version = request["version"]
         .as_i64()

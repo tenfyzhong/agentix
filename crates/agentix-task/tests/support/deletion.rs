@@ -445,7 +445,7 @@ async fn deleting_after_projection_conflicts_preserves_unowned_destinations() {
         };
         let path = root.join(relative);
         // Even another generated entity's document is not ours to delete.
-        let innocent = "---\ntaskcli-generated: true\nid: unrelated\n---\n\nKeep this note.\n";
+        let innocent = "---\ntaskix-generated: true\nid: unrelated\n---\n\nKeep this note.\n";
         std::fs::write(&path, innocent).unwrap();
         let request = match kind {
             "new-job" => {

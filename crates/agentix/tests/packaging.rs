@@ -64,15 +64,15 @@ fn workspace_uses_a_development_version_until_release_packaging() {
 #[test]
 fn release_uploads_and_checksums_cover_both_binary_archives() {
     let workflow = repository_file(".github/workflows/release.yml");
-    assert!(workflow.contains("--package taskcli"));
+    assert!(workflow.contains("--package taskix"));
     assert!(workflow.contains("name: release-${{ matrix.target }}"));
     assert!(workflow.contains("pattern: release-*"));
-    for binary in ["agentix", "taskcli"] {
+    for binary in ["agentix", "taskix"] {
         for extension in ["tar.gz", "zip"] {
             assert!(workflow.contains(&format!("dist/{binary}-*.{extension}")));
         }
     }
-    assert!(workflow.contains("sha256sum agentix-* taskcli-* > SHA256SUMS"));
+    assert!(workflow.contains("sha256sum agentix-* taskix-* > SHA256SUMS"));
 }
 
 #[cfg(unix)]
@@ -91,8 +91,8 @@ mod release_archives {
         "hooks/run.mjs",
         "extensions/pi.ts",
         "extensions/omp.ts",
-        "skills/agent-task-manager/SKILL.md",
-        "skills/agent-task-manager/references/commands.md",
+        "skills/taskix-manager/SKILL.md",
+        "skills/taskix-manager/references/commands.md",
     ];
 
     fn step_script(workflow: &str, name: &str) -> String {
@@ -173,7 +173,7 @@ mod release_archives {
         ] {
             fixture_file(root, path, repository_file(path).as_bytes());
         }
-        for binary in ["agentix", "taskcli"] {
+        for binary in ["agentix", "taskix"] {
             fixture_file(
                 root,
                 &format!("config/{binary}.example.toml"),
@@ -194,7 +194,7 @@ mod release_archives {
             }
         }
         for file in PLUGIN_FILES {
-            let path = format!("plugins/agent-task-manager/{file}");
+            let path = format!("plugins/taskix-manager/{file}");
             fixture_file(root, &path, repository_file(&path).as_bytes());
         }
         git(root, &["init", "--initial-branch=test/release-packaging"]);
@@ -205,7 +205,7 @@ mod release_archives {
         );
         fixture_file(
             root,
-            "plugins/agent-task-manager/node_modules/untracked.txt",
+            "plugins/taskix-manager/node_modules/untracked.txt",
             b"exclude me",
         );
         directory
@@ -221,12 +221,12 @@ mod release_archives {
             format!("completions/_{binary}"),
             format!("completions/{binary}.fish"),
         ]);
-        if binary == "taskcli" {
+        if binary == "taskix" {
             expected.extend([
                 "docs/task-board.md".into(),
                 "docs/task-workflow-mechanisms.md".into(),
             ]);
-            expected.extend(PLUGIN_FILES.map(|file| format!("plugins/agent-task-manager/{file}")));
+            expected.extend(PLUGIN_FILES.map(|file| format!("plugins/taskix-manager/{file}")));
         }
         expected
     }
@@ -272,7 +272,7 @@ mod release_archives {
                 "{}",
                 String::from_utf8_lossy(&output.stderr)
             );
-            for binary in ["agentix", "taskcli"] {
+            for binary in ["agentix", "taskix"] {
                 let expected = expected_archive_files(binary, suffix);
                 for extension in extensions {
                     let archive = root.join(format!("dist/{binary}-1.2.3-{target}.{extension}"));
@@ -307,7 +307,7 @@ mod release_archives {
             );
             let sums = fs::read_to_string(root.join("dist/SHA256SUMS")).unwrap();
             assert_eq!(sums.lines().count(), 2 * extensions.len());
-            for binary in ["agentix", "taskcli"] {
+            for binary in ["agentix", "taskix"] {
                 for extension in extensions {
                     assert!(sums.contains(&format!("{binary}-1.2.3-{target}.{extension}")));
                 }
@@ -408,7 +408,7 @@ fn homebrew_workflow_builds_a_bottle_and_updates_the_tap() {
     assert!(workflow.contains("HOMEBREW_TAP_TOKEN"));
     assert!(workflow.contains("FORMULA: ${{ matrix.formula }}"));
     assert!(workflow.contains("Formula/${{ matrix.formula }}.rb"));
-    assert!(workflow.contains(r#"'["agentix", "taskcli"]'"#));
+    assert!(workflow.contains(r#"'["agentix", "taskix"]'"#));
     assert!(workflow.contains("branch: automation/${{ matrix.formula }}-"));
     assert!(workflow.contains("signoff: true"));
     assert!(workflow.contains("brew install --build-bottle"));
@@ -433,7 +433,7 @@ fn homebrew_bottle_asset_names_match_the_selected_formula() {
         .next()
         .unwrap();
 
-    for formula in ["agentix", "taskcli"] {
+    for formula in ["agentix", "taskix"] {
         let directory = tempfile::tempdir().unwrap();
         let original = format!("{formula}--0.2.0.arm64_sequoia.bottle.tar.gz");
         let asset = format!("{formula}-0.2.0.arm64_sequoia.bottle.tar.gz");
@@ -483,13 +483,8 @@ fn homebrew_bottle_asset_names_match_the_selected_formula() {
 #[cfg(target_os = "macos")]
 fn homebrew_source_update_preserves_tap_customizations_and_removes_old_bottles() {
     let workflow = repository_file(".github/workflows/homebrew.yml");
-    let ruby = workflow
-        .split("ruby <<'RUBY'\n")
-        .nth(1)
-        .unwrap()
-        .split("          RUBY")
-        .next()
-        .unwrap();
+    assert!(workflow.contains("ruby .github/scripts/update-homebrew-formula.rb"));
+    let ruby = repository_file(".github/scripts/update-homebrew-formula.rb");
     let temporary_tap = tempfile::tempdir().unwrap();
     let formula_path = temporary_tap.path().join("agentix.rb");
     let formula = concat!(
@@ -521,7 +516,7 @@ fn homebrew_source_update_preserves_tap_customizations_and_removes_old_bottles()
             fs::write(&formula_path, &formula).unwrap();
             for _ in 0..2 {
                 let result = Command::new("ruby")
-                    .args(["-e", ruby])
+                    .args(["-e", &ruby])
                     .env("FORMULA_PATH", &formula_path)
                     .env("SOURCE_URL", source_url)
                     .env("SOURCE_SHA256", "new-source-checksum")

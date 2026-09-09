@@ -2605,7 +2605,7 @@ owner_open_ids = ["ou_owner"]
     #[tokio::test]
     async fn disabled_task_board_does_not_load_its_configuration() {
         let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("missing-taskcli.toml");
+        let path = directory.path().join("missing-taskix.toml");
         for setting in [None, Some(""), Some("enable = false")] {
             let config = task_board_test_config(setting, &path);
             assert!(super::build_task_board(&config).await.unwrap().is_none());
@@ -2616,7 +2616,7 @@ owner_open_ids = ["ou_owner"]
     #[tokio::test]
     async fn enabled_task_board_requires_configuration_and_opens_its_database() {
         let directory = tempfile::tempdir().unwrap();
-        let path = directory.path().join("taskcli.toml");
+        let path = directory.path().join("taskix.toml");
         let database = directory.path().join("tasks.sqlite3");
         let config = task_board_test_config(Some("enable = true"), &path);
         assert!(super::build_task_board(&config).await.is_err());
@@ -2644,7 +2644,7 @@ owner_open_ids = ["ou_owner"]
             (Some("enable = false"), false),
             (Some("enable = true"), true),
         ] {
-            let config = task_board_test_config(setting, Path::new("/missing/taskcli.toml"));
+            let config = task_board_test_config(setting, Path::new("/missing/taskix.toml"));
             let commands = super::telegram_menu_commands(&config);
             let expected = if enabled {
                 vec!["sessions", "dashboard", "cancel", "rmux", "help"]

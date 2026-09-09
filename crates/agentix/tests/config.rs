@@ -51,7 +51,7 @@ fn task_board_configuration_is_optional_and_expands_home() {
     let base = credential_config("telegram", "[channel.telegram]\ntoken='token'");
     assert!(Config::from_toml(&base).unwrap().task_board.is_none());
     let config = Config::from_toml(&format!(
-        "{base}\n[task_board]\nconfig='~/.config/taskcli/config.toml'\n"
+        "{base}\n[task_board]\nconfig='~/.config/taskix/config.toml'\n"
     ))
     .unwrap();
     let task_board = config.task_board.unwrap();
@@ -64,7 +64,7 @@ fn accepts_explicit_task_board_enable_switch() {
     let base = credential_config("telegram", "[channel.telegram]\ntoken='token'");
     for enable in [false, true] {
         let config = Config::from_toml(&format!(
-            "{base}\n[task_board]\nenable={enable}\nconfig='~/.config/taskcli/config.toml'\n"
+            "{base}\n[task_board]\nenable={enable}\nconfig='~/.config/taskix/config.toml'\n"
         ))
         .unwrap();
         assert_eq!(config.task_board.unwrap().enable, enable);

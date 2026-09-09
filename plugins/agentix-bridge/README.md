@@ -6,7 +6,7 @@ For Claude Code, install `agentix-bridge@agentix`, configure `[agent.claude]`, a
 
 ## Install and start
 
-Install the repository using the [Pi or OMP package instructions](../agent-task-manager/README.md#prerequisites-and-activation), then restart or reload the host. The repository installs both the task extension and the bridge. For a local checkout you can explicitly load one entrypoint:
+Install the repository using the [Pi or OMP package instructions](../taskix-manager/README.md#prerequisites-and-activation), then restart or reload the host. The repository installs both the task extension and the bridge. For a local checkout you can explicitly load one entrypoint:
 
 ```sh
 pi -e /path/to/agentix/plugins/agentix-bridge/extensions/pi.ts
@@ -29,7 +29,7 @@ session_dir = "~/.omp/agent/sessions"
 rmux_directory = "~/work"
 ```
 
-Only live, registered connections whose session file is under `session_dir` appear in Agentix. Start `agentix serve` to open the shared listener; extensions may start before or after the service. History queries return at most 20 turns per page; Pi/OMP visibly shorten exceptionally large message text in history responses. Session IDs are qualified as `codex:<id>`, `pi:<id>`, `omp:<id>`, and `claude:<id>`. `/sessions pi`, `/sessions omp`, and `/sessions claude` filter the picker. A bare ID works only when exactly one backend owns it. Taskcli continues to store the native host ID.
+Only live, registered connections whose session file is under `session_dir` appear in Agentix. Start `agentix serve` to open the shared listener; extensions may start before or after the service. History queries return at most 20 turns per page; Pi/OMP visibly shorten exceptionally large message text in history responses. Session IDs are qualified as `codex:<id>`, `pi:<id>`, `omp:<id>`, and `claude:<id>`. `/sessions pi`, `/sessions omp`, and `/sessions claude` filter the picker. A bare ID works only when exactly one backend owns it. Taskix continues to store the native host ID.
 
 Existing unqualified bindings must first be migrated by starting Agentix once with the original single-backend configuration. Multiple backends never guess the owner of legacy bindings.
 
@@ -43,7 +43,7 @@ A disconnected client does not trigger replay. If an extension reload discovers 
 
 `/rmux pi`, `/rmux omp`, `/rmux claude`, and `/rmux codex` select a launch backend for the current chat. With multiple backends and no attachment, `/rmux` offers a picker. The service waits for a new live bridge associated with the created pane before attaching. A timeout leaves the terminal open for inspection.
 
-Third-party extension dialogs and approval prompts stay in the original terminal. Clear, fork, plan, goal, review, Fast mode, and MCP management are not exposed for Pi/OMP. Claude Code uses a hook-backed session adapter with default rmux delivery and an optional Channel adapter; see the [Claude guide](../../docs/claude-code.md) for its supported capabilities. The Agent Task Manager plugin can be installed independently.
+Third-party extension dialogs and approval prompts stay in the original terminal. Clear, fork, plan, goal, review, Fast mode, and MCP management are not exposed for Pi/OMP. Claude Code uses a hook-backed session adapter with default rmux delivery and an optional Channel adapter; see the [Claude guide](../../docs/claude-code.md) for its supported capabilities. The Taskix Manager plugin can be installed independently.
 
 ## Transport and troubleshooting
 

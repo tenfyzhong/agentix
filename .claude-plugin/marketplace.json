@@ -8,9 +8,9 @@
   },
   "plugins": [
     {
-      "name": "agent-task-manager",
-      "source": "./plugins/agent-task-manager",
-      "description": "Coordinate tracked work with taskcli and read-only Markdown boards."
+      "name": "taskix-manager",
+      "source": "./plugins/taskix-manager",
+      "description": "Coordinate tracked work with taskix and read-only Markdown boards."
     },
     {
       "name": "agentix-bridge",

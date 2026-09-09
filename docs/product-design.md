@@ -9,7 +9,7 @@ The first release supports:
 | Area | Included | Deferred |
 | --- | --- | --- |
 | IM agent backends | Codex, Pi, Oh My Pi, Claude Code plugin with rmux input | Claude native stop, steering, model control, and approval relay |
-| Standalone task coordination | taskcli and the Codex, Claude Code, Pi, and OMP plugin | automatic team scheduling |
+| Standalone task coordination | taskix and the Codex, Claude Code, Pi, and OMP plugin | automatic team scheduling |
 | IM channels | Telegram, Feishu | Slack, Discord, others |
 | Session operations | discover, attach, current, detach, history, create, fork, compact | archive/delete |
 | Turn operations | start, persistent Codex/Pi/OMP follow-up queues, steer, stream, stop, model and reasoning settings | sandbox configuration |

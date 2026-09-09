@@ -281,7 +281,7 @@ async fn legacy_project_meta_is_deleted_only_after_board_publication_and_retry_i
     let meta = root.join(relative);
     std::fs::write(
         &meta,
-        "---\ntaskcli-generated: true\n---\n\n# Legacy project metadata\n",
+        "---\ntaskix-generated: true\n---\n\n# Legacy project metadata\n",
     )
     .unwrap();
     let mut documents = f

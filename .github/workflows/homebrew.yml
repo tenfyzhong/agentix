@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       formula:
-        description: Formula to publish (all, agentix, or taskcli)
+        description: Formula to publish (all, agentix, or taskix)
         default: all
         type: string
     secrets:
@@ -27,7 +27,7 @@ on:
         options:
           - all
           - agentix
-          - taskcli
+          - taskix
 
 permissions:
   contents: write
@@ -41,7 +41,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        formula: ${{ fromJSON(inputs.formula == 'agentix' && '["agentix"]' || inputs.formula == 'taskcli' && '["taskcli"]' || '["agentix", "taskcli"]') }}
+        formula: ${{ fromJSON(inputs.formula == 'agentix' && '["agentix"]' || inputs.formula == 'taskix' && '["taskix"]' || '["agentix", "taskix"]') }}
     runs-on: macos-15
     env:
       FORMULA: ${{ matrix.formula }}
@@ -84,16 +84,7 @@ jobs:
           fi
           export SOURCE_URL="$source_url"
           export SOURCE_SHA256="$source_sha256"
-          ruby <<'RUBY'
-          formula_path = ENV.fetch("FORMULA_PATH")
-          formula = File.read(formula_path)
-          previous_source_url = formula[/^  url "(.*)"$/, 1]
-          formula.sub!(/^  url ".*"$/, %(  url "#{ENV.fetch("SOURCE_URL")}")) or abort("Formula URL not found")
-          formula.sub!(/^  sha256 ".*"$/, %(  sha256 "#{ENV.fetch("SOURCE_SHA256")}")) or abort("Formula SHA-256 not found")
-          formula.sub!(/^  revision \d+\n/, "") if previous_source_url != ENV.fetch("SOURCE_URL")
-          formula.sub!(/^  bottle do\n.*?^  end\n\n?/m, "")
-          File.write(formula_path, formula)
-          RUBY
+          ruby .github/scripts/update-homebrew-formula.rb
       - name: Set up Homebrew tap
         run: |
           brew tap "$TAP_NAME"

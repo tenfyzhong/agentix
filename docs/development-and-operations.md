@@ -112,7 +112,7 @@ Omit a backend table to disable it. Existing backend-specific fields retain thei
 
 ## Optional task coordination
 
-Initialize taskcli separately, then set `[task_board].config` to its configuration path and `task_board.enable = true` to enable IM task browsing and controls. The enable switch defaults to `false`; while disabled, Agentix does not load the taskcli configuration, start the task board, or add its commands to IM menus and help. The task database and document tree are independent of Agentix binding storage. Install the host plugin separately for CLI-session lease hooks; running Agentix is not required for standalone taskcli use. See the [task board guide](task-board.md) for configuration, document migration, backup, and session cleanup.
+Initialize taskix separately, then set `[task_board].config` to its configuration path and `task_board.enable = true` to enable IM task browsing and controls. The enable switch defaults to `false`; while disabled, Agentix does not load the taskix configuration, start the task board, or add its commands to IM menus and help. The task database and document tree are independent of Agentix binding storage. Install the host plugin separately for CLI-session lease hooks; running Agentix is not required for standalone taskix use. See the [task board guide](task-board.md) for configuration, document migration, backup, and session cleanup.
 
 ## Owner claim setup
 

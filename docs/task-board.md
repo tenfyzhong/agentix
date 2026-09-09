@@ -1,6 +1,6 @@
 # Task board and standalone CLI
 
-`agentix-task` supplies SQLite coordination and document projection; `taskcli` is its independent command-line interface. Agentix optionally uses the same library and database for IM control. Agent Team membership, scheduling, and shared context are external concerns, associated through stable Job IDs and optional `delegated_by` metadata.
+`agentix-task` supplies SQLite coordination and document projection; `taskix` is its independent command-line interface. Agentix optionally uses the same library and database for IM control. Agent Team membership, scheduling, and shared context are external concerns, associated through stable Job IDs and optional `delegated_by` metadata.
 
 ## Model and concurrency
 
@@ -20,7 +20,7 @@ Schema v11 records each Job’s most recent `pending_review_at` and recovers exi
 
 Schema v10 aligns Inbox states with Jobs, migrating IN_PROGRESS/DONE to ACTIVE/COMPLETED and restoring PENDING_REVIEW from the linked Job. Upgrade all writers together. Sync publishes the five distinct checkbox symbols; old state names remain accepted CLI aliases.
 
-Schema v8 adds Project Inbox entries, their exclusive leases, deletion tombstones, and publication state without changing existing Job/Task identities or Plans. Upgrade all taskcli and Agentix writers together; older binaries reject v8. Existing Projects receive `Inbox.md` on synchronization.
+Schema v8 adds Project Inbox entries, their exclusive leases, deletion tombstones, and publication state without changing existing Job/Task identities or Plans. Upgrade all taskix and Agentix writers together; older binaries reject v8. Existing Projects receive `Inbox.md` on synchronization.
 
 Schema v9 adds PENDING_REVIEW and optional `review_reason`; historical COMPLETED Jobs stay completed. Upgrade all database writers together. See the [Task and Job state machines](task-state-machines.md).
 
@@ -36,7 +36,7 @@ Each Project has `Projects/<project-name>/Inbox.md`, linked from its Board. Huma
 - [ ] Add an export history page
 ```
 
-Nested checklists and fenced examples do not become separate entries. Synchronization adds stable `inbox_` IDs; keep these ID comments and the document's start/end markers intact. Identical titles are allowed. Direct document text edits are imported only while an entry is `TODO` and has no linked Job; releasing an entry does not make its text editable again. Reorder whole entries, including their IDs and indented bodies. New IM submissions go at the end. Generated items have no extra blank separator; paragraph breaks inside a requirement are preserved. Editing a registered IM `/inbox` message updates that same entry and its document, preserving status, order, lease, and linked Job. Telegram uses edit events; Feishu checks registered source messages every 30 seconds while Agentix runs. Matching sender and conversation identity are required; duplicate and older updates are ignored. Associations survive restart and attachment changes. Removing the `/inbox` command from a message does not execute a different command or delete the entry. Archived Projects and withdrawn entries reject edits. Failed document publication is recoverable on sync. Reserved `<!-- taskcli:` control markers cannot be submitted as content.
+Nested checklists and fenced examples do not become separate entries. Synchronization adds stable `inbox_` IDs; keep these ID comments and the document's start/end markers intact. Identical titles are allowed. Direct document text edits are imported only while an entry is `TODO` and has no linked Job; releasing an entry does not make its text editable again. Reorder whole entries, including their IDs and indented bodies. New IM submissions go at the end. Generated items have no extra blank separator; paragraph breaks inside a requirement are preserved. Editing a registered IM `/inbox` message updates that same entry and its document, preserving status, order, lease, and linked Job. Telegram uses edit events; Feishu checks registered source messages every 30 seconds while Agentix runs. Matching sender and conversation identity are required; duplicate and older updates are ignored. Associations survive restart and attachment changes. Removing the `/inbox` command from a message does not execute a different command or delete the entry. Archived Projects and withdrawn entries reject edits. Failed document publication is recoverable on sync. Reserved `<!-- taskix:` control markers cannot be submitted as content.
 
 | Inbox status | Meaning |
 | --- | --- |
@@ -49,30 +49,30 @@ Nested checklists and fenced examples do not become separate entries. Synchroniz
 Managed metadata stays on the entry's checkbox line: the ID and status are HTML comments, followed by a visible Job link and current executor when present. For example:
 
 ```markdown
-- [ ] Check feature completeness <!-- taskcli:entry:inbox_01a07760d6a673f2a863e0f105eb9783 --> <!-- taskcli:entry-state TODO revision=1 -->
+- [ ] Check feature completeness <!-- taskix:entry:inbox_01a07760d6a673f2a863e0f105eb9783 --> <!-- taskix:entry-state TODO revision=1 -->
 ```
 
-Synchronization upgrades older receipts to this inline format with a revision, preserving entry IDs and authored details. Legacy `[p]` review markers remain readable; synchronization and status repair write the canonical `[r]` marker without changing the entry state or revision. The connected plugin maps `[ ]`, `[/]`, `[r]`, `[x]`, `[-]` to TODO, ACTIVE, PENDING_REVIEW, COMPLETED, CANCELLED through `inbox set-status`. Manual status changes never create Jobs or claim agent leases. Unlinked items can be marked ACTIVE or PENDING_REVIEW and completed directly after reopening if cancelled. Activating a linked item resumes its existing Job. Linked review submission requires ready Tasks; checking a linked item approves its pending verification. Reopening preserves the Job ID and Task history. Returning to TODO requires active leases to be released first. Unsupported edits restore the checkbox and show a notification. See [Inbox checkbox edits](../plugins/agent-task-manager/obsidian/README.md#inbox-checkbox-edits).
+Synchronization upgrades older receipts to this inline format with a revision, preserving entry IDs and authored details. Legacy `[p]` review markers remain readable; synchronization and status repair write the canonical `[r]` marker without changing the entry state or revision. The connected plugin maps `[ ]`, `[/]`, `[r]`, `[x]`, `[-]` to TODO, ACTIVE, PENDING_REVIEW, COMPLETED, CANCELLED through `inbox set-status`. Manual status changes never create Jobs or claim agent leases. Unlinked items can be marked ACTIVE or PENDING_REVIEW and completed directly after reopening if cancelled. Activating a linked item resumes its existing Job. Linked review submission requires ready Tasks; checking a linked item approves its pending verification. Reopening preserves the Job ID and Task history. Returning to TODO requires active leases to be released first. Unsupported edits restore the checkbox and show a notification. See [Inbox checkbox edits](../plugins/taskix-manager/obsidian/README.md#inbox-checkbox-edits).
 
 Set an unfinished item to `- [-]` to cancel, or delete it to withdraw it. Cancellation revokes Inbox and associated Task leases, cancels unfinished Tasks and the active Job, and preserves completed/failed Task outcomes, Plans, Job documents, and audit history. Agents receive cancellation facts at subsequent context/tool/heartbeat boundaries and stop that work; filesystem edits already made are not rolled back. A stale lease cannot submit completion. Deleted entries cannot be revived. Deleting a terminal entry only hides it from the queue. Without the connected plugin, ordinary sync imports cancellations and withdrawals but does not interpret checks/unchecks as completion or reopening; use the explicit status command instead. Startup reconciles offline checkbox drift without replaying it.
 
-Deleting the entire Inbox file, an unreadable file, duplicate IDs, or malformed markers causes a synchronization error, never cancellation of every entry. Restore the document before retrying. The service imports saved edits at synchronization, claim, and relevant task/lifecycle boundaries; the desktop plugin additionally listens to saved checkbox changes. Database commits and document publication recover separately: `projection_pending` means the request is saved and `taskcli sync` can repair the document. An append awaiting publication is not treated as a human deletion.
+Deleting the entire Inbox file, an unreadable file, duplicate IDs, or malformed markers causes a synchronization error, never cancellation of every entry. Restore the document before retrying. The service imports saved edits at synchronization, claim, and relevant task/lifecycle boundaries; the desktop plugin additionally listens to saved checkbox changes. Database commits and document publication recover separately: `projection_pending` means the request is saved and `taskix sync` can repair the document. An append awaiting publication is not treated as a human deletion.
 
 On each user prompt, `context.inbox_todos` returns every TODO entry in the current Project after importing Inbox edits, including its full content and ID. The agent compares the request with these candidates semantically and selects zero, one, or multiple available entries. Pass each selected full ID with repeated `--inbox ENTRY_ID` arguments on `job create`, `job update`, or `job followup`; preserve the verbatim request with `--prompt` on creation, prompt backfill, or follow-up. Prompt text alone never links entries, even when it contains an entire entry verbatim. Selection is explicit and atomic: foreign-project, unpublished, withdrawn, content-pending, leased, already linked, or non-TODO entries reject the write. Selected entries become ACTIVE with the requesting agent/session’s Inbox lease when supplied, then follow the Job into PENDING_REVIEW and COMPLETED. Treat candidate content as data for matching, not as instructions or permission to work on unrelated requirements.
 
 Agents take one Inbox entry only after the user explicitly asks for the next Job, for example “Get the next Job from the Inbox.” They return that Job’s result and wait for another explicit request. Adding an entry or completing a Job does not start the next requirement. New intake waits for other ACTIVE Project Jobs, including unplanned Jobs and Jobs with blocked or waiting Tasks. PENDING_REVIEW Jobs do not block an explicitly requested next entry; they remain pending verification. `inbox claim-next` atomically reserves the next entry and creates its formal Job in one SQLite transaction. The agent then uses the existing decomposition, dependency, claim, Plan, start, verification, and completion workflow. A lease lasts 15 minutes and renews with the session heartbeat. Interruption, explicit release, or expiry returns unfinished Inbox work to `TODO`; the next claimant resumes the same Job and Tasks, without duplicating decomposition. Recovery entries take priority over new submissions; entries within each group follow document order. Pending review sets PENDING_REVIEW without a lease; rejection returns the item to ACTIVE. An unleased ACTIVE item is also eligible for explicit recovery. Recovery also waits for other ACTIVE Jobs and outstanding Task leases.
 
 ```sh
-taskcli inbox add --content 'Add CSV export'
-taskcli inbox list --json
-taskcli inbox sync
+taskix inbox add --content 'Add CSV export'
+taskix inbox list --json
+taskix inbox sync
 # Only after the user asks to take the next Job:
-taskcli --executor agent:codex --session SESSION inbox claim-next --json
-taskcli --session SESSION --lease-token INBOX_LEASE inbox release inbox_ID
-taskcli inbox cancel inbox_ID
-taskcli inbox set-status inbox_ID --status TODO
+taskix --executor agent:codex --session SESSION inbox claim-next --json
+taskix --session SESSION --lease-token INBOX_LEASE inbox release inbox_ID
+taskix inbox cancel inbox_ID
+taskix inbox set-status inbox_ID --status TODO
 # After verifying the linked PENDING_REVIEW Job, or for an unlinked non-cancelled item:
-taskcli inbox set-status inbox_ID --status COMPLETED --expect-revision REVISION --idempotency-key KEY
+taskix inbox set-status inbox_ID --status COMPLETED --expect-revision REVISION --idempotency-key KEY
 ```
 
 Use `--project PROJECT` outside Git. The Inbox lease is distinct from a Task lease. Use the full Inbox ID and its own token for release. `context --session SESSION --json` includes owned Inbox facts even before decomposition, plus cancellation facts. The legacy CLI `hook stop` is a compatibility no-op: it returns `claimed: false` with reason `manual_intake_required`. Codex/Claude Stop only renews leases. Pi/OMP completion and idle callbacks handle lifecycle state without claiming work or requesting Inbox follow-ups.
@@ -105,46 +105,46 @@ CLI Project and Job detail reads load only the requested entity. Project lists l
 
 ## Shell completions
 
-`taskcli completions bash`, `taskcli completions zsh`, and `taskcli completions fish` print shell scripts directly, including when `--json` is present. Generation skips configuration loading and does not open or mutate the task database, so it works before `taskcli init`.
+`taskix completions bash`, `taskix completions zsh`, and `taskix completions fish` print shell scripts directly, including when `--json` is present. Generation skips configuration loading and does not open or mutate the task database, so it works before `taskix init`.
 
-Source checkouts and `taskcli-*` release archives include `completions/taskcli.bash`, `completions/_taskcli`, and `completions/taskcli.fish`. Follow the [shell installation instructions](../README.md#shell-completions). Contributors regenerate all Agentix and taskcli scripts with `make completions`; tests compare the generated output with these files and exercise nested commands, options and file paths.
+Source checkouts and `taskix-*` release archives include `completions/taskix.bash`, `completions/_taskix`, and `completions/taskix.fish`. Follow the [shell installation instructions](../README.md#shell-completions). Contributors regenerate all Agentix and taskix scripts with `make completions`; tests compare the generated output with these files and exercise nested commands, options and file paths.
 
 ## Configuration
 
 Task boards require an existing Obsidian vault with TaskNotes and Bases enabled for rendered boards, task queries, and wikilink navigation. See [Obsidian plugin setup](#obsidian-plugin-setup).
 
 ```sh
-taskcli init --root /existing/vault --directory "Agent Tasks"
+taskix init --root /existing/vault --directory "Agent Tasks"
 ```
 
-Default config: `~/.config/taskcli/config.toml`; override with `--config` or `TASKCLI_CONFIG`. Initialization refuses to overwrite an existing config. `--database` selects the independent task database. The config has this shape:
+Default config: `~/.config/taskix/config.toml`; override with `--config` or `TASKIX_CONFIG`. Initialization refuses to overwrite an existing config. `--database` selects the independent task database. The config has this shape:
 
 ```toml
 schema_version = 1
 
 [storage]
-path = "~/.local/share/taskcli/tasks.sqlite3"
+path = "~/.local/share/taskix/tasks.sqlite3"
 
 [documents]
 root = "/existing/vault"
 directory = "Agent Tasks"
 ```
 
-The root must be an existing absolute Obsidian vault directory containing `.obsidian`. The output subdirectory is relative, has no traversal components, and may be `.`. The database must be outside the output directory and separate from Agentix runtime storage. Task databases carry a SQLite application identifier; taskcli rejects unrelated databases, and Agentix refuses to add its runtime tables to task databases. Symlinks cannot make document paths escape their configured root. Keep one output configuration per database; configuration relocation is an explicit migration, not automatic synchronization.
+The root must be an existing absolute Obsidian vault directory containing `.obsidian`. The output subdirectory is relative, has no traversal components, and may be `.`. The database must be outside the output directory and separate from Agentix runtime storage. Task databases carry a SQLite application identifier; taskix rejects unrelated databases, and Agentix refuses to add its runtime tables to task databases. Symlinks cannot make document paths escape their configured root. Keep one output configuration per database; configuration relocation is an explicit migration, not automatic synchronization.
 
 ## Workflow
 
 ```sh
-taskcli project register                       # Run in the Git worktree
-taskcli project register --root /work/docs --name Docs
-taskcli job create --project prj_ID --title "New requirement" --goal "Acceptance checks" --prompt "Original user request" --executor agent:HOST --session HOST_SESSION
-taskcli task add --job job_ID --title "Implement and verify the storage layer" --executor agent:HOST --session HOST_SESSION
-taskcli task add --job job_ID --title "Integrate the client" --executor agent:HOST --session HOST_SESSION
-taskcli task depend task_CLIENT task_STORAGE
-taskcli task claim task_STORAGE --executor agent:HOST:member --session HOST_SESSION --json
+taskix project register                       # Run in the Git worktree
+taskix project register --root /work/docs --name Docs
+taskix job create --project prj_ID --title "New requirement" --goal "Acceptance checks" --prompt "Original user request" --executor agent:HOST --session HOST_SESSION
+taskix task add --job job_ID --title "Implement and verify the storage layer" --executor agent:HOST --session HOST_SESSION
+taskix task add --job job_ID --title "Integrate the client" --executor agent:HOST --session HOST_SESSION
+taskix task depend task_CLIENT task_STORAGE
+taskix task claim task_STORAGE --executor agent:HOST:member --session HOST_SESSION --json
 # After claim succeeds, draft the Plan and publish it with the returned token:
-taskcli plan create task_STORAGE --file /work/storage-plan.md --session HOST_SESSION --lease-token lease_TOKEN
-taskcli task start task_STORAGE --session HOST_SESSION --lease-token lease_TOKEN
+taskix plan create task_STORAGE --file /work/storage-plan.md --session HOST_SESSION --lease-token lease_TOKEN
+taskix task start task_STORAGE --session HOST_SESSION --lease-token lease_TOKEN
 # Execute the Plan, verify acceptance, then call done with the same token.
 ```
 
@@ -157,14 +157,14 @@ Individual Plan, Task Markdown, and Job Markdown reads also avoid full database 
 Claim returns the Task and a `lease` containing its token. Subsequent writes to a leased Task must include the current session and token:
 
 ```sh
-taskcli task heartbeat task_ID --session HOST_SESSION --lease-token lease_TOKEN
-taskcli task done task_ID --session HOST_SESSION --lease-token lease_TOKEN
-taskcli task block task_ID --reason "Upstream unavailable" --session HOST_SESSION --lease-token lease_TOKEN
-taskcli task wait task_ID --reason "Need a decision" --session HOST_SESSION --lease-token lease_TOKEN
-taskcli task fail task_ID --reason "Acceptance test failed" --session HOST_SESSION --lease-token lease_TOKEN
-taskcli task release task_ID --reason "Handing off" --session HOST_SESSION --lease-token lease_TOKEN
-taskcli task retry task_ID
-taskcli task reopen task_ID
+taskix task heartbeat task_ID --session HOST_SESSION --lease-token lease_TOKEN
+taskix task done task_ID --session HOST_SESSION --lease-token lease_TOKEN
+taskix task block task_ID --reason "Upstream unavailable" --session HOST_SESSION --lease-token lease_TOKEN
+taskix task wait task_ID --reason "Need a decision" --session HOST_SESSION --lease-token lease_TOKEN
+taskix task fail task_ID --reason "Acceptance test failed" --session HOST_SESSION --lease-token lease_TOKEN
+taskix task release task_ID --reason "Handing off" --session HOST_SESSION --lease-token lease_TOKEN
+taskix task retry task_ID
+taskix task reopen task_ID
 ```
 
 A lease lasts 15 minutes. Renew at least once a minute during planning and execution. Terminal, blocked, waiting, and release operations remove the lease and clear the phase. Abnormal exit hooks and expired leases create a system BLOCKED reason. Expiry is checked on CLI/library operations and Agentix refresh, without a standalone background daemon. Resuming the same session reacquires only system-blocked Tasks that have not been taken over; it issues new tokens and returns to PLANNING. Manual blocks stay blocked. Missing Plans do not prevent planning recovery; repair/review the Plan and explicitly call start before continuing execution. Hooks never automatically start or finish work.
@@ -174,13 +174,13 @@ Use `--expect-revision N` to protect an update based on an earlier read. Use `--
 `job update`, `task update`, `task depend/undepend`, `plan revise`, `job followup`, `job submit/approve/reject`, `job cancel`, `job archive/unarchive`, `job delete`, and `project delete` provide the remaining mutations. Job deletion cleans up registered document paths and unregistered destinations only when their generated entity identity matches. An unrelated note that blocked creation or renaming is preserved. Project deletion still removes the entire project directory, including attachments. Consult `--help` for each command.
 
 ```sh
-taskcli job list --active
-taskcli job list --pending-review
-taskcli job list --completed
-taskcli job list --archived --period 2026-09
-taskcli job list --created-from 2026-07-01 --created-to 2026-09-30
-taskcli event list --job job_ID --after 0 --limit 100 --json
-taskcli context --session HOST_SESSION --json
+taskix job list --active
+taskix job list --pending-review
+taskix job list --completed
+taskix job list --archived --period 2026-09
+taskix job list --created-from 2026-07-01 --created-to 2026-09-30
+taskix event list --job job_ID --after 0 --limit 100 --json
+taskix context --session HOST_SESSION --json
 ```
 
 Timestamp fields are Unix seconds in UTC; creation date filters include both specified calendar dates. JSON responses carry `schema_version: 1`, `ok`, and either `result` or `error`. Mutation responses also include `sequence` and `projection_pending`. Exit status is 0 on success, 1 on business/runtime failure, and 2 on argument errors. Event listing returns ordered events and `next_cursor`; the limit is 1–1000. Event payloads contain no Plan body.
@@ -199,7 +199,7 @@ Projects/<project-name>/
 
 Unarchived Jobs live directly under `Jobs/`; only explicitly archived Jobs move into `Jobs/Archived/`. Archiving and restoring a Job preserve its filename. Migration removes empty legacy `Jobs/Active/` and `Jobs/Archive/YYYY/MM/` directories after publishing the replacement documents and links.
 
-`Dashboard.base` is a compact native Bases table with Name, Status, and Updated columns, sorted by recent activity. Each project name links directly to its Board. Filters include only generated, active project Boards in the configured output directory; archived projects are hidden. Formula columns display database-derived values without making project state editable in the table. The Obsidian Dashboard also has a **Pending review** Kanban view of all unarchived PENDING_REVIEW Jobs in the configured directory, ordered by `pending_review_at` ascending (oldest first). A separate `Recent Jobs.base` shows unarchived Jobs across all projects in ACTIVE, PENDING_REVIEW, COMPLETED, and CANCELLED columns, with at most ten Jobs per status ordered by `updated_at` descending. The default board uses the Taskcli Sync `taskcliRecentJobs` adapter around TaskNotes Kanban, preserving its card interactions while limiting entries independently for each status. Four native status tables provide the same ten-result limit without the custom view. Cards show a named project Board link and local update/review timestamps. Approval, rejection, and cancellation move Jobs between columns; archival removes them. Sync publishes the replacement before removing the registered legacy `Pending Review.base`, and protects unrelated destination files. The Projects view remains scoped to active project Boards. Sync publishes the replacement before removing the old registered Dashboard; an unrelated existing `Dashboard.base` is preserved and reported as a conflict.
+`Dashboard.base` is a compact native Bases table with Name, Status, and Updated columns, sorted by recent activity. Each project name links directly to its Board. Filters include only generated, active project Boards in the configured output directory; archived projects are hidden. Formula columns display database-derived values without making project state editable in the table. The Obsidian Dashboard also has a **Pending review** Kanban view of all unarchived PENDING_REVIEW Jobs in the configured directory, ordered by `pending_review_at` ascending (oldest first). A separate `Recent Jobs.base` shows unarchived Jobs across all projects in ACTIVE, PENDING_REVIEW, COMPLETED, and CANCELLED columns, with at most ten Jobs per status ordered by `updated_at` descending. The default board uses the Taskix Sync `taskixRecentJobs` adapter around TaskNotes Kanban, preserving its card interactions while limiting entries independently for each status. Four native status tables provide the same ten-result limit without the custom view. Cards show a named project Board link and local update/review timestamps. Approval, rejection, and cancellation move Jobs between columns; archival removes them. Sync publishes the replacement before removing the registered legacy `Pending Review.base`, and protects unrelated destination files. The Projects view remains scoped to active project Boards. Sync publishes the replacement before removing the old registered Dashboard; an unrelated existing `Dashboard.base` is preserved and reported as a conflict.
 
 Names preserve Unicode and spaces. IDs stay in YAML frontmatter, not filenames. Only collisions add `-2`, `-3`, etc.; comparison is case insensitive. `job create --name` and `task add --name` accept a concise summary separately from the full `--title`. Names default to a portable, at most 48-character title. Agents should summarize the work when choosing `--name`, rather than rely on truncation. `job update --name` and `task update --name` also work on completed work and update generated links without adding Plan versions.
 
@@ -219,13 +219,13 @@ Job and Task frontmatter includes managed `agent` and `session_id` properties. J
 
 Each Task has one TaskNotes-compatible note in `Tasks/`, created even before a Plan is published. Notes carry `task` for TaskNotes identification and `agent/task` for Agentix board filtering. Sync adds missing tags to existing notes and preserves custom tags. Its frontmatter contains the Task ID, optional Plan ID, state, phase, revision, local dates, project link, Job link, and `dependencies`: a list of prerequisite Task IDs, or `[]`. Register all known initial Tasks and dependencies before implementation. When taking up a Task, claim it and publish its freely structured Plan into that same note. `plan revise` updates it in place and advances the Task revision. The document exposes only `revision`; the internal Plan publication counter remains part of CLI metadata. Authored properties are merged with managed metadata. LF and CRLF frontmatter delimiters are recognized, including a closing delimiter at end of file; authored body line endings are preserved. Quoted YAML keys round-trip safely. Frontmatter alone does not satisfy the nonempty Plan body required by `task start`. Dependency fields are generated from SQLite, refreshed by sync, and cannot be overridden by authored Plan properties; `task start` requires all prerequisites to be DONE.
 
-Jobs store an optional original user `prompt` separately from the acceptance Goal. Pass it verbatim with `job create --prompt "Original user request"`; `job update JOB_ID --prompt "..."` can backfill or correct it while the Job is active, and an empty string clears it. Nonempty prompts appear in a generated **Prompt** section as literal text, preserving Markdown source and line breaks without interpreting embedded taskcli markers. The prompt stays in SQLite across sync, document recreation, renaming, and archival, and is also included in IM Job details. Existing Jobs without this field default to an empty prompt and keep their previous document layout. Use the updated taskcli for all writers so older versions do not drop the new field when rewriting Job records. The agent-task-manager skill instructs agents to supply the original request in its original language, independently of the language used for summaries and Plans.
+Jobs store an optional original user `prompt` separately from the acceptance Goal. Pass it verbatim with `job create --prompt "Original user request"`; `job update JOB_ID --prompt "..."` can backfill or correct it while the Job is active, and an empty string clears it. Nonempty prompts appear in a generated **Prompt** section as literal text, preserving Markdown source and line breaks without interpreting embedded taskix markers. The prompt stays in SQLite across sync, document recreation, renaming, and archival, and is also included in IM Job details. Existing Jobs without this field default to an empty prompt and keep their previous document layout. Use the updated taskix for all writers so older versions do not drop the new field when rewriting Job records. The taskix-manager skill instructs agents to supply the original request in its original language, independently of the language used for summaries and Plans.
 
 Job task sections directly link Task notes, displaying their filenames without `.md`. Task links use Obsidian wikilinks. Board embeds separate Job and Task Bases, with Job status columns in pastel colors. Completed and cancelled work remains visible until its Job or Project is archived. Goal, Notes, names, and Plan prose are preserved as authored.
 
-Each nonempty Job task section also includes a generated Mermaid dependency graph. Every Task in the Job appears, including independent Tasks; arrows point from prerequisite to dependent Task. Direct prerequisites from other Jobs appear once with their Job name, without expanding those Jobs' full dependency graphs. Task additions, renames, and dependency changes refresh the graph automatically; `taskcli sync` adds it to existing Job documents. The graph is read-only and uses the same database dependencies as the Task notes. Direct edges are omitted when another path in the displayed graph already connects the same Tasks. Stored dependencies and execution gates remain unchanged; paths through unexpanded external Jobs do not hide edges. Task links below it remain available. Dependencies are displayed in the graph, without a duplicate `Dependencies:` list under each Task; sync removes those generated lists from existing Jobs while preserving authored Goal and Notes content.
+Each nonempty Job task section also includes a generated Mermaid dependency graph. Every Task in the Job appears, including independent Tasks; arrows point from prerequisite to dependent Task. Direct prerequisites from other Jobs appear once with their Job name, without expanding those Jobs' full dependency graphs. Task additions, renames, and dependency changes refresh the graph automatically; `taskix sync` adds it to existing Job documents. The graph is read-only and uses the same database dependencies as the Task notes. Direct edges are omitted when another path in the displayed graph already connects the same Tasks. Stored dependencies and execution gates remain unchanged; paths through unexpanded external Jobs do not hide edges. Task links below it remain available. Dependencies are displayed in the graph, without a duplicate `Dependencies:` list under each Task; sync removes those generated lists from existing Jobs while preserving authored Goal and Notes content.
 
-Graph nodes show `Task name · STATUS` using the seven `TaskStatus` values: `TODO`, `IN_PROGRESS`, `BLOCKED`, `WAITING_USER`, `DONE`, `FAILED`, and `CANCELLED`. Their light background colors match the bundled [TaskNotes status configuration](../plugins/agent-task-manager/obsidian/tasknotes-settings.json), with dark text for contrast; only `DONE` means successful completion. Planning and executing are phases within `IN_PROGRESS`, not additional statuses. Status changes through taskcli refresh the graph, including cross-Job prerequisite nodes.
+Graph nodes show `Task name · STATUS` using the seven `TaskStatus` values: `TODO`, `IN_PROGRESS`, `BLOCKED`, `WAITING_USER`, `DONE`, `FAILED`, and `CANCELLED`. Their light background colors match the bundled [TaskNotes status configuration](../plugins/taskix-manager/obsidian/tasknotes-settings.json), with dark text for contrast; only `DONE` means successful completion. Planning and executing are phases within `IN_PROGRESS`, not additional statuses. Status changes through taskix refresh the graph, including cross-Job prerequisite nodes.
 
 Clicking a node's label opens its Task note. The graph uses an HTML internal link inside the node with a vault-relative file path, supporting normal navigation and hover previews without changing Mermaid security settings. Renames and Job archival regenerate the target paths. Mermaid viewers that disable interactive links can still use the ordinary Task links below the graph. Nodes display database state at the last projection or sync; they do not embed editable TaskNotes widgets or read customized vault colors.
 
@@ -243,45 +243,45 @@ For a macOS desktop host launched outside fish, set the environment before resta
 launchctl setenv AGENT_TASK_LANG zh-CN
 ```
 
-Codex/Claude hooks and Pi/OMP extensions include `task_language` in injected agent context. This field belongs to the plugin, not `taskcli context`. taskcli has no language option, ignores `AGENT_TASK_LANG` and the obsolete `TASKCLI_LANGUAGE`, and uses fixed English labels for generated sections. Supplied names and prose remain unchanged; changing the skill preference does not translate existing documents.
+Codex/Claude hooks and Pi/OMP extensions include `task_language` in injected agent context. This field belongs to the plugin, not `taskix context`. taskix has no language option, ignores `AGENT_TASK_LANG` and the obsolete `TASKIX_LANGUAGE`, and uses fixed English labels for generated sections. Supplied names and prose remain unchanged; changing the skill preference does not translate existing documents.
 
-When upgrading, rename the host environment variable to `AGENT_TASK_LANG`, remove `TASKCLI_LANGUAGE`, and remove `[documents].language` from taskcli configuration. The config loader tolerates and ignores that legacy key so existing installations still open; new configs and CLI context no longer include it. Restart desktop hosts to inherit the new environment.
+When upgrading, rename the host environment variable to `AGENT_TASK_LANG`, remove `TASKIX_LANGUAGE`, and remove `[documents].language` from taskix configuration. The config loader tolerates and ignores that legacy key so existing installations still open; new configs and CLI context no longer include it. Restart desktop hosts to inherit the new environment.
 
 ### Obsidian plugin setup
 
-After `taskcli init`, run:
+After `taskix init`, run:
 
 ```sh
-taskcli obsidian setup
-# Use a different taskcli configuration:
-taskcli --config /path/to/taskcli.toml obsidian setup --json
+taskix obsidian setup
+# Use a different taskix configuration:
+taskix --config /path/to/taskix.toml obsidian setup --json
 ```
 
-The command uses `documents.root` from the selected configuration. It installs the tested TaskNotes 4.12.5 release from its official GitHub repository when the plugin is missing, installs/enables the embedded desktop Taskcli Sync plugin and enables TaskNotes and Bases in the vault configuration, and merges task identification, required field mappings, the seven Task statuses, three additional Job statuses, and the default `TODO` status. It preserves unrelated settings, custom status values, and other plugins. An existing compatible TaskNotes 4.x installation (4.12.5 or newer) is retained without a download. No task database is opened or modified.
+The command uses `documents.root` from the selected configuration. It installs the tested TaskNotes 4.12.5 release from its official GitHub repository when the plugin is missing, installs/enables the embedded desktop Taskix Sync plugin and enables TaskNotes and Bases in the vault configuration, and merges task identification, required field mappings, the seven Task statuses, three additional Job statuses, and the default `TODO` status. It preserves unrelated settings, custom status values, and other plugins. An existing compatible TaskNotes 4.x installation (4.12.5 or newer) is retained without a download. No task database is opened or modified.
 
 When files change, setup automatically reloads the configured vault window through [Obsidian CLI](https://help.obsidian.md/cli). Enable **Settings → General → Command line interface** and make `obsidian` available on `PATH`. The CLI may launch Obsidian if it is not running. Setup explicitly selects the vault and verifies its canonical path before making app changes; it will not reload a different vault with the same name. Each CLI call has a ten-second timeout.
 
-Before publishing files, setup temporarily disables already-enabled Taskcli Sync and TaskNotes, then rereads configuration to preserve settings written during app startup or plugin shutdown. If installation fails, it attempts to re-enable those plugins. If reload fails after installation, it keeps the installed files and enabled list intact for a manual restart; suspended plugins may remain inactive until then. The result includes `reloaded`, `reload_error`, and `restart_required`. A successful reload command sets `reloaded: true` and `restart_required: false`; this confirms the request was accepted, not that every plugin finished loading. Otherwise `restart_required` remains true because the running app state is unconfirmed, including when unchanged files cause setup to skip CLI calls.
+Before publishing files, setup temporarily disables already-enabled Taskix Sync and TaskNotes, then rereads configuration to preserve settings written during app startup or plugin shutdown. If installation fails, it attempts to re-enable those plugins. If reload fails after installation, it keeps the installed files and enabled list intact for a manual restart; suspended plugins may remain inactive until then. The result includes `reloaded`, `reload_error`, and `restart_required`. A successful reload command sets `reloaded: true` and `restart_required: false`; this confirms the request was accepted, not that every plugin finished loading. Otherwise `restart_required` remains true because the running app state is unconfirmed, including when unchanged files cause setup to skip CLI calls.
 
-If the CLI is missing or fails, setup still installs the files and reports the reason with instructions to restart Obsidian. For offline setup, close Obsidian first and run `taskcli obsidian setup --no-reload`, then reopen it; this flag skips all Obsidian CLI calls. If Restricted mode is enabled, turn it off in **Settings → Community plugins** to allow TaskNotes and Taskcli Sync to load; setup does not change this app-local permission. Avoid editing the same configuration through Obsidian or other tools during setup.
+If the CLI is missing or fails, setup still installs the files and reports the reason with instructions to restart Obsidian. For offline setup, close Obsidian first and run `taskix obsidian setup --no-reload`, then reopen it; this flag skips all Obsidian CLI calls. If Restricted mode is enabled, turn it off in **Settings → Community plugins** to allow TaskNotes and Taskix Sync to load; setup does not change this app-local permission. Avoid editing the same configuration through Obsidian or other tools during setup.
 
 For offline installation or an explicit plugin replacement, download `manifest.json`, `main.js`, and `styles.css` from a compatible [official TaskNotes release](https://github.com/callumalpass/tasknotes/releases) into one directory:
 
 ```sh
-taskcli obsidian setup --plugin-dir /path/to/tasknotes-release
+taskix obsidian setup --plugin-dir /path/to/tasknotes-release
 ```
 
-Changed existing files are backed up under `.obsidian/taskcli-backups/setup-*/`, retaining their relative paths. The result reports the backup directory, installed version, and whether anything changed. Repeating setup with unchanged settings creates no further backups. Invalid settings or plugin bundles and symlinked configuration paths are rejected before publication; write failures attempt to restore the previous files and report any rollback errors. To restore a backup, close Obsidian and copy the saved files back to the corresponding paths under `.obsidian/`.
+Changed existing files are backed up under `.obsidian/taskix-backups/setup-*/`, retaining their relative paths. The result reports the backup directory, installed version, and whether anything changed. Repeating setup with unchanged settings creates no further backups. Invalid settings or plugin bundles and symlinked configuration paths are rejected before publication; write failures attempt to restore the previous files and report any rollback errors. To restore a backup, close Obsidian and copy the saved files back to the corresponding paths under `.obsidian/`.
 
 For manual setup, use the following settings.
 
-Enable [TaskNotes](https://tasknotes.dev/obsidian/core-concepts/) and Obsidian's Bases core plugin. Set TaskNotes' identification tag to `task`, map `dateCreated`/`dateModified`/`completedDate` to `created_at`/`updated_at`/`completed_at`, and configure the seven exact status values: `TODO`, `IN_PROGRESS`, `BLOCKED`, `WAITING_USER`, `DONE`, `FAILED`, and `CANCELLED`. Add ACTIVE, PENDING_REVIEW, and COMPLETED for the Job board; DONE and COMPLETED represent successful completion; disable automatic archival for these statuses. See the [TaskNotes setup guide](../plugins/agent-task-manager/obsidian/README.md) for labels, colors, settings, and examples.
+Enable [TaskNotes](https://tasknotes.dev/obsidian/core-concepts/) and Obsidian's Bases core plugin. Set TaskNotes' identification tag to `task`, map `dateCreated`/`dateModified`/`completedDate` to `created_at`/`updated_at`/`completed_at`, and configure the seven exact status values: `TODO`, `IN_PROGRESS`, `BLOCKED`, `WAITING_USER`, `DONE`, `FAILED`, and `CANCELLED`. Add ACTIVE, PENDING_REVIEW, and COMPLETED for the Job board; DONE and COMPLETED represent successful completion; disable automatic archival for these statuses. See the [TaskNotes setup guide](../plugins/taskix-manager/obsidian/README.md) for labels, colors, settings, and examples.
 
-`Board.md` embeds two `tasknotesKanban` Bases: Job board first (ACTIVE, PENDING_REVIEW, COMPLETED, CANCELLED), then the seven-column Task board. Each view pins its status columns and hides unrelated empty columns. Filters select the exact Jobs/Tasks folder, project ID, the corresponding `agent/job` or `agent/task` tag, and `archived != true`. Job notes expose their name as `title` and canonical lifecycle dates through the TaskNotes field mappings without acquiring the `task` tag. Cards open their notes; status dragging is handled by Taskcli Sync. Each view sorts by `updated_at` ascending, with filename as a stable tie-breaker; generated configuration does not persist manual order within a column.
+`Board.md` embeds two `tasknotesKanban` Bases: Job board first (ACTIVE, PENDING_REVIEW, COMPLETED, CANCELLED), then the seven-column Task board. Each view pins its status columns and hides unrelated empty columns. Filters select the exact Jobs/Tasks folder, project ID, the corresponding `agent/job` or `agent/task` tag, and `archived != true`. Job notes expose their name as `title` and canonical lifecycle dates through the TaskNotes field mappings without acquiring the `task` tag. Cards open their notes; status dragging is handled by Taskix Sync. Each view sorts by `updated_at` ascending, with filename as a stable tie-breaker; generated configuration does not persist manual order within a column.
 
-Taskcli Sync settings contain the current executable's absolute `cliPath` and the selected absolute `configPath` on first setup; existing values are preserved. `--plugin-dir` only selects the TaskNotes bundle. The sync plugin is embedded in the CLI and included in the release package. Use its settings to change paths or check the connection.
+Taskix Sync settings contain the current executable's absolute `cliPath` and the selected absolute `configPath` on first setup; existing values are preserved. `--plugin-dir` only selects the TaskNotes bundle. The sync plugin is embedded in the CLI and included in the release package. Use its settings to change paths or check the connection.
 
-Taskcli Sync filters vault file events to `documents.directory` and its subdirectories, using the connected CLI configuration. Unrelated notes outside that directory do not trigger synchronization. Moves into or out of the directory still refresh registered paths. With `documents.directory = "."`, the whole vault is monitored. A failed initial connection pauses automatic event handling until a successful connection check.
+Taskix Sync filters vault file events to `documents.directory` and its subdirectories, using the connected CLI configuration. Unrelated notes outside that directory do not trigger synchronization. Moves into or out of the directory still refresh registered paths. With `documents.directory = "."`, the whole vault is monitored. A failed initial connection pauses automatic event handling until a successful connection check.
 
 The plugin reads configuration through `obsidian connection` and queries individual records through `obsidian show ID`, using IDs from note frontmatter or Inbox markers. It validates each returned path before acting on edits. Startup reconciles open notes; other notes are checked when opened or edited. At most 128 recently confirmed records are cached, alongside pending edits, instead of retaining the complete snapshot. Install the updated CLI and plugin together. Full `obsidian snapshot` remains available for diagnostics.
 
@@ -289,18 +289,18 @@ Normal writes use indexed entity and relationship queries, with SQL summaries fo
 
 The write transaction also records affected documents in a durable SQLite queue. A Task change updates its note, its Job summary and dependent Jobs' graphs, the relevant Project Board, and any changed Inbox entries. Job renaming or archival also refreshes its Task links and archive properties; Project archival affects that Project's notes. Obsidian Bases query vault notes dynamically; their definitions and query results are not stored in SQLite. Incremental synchronization preserves existing registered `Dashboard.base` and `Recent Jobs.base` files, including settings saved by Obsidian without generated comments, and recreates missing files. Only their managed paths are registered in SQLite. Explicit full synchronization rebuilds their definitions. Generated files retain authored regions and properties and are replaced atomically only when their contents change.
 
-Document paths are registered individually instead of rewriting a database-wide JSON map. Pending work is deduplicated per document and read in batches of 128. Each successful publication acknowledges only the generation it read, so concurrent later edits remain queued. A failed document remains pending while other documents are attempted. The next write or `taskcli sync --pending` retries that queue, including after restart; Taskcli Sync uses this incremental retry after a `projection_pending` response. `doctor` reports outstanding queue entries as unhealthy even when the event cursor has not advanced.
+Document paths are registered individually instead of rewriting a database-wide JSON map. Pending work is deduplicated per document and read in batches of 128. Each successful publication acknowledges only the generation it read, so concurrent later edits remain queued. A failed document remains pending while other documents are attempted. The next write or `taskix sync --pending` retries that queue, including after restart; Taskix Sync uses this incremental retry after a `projection_pending` response. `doctor` reports outstanding queue entries as unhealthy even when the event cursor has not advanced.
 
-Plain `taskcli sync` remains a full repair/rebuild and imports all Project Inboxes. Schema 12 migrates the path registry and schedules one full rebuild after upgrade. Format or layout changes also require a full sync. Wide operations such as Project archival, deletion, and large dependency changes still process their affected relationship scope; ordinary writes no longer load or project every Task in the database. Persistence builds borrowed indexes for the before/after entities and a single latest-session lookup per Job, avoiding repeated vector scans during change detection and deletion checks. Event order and same-timestamp session selection remain unchanged.
+Plain `taskix sync` remains a full repair/rebuild and imports all Project Inboxes. Schema 12 migrates the path registry and schedules one full rebuild after upgrade. Format or layout changes also require a full sync. Wide operations such as Project archival, deletion, and large dependency changes still process their affected relationship scope; ordinary writes no longer load or project every Task in the database. Persistence builds borrowed indexes for the before/after entities and a single latest-session lookup per Job, avoiding repeated vector scans during change detection and deletion checks. Event order and same-timestamp session selection remain unchanged.
 
-After updating all writers, run `taskcli sync`. Schema 7 migrates registered Plan paths to `Tasks/`; sync preserves authored content and properties and removes old managed files after publishing replacements. Board and Job paths remain stable. Task notes use the Task ID as `id`, and keep the Plan ID separately in `plan_id`. New document creation does not open tabs. taskcli does not change vault-wide plugin settings. Sync removes the obsolete managed `Tasks.md` list and its navigation links; Board is the project’s only status view.
+After updating all writers, run `taskix sync`. Schema 7 migrates registered Plan paths to `Tasks/`; sync preserves authored content and properties and removes old managed files after publishing replacements. Board and Job paths remain stable. Task notes use the Task ID as `id`, and keep the Plan ID separately in `plan_id`. New document creation does not open tabs. taskix does not change vault-wide plugin settings. Sync removes the obsolete managed `Tasks.md` list and its navigation links; Board is the project’s only status view.
 
 ### Project archival
 
 ```sh
-taskcli project archive PROJECT_ID
-taskcli project list --archived
-taskcli project unarchive PROJECT_ID
+taskix project archive PROJECT_ID
+taskix project list --archived
+taskix project unarchive PROJECT_ID
 ```
 
 Complete or cancel all Jobs before archiving a Project. An archived Project is hidden from the Dashboard and the default project list, keeps its documents and history, and rejects new work until restored. Job archive/unarchive remains independent; project unarchive does not unarchive individual Jobs.
@@ -308,32 +308,32 @@ Complete or cancel all Jobs before archiving a Project. An archived Project is h
 ### Deleting work
 
 ```sh
-taskcli job delete JOB_ID
-taskcli project delete PROJECT_ID
+taskix job delete JOB_ID
+taskix project delete PROJECT_ID
 ```
 
 `job delete` permanently removes the Job record and document, its Tasks, dependencies, and Plan records/files, including archived work. Other Jobs and their documents remain. `project delete` removes every Job, Task, and Plan belonging to the Project, then removes its entire `Projects/<project-name>/` directory, including manually added notes, hidden files, and attachments. Its repository directory is outside this cleanup scope. Neither command requires prior archival or completion.
 
 Release active Task leases before deleting. Job deletion rejects dependencies from Tasks in surviving Jobs; remove those dependencies explicitly first. Dependencies wholly within a deleted Project are removed together. Both commands accept `--expect-revision` and `--idempotency-key`; no interactive prompt is added. Audit events and idempotency results remain in SQLite; unfiltered `event list` includes deletion events. Deleted Job/Task filename sequence numbers are not reused within the surviving Project.
 
-Database removal and file-cleanup records commit in one transaction. File failures return `projection_pending`; fix the reported issue and run `taskcli sync`, or retry the exact delete request with the same idempotency key. Cleanup survives process restarts. A Project name whose directory is still pending deletion cannot be registered until cleanup completes. Cleanup refuses paths redirected through symlinks, and removes nested attachment symlinks without following their targets.
+Database removal and file-cleanup records commit in one transaction. File failures return `projection_pending`; fix the reported issue and run `taskix sync`, or retry the exact delete request with the same idempotency key. Cleanup survives process restarts. A Project name whose directory is still pending deletion cannot be registered until cleanup completes. Cleanup refuses paths redirected through symlinks, and removes nested attachment symlinks without following their targets.
 
 ### Read-only boundary
 
-`Inbox.md` imports saved human requirements and cancellations. Taskcli Sync also listens to saved Obsidian Job/Task status edits, including TaskNotes dragging, and registered Inbox checkbox edits, sending supported transitions to taskcli. Failed or unsupported changes restore authoritative status, completion dates or the affected checkbox and show a Notice. See [supported edits and recovery](../plugins/agent-task-manager/obsidian/README.md#status-edits). The plugin never claims work or borrows an agent lease.
+`Inbox.md` imports saved human requirements and cancellations. Taskix Sync also listens to saved Obsidian Job/Task status edits, including TaskNotes dragging, and registered Inbox checkbox edits, sending supported transitions to taskix. Failed or unsupported changes restore authoritative status, completion dates or the affected checkbox and show a Notice. See [supported edits and recovery](../plugins/taskix-manager/obsidian/README.md#status-edits). The plugin never claims work or borrows an agent lease.
 
 Other managed fields remain read-only projections. Existing Base definitions are preserved during incremental synchronization; explicit full synchronization regenerates them. Goal/Notes markers preserve their editable bodies, and custom Job/Task properties survive synchronization. Explicit `job update --goal` replaces a manually edited Goal; Notes remain untouched. Missing/duplicated editable markers fail synchronization instead of dropping content. With the plugin disabled, status edits are local drift and the next projection restores them. Startup reconciliation never replays offline edits as commands. There is no CLI `watch` daemon.
 
-Database commits happen before generated-document updates. A filesystem failure returns success with `projection_pending` so callers do not recreate committed work. `taskcli sync` repairs the projection. Output file locks serialize independent CLI processes; temporary-file replacement protects each document. Archival writes the destination and updates managed links before removing the previous generated file. A Plan replacement body is committed with its lease check and retained until projection acknowledges it, so interrupted publication can be retried. Back up the database and document tree together; editable bodies are not recoverable from SQLite alone.
+Database commits happen before generated-document updates. A filesystem failure returns success with `projection_pending` so callers do not recreate committed work. `taskix sync` repairs the projection. Output file locks serialize independent CLI processes; temporary-file replacement protects each document. Archival writes the destination and updates managed links before removing the previous generated file. A Plan replacement body is committed with its lease check and retained until projection acknowledges it, so interrupted publication can be retried. Back up the database and document tree together; editable bodies are not recoverable from SQLite alone.
 
 ```sh
-taskcli doctor --json  # healthy, missing_plans, database/projection sequence
-taskcli sync
+taskix doctor --json  # healthy, missing_plans, database/projection sequence
+taskix sync
 ```
 
 ### Data coverage and recovery
 
-TaskNotes renders the views; the bundled Taskcli Sync desktop plugin submits status edits. Enable Obsidian's built-in Bases core plugin as well. TaskNotes indexes Markdown files, so the saved notes and board remain readable if taskcli's SQLite database is lost. Agent task execution and synchronization still depend on SQLite.
+TaskNotes renders the views; the bundled Taskix Sync desktop plugin submits status edits. Enable Obsidian's built-in Bases core plugin as well. TaskNotes indexes Markdown files, so the saved notes and board remain readable if taskix's SQLite database is lost. Agent task execution and synchronization still depend on SQLite.
 
 The vault is not a complete database export:
 
@@ -355,36 +355,36 @@ There is no general vault import or database rebuild command; Inbox import only 
 
 For a restorable backup:
 
-1. Pause agent/CLI writers and note edits, run `taskcli sync`, and confirm `taskcli doctor --json` reports a healthy projection.
+1. Pause agent/CLI writers and note edits, run `taskix sync`, and confirm `taskix doctor --json` reports a healthy projection.
 2. Create a database snapshot using the [SQLite backup API](https://sqlite.org/backup.html) or the SQLite shell's `.backup` command. Do not rely on copying only the main file of a live WAL database.
-3. Back up the matching document tree and taskcli configuration while writes remain paused. Include TaskNotes settings to preserve the Obsidian display configuration.
+3. Back up the matching document tree and taskix configuration while writes remain paused. Include TaskNotes settings to preserve the Obsidian display configuration.
 4. Restore the matched database, documents, and configuration with writers stopped. Validate the restored copy separately with `doctor`, then `sync` and `doctor` before resuming work. Recover/reclaim active work through the normal lease workflow.
 
-If only the vault survives, preserve a copy before further taskcli writes. Existing task notes can still be browsed with TaskNotes, but normal agent execution requires a database backup or a separately implemented, explicitly partial reconstruction.
+If only the vault survives, preserve a copy before further taskix writes. Existing task notes can still be browsed with TaskNotes, but normal agent execution requires a database backup or a separately implemented, explicitly partial reconstruction.
 
 ## Host plugin
 
-The shared package is `plugins/agent-task-manager`, included in the standalone `taskcli-*` release archives, not the `agentix-*` archives. Use a taskcli archive or a source checkout for the plugin; Homebrew packaging is maintained separately in the tap. It has Codex/Claude manifests, a shared Skill, command hooks, and Pi/OMP TypeScript entrypoints. Node.js 22 or newer is required for command hooks. Put `taskcli` on PATH or set `TASKCLI_BIN`; set `TASKCLI_CONFIG` when using a non-default config.
+The shared package is `plugins/taskix-manager`, included in the standalone `taskix-*` release archives, not the `agentix-*` archives. Use a taskix archive or a source checkout for the plugin; The Homebrew formula installs the CLI, embedded Taskix Sync resources, completions, and example configuration; the formula is maintained exclusively in [`tenfyzhong/homebrew-tap`](https://github.com/tenfyzhong/homebrew-tap/blob/main/Formula/taskix.rb). Install host plugins separately using the commands below. It has Codex/Claude manifests, a shared Skill, command hooks, and Pi/OMP TypeScript entrypoints. Node.js 22 or newer is required for command hooks. Put `taskix` on PATH or set `TASKIX_BIN`; set `TASKIX_CONFIG` when using a non-default config.
 
-Install through the repository's `agentix` marketplace in Codex and Claude Code. Add the repository/worktree root as the marketplace, then install `agent-task-manager@agentix`. Codex uses `codex plugin marketplace add` followed by `codex plugin add`; Claude Code uses `claude plugin marketplace add` followed by `claude plugin install`. The catalogs are `.agents/plugins/marketplace.json` and `.claude-plugin/marketplace.json`. See the [complete installation commands](../plugins/agent-task-manager/README.md#prerequisites-and-activation), including when GitHub-based installation is available.
+Install through the repository's `agentix` marketplace in Codex and Claude Code. Add the repository/worktree root as the marketplace, then install `taskix-manager@agentix`. Codex uses `codex plugin marketplace add` followed by `codex plugin add`; Claude Code uses `claude plugin marketplace add` followed by `claude plugin install`. The catalogs are `.agents/plugins/marketplace.json` and `.claude-plugin/marketplace.json`. See the [complete installation commands](../plugins/taskix-manager/README.md#prerequisites-and-activation), including when GitHub-based installation is available.
 
 Claude merges default discovery of the shared hook file with manifest-selected `hooks/claude.json` for explicitly interrupted tool failures. Codex explicitly loads that file plus `hooks/codex.json` for Interrupt; its manifest replaces default discovery, avoiding duplicate hooks. Review/enable hooks in the host as required; Codex requires reviewing and trusting plugin hooks through `/hooks`. The command resolves plugin-root environment variables inside Node rather than using shell-specific expansion.
 
-The package explicitly includes its manifests, hooks, extensions, runtime, skills, and activation guide in npm distributions. Pi and OMP each select their own entrypoint through `package.json`; installing the complete package does not require copying hooks into project settings. See the [plugin activation and lifecycle guide](../plugins/agent-task-manager/README.md).
+The package explicitly includes its manifests, hooks, extensions, runtime, skills, and activation guide in npm distributions. Pi and OMP each select their own entrypoint through `package.json`; installing the complete package does not require copying hooks into project settings. See the [plugin activation and lifecycle guide](../plugins/taskix-manager/README.md).
 
-For Pi/OMP, install dependencies and use the host's `install` command on the complete plugin directory from a source checkout or taskcli release archive:
+For Pi/OMP, install dependencies and use the host's `install` command on the complete plugin directory from a source checkout or taskix release archive:
 
 ```sh
-npm ci --ignore-scripts --prefix /absolute/path/to/agent-task-manager
-pi install /absolute/path/to/agent-task-manager
-omp install /absolute/path/to/agent-task-manager
+npm ci --ignore-scripts --prefix /absolute/path/to/taskix-manager
+pi install /absolute/path/to/taskix-manager
+omp install /absolute/path/to/taskix-manager
 ```
 
-Run only the install command for your chosen host, then restart or reload it. Both hosts load the selected extension and the shared Skill from `package.json`; keep the local package at a stable path. Obsidian editing requires the user's separate Obsidian skill package; taskcli's generated structure is deterministic and does not launch an Agent itself.
+Run only the install command for your chosen host, then restart or reload it. Both hosts load the selected extension and the shared Skill from `package.json`; keep the local package at a stable path. Obsidian editing requires the user's separate Obsidian skill package; taskix's generated structure is deterministic and does not launch an Agent itself.
 
-SessionStart restores eligible Tasks and supplies task context. SessionEnd blocks active work and releases leases. Codex Interrupt does the same with reason `session interrupted` for an interrupted active main-thread turn; it preserves the Plan, fences the old token, and allows deletion once all relevant leases are released. Subsequent heartbeats do not reacquire released leases. Stop renews leases without claiming Inbox work or requesting a continuation. Inbox intake requires explicit user input for each next Job. Tool hooks renew at tool boundaries; no hook daemon is spawned. A Codex/Claude operation or idle gap longer than 15 minutes can expire a lease. Pi/OMP extensions renew every minute while active; detected interruption and shutdown stop the timer and cancel in-flight renewal before releasing leases. Pi waits for agent_settled after an aborted result; OMP uses agent_end and excludes willContinue. New work restarts heartbeat without implicitly reclaiming a Task. The extensions inject current task facts before the agent runs, and expose a structured taskcli tool with session, executor, current lease token, and request idempotency key. Full Task IDs and unambiguous Task prefixes receive the same lease injection; prefixes are resolved before matching the owned Task, and ambiguous prefixes are rejected. Retried writes keep their original injected credentials. A stale-token rejection requires inspecting and reacquiring work, never forcing a completion.
+SessionStart restores eligible Tasks and supplies task context. SessionEnd blocks active work and releases leases. Codex Interrupt does the same with reason `session interrupted` for an interrupted active main-thread turn; it preserves the Plan, fences the old token, and allows deletion once all relevant leases are released. Subsequent heartbeats do not reacquire released leases. Stop renews leases without claiming Inbox work or requesting a continuation. Inbox intake requires explicit user input for each next Job. Tool hooks renew at tool boundaries; no hook daemon is spawned. A Codex/Claude operation or idle gap longer than 15 minutes can expire a lease. Pi/OMP extensions renew every minute while active; detected interruption and shutdown stop the timer and cancel in-flight renewal before releasing leases. Pi waits for agent_settled after an aborted result; OMP uses agent_end and excludes willContinue. New work restarts heartbeat without implicitly reclaiming a Task. The extensions inject current task facts before the agent runs, and expose a structured taskix tool with session, executor, current lease token, and request idempotency key. Full Task IDs and unambiguous Task prefixes receive the same lease injection; prefixes are resolved before matching the owned Task, and ambiguous prefixes are rejected. Retried writes keep their original injected credentials. A stale-token rejection requires inspecting and reacquiring work, never forcing a completion.
 
-The shared SessionEnd hook, Codex Interrupt hook, and Claude PostToolUseFailure hook each request three seconds. Claude also has an overall session-exit budget, defaulting to 1.5 seconds; plugin hook timeouts do not raise it. Set `CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS=3000` when additional shutdown time is needed. If a busy database or interrupted process prevents shutdown cleanup, the next task operation reaps the expired lease. Other command hooks allow 30 seconds. Claude only releases on PostToolUseFailure when is_interrupt is the boolean true; ordinary tool errors do nothing. Claude has no general interrupt hook, and cancellation may emit no failure event. Use explicit cleanup after stopping work in that case. Pi/OMP aborts without an aborted assistant result also require shutdown or explicit cleanup. Disconnecting an idle Codex CLI from a persistent app-server does not guarantee Interrupt or immediate SessionEnd. After stopping the agent, `taskcli hook session-end --session SESSION_ID` explicitly releases its active leases; `taskcli hook interrupt --session SESSION_ID` records interruption instead. Update both taskcli and the installed plugin, then review the changed Codex hooks through `/hooks`; see the [lifecycle guide](../plugins/agent-task-manager/README.md#lifecycle-behavior).
+The shared SessionEnd hook, Codex Interrupt hook, and Claude PostToolUseFailure hook each request three seconds. Claude also has an overall session-exit budget, defaulting to 1.5 seconds; plugin hook timeouts do not raise it. Set `CLAUDE_CODE_SESSIONEND_HOOKS_TIMEOUT_MS=3000` when additional shutdown time is needed. If a busy database or interrupted process prevents shutdown cleanup, the next task operation reaps the expired lease. Other command hooks allow 30 seconds. Claude only releases on PostToolUseFailure when is_interrupt is the boolean true; ordinary tool errors do nothing. Claude has no general interrupt hook, and cancellation may emit no failure event. Use explicit cleanup after stopping work in that case. Pi/OMP aborts without an aborted assistant result also require shutdown or explicit cleanup. Disconnecting an idle Codex CLI from a persistent app-server does not guarantee Interrupt or immediate SessionEnd. After stopping the agent, `taskix hook session-end --session SESSION_ID` explicitly releases its active leases; `taskix hook interrupt --session SESSION_ID` records interruption instead. Update both taskix and the installed plugin, then review the changed Codex hooks through `/hooks`; see the [lifecycle guide](../plugins/taskix-manager/README.md#lifecycle-behavior).
 
 Pi/OMP supplies an idempotency key for metadata mutations, including Job/Project deletion. Retrying the same deletion tool call returns the committed result without duplicate events. Within one Pi/OMP extension instance, the most recent 512 write requests retain their original injected lease token for idempotent retries, including after a successful write releases the lease or its response is lost. This token cache is not persisted across host restarts. Retrying beyond that window must preserve the original CLI request explicitly; do not assume a newly discovered lease will replay the old request.
 
@@ -392,15 +392,15 @@ Host session references remain unchanged so Agentix bindings can route notificat
 
 ## Agentix integration
 
-After initializing taskcli, add to Agentix's configuration:
+After initializing taskix, add to Agentix's configuration:
 
 ```toml
 [task_board]
 enable = true
-config = "~/.config/taskcli/config.toml"
+config = "~/.config/taskix/config.toml"
 ```
 
-`task_board.enable` defaults to `false`; a `config` path alone does not enable the integration. When disabled, Agentix does not load the taskcli configuration or start the task board, and IM menus and help omit task-board commands. When `enable = true`, the referenced configuration must exist; its SQLite database is created if missing. Select the same taskcli configuration as your task writers to browse their existing work. Restart Agentix after adding or changing `[task_board]`; taskcli being configured on its own does not enable the IM integration. With `task_board.enable = true`, Telegram registers `/dashboard` in its default command menu at startup, before any attachment. The top-level menu order is `/sessions`, `/dashboard`, `/cancel`, `/rmux`, `/help` (omit `/dashboard` when disabled). Contextual commands follow in alphabetical order. `/board`, `/jobs`, `/inboxes`, and `/inbox` appear in the chat menu only after attach; `/tasks` is not added to the menu.
+`task_board.enable` defaults to `false`; a `config` path alone does not enable the integration. When disabled, Agentix does not load the taskix configuration or start the task board, and IM menus and help omit task-board commands. When `enable = true`, the referenced configuration must exist; its SQLite database is created if missing. Select the same taskix configuration as your task writers to browse their existing work. Restart Agentix after adding or changing `[task_board]`; taskix being configured on its own does not enable the IM integration. With `task_board.enable = true`, Telegram registers `/dashboard` in its default command menu at startup, before any attachment. The top-level menu order is `/sessions`, `/dashboard`, `/cancel`, `/rmux`, `/help` (omit `/dashboard` when disabled). Contextual commands follow in alphabetical order. `/board`, `/jobs`, `/inboxes`, and `/inbox` appear in the chat menu only after attach; `/tasks` is not added to the menu.
 
 `/dashboard` is the top-level IM dashboard. Each unarchived project has a button that opens its task board, grouped by status with full counts and clickable task entries. Project boards can be browsed without attaching a session.
 
@@ -414,11 +414,11 @@ Project/Job/task lists have six entries per page with **Previous**/**Next** cont
 
 `/projects` and `/sessionboard` are replaced by `/dashboard` and `/board`; `/board` and `/jobs` always use the current attachment. Legacy `/tasks [job-or-project]` and `/task <id>` remain direct shortcuts; the legacy task list is capped at 50 entries. An attached session can claim an unplanned Task or operate its own lease. Start is offered in PLANNING when Plan metadata and dependencies are ready; the service verifies the file at execution time. Done is offered only in EXECUTING. Block/Wait/Fail request a reason; `/cancel` clears pending input. Buttons use existing owner/conversation, generation, and binding-epoch checks plus the Task revision. IM can append human requirements to the Project Inbox; agents create the formal Job and Tasks on intake. IM does not edit Plan bodies.
 
-Agentix incrementally consumes SQLite events during its existing runtime tick. WAITING_USER, BLOCKED, FAILED, and Job pending-review, rejection, and completion notifications go only to the matching bound session's conversation. Events without a matching binding are skipped. Agentix atomically writes notifications and its ingestion cursor to its runtime database before sending. Existing taskcli consumer cursors are imported once. Up to 32 independent workers deliver the oldest pending notice per conversation, each with a 20-second deadline. Failed sends retry after exponential delays of 1–256 seconds; interrupted deliveries become available when their 60-second leases expire. A slow conversation does not hold the ingestion cursor or another conversation’s delivery. Delivery is at least once: a crash after IM accepts a send but before its local acknowledgment can duplicate the notice. Acknowledged notices are removed, and replaying their event IDs cannot recreate them. CLI-only usage does not require Agentix to run.
+Agentix incrementally consumes SQLite events during its existing runtime tick. WAITING_USER, BLOCKED, FAILED, and Job pending-review, rejection, and completion notifications go only to the matching bound session's conversation. Events without a matching binding are skipped. Agentix atomically writes notifications and its ingestion cursor to its runtime database before sending. Existing taskix consumer cursors are imported once. Up to 32 independent workers deliver the oldest pending notice per conversation, each with a 20-second deadline. Failed sends retry after exponential delays of 1–256 seconds; interrupted deliveries become available when their 60-second leases expire. A slow conversation does not hold the ingestion cursor or another conversation’s delivery. Delivery is at least once: a crash after IM accepts a send but before its local acknowledgment can duplicate the notice. Acknowledged notices are removed, and replaying their event IDs cannot recreate them. CLI-only usage does not require Agentix to run.
 
 ## Validation
 
-`make check` installs locked plugin dependencies, then runs Rust formatting, Clippy, workspace tests, and the Node built-in plugin tests. Install Node.js 24+ and npm. Direct Cargo invocations require `npm ci --ignore-scripts --prefix plugins/agent-task-manager` first. Normal tests use temporary databases/directories and local mock services, not live accounts.
+`make check` installs locked plugin dependencies, then runs Rust formatting, Clippy, workspace tests, and the Node built-in plugin tests. Install Node.js 24+ and npm. Direct Cargo invocations require `npm ci --ignore-scripts --prefix plugins/taskix-manager` first. Normal tests use temporary databases/directories and local mock services, not live accounts.
 
 | Boundary | Automated coverage |
 | --- | --- |
@@ -434,11 +434,11 @@ The plugin tests use a minimal host API harness, not installed Pi/OMP loaders or
 For actual Obsidian rendering, enable the ignored desktop tests explicitly. Open a test vault with TaskNotes and Bases enabled, bring its window to the foreground, enable the Obsidian CLI, and ensure the chosen parent directory already exists:
 
 ```sh
-TASKCLI_OBSIDIAN_VAULT="Test vault" TASKCLI_OBSIDIAN_PARENT="Tests" \
-  cargo test -p taskcli --test obsidian_smoke -- --ignored --nocapture
+TASKIX_OBSIDIAN_VAULT="Test vault" TASKIX_OBSIDIAN_PARENT="Tests" \
+  cargo test -p taskix --test obsidian_smoke -- --ignored --nocapture
 ```
 
-`OBSIDIAN_BIN` can select a specific CLI executable. For each format, the test creates an isolated `taskcli-smoke-*` directory under that parent (default `00-Inbox/agent`) and a temporary tab, then restores the previous tab and deletes only its own generated files. It checks Dashboard columns, dates, archive/unarchive filtering and link targets through native navigation, plus separate Job/Task Kanban columns and cards, task note recognition, note links, and the Mermaid state diagrams. The status bridge scenario loads the bundled plugin under a temporary ID against an isolated database, edits real frontmatter, and verifies rollback notifications and successful CLI writes. The visibility prerequisite prevents hidden-window rendering from being mistaken for an empty board. It temporarily extends TaskNotes status definitions in memory and loads a temporary Taskcli Sync instance through Obsidian's plugin loader; cleanup unloads it and restores the previous status definitions. It does not change persistent community-plugin settings. A force-killed test process can leave its temporary directory/tab behind; do not run it concurrently with manual edits in that directory.
+`OBSIDIAN_BIN` can select a specific CLI executable. For each format, the test creates an isolated `taskix-smoke-*` directory under that parent (default `00-Inbox/agent`) and a temporary tab, then restores the previous tab and deletes only its own generated files. It checks Dashboard columns, dates, archive/unarchive filtering and link targets through native navigation, plus separate Job/Task Kanban columns and cards, task note recognition, note links, and the Mermaid state diagrams. The status bridge scenario loads the bundled plugin under a temporary ID against an isolated database, edits real frontmatter, and verifies rollback notifications and successful CLI writes. The visibility prerequisite prevents hidden-window rendering from being mistaken for an empty board. It temporarily extends TaskNotes status definitions in memory and loads a temporary Taskix Sync instance through Obsidian's plugin loader; cleanup unloads it and restores the previous status definitions. It does not change persistent community-plugin settings. A force-killed test process can leave its temporary directory/tab behind; do not run it concurrently with manual edits in that directory.
 
 The [integration coverage map](integration-coverage.md) links each behavior to its executable tests. These tests do not establish complete branch coverage or live-system acceptance. Real IM credentials/permissions, host installer and loader compatibility, model-directed tool selection, desktop themes/plugins, and multi-machine/network-filesystem behavior require separate checks. The supported concurrency target remains multiple local processes on one computer.
 
@@ -450,10 +450,10 @@ Job documents preserve the actual original user request under **Prompt** and fol
 
 Agentix collects completed user/assistant message items and records them when the turn ends, even without an IM attachment, so a new prompt is not assigned before its Job is created. Codex and Claude Stop hooks read the current turn from the host transcript when `transcript_path` is supplied; Pi/OMP record visible messages at `agent_end`. Tool calls, tool results, reasoning, and system/developer messages are excluded. Known leading host-context wrappers, including injected `# AGENTS.md instructions` with `<INSTRUCTIONS>` and `<environment_context>`, are also removed from user-role messages at capture and persistence. Actual requests mentioning AGENTS.md remain intact. Sync applies the same filtering when rendering old stored conversations and prompts. Existing Job prompts are preserved; the first recorded user message fills a missing prompt. Automatic capture applies to new turns after upgrading the host plugin; it does not reconstruct unavailable historical transcripts.
 
-A host can submit a JSON array of `{ "id": "stable-message-id", "role": "user" | "assistant", "text": "visible text" }` through `taskcli hook record --session SESSION --file messages.json`, optionally with `--job JOB_ID`. Only Jobs associated with that session are eligible; otherwise the most recently worked associated Job is selected. No eligible Job is a no-op. Replaying the same message ID does not duplicate it. A late final response can be recorded after Task completion without changing the Job's review state. The operation does not claim work or acquire a Task lease.
+A host can submit a JSON array of `{ "id": "stable-message-id", "role": "user" | "assistant", "text": "visible text" }` through `taskix hook record --session SESSION --file messages.json`, optionally with `--job JOB_ID`. Only Jobs associated with that session are eligible; otherwise the most recently worked associated Job is selected. No eligible Job is a no-op. Replaying the same message ID does not duplicate it. A late final response can be recorded after Task completion without changing the Job's review state. The operation does not claim work or acquire a Task lease.
 
 ### Supplementary requests and review policy
 
-Context and host hooks expose `previous_job` as a candidate for a new prompt. The agent decides whether the request supplements that PENDING_REVIEW Job. If so, `taskcli job followup JOB_ID --prompt "Verbatim supplementary request" --executor agent:HOST --session HOST_SESSION` returns the same Job to ACTIVE and appends the request without replacing its original Prompt. Supply the actual current host identity and session on follow-up to associate subsequent conversation capture with that session. Existing Tasks remain; each Task added for this supplement automatically depends on the snapshot of all old Tasks taken at follow-up. Additional dependencies among new Tasks are configured normally. Cancelled and other unfinished prerequisites do not satisfy the execution gate. Independent requirements and requests after a COMPLETED Job create new Jobs; hooks do not reopen Jobs merely because a prompt arrived.
+Context and host hooks expose `previous_job` as a candidate for a new prompt. The agent decides whether the request supplements that PENDING_REVIEW Job. If so, `taskix job followup JOB_ID --prompt "Verbatim supplementary request" --executor agent:HOST --session HOST_SESSION` returns the same Job to ACTIVE and appends the request without replacing its original Prompt. Supply the actual current host identity and session on follow-up to associate subsequent conversation capture with that session. Existing Tasks remain; each Task added for this supplement automatically depends on the snapshot of all old Tasks taken at follow-up. Additional dependencies among new Tasks are configured normally. Cancelled and other unfinished prerequisites do not satisfy the execution gate. Independent requirements and requests after a COMPLETED Job create new Jobs; hooks do not reopen Jobs merely because a prompt arrived.
 
 `job create` and `job update` accept `--review-policy required|none`. Creation defaults to `required`; updates that omit the flag preserve the existing policy. Investigation-only, document-only, and simple operational Jobs such as git commit/push use `none`: when at least one non-cancelled Task exists and all are DONE, the Job goes directly to COMPLETED, and its Inbox entry completes with it. No separate human approval is needed. Code-change Jobs and mixed Jobs retain `required` and enter PENDING_REVIEW when ready. If supplementary work adds code changes, update the policy to `required` for the whole Job.

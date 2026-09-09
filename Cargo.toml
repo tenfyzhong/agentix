@@ -10,7 +10,7 @@ members = [
   "crates/agentix-rmux",
   "crates/agentix-telegram",
   "crates/agentix-task",
-  "crates/taskcli",
+  "crates/taskix",
 ]
 resolver = "3"
 
