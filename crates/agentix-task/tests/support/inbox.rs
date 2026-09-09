@@ -1087,7 +1087,7 @@ async fn inbox_source_migration_recovers_legacy_im_associations() {
 }
 
 #[tokio::test]
-async fn prompt_links_inbox_and_follows_job_lifecycle() {
+async fn selected_inboxes_follow_job_lifecycle() {
     for policy in ["none", "required"] {
         let mut f = fixture().await;
         // A fresh human entry must be imported before matching the prompt.
@@ -1097,11 +1097,22 @@ async fn prompt_links_inbox_and_follows_job_lifecycle() {
             doc.replace(END, &format!("- [ ] Fix login error\n{END}")),
         )
         .unwrap();
+        let candidate = f
+            .service
+            .execute(
+                json!({"command":"inbox.list","project":f.project}),
+                WriteOptions::default(),
+            )
+            .await
+            .unwrap()
+            .result[0]
+            .clone();
+        let second = add(&f, "Add login regression coverage").await;
         let job = f
             .service
             .execute(
                 json!({"command":"job.create","project":f.project,"title":"Login fix",
-                "prompt":"Please Fix login error and add tests", "review_policy":policy}),
+                "prompt":"修复登录并增加回归测试", "inbox_ids":[candidate["id"], second["id"]], "review_policy":policy}),
                 identity("worker"),
             )
             .await
@@ -1109,6 +1120,12 @@ async fn prompt_links_inbox_and_follows_job_lifecycle() {
             .result;
         f.job = job["id"].as_str().unwrap().into();
         let linked = entries(&f).await;
+        assert_eq!(linked.len(), 2);
+        assert!(
+            linked
+                .iter()
+                .all(|e| e["job_id"] == f.job && e["status"] == "ACTIVE")
+        );
         assert_eq!(linked[0]["job_id"], f.job);
         assert_eq!(linked[0]["status"], "ACTIVE");
         assert_eq!(linked[0]["last_session"], "worker");
@@ -1127,7 +1144,7 @@ async fn prompt_links_inbox_and_follows_job_lifecycle() {
             assert_eq!(entries(&f).await[0]["status"], "PENDING_REVIEW");
             f.approve().await;
         }
-        assert_eq!(entries(&f).await[0]["status"], "COMPLETED");
+        assert!(entries(&f).await.iter().all(|e| e["status"] == "COMPLETED"));
         assert!(
             std::fs::read_to_string(path(&f))
                 .unwrap()
@@ -1137,52 +1154,104 @@ async fn prompt_links_inbox_and_follows_job_lifecycle() {
 }
 
 #[tokio::test]
-async fn prompt_links_only_available_complete_matches_in_its_project() {
+async fn prompt_text_alone_never_links_inbox() {
     let f = fixture().await;
-    let matched = add(&f, "Fix login").await;
-    add(&f, "Fix login and logout").await;
-    let cancelled = add(&f, "Cancelled work").await;
-    set_status(&f, cancelled["id"].as_str().unwrap(), "CANCELLED")
+    add(&f, "Fix login").await;
+    let before = entries(&f).await;
+    f.service
+        .execute(
+            json!({"command":"job.create","project":f.project,"title":"Delivery",
+            "prompt":"Please Fix login"}),
+            identity("worker"),
+        )
         .await
         .unwrap();
-    let completed = add(&f, "Completed work").await;
-    set_status(&f, completed["id"].as_str().unwrap(), "COMPLETED")
-        .await
-        .unwrap();
+    assert_eq!(entries(&f).await, before);
+}
+
+#[tokio::test]
+async fn inbox_selection_is_atomic_and_rejects_unavailable_entries() {
+    let f = fixture().await;
+    let available = add(&f, "Fix login").await;
+    let unavailable = add(&f, "Closed work").await;
+    for status in ["ACTIVE", "PENDING_REVIEW", "COMPLETED", "TODO", "CANCELLED"] {
+        set_status(&f, unavailable["id"].as_str().unwrap(), status)
+            .await
+            .unwrap();
+        if status == "TODO" {
+            continue;
+        }
+        let before = f.service.store().snapshot().await.unwrap();
+        let result = f
+            .service
+            .execute(
+                json!({"command":"job.create","project":f.project,
+            "title":"Delivery","prompt":"Fix both issues",
+            "inbox_ids":[available["id"], unavailable["id"]]}),
+                identity("worker"),
+            )
+            .await;
+        assert!(result.is_err(), "must reject {status}");
+        let after = f.service.store().snapshot().await.unwrap();
+        assert_eq!(after.inboxes, before.inboxes);
+        assert_eq!(after.jobs, before.jobs);
+    }
+    for selection in [
+        json!([available["id"], "inbox_missing"]),
+        json!([42]),
+        json!("bad"),
+    ] {
+        assert!(
+            f.service
+                .execute(
+                    json!({"command":"job.create","project":f.project,
+            "title":"Delivery","prompt":"Fix issues","inbox_ids":selection}),
+                    identity("worker")
+                )
+                .await
+                .is_err()
+        );
+    }
     let other = f
         .service
         .execute(
-            json!({"command":"project.register","name":"other","root":f.dir.path().join("other")}),
+            json!({"command":"project.register","name":"other",
+        "root":f.dir.path().join("other")}),
             WriteOptions::default(),
         )
         .await
         .unwrap()
         .result;
+    assert!(
+        f.service
+            .execute(
+                json!({"command":"job.create","project":other["id"],
+        "title":"Other delivery","prompt":"Fix issues","inbox_ids":[available["id"]]}),
+                identity("worker")
+            )
+            .await
+            .is_err()
+    );
     f.service
         .execute(
-            json!({"command":"inbox.add","project":other["id"],"content":"Fix login"}),
-            WriteOptions::default(),
+            json!({"command":"job.create","project":f.project,
+        "title":"Delivery","prompt":"修复登录","inbox_ids":[available["id"]]}),
+            identity("worker"),
         )
         .await
         .unwrap();
-    let request = json!({"command":"job.create","project":f.project,"title":"Delivery",
-        "prompt":"Please Fix login; Cancelled work; Completed work"});
-    let first = f
-        .service
-        .execute(request.clone(), identity("one"))
-        .await
-        .unwrap()
-        .result;
     let before = entries(&f).await;
-    let linked = before.iter().find(|e| e["id"] == matched["id"]).unwrap();
-    assert_eq!(linked["job_id"], first["id"]);
-    assert_eq!(before.iter().filter(|e| !e["job_id"].is_null()).count(), 1);
-    f.service.execute(request, identity("two")).await.unwrap();
-    assert_eq!(
-        entries(&f).await,
-        before,
-        "must not steal or relink an owned entry"
+    assert!(
+        f.service
+            .execute(
+                json!({"command":"job.create","project":f.project,
+        "title":"Steal","prompt":"修复登录","inbox_ids":[available["id"]]}),
+                identity("other")
+            )
+            .await
+            .is_err()
     );
+    assert_eq!(entries(&f).await, before);
 }
 
 #[tokio::test]
@@ -1200,10 +1269,10 @@ async fn prompt_links_on_backfill_and_followup() {
         .as_str()
         .unwrap()
         .into();
-    add(&f, "First request").await;
+    let first = add(&f, "First request").await;
     f.service
         .execute(
-            json!({"command":"job.update","job":f.job,"prompt":"Please handle First request"}),
+            json!({"command":"job.update","job":f.job,"prompt":"处理第一个需求","inbox_ids":[first["id"]]}),
             identity("worker"),
         )
         .await
@@ -1215,10 +1284,10 @@ async fn prompt_links_on_backfill_and_followup() {
         .execute(json!({"command":"task.done","task":task}), owner(&owned))
         .await
         .unwrap();
-    add(&f, "Second request").await;
+    let second = add(&f, "Second request").await;
     f.service
         .execute(
-            json!({"command":"job.followup","job":f.job,"prompt":"Also handle Second request"}),
+            json!({"command":"job.followup","job":f.job,"prompt":"也处理第二个需求","inbox_ids":[second["id"]]}),
             identity("worker"),
         )
         .await

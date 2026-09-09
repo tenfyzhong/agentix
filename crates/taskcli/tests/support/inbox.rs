@@ -323,3 +323,186 @@ fn inbox_context_prefers_current_directory_over_ambiguous_session_history() {
     let context = cli.ok(&["context", "--session", "worker"]);
     assert_eq!(context["project_id"], first);
 }
+
+#[test]
+fn context_returns_all_project_todos_for_ai_selection() {
+    let cli = Cli::new();
+    let project = project(&cli);
+    let first = cli.ok(&[
+        "inbox",
+        "add",
+        "--project",
+        &project,
+        "--content",
+        "Repair login",
+    ]);
+    let second = cli.ok(&[
+        "inbox",
+        "add",
+        "--project",
+        &project,
+        "--content",
+        "Add regression tests",
+    ]);
+    let closed = cli.ok(&["inbox", "add", "--project", &project, "--content", "Closed"]);
+    cli.ok(&[
+        "inbox",
+        "set-status",
+        closed["id"].as_str().unwrap(),
+        "--status",
+        "COMPLETED",
+    ]);
+    let ctx = cli.ok(&["context", "--project", &project, "--session", "worker"]);
+    let path = std::path::Path::new(ctx["inbox_path"].as_str().unwrap());
+    let doc = std::fs::read_to_string(path).unwrap();
+    std::fs::write(
+        path,
+        doc.replace(
+            "<!-- taskcli:inbox:end -->",
+            "- [ ] Fresh human entry\n<!-- taskcli:inbox:end -->",
+        ),
+    )
+    .unwrap();
+    let ctx = cli.ok(&["context", "--project", &project, "--session", "worker"]);
+    let todos = ctx["inbox_todos"]
+        .as_array()
+        .expect("all TODO candidates must be returned");
+    assert_eq!(todos.len(), 3);
+    assert_eq!(todos[0]["id"], first["id"]);
+    assert_eq!(todos[1]["id"], second["id"]);
+    assert_eq!(todos[2]["content"], "Fresh human entry");
+    assert!(
+        todos
+            .iter()
+            .all(|e| e["status"] == "TODO" && e["job_id"].is_null() && e["lease"].is_null())
+    );
+    let job = cli.ok(&[
+        "job",
+        "create",
+        "--project",
+        &project,
+        "--title",
+        "Login",
+        "--prompt",
+        "修复登录并补充测试",
+        "--inbox",
+        first["id"].as_str().unwrap(),
+        "--inbox",
+        second["id"].as_str().unwrap(),
+        "--executor",
+        "agent:codex",
+        "--session",
+        "worker",
+    ]);
+    let entries = cli.ok(&["inbox", "list", "--project", &project]);
+    assert!(
+        entries.as_array().unwrap()[..2]
+            .iter()
+            .all(|e| e["job_id"] == job["id"] && e["status"] == "ACTIVE")
+    );
+    let ctx = cli.ok(&["context", "--session", "worker"]);
+    assert_eq!(ctx["inbox_todos"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn context_imports_cancellation_before_returning_assignment() {
+    let cli = Cli::new();
+    let project = project(&cli);
+    let entry = cli.ok(&[
+        "inbox",
+        "add",
+        "--project",
+        &project,
+        "--content",
+        "Cancel this",
+    ]);
+    cli.ok(&[
+        "job",
+        "create",
+        "--project",
+        &project,
+        "--title",
+        "Work",
+        "--prompt",
+        "Handle request",
+        "--inbox",
+        entry["id"].as_str().unwrap(),
+        "--executor",
+        "agent:codex",
+        "--session",
+        "worker",
+    ]);
+    let ctx = cli.ok(&["context", "--session", "worker"]);
+    let path = std::path::Path::new(ctx["inbox_path"].as_str().unwrap());
+    let doc = std::fs::read_to_string(path).unwrap();
+    std::fs::write(path, doc.replace("- [/] Cancel this", "- [-] Cancel this")).unwrap();
+    let ctx = cli.ok(&["context", "--session", "worker"]);
+    assert_eq!(ctx["inbox_cancellations"][0]["id"], entry["id"]);
+    assert!(ctx["inbox"].is_null(), "must not return the revoked lease");
+}
+
+#[test]
+fn cli_links_selected_inboxes_on_update_and_followup() {
+    let cli = Cli::new();
+    let job = cli.job("Delivery");
+    let project = cli.ok(&["job", "show", &job])["project_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let first = cli.ok(&[
+        "inbox",
+        "add",
+        "--project",
+        &project,
+        "--content",
+        "Repair login",
+    ]);
+    cli.ok(&[
+        "job",
+        "update",
+        &job,
+        "--inbox",
+        first["id"].as_str().unwrap(),
+        "--executor",
+        "agent:codex",
+        "--session",
+        "worker",
+    ]);
+    let task = cli.task(&job, "Fix login");
+    let claim = cli.claim(&task, "worker");
+    cli.owned(
+        &["plan", "create", &task, "--body", "Repair and test"],
+        &claim,
+    );
+    cli.owned(&["task", "start", &task], &claim);
+    cli.owned(&["task", "done", &task], &claim);
+    let second = cli.ok(&[
+        "inbox",
+        "add",
+        "--project",
+        &project,
+        "--content",
+        "Add regression tests",
+    ]);
+    cli.ok(&[
+        "job",
+        "followup",
+        &job,
+        "--prompt",
+        "再补充回归测试",
+        "--inbox",
+        second["id"].as_str().unwrap(),
+        "--executor",
+        "agent:codex",
+        "--session",
+        "worker",
+    ]);
+    let entries = cli.ok(&["inbox", "list", "--project", &project]);
+    assert!(
+        entries
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|e| e["job_id"] == job && e["status"] == "ACTIVE")
+    );
+}

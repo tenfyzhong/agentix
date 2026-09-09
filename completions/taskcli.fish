@@ -396,6 +396,7 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from followup submit approve reject delete create update list show cancel archive unarchive help" -f -a "unarchive" -d 'Restore an archived Job document without changing its completion status'
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and not __fish_seen_subcommand_from followup submit approve reject delete create update list show cancel archive unarchive help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from followup" -l prompt -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from followup" -l inbox -d 'Inbox TODO IDs selected by the agent through semantic matching; repeat for multiple entries' -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from followup" -l config -r -F
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from followup" -l project -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from followup" -l actor -r
@@ -456,6 +457,7 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_sub
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from create" -l title -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from create" -l goal -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from create" -l prompt -d 'Original user prompt, preserved verbatim in the Job document' -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from create" -l inbox -d 'Inbox TODO IDs selected by the agent through semantic matching; repeat for multiple entries' -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from create" -l review-policy -r -f -a "required\t''
 none\t''"
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from create" -l config -r -F
@@ -473,6 +475,7 @@ complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_sub
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from update" -l title -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from update" -l goal -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from update" -l prompt -d 'Replace the original user prompt; an empty string clears it' -r
+complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from update" -l inbox -d 'Inbox TODO IDs selected by the agent through semantic matching; repeat for multiple entries' -r
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from update" -l review-policy -r -f -a "required\t''
 none\t''"
 complete -c taskcli -n "__fish_taskcli_using_subcommand job; and __fish_seen_subcommand_from update" -l config -r -F
