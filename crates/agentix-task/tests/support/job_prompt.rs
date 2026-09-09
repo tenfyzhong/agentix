@@ -56,8 +56,8 @@ async fn job_document_places_prompt_and_conversation_after_notes() {
     let legacy = format!("{header}\n## Prompt\n{history}\n## Goal\n{sections}")
         .replace("Ship it", "Authored goal.")
         .replace(
-            "<!-- taskcli:notes:start -->",
-            "<!-- taskcli:notes:start -->\nAuthored notes.",
+            "<!-- taskix:notes:start -->",
+            "<!-- taskix:notes:start -->\nAuthored notes.",
         );
     std::fs::write(&path, legacy).unwrap();
     f.service.sync().await.unwrap();
@@ -161,7 +161,7 @@ async fn conversation_selects_new_job_in_same_second_and_can_target_previous_job
 #[tokio::test]
 async fn job_prompt_survives_updates_sync_reopen_and_archive() {
     let f = Fixture::new().await;
-    let prompt = "Please preserve **this request**.\n\n```rust\nprintln!(\"hello\");\n```\n<!-- taskcli:goal:start -->\n<!-- taskcli:notes:end -->\n";
+    let prompt = "Please preserve **this request**.\n\n```rust\nprintln!(\"hello\");\n```\n<!-- taskix:goal:start -->\n<!-- taskix:notes:end -->\n";
     let created = f.service.execute(
         json!({"command":"job.create","project":f.project,"title":"Original request","goal":"Acceptance","prompt":prompt}),
         WriteOptions::default(),
@@ -177,12 +177,12 @@ async fn job_prompt_survives_updates_sync_reopen_and_archive() {
     let doc = std::fs::read_to_string(&path).unwrap();
     assert!(doc.contains("## Prompt\n"));
     assert!(!doc.lines().any(|line| line.starts_with("prompt:")));
-    assert!(doc.contains("    Please preserve **this request**.\n\n    ```rust\n    println!(\"hello\");\n    ```\n    <!-- taskcli:goal:start -->\n    <!-- taskcli:notes:end -->\n"));
+    assert!(doc.contains("    Please preserve **this request**.\n\n    ```rust\n    println!(\"hello\");\n    ```\n    <!-- taskix:goal:start -->\n    <!-- taskix:notes:end -->\n"));
     std::fs::write(
         &path,
         doc.replace(
-            "<!-- taskcli:notes:start -->",
-            "<!-- taskcli:notes:start -->\nKeep authored notes.",
+            "<!-- taskix:notes:start -->",
+            "<!-- taskix:notes:start -->\nKeep authored notes.",
         ),
     )
     .unwrap();
@@ -269,7 +269,7 @@ async fn job_conversation_records_text_after_delivery_without_changing_review_st
     let request = json!({"command":"session.record","session":"conversation","messages":[
         {"id":"context","role":"user","text":"# AGENTS.md instructions\n<INSTRUCTIONS>Injected rules</INSTRUCTIONS><environment_context>cwd: /work</environment_context>"},
         {"id":"u1","role":"user","text":"Exact **prompt**"},
-        {"id":"a1","role":"assistant","text":"Delivered.\n<!-- taskcli:notes:end -->"},
+        {"id":"a1","role":"assistant","text":"Delivered.\n<!-- taskix:notes:end -->"},
         {"id":"a2","role":"assistant","text":"Final **answer**.\n\n```rust\nfn main() {}\n```"}
     ]});
     f.service
@@ -294,7 +294,7 @@ async fn job_conversation_records_text_after_delivery_without_changing_review_st
             .any(|line| line.starts_with("### ") && line.contains(" · "))
     );
     assert!(!doc.contains("Injected rules"));
-    assert!(doc.contains("> Delivered.\n> <!-- taskcli:notes:end -->\n>\n> Final **answer**.\n>\n> ```rust\n> fn main() {}\n> ```"));
+    assert!(doc.contains("> Delivered.\n> <!-- taskix:notes:end -->\n>\n> Final **answer**.\n>\n> ```rust\n> fn main() {}\n> ```"));
     std::fs::remove_file(&path).unwrap();
     Service::open(f.service.config().clone())
         .await
@@ -323,7 +323,7 @@ async fn conversation_pairs_each_prompt_with_its_own_agent_output() {
             {"id":"a2","role":"assistant","text":"First validation"}
         ]),
         json!([
-            {"id":"u2","role":"user","text":"Add a followup\n<!-- taskcli:notes:end -->"},
+            {"id":"u2","role":"user","text":"Add a followup\n<!-- taskix:notes:end -->"},
             {"id":"a3","role":"assistant","text":"Second delivery"}
         ]),
         json!([
@@ -357,7 +357,7 @@ async fn conversation_pairs_each_prompt_with_its_own_agent_output() {
         .split("### Turn 3")
         .next()
         .unwrap();
-    assert!(second.contains("    Add a followup\n    <!-- taskcli:notes:end -->"));
+    assert!(second.contains("    Add a followup\n    <!-- taskix:notes:end -->"));
     assert!(second.contains("> Second delivery"));
     let third = body.split("### Turn 3").nth(1).unwrap();
     assert!(

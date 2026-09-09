@@ -71,7 +71,7 @@ impl Store {
                 .await?;
         ensure!(
             application_id == 0x4158_544b || (application_id == 0 && table_count == 0),
-            "invalid: task database must be a dedicated taskcli database"
+            "invalid: task database must be a dedicated taskix database"
         );
         let version: i64 = sqlx::query_scalar("PRAGMA user_version")
             .fetch_one(&mut *tx)

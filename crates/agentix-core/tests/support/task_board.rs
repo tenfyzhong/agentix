@@ -127,8 +127,8 @@ async fn dashboard_project_board_task_job_roundtrip_renders_authored_markdown() 
         .unwrap()
         .replace("Ship", "**Ship safely**")
         .replace(
-            "<!-- taskcli:notes:start -->",
-            "<!-- taskcli:notes:start -->\n- Authored job note",
+            "<!-- taskix:notes:start -->",
+            "<!-- taskix:notes:start -->\n- Authored job note",
         );
     std::fs::write(job_path, content).unwrap();
     let before = service.store().snapshot().await.unwrap();
@@ -153,12 +153,12 @@ async fn dashboard_project_board_task_job_roundtrip_renders_authored_markdown() 
     click(&engine, button(&board, "Implement task board")).await;
     let task = last(&channel);
     assert!(task.body.contains("**Bold plan** with `code`"));
-    assert!(!task.body.contains("taskcli-generated:"));
+    assert!(!task.body.contains("taskix-generated:"));
     click(&engine, button(&task, "Job")).await;
     let job = last(&channel);
     assert!(job.body.contains("**Ship safely**"));
     assert!(job.body.contains("- Authored job note"));
-    assert!(!job.body.contains("<!-- taskcli:"));
+    assert!(!job.body.contains("<!-- taskix:"));
     assert!(!job.body.contains("```mermaid"));
     click(&engine, button(&job, "Implement task board")).await;
     assert_eq!(last(&channel).body, task.body);

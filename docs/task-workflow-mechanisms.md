@@ -1,8 +1,8 @@
 # Task Decomposition, Skills, and Hooks
 
-This document explains how the task-management components work together: who breaks down requirements, who decides when work starts or finishes, who maintains session state, and which operations are protected when multiple agents work concurrently. For command arguments and installation instructions, see the [task board guide](task-board.md) and [plugin guide](../plugins/agent-task-manager/README.md).
+This document explains how the task-management components work together: who breaks down requirements, who decides when work starts or finishes, who maintains session state, and which operations are protected when multiple agents work concurrently. For command arguments and installation instructions, see the [task board guide](task-board.md) and [plugin guide](../plugins/taskix-manager/README.md).
 
-First decompose the requirement into a Task DAG, create or resolve every node’s Task ID, and configure each edge A → B with `task depend B_ID A_ID`. Verify the stored dependencies against the DAG before implementation. Each Task already has a note with managed frontmatter at this point. When taking up a Task, follow `claim → publish Plan in its note → start → execute and verify → done`. The agent makes decisions using the Skill, hooks respond to host events, and taskcli validates and persists task state.
+First decompose the requirement into a Task DAG, create or resolve every node’s Task ID, and configure each edge A → B with `task depend B_ID A_ID`. Verify the stored dependencies against the DAG before implementation. Each Task already has a note with managed frontmatter at this point. When taking up a Task, follow `claim → publish Plan in its note → start → execute and verify → done`. The agent makes decisions using the Skill, hooks respond to host events, and taskix validates and persists task state.
 
 ## 1. Responsibilities
 
@@ -11,11 +11,11 @@ First decompose the requirement into a Task DAG, create or resolve every node’
 | Agent | Understand requirements, decompose work, claim Tasks, write Plans, execute, and verify acceptance | A natural-language statement such as "finished" does not change database state |
 | Skill | Provide the agent with a workflow, command guidance, and document rules | Does not run continuously, acquire locks, execute tests, or enforce compliance |
 | Hook / Extension | Handle session events, inject task context, renew leases, and handle exits and resumption | Does not decompose work, generate Plans, or automatically call start or done |
-| taskcli / agentix-task | Validate state transitions, ownership, dependencies, revisions, and idempotency; persist changes | Does not judge business correctness or run acceptance commands from a Plan |
+| taskix / agentix-task | Validate state transitions, ownership, dependencies, revisions, and idempotency; persist changes | Does not judge business correctness or run acceptance commands from a Plan |
 | SQLite | Store Project, Inbox, Job, Task, and Plan metadata, leases, and events | Does not store complete Plan bodies or isolate code workspaces |
-| Obsidian files | Store Plans, Goal/Notes, and the human Project Inbox; display generated boards | Inbox imports human requests; Taskcli Sync submits supported Obsidian status edits through taskcli |
+| Obsidian files | Store Plans, Goal/Notes, and the human Project Inbox; display generated boards | Inbox imports human requests; Taskix Sync submits supported Obsidian status edits through taskix |
 
-The Skill defines working instructions, hooks adapt host events, and taskcli provides validated task operations. None replaces the others.
+The Skill defines working instructions, hooks adapt host events, and taskix provides validated task operations. None replaces the others.
 
 ## 2. Decomposing Work
 
@@ -86,7 +86,7 @@ The workflow establishes ownership before allowing Plan publication:
 ```mermaid
 sequenceDiagram
     participant A as Agent
-    participant C as taskcli / Service
+    participant C as taskix / Service
     participant D as SQLite
     participant F as Document directory
     A->>C: claim(task, executor, session)
@@ -120,11 +120,11 @@ A Job enters PENDING_REVIEW when at least one non-CANCELLED Task exists and ever
 
 ## 4. How the Skill Works
 
-The plugin's [agent-task-manager Skill](../plugins/agent-task-manager/skills/agent-task-manager/SKILL.md) is an instruction file for the model, not a background process. Once the host loads the plugin's skills directory, the agent uses it when relevant. Codex/Claude session-start hooks also remind the agent to use the Skill, but that reminder does not guarantee that the model has read or followed every instruction.
+The plugin's [taskix-manager Skill](../plugins/taskix-manager/skills/taskix-manager/SKILL.md) is an instruction file for the model, not a background process. Once the host loads the plugin's skills directory, the agent uses it when relevant. Codex/Claude session-start hooks also remind the agent to use the Skill, but that reminder does not guarantee that the model has read or followed every instruction.
 
 The Skill guides the agent to:
 
-1. Read `taskcli context --session <actual-host-session-id> --json` first and prioritize continuing an existing Job/Task.
+1. Read `taskix context --session <actual-host-session-id> --json` first and prioritize continuing an existing Job/Task.
 2. Decide whether the request needs durable tracking; do not create a Job for every short question.
 3. Discover or register the Project, create or reuse a Job, and decompose Tasks and dependencies.
 4. Draft and publish the Plan only after claim succeeds; do not keep writing that Task's Plan after a claim conflict.
@@ -146,31 +146,31 @@ A session query may return empty task fields when there is no active Task. It do
 
 ## 5. How Hooks and Extensions Work
 
-This document uses "hook layer" for both host integration mechanisms: Codex/Claude command hooks and Pi/OMP in-process extension callbacks. Both ultimately call the same taskcli.
+This document uses "hook layer" for both host integration mechanisms: Codex/Claude command hooks and Pi/OMP in-process extension callbacks. Both ultimately call the same taskix.
 
 ### 5.1 Codex / Claude: command hooks
 
-Codex explicitly loads [hooks/hooks.json](../plugins/agent-task-manager/hooks/hooks.json) and [hooks/codex.json](../plugins/agent-task-manager/hooks/codex.json). Claude discovers the shared file by default and adds only [hooks/claude.json](../plugins/agent-task-manager/hooks/claude.json) through its manifest. Repeating the shared file in Claude’s manifest would load it twice. These commands run the Node entrypoint [hooks/run.mjs](../plugins/agent-task-manager/hooks/run.mjs), which reads host event JSON from stdin and passes it to the shared runtime.
+Codex explicitly loads [hooks/hooks.json](../plugins/taskix-manager/hooks/hooks.json) and [hooks/codex.json](../plugins/taskix-manager/hooks/codex.json). Claude discovers the shared file by default and adds only [hooks/claude.json](../plugins/taskix-manager/hooks/claude.json) through its manifest. Repeating the shared file in Claude’s manifest would load it twice. These commands run the Node entrypoint [hooks/run.mjs](../plugins/taskix-manager/hooks/run.mjs), which reads host event JSON from stdin and passes it to the shared runtime.
 
 | Configured host event | Commands | Plugin behavior |
 | --- | --- | --- |
-| SessionStart | `taskcli hook session-start`, then `taskcli context` | Attempt to resume eligible Tasks; return the actual session ID, task facts, and a Skill reminder as additional context |
-| PreToolUse | `taskcli hook heartbeat`, then `taskcli context` | Renew active leases and surface Inbox cancellation facts |
-| PostToolUse | `taskcli hook heartbeat`, then `taskcli context` | Renew active leases and surface Inbox cancellation facts |
-| Stop | `taskcli hook heartbeat` | Renew leases without taking Inbox work or requesting continuation; the legacy `hook stop` command is a compatibility no-op |
-| Codex Interrupt | `taskcli hook interrupt` | Mark active Tasks as system BLOCKED with reason `session interrupted`; release leases and preserve Plans |
-| Claude PostToolUseFailure | `taskcli hook interrupt` only when `is_interrupt` is boolean `true` | Release interrupted work; ordinary failures neither renew nor release ownership |
-| SessionEnd | `taskcli hook session-end` | Mark the session's in-progress Tasks as system BLOCKED and release their leases |
+| SessionStart | `taskix hook session-start`, then `taskix context` | Attempt to resume eligible Tasks; return the actual session ID, task facts, and a Skill reminder as additional context |
+| PreToolUse | `taskix hook heartbeat`, then `taskix context` | Renew active leases and surface Inbox cancellation facts |
+| PostToolUse | `taskix hook heartbeat`, then `taskix context` | Renew active leases and surface Inbox cancellation facts |
+| Stop | `taskix hook heartbeat` | Renew leases without taking Inbox work or requesting continuation; the legacy `hook stop` command is a compatibility no-op |
+| Codex Interrupt | `taskix hook interrupt` | Mark active Tasks as system BLOCKED with reason `session interrupted`; release leases and preserve Plans |
+| Claude PostToolUseFailure | `taskix hook interrupt` only when `is_interrupt` is boolean `true` | Release interrupted work; ordinary failures neither renew nor release ownership |
+| SessionEnd | `taskix hook session-end` | Mark the session's in-progress Tasks as system BLOCKED and release their leases |
 
-Command hooks do not stay running or start a heartbeat daemon. There is no periodic heartbeat without tool events; a single long tool call or an idle gap exceeding 15 minutes can still expire the lease. A PostToolUse heartbeat after expiry or interruption cannot revive the old lease; session resumption or a new claim is required. Stop means normal turn completion, not user interruption. Interrupt/SessionEnd cleanup requests a three-second hook timeout; other command hooks allow 30 seconds. The host may impose a shorter total shutdown budget. See the [lifecycle guide](../plugins/agent-task-manager/README.md#lifecycle-behavior) for event availability, host requirements, and explicit cleanup when no event arrives.
+Command hooks do not stay running or start a heartbeat daemon. There is no periodic heartbeat without tool events; a single long tool call or an idle gap exceeding 15 minutes can still expire the lease. A PostToolUse heartbeat after expiry or interruption cannot revive the old lease; session resumption or a new claim is required. Stop means normal turn completion, not user interruption. Interrupt/SessionEnd cleanup requests a three-second hook timeout; other command hooks allow 30 seconds. The host may impose a shorter total shutdown budget. See the [lifecycle guide](../plugins/taskix-manager/README.md#lifecycle-behavior) for event availability, host requirements, and explicit cleanup when no event arrives.
 
-PreToolUse renews leases and supplies cancellation facts. It does not check whether the next tool will bypass taskcli to write a Plan, and it is not a general file-write interceptor. The entrypoint returns an error when a hook fails; how the host displays or handles that error depends on its runtime behavior. A failed hook must not be treated as a successful renewal.
+PreToolUse renews leases and supplies cancellation facts. It does not check whether the next tool will bypass taskix to write a Plan, and it is not a general file-write interceptor. The entrypoint returns an error when a hook fails; how the host displays or handles that error depends on its runtime behavior. A failed hook must not be treated as a successful renewal.
 
 These descriptions cover the repository's configuration and implementation, not verified live loading in every host version. The host must load the plugin correctly and satisfy its hook-enablement and trust requirements. Installation entrypoints are documented in the plugin guide.
 
 ### 5.2 Pi / OMP: extension callbacks and a structured tool
 
-Both [pi.ts](../plugins/agent-task-manager/extensions/pi.ts) and [omp.ts](../plugins/agent-task-manager/extensions/omp.ts) call the shared `registerExtension`. Each host selects its entrypoint through its package configuration.
+Both [pi.ts](../plugins/taskix-manager/extensions/pi.ts) and [omp.ts](../plugins/taskix-manager/extensions/omp.ts) call the shared `registerExtension`. Each host selects its entrypoint through its package configuration.
 
 | Callback or tool | Plugin behavior |
 | --- | --- |
@@ -180,7 +180,7 @@ Both [pi.ts](../plugins/agent-task-manager/extensions/pi.ts) and [omp.ts](../plu
 | Pi agent_end + agent_settled | Release interrupted work at idle settle; successful final responses leave Inbox entries pending for explicit user input |
 | OMP agent_end | Release aborted work when `willContinue` is false; successful final responses leave Inbox entries pending for explicit user input |
 | session_shutdown | Stop the timer, cancel in-flight renewal, and run session-end |
-| taskcli tool | Accept an array of argument strings, invoke the actual taskcli process, and return JSON results or errors |
+| taskix tool | Accept an array of argument strings, invoke the actual taskix process, and return JSON results or errors |
 
 For example, the agent supplies:
 
@@ -200,7 +200,7 @@ Pi/OMP reports periodic heartbeat failures and retries on later ticks. Interrupt
 
 ### 5.3 Agentix IM integration
 
-taskcli does not depend on the IM bridge process. Attached sessions can use `/inboxes` to browse the Project queue and `/inbox <content>` to append one requirement with durable message deduplication, including on read-only agent attachments. When Agentix task boards are enabled, IM can browse Tasks, and a bound session can use buttons to claim, start, or change state. Agentix validates these actions through the same Service and handles resumption or exit processing from session events.
+taskix does not depend on the IM bridge process. Attached sessions can use `/inboxes` to browse the Project queue and `/inbox <content>` to append one requirement with durable message deduplication, including on read-only agent attachments. When Agentix task boards are enabled, IM can browse Tasks, and a bound session can use buttons to claim, start, or change state. Agentix validates these actions through the same Service and handles resumption or exit processing from session events.
 
 IM does not create Plans or replace the Skill. Its existing refresh loop also consumes task events and sends waiting-user, blocked, failed, or Job review, rejection, or completion notifications to the corresponding session. This is not a file watcher.
 
@@ -234,7 +234,7 @@ Two request-level protections complement these locks:
 Automatic resumption applies to system interruptions, not manual blocks:
 
 1. Claim enters PLANNING; heartbeats are required throughout planning too.
-2. SessionEnd or a detected interruption marks the Task as system BLOCKED and releases its lease, preserving its Plan. A forcibly killed process, idle client disconnect, or host without the matching event may skip cleanup. After stopping that session’s work, explicit `taskcli hook interrupt --session SESSION_ID` or `taskcli hook session-end --session SESSION_ID` can release its leases.
+2. SessionEnd or a detected interruption marks the Task as system BLOCKED and releases its lease, preserving its Plan. A forcibly killed process, idle client disconnect, or host without the matching event may skip cleanup. After stopping that session’s work, explicit `taskix hook interrupt --session SESSION_ID` or `taskix hook session-end --session SESSION_ID` can release its leases.
 3. Without a normal exit event, later CLI/library operations or Agentix refreshes check lease expiry and mark expired Tasks as system BLOCKED. No continuously running expiry scanner is required.
 4. SessionStart for the same session attempts to reclaim its previously system-blocked Tasks. Resumption fails if another executor has taken over, the Job has closed, or other claim constraints are not met.
 5. Successful resumption issues a new token and returns to PLANNING. It does not automatically resume execution, even if the previous phase was EXECUTING.
@@ -246,24 +246,24 @@ This distinction prevents a session restart from being mistaken for confirmation
 
 ## 8. Documents and the Obsidian Status Bridge
 
-SQLite is authoritative for task status, dependencies, revisions, ownership, and other metadata. Board, Dashboard, and Job task sections are logically read-only views generated from those facts. The optional desktop Taskcli Sync plugin listens to saved status edits and submits supported changes through taskcli.
+SQLite is authoritative for task status, dependencies, revisions, ownership, and other metadata. Board, Dashboard, and Job task sections are logically read-only views generated from those facts. The optional desktop Taskix Sync plugin listens to saved status edits and submits supported changes through taskix.
 
 Obsidian uses a native `Dashboard.base` table with clickable Name, Status, and Updated formula columns, filtered to active generated project Boards and sorted by recent activity. Board contains project metadata; there is no separate meta note or Project link on Board. Sync safely migrates registered legacy files after publishing replacements. Job task sections render dependency arrows, seven statuses, and task links in Mermaid, without repeating Dependencies prose.
 
-`taskcli` generates `Board.md` with a Job Base above a Task Base. Each `tasknotesKanban` view selects its exact project folder, entity tag, project ID, and unarchived notes. Pinned status columns remain visible while unrelated empty statuses are hidden. Each Task has one file under `Tasks/`, whose frontmatter records status and metadata and whose body contains the Plan. Jobs link these notes directly, so their checklists and authored Plan checklists do not duplicate task cards. Internal note links use Obsidian wikilinks. Rendering requires TaskNotes and Bases; generating notes does not modify vault settings.
+`taskix` generates `Board.md` with a Job Base above a Task Base. Each `tasknotesKanban` view selects its exact project folder, entity tag, project ID, and unarchived notes. Pinned status columns remain visible while unrelated empty statuses are hidden. Each Task has one file under `Tasks/`, whose frontmatter records status and metadata and whose body contains the Plan. Jobs link these notes directly, so their checklists and authored Plan checklists do not duplicate task cards. Internal note links use Obsidian wikilinks. Rendering requires TaskNotes and Bases; generating notes does not modify vault settings.
 
-Task boards require an Obsidian vault with TaskNotes and Bases enabled. Initialize against the vault with `taskcli init --root /existing/vault`. SQLite retains ownership of task state, and state changes must go through taskcli or Agentix.
+Task boards require an Obsidian vault with TaskNotes and Bases enabled. Initialize against the vault with `taskix init --root /existing/vault`. SQLite retains ownership of task state, and state changes must go through taskix or Agentix.
 
-Taskcli Sync debounces saved status changes, verifies the registered note identity and revision, and serializes CLI writes with idempotency keys. It never obtains or borrows leases. Unsupported transitions and ownership conflicts restore authoritative properties and show a Notice. Startup drift is reconciled without replaying offline edits. See the [supported status edits](../plugins/agent-task-manager/obsidian/README.md#status-edits).
+Taskix Sync debounces saved status changes, verifies the registered note identity and revision, and serializes CLI writes with idempotency keys. It never obtains or borrows leases. Unsupported transitions and ownership conflicts restore authoritative properties and show a Notice. Startup drift is reconciled without replaying offline edits. See the [supported status edits](../plugins/taskix-manager/obsidian/README.md#status-edits).
 
 Plan bodies live in the Task notes, alongside frontmatter properties. Projection preserves editable Goal/Notes sections, while an explicit `job update --goal` replaces the Goal. Agents must publish Plans through `plan create/revise`, not overwrite registered files directly.
 
-- Agents use the separate Obsidian Skill to author bodies with `[[wikilinks]]`. If a temporary draft is needed, use a session-specific path and publish through taskcli with the lease.
-- taskcli generates directories and projections deterministically. It does not start a model or automatically invoke the Obsidian Skill.
+- Agents use the separate Obsidian Skill to author bodies with `[[wikilinks]]`. If a temporary draft is needed, use a session-specific path and publish through taskix with the lease.
+- taskix generates directories and projections deterministically. It does not start a model or automatically invoke the Obsidian Skill.
 
 Task-state writes normally commit to the database before updating projections. A projection failure returns `projection_pending`, meaning the state change succeeded and `sync` should repair the view; do not recreate the Task. Plan publication validates and writes the file before registering metadata transactionally. The filesystem and SQLite do not share one atomic transaction, so an interruption can leave an unregistered file. The implementation checks existing content at that path instead of blindly overwriting it.
 
-Edits to generated Base definitions and other managed metadata are overwritten by projection. Without Taskcli Sync, saved status edits also remain local until projection restores them. Manual Plan-body edits can refresh hashes through `sync` or `plan show`, but this provides no concurrent ownership protection and is not an agent collaboration workflow.
+Edits to generated Base definitions and other managed metadata are overwritten by projection. Without Taskix Sync, saved status edits also remain local until projection restores them. Manual Plan-body edits can refresh hashes through `sync` or `plan show`, but this provides no concurrent ownership protection and is not an agent collaboration workflow.
 
 ## 9. Extending the System for Agent Teams
 
@@ -277,13 +277,13 @@ A future layer could assign the coordinator responsibility for requirements and 
 
 | Mechanism | Code or tests |
 | --- | --- |
-| Agent working instructions | [SKILL.md](../plugins/agent-task-manager/skills/agent-task-manager/SKILL.md), [command reference](../plugins/agent-task-manager/skills/agent-task-manager/references/commands.md) |
-| Four-host hooks, context injection, and tool adaptation | [runtime.mjs](../plugins/agent-task-manager/runtime.mjs), [hooks.json](../plugins/agent-task-manager/hooks/hooks.json) |
-| Context and hook command entrypoints | [taskcli/main.rs](../crates/taskcli/src/main.rs) |
+| Agent working instructions | [SKILL.md](../plugins/taskix-manager/skills/taskix-manager/SKILL.md), [command reference](../plugins/taskix-manager/skills/taskix-manager/references/commands.md) |
+| Four-host hooks, context injection, and tool adaptation | [runtime.mjs](../plugins/taskix-manager/runtime.mjs), [hooks.json](../plugins/taskix-manager/hooks/hooks.json) |
+| Context and hook command entrypoints | [taskix/main.rs](../crates/taskix/src/main.rs) |
 | Claim, start, done, and session-resumption state machine | [mutations.rs](../crates/agentix-task/src/mutations.rs) |
 | Write transactions, lease expiry, and idempotent replay | [store.rs](../crates/agentix-task/src/store.rs), [schema.sql](../crates/agentix-task/src/schema.sql) |
 | Plan publication, output locking, and projection | [projection.rs](../crates/agentix-task/src/projection.rs) |
-| Concurrent claims, state transitions, and resumption tests | [task_system.rs](../crates/agentix-task/tests/task_system.rs), [CLI integration tests](../crates/taskcli/tests/cli.rs) |
-| Actual CLI and host-adapter entrypoint integration tests | [integration.mjs](../plugins/agent-task-manager/tests/integration.mjs) |
+| Concurrent claims, state transitions, and resumption tests | [task_system.rs](../crates/agentix-task/tests/task_system.rs), [CLI integration tests](../crates/taskix/tests/cli.rs) |
+| Actual CLI and host-adapter entrypoint integration tests | [integration.mjs](../plugins/taskix-manager/tests/integration.mjs) |
 
 Existing tests cover competing CLI processes, phase transitions, stale tokens, planning resumption without a Plan, Plan validation, idempotent retries, and hooks calling the actual CLI. Host-adapter tests use event and API harnesses; they do not establish that a real model always decomposes work correctly, reads the Skill, or verifies acceptance. The opt-in Obsidian desktop test checks Dashboard tables, project filtering and links, TaskNotes cards, and rendered note navigation in a foreground vault. Live host loading and trust remain separate acceptance checks. See the [coverage map](integration-coverage.md) for test entrypoints and boundaries.

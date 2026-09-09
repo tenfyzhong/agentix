@@ -183,8 +183,8 @@ async fn job_sync_removes_legacy_dependency_prose_and_preserves_authored_notes()
                 "\n  Dependencies: Legacy prerequisite\n\n## Notes",
             )
             .replace(
-                "<!-- taskcli:notes:start -->",
-                "<!-- taskcli:notes:start -->\nDependencies: Keep this authored note.",
+                "<!-- taskix:notes:start -->",
+                "<!-- taskix:notes:start -->\nDependencies: Keep this authored note.",
             ),
     )
     .unwrap();
@@ -253,8 +253,8 @@ async fn job_graph_tracks_nodes_dependencies_and_renames() {
     std::fs::write(
         &path,
         document.replace(
-            "<!-- taskcli:notes:start -->",
-            "<!-- taskcli:notes:start -->\nKeep my notes.",
+            "<!-- taskix:notes:start -->",
+            "<!-- taskix:notes:start -->\nKeep my notes.",
         ),
     )
     .unwrap();
@@ -364,7 +364,7 @@ async fn job_graph_escapes_task_labels_as_literal_text() {
 #[tokio::test]
 async fn job_graph_displays_all_seven_task_statuses_with_tasknotes_colors() {
     let settings: Value = serde_json::from_str(include_str!(
-        "../../../../plugins/agent-task-manager/obsidian/tasknotes-settings.json"
+        "../../../../plugins/taskix-manager/obsidian/tasknotes-settings.json"
     ))
     .unwrap();
     let f = Fixture::new().await;

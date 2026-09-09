@@ -4,7 +4,7 @@ Thank you for helping improve Agentix. Contributions may include code, tests, do
 
 ## Development environment
 
-Agentix is a Rust workspace. Install the toolchain pinned in `rust-toolchain.toml`; it includes Rust 1.95, rustfmt, and Clippy. Node.js 24+ and npm run the task plugin tests, including its TypeScript entrypoints against Cargo's freshly compiled `taskcli`. Linux CI also installs `protobuf-compiler`.
+Agentix is a Rust workspace. Install the toolchain pinned in `rust-toolchain.toml`; it includes Rust 1.95, rustfmt, and Clippy. Node.js 24+ and npm run the task plugin tests, including its TypeScript entrypoints against Cargo's freshly compiled `taskix`. Linux CI also installs `protobuf-compiler`.
 
 CI uses Rust 1.95.0. Ensure `cargo`, `rustc`, `cargo-clippy`, and `rustfmt` all come from that toolchain rather than mixing Homebrew and rustup installations.
 
@@ -43,7 +43,7 @@ Agentix uses test-driven development for features, bug fixes, refactors, and oth
 
 Documentation-only and configuration-only changes do not require a failing test first. Keep `README.md` and the documents under `docs/` synchronized with user-visible behavior and architecture changes.
 
-After changing CLI commands or options, run `make completions` and commit the updated files for both CLIs. Tests verify that the checked-in completions match their CLI and that taskcli generation does not read configuration or create task state. Checked-in shell completions retain LF line endings on every platform through `.gitattributes`.
+After changing CLI commands or options, run `make completions` and commit the updated files for both CLIs. Tests verify that the checked-in completions match their CLI and that taskix generation does not read configuration or create task state. Checked-in shell completions retain LF line endings on every platform through `.gitattributes`.
 
 ## Tests and external dependencies
 
@@ -66,14 +66,14 @@ make check
 This is equivalent to:
 
 ```sh
-npm ci --ignore-scripts --prefix plugins/agent-task-manager
+npm ci --ignore-scripts --prefix plugins/taskix-manager
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
-node --test plugins/agent-task-manager/tests/*.test.mjs
+node --test plugins/taskix-manager/tests/*.test.mjs
 ```
 
-`make check` installs the locked plugin dependencies automatically. When running Cargo directly, run the npm command above first: the taskcli integration suite imports the actual Pi/OMP TypeScript entrypoints. Node is required; these checks never silently skip missing dependencies.
+`make check` installs the locked plugin dependencies automatically. When running Cargo directly, run the npm command above first: the taskix integration suite imports the actual Pi/OMP TypeScript entrypoints. Node is required; these checks never silently skip missing dependencies.
 
 The optional desktop Obsidian smoke test is ignored by default and requires an explicitly selected open test vault. It creates and removes only its own temporary files and tab. Bring the selected vault window to the foreground before running it. See [task board validation](docs/task-board.md#validation) for the command and the [integration coverage map](docs/integration-coverage.md) for automated boundaries and separate live-system acceptance.
 
@@ -83,11 +83,11 @@ Codex uses a stateful mock app-server under `crates/agentix-codex/tests/support/
 
 Channel shutdown deadline tests use Tokio's paused clock to verify the shared grace period and task cancellation independently of database and filesystem latency. Service lifecycle tests also exercise startup and shutdown with a temporary SQLite database. The test suite checks the non-Unix Codex compatibility API on Unix hosts as well, so Windows-only API omissions are caught locally.
 
-GitHub Actions keeps formatting and Clippy in `ci.yml`. The `tests.yml` workflow runs the full suite on Linux and macOS. On Windows, it checks the workspace and runs the native TCP control, task library, and taskcli suites. Task timestamp tests use `TZ` overrides on Unix; Windows CI switches the native system time zone to verify UTC+09:00, UTC-05:00, and UTC, then restores the original setting. Both workflows run for pull requests and pushes to `main`, except when every changed file is Markdown (`.md`). Changes that include any other file still run both workflows. The Tests workflow also supports manual dispatch regardless of the changed files.
+GitHub Actions keeps formatting and Clippy in `ci.yml`. The `tests.yml` workflow runs the full suite on Linux and macOS. On Windows, it checks the workspace and runs the native TCP control, task library, and taskix suites. Task timestamp tests use `TZ` overrides on Unix; Windows CI switches the native system time zone to verify UTC+09:00, UTC-05:00, and UTC, then restores the original setting. Both workflows run for pull requests and pushes to `main`, except when every changed file is Markdown (`.md`). Changes that include any other file still run both workflows. The Tests workflow also supports manual dispatch regardless of the changed files.
 
 ## Workspace architecture
 
-The main crates are `agentix-domain` (contracts), `agentix-storage` (runtime persistence), `agentix-core` (application services), `agentix-codex`, `agentix-bridge`, `agentix-telegram`, `agentix-feishu`, the independent `agentix-task` library, and the `agentix` / `taskcli` executables. See [task board design and usage](docs/task-board.md) for the task database and document projection boundary.
+The main crates are `agentix-domain` (contracts), `agentix-storage` (runtime persistence), `agentix-core` (application services), `agentix-codex`, `agentix-bridge`, `agentix-telegram`, `agentix-feishu`, the independent `agentix-task` library, and the `agentix` / `taskix` executables. See [task board design and usage](docs/task-board.md) for the task database and document projection boundary.
 
 The core exposes a small common agent interface plus optional queue, attached-session control, and workspace-runtime ports. A serialized runtime loop feeds IM and agent events into coordinator-owned session, turn, interaction, and rmux state. See the [architecture document](docs/architecture.md) for the state/effect and retry boundaries.
 
@@ -146,12 +146,12 @@ Pushing the tag starts the `Release` workflow, which:
 1. verifies that the tag points at the checked-out commit and contains a supported semantic version;
 2. applies that version to the workspace manifest and lockfile, then builds native binaries for macOS arm64, Linux x86_64/arm64, and Windows x86_64;
 3. verifies each binary's `--version` against the tag;
-4. publishes separate `agentix-<tag>-<target>` and `taskcli-<tag>-<target>` archives, a shared `SHA256SUMS`, and generated notes to the matching GitHub Release;
+4. publishes separate `agentix-<tag>-<target>` and `taskix-<tag>-<target>` archives, a shared `SHA256SUMS`, and generated notes to the matching GitHub Release;
 5. invokes the Homebrew workflow after the GitHub Release is available.
 
-Each tool's archive includes its own binary, example configuration, and shell completions. Only the taskcli archive includes task documentation and the agent-task-manager plugin. All targets have `.tar.gz` archives; Windows additionally has `.zip` archives for both tools. Packaging tests execute the workflow's packaging and checksum steps against fixture binaries to verify archive contents and separation.
+Each tool's archive includes its own binary, example configuration, and shell completions. Only the taskix archive includes task documentation and the taskix-manager plugin. All targets have `.tar.gz` archives; Windows additionally has `.zip` archives for both tools. Packaging tests execute the workflow's packaging and checksum steps against fixture binaries to verify archive contents and separation.
 
-The Homebrew formula is maintained exclusively in [`tenfyzhong/homebrew-tap`](https://github.com/tenfyzhong/homebrew-tap/blob/main/Formula/agentix.rb); edit dependencies, installation steps, and service settings there. Do not add a formula template to this repository. The formula applies its source tag version to the Cargo metadata before its locked source build. The workflow checks out the tap, updates the existing formula's source URL and checksum, and removes stale bottle metadata while preserving the tap's other settings. It then builds an arm64 macOS bottle, uploads it to the release, adds its metadata, and opens or updates a PR in the tap. Automatic and manually dispatched publishing both require a `HOMEBREW_TAP_TOKEN` with permission to create branches and pull requests.
+The Agentix Homebrew formula is maintained in [`tenfyzhong/homebrew-tap`](https://github.com/tenfyzhong/homebrew-tap/blob/main/Formula/agentix.rb); edit dependencies, installation steps, and service settings there. Keep formulas exclusively in the tap repository. The formula applies its source tag version to the Cargo metadata before its locked source build. The workflow checks out the tap, updates the existing formula's source URL and checksum, and removes stale bottle metadata while preserving the tap's other settings. It then builds an arm64 macOS bottle, uploads it to the release, adds its metadata, and opens or updates a PR in the tap. Automatic and manually dispatched publishing both require a `HOMEBREW_TAP_TOKEN` with permission to create branches and pull requests.
 
 When the source URL changes for a new tag, the Homebrew workflow also removes the formula's old `revision` so the new upstream version starts at revision zero. Re-running the same tag preserves its revision while rebuilding the bottle.
 
@@ -164,3 +164,18 @@ Before tagging a release:
 5. Restart Agentix during an active turn and verify that the original message recovers its Stop action and completes in place.
 6. Restart the Codex daemon and verify reconnect and subscription recovery.
 7. Attach a fresh Codex TUI before its first prompt, send that prompt from IM, and verify that the session materializes and resumes.
+
+### Taskix Homebrew formula
+
+Maintain `Formula/taskix.rb` exclusively in `tenfyzhong/homebrew-tap`.
+The local tap repository is `/opt/homebrew/Library/Taps/tenfyzhong/homebrew-tap`;
+use its dedicated branch worktree for edits. Agentix contains no formula template.
+The release workflow checks out the tap and updates its formula with the published
+tag URL and archive SHA-256, then builds and tests the bottle and opens a tap PR.
+It also supports adding the first stable release to a HEAD-only tap formula.
+
+Merge the Taskix source change and tap formula before publishing the first
+Taskix release. Until that release formula is published, use
+`brew install --HEAD tenfyzhong/tap/taskix` after the source rename is merged.
+The release workflow requires `HOMEBREW_TAP_TOKEN` with permission to create
+formula update PRs in the tap repository.

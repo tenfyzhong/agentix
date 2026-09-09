@@ -6,10 +6,10 @@ use serde_json::{Value, json};
 use crate::projection::atomic_write;
 use crate::{InboxEntry, InboxStatus, Project, Service, Snapshot, WriteOptions, new_id};
 
-const END: &str = "<!-- taskcli:inbox:end -->";
-const ID: &str = " <!-- taskcli:entry:";
-const LEGACY_RECEIPT: &str = "  <!-- taskcli:entry-state -->";
-const STATE: &str = " <!-- taskcli:entry-state ";
+const END: &str = "<!-- taskix:inbox:end -->";
+const ID: &str = " <!-- taskix:entry:";
+const LEGACY_RECEIPT: &str = "  <!-- taskix:entry-state -->";
+const STATE: &str = " <!-- taskix:entry-state ";
 
 struct ParsedEntry {
     id: Option<String>,
@@ -20,7 +20,7 @@ struct ParsedEntry {
 }
 
 fn start(project: &str) -> String {
-    format!("<!-- taskcli:inbox:start project={project} -->")
+    format!("<!-- taskix:inbox:start project={project} -->")
 }
 
 fn strip_inline_receipt(header: &str) -> Result<&str> {
@@ -128,7 +128,7 @@ fn parse(source: &str, project: &str) -> Result<Vec<ParsedEntry>> {
             // A canonical [-] receipt can be left behind by an interrupted
             // reopen projection. Only a changed checkbox requests cancellation.
             cancelled: line.as_bytes()[3] == b'-'
-                && !line.contains(" <!-- taskcli:entry-state CANCELLED "),
+                && !line.contains(" <!-- taskix:entry-state CANCELLED "),
             span: offset..end_offset,
             header_end: offset + line.trim_end_matches(['\r', '\n']).len(),
         });

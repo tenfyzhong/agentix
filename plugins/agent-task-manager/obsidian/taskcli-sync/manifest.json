@@ -1,9 +1,0 @@
-{
-  "id": "taskcli-sync",
-  "name": "Taskcli Sync",
-  "version": "0.1.0",
-  "minAppVersion": "1.10.1",
-  "description": "Synchronize Task and Job status edits with taskcli, restoring rejected changes.",
-  "author": "tenfyzhong",
-  "isDesktopOnly": true
-}

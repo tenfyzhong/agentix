@@ -29,7 +29,7 @@ brew tap tenfyzhong/tap
 brew install agentix
 ```
 
-The Homebrew formulae for Agentix and the standalone task manager, taskcli, are maintained in [tenfyzhong/homebrew-tap](https://github.com/tenfyzhong/homebrew-tap). Release automation updates both formulae and publishes macOS arm64 bottles. Install taskcli with `brew install tenfyzhong/tap/taskcli`. The Homebrew workflow can also be run manually for an existing release tag, selecting `agentix`, `taskcli`, or `all` (the default) to publish the corresponding bottles and formula pull requests.
+The Homebrew formulae for Agentix and the standalone task manager, taskix, are maintained in [tenfyzhong/homebrew-tap](https://github.com/tenfyzhong/homebrew-tap). Release automation updates both formulae and publishes macOS arm64 bottles. Install taskix with `brew install tenfyzhong/tap/taskix`. The Homebrew workflow can also be run manually for an existing release tag, selecting `agentix`, `taskix`, or `all` (the default) to publish the corresponding bottles and formula pull requests.
 
 The Codex backend requires Codex CLI 0.153.0 or newer from the official standalone installer. The Homebrew Codex package does not include the managed app-server layout Agentix needs.
 
@@ -48,18 +48,18 @@ Expand-Archive $archive.FullName -DestinationPath .\agentix
 $env:Path = "$(Resolve-Path .\agentix);$env:Path"
 ```
 
-Keep the extracted directory in a stable location and add it to your user `PATH`. The current native IM backends require macOS/Linux and a Unix socket. Windows packages remain useful for standalone taskcli and task plugins; they do not provide native IM bridging for Codex, Pi, OMP, or Claude.
+Keep the extracted directory in a stable location and add it to your user `PATH`. The current native IM backends require macOS/Linux and a Unix socket. Windows packages remain useful for standalone taskix and task plugins; they do not provide native IM bridging for Codex, Pi, OMP, or Claude.
 
 #### Separate release archives
 
-Each [GitHub release](https://github.com/tenfyzhong/agentix/releases/latest) publishes Agentix and taskcli separately, using the same version and targets (macOS arm64, Linux x86_64/arm64, and Windows x86_64):
+Each [GitHub release](https://github.com/tenfyzhong/agentix/releases/latest) publishes Agentix and taskix separately, using the same version and targets (macOS arm64, Linux x86_64/arm64, and Windows x86_64):
 
 - `agentix-<version>-<target>.tar.gz`: Agentix, its example configuration, and its shell completions.
-- `taskcli-<version>-<target>.tar.gz`: taskcli, its example configuration, its shell completions, task documentation, and `plugins/agent-task-manager/`.
+- `taskix-<version>-<target>.tar.gz`: taskix, its example configuration, its shell completions, task documentation, and `plugins/taskix-manager/`.
 
 Both archives include `README.md` and `LICENSE`. Windows also has `.zip` archives for each tool. The shared `SHA256SUMS` covers both tools and all archive formats. Verify the downloaded archive against its matching checksum before extracting it, then add the extracted binary's directory to `PATH`.
 
-Download the taskcli archive to use the task board independently; Agentix is not required. Download both archives if you need both tools. Keep the taskcli plugin directory at a stable path and follow the [plugin activation guide](../plugins/agent-task-manager/README.md).
+Download the taskix archive to use the task board independently; Agentix is not required. Download both archives if you need both tools. Keep the taskix plugin directory at a stable path and follow the [plugin activation guide](../plugins/taskix-manager/README.md).
 
 #### Build from source
 
@@ -69,7 +69,7 @@ Install the Rust toolchain declared by `rust-toolchain.toml`, then run:
 make release
 ```
 
-The binaries are written to `target/release/agentix` and `target/release/taskcli` (`.exe` on Windows).
+The binaries are written to `target/release/agentix` and `target/release/taskix` (`.exe` on Windows).
 
 ### rmux (optional)
 
@@ -80,14 +80,14 @@ See [rmux workspaces](usage.md#rmux-workspaces) for details.
 ### Shell completions
 
 Both CLIs support `completions bash`, `completions zsh`, and `completions fish`.
-For example, use `agentix completions bash` or `taskcli completions bash`.
+For example, use `agentix completions bash` or `taskix completions bash`.
 Generation requires no configuration, running server, or task database.
 
 For bash, add this line to `~/.bashrc` (or `~/.bash_profile` on macOS):
 
 ```bash
 source <(agentix completions bash)
-source <(taskcli completions bash)
+source <(taskix completions bash)
 ```
 
 For zsh, save the completion file:
@@ -95,7 +95,7 @@ For zsh, save the completion file:
 ```zsh
 mkdir -p ~/.zsh/completions
 agentix completions zsh > ~/.zsh/completions/_agentix
-taskcli completions zsh > ~/.zsh/completions/_taskcli
+taskix completions zsh > ~/.zsh/completions/_taskix
 ```
 
 Add the following to `~/.zshrc`, placing the `fpath` line before any existing
@@ -113,13 +113,13 @@ For fish:
 ```fish
 mkdir -p ~/.config/fish/completions
 agentix completions fish > ~/.config/fish/completions/agentix.fish
-taskcli completions fish > ~/.config/fish/completions/taskcli.fish
+taskix completions fish > ~/.config/fish/completions/taskix.fish
 ```
 
 Restart your shell after installation. Regenerate saved files after upgrading
 either CLI. Source checkouts include ready-to-use files
-in `completions/`: `agentix.bash`, `_agentix`, `agentix.fish`, `taskcli.bash`,
-`_taskcli`, and `taskcli.fish`. Each release archive includes only its own CLI's
+in `completions/`: `agentix.bash`, `_agentix`, `agentix.fish`, `taskix.bash`,
+`_taskix`, and `taskix.fish`. Each release archive includes only its own CLI's
 three completion files. Enable only the CLIs you have installed. You can
 source the bash files or copy the zsh/fish files to the directories above.
 
@@ -220,7 +220,7 @@ If the selected channel has no configured owner, keep `agentix serve` running, e
 - Owner allowlists, one-time owner claiming, group mention requirements, event deduplication, and single-use actions
 - Durable bindings, restart recovery, process-exit notifications, and automatic Codex reattachment
 - Streamed in-place responses, background completion notifications, and reply context
-- Standalone `taskcli`: SQLite jobs with dependencies displayed as Mermaid graphs showing seven task statuses in a light palette shared with TaskNotes and clickable note links, concurrent task claims with lease release on supported host interruptions and session shutdown, task notes tagged `task` and `agent/task` with prerequisite and revision metadata, audit events, a compact clickable project Dashboard Base, and generated TaskNotes boards containing project metadata in Obsidian vaults
+- Standalone `taskix`: SQLite jobs with dependencies displayed as Mermaid graphs showing seven task statuses in a light palette shared with TaskNotes and clickable note links, concurrent task claims with lease release on supported host interruptions and session shutdown, task notes tagged `task` and `agent/task` with prerequisite and revision metadata, audit events, a compact clickable project Dashboard Base, and generated TaskNotes boards containing project metadata in Obsidian vaults
 - Optional IM task controls and a shared Codex, Claude, Pi, and OMP plugin, with stable interfaces for future Agent Team orchestration
 
 While `agentix serve` is running, Agentix checks running Codex sessions for completed turns every ten seconds using read-only history queries, including sessions that have never been attached or were detached from IM. Background monitoring does not resume sessions or acquire their writer locks. New completions include the completed turn's prompt and response, a Background label, and an Attach button. Feishu uses a purple header and a grey quote area; Telegram uses a ⚫ Background marker and blockquotes. Notifications go to authenticated IM conversations known to the service. Codex subagent sessions do not generate standalone completion notices; parent sessions and existing attached or draining turn cards continue updating normally. Send the bot `/help` once to register a conversation for these notifications; attaching a session is optional.
@@ -251,10 +251,10 @@ Add the following to `~/.config/agentix/config.toml`, then restart Agentix to br
 ```toml
 [task_board]
 enable = true
-config = "~/.config/taskcli/config.toml"
+config = "~/.config/taskix/config.toml"
 ```
 
-`task_board.enable` defaults to `false`, including when the section contains only a `config` path. When disabled, Agentix does not load the taskcli configuration or start the task board, and IM menus and help omit task-board commands. Set `enable = true` to enable the integration. The referenced taskcli configuration must then already exist. Agentix opens the database specified there and creates it if missing; use the same configuration as your taskcli writers to see their existing work. Restart Agentix after changing this section. When disabled, typed board commands report `Task board is not configured.`
+`task_board.enable` defaults to `false`, including when the section contains only a `config` path. When disabled, Agentix does not load the taskix configuration or start the task board, and IM menus and help omit task-board commands. Set `enable = true` to enable the integration. The referenced taskix configuration must then already exist. Agentix opens the database specified there and creates it if missing; use the same configuration as your taskix writers to see their existing work. Restart Agentix after changing this section. When disabled, typed board commands report `Task board is not configured.`
 
 | Command | View |
 | --- | --- |

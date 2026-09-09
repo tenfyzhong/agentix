@@ -27,7 +27,7 @@ async fn inbox_review_marker_migration_preserves_state_and_authored_details() {
     }
 }
 
-const END: &str = "<!-- taskcli:inbox:end -->";
+const END: &str = "<!-- taskix:inbox:end -->";
 
 #[tokio::test]
 async fn inbox_pending_review_allows_next_claim_and_rejection_blocks_it() {
@@ -507,8 +507,8 @@ async fn inbox_rejects_reserved_control_markers_before_committing_a_submission()
     let f = fixture().await;
     let before = entries(&f).await;
     for content in [
-        "Request\n<!-- taskcli:inbox:end -->",
-        "Request\n<!-- taskcli:entry-state --> TODO",
+        "Request\n<!-- taskix:inbox:end -->",
+        "Request\n<!-- taskix:entry-state --> TODO",
     ] {
         let result = f
             .service
@@ -625,9 +625,9 @@ async fn inbox_metadata_stays_on_the_header_with_status_in_a_comment() {
     let source = std::fs::read_to_string(path(&f)).unwrap();
     let revision = entries(&f).await[0]["revision"].as_i64().unwrap();
     assert!(source.contains(&format!(
-        "- [ ] Request <!-- taskcli:entry:{id} --> <!-- taskcli:entry-state TODO revision={revision} -->\n  Details with **Markdown**.\n  - [ ] Acceptance\n"
+        "- [ ] Request <!-- taskix:entry:{id} --> <!-- taskix:entry-state TODO revision={revision} -->\n  Details with **Markdown**.\n  - [ ] Acceptance\n"
     )));
-    assert!(!source.contains("\n  <!-- taskcli:entry-state"));
+    assert!(!source.contains("\n  <!-- taskix:entry-state"));
     f.service.sync().await.unwrap();
     assert_eq!(std::fs::read_to_string(path(&f)).unwrap(), source);
     assert_eq!(entries(&f).await[0]["content"], content);
@@ -641,11 +641,11 @@ async fn inbox_metadata_stays_on_the_header_with_status_in_a_comment() {
         .unwrap();
     let revision = entries(&f).await[0]["revision"].as_i64().unwrap();
     assert!(header.contains(&format!(
-        "<!-- taskcli:entry-state ACTIVE revision={revision} --> · "
+        "<!-- taskix:entry-state ACTIVE revision={revision} --> · "
     )));
     assert!(header.contains("[["));
     assert!(header.ends_with(" · agent:one"));
-    assert!(!source.contains("\n  <!-- taskcli:entry-state"));
+    assert!(!source.contains("\n  <!-- taskix:entry-state"));
     f.service.sync().await.unwrap();
     assert_eq!(std::fs::read_to_string(path(&f)).unwrap(), source);
     assert_eq!(entries(&f).await[0]["content"], content);
@@ -660,7 +660,7 @@ async fn inbox_metadata_stays_on_the_header_with_status_in_a_comment() {
     let source = std::fs::read_to_string(path(&f)).unwrap();
     let revision = entries(&f).await[0]["revision"].as_i64().unwrap();
     assert!(source.contains(&format!(
-        "- [-] Request <!-- taskcli:entry:{id} --> <!-- taskcli:entry-state CANCELLED revision={revision} --> · "
+        "- [-] Request <!-- taskix:entry:{id} --> <!-- taskix:entry-state CANCELLED revision={revision} --> · "
     )));
     assert!(!source.contains("agent:one"));
 }
@@ -671,7 +671,7 @@ async fn inbox_legacy_receipt_migrates_without_changing_identity_or_content() {
     let initial = std::fs::read_to_string(path(&f)).unwrap();
     let id = "inbox_01a07760d6a673f2a863e0f105eb9783";
     let legacy = format!(
-        "- [ ] Request <!-- taskcli:entry:{id} -->\n  Details.\n  <!-- taskcli:entry-state --> TODO\n\n"
+        "- [ ] Request <!-- taskix:entry:{id} -->\n  Details.\n  <!-- taskix:entry-state --> TODO\n\n"
     );
     std::fs::write(path(&f), initial.replace(END, &format!("{legacy}{END}"))).unwrap();
     f.service.sync().await.unwrap();
@@ -683,7 +683,7 @@ async fn inbox_legacy_receipt_migrates_without_changing_identity_or_content() {
     let source = std::fs::read_to_string(path(&f)).unwrap();
     let revision = rows[0]["revision"].as_i64().unwrap();
     assert!(source.contains(&format!(
-        "- [ ] Request <!-- taskcli:entry:{id} --> <!-- taskcli:entry-state TODO revision={revision} -->\n  Details.\n"
+        "- [ ] Request <!-- taskix:entry:{id} --> <!-- taskix:entry-state TODO revision={revision} -->\n  Details.\n"
     )));
     f.service.sync().await.unwrap();
     assert_eq!(entries(&f).await, rows);
@@ -903,7 +903,7 @@ async fn inbox_completion_checks_the_box_and_idempotent_append_keeps_one_entry()
         std::fs::read_to_string(path(&f))
             .unwrap()
             .contains(&format!(
-        "- [x] Ship <!-- taskcli:entry:{} --> <!-- taskcli:entry-state COMPLETED revision={} --> · ",
+        "- [x] Ship <!-- taskix:entry:{} --> <!-- taskix:entry-state COMPLETED revision={} --> · ",
         first.result["id"].as_str().unwrap(), entries(&f).await[0]["revision"]
             ))
     );
@@ -1045,7 +1045,7 @@ async fn inbox_source_edit_survives_projection_interruption_without_reverting_co
         entry,
         &f.service.store().snapshot().await.unwrap().inboxes[0]
     );
-    for content in ["", "<!-- taskcli:inbox:end -->"] {
+    for content in ["", "<!-- taskix:inbox:end -->"] {
         assert!(f.service.execute(json!({"command":"inbox.edit","inbox":added["id"],"content":content,"source":"message-key","version":3}), opts.clone()).await.is_err());
     }
 }

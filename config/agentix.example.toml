@@ -72,9 +72,9 @@ owner_user_ids = []
 # [task_board]
 # Optional: uncomment this table and set enable = true to enable a task board.
 # Disabled by default, even when a config path is present.
-# Initialize taskcli before enabling this integration.
+# Initialize taskix before enabling this integration.
 # enable = false
-# config = "~/.config/taskcli/config.toml"
+# config = "~/.config/taskix/config.toml"
 
 # Enable any combination of [agent.codex], [agent.pi], [agent.omp], and [agent.claude].
 # The table name selects the backend; do not add a kind field.

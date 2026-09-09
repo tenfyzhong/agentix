@@ -24,7 +24,7 @@ claude plugin marketplace add .
 claude plugin install agentix-bridge@agentix
 ```
 
-The marketplace is named `agentix`, matching Agent Task Manager. You can install either plugin independently or both together. No official marketplace submission is required. If you already registered `agentix` from another checkout, update that marketplace source to the checkout containing this plugin before installing.
+The marketplace is named `agentix`, matching Taskix Manager. You can install either plugin independently or both together. No official marketplace submission is required. If you already registered `agentix` from another checkout, update that marketplace source to the checkout containing this plugin before installing.
 
 Add the backend to the Agentix configuration:
 

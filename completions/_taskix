@@ -1,0 +1,3426 @@
+#compdef taskix
+
+autoload -U is-at-least
+
+_taskix() {
+    typeset -A opt_args
+    typeset -a _arguments_options
+    local ret=1
+
+    if is-at-least 5.2; then
+        _arguments_options=(-s -S -C)
+    else
+        _arguments_options=(-s -C)
+    fi
+
+    local context curcontext="$curcontext" state line
+    _arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+'-V[Print version]' \
+'--version[Print version]' \
+":: :_taskix_commands" \
+"*::: :->taskix" \
+&& ret=0
+    case $state in
+    (taskix)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskix-command-$line[1]:"
+        case $line[1] in
+            (inbox)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_taskix__subcmd__inbox_commands" \
+"*::: :->inbox" \
+&& ret=0
+
+    case $state in
+    (inbox)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskix-inbox-command-$line[1]:"
+        case $line[1] in
+            (add)
+_arguments "${_arguments_options[@]}" : \
+'--content=[]:CONTENT:_default' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(sync)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(claim-next)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(release)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(cancel)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(set-status)
+_arguments "${_arguments_options[@]}" : \
+'--status=[]:STATUS:(TODO ACTIVE PENDING_REVIEW COMPLETED CANCELLED IN_PROGRESS DONE)' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_taskix__subcmd__inbox__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskix-inbox-help-command-$line[1]:"
+        case $line[1] in
+            (add)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(sync)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(claim-next)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(release)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(cancel)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(set-status)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(completions)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':shell:(bash elvish fish powershell zsh)' \
+&& ret=0
+;;
+(init)
+_arguments "${_arguments_options[@]}" : \
+'--root=[]:ROOT:_files -/' \
+'--directory=[]:DIRECTORY:_files -/' \
+'--database=[]:DATABASE:_files' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(obsidian)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_taskix__subcmd__obsidian_commands" \
+"*::: :->obsidian" \
+&& ret=0
+
+    case $state in
+    (obsidian)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskix-obsidian-command-$line[1]:"
+        case $line[1] in
+            (connection)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(show)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(snapshot)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(setup)
+_arguments "${_arguments_options[@]}" : \
+'--plugin-dir=[Use a local \`TaskNotes\` release directory instead of downloading the bundled version]:PLUGIN_DIR:_files -/' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--no-reload[Skip Obsidian CLI calls; close Obsidian before setup and reopen it afterward]' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_taskix__subcmd__obsidian__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskix-obsidian-help-command-$line[1]:"
+        case $line[1] in
+            (connection)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(show)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(snapshot)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(setup)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(doctor)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(sync)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--pending[Retry only pending document publications without a full rebuild]' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(project)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_taskix__subcmd__project_commands" \
+"*::: :->project" \
+&& ret=0
+
+    case $state in
+    (project)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskix-project-command-$line[1]:"
+        case $line[1] in
+            (delete)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(register)
+_arguments "${_arguments_options[@]}" : \
+'--name=[]:NAME:_default' \
+'--root=[]:ROOT:_files -/' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--archived[]' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(show)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(archive)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(unarchive)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_taskix__subcmd__project__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskix-project-help-command-$line[1]:"
+        case $line[1] in
+            (delete)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(register)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(show)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(archive)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(unarchive)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(job)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_taskix__subcmd__job_commands" \
+"*::: :->job" \
+&& ret=0
+
+    case $state in
+    (job)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskix-job-command-$line[1]:"
+        case $line[1] in
+            (followup)
+_arguments "${_arguments_options[@]}" : \
+'--prompt=[]:PROMPT:_default' \
+'*--inbox=[Inbox TODO IDs selected by the agent through semantic matching; repeat for multiple entries]:INBOX_IDS:_default' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(submit)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(approve)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(reject)
+_arguments "${_arguments_options[@]}" : \
+'--reason=[]:REASON:_default' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(delete)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(create)
+_arguments "${_arguments_options[@]}" : \
+'--name=[]:NAME:_default' \
+'--title=[]:TITLE:_default' \
+'--goal=[]:GOAL:_default' \
+'--prompt=[Original user prompt, preserved verbatim in the Job document]:PROMPT:_default' \
+'*--inbox=[Inbox TODO IDs selected by the agent through semantic matching; repeat for multiple entries]:INBOX_IDS:_default' \
+'--review-policy=[]:REVIEW_POLICY:(required none)' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(update)
+_arguments "${_arguments_options[@]}" : \
+'--name=[]:NAME:_default' \
+'--title=[]:TITLE:_default' \
+'--goal=[]:GOAL:_default' \
+'--prompt=[Replace the original user prompt; an empty string clears it]:PROMPT:_default' \
+'*--inbox=[Inbox TODO IDs selected by the agent through semantic matching; repeat for multiple entries]:INBOX_IDS:_default' \
+'--review-policy=[]:REVIEW_POLICY:(required none)' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+'--period=[]:PERIOD:_default' \
+'--created-from=[]:CREATED_FROM:_default' \
+'--created-to=[]:CREATED_TO:_default' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'(--completed --archived --pending-review)--active[]' \
+'(--completed --archived)--pending-review[]' \
+'(--archived)--completed[]' \
+'--archived[]' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(show)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(cancel)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(archive)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(unarchive)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_taskix__subcmd__job__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskix-job-help-command-$line[1]:"
+        case $line[1] in
+            (followup)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(submit)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(approve)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(reject)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(delete)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(create)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(update)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(show)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(cancel)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(archive)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(unarchive)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(task)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_taskix__subcmd__task_commands" \
+"*::: :->task" \
+&& ret=0
+
+    case $state in
+    (task)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskix-task-command-$line[1]:"
+        case $line[1] in
+            (add)
+_arguments "${_arguments_options[@]}" : \
+'--name=[]:NAME:_default' \
+'--job=[]:JOB:_default' \
+'--title=[]:TITLE:_default' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(update)
+_arguments "${_arguments_options[@]}" : \
+'--name=[]:NAME:_default' \
+'--title=[]:TITLE:_default' \
+'--position=[]:POSITION:_default' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+'--job=[]:JOB:_default' \
+'--status=[]:STATUS:_default' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--ready[]' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(show)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(depend)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+':dependency:_default' \
+&& ret=0
+;;
+(undepend)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+':dependency:_default' \
+&& ret=0
+;;
+(claim)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(start)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(heartbeat)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(release)
+_arguments "${_arguments_options[@]}" : \
+'--reason=[]:REASON:_default' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(block)
+_arguments "${_arguments_options[@]}" : \
+'--reason=[]:REASON:_default' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(wait)
+_arguments "${_arguments_options[@]}" : \
+'--reason=[]:REASON:_default' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(fail)
+_arguments "${_arguments_options[@]}" : \
+'--reason=[]:REASON:_default' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(done)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(cancel)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(retry)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(reopen)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_taskix__subcmd__task__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskix-task-help-command-$line[1]:"
+        case $line[1] in
+            (add)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(update)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(show)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(depend)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(undepend)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(claim)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(start)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(heartbeat)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(release)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(block)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(wait)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(fail)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(done)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(cancel)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(retry)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(reopen)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(plan)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_taskix__subcmd__plan_commands" \
+"*::: :->plan" \
+&& ret=0
+
+    case $state in
+    (plan)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskix-plan-command-$line[1]:"
+        case $line[1] in
+            (create)
+_arguments "${_arguments_options[@]}" : \
+'(--file)--body=[]:BODY:_default' \
+'--file=[]:FILE:_files' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':task:_default' \
+&& ret=0
+;;
+(revise)
+_arguments "${_arguments_options[@]}" : \
+'(--file)--body=[]:BODY:_default' \
+'--file=[]:FILE:_files' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':task:_default' \
+&& ret=0
+;;
+(show)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':task:_default' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_taskix__subcmd__plan__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskix-plan-help-command-$line[1]:"
+        case $line[1] in
+            (create)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(revise)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(show)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(event)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_taskix__subcmd__event_commands" \
+"*::: :->event" \
+&& ret=0
+
+    case $state in
+    (event)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskix-event-command-$line[1]:"
+        case $line[1] in
+            (list)
+_arguments "${_arguments_options[@]}" : \
+'--job=[]:JOB:_default' \
+'--after=[]:AFTER:_default' \
+'--limit=[]:LIMIT:_default' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_taskix__subcmd__event__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskix-event-help-command-$line[1]:"
+        case $line[1] in
+            (list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(context)
+_arguments "${_arguments_options[@]}" : \
+'--task=[]:TASK:_default' \
+'--job=[]:JOB:_default' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(hook)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_taskix__subcmd__hook_commands" \
+"*::: :->hook" \
+&& ret=0
+
+    case $state in
+    (hook)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskix-hook-command-$line[1]:"
+        case $line[1] in
+            (record)
+_arguments "${_arguments_options[@]}" : \
+'--file=[]:FILE:_files' \
+'--job=[]:JOB:_default' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(stop)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(session-start)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(session-end)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(interrupt)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(heartbeat)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_taskix__subcmd__hook__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskix-hook-help-command-$line[1]:"
+        case $line[1] in
+            (record)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(stop)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(session-start)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(session-end)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(interrupt)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(heartbeat)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_taskix__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskix-help-command-$line[1]:"
+        case $line[1] in
+            (inbox)
+_arguments "${_arguments_options[@]}" : \
+":: :_taskix__subcmd__help__subcmd__inbox_commands" \
+"*::: :->inbox" \
+&& ret=0
+
+    case $state in
+    (inbox)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskix-help-inbox-command-$line[1]:"
+        case $line[1] in
+            (add)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(sync)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(claim-next)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(release)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(cancel)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(set-status)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(completions)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(init)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(obsidian)
+_arguments "${_arguments_options[@]}" : \
+":: :_taskix__subcmd__help__subcmd__obsidian_commands" \
+"*::: :->obsidian" \
+&& ret=0
+
+    case $state in
+    (obsidian)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskix-help-obsidian-command-$line[1]:"
+        case $line[1] in
+            (connection)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(show)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(snapshot)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(setup)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(doctor)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(sync)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(project)
+_arguments "${_arguments_options[@]}" : \
+":: :_taskix__subcmd__help__subcmd__project_commands" \
+"*::: :->project" \
+&& ret=0
+
+    case $state in
+    (project)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskix-help-project-command-$line[1]:"
+        case $line[1] in
+            (delete)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(register)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(show)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(archive)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(unarchive)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(job)
+_arguments "${_arguments_options[@]}" : \
+":: :_taskix__subcmd__help__subcmd__job_commands" \
+"*::: :->job" \
+&& ret=0
+
+    case $state in
+    (job)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskix-help-job-command-$line[1]:"
+        case $line[1] in
+            (followup)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(submit)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(approve)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(reject)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(delete)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(create)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(update)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(show)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(cancel)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(archive)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(unarchive)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(task)
+_arguments "${_arguments_options[@]}" : \
+":: :_taskix__subcmd__help__subcmd__task_commands" \
+"*::: :->task" \
+&& ret=0
+
+    case $state in
+    (task)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskix-help-task-command-$line[1]:"
+        case $line[1] in
+            (add)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(update)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(show)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(depend)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(undepend)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(claim)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(start)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(heartbeat)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(release)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(block)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(wait)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(fail)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(done)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(cancel)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(retry)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(reopen)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(plan)
+_arguments "${_arguments_options[@]}" : \
+":: :_taskix__subcmd__help__subcmd__plan_commands" \
+"*::: :->plan" \
+&& ret=0
+
+    case $state in
+    (plan)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskix-help-plan-command-$line[1]:"
+        case $line[1] in
+            (create)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(revise)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(show)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(event)
+_arguments "${_arguments_options[@]}" : \
+":: :_taskix__subcmd__help__subcmd__event_commands" \
+"*::: :->event" \
+&& ret=0
+
+    case $state in
+    (event)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskix-help-event-command-$line[1]:"
+        case $line[1] in
+            (list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(context)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(hook)
+_arguments "${_arguments_options[@]}" : \
+":: :_taskix__subcmd__help__subcmd__hook_commands" \
+"*::: :->hook" \
+&& ret=0
+
+    case $state in
+    (hook)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskix-help-hook-command-$line[1]:"
+        case $line[1] in
+            (record)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(stop)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(session-start)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(session-end)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(interrupt)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(heartbeat)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+}
+
+(( $+functions[_taskix_commands] )) ||
+_taskix_commands() {
+    local commands; commands=(
+'inbox:Submit, inspect, claim, or cancel human requirements in a Project Inbox' \
+'completions:Print a shell completion script without loading task configuration' \
+'init:Create configuration, initialize \`SQLite\` storage, and generate task documents' \
+'obsidian:Install and configure Obsidian task views in the configured vault' \
+'doctor:Check for missing Plan files and documents that are behind the event log' \
+'sync:Regenerate task documents from the current database state' \
+'project:Register, inspect, archive, or delete Projects shared across worktrees' \
+'job:Manage Jobs that group Tasks for an independently deliverable requirement' \
+'task:Manage Task dependencies, ownership leases, and execution status' \
+'plan:Publish, revise, or inspect the execution Plan in a Task note' \
+'event:Inspect the ordered audit log of task coordination events' \
+'context:Show Task, Job, lease, Plan, and document context for a session or explicit IDs' \
+'hook:Handle agent session lifecycle events and maintain Task leases' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'taskix commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__completions_commands] )) ||
+_taskix__subcmd__completions_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix completions commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__context_commands] )) ||
+_taskix__subcmd__context_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix context commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__doctor_commands] )) ||
+_taskix__subcmd__doctor_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix doctor commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__event_commands] )) ||
+_taskix__subcmd__event_commands() {
+    local commands; commands=(
+'list:List events after a sequence cursor, optionally filtered by Job and limited in count' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'taskix event commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__event__subcmd__help_commands] )) ||
+_taskix__subcmd__event__subcmd__help_commands() {
+    local commands; commands=(
+'list:List events after a sequence cursor, optionally filtered by Job and limited in count' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'taskix event help commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__event__subcmd__help__subcmd__help_commands] )) ||
+_taskix__subcmd__event__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix event help help commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__event__subcmd__help__subcmd__list_commands] )) ||
+_taskix__subcmd__event__subcmd__help__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix event help list commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__event__subcmd__list_commands] )) ||
+_taskix__subcmd__event__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix event list commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help_commands] )) ||
+_taskix__subcmd__help_commands() {
+    local commands; commands=(
+'inbox:Submit, inspect, claim, or cancel human requirements in a Project Inbox' \
+'completions:Print a shell completion script without loading task configuration' \
+'init:Create configuration, initialize \`SQLite\` storage, and generate task documents' \
+'obsidian:Install and configure Obsidian task views in the configured vault' \
+'doctor:Check for missing Plan files and documents that are behind the event log' \
+'sync:Regenerate task documents from the current database state' \
+'project:Register, inspect, archive, or delete Projects shared across worktrees' \
+'job:Manage Jobs that group Tasks for an independently deliverable requirement' \
+'task:Manage Task dependencies, ownership leases, and execution status' \
+'plan:Publish, revise, or inspect the execution Plan in a Task note' \
+'event:Inspect the ordered audit log of task coordination events' \
+'context:Show Task, Job, lease, Plan, and document context for a session or explicit IDs' \
+'hook:Handle agent session lifecycle events and maintain Task leases' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'taskix help commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__completions_commands] )) ||
+_taskix__subcmd__help__subcmd__completions_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help completions commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__context_commands] )) ||
+_taskix__subcmd__help__subcmd__context_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help context commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__doctor_commands] )) ||
+_taskix__subcmd__help__subcmd__doctor_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help doctor commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__event_commands] )) ||
+_taskix__subcmd__help__subcmd__event_commands() {
+    local commands; commands=(
+'list:List events after a sequence cursor, optionally filtered by Job and limited in count' \
+    )
+    _describe -t commands 'taskix help event commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__event__subcmd__list_commands] )) ||
+_taskix__subcmd__help__subcmd__event__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help event list commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__help_commands] )) ||
+_taskix__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help help commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__hook_commands] )) ||
+_taskix__subcmd__help__subcmd__hook_commands() {
+    local commands; commands=(
+'record:Record visible user/assistant messages from a JSON array in the session Job' \
+'stop:Acknowledge turn completion without claiming Inbox work' \
+'session-start:Recover the session'\''s Tasks blocked by interruption or lease expiry into planning' \
+'session-end:Record session shutdown and release its active Task leases' \
+'interrupt:Release an interrupted session'\''s Task leases while preserving its Plans' \
+'heartbeat:Renew all active Task leases owned by the session' \
+    )
+    _describe -t commands 'taskix help hook commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__hook__subcmd__heartbeat_commands] )) ||
+_taskix__subcmd__help__subcmd__hook__subcmd__heartbeat_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help hook heartbeat commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__hook__subcmd__interrupt_commands] )) ||
+_taskix__subcmd__help__subcmd__hook__subcmd__interrupt_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help hook interrupt commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__hook__subcmd__record_commands] )) ||
+_taskix__subcmd__help__subcmd__hook__subcmd__record_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help hook record commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__hook__subcmd__session-end_commands] )) ||
+_taskix__subcmd__help__subcmd__hook__subcmd__session-end_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help hook session-end commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__hook__subcmd__session-start_commands] )) ||
+_taskix__subcmd__help__subcmd__hook__subcmd__session-start_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help hook session-start commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__hook__subcmd__stop_commands] )) ||
+_taskix__subcmd__help__subcmd__hook__subcmd__stop_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help hook stop commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__inbox_commands] )) ||
+_taskix__subcmd__help__subcmd__inbox_commands() {
+    local commands; commands=(
+'add:Append one requirement, preserving its complete Markdown content' \
+'list:Import human edits and show visible Inbox entries in document order' \
+'sync:Import submissions, cancellations, and withdrawals and repair the document' \
+'claim-next:Atomically claim the next eligible requirement and create or resume its Job' \
+'release:Release an owned Inbox lease so another agent can resume its existing Job' \
+'cancel:Cancel a requirement and its unfinished work, preserving history' \
+'set-status:Set a human Inbox status; linked completion requires a pending review' \
+    )
+    _describe -t commands 'taskix help inbox commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__inbox__subcmd__add_commands] )) ||
+_taskix__subcmd__help__subcmd__inbox__subcmd__add_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help inbox add commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__inbox__subcmd__cancel_commands] )) ||
+_taskix__subcmd__help__subcmd__inbox__subcmd__cancel_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help inbox cancel commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__inbox__subcmd__claim-next_commands] )) ||
+_taskix__subcmd__help__subcmd__inbox__subcmd__claim-next_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help inbox claim-next commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__inbox__subcmd__list_commands] )) ||
+_taskix__subcmd__help__subcmd__inbox__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help inbox list commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__inbox__subcmd__release_commands] )) ||
+_taskix__subcmd__help__subcmd__inbox__subcmd__release_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help inbox release commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__inbox__subcmd__set-status_commands] )) ||
+_taskix__subcmd__help__subcmd__inbox__subcmd__set-status_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help inbox set-status commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__inbox__subcmd__sync_commands] )) ||
+_taskix__subcmd__help__subcmd__inbox__subcmd__sync_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help inbox sync commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__init_commands] )) ||
+_taskix__subcmd__help__subcmd__init_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help init commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__job_commands] )) ||
+_taskix__subcmd__help__subcmd__job_commands() {
+    local commands; commands=(
+'followup:Resume a pending Job with a supplemental user prompt' \
+'submit:Submit an ACTIVE Job for review once all non-cancelled Tasks are DONE' \
+'approve:Record human acceptance of a Job awaiting review' \
+'reject:Return a Job awaiting review to ACTIVE, preserving its Tasks' \
+'delete:Delete the Job, its Tasks, and their Plan documents' \
+'create:Create a Job with a title and acceptance goal in the selected Project' \
+'update:Change a Job'\''s display name, title, acceptance goal, or original prompt' \
+'list:List Jobs, optionally filtered by Project, status, or date' \
+'show:Show a Job'\''s goal, status, and lifecycle metadata' \
+'cancel:Cancel a Job and its unfinished Tasks after their leases have been released' \
+'archive:Archive a closed Job and move its document to the archive' \
+'unarchive:Restore an archived Job document without changing its completion status' \
+    )
+    _describe -t commands 'taskix help job commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__job__subcmd__approve_commands] )) ||
+_taskix__subcmd__help__subcmd__job__subcmd__approve_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help job approve commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__job__subcmd__archive_commands] )) ||
+_taskix__subcmd__help__subcmd__job__subcmd__archive_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help job archive commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__job__subcmd__cancel_commands] )) ||
+_taskix__subcmd__help__subcmd__job__subcmd__cancel_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help job cancel commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__job__subcmd__create_commands] )) ||
+_taskix__subcmd__help__subcmd__job__subcmd__create_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help job create commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__job__subcmd__delete_commands] )) ||
+_taskix__subcmd__help__subcmd__job__subcmd__delete_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help job delete commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__job__subcmd__followup_commands] )) ||
+_taskix__subcmd__help__subcmd__job__subcmd__followup_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help job followup commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__job__subcmd__list_commands] )) ||
+_taskix__subcmd__help__subcmd__job__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help job list commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__job__subcmd__reject_commands] )) ||
+_taskix__subcmd__help__subcmd__job__subcmd__reject_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help job reject commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__job__subcmd__show_commands] )) ||
+_taskix__subcmd__help__subcmd__job__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help job show commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__job__subcmd__submit_commands] )) ||
+_taskix__subcmd__help__subcmd__job__subcmd__submit_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help job submit commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__job__subcmd__unarchive_commands] )) ||
+_taskix__subcmd__help__subcmd__job__subcmd__unarchive_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help job unarchive commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__job__subcmd__update_commands] )) ||
+_taskix__subcmd__help__subcmd__job__subcmd__update_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help job update commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__obsidian_commands] )) ||
+_taskix__subcmd__help__subcmd__obsidian_commands() {
+    local commands; commands=(
+'connection:Read the Obsidian connection configuration without loading task records' \
+'show:Query one registered Task, Job, or Inbox entry by its exact ID' \
+'snapshot:Query registered notes and authoritative status properties without lease credentials' \
+'setup:Install task views and reload the configured Obsidian vault when files change' \
+    )
+    _describe -t commands 'taskix help obsidian commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__obsidian__subcmd__connection_commands] )) ||
+_taskix__subcmd__help__subcmd__obsidian__subcmd__connection_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help obsidian connection commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__obsidian__subcmd__setup_commands] )) ||
+_taskix__subcmd__help__subcmd__obsidian__subcmd__setup_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help obsidian setup commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__obsidian__subcmd__show_commands] )) ||
+_taskix__subcmd__help__subcmd__obsidian__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help obsidian show commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__obsidian__subcmd__snapshot_commands] )) ||
+_taskix__subcmd__help__subcmd__obsidian__subcmd__snapshot_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help obsidian snapshot commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__plan_commands] )) ||
+_taskix__subcmd__help__subcmd__plan_commands() {
+    local commands; commands=(
+'create:Publish a Plan from --body or --file while holding the Task lease' \
+'revise:Replace the Plan body in the same Task note while holding its lease' \
+'show:Show the current Plan'\''s metadata and absolute file path for a Task' \
+    )
+    _describe -t commands 'taskix help plan commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__plan__subcmd__create_commands] )) ||
+_taskix__subcmd__help__subcmd__plan__subcmd__create_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help plan create commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__plan__subcmd__revise_commands] )) ||
+_taskix__subcmd__help__subcmd__plan__subcmd__revise_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help plan revise commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__plan__subcmd__show_commands] )) ||
+_taskix__subcmd__help__subcmd__plan__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help plan show commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__project_commands] )) ||
+_taskix__subcmd__help__subcmd__project_commands() {
+    local commands; commands=(
+'delete:Delete the Project, its work, and its entire generated document directory' \
+'register:Register a Project using its root directory and Git identity when available' \
+'list:List unarchived Projects, or archived Projects with --archived' \
+'show:Show a Project'\''s identity, root directory, and archival state' \
+'archive:Archive a Project after all of its Jobs are closed' \
+'unarchive:Restore an archived Project to the active project views' \
+    )
+    _describe -t commands 'taskix help project commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__project__subcmd__archive_commands] )) ||
+_taskix__subcmd__help__subcmd__project__subcmd__archive_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help project archive commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__project__subcmd__delete_commands] )) ||
+_taskix__subcmd__help__subcmd__project__subcmd__delete_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help project delete commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__project__subcmd__list_commands] )) ||
+_taskix__subcmd__help__subcmd__project__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help project list commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__project__subcmd__register_commands] )) ||
+_taskix__subcmd__help__subcmd__project__subcmd__register_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help project register commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__project__subcmd__show_commands] )) ||
+_taskix__subcmd__help__subcmd__project__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help project show commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__project__subcmd__unarchive_commands] )) ||
+_taskix__subcmd__help__subcmd__project__subcmd__unarchive_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help project unarchive commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__sync_commands] )) ||
+_taskix__subcmd__help__subcmd__sync_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help sync commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__task_commands] )) ||
+_taskix__subcmd__help__subcmd__task_commands() {
+    local commands; commands=(
+'add:Add a Task to a Job and create its note without publishing a Plan' \
+'update:Change a Task'\''s display name, title, or board position' \
+'list:List Tasks, optionally filtered by Job, Project, status, or readiness' \
+'show:Show a Task'\''s status, dependencies, Plan reference, and current lease' \
+'depend:Add a prerequisite Task in the same Project before execution has started' \
+'undepend:Remove a prerequisite Task before execution has started' \
+'claim:Acquire a planning lease using --executor and --session' \
+'start:Begin execution with the current lease, a published Plan, and DONE prerequisites' \
+'heartbeat:Renew a Task lease using its owning session and lease token' \
+'release:Release ownership and mark the Task BLOCKED with a handoff reason' \
+'block:Mark a Task BLOCKED with a reason and release its lease' \
+'wait:Mark a Task \`WAITING_USER\` with a reason and release its lease' \
+'fail:Mark a Task FAILED with a reason and release its lease' \
+'done:Mark an EXECUTING Task DONE and release its lease' \
+'cancel:Cancel a Task and release its lease' \
+'retry:Return a FAILED Task to TODO so it can be claimed again' \
+'reopen:Return a DONE or CANCELLED Task to TODO so it can be claimed again' \
+    )
+    _describe -t commands 'taskix help task commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__task__subcmd__add_commands] )) ||
+_taskix__subcmd__help__subcmd__task__subcmd__add_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help task add commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__task__subcmd__block_commands] )) ||
+_taskix__subcmd__help__subcmd__task__subcmd__block_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help task block commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__task__subcmd__cancel_commands] )) ||
+_taskix__subcmd__help__subcmd__task__subcmd__cancel_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help task cancel commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__task__subcmd__claim_commands] )) ||
+_taskix__subcmd__help__subcmd__task__subcmd__claim_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help task claim commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__task__subcmd__depend_commands] )) ||
+_taskix__subcmd__help__subcmd__task__subcmd__depend_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help task depend commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__task__subcmd__done_commands] )) ||
+_taskix__subcmd__help__subcmd__task__subcmd__done_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help task done commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__task__subcmd__fail_commands] )) ||
+_taskix__subcmd__help__subcmd__task__subcmd__fail_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help task fail commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__task__subcmd__heartbeat_commands] )) ||
+_taskix__subcmd__help__subcmd__task__subcmd__heartbeat_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help task heartbeat commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__task__subcmd__list_commands] )) ||
+_taskix__subcmd__help__subcmd__task__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help task list commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__task__subcmd__release_commands] )) ||
+_taskix__subcmd__help__subcmd__task__subcmd__release_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help task release commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__task__subcmd__reopen_commands] )) ||
+_taskix__subcmd__help__subcmd__task__subcmd__reopen_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help task reopen commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__task__subcmd__retry_commands] )) ||
+_taskix__subcmd__help__subcmd__task__subcmd__retry_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help task retry commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__task__subcmd__show_commands] )) ||
+_taskix__subcmd__help__subcmd__task__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help task show commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__task__subcmd__start_commands] )) ||
+_taskix__subcmd__help__subcmd__task__subcmd__start_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help task start commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__task__subcmd__undepend_commands] )) ||
+_taskix__subcmd__help__subcmd__task__subcmd__undepend_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help task undepend commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__task__subcmd__update_commands] )) ||
+_taskix__subcmd__help__subcmd__task__subcmd__update_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help task update commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__task__subcmd__wait_commands] )) ||
+_taskix__subcmd__help__subcmd__task__subcmd__wait_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help task wait commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__hook_commands] )) ||
+_taskix__subcmd__hook_commands() {
+    local commands; commands=(
+'record:Record visible user/assistant messages from a JSON array in the session Job' \
+'stop:Acknowledge turn completion without claiming Inbox work' \
+'session-start:Recover the session'\''s Tasks blocked by interruption or lease expiry into planning' \
+'session-end:Record session shutdown and release its active Task leases' \
+'interrupt:Release an interrupted session'\''s Task leases while preserving its Plans' \
+'heartbeat:Renew all active Task leases owned by the session' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'taskix hook commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__hook__subcmd__heartbeat_commands] )) ||
+_taskix__subcmd__hook__subcmd__heartbeat_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix hook heartbeat commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__hook__subcmd__help_commands] )) ||
+_taskix__subcmd__hook__subcmd__help_commands() {
+    local commands; commands=(
+'record:Record visible user/assistant messages from a JSON array in the session Job' \
+'stop:Acknowledge turn completion without claiming Inbox work' \
+'session-start:Recover the session'\''s Tasks blocked by interruption or lease expiry into planning' \
+'session-end:Record session shutdown and release its active Task leases' \
+'interrupt:Release an interrupted session'\''s Task leases while preserving its Plans' \
+'heartbeat:Renew all active Task leases owned by the session' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'taskix hook help commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__hook__subcmd__help__subcmd__heartbeat_commands] )) ||
+_taskix__subcmd__hook__subcmd__help__subcmd__heartbeat_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix hook help heartbeat commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__hook__subcmd__help__subcmd__help_commands] )) ||
+_taskix__subcmd__hook__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix hook help help commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__hook__subcmd__help__subcmd__interrupt_commands] )) ||
+_taskix__subcmd__hook__subcmd__help__subcmd__interrupt_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix hook help interrupt commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__hook__subcmd__help__subcmd__record_commands] )) ||
+_taskix__subcmd__hook__subcmd__help__subcmd__record_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix hook help record commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__hook__subcmd__help__subcmd__session-end_commands] )) ||
+_taskix__subcmd__hook__subcmd__help__subcmd__session-end_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix hook help session-end commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__hook__subcmd__help__subcmd__session-start_commands] )) ||
+_taskix__subcmd__hook__subcmd__help__subcmd__session-start_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix hook help session-start commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__hook__subcmd__help__subcmd__stop_commands] )) ||
+_taskix__subcmd__hook__subcmd__help__subcmd__stop_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix hook help stop commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__hook__subcmd__interrupt_commands] )) ||
+_taskix__subcmd__hook__subcmd__interrupt_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix hook interrupt commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__hook__subcmd__record_commands] )) ||
+_taskix__subcmd__hook__subcmd__record_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix hook record commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__hook__subcmd__session-end_commands] )) ||
+_taskix__subcmd__hook__subcmd__session-end_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix hook session-end commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__hook__subcmd__session-start_commands] )) ||
+_taskix__subcmd__hook__subcmd__session-start_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix hook session-start commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__hook__subcmd__stop_commands] )) ||
+_taskix__subcmd__hook__subcmd__stop_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix hook stop commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__inbox_commands] )) ||
+_taskix__subcmd__inbox_commands() {
+    local commands; commands=(
+'add:Append one requirement, preserving its complete Markdown content' \
+'list:Import human edits and show visible Inbox entries in document order' \
+'sync:Import submissions, cancellations, and withdrawals and repair the document' \
+'claim-next:Atomically claim the next eligible requirement and create or resume its Job' \
+'release:Release an owned Inbox lease so another agent can resume its existing Job' \
+'cancel:Cancel a requirement and its unfinished work, preserving history' \
+'set-status:Set a human Inbox status; linked completion requires a pending review' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'taskix inbox commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__inbox__subcmd__add_commands] )) ||
+_taskix__subcmd__inbox__subcmd__add_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix inbox add commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__inbox__subcmd__cancel_commands] )) ||
+_taskix__subcmd__inbox__subcmd__cancel_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix inbox cancel commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__inbox__subcmd__claim-next_commands] )) ||
+_taskix__subcmd__inbox__subcmd__claim-next_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix inbox claim-next commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__inbox__subcmd__help_commands] )) ||
+_taskix__subcmd__inbox__subcmd__help_commands() {
+    local commands; commands=(
+'add:Append one requirement, preserving its complete Markdown content' \
+'list:Import human edits and show visible Inbox entries in document order' \
+'sync:Import submissions, cancellations, and withdrawals and repair the document' \
+'claim-next:Atomically claim the next eligible requirement and create or resume its Job' \
+'release:Release an owned Inbox lease so another agent can resume its existing Job' \
+'cancel:Cancel a requirement and its unfinished work, preserving history' \
+'set-status:Set a human Inbox status; linked completion requires a pending review' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'taskix inbox help commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__inbox__subcmd__help__subcmd__add_commands] )) ||
+_taskix__subcmd__inbox__subcmd__help__subcmd__add_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix inbox help add commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__inbox__subcmd__help__subcmd__cancel_commands] )) ||
+_taskix__subcmd__inbox__subcmd__help__subcmd__cancel_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix inbox help cancel commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__inbox__subcmd__help__subcmd__claim-next_commands] )) ||
+_taskix__subcmd__inbox__subcmd__help__subcmd__claim-next_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix inbox help claim-next commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__inbox__subcmd__help__subcmd__help_commands] )) ||
+_taskix__subcmd__inbox__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix inbox help help commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__inbox__subcmd__help__subcmd__list_commands] )) ||
+_taskix__subcmd__inbox__subcmd__help__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix inbox help list commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__inbox__subcmd__help__subcmd__release_commands] )) ||
+_taskix__subcmd__inbox__subcmd__help__subcmd__release_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix inbox help release commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__inbox__subcmd__help__subcmd__set-status_commands] )) ||
+_taskix__subcmd__inbox__subcmd__help__subcmd__set-status_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix inbox help set-status commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__inbox__subcmd__help__subcmd__sync_commands] )) ||
+_taskix__subcmd__inbox__subcmd__help__subcmd__sync_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix inbox help sync commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__inbox__subcmd__list_commands] )) ||
+_taskix__subcmd__inbox__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix inbox list commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__inbox__subcmd__release_commands] )) ||
+_taskix__subcmd__inbox__subcmd__release_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix inbox release commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__inbox__subcmd__set-status_commands] )) ||
+_taskix__subcmd__inbox__subcmd__set-status_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix inbox set-status commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__inbox__subcmd__sync_commands] )) ||
+_taskix__subcmd__inbox__subcmd__sync_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix inbox sync commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__init_commands] )) ||
+_taskix__subcmd__init_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix init commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__job_commands] )) ||
+_taskix__subcmd__job_commands() {
+    local commands; commands=(
+'followup:Resume a pending Job with a supplemental user prompt' \
+'submit:Submit an ACTIVE Job for review once all non-cancelled Tasks are DONE' \
+'approve:Record human acceptance of a Job awaiting review' \
+'reject:Return a Job awaiting review to ACTIVE, preserving its Tasks' \
+'delete:Delete the Job, its Tasks, and their Plan documents' \
+'create:Create a Job with a title and acceptance goal in the selected Project' \
+'update:Change a Job'\''s display name, title, acceptance goal, or original prompt' \
+'list:List Jobs, optionally filtered by Project, status, or date' \
+'show:Show a Job'\''s goal, status, and lifecycle metadata' \
+'cancel:Cancel a Job and its unfinished Tasks after their leases have been released' \
+'archive:Archive a closed Job and move its document to the archive' \
+'unarchive:Restore an archived Job document without changing its completion status' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'taskix job commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__job__subcmd__approve_commands] )) ||
+_taskix__subcmd__job__subcmd__approve_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix job approve commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__job__subcmd__archive_commands] )) ||
+_taskix__subcmd__job__subcmd__archive_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix job archive commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__job__subcmd__cancel_commands] )) ||
+_taskix__subcmd__job__subcmd__cancel_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix job cancel commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__job__subcmd__create_commands] )) ||
+_taskix__subcmd__job__subcmd__create_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix job create commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__job__subcmd__delete_commands] )) ||
+_taskix__subcmd__job__subcmd__delete_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix job delete commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__job__subcmd__followup_commands] )) ||
+_taskix__subcmd__job__subcmd__followup_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix job followup commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__job__subcmd__help_commands] )) ||
+_taskix__subcmd__job__subcmd__help_commands() {
+    local commands; commands=(
+'followup:Resume a pending Job with a supplemental user prompt' \
+'submit:Submit an ACTIVE Job for review once all non-cancelled Tasks are DONE' \
+'approve:Record human acceptance of a Job awaiting review' \
+'reject:Return a Job awaiting review to ACTIVE, preserving its Tasks' \
+'delete:Delete the Job, its Tasks, and their Plan documents' \
+'create:Create a Job with a title and acceptance goal in the selected Project' \
+'update:Change a Job'\''s display name, title, acceptance goal, or original prompt' \
+'list:List Jobs, optionally filtered by Project, status, or date' \
+'show:Show a Job'\''s goal, status, and lifecycle metadata' \
+'cancel:Cancel a Job and its unfinished Tasks after their leases have been released' \
+'archive:Archive a closed Job and move its document to the archive' \
+'unarchive:Restore an archived Job document without changing its completion status' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'taskix job help commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__job__subcmd__help__subcmd__approve_commands] )) ||
+_taskix__subcmd__job__subcmd__help__subcmd__approve_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix job help approve commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__job__subcmd__help__subcmd__archive_commands] )) ||
+_taskix__subcmd__job__subcmd__help__subcmd__archive_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix job help archive commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__job__subcmd__help__subcmd__cancel_commands] )) ||
+_taskix__subcmd__job__subcmd__help__subcmd__cancel_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix job help cancel commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__job__subcmd__help__subcmd__create_commands] )) ||
+_taskix__subcmd__job__subcmd__help__subcmd__create_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix job help create commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__job__subcmd__help__subcmd__delete_commands] )) ||
+_taskix__subcmd__job__subcmd__help__subcmd__delete_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix job help delete commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__job__subcmd__help__subcmd__followup_commands] )) ||
+_taskix__subcmd__job__subcmd__help__subcmd__followup_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix job help followup commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__job__subcmd__help__subcmd__help_commands] )) ||
+_taskix__subcmd__job__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix job help help commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__job__subcmd__help__subcmd__list_commands] )) ||
+_taskix__subcmd__job__subcmd__help__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix job help list commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__job__subcmd__help__subcmd__reject_commands] )) ||
+_taskix__subcmd__job__subcmd__help__subcmd__reject_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix job help reject commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__job__subcmd__help__subcmd__show_commands] )) ||
+_taskix__subcmd__job__subcmd__help__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix job help show commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__job__subcmd__help__subcmd__submit_commands] )) ||
+_taskix__subcmd__job__subcmd__help__subcmd__submit_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix job help submit commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__job__subcmd__help__subcmd__unarchive_commands] )) ||
+_taskix__subcmd__job__subcmd__help__subcmd__unarchive_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix job help unarchive commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__job__subcmd__help__subcmd__update_commands] )) ||
+_taskix__subcmd__job__subcmd__help__subcmd__update_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix job help update commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__job__subcmd__list_commands] )) ||
+_taskix__subcmd__job__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix job list commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__job__subcmd__reject_commands] )) ||
+_taskix__subcmd__job__subcmd__reject_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix job reject commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__job__subcmd__show_commands] )) ||
+_taskix__subcmd__job__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix job show commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__job__subcmd__submit_commands] )) ||
+_taskix__subcmd__job__subcmd__submit_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix job submit commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__job__subcmd__unarchive_commands] )) ||
+_taskix__subcmd__job__subcmd__unarchive_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix job unarchive commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__job__subcmd__update_commands] )) ||
+_taskix__subcmd__job__subcmd__update_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix job update commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__obsidian_commands] )) ||
+_taskix__subcmd__obsidian_commands() {
+    local commands; commands=(
+'connection:Read the Obsidian connection configuration without loading task records' \
+'show:Query one registered Task, Job, or Inbox entry by its exact ID' \
+'snapshot:Query registered notes and authoritative status properties without lease credentials' \
+'setup:Install task views and reload the configured Obsidian vault when files change' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'taskix obsidian commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__obsidian__subcmd__connection_commands] )) ||
+_taskix__subcmd__obsidian__subcmd__connection_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix obsidian connection commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__obsidian__subcmd__help_commands] )) ||
+_taskix__subcmd__obsidian__subcmd__help_commands() {
+    local commands; commands=(
+'connection:Read the Obsidian connection configuration without loading task records' \
+'show:Query one registered Task, Job, or Inbox entry by its exact ID' \
+'snapshot:Query registered notes and authoritative status properties without lease credentials' \
+'setup:Install task views and reload the configured Obsidian vault when files change' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'taskix obsidian help commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__obsidian__subcmd__help__subcmd__connection_commands] )) ||
+_taskix__subcmd__obsidian__subcmd__help__subcmd__connection_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix obsidian help connection commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__obsidian__subcmd__help__subcmd__help_commands] )) ||
+_taskix__subcmd__obsidian__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix obsidian help help commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__obsidian__subcmd__help__subcmd__setup_commands] )) ||
+_taskix__subcmd__obsidian__subcmd__help__subcmd__setup_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix obsidian help setup commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__obsidian__subcmd__help__subcmd__show_commands] )) ||
+_taskix__subcmd__obsidian__subcmd__help__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix obsidian help show commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__obsidian__subcmd__help__subcmd__snapshot_commands] )) ||
+_taskix__subcmd__obsidian__subcmd__help__subcmd__snapshot_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix obsidian help snapshot commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__obsidian__subcmd__setup_commands] )) ||
+_taskix__subcmd__obsidian__subcmd__setup_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix obsidian setup commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__obsidian__subcmd__show_commands] )) ||
+_taskix__subcmd__obsidian__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix obsidian show commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__obsidian__subcmd__snapshot_commands] )) ||
+_taskix__subcmd__obsidian__subcmd__snapshot_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix obsidian snapshot commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__plan_commands] )) ||
+_taskix__subcmd__plan_commands() {
+    local commands; commands=(
+'create:Publish a Plan from --body or --file while holding the Task lease' \
+'revise:Replace the Plan body in the same Task note while holding its lease' \
+'show:Show the current Plan'\''s metadata and absolute file path for a Task' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'taskix plan commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__plan__subcmd__create_commands] )) ||
+_taskix__subcmd__plan__subcmd__create_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix plan create commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__plan__subcmd__help_commands] )) ||
+_taskix__subcmd__plan__subcmd__help_commands() {
+    local commands; commands=(
+'create:Publish a Plan from --body or --file while holding the Task lease' \
+'revise:Replace the Plan body in the same Task note while holding its lease' \
+'show:Show the current Plan'\''s metadata and absolute file path for a Task' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'taskix plan help commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__plan__subcmd__help__subcmd__create_commands] )) ||
+_taskix__subcmd__plan__subcmd__help__subcmd__create_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix plan help create commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__plan__subcmd__help__subcmd__help_commands] )) ||
+_taskix__subcmd__plan__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix plan help help commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__plan__subcmd__help__subcmd__revise_commands] )) ||
+_taskix__subcmd__plan__subcmd__help__subcmd__revise_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix plan help revise commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__plan__subcmd__help__subcmd__show_commands] )) ||
+_taskix__subcmd__plan__subcmd__help__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix plan help show commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__plan__subcmd__revise_commands] )) ||
+_taskix__subcmd__plan__subcmd__revise_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix plan revise commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__plan__subcmd__show_commands] )) ||
+_taskix__subcmd__plan__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix plan show commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__project_commands] )) ||
+_taskix__subcmd__project_commands() {
+    local commands; commands=(
+'delete:Delete the Project, its work, and its entire generated document directory' \
+'register:Register a Project using its root directory and Git identity when available' \
+'list:List unarchived Projects, or archived Projects with --archived' \
+'show:Show a Project'\''s identity, root directory, and archival state' \
+'archive:Archive a Project after all of its Jobs are closed' \
+'unarchive:Restore an archived Project to the active project views' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'taskix project commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__project__subcmd__archive_commands] )) ||
+_taskix__subcmd__project__subcmd__archive_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix project archive commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__project__subcmd__delete_commands] )) ||
+_taskix__subcmd__project__subcmd__delete_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix project delete commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__project__subcmd__help_commands] )) ||
+_taskix__subcmd__project__subcmd__help_commands() {
+    local commands; commands=(
+'delete:Delete the Project, its work, and its entire generated document directory' \
+'register:Register a Project using its root directory and Git identity when available' \
+'list:List unarchived Projects, or archived Projects with --archived' \
+'show:Show a Project'\''s identity, root directory, and archival state' \
+'archive:Archive a Project after all of its Jobs are closed' \
+'unarchive:Restore an archived Project to the active project views' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'taskix project help commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__project__subcmd__help__subcmd__archive_commands] )) ||
+_taskix__subcmd__project__subcmd__help__subcmd__archive_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix project help archive commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__project__subcmd__help__subcmd__delete_commands] )) ||
+_taskix__subcmd__project__subcmd__help__subcmd__delete_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix project help delete commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__project__subcmd__help__subcmd__help_commands] )) ||
+_taskix__subcmd__project__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix project help help commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__project__subcmd__help__subcmd__list_commands] )) ||
+_taskix__subcmd__project__subcmd__help__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix project help list commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__project__subcmd__help__subcmd__register_commands] )) ||
+_taskix__subcmd__project__subcmd__help__subcmd__register_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix project help register commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__project__subcmd__help__subcmd__show_commands] )) ||
+_taskix__subcmd__project__subcmd__help__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix project help show commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__project__subcmd__help__subcmd__unarchive_commands] )) ||
+_taskix__subcmd__project__subcmd__help__subcmd__unarchive_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix project help unarchive commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__project__subcmd__list_commands] )) ||
+_taskix__subcmd__project__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix project list commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__project__subcmd__register_commands] )) ||
+_taskix__subcmd__project__subcmd__register_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix project register commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__project__subcmd__show_commands] )) ||
+_taskix__subcmd__project__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix project show commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__project__subcmd__unarchive_commands] )) ||
+_taskix__subcmd__project__subcmd__unarchive_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix project unarchive commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__sync_commands] )) ||
+_taskix__subcmd__sync_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix sync commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__task_commands] )) ||
+_taskix__subcmd__task_commands() {
+    local commands; commands=(
+'add:Add a Task to a Job and create its note without publishing a Plan' \
+'update:Change a Task'\''s display name, title, or board position' \
+'list:List Tasks, optionally filtered by Job, Project, status, or readiness' \
+'show:Show a Task'\''s status, dependencies, Plan reference, and current lease' \
+'depend:Add a prerequisite Task in the same Project before execution has started' \
+'undepend:Remove a prerequisite Task before execution has started' \
+'claim:Acquire a planning lease using --executor and --session' \
+'start:Begin execution with the current lease, a published Plan, and DONE prerequisites' \
+'heartbeat:Renew a Task lease using its owning session and lease token' \
+'release:Release ownership and mark the Task BLOCKED with a handoff reason' \
+'block:Mark a Task BLOCKED with a reason and release its lease' \
+'wait:Mark a Task \`WAITING_USER\` with a reason and release its lease' \
+'fail:Mark a Task FAILED with a reason and release its lease' \
+'done:Mark an EXECUTING Task DONE and release its lease' \
+'cancel:Cancel a Task and release its lease' \
+'retry:Return a FAILED Task to TODO so it can be claimed again' \
+'reopen:Return a DONE or CANCELLED Task to TODO so it can be claimed again' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'taskix task commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__task__subcmd__add_commands] )) ||
+_taskix__subcmd__task__subcmd__add_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix task add commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__task__subcmd__block_commands] )) ||
+_taskix__subcmd__task__subcmd__block_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix task block commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__task__subcmd__cancel_commands] )) ||
+_taskix__subcmd__task__subcmd__cancel_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix task cancel commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__task__subcmd__claim_commands] )) ||
+_taskix__subcmd__task__subcmd__claim_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix task claim commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__task__subcmd__depend_commands] )) ||
+_taskix__subcmd__task__subcmd__depend_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix task depend commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__task__subcmd__done_commands] )) ||
+_taskix__subcmd__task__subcmd__done_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix task done commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__task__subcmd__fail_commands] )) ||
+_taskix__subcmd__task__subcmd__fail_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix task fail commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__task__subcmd__heartbeat_commands] )) ||
+_taskix__subcmd__task__subcmd__heartbeat_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix task heartbeat commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__task__subcmd__help_commands] )) ||
+_taskix__subcmd__task__subcmd__help_commands() {
+    local commands; commands=(
+'add:Add a Task to a Job and create its note without publishing a Plan' \
+'update:Change a Task'\''s display name, title, or board position' \
+'list:List Tasks, optionally filtered by Job, Project, status, or readiness' \
+'show:Show a Task'\''s status, dependencies, Plan reference, and current lease' \
+'depend:Add a prerequisite Task in the same Project before execution has started' \
+'undepend:Remove a prerequisite Task before execution has started' \
+'claim:Acquire a planning lease using --executor and --session' \
+'start:Begin execution with the current lease, a published Plan, and DONE prerequisites' \
+'heartbeat:Renew a Task lease using its owning session and lease token' \
+'release:Release ownership and mark the Task BLOCKED with a handoff reason' \
+'block:Mark a Task BLOCKED with a reason and release its lease' \
+'wait:Mark a Task \`WAITING_USER\` with a reason and release its lease' \
+'fail:Mark a Task FAILED with a reason and release its lease' \
+'done:Mark an EXECUTING Task DONE and release its lease' \
+'cancel:Cancel a Task and release its lease' \
+'retry:Return a FAILED Task to TODO so it can be claimed again' \
+'reopen:Return a DONE or CANCELLED Task to TODO so it can be claimed again' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'taskix task help commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__task__subcmd__help__subcmd__add_commands] )) ||
+_taskix__subcmd__task__subcmd__help__subcmd__add_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix task help add commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__task__subcmd__help__subcmd__block_commands] )) ||
+_taskix__subcmd__task__subcmd__help__subcmd__block_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix task help block commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__task__subcmd__help__subcmd__cancel_commands] )) ||
+_taskix__subcmd__task__subcmd__help__subcmd__cancel_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix task help cancel commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__task__subcmd__help__subcmd__claim_commands] )) ||
+_taskix__subcmd__task__subcmd__help__subcmd__claim_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix task help claim commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__task__subcmd__help__subcmd__depend_commands] )) ||
+_taskix__subcmd__task__subcmd__help__subcmd__depend_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix task help depend commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__task__subcmd__help__subcmd__done_commands] )) ||
+_taskix__subcmd__task__subcmd__help__subcmd__done_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix task help done commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__task__subcmd__help__subcmd__fail_commands] )) ||
+_taskix__subcmd__task__subcmd__help__subcmd__fail_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix task help fail commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__task__subcmd__help__subcmd__heartbeat_commands] )) ||
+_taskix__subcmd__task__subcmd__help__subcmd__heartbeat_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix task help heartbeat commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__task__subcmd__help__subcmd__help_commands] )) ||
+_taskix__subcmd__task__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix task help help commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__task__subcmd__help__subcmd__list_commands] )) ||
+_taskix__subcmd__task__subcmd__help__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix task help list commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__task__subcmd__help__subcmd__release_commands] )) ||
+_taskix__subcmd__task__subcmd__help__subcmd__release_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix task help release commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__task__subcmd__help__subcmd__reopen_commands] )) ||
+_taskix__subcmd__task__subcmd__help__subcmd__reopen_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix task help reopen commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__task__subcmd__help__subcmd__retry_commands] )) ||
+_taskix__subcmd__task__subcmd__help__subcmd__retry_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix task help retry commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__task__subcmd__help__subcmd__show_commands] )) ||
+_taskix__subcmd__task__subcmd__help__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix task help show commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__task__subcmd__help__subcmd__start_commands] )) ||
+_taskix__subcmd__task__subcmd__help__subcmd__start_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix task help start commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__task__subcmd__help__subcmd__undepend_commands] )) ||
+_taskix__subcmd__task__subcmd__help__subcmd__undepend_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix task help undepend commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__task__subcmd__help__subcmd__update_commands] )) ||
+_taskix__subcmd__task__subcmd__help__subcmd__update_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix task help update commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__task__subcmd__help__subcmd__wait_commands] )) ||
+_taskix__subcmd__task__subcmd__help__subcmd__wait_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix task help wait commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__task__subcmd__list_commands] )) ||
+_taskix__subcmd__task__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix task list commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__task__subcmd__release_commands] )) ||
+_taskix__subcmd__task__subcmd__release_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix task release commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__task__subcmd__reopen_commands] )) ||
+_taskix__subcmd__task__subcmd__reopen_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix task reopen commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__task__subcmd__retry_commands] )) ||
+_taskix__subcmd__task__subcmd__retry_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix task retry commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__task__subcmd__show_commands] )) ||
+_taskix__subcmd__task__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix task show commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__task__subcmd__start_commands] )) ||
+_taskix__subcmd__task__subcmd__start_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix task start commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__task__subcmd__undepend_commands] )) ||
+_taskix__subcmd__task__subcmd__undepend_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix task undepend commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__task__subcmd__update_commands] )) ||
+_taskix__subcmd__task__subcmd__update_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix task update commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__task__subcmd__wait_commands] )) ||
+_taskix__subcmd__task__subcmd__wait_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix task wait commands' commands "$@"
+}
+
+if [ "$funcstack[1]" = "_taskix" ]; then
+    _taskix "$@"
+else
+    compdef _taskix taskix
+fi

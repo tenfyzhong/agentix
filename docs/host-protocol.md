@@ -56,7 +56,7 @@ agentix client history pi:native-id --limit 20
 agentix client command omp:native-id '{"command":"model","params":null}'
 ```
 
-The registry uses `SessionRef { agent, native_id }`. Public service IDs encode it as `pi:<native-id>`, `omp:<native-id>`, `claude:<native-id>`, or `codex:<native-id>`. Native IDs remain opaque, including any embedded colons. Unqualified IDs are accepted only when ownership is unambiguous. Extension frames and taskcli provenance always use the native ID.
+The registry uses `SessionRef { agent, native_id }`. Public service IDs encode it as `pi:<native-id>`, `omp:<native-id>`, `claude:<native-id>`, or `codex:<native-id>`. Native IDs remain opaque, including any embedded colons. Unqualified IDs are accepted only when ownership is unambiguous. Extension frames and taskix provenance always use the native ID.
 
 ## Native registration, version 2
 

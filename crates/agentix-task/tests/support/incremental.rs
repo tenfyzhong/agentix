@@ -559,7 +559,7 @@ async fn job_approval_preserves_registered_bases_saved_without_comments() {
         assert!(
             fs::read_to_string(path)
                 .unwrap()
-                .starts_with("# taskcli-generated:")
+                .starts_with("# taskix-generated:")
         );
     }
 }

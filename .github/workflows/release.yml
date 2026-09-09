@@ -98,7 +98,7 @@ jobs:
         with:
           shared-key: release-${{ matrix.target }}
       - name: Build release binary
-        run: cargo build --locked --release --target "${{ matrix.target }}" --package agentix --package taskcli
+        run: cargo build --locked --release --target "${{ matrix.target }}" --package agentix --package taskix
       - name: Verify binary version
         shell: bash
         env:
@@ -114,27 +114,27 @@ jobs:
             echo "Binary version '$version_output' does not match tag version '$VERSION'" >&2
             exit 1
           fi
-          task_binary="target/$TARGET/release/taskcli"
+          task_binary="target/$TARGET/release/taskix"
           if [[ "${{ runner.os }}" == "Windows" ]]; then
             task_binary="${task_binary}.exe"
           fi
-          [[ "$("$task_binary" --version)" == "taskcli $VERSION" ]]
+          [[ "$("$task_binary" --version)" == "taskix $VERSION" ]]
       - name: Package release binary
         shell: bash
         env:
           RELEASE_TAG: ${{ needs.resolve-version.outputs.tag }}
           TARGET: ${{ matrix.target }}
         run: |
-          for binary in agentix taskcli; do
+          for binary in agentix taskix; do
             staging="dist/stage/$binary"
             mkdir -p "$staging/completions"
             cp README.md LICENSE "config/$binary.example.toml" "$staging/"
             cp "completions/$binary.bash" "completions/_$binary" \
               "completions/$binary.fish" "$staging/completions/"
-            if [[ "$binary" == "taskcli" ]]; then
+            if [[ "$binary" == "taskix" ]]; then
               mkdir -p "$staging/docs"
               cp docs/task-board.md docs/task-workflow-mechanisms.md "$staging/docs/"
-              git archive HEAD plugins/agent-task-manager | tar -x -C "$staging"
+              git archive HEAD plugins/taskix-manager | tar -x -C "$staging"
             fi
             executable="$binary"
             if [[ "$RUNNER_OS" == "Windows" ]]; then
@@ -153,8 +153,8 @@ jobs:
           path: |
             dist/agentix-*.tar.gz
             dist/agentix-*.zip
-            dist/taskcli-*.tar.gz
-            dist/taskcli-*.zip
+            dist/taskix-*.tar.gz
+            dist/taskix-*.zip
           if-no-files-found: error
 
   publish-release:
@@ -173,7 +173,7 @@ jobs:
           merge-multiple: true
       - name: Create checksums
         working-directory: dist
-        run: sha256sum agentix-* taskcli-* > SHA256SUMS
+        run: sha256sum agentix-* taskix-* > SHA256SUMS
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}

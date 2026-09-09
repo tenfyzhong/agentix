@@ -5,10 +5,10 @@
   },
   "plugins": [
     {
-      "name": "agent-task-manager",
+      "name": "taskix-manager",
       "source": {
         "source": "local",
-        "path": "./plugins/agent-task-manager"
+        "path": "./plugins/taskix-manager"
       },
       "policy": {
         "installation": "AVAILABLE",

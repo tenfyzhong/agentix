@@ -95,7 +95,7 @@ impl Browser {
             }
             Self::Feishu(_) => assert!(body.contains(&format!("**{bold}**")), "{body}"),
         }
-        assert!(!body.contains("taskcli:"));
+        assert!(!body.contains("taskix:"));
         assert!(!body.contains("```mermaid"));
     }
 }
@@ -244,12 +244,12 @@ async fn prepare_browse_documents(service: &agentix_task::Service, id: &str) {
     let document = std::fs::read_to_string(&path)
         .unwrap()
         .replace(
-            "<!-- taskcli:goal:start -->",
-            "<!-- taskcli:goal:start -->\n**Bold goal**",
+            "<!-- taskix:goal:start -->",
+            "<!-- taskix:goal:start -->\n**Bold goal**",
         )
         .replace(
-            "<!-- taskcli:notes:start -->",
-            "<!-- taskcli:notes:start -->\n**Bold notes**",
+            "<!-- taskix:notes:start -->",
+            "<!-- taskix:notes:start -->\n**Bold notes**",
         );
     std::fs::write(path, document).unwrap();
 }

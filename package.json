@@ -11,25 +11,25 @@
     "@sinclair/typebox": "^0.34.0"
   },
   "workspaces": [
-    "plugins/agent-task-manager",
+    "plugins/taskix-manager",
     "plugins/agentix-bridge"
   ],
   "pi": {
     "extensions": [
-      "./plugins/agent-task-manager/extensions/pi.ts",
+      "./plugins/taskix-manager/extensions/pi.ts",
       "./plugins/agentix-bridge/extensions/pi.ts"
     ],
     "skills": [
-      "./plugins/agent-task-manager/skills"
+      "./plugins/taskix-manager/skills"
     ]
   },
   "omp": {
     "extensions": [
-      "./plugins/agent-task-manager/extensions/omp.ts",
+      "./plugins/taskix-manager/extensions/omp.ts",
       "./plugins/agentix-bridge/extensions/omp.ts"
     ],
     "skills": [
-      "./plugins/agent-task-manager/skills"
+      "./plugins/taskix-manager/skills"
     ]
   }
 }

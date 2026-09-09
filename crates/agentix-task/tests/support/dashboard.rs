@@ -58,13 +58,13 @@ async fn recent_jobs_base_is_independent_scoped_and_safe_to_regenerate() {
     for filter in [
         "file.inFolder(\"Tasks ☃/Projects\")",
         "file.hasTag(\"agent/job\")",
-        "note[\"taskcli-generated\"] == true",
+        "note[\"taskix-generated\"] == true",
         "archived != true",
     ] {
         assert!(filters.contains(&json!(filter)), "{filter}");
     }
     assert!(!source.contains("project_id"));
-    assert_eq!(base["views"][0]["type"], "taskcliRecentJobs");
+    assert_eq!(base["views"][0]["type"], "taskixRecentJobs");
     assert_eq!(
         base["views"][0]["pinnedColumns"],
         json!(["ACTIVE", "PENDING_REVIEW", "COMPLETED", "CANCELLED"])
@@ -147,7 +147,7 @@ async fn recent_jobs_base_preserves_unmanaged_collision_and_recovers_publication
             .contains("unmanaged document")
     );
     assert_eq!(std::fs::read_to_string(&path).unwrap(), authored);
-    std::fs::write(&path, "# taskcli-generated: pending-review\nviews: []\n").unwrap();
+    std::fs::write(&path, "# taskix-generated: pending-review\nviews: []\n").unwrap();
     service.sync().await.unwrap();
     assert!(
         std::fs::read_to_string(&path)
@@ -183,7 +183,7 @@ async fn obsidian_dashboard_is_a_scoped_read_only_table_with_project_links() {
     let text = std::fs::read_to_string(root.join("Dashboard.base")).unwrap();
     let base: Value = serde_yaml::from_str(&text).unwrap();
     assert!(!root.join("Dashboard.md").exists());
-    assert!(text.starts_with("# taskcli-generated: dashboard\n"));
+    assert!(text.starts_with("# taskix-generated: dashboard\n"));
     assert_eq!(base["formulas"]["name"], "link(file.path, note.name)");
     assert_eq!(base["formulas"]["status"], "note.status");
     assert_eq!(base["formulas"]["updated"], "date(note.updated_at)");
@@ -209,7 +209,7 @@ async fn obsidian_dashboard_is_a_scoped_read_only_table_with_project_links() {
         "file.ext == \"md\"",
         "file.hasTag(\"agent/project\")",
         "note.status == \"ACTIVE\"",
-        "note[\"taskcli-generated\"] == true",
+        "note[\"taskix-generated\"] == true",
     ] {
         assert!(
             filters.contains(&json!(filter)),
@@ -259,7 +259,7 @@ async fn dashboard_base_stays_stable_while_board_records_work_activity() {
 async fn dashboard_migration_protects_collisions_and_recovers_after_partial_publication() {
     let f = Fixture::new().await;
     let root = f.service.config().output_dir();
-    let legacy = "---\nid: dashboard\ntaskcli-generated: true\ntags: [agent/dashboard]\n---\n# Task dashboard\n";
+    let legacy = "---\nid: dashboard\ntaskix-generated: true\ntags: [agent/dashboard]\n---\n# Task dashboard\n";
     std::fs::write(root.join("Dashboard.md"), legacy).unwrap();
     let mut paths = f
         .service

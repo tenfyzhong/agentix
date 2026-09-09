@@ -220,7 +220,7 @@ impl Service {
     async fn lock_output(&self) -> Result<File> {
         self.config.validate()?;
         std::fs::create_dir_all(self.config.output_dir())?;
-        let path = self.safe_path(".taskcli.lock")?;
+        let path = self.safe_path(".taskix.lock")?;
         tokio::task::spawn_blocking(move || {
             let lock = OpenOptions::new()
                 .create(true)
@@ -373,7 +373,7 @@ impl Service {
         crate::mutations::apply(&mut preview, &registration, &options, self.store.now())?;
         let managed_task = if current.is_none() && path.is_file() {
             let (properties, _) = split_properties(&std::fs::read_to_string(&path)?)?;
-            properties["taskcli-generated"] == true && properties["id"] == task.id
+            properties["taskix-generated"] == true && properties["id"] == task.id
         } else {
             false
         };
@@ -551,7 +551,7 @@ impl Service {
                 }
                 let mut doc = frontmatter(properties);
                 doc.push_str(&Self::header(&job.name));
-                doc.push_str(&format!("\n## {}\n\n<!-- taskcli:goal:start -->\n{}\n<!-- taskcli:goal:end -->\n\n## {}\n", "Goal", goal, "Tasks"));
+                doc.push_str(&format!("\n## {}\n\n<!-- taskix:goal:start -->\n{}\n<!-- taskix:goal:end -->\n\n## {}\n", "Goal", goal, "Tasks"));
                 doc.push_str(&job_dependency_graph(self, &index, &job.id)?);
                 for task in index
                     .tasks_by_job
@@ -565,7 +565,10 @@ impl Service {
                         doc.push_str(&format!("\n  {}: {}\n", "Reason", escape(reason)));
                     }
                 }
-                doc.push_str(&format!("\n## {}\n\n<!-- taskcli:notes:start -->\n{notes}\n<!-- taskcli:notes:end -->\n", "Notes"));
+                doc.push_str(&format!(
+                    "\n## {}\n\n<!-- taskix:notes:start -->\n{notes}\n<!-- taskix:notes:end -->\n",
+                    "Notes"
+                ));
                 doc.push_str(&prompt_markdown(&job.prompt));
                 doc.push_str(&conversation_markdown(job));
                 files.insert(job.document_path.clone(), doc);
@@ -638,13 +641,13 @@ impl Service {
             if path.exists() && !previous_paths.contains(relative.as_str()) {
                 let existing = std::fs::read_to_string(&path)?;
                 let owned = if relative == "Dashboard.base" {
-                    existing.starts_with("# taskcli-generated: dashboard\n")
+                    existing.starts_with("# taskix-generated: dashboard\n")
                 } else if relative == "Recent Jobs.base" {
-                    existing.starts_with("# taskcli-generated: pending-review\n")
+                    existing.starts_with("# taskix-generated: pending-review\n")
                 } else {
                     let (old, _) = split_properties(&existing)?;
                     let (new, _) = split_properties(contents)?;
-                    old["taskcli-generated"] == true && old["id"] == new["id"]
+                    old["taskix-generated"] == true && old["id"] == new["id"]
                 };
                 ensure!(
                     owned,
@@ -729,7 +732,7 @@ impl Service {
                     }
                 };
                 if let Ok((properties, _)) = split_properties(&body)
-                    && properties["taskcli-generated"] == true
+                    && properties["taskix-generated"] == true
                     && properties["id"]
                         .as_str()
                         .is_some_and(|id| identities.contains(id))
@@ -787,7 +790,7 @@ impl Service {
     }
 
     fn notice() -> &'static str {
-        "> GENERATED — Use taskcli for managed fields; Obsidian status edits require Taskcli Sync."
+        "> GENERATED — Use taskix for managed fields; Obsidian status edits require Taskix Sync."
     }
 
     fn recent_jobs_base(&self) -> Result<String> {
@@ -796,7 +799,7 @@ impl Service {
         let base = json!({
             "filters":{"and":[
                 format!("file.inFolder({})", json!(folder.trim_start_matches("./"))),
-                "file.ext == \"md\"", "note[\"taskcli-generated\"] == true",
+                "file.ext == \"md\"", "note[\"taskix-generated\"] == true",
                 "file.hasTag(\"agent/job\")", "archived != true"
             ]},
             "formulas":{"name":"link(file.path, note.name)", "review_time":REVIEW_TIME_FORMULA, "updated":"date(note.updated_at).format(\"YYYY-MM-DD HH:mm:ss\")"},
@@ -809,7 +812,7 @@ impl Service {
             "views": recent_jobs_views()
         });
         Ok(format!(
-            "# taskcli-generated: pending-review\n{}",
+            "# taskix-generated: pending-review\n{}",
             serde_yaml::to_string(&base)?
         ))
     }
@@ -821,7 +824,7 @@ impl Service {
         let base = json!({
             "filters": {"and": [
                 format!("file.inFolder({})", json!(folder)),
-                "file.ext == \"md\"", "note[\"taskcli-generated\"] == true"
+                "file.ext == \"md\"", "note[\"taskix-generated\"] == true"
             ]},
             "formulas": {
                 "name": "link(file.path, note.name)",
@@ -844,7 +847,7 @@ impl Service {
         Ok((
             "Dashboard.base".into(),
             format!(
-                "# taskcli-generated: dashboard\n{}",
+                "# taskix-generated: dashboard\n{}",
                 serde_yaml::to_string(&base)?
             ),
         ))
@@ -1079,7 +1082,7 @@ fn frontmatter(mut properties: Value) -> String {
     #[cfg(test)]
     tests::FRONTMATTER_CALLS.with(|calls| calls.set(calls.get() + 1));
     normalize_timestamp_properties(&mut properties);
-    properties["taskcli-generated"] = json!(true);
+    properties["taskix-generated"] = json!(true);
     let mut result = String::from("---\n");
     for (key, value) in properties.as_object().unwrap() {
         let key = if key
@@ -1304,8 +1307,8 @@ fn section(body: &str, name: &str) -> Result<Option<String>> {
     if body.is_empty() {
         return Ok(None);
     }
-    let start = format!("<!-- taskcli:{name}:start -->");
-    let end = format!("<!-- taskcli:{name}:end -->");
+    let start = format!("<!-- taskix:{name}:start -->");
+    let end = format!("<!-- taskix:{name}:end -->");
     // Only standalone markers delimit editable sections. Quoted or indented
     // user text (including the original prompt) must not alter the document.
     let positions = |marker: &str| {
@@ -1356,7 +1359,7 @@ fn recent_jobs_views() -> Vec<Value> {
         {"column":"file.name","direction":"ASC"}
     ]);
     let mut views = vec![json!({
-        "type":"taskcliRecentJobs", "name":"Recent jobs",
+        "type":"taskixRecentJobs", "name":"Recent jobs",
         "groupBy":{"property":"status","direction":"ASC"},
         "order":["status", "projects", "formula.updated", "formula.review_time"],
         "sort":sort,
@@ -1364,7 +1367,7 @@ fn recent_jobs_views() -> Vec<Value> {
         "hideEmptyColumns":true, "columnWidth":300
     })];
     // Native Bases limits apply to the whole view, so each status gets its
-    // own table. The Taskcli Sync Kanban adapter limits each column instead.
+    // own table. The Taskix Sync Kanban adapter limits each column instead.
     views.extend(statuses.map(|status| json!({
         "type":"table", "name":status, "limit":10,
         "filters":format!("note.status == {status:?}"),

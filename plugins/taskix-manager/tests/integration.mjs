@@ -1,0 +1,671 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { spawn } from "node:child_process";
+import { cp, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+import { runHook, runTaskix } from "../runtime.mjs";
+import { loadPlugin, copy } from "./support/obsidian-plugin.mjs";
+
+// Cargo supplies its freshly compiled executable: these tests must never fall
+// back to a developer's installed taskix or normal task database.
+assert.ok(process.env.TASKIX_BIN, "Run through cargo test -p taskix");
+
+async function fixture(t) {
+    const dir = await mkdtemp(join(tmpdir(), "task-plugin \u{2603} "));
+    const previous = process.env.TASKIX_CONFIG;
+    const cleanup = [];
+    process.env.TASKIX_CONFIG = join(dir, "config.toml");
+    t.after(async () => {
+        for (const callback of cleanup.reverse()) await callback();
+        if (previous === undefined) delete process.env.TASKIX_CONFIG;
+        else process.env.TASKIX_CONFIG = previous;
+        await rm(dir, { recursive: true, force: true });
+    });
+    const root = join(dir, "vault");
+    await mkdir(join(root, ".obsidian"), { recursive: true });
+    const run = async (args, options = {}) =>
+        (await runTaskix(args, { cwd: dir, ...options })).result;
+    await run([
+        "init",
+        "--root",
+        root,
+        "--directory",
+        "Tasks \u{2603}",
+        "--database",
+        join(dir, "tasks.sqlite3"),
+    ]);
+    const project = await run([
+        "project",
+        "register",
+        "--root",
+        dir,
+        "--name",
+        "Plugin tests",
+    ]);
+    const job = await run([
+        "job",
+        "create",
+        "--project",
+        project.id,
+        "--title",
+        "Integration",
+    ]);
+    return { dir, root, project, job, run, cleanup };
+}
+
+test("Obsidian bridge uses real CLI revisions, lease guards and manual Job review", async (t) => {
+    const f = await fixture(t);
+    const task = await f.run(["task", "add", "--job", f.job.id, "--title", "Bridge"]);
+    const { SyncEngine, runCli } = loadPlugin();
+    const execute = (args) => runCli({ cliPath: process.env.TASKIX_BIN, configPath: process.env.TASKIX_CONFIG, vaultPath: f.root }, args);
+    const lookup = async (id) => (await execute(["obsidian", "show", id])).result;
+    const files = new Map();
+    const notices = [];
+    for (const row of [await lookup(task.id), await lookup(f.job.id)]) {
+        files.set(row.path, { ...copy(row.properties), id: row.id, task_id: row.kind === "task" ? row.id : undefined, revision: row.revision, custom: "preserved" });
+    }
+    const engine = new SyncEngine({
+        connection: async () => (await execute(["obsidian", "connection"])).result,
+        lookup, execute, notice: (message) => notices.push(message),
+        openNotes: () => [...files].map(([path, properties]) => ({ path, properties })),
+        read: async (path) => copy(files.get(path)),
+        patch: async (path, expected, properties) => {
+            const file = files.get(path);
+            if (file.id !== expected.id || file.status !== expected.status || file.revision !== expected.revision) return false;
+            Object.assign(file, copy(properties));
+            return true;
+        },
+    });
+    t.after(() => engine.dispose());
+    await engine.initialize();
+    const edit = async (id, status) => {
+        const row = await lookup(id);
+        Object.assign(files.get(row.path), copy(row.properties), { revision: row.revision, status });
+        engine.observe(row.path, files.get(row.path));
+        await engine.flush();
+        return files.get(row.path);
+    };
+    await edit(task.id, "BLOCKED");
+    assert.equal((await f.run(["task", "show", task.id])).status, "BLOCKED");
+    const claim = (await execute(["task", "claim", task.id, "--executor", "agent:test", "--session", "bridge-owner"])).result;
+    await engine.initialize();
+    const rejected = await edit(task.id, "CANCELLED");
+    assert.equal(rejected.status, "IN_PROGRESS");
+    assert.equal(rejected.custom, "preserved");
+    assert.equal(notices.length, 1);
+    const owner = ["--session", "bridge-owner", "--lease-token", claim.lease.token];
+    await execute(["plan", "create", task.id, "--body", "Verify bridge", ...owner]);
+    await execute(["task", "start", task.id, ...owner]);
+    await execute(["task", "done", task.id, ...owner]);
+    await engine.initialize();
+    assert.equal((await f.run(["job", "show", f.job.id])).status, "PENDING_REVIEW");
+    await edit(f.job.id, "ACTIVE");
+    assert.equal((await f.run(["job", "show", f.job.id])).status, "ACTIVE");
+    assert.equal((await f.run(["task", "show", task.id])).status, "DONE");
+    await edit(f.job.id, "PENDING_REVIEW");
+    const approved = await edit(f.job.id, "COMPLETED");
+    assert.equal(approved.status, "COMPLETED");
+    assert.ok(approved.completed_at);
+    assert.equal(Object.hasOwn(approved, "completedDate"), false);
+    const job = await f.run(["job", "show", f.job.id]);
+    assert.ok(job.completed_at);
+    assert.match(await readFile(join(f.root, "Tasks \u{2603}", job.document_path), "utf8"), /status: "COMPLETED"/);
+    assert.equal(notices.length, 1);
+});
+
+test("Inbox bridge edits real Markdown, enforces Job review and reopens completed work", async (t) => {
+    const f = await fixture(t);
+    await f.run(["job", "cancel", f.job.id]);
+    const entry = await f.run(["inbox", "add", "--project", f.project.id, "--content", "Deliver\nPreserve these details."]);
+    const claimed = await f.run(["inbox", "claim-next", "--project", f.project.id], { session: "inbox-worker", executor: "agent:test" });
+    const task = await f.run(["task", "add", "--job", claimed.job.id, "--title", "Implementation"]);
+    const { SyncEngine, runCli, parseInbox, patchInbox } = loadPlugin();
+    const execute = (args) => runCli({ cliPath: process.env.TASKIX_BIN, configPath: process.env.TASKIX_CONFIG, vaultPath: f.root }, args);
+    const lookup = async (id) => (await execute(["obsidian", "show", id])).result;
+    const note = await lookup(entry.id);
+    const path = join(f.root, note.path);
+    const notices = [];
+    const engine = new SyncEngine({
+        connection: async () => (await execute(["obsidian", "connection"])).result,
+        lookup, execute, notice: (message) => notices.push(message),
+        openNotes: async function* () { yield { path: note.path, source: await readFile(path, "utf8") }; },
+        read: async () => parseInbox(await readFile(path, "utf8"), f.project.id).find((row) => row.id === entry.id),
+        patch: async (_path, expected, properties, row) => {
+            await writeFile(path, patchInbox(await readFile(path, "utf8"), row, expected, properties));
+        },
+    });
+    t.after(() => engine.dispose());
+    await engine.initialize();
+    const edit = async (from, to) => {
+        const source = (await readFile(path, "utf8")).replace(`- [${from}] Deliver`, `- [${to}] Deliver`);
+        await writeFile(path, source); engine.observeInbox(note.path, source); await engine.flush();
+    };
+    await edit("/", "x");
+    assert.equal((await f.run(["job", "show", claimed.job.id])).status, "ACTIVE");
+    assert.match(notices[0], /PENDING_REVIEW/);
+    assert.match(await readFile(path, "utf8"), /- \[\/\] Deliver/);
+    const owner = { session: "inbox-worker", executor: "agent:test" };
+    const claim = await f.run(["task", "claim", task.id], owner); owner.token = claim.lease.token;
+    await f.run(["plan", "create", task.id, "--body", "Verify"], owner);
+    await f.run(["task", "start", task.id], owner); await f.run(["task", "done", task.id], owner);
+    await engine.initialize();
+    assert.match(await readFile(path, "utf8"), /- \[r\] Deliver/);
+    await edit("r", "/");
+    assert.equal((await f.run(["job", "show", claimed.job.id])).status, "ACTIVE");
+    await edit("/", "r");
+    assert.equal((await f.run(["job", "show", claimed.job.id])).status, "PENDING_REVIEW");
+    await edit("r", "x");
+    assert.equal((await f.run(["job", "show", claimed.job.id])).status, "COMPLETED");
+    await edit("x", "/");
+    assert.equal((await f.run(["job", "show", claimed.job.id])).status, "ACTIVE");
+    await edit("/", " ");
+    await edit(" ", "-");
+    assert.equal((await f.run(["job", "show", claimed.job.id])).status, "CANCELLED");
+    await edit("-", " ");
+    assert.equal((await f.run(["inbox", "list", "--project", f.project.id]))[0].status, "TODO");
+    assert.equal((await f.run(["task", "show", task.id])).status, "DONE");
+    assert.match(await readFile(path, "utf8"), /Preserve these details/);
+    assert.equal(notices.length, 1);
+});
+
+function taskLanguage(t, language) {
+    const previous = process.env.AGENT_TASK_LANG;
+    process.env.AGENT_TASK_LANG = language;
+    t.after(() => {
+        if (previous === undefined) delete process.env.AGENT_TASK_LANG;
+        else process.env.AGENT_TASK_LANG = previous;
+    });
+}
+
+async function extension(t, f, host) {
+    const handlers = new Map();
+    const messages = [];
+    let tool;
+    const pkg = JSON.parse(await readFile("package.json", "utf8"));
+    assert.equal(pkg[host].extensions.length, 1);
+    const { default: install } = await import(
+        pathToFileURL(resolve(pkg[host].extensions[0]))
+    );
+    install({
+        sendMessage: (...args) => messages.push(args),
+        on: (name, handler) => handlers.set(name, handler),
+        registerTool: (value) => {
+            tool = value;
+        },
+    });
+    assert.equal(tool.parameters.properties.args.type, "array");
+    assert.ok(tool.parameters.required.includes("args"));
+    const ctx = {
+        cwd: f.dir,
+        sessionManager: { getSessionId: () => `session:${host}` },
+        isIdle: () => true,
+    };
+    await handlers.get("session_start")({}, ctx);
+    f.cleanup.push(() => handlers.get("session_shutdown")({}, ctx));
+    let calls = 0;
+    const invoke = async (args, id = `call-${++calls}`) =>
+        (await tool.execute(id, { args }, undefined, undefined, ctx)).details
+            .result;
+    return { invoke, handlers, ctx, messages };
+}
+
+for (const host of ["pi", "omp"]) {
+    test(`${host} entrypoint uses real CLI, plans, leases and Obsidian files`, async (t) => {
+        taskLanguage(t, "zh-CN");
+        const f = await fixture(t);
+        const x = await extension(t, f, host);
+        const task = await x.invoke([
+            "task",
+            "add",
+            "--job",
+            f.job.id,
+            "--title",
+            "Build $(not-a-shell) Unicode \u{2603}",
+        ]);
+        const claim = await x.invoke([
+            "task",
+            "claim",
+            task.id,
+            "--delegated-by",
+            "team:test",
+        ]);
+        assert.equal(claim.lease.session_ref, `session:${host}`);
+        assert.equal(claim.lease.delegated_by, "team:test");
+        assert.equal(claim.phase, "PLANNING");
+        await x.invoke([
+            "plan",
+            "create",
+            task.id,
+            "--body",
+            "# Plan\nAcceptance checks.",
+        ]);
+        const context = await x.handlers.get("before_agent_start")({}, x.ctx);
+        assert.ok(context.message.content.includes(task.id));
+        const injected = JSON.parse(context.message.content.split("\n").at(-1));
+        assert.equal(injected.task_language, "zh-CN");
+        assert.equal(injected.documents.language, undefined);
+        const revision = await x.invoke([
+            "plan",
+            "revise",
+            task.id,
+            "--body",
+            "# Revised plan",
+        ]);
+        assert.equal(revision.version, 2);
+        assert.ok((await readFile(revision.absolute_path, "utf8")).endsWith("# Revised plan"));
+        await x.invoke(["task", "wait", task.id, "--reason", "Need review"]);
+        assert.equal(
+            (await f.run(["task", "show", task.id])).status,
+            "WAITING_USER",
+        );
+        await x.invoke(["task", "claim", task.id]);
+        await assert.rejects(
+            x.invoke(["task", "done", task.id]),
+            /EXECUTING/,
+        );
+        await x.invoke(["task", "start", task.id]);
+        await x.invoke(["task", "done", task.id]);
+        const job = await f.run(["job", "show", f.job.id]);
+        assert.equal(job.status, "PENDING_REVIEW");
+        await f.run(["job", "approve", job.id]);
+        const body = await readFile(
+            join(f.root, "Tasks \u{2603}", job.document_path),
+            "utf8",
+        );
+        assert.ok(body.includes(task.name));
+        assert.ok(body.includes("Tasks/"));
+        const note = await f.run(["plan", "show", task.id]);
+        assert.equal(note.properties.status, "DONE");
+        assert.equal(note.properties.id, task.id);
+        assert.ok(note.path.includes("/Tasks/"));
+        assert.equal(body.includes("[["), true);
+        assert.equal((await f.run(["doctor"])).healthy, true);
+    });
+}
+
+test("tool retries preserve identity after claim, Plan revision and lease-releasing writes", async (t) => {
+    const f = await fixture(t);
+    const x = await extension(t, f, "pi");
+    const task = await x.invoke([
+        "task",
+        "add",
+        "--job",
+        f.job.id,
+        "--title",
+        "Idempotent",
+    ]);
+    const claimArgs = ["task", "claim", task.id];
+    const claim = await x.invoke(claimArgs, "claim-once");
+    assert.deepEqual(await x.invoke(claimArgs, "claim-once"), claim);
+    await x.invoke(["plan", "create", task.id, "--body", "# Plan"]);
+    const planArgs = ["plan", "revise", task.id, "--body", "# Retry safe"];
+    const plan = await x.invoke(planArgs, "revise-once");
+    assert.deepEqual(await x.invoke(planArgs, "revise-once"), plan);
+    const startArgs = ["task", "start", task.id];
+    const start = await x.invoke(startArgs, "start-once");
+    assert.deepEqual(await x.invoke(startArgs, "start-once"), start);
+    assert.equal(start.lease.token, claim.lease.token);
+    const doneArgs = ["task", "done", task.id];
+    const done = await x.invoke(doneArgs, "done-once");
+    const before = await f.run(["event", "list", "--job", f.job.id]);
+    assert.deepEqual(await x.invoke(doneArgs, "done-once"), done);
+    assert.deepEqual(await f.run(["event", "list", "--job", f.job.id]), before);
+    await assert.rejects(
+        x.invoke(["task", "cancel", task.id], "done-once"),
+        /idempotency|different/,
+    );
+});
+
+for (const host of ["codex", "claude"]) {
+    test(`${host} real Stop hooks leave pending entries unclaimed until manual intake`, async (t) => {
+        const f = await fixture(t);
+        const options = { session: `session:${host}`, executor: `agent:${host}`, cwd: f.dir };
+        const previous = await f.run(["task", "add", "--job", f.job.id, "--title", "Previous work"], options);
+        const owner = await f.run(["task", "claim", previous.id], options);
+        const leased = { ...options, token: owner.lease.token };
+        await f.run(["plan", "create", previous.id, "--body", "# Deliver"], leased);
+        await f.run(["task", "start", previous.id], leased);
+        await f.run(["task", "done", previous.id], leased);
+        await f.run(["job", "approve", f.job.id]);
+        const entry = await f.run(["inbox", "add", "--project", f.project.id, "--content", "Await user review"]);
+        const queue = await f.run(["inbox", "list", "--project", f.project.id]);
+        for (let i = 0; i < 2; i++) {
+            assert.deepEqual(await runHook({
+                hook_event_name: "Stop", session_id: options.session, cwd: f.dir,
+                ...(host === "codex" ? { turn_id: `turn-${i}` } : {}),
+            }), {});
+        }
+        assert.deepEqual(await f.run(["inbox", "list", "--project", f.project.id]), queue);
+        assert.equal((await f.run(["context"], options)).inbox, null);
+        const next = await f.run(["inbox", "claim-next", "--project", f.project.id], options);
+        assert.equal(next.entry.id, entry.id);
+        await f.run(["inbox", "cancel", entry.id]);
+    });
+}
+
+for (const host of ["pi", "omp"]) {
+    test(`${host} real Inbox Jobs require explicit intake after each completion`, async (t) => {
+        const f = await fixture(t);
+        const x = await extension(t, f, host);
+        async function finish(job) {
+            const task = await x.invoke(["task", "add", "--job", job, "--title", "Deliver"]);
+            await x.invoke(["task", "claim", task.id]);
+            await x.invoke(["plan", "create", task.id, "--body", "# Deliver and verify"]);
+            await x.invoke(["task", "start", task.id]);
+            await x.invoke(["task", "done", task.id]);
+        }
+        async function settle() {
+            await x.handlers.get("agent_end")({ messages: [{ role: "assistant", stopReason: "stop" }] }, x.ctx);
+            if (host === "pi") await x.handlers.get("agent_settled")({}, x.ctx);
+        }
+        await finish(f.job.id);
+        await f.run(["job", "approve", f.job.id]);
+        const first = await f.run(["inbox", "add", "--project", f.project.id, "--content", "First request"]);
+        const second = await f.run(["inbox", "add", "--project", f.project.id, "--content", "Second request"]);
+        for (const entry of [first, second]) {
+            await settle();
+            await settle();
+            let current = await f.run(["context"], { session: x.ctx.sessionManager.getSessionId() });
+            assert.equal(current.inbox, null);
+            assert.equal(x.messages.length, 0);
+            const queue = await f.run(["inbox", "list", "--project", f.project.id]);
+            assert.equal(queue.find(row => row.id === entry.id).status, "TODO");
+            assert.equal(queue.find(row => row.id === entry.id).job_id, null);
+            const claimed = await x.invoke(["inbox", "claim-next", "--project", f.project.id]);
+            assert.equal(claimed.entry.id, entry.id);
+            current = await f.run(["context"], { session: x.ctx.sessionManager.getSessionId() });
+            assert.equal(current.inbox.id, entry.id);
+            if (entry.id === first.id) {
+                await finish(current.job_id);
+                assert.equal((await f.run(["job", "show", current.job_id])).status, "PENDING_REVIEW");
+                await f.run(["job", "approve", current.job_id]);
+            }
+            else await f.run(["inbox", "cancel", entry.id]);
+        }
+        const heartbeat = await f.run(["hook", "heartbeat"], { session: x.ctx.sessionManager.getSessionId() });
+        assert.ok(heartbeat.inbox_cancellations.some(entry => entry.id === second.id));
+        await settle();
+        assert.equal(x.messages.length, 0);
+    });
+    for (const entity of ["job", "project"]) {
+        test(`${host} ${entity} deletion replays its committed result without duplicate events`, async (t) => {
+            const f = await fixture(t);
+            const x = await extension(t, f, host);
+            const task = await x.invoke(["task", "add", "--job", f.job.id, "--title", "Delete safely"]);
+            await x.invoke(["task", "claim", task.id]);
+            const args = [entity, "delete", f[entity].id];
+            await assert.rejects(x.invoke(args, "delete-once"), /release active Task leases/);
+            await x.handlers.get("session_shutdown")({}, x.ctx);
+            const deleted = await x.invoke(args, "delete-once");
+            assert.equal(deleted.deleted, true);
+            const events = await f.run(["event", "list"]);
+            assert.deepEqual(await x.invoke(args, "delete-once"), deleted);
+            assert.deepEqual(await f.run(["event", "list"]), events);
+            await assert.rejects(x.invoke([entity, "delete", "missing"], "delete-once"), /idempotency|different/);
+            await assert.rejects(f.run(["task", "show", task.id]), /not_found/);
+            assert.equal((await f.run(["doctor"])).healthy, true);
+        });
+    }
+}
+
+async function hookProcess(event, command, host, root, shell) {
+    const args =
+        process.platform === "win32"
+            ? ["cmd.exe", ["/d", "/s", "/c", `"${command}"`]]
+            : [shell, ["-c", command]];
+    const env = { ...process.env };
+    delete env.CLAUDE_PLUGIN_ROOT;
+    delete env.PLUGIN_ROOT;
+    env[host === "claude" ? "CLAUDE_PLUGIN_ROOT" : "PLUGIN_ROOT"] = root;
+    const child = spawn(args[0], args[1], {
+        env,
+        cwd: event.cwd,
+        windowsVerbatimArguments: process.platform === "win32",
+        stdio: ["pipe", "pipe", "pipe"],
+    });
+    const out = [],
+        err = [];
+    child.stdout.on("data", (chunk) => out.push(chunk));
+    child.stderr.on("data", (chunk) => err.push(chunk));
+    const exited = new Promise((resolve, reject) => {
+        child.once("error", reject);
+        child.once("close", (code) => resolve(code));
+    });
+    child.stdin.end(JSON.stringify(event));
+    assert.equal(await exited, 0, Buffer.concat(err).toString());
+    return JSON.parse(Buffer.concat(out).toString());
+}
+
+for (const host of ["codex", "claude"]) {
+    for (const shell of new Set(
+        ["/bin/sh", process.env.TASKIX_TEST_HOOK_SHELL].filter(Boolean),
+    )) {
+        test(`${host} bundled hooks run through ${process.platform === "win32" ? "cmd.exe" : shell} and restore fenced leases`, async (t) => {
+            taskLanguage(t, "ja");
+            const f = await fixture(t);
+            const root = join(f.dir, "installed plugin \u{2603}");
+            await mkdir(root);
+            for (const path of ["hooks", "runtime.mjs", "conversation.mjs", `.${host}-plugin`]) {
+                await cp(resolve(path), join(root, path), { recursive: true });
+            }
+            const task = await f.run([
+                "task",
+                "add",
+                "--job",
+                f.job.id,
+                "--title",
+                "Hooks",
+            ]);
+            const options = {
+                executor: "agent:hooks",
+                session: "host-session",
+            };
+            const claim = await f.run(["task", "claim", task.id], options);
+            // Hooks must renew and recover even an unfinished planning phase.
+            assert.equal(claim.phase, "PLANNING");
+            const manifest = JSON.parse(
+                await readFile(join(root, `.${host}-plugin/plugin.json`), "utf8"),
+            );
+            const hooks = {};
+            // Claude merges its extra manifest hooks with default discovery;
+            // Codex's manifest replaces default discovery.
+            const hookPaths = host === "claude"
+                ? ["./hooks/hooks.json", manifest.hooks]
+                : manifest.hooks;
+            for (const path of hookPaths) {
+                const config = JSON.parse(await readFile(join(root, path), "utf8"));
+                for (const [name, groups] of Object.entries(config.hooks)) {
+                    assert.equal(hooks[name], undefined, `Duplicate ${name}`);
+                    hooks[name] = groups;
+                }
+            }
+            const interruptEvent = host === "codex" ? "Interrupt" : "PostToolUseFailure";
+            if (host === "claude") {
+                const events = await f.run(["event", "list"]);
+                for (const is_interrupt of [undefined, false, "true"]) {
+                    await hookProcess(
+                        { hook_event_name: interruptEvent, is_interrupt, session_id: options.session, cwd: f.dir },
+                        hooks[interruptEvent][0].hooks[0].command,
+                        host, root, shell,
+                    );
+                    assert.deepEqual(await f.run(["task", "show", task.id]), claim);
+                    assert.deepEqual(await f.run(["event", "list"]), events);
+                }
+            }
+            let expectedStatus = "IN_PROGRESS";
+            for (const name of [
+                "SessionStart",
+                "PreToolUse",
+                "PostToolUse",
+                "Stop",
+                interruptEvent,
+                interruptEvent,
+                "PostToolUse",
+                "SessionStart",
+                "SessionEnd",
+                "SessionStart",
+            ]) {
+                const command = hooks[name][0].hooks[0].command;
+                const output = await hookProcess(
+                    {
+                        hook_event_name: name,
+                        is_interrupt: name === "PostToolUseFailure",
+                        session_id: options.session,
+                        cwd: f.dir,
+                    },
+                    command,
+                    host,
+                    root,
+                    shell,
+                );
+                const current = await f.run(["task", "show", task.id]);
+                if (name === "SessionEnd" || name === interruptEvent) expectedStatus = "BLOCKED";
+                if (name === "SessionStart") expectedStatus = "IN_PROGRESS";
+                assert.equal(current.status, expectedStatus);
+                if (expectedStatus === "BLOCKED") assert.equal(current.lease, null);
+                if (name === interruptEvent) assert.equal(current.reason, "session interrupted");
+                if (name === "SessionStart")
+                    assert.equal(
+                        JSON.parse(output.hookSpecificOutput.additionalContext.split("\n").at(-1)).task_language,
+                        "ja",
+                    );
+                if (name === "SessionStart")
+                    assert.ok(
+                        output.hookSpecificOutput.additionalContext.includes(
+                            task.id,
+                        ),
+                    );
+            }
+            const resumed = await f.run(["task", "show", task.id]);
+            assert.equal(resumed.phase, "PLANNING");
+            assert.notEqual(resumed.lease.token, claim.lease.token);
+            await assert.rejects(
+                f.run(["plan", "create", task.id, "--body", "# Stale Plan"], {
+                    ...options,
+                    token: claim.lease.token,
+                }),
+                /conflict/,
+            );
+            const resumedOptions = {
+                ...options,
+                token: resumed.lease.token,
+            };
+            await f.run(
+                ["plan", "create", task.id, "--body", "# Owned Plan"],
+                resumedOptions,
+            );
+            await f.run(["task", "start", task.id], resumedOptions);
+            await hookProcess(
+                { hook_event_name: interruptEvent, is_interrupt: true, session_id: options.session, turn_id: "executing-turn", cwd: f.dir },
+                hooks[interruptEvent][0].hooks[0].command,
+                host,
+                root,
+                shell,
+            );
+            const interrupted = await f.run(["task", "show", task.id]);
+            assert.equal(interrupted.status, "BLOCKED");
+            assert.equal(interrupted.lease, null);
+            await assert.rejects(f.run(["task", "done", task.id], resumedOptions), /conflict/);
+            await f.run(["job", "delete", f.job.id]);
+        });
+    }
+}
+
+test("real CLI errors, aborts and identity overrides are not reported as success", async (t) => {
+    const f = await fixture(t);
+    await assert.rejects(f.run(["task", "show", "task_missing"]), /not_found/);
+    await assert.rejects(
+        f.run(["task", "claim", "task_missing", "--session=someone-else"]),
+        /managed by the host/,
+    );
+    const controller = new AbortController();
+    controller.abort();
+    await assert.rejects(
+        f.run(["context"], { signal: controller.signal }),
+        /abort/i,
+    );
+});
+
+for (const host of ["pi", "omp"]) {
+    test(`${host} normal continuations and stale session callbacks preserve the current lease`, async (t) => {
+        const f = await fixture(t);
+        const x = await extension(t, f, host);
+        const task = await x.invoke(["task", "add", "--job", f.job.id, "--title", "Continue work"]);
+        const claim = await x.invoke(["task", "claim", task.id]);
+        await x.invoke(["plan", "create", task.id, "--body", "# Continue"]);
+        await x.invoke(["task", "start", task.id]);
+        await x.handlers.get("session_start")({}, x.ctx);
+        for (const event of [
+            { messages: [{ role: "assistant", stopReason: "stop" }] },
+            { messages: [{ role: "assistant", stopReason: "aborted" }], willContinue: true },
+            { messages: [{ role: "assistant", stopReason: "aborted" }, { role: "assistant", stopReason: "stop" }] },
+        ]) {
+            await x.handlers.get("agent_end")(event, x.ctx);
+            if (host === "pi") await x.handlers.get("agent_settled")({}, x.ctx);
+            const current = await f.run(["task", "show", task.id]);
+            assert.equal(current.phase, "EXECUTING");
+            assert.equal(current.lease.token, claim.lease.token);
+        }
+        const nextCtx = { ...x.ctx, sessionManager: { getSessionId: () => `next:${host}` } };
+        await x.handlers.get("session_start")({}, nextCtx);
+        f.cleanup.push(() => x.handlers.get("session_shutdown")({}, nextCtx));
+        assert.equal((await f.run(["task", "show", task.id])).reason, "session ended");
+        const other = await f.run(["task", "add", "--job", f.job.id, "--title", "New session"]);
+        const next = await f.run(["task", "claim", other.id], { executor: `agent:${host}:next:${host}`, session: `next:${host}` });
+        await x.handlers.get("agent_end")({ messages: [{ role: "assistant", stopReason: "aborted" }] }, x.ctx);
+        if (host === "pi") await x.handlers.get("agent_settled")({}, x.ctx);
+        await x.handlers.get("session_shutdown")({}, x.ctx);
+        assert.deepEqual(await f.run(["task", "show", other.id]), next);
+        await x.handlers.get("session_shutdown")({}, nextCtx);
+        assert.equal((await f.run(["task", "show", other.id])).lease, null);
+    });
+
+    for (const executing of [false, true]) {
+        test(`${host} releases ${executing ? "executing" : "planning"} work on interruption and shutdown`, async (t) => {
+            const f = await fixture(t);
+            const x = await extension(t, f, host);
+            const task = await x.invoke(["task", "add", "--job", f.job.id, "--title", "Interrupted"]);
+            const claim = await x.invoke(["task", "claim", task.id]);
+            await x.invoke(["plan", "create", task.id, "--body", "# Keep this plan"]);
+            if (executing) await x.invoke(["task", "start", task.id]);
+            await x.handlers.get("agent_end")({ messages: [{ role: "assistant", stopReason: "aborted" }] }, x.ctx);
+            if (host === "pi") await x.handlers.get("agent_settled")({}, x.ctx);
+            const blocked = await f.run(["task", "show", task.id]);
+            assert.equal(blocked.reason, "session interrupted");
+            assert.equal(blocked.lease, null);
+            assert.equal(blocked.current_plan, (await f.run(["plan", "show", task.id])).id);
+            await assert.rejects(f.run(["task", "heartbeat", task.id], {
+                session: claim.lease.session_ref, token: claim.lease.token,
+            }), /conflict/);
+            await x.handlers.get("before_agent_start")({}, x.ctx);
+            assert.equal((await f.run(["task", "show", task.id])).lease, null);
+            const next = await x.invoke(["task", "claim", task.id]);
+            assert.notEqual(next.lease.token, claim.lease.token);
+            if (executing) await x.invoke(["task", "start", task.id]);
+            await x.handlers.get("session_shutdown")({}, x.ctx);
+            const ended = await f.run(["task", "show", task.id]);
+            assert.equal(ended.reason, "session ended");
+            assert.equal(ended.lease, null);
+            await f.run(["job", "delete", f.job.id]);
+        });
+    }
+}
+
+for (const host of ["pi", "omp"]) {
+    test(`${host} resolves real task prefixes for lease-authorized operations`, async (t) => {
+        const f = await fixture(t);
+        const x = await extension(t, f, host);
+        const task = await x.invoke(["task", "add", "--job", f.job.id, "--title", "Prefix ownership"]);
+        await x.invoke(["task", "claim", task.id]);
+        const prefix = task.id.slice(0, -1);
+        await x.invoke(["plan", "create", prefix, "--body", "# Prefix plan"]);
+        await x.invoke(["plan", "revise", prefix, "--body", "# Revised prefix plan"]);
+        await x.invoke(["task", "start", prefix]);
+        const done = await x.invoke(["task", "done", prefix], "prefix-done");
+        assert.equal(done.status, "DONE");
+        assert.deepEqual(await x.invoke(["task", "done", prefix], "prefix-done"), done);
+        assert.equal((await f.run(["plan", "show", task.id])).body, "# Revised prefix plan");
+    });
+}

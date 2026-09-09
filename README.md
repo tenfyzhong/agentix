@@ -8,10 +8,10 @@ Agentix connects local Codex, Pi, Oh My Pi, and Claude Code sessions to Telegram
 - Control Codex models, reasoning, plans, and reviews, and respond to approvals in IM.
 - Restore session bindings after restarts and receive background completion notifications.
 - Create Codex, Pi, OMP, and Claude Code sessions from chat with optional rmux integration.
-- Coordinate work with standalone `taskcli` and browse project, Job, and Task boards in IM or Obsidian.
+- Coordinate work with standalone `taskix` and browse project, Job, and Task boards in IM or Obsidian.
 - Verify Jobs before completion and synchronize Obsidian status edits with automatic rollback on failure.
 
-Install Agent Task Manager from GitHub using the [host-specific installation guide](plugins/agent-task-manager/README.md#prerequisites-and-activation). Codex and Claude Code use the `agentix` marketplace; Pi and OMP install the repository as an extension package with their own entrypoints and shared runtime dependencies.
+Install Taskix Manager from GitHub using the [host-specific installation guide](plugins/taskix-manager/README.md#prerequisites-and-activation). Codex and Claude Code use the `agentix` marketplace; Pi and OMP install the repository as an extension package with their own entrypoints and shared runtime dependencies.
 
 Claude Code IM access uses the [Agentix bridge plugin](docs/claude-code.md), installed from the same `agentix` marketplace.
 
@@ -32,7 +32,7 @@ curl -fsSL https://chatgpt.com/codex/install.sh | sh
 
 ### Windows (x86_64)
 
-Download and extract `agentix-<version>-x86_64-pc-windows-msvc.zip` from the [latest release](https://github.com/tenfyzhong/agentix/releases/latest), then add the extracted directory to `PATH`. Native IM backends currently require macOS/Linux; the standalone taskcli and task plugins remain available on Windows.
+Download and extract `agentix-<version>-x86_64-pc-windows-msvc.zip` from the [latest release](https://github.com/tenfyzhong/agentix/releases/latest), then add the extracted directory to `PATH`. Native IM backends currently require macOS/Linux; the standalone taskix and task plugins remain available on Windows.
 
 For checksums, other release archives, or building from source, see the [installation guide](docs/guide.md#install).
 
@@ -133,8 +133,8 @@ To create sessions from chat, install optional rmux and use `/rmux` (or `/rmux p
 
 With [task boards configured](docs/guide.md#im-task-boards), use `/dashboard`, `/board`, and `/jobs` to browse work. Use `/inboxes` to view the current project's human queue and `/inbox <content>` to append a requirement; explicitly ask the agent to take the next Job after reviewing its current result. See [Project inbox](docs/task-board.md#project-inbox) for document submission and cancellation.
 
-For Obsidian task views, configure taskcli for your vault and run [`taskcli obsidian setup`](docs/task-board.md#obsidian-plugin-setup) to install and configure TaskNotes and automatically reload the vault through Obsidian CLI.
+For Obsidian task views, configure taskix for your vault and run [`taskix obsidian setup`](docs/task-board.md#obsidian-plugin-setup) to install and configure TaskNotes and automatically reload the vault through Obsidian CLI.
 
-Run `taskcli --help` to browse commands and `taskcli <command> --help` to see each group's subcommands and descriptions. For a specific operation, use nested help such as `taskcli task claim --help` or `taskcli plan create --help`.
+Run `taskix --help` to browse commands and `taskix <command> --help` to see each group's subcommands and descriptions. For a specific operation, use nested help such as `taskix task claim --help` or `taskix plan create --help`.
 
 See the [detailed guide](docs/guide.md) for installation alternatives, shell completions, session behavior, task boards, and links to the command reference and development documentation.
