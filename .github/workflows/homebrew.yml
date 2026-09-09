@@ -36,8 +36,12 @@ concurrency:
   group: homebrew-${{ inputs.tag }}
   cancel-in-progress: false
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
-  publish-homebrew:
+  prepare-homebrew:
     strategy:
       fail-fast: false
       matrix:
@@ -85,6 +89,34 @@ jobs:
           export SOURCE_URL="$source_url"
           export SOURCE_SHA256="$source_sha256"
           ruby .github/scripts/update-homebrew-formula.rb
+      - name: Save prepared formula
+        uses: actions/upload-artifact@v4
+        with:
+          name: homebrew-formula-${{ matrix.formula }}
+          path: ${{ env.FORMULA_PATH }}
+          if-no-files-found: error
+
+  build-bottles:
+    needs: prepare-homebrew
+    strategy:
+      fail-fast: false
+      matrix:
+        formula: ${{ fromJSON(inputs.formula == 'agentix' && '["agentix"]' || inputs.formula == 'taskix' && '["taskix"]' || '["agentix", "taskix"]') }}
+        runner: [macos-15, ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    env:
+      FORMULA: ${{ matrix.formula }}
+      FORMULA_PATH: ${{ github.workspace }}/prepared-formula/${{ matrix.formula }}.rb
+      RELEASE_TAG: ${{ inputs.tag }}
+      TAP_NAME: tenfyzhong/tap
+    steps:
+      - name: Set up Homebrew
+        uses: Homebrew/actions/setup-homebrew@1f8e202ffddf94def7f42f6fa3a482e821489f9c # 2026.07.10.1
+      - name: Download prepared formula
+        uses: actions/download-artifact@v4
+        with:
+          name: homebrew-formula-${{ matrix.formula }}
+          path: prepared-formula
       - name: Set up Homebrew tap
         run: |
           brew tap "$TAP_NAME"
@@ -111,15 +143,71 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "$RELEASE_TAG" ./*.bottle.tar.gz --repo "$GITHUB_REPOSITORY" --clobber
+      - name: Save bottle metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: homebrew-bottle-${{ matrix.formula }}-${{ matrix.runner }}
+          path: ./*.bottle.json
+          if-no-files-found: error
+
+  publish-homebrew:
+    needs: [prepare-homebrew, build-bottles]
+    strategy:
+      fail-fast: false
+      matrix:
+        formula: ${{ fromJSON(inputs.formula == 'agentix' && '["agentix"]' || inputs.formula == 'taskix' && '["taskix"]' || '["agentix", "taskix"]') }}
+    runs-on: macos-15
+    env:
+      FORMULA: ${{ matrix.formula }}
+      FORMULA_PATH: ${{ github.workspace }}/homebrew-tap/Formula/${{ matrix.formula }}.rb
+      RELEASE_TAG: ${{ inputs.tag }}
+      TAP_NAME: tenfyzhong/tap
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+      - name: Resolve release version
+        id: release
+        run: echo "version=$(.github/scripts/release-version.sh "$RELEASE_TAG")" >> "$GITHUB_OUTPUT"
+      - name: Check out Homebrew tap
+        uses: actions/checkout@v4
+        with:
+          repository: tenfyzhong/homebrew-tap
+          ref: main
+          path: homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          persist-credentials: false
+      - name: Set up Homebrew
+        uses: Homebrew/actions/setup-homebrew@1f8e202ffddf94def7f42f6fa3a482e821489f9c # 2026.07.10.1
+      - name: Download prepared formula
+        uses: actions/download-artifact@v4
+        with:
+          name: homebrew-formula-${{ matrix.formula }}
+          path: homebrew-tap/Formula
+      - name: Set up Homebrew tap
+        run: |
+          brew tap "$TAP_NAME"
+          brew trust "$TAP_NAME"
+          tap_formula_path="$(brew --repository "$TAP_NAME")/Formula/$FORMULA.rb"
+          cp "$FORMULA_PATH" "$tap_formula_path"
+      - name: Download bottle metadata
+        uses: actions/download-artifact@v4
+        with:
+          pattern: homebrew-bottle-${{ matrix.formula }}-*
+          path: bottles
+          merge-multiple: true
       - name: Add bottle metadata to formula
         run: |
           tap_formula_path="$(brew --repository "$TAP_NAME")/Formula/$FORMULA.rb"
-          bottle_json="$(find . -maxdepth 1 -name '*.bottle.json' -print -quit)"
-          if [[ -z "$bottle_json" ]]; then
-            echo "Homebrew bottle metadata is missing" >&2
+          shopt -s nullglob
+          bottle_json=(bottles/"$FORMULA"--*.bottle.json)
+          # One metadata file for each runner in the build matrix.
+          if [[ "${#bottle_json[@]}" -ne 3 ]]; then
+            echo "Expected three platform bottles for $FORMULA, found ${#bottle_json[@]}" >&2
             exit 1
           fi
-          brew bottle --merge --write --no-commit "$bottle_json"
+          brew bottle --merge --write --no-commit "${bottle_json[@]}"
           cp "$tap_formula_path" "$FORMULA_PATH"
       - name: Create formula bump pull request
         uses: peter-evans/create-pull-request@v7
@@ -132,4 +220,4 @@ jobs:
           commit-message: "${{ matrix.formula }} ${{ inputs.tag }}"
           title: "${{ matrix.formula }} ${{ inputs.tag }}"
           body: |
-            Updates ${{ matrix.formula }} to `${{ inputs.tag }}` and adds the macOS arm64 bottle.
+            Updates ${{ matrix.formula }} to `${{ inputs.tag }}` and adds macOS arm64, Linux x86_64, and Linux arm64 bottles.
