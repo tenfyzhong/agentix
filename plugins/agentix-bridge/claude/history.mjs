@@ -27,12 +27,18 @@ export function readTranscript(path, sessionId) {
                 if (content) turn.agent_text = [turn.agent_text, content].filter(Boolean).join('\n').slice(-100000);
                 if (message.stop_reason === 'end_turn') turn.status = 'completed';
                 for (const block of Array.isArray(message.content) ? message.content : []) {
-                    if (block.type === 'tool_use') turn.tools.push({ id: block.id, kind: block.name, label: block.name, status: 'inProgress' });
+                    if (block.type === 'thinking' && typeof block.thinking === 'string') turn.items.push({ id: `${entry.uuid}:reasoning:${turn.items.length}`, kind: 'reasoning', text: block.thinking.slice(0, 65536), status: 'completed' });
+                    if (block.type === 'tool_use') {
+                        turn.tools.push({ id: block.id, kind: block.name, label: block.name, status: 'inProgress' });
+                        turn.items.push({ id: block.id, kind: block.name, text: JSON.stringify(block.input ?? {}).slice(0, 65536), status: 'inProgress' });
+                    }
                 }
             } else if (entry.type === 'user' && Array.isArray(message.content)) {
                 for (const block of message.content.filter(b => b.type === 'tool_result')) {
                     const tool = turn.tools.find(tool => tool.id === block.tool_use_id);
                     if (tool) tool.status = block.is_error ? 'failed' : 'completed';
+                    const item = turn.items.find(item => item.id === block.tool_use_id);
+                    if (item) { item.status = tool.status; item.text = [item.text, textOf(block.content)].join('\n\n').slice(0, 65536); }
                 }
             }
         }

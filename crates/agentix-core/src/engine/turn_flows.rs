@@ -23,6 +23,7 @@ impl Engine {
             TurnBuffer {
                 user_text: turn.user_text.clone().unwrap_or_default(),
                 agent_text: turn.agent_text.clone().unwrap_or_default(),
+                process_items: Vec::new(),
                 status: turn.status.clone(),
                 started_at: Some(Instant::now()),
                 rendered_elapsed_seconds: None,
@@ -554,7 +555,8 @@ impl Engine {
         turn_id: &str,
         item: &ItemSummary,
     ) -> bool {
-        if !matches!(item.kind.as_str(), "agentMessage" | "userMessage") {
+        let process = self.output.process_text(item);
+        if !matches!(item.kind.as_str(), "agentMessage" | "userMessage") && process.is_none() {
             return false;
         }
         let mut buffers = self.turns.buffers.lock().await;
@@ -565,7 +567,19 @@ impl Engine {
         match item.kind.as_str() {
             "agentMessage" => buffer.agent_text = item.text.clone().unwrap_or_default(),
             "userMessage" => buffer.user_text = item.text.clone().unwrap_or_default(),
-            _ => {}
+            _ => {
+                if let Some(text) = process {
+                    if let Some(existing) = buffer
+                        .process_items
+                        .iter_mut()
+                        .find(|(id, _)| id == &item.id)
+                    {
+                        existing.1 = text;
+                    } else {
+                        buffer.process_items.push((item.id.clone(), text));
+                    }
+                }
+            }
         }
         true
     }

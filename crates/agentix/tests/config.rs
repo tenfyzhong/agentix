@@ -932,3 +932,32 @@ fn slack_cli_path_is_global_and_requires_an_absolute_override() {
     assert!(Config::from_toml(&format!("slack_cli_path = 'relative/slack'\n{base}")).is_err());
     assert!(Config::from_toml(&base.replace("A123", " ")).is_err());
 }
+
+#[test]
+fn slack_command_affixes_are_configurable_and_validated() {
+    let base = "[agent.codex]\n[storage]\npath='/tmp/state'\n[channel]\nkind='slack'\n[channel.slack]\nbot_token='test'\napp_token='test'\n";
+    let config = Config::from_toml(&format!(
+        "{base}command_prefix='ax-'\ncommand_suffix='-dev'\n"
+    ))
+    .unwrap();
+    let slack = config.channel.slack.unwrap();
+    assert_eq!(slack.command_prefix, "ax-");
+    assert_eq!(slack.command_suffix, "-dev");
+    assert!(Config::from_toml(&format!("{base}command_prefix='bad prefix'\n")).is_err());
+    assert!(Config::from_toml(&format!("{base}command_suffix='{}'\n", "x".repeat(30))).is_err());
+}
+
+#[test]
+fn process_output_switches_default_off_and_can_be_enabled_independently() {
+    let base = "[agent.codex]\n[storage]\npath='/tmp/state'\n[channel]\nkind='telegram'\n[channel.telegram]\ntoken='test'\n";
+    let defaults = Config::from_toml(base).unwrap();
+    assert!(!defaults.output.show_reasoning && !defaults.output.show_tool_calls);
+    for (reasoning, tools) in [(true, false), (false, true), (true, true)] {
+        let config = Config::from_toml(&format!(
+            "{base}[output]\nshow_reasoning={reasoning}\nshow_tool_calls={tools}\n"
+        ))
+        .unwrap();
+        assert_eq!(config.output.show_reasoning, reasoning);
+        assert_eq!(config.output.show_tool_calls, tools);
+    }
+}

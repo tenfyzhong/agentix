@@ -153,6 +153,12 @@ export function registerBridge(api, kind, options = {}) {
         if (!record) return;
         start();
         const update = value.assistantMessageEvent;
+        if (update?.type === 'thinking_end' && typeof update.content === 'string') {
+            const item = { id: `${session.turn.id}:reasoning:${session.turn.items.length}`, kind: 'reasoning', text: update.content.slice(0, 65536), status: 'completed' };
+            session.turn.items.push(item);
+            event({ ItemCompleted: { session_id: record.session_id, turn_id: session.turn.id, item } });
+            persist();
+        }
         if (update?.type === 'text_delta') {
             session.turn.agent_text += update.delta;
             event({ AgentMessageDelta: { session_id: record.session_id, turn_id: session.turn.id, item_id: `${session.turn.id}:assistant`, delta: update.delta } });
@@ -163,15 +169,18 @@ export function registerBridge(api, kind, options = {}) {
         start();
         const label = value.toolName ?? 'tool';
         session.turn.tools.push({ kind: label, label, status: 'inProgress', id: value.toolCallId });
-        event({ ItemStarted: { session_id: record.session_id, turn_id: session.turn.id, item_id: value.toolCallId, kind: label, label } });
+        const item = { id: value.toolCallId, kind: label, text: JSON.stringify(value.args ?? {}).slice(0, 65536), status: 'inProgress' };
+        session.turn.items.push(item);
+        event({ ItemStarted: { session_id: record.session_id, turn_id: session.turn.id, item_id: value.toolCallId, kind: label, label: `${label} ${item.text}` } });
     });
     on('tool_execution_end', value => {
         if (!record || !session.turn) return;
         const status = value.isError ? 'failed' : 'completed';
         const tool = session.turn.tools.find(tool => tool.id === value.toolCallId);
         if (tool) tool.status = status;
-        const item = { id: value.toolCallId, kind: value.toolName ?? 'tool', text: textOf(value.result?.content).slice(0, 65536), status };
-        session.turn.items.push(item);
+        const previous = session.turn.items.find(item => item.id === value.toolCallId);
+        const item = { id: value.toolCallId, kind: value.toolName ?? 'tool', text: [previous?.text, textOf(value.result?.content)].filter(Boolean).join('\n\n').slice(0, 65536), status };
+        if (previous) Object.assign(previous, item); else session.turn.items.push(item);
         event({ ItemCompleted: { session_id: record.session_id, turn_id: session.turn.id, item } });
         persist();
     });

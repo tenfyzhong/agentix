@@ -1,3 +1,4 @@
+import { readTranscript } from './history.mjs';
 import { randomUUID } from 'node:crypto';
 import { ChannelDelivery } from './delivery.mjs';
 import { failure } from '../protocol/errors.mjs';
@@ -155,6 +156,12 @@ export class ClaudeSession {
         if (['Stop', 'StopFailure', 'SessionEnd'].includes(value.hook_event_name) && this.active) {
             const turn = this.active;
             const previous = { status: turn.status, agent_text: turn.agent_text };
+            const transcript = (this.options.readTranscript ?? readTranscript)(this.identity.transcript_path, this.identity.session_id).at(-1);
+            if (transcript?.user_text === turn.user_text) {
+                turn.items = transcript.items;
+                turn.tools = transcript.tools ?? [];
+                for (const item of turn.items) this.emit({ ItemCompleted: { session_id: value.session_id, turn_id: turn.id, item } });
+            }
             if (!turn.agent_text && typeof value.last_assistant_message === 'string') turn.agent_text = value.last_assistant_message.slice(-100000);
             turn.status = value.hook_event_name === 'Stop' ? 'completed' : value.hook_event_name === 'SessionEnd' ? 'interrupted' : 'failed';
             this.active = null;

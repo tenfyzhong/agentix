@@ -118,3 +118,13 @@ test('Claude cannot clear uncertain ownership when persistence fails', async () 
     assert.equal(session.queueState().uncertain.id, 'lost');
     await assert.rejects(session.request('prompt', { request_id: 'new', text: 'hello' }), /busy/);
 });
+
+test('Claude forwards transcript process items before completion', () => {
+    const events = [];
+    const session = new ClaudeSession({ event: value => events.push(value), readTranscript: () => [{ user_text: 'hello', items: [{ id: 'r', kind: 'reasoning', text: 'Visible summary', status: 'completed' }] }] });
+    session.hook(identity);
+    session.hook({ ...identity, hook_event_name: 'UserPromptSubmit', prompt: 'hello' });
+    session.hook({ ...identity, hook_event_name: 'Stop', last_assistant_message: 'Answer' });
+    assert.equal(events.filter(e => e.ItemCompleted?.item.kind === 'reasoning').length, 1);
+    assert.ok(events.findIndex(e => e.ItemCompleted?.item.kind === 'reasoning') < events.findIndex(e => e.TurnCompleted));
+});

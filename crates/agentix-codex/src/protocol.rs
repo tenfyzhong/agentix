@@ -379,6 +379,22 @@ pub(crate) fn item_summary(item: &Value, method: &str) -> Result<ItemSummary, Pr
                     .collect::<Vec<_>>()
                     .join("\n")
             }),
+        "reasoning" => item.get("summary").and_then(Value::as_array).map(|parts| {
+            parts
+                .iter()
+                .filter_map(|part| {
+                    part.as_str()
+                        .or_else(|| part.get("text").and_then(Value::as_str))
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        }),
+        "commandExecution" => Some(format!(
+            "{}\n{}",
+            item["command"].as_str().unwrap_or_default(),
+            item["aggregatedOutput"].as_str().unwrap_or_default()
+        )),
+        "fileChange" | "mcpToolCall" | "dynamicToolCall" | "webSearch" => Some(item.to_string()),
         _ => None,
     };
     Ok(ItemSummary {

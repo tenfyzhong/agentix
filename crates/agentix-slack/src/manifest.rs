@@ -96,11 +96,12 @@ pub(crate) fn merge_for_owner(
     remote: &Value,
     commands: &[ChannelCommand],
     has_owner: bool,
+    affixes: &crate::CommandAffixes,
 ) -> Result<Value, ChannelError> {
-    let mut merged = merge_command_manifest(remote, commands)?;
+    let mut merged = affixes.merge_manifest(remote, commands)?;
     if !has_owner {
         merged["features"]["slash_commands"] = json!([{
-            "command":"/claim", "description":"Link your Slack account to Agentix",
+            "command":affixes.encode("claim")?, "description":"Link your Slack account to Agentix",
             "usage_hint":"<code>", "should_escape":false
         }]);
     }

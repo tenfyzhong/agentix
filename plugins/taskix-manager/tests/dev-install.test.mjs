@@ -69,7 +69,9 @@ test("dev-test installs OMP from a clean state and propagates installation failu
     assert.ok((await lstat(f.target)).isSymbolicLink());
     assert.notEqual(f.run("install").status, 0, "make must report failed installation");
     await symlink(repository, f.target);
-    assert.notEqual(f.run("uninstall").status, 0, "make must stop if cleanup fails");
+    assert.equal(f.run("uninstall").status, 0, "best-effort cleanup must allow installation to continue");
+    assert.ok((await lstat(f.target)).isSymbolicLink());
+    assert.equal(await realpath(f.target), await realpath(repository));
 });
 
 const removals = [
@@ -101,7 +103,7 @@ for (const target of ["dev-test", "prod-test"]) {
         assert.deepEqual(calls.slice(removals.length), [
             `codex plugin marketplace add ${source}`,
             "codex plugin add taskix-manager@agentix",
-            `claude plugin marketplace add ${source}`,
+            `claude plugin marketplace add ${target === "dev-test" ? "./" : source}`,
             "claude plugin install taskix-manager@agentix",
             "claude plugin install agentix-bridge@agentix",
             `pi install ${target === "dev-test" ? "." : "git:github.com/tenfyzhong/agentix"}`,

@@ -880,6 +880,7 @@ impl Engine {
             TurnBuffer {
                 user_text: prompt.to_owned(),
                 agent_text: String::new(),
+                process_items: Vec::new(),
                 status: TurnStatus::InProgress,
                 started_at: Some(Instant::now()),
                 rendered_elapsed_seconds: None,

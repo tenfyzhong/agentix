@@ -38,6 +38,7 @@ fn error(error: impl std::fmt::Display) -> EngineError {
 /// Owns task-board state independently of the IM engine.
 pub(super) struct TaskBoardService {
     pub(super) backend: Option<Arc<Service>>,
+    pub(super) output: crate::OutputConfig,
     conversations: Mutex<HashMap<(String, String), Vec<serde_json::Value>>>,
     inputs: Mutex<HashMap<ConversationRef, PendingTaskInput>>,
     refresh: Mutex<()>,
@@ -76,6 +77,7 @@ impl TaskBoardService {
     pub(super) fn new(backend: Option<Arc<Service>>, state: crate::SqliteState) -> Self {
         Self {
             backend,
+            output: crate::OutputConfig::default(),
             state,
             conversations: Mutex::new(HashMap::new()),
             inputs: Mutex::new(HashMap::new()),
@@ -492,12 +494,18 @@ impl TaskBoardService {
                 turn_id,
                 item,
             } => {
+                let process = self.output.process_text(item);
                 let role = match item.kind.as_str() {
                     "userMessage" => "user",
                     "agentMessage" => "assistant",
+                    _ if process.is_some() => "assistant",
                     _ => return,
                 };
-                let Some(text) = item.text.as_deref().filter(|text| !text.trim().is_empty()) else {
+                let Some(text) = process
+                    .as_deref()
+                    .or(item.text.as_deref())
+                    .filter(|text| !text.trim().is_empty())
+                else {
                     return;
                 };
                 let mut conversations = self.conversations.lock().await;

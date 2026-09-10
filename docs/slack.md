@@ -74,3 +74,9 @@ See [Slack's slash-command documentation](https://docs.slack.dev/interactivity/i
 - New messages are paced at 1.1 seconds per channel, shared across threads. A Slack rate-limit response pauses the affected API method according to `Retry-After`, with a bounded retry count. Socket disconnects reconnect with bounded backoff. Shutdown cancels connection attempts and pending delivery.
 
 Automated tests use local Slack HTTP/WebSocket and Codex services. Workspace installation, granted permissions, and Slack service behavior still require a real-workspace smoke test with your credentials.
+
+## Custom command names
+
+Set `command_prefix` and/or `command_suffix` in `[channel.slack]` to distinguish apps in the same workspace. Both default to an empty string. For example, `command_prefix = "ax-"` and `command_suffix = "-dev"` register `/ax-sessions-dev`, `/ax-status-dev`, `/ax-agentix-dev` and the bootstrap `/ax-claim-dev`. Use lowercase letters, digits, `_` and `-`; the resulting slash command must fit Slack’s 32-character limit. Restart Agentix to synchronize the configured names.
+
+Affixes apply to native Slack slash commands. Arguments and commands typed as ordinary DM text or inside the gateway remain unchanged: `/ax-agentix-dev /sessions` routes `/sessions`. With empty affixes the existing menu, including `/agentix-status` and `/agentix-rename`, stays the same. When changing an existing custom prefix or suffix, remove obsolete registrations from that app’s Slack manifest; Agentix preserves unrelated command names and cannot infer a previous custom namespace.

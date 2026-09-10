@@ -1,4 +1,6 @@
 //! Slack Socket Mode transport and Block Kit rendering.
+mod affixes;
+pub use affixes::CommandAffixes;
 mod events;
 mod render;
 
@@ -30,6 +32,7 @@ use url::Url;
 pub struct SlackAdapter {
     api: api::Api,
     command_sync: Option<SlackCommandSync>,
+    command_affixes: CommandAffixes,
     owner_claimer: Option<Arc<dyn SlackOwnerClaimer>>,
     owners: Arc<Mutex<Vec<String>>>,
     messages: MessageCenter,
@@ -54,12 +57,18 @@ impl SlackAdapter {
         Ok(Self {
             owner_claimer: None,
             command_sync: None,
+            command_affixes: CommandAffixes::default(),
             api: api::Api::new(client, api_url, bot_token, app_token),
             owners: Arc::new(Mutex::new(owners)),
             messages: MessageCenter::default(),
             views: Arc::default(),
             menus: Arc::default(),
         })
+    }
+    #[must_use]
+    pub fn with_command_affixes(mut self, affixes: CommandAffixes) -> Self {
+        self.command_affixes = affixes;
+        self
     }
     #[must_use]
     pub fn with_owner_claimer(mut self, claimer: Arc<dyn SlackOwnerClaimer>) -> Self {
