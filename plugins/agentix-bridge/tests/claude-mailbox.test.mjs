@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs, { mkdtempSync, rmSync, mkdirSync, symlinkSync, realpathSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
+import { EventEmitter } from 'node:events';
+import { setImmediate as nextImmediate } from 'node:timers/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Mailbox } from '../claude/mailbox.mjs';
@@ -36,24 +38,38 @@ test('Claude mailbox keeps a failed event and later events until they are handle
     await box.consume(async () => assert.fail('event replayed'));
 });
 
-test('Claude mailbox watcher wakes on new hooks and stops on shutdown', async t => {
+test('Claude mailbox watcher coalesces hook notifications and cancels pending wakes on shutdown', async t => {
     const root = mkdtempSync(join(tmpdir(), 'ax-watch-'));
     t.after(() => rmSync(root, { recursive: true, force: true }));
     const box = new Mailbox(root, 'host');
-    let wake;
-    const notified = new Promise(resolve => { wake = resolve; });
+    let notify;
+    const watcher = new EventEmitter();
+    watcher.close = t.mock.fn();
+    t.mock.method(fs, 'watch', (_path, callback) => { notify = callback; return watcher; });
+    syncBuiltinESMExports();
+    t.after(() => { t.mock.restoreAll(); syncBuiltinESMExports(); });
     let calls = 0;
-    const stop = box.watch(() => { calls++; wake(); });
+    const stop = box.watch(() => { calls++; });
     t.after(stop);
-    box.publish({ hook_event_name: 'SessionStart', session_id: 's', cwd: root, transcript_path: join(root, 's.jsonl') });
-    await Promise.race([notified, new Promise((_, reject) => {
-        const timer = setTimeout(() => reject(new Error('watcher did not wake')), 1000); timer.unref();
-    })]);
+    // Native notifications can be delayed or lost; test the callback contract
+    // independently of the OS. The server tests cover real mailbox consumption.
+    notify('rename', 'partial.tmp');
+    await nextImmediate();
+    assert.equal(calls, 0);
+    notify('rename', 'identity.json');
+    notify('change', '001.event.json');
+    assert.equal(calls, 0, 'notifications are deferred and coalesced');
+    await nextImmediate();
+    assert.equal(calls, 1);
+    notify('rename', null);
+    await nextImmediate();
+    assert.equal(calls, 2, 'missing filenames still wake the consumer');
+    notify('rename', '002.event.json');
     stop();
-    const previous = calls;
-    box.publish({ ...box.identity(), hook_event_name: 'Stop' });
-    await new Promise(resolve => setTimeout(resolve, 30));
-    assert.equal(calls, previous);
+    notify('rename', '003.event.json');
+    await nextImmediate();
+    assert.equal(calls, 2, 'shutdown cancels queued and subsequent notifications');
+    assert.equal(watcher.close.mock.callCount(), 1);
 });
 
 test('Claude mailbox watches the canonical directory behind aliases', t => {
