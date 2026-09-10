@@ -50,7 +50,9 @@ impl SlackAdapter {
         drop(owners);
         let body = match result {
             Ok(true) => match self.sync_commands(team, true).await {
-                Ok(()) => "Owner linked. Send /sessions to begin.",
+                Ok(()) => {
+                    "Owner linked. Choose the sessions command from this app’s command menu to begin."
+                }
                 Err(error) => {
                     tracing::warn!(%error, "Slack command sync after owner claim failed");
                     "Owner linked, but the command menu could not be updated. Check the server logs and restart Agentix to retry."
@@ -100,6 +102,9 @@ impl SlackAdapter {
             let (tx, mut rx) = mpsc::channel(128);
             let deliver = async {
                 while let Some(event) = rx.recv().await {
+                    let Some(event) = self.command_affixes.normalize(&event) else {
+                        continue;
+                    };
                     if self.handle_claim(&event, team, bot).await {
                         continue;
                     }

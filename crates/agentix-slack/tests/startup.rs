@@ -312,3 +312,22 @@ async fn reports_missing_app_without_exposing_cli_credentials() {
     assert!(!calls.contains("app install"));
     assert_projects_removed(&dir);
 }
+
+#[tokio::test]
+async fn synchronizes_configured_command_affixes_and_skips_identical_menu() {
+    let (dir, sync) = fixture();
+    let sync =
+        sync.with_command_affixes(agentix_slack::CommandAffixes::new("ax-", "-dev").unwrap());
+    assert!(sync.sync("T123").await.unwrap());
+    assert!(!sync.sync("T123").await.unwrap());
+    let remote: Value =
+        serde_json::from_str(&std::fs::read_to_string(dir.path().join("remote.json")).unwrap())
+            .unwrap();
+    assert!(
+        remote["features"]["slash_commands"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c["command"] == "/ax-sessions-dev")
+    );
+}

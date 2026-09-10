@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { Mailbox, hostKey } from '../claude/mailbox.mjs';
 
-for (const mode of ['channel', 'rmux']) test(`Claude MCP child bridges original session through Agentix socket in ${mode} mode`, { timeout: 15000, skip: process.platform === 'win32' }, async t => {
+for (const [mode, notifications] of [['channel', true], ['rmux', true], ['rmux', false]]) test(`Claude MCP child bridges original session through Agentix socket in ${mode} mode (notifications=${notifications})`, { timeout: 15000, skip: process.platform === 'win32' }, async t => {
     const root = mkdtempSync(join(tmpdir(), 'ax-cc-'));
     cpSync(new URL('../', import.meta.url), join(root, 'plugin'), { recursive: true, filter: path => !path.includes('node_modules') });
     const mailbox = new Mailbox(root, hostKey(process.pid));
@@ -23,7 +23,8 @@ for (const mode of ['channel', 'rmux']) test(`Claude MCP child bridges original 
         });
     });
     await new Promise(resolve => server.listen(join(root, 'control.sock'), resolve));
-    const child = spawn(process.execPath, [join(root, 'plugin/claude/server.mjs')], {
+    const preload = notifications ? [] : ['--import', new URL('./silent-watch.mjs', import.meta.url).href];
+    const child = spawn(process.execPath, [...preload, join(root, 'plugin/claude/server.mjs')], {
         env: { ...process.env, AGENTIX_CLAUDE_DELIVERY: mode, AGENTIX_CLAUDE_DATA_DIR: root, AGENTIX_CONTROL_ENDPOINT: `unix://${join(root, 'control.sock')}` }, stdio: ['pipe', 'pipe', 'pipe'],
     });
     let errors = ''; child.stderr.on('data', data => errors += data);

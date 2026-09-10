@@ -371,10 +371,11 @@ fn concurrent_cli_jobs_preserve_notes_and_all_projections() {
         let value: Value = serde_json::from_slice(&result.stdout).unwrap();
         assert!(value["projection_pending"].is_null(), "{value}");
     }
-    for (path, task) in paths.iter().zip(&tasks) {
+    for ((path, task), job) in paths.iter().zip(&tasks).zip(&jobs) {
         let body = std::fs::read_to_string(path).unwrap();
         assert_eq!(body.matches("Keep my notes.").count(), 1);
-        assert!(body.contains("Tasks/") && body.contains(&task.replace('_', "-")));
+        assert!(body.contains("```base\n") && body.contains("tasknotesKanban"));
+        assert!(body.contains(&format!("job_id == \"{job}\"")));
         let folder = path.parent().unwrap().parent().unwrap().join("Tasks");
         let note = std::fs::read_dir(folder)
             .unwrap()
@@ -382,6 +383,7 @@ fn concurrent_cli_jobs_preserve_notes_and_all_projections() {
             .find(|s| s.contains(task))
             .unwrap();
         assert!(note.contains("status: \"IN_PROGRESS\""));
+        assert!(note.contains(&format!("job_id: \"{job}\"")));
     }
     assert_eq!(
         cli.ok(&["task", "list", "--status", "IN_PROGRESS"])
@@ -450,11 +452,18 @@ async fn killed_cli_after_database_commit_replays_without_duplicates_and_repairs
         .as_str()
         .unwrap()
         .to_owned();
-    assert!(
-        std::fs::read_to_string(cli.dir.path().join("vault/Tasks \u{2603}").join(path))
-            .unwrap()
-            .contains(&task.id.replace('_', "-"))
-    );
+    let path = cli.dir.path().join("vault/Tasks \u{2603}").join(path);
+    let body = std::fs::read_to_string(&path).unwrap();
+    assert!(body.contains("```base\n") && body.contains("tasknotesKanban"));
+    assert!(body.contains(&format!("job_id == \"{job}\"")));
+    let folder = path.parent().unwrap().parent().unwrap().join("Tasks");
+    let note = std::fs::read_dir(folder)
+        .unwrap()
+        .map(|e| std::fs::read_to_string(e.unwrap().path()).unwrap())
+        .find(|s| s.contains(&format!("id: \"{}\"", task.id)))
+        .unwrap();
+    assert!(note.contains(&format!("job_id: \"{job}\"")));
+    assert!(note.contains("status: \"TODO\""));
 }
 
 #[test]

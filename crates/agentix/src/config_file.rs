@@ -19,6 +19,8 @@ pub(super) struct ConfigFile {
     pub(super) logging: LoggingConfig,
     #[serde(default)]
     pub(super) notifications: NotificationConfig,
+    #[serde(default)]
+    pub(super) output: agentix_core::OutputConfig,
     pub(super) channel: ChannelConfig,
     #[serde(default)]
     pub(super) agent: Option<toml::Value>,
@@ -67,6 +69,7 @@ impl TryFrom<ConfigFile> for Config {
             server: file.server,
             logging: file.logging,
             notifications: file.notifications,
+            output: file.output,
             channel: file.channel,
             agent,
             agents: file.agents,

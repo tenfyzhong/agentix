@@ -261,11 +261,15 @@ pub(super) fn live_turn_body(
     buffer: &TurnBuffer,
     delivery: DeliveryClass,
 ) -> String {
-    let mut body = turn_conversation_body(
-        agent_name,
-        Some(&buffer.user_text),
-        Some(&buffer.agent_text),
-    );
+    let output = buffer
+        .process_items
+        .iter()
+        .map(|(_, text)| text.as_str())
+        .chain(std::iter::once(buffer.agent_text.as_str()))
+        .filter(|text| !text.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let mut body = turn_conversation_body(agent_name, Some(&buffer.user_text), Some(&output));
     if delivery == DeliveryClass::Draining {
         body.push_str("\n\nThis is a background session after switching.");
     }

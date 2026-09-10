@@ -629,9 +629,18 @@ async fn assert_task_projection(service: &agentix_task::Service, reason: &str) {
     )
     .unwrap();
     assert_eq!(state.tasks[0].status, agentix_task::TaskStatus::WaitingUser);
-    assert!(body.contains("Tasks/") && body.contains(reason));
+    let board = body
+        .split_once("```base\n")
+        .unwrap()
+        .1
+        .split_once("\n```")
+        .unwrap()
+        .0;
+    assert!(board.contains("tasknotesKanban"));
+    assert!(board.contains(&format!("job_id == \"{}\"", state.jobs[0].id)));
     let note = service.plan(&state.tasks[0].id).await.unwrap();
     assert_eq!(note["properties"]["id"], state.tasks[0].id);
+    assert_eq!(note["properties"]["job_id"], state.jobs[0].id);
     assert_eq!(note["properties"]["status"], "WAITING_USER");
 }
 

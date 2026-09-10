@@ -98,6 +98,7 @@ impl Engine {
                 TurnBuffer {
                     user_text: stored.user_text,
                     agent_text: stored.agent_text,
+                    process_items: Vec::new(),
                     started_at: matches!(
                         &stored.status,
                         TurnStatus::InProgress | TurnStatus::Unknown
@@ -266,6 +267,7 @@ impl Engine {
                     let buffer = TurnBuffer {
                         user_text: stored.user_text,
                         agent_text: stored.agent_text,
+                        process_items: Vec::new(),
                         status: stored.status,
                         started_at: None,
                         rendered_elapsed_seconds: None,

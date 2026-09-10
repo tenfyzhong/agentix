@@ -53,7 +53,7 @@ remove-plugin:
 dev-test: remove-plugin
 	codex plugin marketplace add .
 	codex plugin add taskix-manager@agentix
-	claude plugin marketplace add .
+	claude plugin marketplace add ./
 	claude plugin install taskix-manager@agentix
 	claude plugin install agentix-bridge@agentix
 	pi install .

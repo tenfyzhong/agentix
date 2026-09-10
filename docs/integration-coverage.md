@@ -178,7 +178,7 @@ tests. No production behavior change was needed for the gaps found by this audit
 | Claude rmux/Channel MCP capability separation, hook replies, acknowledgement and reconnect | [MCP integration](../plugins/agentix-bridge/tests/claude-server.test.mjs), [Rust contract](../crates/agentix-bridge/tests/bridge.rs) |
 | Claude incremental persistence, legacy replay, partial tails, deduplication and linear serialization growth | [store tests](../plugins/agentix-bridge/tests/claude-store.test.mjs) |
 | Claude failed persistence, receipt timeout, completion/clear rollback and recovery | [session tests](../plugins/agentix-bridge/tests/claude.test.mjs) |
-| Hook mailbox process isolation, failed-event retention, filesystem wakeup and shutdown | [mailbox tests](../plugins/agentix-bridge/tests/claude-mailbox.test.mjs) |
+| Hook mailbox process isolation, failed-event retention, controlled notification coalescing and shutdown; real MCP consumption with native notifications or missed-notification polling | [mailbox tests](../plugins/agentix-bridge/tests/claude-mailbox.test.mjs), [MCP server tests](../plugins/agentix-bridge/tests/claude-server.test.mjs) |
 | Per-frame size limits, fragmented UTF-8 and coalesced frames | [framing tests](../plugins/agentix-bridge/tests/framing.test.mjs), [transport tests](../plugins/agentix-bridge/tests/transport.test.mjs) |
 | Stalled registration leaves other sessions responsive; duplicate reservation and cancellation cleanup | [hub unit tests](../crates/agentix-bridge/src/bridge_hub.rs) |
 | Offline saved native binding still permits Unix control listener startup | [service lifecycle tests](../crates/agentix/src/main.rs), [core recovery tests](../crates/agentix-core/tests/engine.rs) |

@@ -318,3 +318,90 @@ async fn job_conversation_captures_completed_messages_even_without_im_binding() 
     assert_eq!(job["conversation"][1]["text"], "Visible answer");
     assert!(!job.to_string().contains("secret tool result"));
 }
+
+#[tokio::test]
+async fn job_conversation_records_enabled_process_output_in_agent_quote() {
+    let (_dir, service, _) = task_fixture().await;
+    let (engine, _) = engine(service.clone()).await;
+    let engine = engine.with_output(agentix_core::OutputConfig {
+        show_reasoning: true,
+        show_tool_calls: true,
+    });
+    for (id, kind, text) in [
+        ("user", "userMessage", "Request"),
+        ("tool", "commandExecution", "secret tool result"),
+        ("reason", "reasoning", "private reasoning"),
+        ("assistant", "agentMessage", "Visible answer"),
+    ] {
+        engine
+            .handle_agent_event(AgentEvent::ItemCompleted {
+                session_id: "thr_a".into(),
+                turn_id: "turn_capture".into(),
+                item: ItemSummary {
+                    id: id.into(),
+                    kind: kind.into(),
+                    text: Some(text.into()),
+                    status: None,
+                },
+            })
+            .await
+            .unwrap();
+    }
+    // No user prompt is assigned until the turn has finished creating its Job.
+    assert!(serde_json::to_value(&service.store().snapshot().await.unwrap().jobs[0]).unwrap()["conversation"].as_array().unwrap().is_empty());
+    engine
+        .handle_agent_event(AgentEvent::TurnCompleted {
+            session_id: "thr_a".into(),
+            turn_id: "turn_capture".into(),
+            status: TurnStatus::Completed,
+            error: None,
+        })
+        .await
+        .unwrap();
+    let job = serde_json::to_value(&service.store().snapshot().await.unwrap().jobs[0]).unwrap();
+    assert_eq!(job["conversation"].as_array().unwrap().len(), 4);
+    assert_eq!(job["conversation"][3]["text"], "Visible answer");
+    let document = std::fs::read_to_string(
+        service
+            .config()
+            .output_dir()
+            .join(job["document_path"].as_str().unwrap()),
+    )
+    .unwrap();
+    assert!(document.contains("> Tool call: commandExecution"));
+    assert!(document.contains("> secret tool result"));
+    assert!(document.contains("> Reasoning"));
+    assert!(document.contains("> private reasoning"));
+    assert!(document.contains("> Visible answer"));
+}
+
+#[tokio::test]
+async fn job_process_output_keeps_tool_start_when_turn_is_interrupted() {
+    let (_dir, service, _) = task_fixture().await;
+    let (engine, _) = engine(service.clone()).await;
+    let engine = engine.with_output(agentix_core::OutputConfig {
+        show_reasoning: false,
+        show_tool_calls: true,
+    });
+    engine
+        .handle_agent_event(AgentEvent::ItemStarted {
+            session_id: "thr_a".into(),
+            turn_id: "t".into(),
+            item_id: "tool".into(),
+            kind: "commandExecution".into(),
+            label: "cargo test".into(),
+        })
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::TurnCompleted {
+            session_id: "thr_a".into(),
+            turn_id: "t".into(),
+            status: TurnStatus::Interrupted,
+            error: None,
+        })
+        .await
+        .unwrap();
+    let job = serde_json::to_value(&service.store().snapshot().await.unwrap().jobs[0]).unwrap();
+    assert!(job["conversation"].to_string().contains("cargo test"));
+}

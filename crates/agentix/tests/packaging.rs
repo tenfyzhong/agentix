@@ -568,5 +568,8 @@ fn readme_documents_installation_on_all_supported_platforms() {
     assert!(readme.contains("agentix-<version>-x86_64-pc-windows-msvc.zip"));
     assert!(readme.contains("New-Item -ItemType Directory -Force \"$HOME\\.config\\agentix\""));
     assert!(readme.contains("agentix.exe doctor"));
-    assert!(readme.contains("Native IM backends currently require macOS/Linux"));
+    assert!(
+        readme
+            .contains("Pi/OMP live bridges can use a configured loopback TCP endpoint on Windows")
+    );
 }

@@ -107,3 +107,29 @@ fn approval_requests_keep_rpc_and_session_context() {
     assert_eq!(request.kind, InteractionKind::CommandApproval);
     assert_eq!(request.available_decisions, vec!["accept", "decline"]);
 }
+
+#[test]
+fn completed_reasoning_and_tool_items_preserve_visible_details() {
+    for (item, expected) in [
+        (
+            json!({"id":"r","type":"reasoning","summary":["Visible summary"],"content":[]}),
+            "Visible summary",
+        ),
+        (
+            json!({"id":"c","type":"commandExecution","command":"cargo test","aggregatedOutput":"passed","status":"completed"}),
+            "cargo test",
+        ),
+        (
+            json!({"id":"m","type":"mcpToolCall","server":"test","tool":"read","arguments":{"path":"a"},"result":{"content":[]}}),
+            "read",
+        ),
+    ] {
+        let ServerMessage::Event(AgentEvent::ItemCompleted { item, .. }) = decode_server_frame(
+            &json!({"method":"item/completed","params":{"threadId":"s","turnId":"t","item":item}}),
+        )
+        .unwrap() else {
+            panic!("completed item")
+        };
+        assert!(item.text.unwrap_or_default().contains(expected));
+    }
+}

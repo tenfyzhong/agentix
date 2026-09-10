@@ -55,6 +55,10 @@ pi install git:github.com/tenfyzhong/agentix
 
 Pi manages the Git checkout and installs npm dependencies automatically. The repository-root `package.json` selects the plugin's Pi extension and shared skills; its npm workspace installs the plugin's runtime dependencies. Restart or reload Pi after installation. See [Pi package installation](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/packages.md#install-and-manage).
 
+Keep only one Agentix installation enabled in Pi. Installing the GitHub package while a local checkout is still registered can produce `Tool "taskix" conflicts with ...`. Remove the old checkout with `pi remove /absolute/path/to/old/checkout`, then restart Pi. This removes its registration without deleting the source files.
+
+Project-local installations created with `pi install -l` must be removed with `pi remove /absolute/path/to/old/checkout -l` in that project.
+
 ### OMP: install
 
 Install the extension package directly from GitHub:
@@ -146,5 +150,7 @@ See the [TaskNotes setup guide](obsidian/README.md) for task identification, sev
 Run `taskix obsidian setup` to install TaskNotes and the bundled desktop Taskix Sync plugin. Board contains a pastel Job status board above the Task board. Saved status edits are submitted through taskix; rejected changes are restored with a notification. See [Obsidian setup and supported edits](obsidian/README.md#status-edits).
 
 When all non-cancelled Tasks are DONE and at least one exists, the default `review_policy: required` submits the Job to PENDING_REVIEW. Investigation-only, document-only, and simple git commit/push Jobs use `job create/update --review-policy none` and complete directly without separate human approval. Mixed Jobs containing code changes retain `required`. Verification passes with `job approve`, or fails with `job reject --reason` to return the Job to ACTIVE while preserving Task outcomes. Use `job submit` to resubmit ready work explicitly. Update all taskix and Agentix database writers together.
+
+Git and gh delivery requests such as `git commit`, `git push`, `gh pr create`, and `gh pr edit` also supplement a pending Job when they concern its changes, even if the prompt only says "commit" or "create a PR". Resolve that ownership before creating a Job or choosing a review policy. Use the conversation and repository/worktree evidence to confirm the delivery; if `context.previous_job` is absent, inspect the current Project with `job list --pending-review` rather than assuming the request is independent. Tool names alone do not establish relevance. For a match, run `job followup` before delivery work, then add new Tasks to the same ACTIVE Job with the old Tasks as dependencies. Preserve the whole Job's review policy: a Git-only supplement to an implementation Job still requires review. Only independent operational Jobs use `none`; unrelated requests and requests after COMPLETED get new Jobs.
 
 A new prompt supplementing a PENDING_REVIEW Job reuses it through `job followup JOB_ID --prompt 'Verbatim supplementary request'`. Context and hooks expose `previous_job` as a candidate for the agent to assess; they do not reopen every Job automatically. Follow-up returns the Job to ACTIVE, preserves old Tasks, and makes each newly added Task depend on the snapshot of all old Tasks. Unsatisfied prerequisites still block execution. Independent requests and requests after COMPLETED get new Jobs. The original Prompt is preserved; Conversation records successive `Turn N` sections, each with User input and Agent output.

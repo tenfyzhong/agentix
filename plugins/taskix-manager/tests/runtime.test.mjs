@@ -447,3 +447,46 @@ test("Pi and OMP explain pending Job followups at each prompt and protect retry 
         assert.equal(calls.at(-1).options.token, undefined);
     }
 });
+
+function assertGitDeliveryFollowupGuidance(content) {
+    for (const command of ["git commit", "git push", "gh pr create", "gh pr edit"]) {
+        assert.ok(content.includes(command), `missing delivery example: ${command}`);
+    }
+    assert.match(content, /before creating a new Job or choosing.*review policy/i);
+    assert.match(content, /job list --pending-review/);
+    assert.match(content, /job followup/);
+    assert.match(content, /ACTIVE/);
+    assert.match(content, /new Tasks/);
+    assert.match(content, /dependencies/);
+    assert.match(content, /Do not downgrade.*required/i);
+    assert.match(content, /independent requests.*COMPLETED.*new Jobs/i);
+}
+
+for (const previous_job of [null, { id: "job_delivery", status: "PENDING_REVIEW" }, { id: "job_done", status: "COMPLETED" }]) {
+    test(`hooks explain Git delivery ownership with candidate ${previous_job?.status ?? "missing"}`, async () => {
+        for (const hook_event_name of ["SessionStart", "PreToolUse"]) {
+            const calls = [];
+            const result = await runHook({ hook_event_name, session_id: "s", cwd: "/work" }, async args => {
+                calls.push(args);
+                return { result: { previous_job, inbox_todos: [{ id: "inbox_candidate" }] } };
+            });
+            assertGitDeliveryFollowupGuidance(result.hookSpecificOutput.additionalContext);
+            assert.ok(calls.every(args => ["hook", "context"].includes(args[0])), "guidance must not mutate Jobs");
+        }
+    });
+    for (const host of ["pi", "omp"]) {
+        test(`${host} explains Git delivery ownership with candidate ${previous_job?.status ?? "missing"}`, async () => {
+            const handlers = new Map(), calls = [];
+            registerExtension({ on: (name, fn) => handlers.set(name, fn), registerTool() {} }, host, async args => {
+                calls.push(args);
+                return { result: { previous_job } };
+            });
+            const ctx = { cwd: "/work", sessionManager: { getSessionId: () => "s" } };
+            for (const prompt of ["提交之前的改动", "创建 PR", "Push the previous changes", "Commit an unrelated repository"]) {
+                const result = await handlers.get("before_agent_start")({ prompt }, ctx);
+                assertGitDeliveryFollowupGuidance(result.message.content);
+            }
+            assert.ok(calls.every(args => ["hook", "context"].includes(args[0])), "tools alone must not choose a Job");
+        });
+    }
+}

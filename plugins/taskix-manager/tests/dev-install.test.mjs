@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
@@ -70,7 +70,10 @@ test("dev-test installs OMP from a clean state and propagates installation failu
     assert.equal(f.run().status, 0);
     assert.ok((await lstat(f.target)).isSymbolicLink());
     assert.notEqual(f.run("install").status, 0, "make must report failed installation");
+    await symlink(repository, f.target);
     assert.equal(f.run("uninstall").status, 0, "missing legacy package does not block marketplace installation");
+    assert.ok((await lstat(f.target)).isSymbolicLink());
+    assert.equal(await realpath(f.target), await realpath(join(repository, "plugins/taskix-manager")));
 });
 
 const removals = [
@@ -105,7 +108,7 @@ for (const target of ["dev-test", "prod-test"]) {
         assert.deepEqual(calls.slice(removals.length), [
             `codex plugin marketplace add ${source}`,
             "codex plugin add taskix-manager@agentix",
-            `claude plugin marketplace add ${source}`,
+            `claude plugin marketplace add ${target === "dev-test" ? "./" : source}`,
             "claude plugin install taskix-manager@agentix",
             "claude plugin install agentix-bridge@agentix",
             `pi install ${target === "dev-test" ? "." : "git:github.com/tenfyzhong/agentix"}`,

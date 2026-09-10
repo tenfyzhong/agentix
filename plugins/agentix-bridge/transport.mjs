@@ -9,6 +9,22 @@ import { PROTOCOL_VERSION, MAX_FRAME_BYTES } from './protocol/constants.mjs';
 export { PROTOCOL_VERSION };
 export const MAX_FRAME = MAX_FRAME_BYTES;
 
+function connectionOptions(endpoint) {
+    if (endpoint.startsWith('unix://') && endpoint.length > 7) {
+        return { path: endpoint.slice(7).replace(/^~(?=\/)/, homedir()) };
+    }
+    if (endpoint.startsWith('tcp://')) {
+        try {
+            const url = new URL(endpoint);
+            if (url.hostname && Number(url.port) > 0 && !url.username && !url.password
+                && !url.pathname && !url.search && !url.hash) {
+                return { host: url.hostname.replace(/^\[|\]$/g, ''), port: Number(url.port) };
+            }
+        } catch { /* Report the same configuration error for all malformed URLs. */ }
+    }
+    throw new Error('Invalid Agentix control endpoint: expected unix://path or tcp://host:port');
+}
+
 /** Outbound transport only. Session state and command execution stay with the host. */
 export class BridgeTransport {
     #options;
@@ -20,6 +36,7 @@ export class BridgeTransport {
     constructor(options) {
         this.#options = { ...options, reconnectDelay: options.reconnectDelay ?? 1000,
             endpoint: options.endpoint ?? process.env.AGENTIX_CONTROL_ENDPOINT ?? `unix://${join(homedir(), '.local/share/agentix/control.sock')}` };
+        this.#options.connection = connectionOptions(this.#options.endpoint);
     }
     get sequence() { return this.#sequence; }
     open(record) {
@@ -72,9 +89,7 @@ export class BridgeTransport {
     #connect(incarnation) {
         try {
             if (!this.#active || this.#record.instance !== incarnation) return;
-            if (!this.#options.endpoint.startsWith('unix://')) throw new Error('Native bridge requires a Unix control endpoint');
-            const path = this.#options.endpoint.slice(7).replace(/^~(?=\/)/, homedir());
-            const socket = net.connect(path);
+            const socket = net.connect(this.#options.connection);
             this.#clients.add(socket);
             const deadline = setTimeout(() => socket.destroy(), 3000); deadline.unref();
             socket.on('error', () => {});

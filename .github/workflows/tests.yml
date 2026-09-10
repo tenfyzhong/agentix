@@ -19,6 +19,23 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  plugins:
+    name: Plugins (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Test task host plugin
+        run: |
+          npm ci --ignore-scripts --prefix plugins/taskix-manager
+          node --test plugins/taskix-manager/tests/*.test.mjs plugins/agentix-bridge/tests/*.test.mjs
+
   test:
     name: ${{ matrix.name }}
     strategy:
@@ -32,15 +49,18 @@ jobs:
           - name: Windows
             os: windows-latest
     runs-on: ${{ matrix.os }}
+    env:
+      # Reduce Windows linker work and cache size; CI does not debug test binaries.
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
     steps:
       - uses: actions/checkout@v4
+      # Rust integration tests also launch native Node host fixtures.
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - name: Test task host plugin
-        run: |
-          npm ci --ignore-scripts --prefix plugins/taskix-manager
-          node --test plugins/taskix-manager/tests/*.test.mjs plugins/agentix-bridge/tests/*.test.mjs
+      - name: Install task plugin dependencies for Rust integration tests
+        run: npm ci --ignore-scripts --prefix plugins/taskix-manager
       - name: Install test tools on Linux
         if: runner.os == 'Linux'
         run: |
@@ -70,10 +90,10 @@ jobs:
         run: cargo check --workspace --all-features
       - name: Run Windows TCP control tests
         if: runner.os == 'Windows'
-        run: cargo test -p agentix --bin agentix control::tests::tcp_control_server
+        run: cargo test -p agentix --all-features --bin agentix control::tests::tcp_control_server
       - name: Run Windows task board tests
         if: runner.os == 'Windows'
-        run: cargo test -p agentix-task -p taskix
+        run: cargo test -p agentix-task -p taskix --all-features
       - name: Verify Windows system time zones
         if: runner.os == 'Windows'
         shell: pwsh
@@ -89,7 +109,7 @@ jobs:
               tzutil /s $zone.Name
               if ($LASTEXITCODE -ne 0) { throw "Cannot set time zone $($zone.Name)" }
               $env:TASKIX_TEST_EXPECTED_OFFSET_SECONDS = $zone.Offset
-              cargo test -p taskix --test cli task_note_timestamps_follow_the_system_local_zone -- --exact
+              cargo test -p taskix --all-features --test cli task_note_timestamps_follow_the_system_local_zone -- --exact
               if ($LASTEXITCODE -ne 0) { throw "Time zone test failed for $($zone.Name)" }
             }
           } finally {

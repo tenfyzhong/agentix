@@ -215,3 +215,7 @@ Tracing timestamps use RFC 3339 in the computer's local time zone and include it
 - Claude Code IM support uses the [plugin with rmux input](claude-code.md) with the existing Agentix bridge protocol. Native stop, steering, model controls, and approval relay are not advertised; terminal permissions remain local.
 
 For the development workflow, test architecture, CI, and release process, see [Contributing to Agentix](../CONTRIBUTING.md).
+
+### CI test cost
+
+Plugin tests run in parallel with Rust tests on each supported operating system. CI disables dev/test debug symbols to reduce Windows linker work and cache size; local Cargo profiles are unchanged. Windows retains the workspace check, native TCP control tests, task-board tests, and three system-time-zone checks. Compare GitHub Actions step timings on equivalent revisions and cache states before claiming a speedup; the baseline Windows run `34441426541` took 17m26s, including 3m43s for workspace checking, 4m31s for the TCP test step, and 5m57s for task-board tests.

@@ -92,8 +92,15 @@ owner_user_ids = []
 # To use Slack, set channel.kind = "slack" and configure this section.
 # See docs/slack-initialization.md for app setup and CLI login.
 # [channel.slack]
+# command_prefix = "" # e.g. "ax-"
+# command_suffix = "" # e.g. "-dev"
 # app_id = "A0123456789" # Enables startup slash-command sync through logged-in Slack CLI.
 # bot_token = "xoxb-..."
 # app_token = "xapp-..."
 # Run `agentix client claim`, then send `/agentix /claim <code>` in the bot DM.
 # owner_user_ids = []
+
+# Show host-exposed process details in IM and the associated Obsidian Job output.
+[output]
+show_reasoning = false
+show_tool_calls = false

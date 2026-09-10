@@ -153,3 +153,9 @@ SLACK_LIVE_APP_ID=A0123456789 SLACK_LIVE_TEAM_ID=T0123456789 \
 ```
 
 To diagnose a command timeout, check `Slack Socket Mode connected` for the app ID and active connection count, then look for `Slack slash command received` and `Slack slash command acknowledged` with its elapsed milliseconds. These logs omit command arguments, message contents, and credentials. If the connected service never receives the command, check for other apps registering the same command and remove the collision. An ACK log records a completed local socket write; it does not prove that Slack received it.
+
+## Custom command names
+
+Set `command_prefix` and/or `command_suffix` in `[channel.slack]` to distinguish apps in the same workspace. Both default to an empty string. For example, `command_prefix = "ax-"` and `command_suffix = "-dev"` register `/ax-sessions-dev`, `/ax-status-dev`, `/ax-agentix-dev` and the bootstrap `/ax-claim-dev`. Use lowercase letters, digits, `_` and `-`; the resulting slash command must fit Slack’s 32-character limit. Restart Agentix to synchronize the configured names.
+
+Affixes apply to native Slack slash commands. Arguments and commands typed as ordinary DM text or inside the gateway remain unchanged: `/ax-agentix-dev /sessions` routes `/sessions`. With empty affixes the existing menu, including `/agentix-status` and `/agentix-rename`, stays the same. When changing an existing custom prefix or suffix, remove obsolete registrations from that app’s Slack manifest; Agentix preserves unrelated command names and cannot infer a previous custom namespace.

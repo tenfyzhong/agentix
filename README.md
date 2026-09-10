@@ -32,7 +32,7 @@ curl -fsSL https://chatgpt.com/codex/install.sh | sh
 
 ### Windows (x86_64)
 
-Download and extract `agentix-<version>-x86_64-pc-windows-msvc.zip` from the [latest release](https://github.com/tenfyzhong/agentix/releases/latest), then add the extracted directory to `PATH`. Native IM backends currently require macOS/Linux; the standalone taskix and task plugins remain available on Windows.
+Download and extract `agentix-<version>-x86_64-pc-windows-msvc.zip` from the [latest release](https://github.com/tenfyzhong/agentix/releases/latest), then add the extracted directory to `PATH`. Pi/OMP live bridges can use a configured loopback TCP endpoint on Windows. Codex Unix sockets and rmux terminal delivery require macOS/Linux; standalone taskix and task plugins also support Windows.
 
 For checksums, other release archives, or building from source, see the [installation guide](docs/guide.md#install).
 
@@ -94,7 +94,7 @@ omp plugin install taskix-manager@agentix
 omp plugin install agentix-bridge@agentix
 ```
 
-Configure `[agent.pi]` or `[agent.omp]`, start `agentix serve`, and keep the original terminal session running. The extension connects to `~/.local/share/agentix/control.sock`; select it with `/sessions pi` or `/sessions omp`. `/detach` leaves the terminal running. See [bridge setup](plugins/agentix-bridge/README.md) for multiple backends and custom endpoints. Live bridging requires macOS/Linux.
+Configure `[agent.pi]` or `[agent.omp]`, start `agentix serve`, and keep the original terminal session running. The extension connects to `~/.local/share/agentix/control.sock`; select it with `/sessions pi` or `/sessions omp`. `/detach` leaves the terminal running. See [bridge setup](plugins/agentix-bridge/README.md) for multiple backends and custom endpoints. Live bridging supports Unix sockets on macOS/Linux and loopback TCP endpoints, including Windows.
 
 ## Claude Code
 
