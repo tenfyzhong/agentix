@@ -553,18 +553,10 @@ impl Service {
                 doc.push_str(&Self::header(&job.name));
                 doc.push_str(&format!("\n## {}\n\n<!-- taskix:goal:start -->\n{}\n<!-- taskix:goal:end -->\n\n## {}\n", "Goal", goal, "Tasks"));
                 doc.push_str(&job_dependency_graph(self, &index, &job.id)?);
-                for task in index
-                    .tasks_by_job
-                    .get(job.id.as_str())
-                    .into_iter()
-                    .flatten()
-                {
-                    doc.push_str(&format!("\n{}\n", self.task_line(&index, task)?));
-                    doc.push_str(&format!("\n^{}\n", task.id.replace('_', "-")));
-                    if let Some(reason) = &task.reason {
-                        doc.push_str(&format!("\n  {}: {}\n", "Reason", escape(reason)));
-                    }
-                }
+                doc.push_str(&format!(
+                    "\n### Task board\n\n```base\n{}\n```\n",
+                    self.tasknotes_base(project, "Task", &json!(TaskStatus::ALL), Some(&job.id))?
+                ));
                 doc.push_str(&format!(
                     "\n## {}\n\n<!-- taskix:notes:start -->\n{notes}\n<!-- taskix:notes:end -->\n",
                     "Notes"
@@ -894,33 +886,53 @@ impl Service {
             "\n{}\n",
             self.link(&format!("Projects/{}/Inbox.md", project.key), "Inbox")
         ));
-        for (kind, folder, statuses) in [
-            ("Job", "Jobs", json!(crate::JobStatus::ALL)),
-            ("Task", "Tasks", json!(TaskStatus::ALL)),
+        for (kind, statuses) in [
+            ("Job", json!(crate::JobStatus::ALL)),
+            ("Task", json!(TaskStatus::ALL)),
         ] {
-            let folder = self
-                .config
-                .documents
-                .directory
-                .join(format!("Projects/{}/{folder}", project.key));
-            let folder = folder.to_string_lossy().replace('\\', "/");
-            let folder = folder.trim_start_matches("./");
-            let base = json!({
-                "filters": {"and": [format!("file.folder == {}", json!(folder)), format!("file.hasTag(\"agent/{}\")", kind.to_lowercase()), format!("project_id == {}", json!(project.id)), "archived != true"]},
-                "views": [{
-                    "type": "tasknotesKanban", "name": format!("{kind} board"),
-                    "groupBy": {"property": "status", "direction": "ASC"},
-                    "order": ["status"], "sort": [{"column": "updated_at", "direction": "ASC"}, {"column": "file.name", "direction": "ASC"}],
-                    "columnOrder": {"status": statuses}, "pinnedColumns": statuses,
-                    "hideEmptyColumns": true, "columnWidth": 300
-                }]
-            });
             doc.push_str(&format!(
                 "\n## {kind} board\n\n```base\n{}\n```\n",
-                serde_yaml::to_string(&base)?.trim_end()
+                self.tasknotes_base(project, kind, &statuses, None)?
             ));
         }
         Ok(doc)
+    }
+
+    fn tasknotes_base(
+        &self,
+        project: &crate::Project,
+        kind: &str,
+        statuses: &Value,
+        job_id: Option<&str>,
+    ) -> Result<String> {
+        let folder = self
+            .config
+            .documents
+            .directory
+            .join(format!("Projects/{}/{kind}s", project.key));
+        let folder = folder.to_string_lossy().replace('\\', "/");
+        let folder = folder.trim_start_matches("./");
+        let mut filters = vec![
+            format!("file.folder == {}", json!(folder)),
+            format!("file.hasTag(\"agent/{}\")", kind.to_lowercase()),
+            format!("project_id == {}", json!(project.id)),
+        ];
+        // Job notes retain their own task history after archival.
+        filters.push(job_id.map_or_else(
+            || "archived != true".into(),
+            |id| format!("job_id == {}", json!(id)),
+        ));
+        let base = json!({
+            "filters": {"and": filters},
+            "views": [{
+                "type": "tasknotesKanban", "name": format!("{kind} board"),
+                "groupBy": {"property": "status", "direction": "ASC"},
+                "order": ["status"], "sort": [{"column": "updated_at", "direction": "ASC"}, {"column": "file.name", "direction": "ASC"}],
+                "columnOrder": {"status": statuses}, "pinnedColumns": statuses,
+                "hideEmptyColumns": true, "columnWidth": 300
+            }]
+        });
+        Ok(serde_yaml::to_string(&base)?.trim_end().to_owned())
     }
 
     fn task_document(
@@ -997,15 +1009,6 @@ impl Service {
 
     fn header(title: &str) -> String {
         format!("# {}\n\n{}\n", escape(title), Self::notice())
-    }
-
-    fn task_line(&self, index: &ProjectionIndex<'_>, task: &Task) -> Result<String> {
-        let path = index.task_path(task)?;
-        let label = Path::new(&path)
-            .file_stem()
-            .and_then(|name| name.to_str())
-            .context("Task path must have a UTF-8 filename")?;
-        Ok(format!("- {}", self.link(&path, label)))
     }
 
     pub(crate) fn link(&self, to: &str, label: &str) -> String {
