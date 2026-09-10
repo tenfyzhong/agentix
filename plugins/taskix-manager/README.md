@@ -55,6 +55,10 @@ pi install git:github.com/tenfyzhong/agentix
 
 Pi manages the Git checkout and installs npm dependencies automatically. The repository-root `package.json` selects the plugin's Pi extension and shared skills; its npm workspace installs the plugin's runtime dependencies. Restart or reload Pi after installation. See [Pi package installation](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/packages.md#install-and-manage).
 
+Keep only one Agentix installation enabled in Pi. Installing the GitHub package while a local checkout is still registered can produce `Tool "taskix" conflicts with ...`. Remove the old checkout with `pi remove /absolute/path/to/old/checkout`, then restart Pi. This removes its registration without deleting the source files.
+
+When switching installations from this repository, `make dev-test` and `make prod-test` first run `make remove-plugin`. Pi cleanup reads the global settings (respecting `PI_CODING_AGENT_DIR`) and removes registered local packages whose manifest name is `agentix-plugins`, including other worktrees, before removing the GitHub installation. Other packages are preserved. Cleanup errors stop installation. Project-local installations created with `pi install -l` must be removed separately with `pi remove /absolute/path/to/checkout -l` in that project.
+
 ### OMP: install
 
 Install the extension package directly from GitHub:
