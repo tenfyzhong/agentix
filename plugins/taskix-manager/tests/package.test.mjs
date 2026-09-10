@@ -11,13 +11,14 @@ const readJson = async (path) =>
     JSON.parse(await readFile(new URL(path, root), "utf8"));
 
 async function assertOmpSkill(packageRoot) {
-    // OMP scans <package>/skills; omp.skills is not a supported manifest field.
-    const entry = new URL("skills/taskix-manager/SKILL.md", packageRoot);
+    // OMP installs the marketplace plugin, whose skills directory is canonical.
+    await assert.rejects(readFile(new URL("skills/taskix-manager/SKILL.md", packageRoot)), { code: "ENOENT" });
+    const entry = new URL("plugins/taskix-manager/skills/taskix-manager/SKILL.md", packageRoot);
     const content = await readFile(entry, "utf8");
     assert.match(content, /^name: taskix-manager$/m);
     assert.match(content, /^description: .+/m);
     const shared = new URL("skills/taskix-manager/", root);
-    const bundled = new URL("skills/taskix-manager/", packageRoot);
+    const bundled = new URL("plugins/taskix-manager/skills/taskix-manager/", packageRoot);
     const files = await readdir(shared, { recursive: true, withFileTypes: true });
     for (const file of files.filter(file => file.isFile())) {
         const source = join(file.parentPath, file.name);
@@ -34,7 +35,7 @@ async function assertOmpSkill(packageRoot) {
     }
 }
 
-test("OMP discovers the shared workflow from the repository package root", async () => {
+test("OMP marketplace plugin uses the canonical workflow without root copies", async () => {
     await assertOmpSkill(new URL("../../", root));
 });
 
@@ -59,7 +60,7 @@ test("Pi and OMP remote packages discover their adapters and install runtime dep
     const npmCache = await mkdtemp(`${tmpdir()}/agentix-npm-cache-`);
     try {
         await mkdir(`${directory}/plugins/taskix-manager`, { recursive: true });
-        for (const path of ["package.json", "package-lock.json", "skills", "plugins/taskix-manager", "plugins/agentix-bridge"]) {
+        for (const path of ["package.json", "package-lock.json", "plugins/taskix-manager", "plugins/agentix-bridge"]) {
             await cp(new URL(path, repository), `${directory}/${path}`, {
                 recursive: true,
                 filter: source => !/[\\/](node_modules|tests)([\\/]|$)/.test(source),
@@ -79,8 +80,8 @@ test("Pi and OMP remote packages discover their adapters and install runtime dep
                 env: { ...process.env, npm_config_cache: npmCache },
             },
         );
-        // OMP installs the repository as a dependency, where root workspaces
-        // alone do not install the nested extension's runtime dependencies.
+        // Check npm consumer installs too: root workspaces alone do not
+        // install the nested extension's runtime dependencies.
         const [archive] = JSON.parse(runNpm("npm pack --ignore-scripts --offline --json", directory));
         const consumer = `${directory}/consumer`;
         await mkdir(consumer);

@@ -11,7 +11,7 @@ Agentix connects local Codex, Pi, Oh My Pi, and Claude Code sessions to Telegram
 - Coordinate work with standalone `taskix` and browse project, Job, and Task boards in IM or Obsidian.
 - Verify Jobs before completion and synchronize Obsidian status edits with automatic rollback on failure.
 
-Install Taskix Manager from GitHub using the [host-specific installation guide](plugins/taskix-manager/README.md#prerequisites-and-activation). Codex and Claude Code use the `agentix` marketplace; Pi and OMP install the repository as an extension package with their own entrypoints and shared runtime dependencies.
+Install Taskix Manager from GitHub using the [host-specific installation guide](plugins/taskix-manager/README.md#prerequisites-and-activation). Codex, Claude Code, and OMP use the `agentix` marketplace. Pi installs the repository as an extension package; all hosts share the plugin skills and runtime.
 
 Claude Code IM access uses the [Agentix bridge plugin](docs/claude-code.md), installed from the same `agentix` marketplace.
 
@@ -89,7 +89,9 @@ Install the extensions, then restart the host:
 
 ```sh
 pi install git:github.com/tenfyzhong/agentix
-omp install github:tenfyzhong/agentix
+omp plugin marketplace add tenfyzhong/agentix
+omp plugin install taskix-manager@agentix
+omp plugin install agentix-bridge@agentix
 ```
 
 Configure `[agent.pi]` or `[agent.omp]`, start `agentix serve`, and keep the original terminal session running. The extension connects to `~/.local/share/agentix/control.sock`; select it with `/sessions pi` or `/sessions omp`. `/detach` leaves the terminal running. See [bridge setup](plugins/agentix-bridge/README.md) for multiple backends and custom endpoints. Live bridging requires macOS/Linux.

@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { once } from "node:events";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { listen, waitFor } from "../../agentix-bridge/tests/support.mjs";
 
-test("native OMP discovers taskix-manager from the extension package", {
+test("native OMP installs marketplace plugins and reads the canonical skill", {
     skip: process.platform === "win32" || !process.env.AGENTIX_TEST_NATIVE_HOSTS,
     timeout: 30000,
 }, async t => {
@@ -19,16 +19,31 @@ test("native OMP discovers taskix-manager from the extension package", {
     const config = join(directory, "taskix.toml");
     const readResults = join(directory, "read-results.json");
     await writeFile(config, `schema_version = 1\n[storage]\npath = ${JSON.stringify(join(directory, "tasks.sqlite3"))}\n[documents]\nroot = ${JSON.stringify(vault)}\ndirectory = "Tasks"\n`);
+    const pluginEnv = {
+        ...process.env,
+        PI_CONFIG_DIR: relative(homedir(), join(directory, "config")),
+        PI_CODING_AGENT_DIR: join(directory, "config", "agent"),
+        OMP_PROFILE: "",
+        PI_PROFILE: "",
+        XDG_DATA_HOME: "",
+        XDG_STATE_HOME: "",
+        XDG_CACHE_HOME: "",
+    };
+    for (const args of [
+        ["plugin", "marketplace", "add", fileURLToPath(new URL("../../../", import.meta.url))],
+        ["plugin", "install", "taskix-manager@agentix"],
+        ["plugin", "install", "agentix-bridge@agentix"],
+    ]) {
+        execFileSync("omp", args, { cwd: directory, env: pluginEnv, timeout: 20000, stdio: "pipe" });
+    }
     const host = spawn("omp", [
-        "--mode", "rpc", "--no-extensions", "--no-lsp", "--no-title", "--no-rules",
+        "--mode", "rpc", "--no-lsp", "--no-title", "--no-rules",
         "--session-dir", join(directory, "sessions"),
-        "-e", process.env.TASKIX_TEST_OMP_PACKAGE_DIR ?? fileURLToPath(new URL("../../../", import.meta.url)),
         "-e", fileURLToPath(new URL("./omp-read-skill.ts", import.meta.url)),
     ], {
         cwd: directory,
         env: {
-            ...process.env,
-            PI_CODING_AGENT_DIR: join(directory, "config"),
+            ...pluginEnv,
             TASKIX_CONFIG: config,
             TASKIX_TEST_READ_RESULTS: readResults,
             AGENTIX_CONTROL_ENDPOINT: `unix://${join(directory, "control.sock")}`,

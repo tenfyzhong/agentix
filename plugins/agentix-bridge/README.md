@@ -6,7 +6,7 @@ For Claude Code, install `agentix-bridge@agentix`, configure `[agent.claude]`, a
 
 ## Install and start
 
-Install the repository using the [Pi or OMP package instructions](../taskix-manager/README.md#prerequisites-and-activation), then restart or reload the host. The repository installs both the task extension and the bridge. For a local checkout you can explicitly load one entrypoint:
+Install both plugins using the [Pi or OMP installation instructions](../taskix-manager/README.md#prerequisites-and-activation), then restart or reload the host. Pi loads both from the repository package; OMP installs both marketplace plugins. For a local checkout you can explicitly load one entrypoint:
 
 ```sh
 pi -e /path/to/agentix/plugins/agentix-bridge/extensions/pi.ts

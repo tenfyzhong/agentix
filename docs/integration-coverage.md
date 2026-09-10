@@ -66,7 +66,7 @@ The projection CLI tests cross argument parsing, a new process per command, SQLi
 
 ## OMP skill discovery
 
-[Package tests](../plugins/taskix-manager/tests/package.test.mjs) verify the complete conventional package-root skill, byte-for-byte agreement with the shared resources, and contained reference links in both the checkout and an installed npm tarball. The optional [native OMP test](../plugins/taskix-manager/tests/native-omp.test.mjs) starts an isolated RPC session and confirms `taskix-manager` appears in the host skill list and reads the full workflow and command reference through the native Read tool using `skill://` URIs. Run it with `AGENTIX_TEST_NATIVE_HOSTS=1`; it needs OMP and taskix on PATH, but sends no model requests and uses a temporary task database.
+[Package tests](../plugins/taskix-manager/tests/package.test.mjs) verify the canonical plugin skill, absence of repository-root copies, and contained reference links in both the checkout and an installed npm tarball. The optional [native OMP test](../plugins/taskix-manager/tests/native-omp.test.mjs) starts an isolated RPC session and confirms `taskix-manager` appears in the host skill list and reads the full workflow and command reference through the native Read tool using `skill://` URIs. Run it with `AGENTIX_TEST_NATIVE_HOSTS=1`; it needs OMP and taskix on PATH, but sends no model requests and uses a temporary task database.
 
 ## Desktop and external acceptance
 

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
@@ -31,11 +31,13 @@ fs.appendFileSync(path.join(process.env.OMP_FIXTURE_DIR, "calls"), "omp " + args
 if (args.join(" ") === "plugin uninstall agentix-plugins") {
     if (process.env.OMP_FAIL === "uninstall") process.exit(7);
     fs.rmSync(target, { recursive: true, force: true });
-} else if (args[0] === "install") {
+} else if (args.join(" ").startsWith("plugin uninstall ") || args.join(" ") === "plugin marketplace remove agentix") {
+} else if (args.join(" ").startsWith("plugin marketplace add ")) {
+} else if (args.join(" ") === "plugin install agentix-bridge@agentix") {
+} else if (args.join(" ") === "plugin install taskix-manager@agentix") {
     if (process.env.OMP_FAIL === "install") process.exit(8);
     try { fs.unlinkSync(target); } catch (error) { if (error.code !== "ENOENT") throw error; }
-    if (args[1] === ".") fs.symlinkSync(process.cwd(), target);
-    else fs.mkdirSync(target);
+    fs.symlinkSync(path.join(process.cwd(), "plugins/taskix-manager"), target);
 } else { throw new Error("Unexpected OMP command: " + args.join(" ")); }
 `);
     await chmod(omp, 0o755);
@@ -58,7 +60,7 @@ test("dev-test replaces a remote OMP directory and can relink repeatedly", { ski
         const result = f.run();
         assert.equal(result.status, 0, result.stderr);
         assert.ok((await lstat(f.target)).isSymbolicLink(), result.stderr);
-        assert.equal(await realpath(f.target), await realpath(repository));
+        assert.equal(await realpath(f.target), await realpath(join(repository, "plugins/taskix-manager")));
     }
     assert.ok(await readFile(join(repository, "package.json")), "relink preserves source checkout");
 });
@@ -68,8 +70,7 @@ test("dev-test installs OMP from a clean state and propagates installation failu
     assert.equal(f.run().status, 0);
     assert.ok((await lstat(f.target)).isSymbolicLink());
     assert.notEqual(f.run("install").status, 0, "make must report failed installation");
-    await symlink(repository, f.target);
-    assert.notEqual(f.run("uninstall").status, 0, "make must stop if cleanup fails");
+    assert.equal(f.run("uninstall").status, 0, "missing legacy package does not block marketplace installation");
 });
 
 const removals = [
@@ -81,6 +82,9 @@ const removals = [
     "pi remove .",
     "pi remove git:github.com/tenfyzhong/agentix",
     "omp plugin uninstall agentix-plugins",
+    "omp plugin uninstall taskix-manager@agentix",
+    "omp plugin uninstall agentix-bridge@agentix",
+    "omp plugin marketplace remove agentix",
 ];
 
 test("remove-plugin only removes Agentix integrations", { skip: process.platform === "win32" }, async t => {
@@ -105,7 +109,9 @@ for (const target of ["dev-test", "prod-test"]) {
             "claude plugin install taskix-manager@agentix",
             "claude plugin install agentix-bridge@agentix",
             `pi install ${target === "dev-test" ? "." : "git:github.com/tenfyzhong/agentix"}`,
-            `omp install ${target === "dev-test" ? "." : "github:tenfyzhong/agentix"}`,
+            `omp plugin marketplace add ${source}`,
+            "omp plugin install taskix-manager@agentix",
+            "omp plugin install agentix-bridge@agentix",
         ]);
     });
 }
