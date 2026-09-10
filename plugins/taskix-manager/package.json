@@ -33,9 +33,6 @@
   "omp": {
     "extensions": [
       "./extensions/omp.ts"
-    ],
-    "skills": [
-      "./skills"
     ]
   }
 }

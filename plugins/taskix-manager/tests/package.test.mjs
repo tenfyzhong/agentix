@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join, posix } from "node:path";
@@ -10,13 +10,42 @@ const root = new URL("../", import.meta.url);
 const readJson = async (path) =>
     JSON.parse(await readFile(new URL(path, root), "utf8"));
 
+async function assertOmpSkill(packageRoot) {
+    // OMP installs the marketplace plugin, whose skills directory is canonical.
+    await assert.rejects(readFile(new URL("skills/taskix-manager/SKILL.md", packageRoot)), { code: "ENOENT" });
+    const entry = new URL("plugins/taskix-manager/skills/taskix-manager/SKILL.md", packageRoot);
+    const content = await readFile(entry, "utf8");
+    assert.match(content, /^name: taskix-manager$/m);
+    assert.match(content, /^description: .+/m);
+    const shared = new URL("skills/taskix-manager/", root);
+    const bundled = new URL("plugins/taskix-manager/skills/taskix-manager/", packageRoot);
+    const files = await readdir(shared, { recursive: true, withFileTypes: true });
+    for (const file of files.filter(file => file.isFile())) {
+        const source = join(file.parentPath, file.name);
+        const relative = source.slice(fileURLToPath(shared).length).replaceAll("\\", "/");
+        const actual = await readFile(new URL(relative, bundled), "utf8");
+        assert.equal(actual, await readFile(source, "utf8"), `OMP must bundle the complete shared ${relative}`);
+        if (!relative.endsWith(".md")) continue;
+        for (const [, target] of actual.matchAll(/\[[^\]]+\]\(([^\s)]+)\)/g)) {
+            if (/^[a-z]+:|^#/i.test(target)) continue;
+            const destination = new URL(target, new URL(relative, bundled));
+            assert.ok(destination.href.startsWith(bundled.href), `skill:// links must stay inside the skill: ${target}`);
+            await readFile(destination, "utf8");
+        }
+    }
+}
+
+test("OMP marketplace plugin uses the canonical workflow without root copies", async () => {
+    await assertOmpSkill(new URL("../../", root));
+});
+
 test("Pi and OMP remote packages discover their adapters and install runtime dependencies", async () => {
     const repository = new URL("../../", root);
     const pkg = await readJson("../../package.json");
     const plugin = await readJson("package.json");
     for (const host of ["pi", "omp"]) {
         assert.ok(pkg[host], `root package must declare ${host} resources`);
-        for (const kind of ["extensions", "skills"]) {
+        for (const kind of host === "pi" ? ["extensions", "skills"] : ["extensions"]) {
             assert.deepEqual(
                 pkg[host][kind],
                 [
@@ -51,8 +80,8 @@ test("Pi and OMP remote packages discover their adapters and install runtime dep
                 env: { ...process.env, npm_config_cache: npmCache },
             },
         );
-        // OMP installs the repository as a dependency, where root workspaces
-        // alone do not install the nested extension's runtime dependencies.
+        // Check npm consumer installs too: root workspaces alone do not
+        // install the nested extension's runtime dependencies.
         const [archive] = JSON.parse(runNpm("npm pack --ignore-scripts --offline --json", directory));
         const consumer = `${directory}/consumer`;
         await mkdir(consumer);
@@ -70,6 +99,7 @@ test("Pi and OMP remote packages discover their adapters and install runtime dep
                 runNpm("npm ci --ignore-scripts --prefer-offline --no-audit --no-fund", directory);
             }
             const installedRoot = host === "pi" ? directory : `${consumer}/node_modules/${pkg.name}`;
+            if (host === "omp") await assertOmpSkill(pathToFileURL(`${installedRoot}/`));
             let entrypoint = join(installedRoot, pkg[host].extensions[0]);
             if (host === "omp") {
                 // These adapters contain plain JavaScript. Node cannot load
@@ -93,7 +123,7 @@ test("Pi and OMP remote packages discover their adapters and install runtime dep
             const bridge = installBridge({ on: event => events.push(event) });
             assert.equal(typeof bridge.close, "function");
             await bridge.close();
-            for (const path of pkg[host].skills) {
+            for (const path of pkg[host].skills ?? []) {
                 await readFile(`${installedRoot}/${path}/taskix-manager/SKILL.md`, "utf8");
             }
         }
@@ -169,7 +199,8 @@ test("package manifests select one host-specific extension and the shared skill"
     const pkg = await readJson("package.json");
     for (const host of ["pi", "omp"]) {
         assert.deepEqual(pkg[host].extensions, [`./extensions/${host}.ts`]);
-        assert.deepEqual(pkg[host].skills, ["./skills"]);
+        if (host === "pi") assert.deepEqual(pkg[host].skills, ["./skills"]);
+        else await readFile(new URL("skills/taskix-manager/SKILL.md", root), "utf8");
         const { default: install } = await import(
             new URL(pkg[host].extensions[0], root)
         );

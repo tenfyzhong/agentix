@@ -13,7 +13,7 @@ Job creation captures the original user request with `job create --prompt`, sepa
 | Pi | `package.json` → `pi.extensions` | `extensions/pi.ts` |
 | OMP | `package.json` → `omp.extensions` | `extensions/omp.ts` |
 
-Codex and Claude share the common lifecycle hooks. Codex explicitly loads the shared file and a separate Interrupt hook; its manifest replaces default discovery, so each hook loads once. Claude merges default discovery of the shared file with its manifest-selected `hooks/claude.json`, which only adds PostToolUseFailure. Do not repeat the shared file in Claude’s manifest. Pi and OMP each select exactly one extension, so neither loads the other host's entrypoint. Both package manifests also include the shared `skills/` directory. The npm `files` list includes all four host manifests, hooks, extensions, runtime, skills, TaskNotes settings and setup guide, and this guide.
+Codex and Claude share the common lifecycle hooks. Codex explicitly loads the shared file and a separate Interrupt hook; its manifest replaces default discovery, so each hook loads once. Claude merges default discovery of the shared file with its manifest-selected `hooks/claude.json`, which only adds PostToolUseFailure. Do not repeat the shared file in Claude’s manifest. Pi and OMP each select exactly one extension, so neither loads the other host's entrypoint. Pi declares the shared `skills/` directory in its manifest. OMP installs the marketplace plugin and discovers its shared `skills/` directory. The npm `files` list includes all four host manifests, hooks, extensions, runtime, skills, TaskNotes settings and setup guide, and this guide.
 
 ## Prerequisites and activation
 
@@ -64,10 +64,14 @@ Project-local installations created with `pi install -l` must be removed with `p
 Install the extension package directly from GitHub:
 
 ```sh
-omp install github:tenfyzhong/agentix
+omp plugin marketplace add tenfyzhong/agentix
+omp plugin install taskix-manager@agentix
+omp plugin install agentix-bridge@agentix
 ```
 
-OMP uses the `github:owner/repo` source format for direct Git installs. The repository-root `package.json` selects the OMP extension through `omp.extensions` and the shared skills through `omp.skills`; package dependencies supply the runtime requirements. Restart OMP after installation. See the [OMP install command](https://github.com/can1357/oh-my-pi/blob/main/packages/coding-agent/src/commands/install.ts), [Git source formats](https://github.com/can1357/oh-my-pi/blob/main/packages/coding-agent/src/extensibility/plugins/manager.ts), and [extension package manifest](https://github.com/can1357/oh-my-pi/blob/main/docs/skills/authoring-extensions.md#packagejson-manifest).
+OMP installs the plugins from the same marketplace used by Claude. The marketplace selects `plugins/taskix-manager/` and `plugins/agentix-bridge/`; each plugin selects its OMP extension through `omp.extensions`. OMP discovers `plugins/taskix-manager/skills/`, so all hosts use the same workflow and reference files. No repository-root skill copies are required. For local development, `make dev-test` registers the current checkout as the marketplace. Restart OMP after installation.
+
+If `skill://taskix-manager` reports `Unknown skill` while the taskix tool is available, remove the old root package with `omp plugin uninstall agentix-plugins`, install the marketplace plugins above, and restart OMP. In a new session, check `/status` for the skill and read `skill://taskix-manager` and `skill://taskix-manager/references/commands.md`. Older repository packages placed skills only below `plugins/taskix-manager/`, outside OMP's discovery root.
 
 An npm-installed copy uses `npm install --ignore-scripts` if dependencies need reinstalling: npm does not ship `package-lock.json`. Source and release copies include the lockfile and can use `npm ci`. The separate Obsidian skill is still required when an agent edits Obsidian Plan/Notes bodies.
 
@@ -121,7 +125,7 @@ PENDING_REVIEW Jobs allow an explicitly requested next Inbox entry while awaitin
 
 ## Validation
 
-The remote-package installation test starts with an isolated empty npm cache and downloads missing locked dependencies from the npm registry. It verifies both Pi checkout installs and OMP package-consumer installs without relying on the host's existing cache.
+The remote-package installation test starts with an isolated empty npm cache and downloads missing locked dependencies from the npm registry. It verifies both Pi checkout installs and OMP package-consumer installs without relying on the host's existing cache, including the canonical plugin skill directory and its contained reference links in the installed tarball.
 
 From the repository root, run `make check` with Node.js 24+ and npm. Tests validate both marketplace entries, inspect host-specific hook discovery, import the manifest-selected Pi/OMP extensions, and verify the npm package file list. Cargo additionally exercises the configured commands with the compiled taskix, one host root variable at a time, from an unrelated working directory and a plugin path containing spaces/Unicode. Linux/macOS CI exercises both sh and fish; Windows tests execute the configured command through `cmd.exe` rather than bypassing it.
 
@@ -132,6 +136,8 @@ TASKIX_TEST_HOOK_SHELL=fish cargo test -p taskix --test cli plugin_entrypoints_e
 ```
 
 Lifecycle tests also cover interruption during planning/execution, ordinary Claude tool failures that must retain ownership, automatic continuations, deletion retries after shutdown, stopped and in-flight heartbeats, cleanup retries, old-session callbacks, and recovery with a new token. The [coverage map](https://github.com/tenfyzhong/agentix/blob/main/docs/integration-coverage.md) separates real CLI checks from host harness and desktop checks. `claude plugin validate plugins/taskix-manager` checks the Claude manifest with the installed host.
+
+Run `AGENTIX_TEST_NATIVE_HOSTS=1 node --test plugins/taskix-manager/tests/native-omp.test.mjs` from the repository root to additionally verify skill discovery with an installed OMP and taskix. This starts an isolated RPC session with the marketplace plugins and checks the host's skill list through the bridge, then uses its native Read tool on `skill://taskix-manager` and `skill://taskix-manager/references/commands.md`, without sending a model prompt or using the user's task database.
 
 These tests do not install the plugin in a user's host or invoke a live model. Native host loading, trust policy, and credentialed IM behavior remain separate acceptance checks.
 

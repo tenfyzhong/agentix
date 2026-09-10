@@ -46,6 +46,9 @@ remove-plugin:
 	pi remove . || true
 	pi remove git:github.com/tenfyzhong/agentix || true
 	omp plugin uninstall agentix-plugins || true
+	omp plugin uninstall taskix-manager@agentix || true
+	omp plugin uninstall agentix-bridge@agentix || true
+	omp plugin marketplace remove agentix || true
 
 dev-test: remove-plugin
 	codex plugin marketplace add .
@@ -54,7 +57,9 @@ dev-test: remove-plugin
 	claude plugin install taskix-manager@agentix
 	claude plugin install agentix-bridge@agentix
 	pi install .
-	omp install .
+	omp plugin marketplace add .
+	omp plugin install taskix-manager@agentix
+	omp plugin install agentix-bridge@agentix
 
 prod-test: remove-plugin
 	codex plugin marketplace add tenfyzhong/agentix
@@ -63,7 +68,9 @@ prod-test: remove-plugin
 	claude plugin install taskix-manager@agentix
 	claude plugin install agentix-bridge@agentix
 	pi install git:github.com/tenfyzhong/agentix
-	omp install github:tenfyzhong/agentix
+	omp plugin marketplace add tenfyzhong/agentix
+	omp plugin install taskix-manager@agentix
+	omp plugin install agentix-bridge@agentix
 
 clean:
 	$(CARGO) clean
