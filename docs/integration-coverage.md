@@ -64,6 +64,10 @@ The projection CLI tests cross argument parsing, a new process per command, SQLi
 | rmux navigation, typed SDK requests, local socket exchange and process launch | [Engine tests](../crates/agentix-core/tests/engine.rs), [multiplexer tests](../crates/agentix-codex/src/multiplexer.rs) |
 | Native release archives, checksums, version alignment and Homebrew formula transformation | [packaging tests](../crates/agentix/tests/packaging.rs) |
 
+## OMP skill discovery
+
+[Package tests](../plugins/taskix-manager/tests/package.test.mjs) verify the complete conventional package-root skill, byte-for-byte agreement with the shared resources, and contained reference links in both the checkout and an installed npm tarball. The optional [native OMP test](../plugins/taskix-manager/tests/native-omp.test.mjs) starts an isolated RPC session and confirms `taskix-manager` appears in the host skill list and reads the full workflow and command reference through the native Read tool using `skill://` URIs. Run it with `AGENTIX_TEST_NATIVE_HOSTS=1`; it needs OMP and taskix on PATH, but sends no model requests and uses a temporary task database.
+
 ## Desktop and external acceptance
 
 The normal suite needs no live account, model, host installation, or desktop. To run native Obsidian checks, follow [task board validation](task-board.md#validation): open the selected vault in the foreground, enable Bases and TaskNotes with the seven statuses, and supply `TASKIX_OBSIDIAN_VAULT` and an existing `TASKIX_OBSIDIAN_PARENT`. The test checks generated link destinations through Obsidian's native navigation API; it does not claim physical mouse or keyboard automation in every theme.

@@ -27,9 +27,6 @@
     "extensions": [
       "./plugins/taskix-manager/extensions/omp.ts",
       "./plugins/agentix-bridge/extensions/omp.ts"
-    ],
-    "skills": [
-      "./plugins/taskix-manager/skills"
     ]
   }
 }
