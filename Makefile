@@ -43,7 +43,6 @@ remove-plugin:
 	claude plugin uninstall taskix-manager@agentix || true
 	claude plugin uninstall agentix-bridge@agentix || true
 	claude plugin marketplace remove agentix || true
-	node scripts/remove-pi-local.mjs
 	pi remove . || true
 	pi remove git:github.com/tenfyzhong/agentix || true
 	omp plugin uninstall agentix-plugins
