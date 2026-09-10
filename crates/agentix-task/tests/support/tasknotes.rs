@@ -197,6 +197,110 @@ fn base(document: &str) -> Value {
     named_base(document, "Task board")
 }
 
+async fn job_board_document(f: &Fixture) -> (std::path::PathBuf, String) {
+    let state = f.service.store().snapshot().await.unwrap();
+    let job = state.jobs.iter().find(|job| job.id == f.job).unwrap();
+    let path = f.service.config().output_dir().join(&job.document_path);
+    let document = std::fs::read_to_string(&path).unwrap();
+    (path, document)
+}
+
+#[tokio::test]
+async fn job_task_board_is_last_in_tasks_and_scoped_to_its_job() {
+    let f = Fixture::new().await;
+    populate_board_states(&f).await;
+    let (_, document) = job_board_document(&f).await;
+    let tasks = document.split_once("\n## Tasks\n").unwrap().1;
+    let (tasks, _) = tasks.split_once("\n## Notes\n").unwrap();
+    let (diagram, board) = tasks
+        .split_once("\n### Task board\n")
+        .expect("Job Tasks end with a nested Task board");
+    assert!(diagram.contains("```mermaid\n"));
+    assert!(diagram.trim_end().ends_with("```"));
+    assert!(
+        !diagram
+            .lines()
+            .any(|line| line.starts_with("- ") || line.starts_with('^'))
+    );
+    assert!(!diagram.contains("Reason:"));
+    for task in f.service.store().snapshot().await.unwrap().tasks {
+        assert!(!diagram.contains(&format!("^{}", task.id.replace('_', "-"))));
+        assert!(diagram.contains(&format!("{}[", task.id)));
+    }
+    assert!(board.trim_end().ends_with("```"));
+    assert_eq!(document.matches("```base\n").count(), 1);
+    let job_base = base(board);
+    assert_eq!(
+        job_base["filters"]["and"],
+        json!([
+            "file.folder == \"Tasks ☃/Projects/demo/Tasks\"",
+            "file.hasTag(\"agent/task\")",
+            format!("project_id == {:?}", f.project),
+            format!("job_id == {:?}", f.job),
+        ])
+    );
+    let project_board = std::fs::read_to_string(
+        f.service
+            .config()
+            .output_dir()
+            .join("Projects/demo/Board.md"),
+    )
+    .unwrap();
+    assert_eq!(job_base["views"], base(&project_board)["views"]);
+    assert_eq!(
+        job_base["views"][0]["pinnedColumns"],
+        json!(agentix_task::TaskStatus::ALL)
+    );
+    let im = f.service.job_markdown(&f.job).await.unwrap();
+    assert!(!im.contains("```base") && !im.contains("### Task board"));
+}
+
+#[tokio::test]
+async fn job_task_board_sync_restores_missing_board_and_preserves_notes_after_archive() {
+    let f = Fixture::new().await;
+    let (_, empty) = job_board_document(&f).await;
+    assert_eq!(base(&empty)["views"][0]["type"], "tasknotesKanban");
+    let task = f.task("Finish work").await;
+    let claim = f.start(&task, "job-board").await;
+    f.service
+        .execute(json!({"command":"task.done","task":task}), owner(&claim))
+        .await
+        .unwrap();
+    f.approve().await;
+    f.service
+        .execute(
+            json!({"command":"job.archive","job":f.job}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    let (path, archived) = job_board_document(&f).await;
+    let board_start = archived.find("\n### Task board\n").unwrap();
+    let notes_start = archived.find("\n## Notes\n").unwrap();
+    let legacy = format!("{}{}", &archived[..board_start], &archived[notes_start..]).replace(
+        "<!-- taskix:notes:start -->",
+        "<!-- taskix:notes:start -->\nKeep authored notes.",
+    );
+    let legacy = legacy.replace(
+        "\n## Notes\n",
+        &format!(
+            "\n- [[Legacy task]]\n\n^{}\n\n  Reason: Legacy reason\n\n## Notes\n",
+            task.replace('_', "-")
+        ),
+    );
+    std::fs::write(&path, legacy).unwrap();
+    f.service.sync().await.unwrap();
+    let (_, restored) = job_board_document(&f).await;
+    assert_eq!(base(&restored), base(&empty));
+    assert!(restored.contains("Keep authored notes."));
+    assert!(!restored.contains("[[Legacy task]]"));
+    assert!(!restored.contains("Legacy reason"));
+    assert!(!restored.contains(&format!("^{}", task.replace('_', "-"))));
+    assert!(!base(&restored)["filters"].to_string().contains("archived"));
+    f.service.sync().await.unwrap();
+    assert_eq!(job_board_document(&f).await.1, restored);
+}
+
 #[tokio::test]
 async fn board_contains_project_metadata_and_is_the_only_project_link_target() {
     let f = Fixture::new().await;
