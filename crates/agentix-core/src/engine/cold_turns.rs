@@ -33,6 +33,8 @@ pub(super) struct ColdTurn {
 struct StoredTurn {
     user_text: String,
     agent_text: String,
+    #[serde(default)]
+    process_items: Vec<(String, String)>,
     status: TurnStatus,
     started_at: Option<Duration>,
     rendered_elapsed_seconds: Option<u64>,
@@ -55,6 +57,7 @@ impl ColdTurns {
         let stored = StoredTurn {
             user_text: value.buffer.user_text,
             agent_text: value.buffer.agent_text,
+            process_items: value.buffer.process_items,
             status: value.buffer.status,
             started_at: value
                 .buffer
@@ -82,6 +85,7 @@ impl ColdTurns {
                     buffer: TurnBuffer {
                         user_text: stored.user_text,
                         agent_text: stored.agent_text,
+                        process_items: stored.process_items,
                         status: stored.status,
                         started_at: stored.started_at.map(|offset| self.origin + offset),
                         rendered_elapsed_seconds: stored.rendered_elapsed_seconds,
@@ -113,6 +117,7 @@ mod tests {
             buffer: TurnBuffer {
                 user_text: "Question".into(),
                 agent_text: text.into(),
+                process_items: Vec::new(),
                 status: TurnStatus::Completed,
                 started_at: Some(started),
                 rendered_elapsed_seconds: Some(1),

@@ -16,6 +16,7 @@ pub struct SlackCommandSync {
     app_id: String,
     commands: Vec<ChannelCommand>,
     timeout: Duration,
+    affixes: crate::CommandAffixes,
 }
 
 impl SlackCommandSync {
@@ -26,7 +27,14 @@ impl SlackCommandSync {
             app_id,
             commands,
             timeout: Duration::from_mins(1),
+            affixes: crate::CommandAffixes::default(),
         }
+    }
+
+    #[must_use]
+    pub fn with_command_affixes(mut self, affixes: crate::CommandAffixes) -> Self {
+        self.affixes = affixes;
+        self
     }
 
     #[must_use]
@@ -67,7 +75,7 @@ impl SlackCommandSync {
         self.run(project, team, &["app", "link", "--environment", "deployed"])
             .await?;
         let remote = self.fetch(project, team).await?;
-        let merged = merge_for_owner(&remote, &self.commands, has_owner)?;
+        let merged = merge_for_owner(&remote, &self.commands, has_owner, &self.affixes)?;
         if commands_match(&remote, &merged) {
             return Ok(false);
         }
@@ -84,7 +92,7 @@ impl SlackCommandSync {
         let actual = self.fetch(project, team).await?;
         if !commands_match(
             &actual,
-            &merge_for_owner(&actual, &self.commands, has_owner)?,
+            &merge_for_owner(&actual, &self.commands, has_owner, &self.affixes)?,
         ) {
             return Err(failure(
                 "Slack CLI completed but command synchronization could not be verified",

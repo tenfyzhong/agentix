@@ -166,3 +166,17 @@ Restarting with the same bot preserves bindings. Rotating its token or app secre
 Changing bots clears that channel's old bindings, saved message views, pending interactions, event deduplication records, and queued notifications in one transaction. Binding epochs remain monotonic, and notification cursors are retained. Other channels and upstream agent sessions are preserved. Switching back to the previous bot does not revive its old routes. Open the new bot's conversation, run `/sessions`, and attach the desired session again.
 
 Old IM routing data without a stored bot identity is unsupported in both development and released versions. On startup, Agentix deletes that data for each configured channel instead of migrating it or adopting it for the current bot. Use `/sessions` to reattach. No manual database edits or identity configuration are needed.
+
+## Process output
+
+In the Agentix configuration, enable either independent option:
+
+```toml
+[output]
+show_reasoning = true
+show_tool_calls = true
+```
+
+Both default to `false`. Restart Agentix after changing them. Enabled host-exposed reasoning summaries and tool details appear alongside the final answer and are written into the associated Obsidian Job’s Agent output when the turn ends, including sessions without an IM attachment. This does not change the model’s reasoning level.
+
+Codex supplies completed reasoning summaries and tool items; Pi/OMP report completed thinking blocks and tool execution results. Claude imports visible thinking blocks and tool inputs/results from the matching transcript turn at completion. Content unavailable from the host is not reconstructed. Tool text may be shortened by the host bridge’s existing size limits. Standalone Taskix hooks retain their ordinary visible-message capture.

@@ -28,6 +28,8 @@ pub struct Config {
     pub logging: LoggingConfig,
     #[serde(default)]
     pub notifications: NotificationConfig,
+    #[serde(default)]
+    pub output: agentix_core::OutputConfig,
     pub channel: ChannelConfig,
     #[serde(default)]
     pub agent: Option<AgentConfig>,
@@ -209,6 +211,10 @@ pub struct SlackConfig {
     #[serde(default)]
     pub app_id: Option<String>,
     #[serde(default)]
+    pub command_prefix: String,
+    #[serde(default)]
+    pub command_suffix: String,
+    #[serde(default)]
     pub bot_token: String,
     #[serde(default)]
     pub app_token: String,
@@ -216,11 +222,35 @@ pub struct SlackConfig {
     pub owner_user_ids: Vec<String>,
 }
 
+impl SlackConfig {
+    fn validate_commands(&self) -> Result<()> {
+        let affixes =
+            agentix_slack::CommandAffixes::new(&self.command_prefix, &self.command_suffix)?;
+        for command in agentix_core::command_menu(true).commands {
+            affixes.encode(&command.name)?;
+        }
+        for name in [
+            "agentix",
+            "claim",
+            "dashboard",
+            "board",
+            "jobs",
+            "inboxes",
+            "inbox",
+        ] {
+            affixes.encode(name)?;
+        }
+        Ok(())
+    }
+}
+
 impl std::fmt::Debug for SlackConfig {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("SlackConfig")
             .field("app_id", &self.app_id)
+            .field("command_prefix", &self.command_prefix)
+            .field("command_suffix", &self.command_suffix)
             .field("bot_token", &"[redacted]")
             .field("app_token", &"[redacted]")
             .field("owner_user_ids", &self.owner_user_ids)
@@ -296,6 +326,7 @@ impl Config {
                     .slack
                     .as_ref()
                     .context("selected slack channel requires [channel.slack] configuration")?;
+                slack.validate_commands()?;
                 if slack.app_id.as_ref().is_some_and(|id| {
                     !id.starts_with('A')
                         || id.len() < 2

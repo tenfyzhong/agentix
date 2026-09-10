@@ -392,6 +392,7 @@ async fn serve(config: Config, config_path: &Path) -> Result<()> {
         config_path.to_owned(),
         claims,
         config.notifications.background_turns,
+        config.output,
         Duration::from_secs(5),
         async {
             tokio::signal::ctrl_c()
@@ -414,6 +415,7 @@ async fn run_service_until_shutdown<F>(
     config_path: PathBuf,
     claims: Arc<ClaimRegistry>,
     background_turn_notifications: bool,
+    output: agentix_core::OutputConfig,
     channel_shutdown_grace: Duration,
     shutdown_signal: F,
 ) -> Result<()>
@@ -440,7 +442,8 @@ where
     );
     let restore_started = Instant::now();
     let mut engine = Engine::new(adapter.clone(), state, channels.clone())
-        .with_background_turn_notifications(background_turn_notifications);
+        .with_background_turn_notifications(background_turn_notifications)
+        .with_output(output);
     if let Some(task_board) = task_board {
         engine = engine
             .with_task_board(task_board)
@@ -916,8 +919,20 @@ async fn handle_control_request(
                 .generate(ttl_minutes, now)
                 .await
                 .map_err(|error| error.to_string())?;
+            let command = if config.channel.kind == ImChannel::Slack {
+                let slack = config
+                    .channel
+                    .slack
+                    .as_ref()
+                    .expect("validated Slack config");
+                agentix_slack::CommandAffixes::new(&slack.command_prefix, &slack.command_suffix)
+                    .and_then(|affixes| affixes.encode("claim"))
+                    .map_err(|error| error.to_string())?
+            } else {
+                "/claim".into()
+            };
             Ok(json!({
-                "command": format!("/claim {code}"),
+                "command": format!("{command} {code}"),
                 "expiresAt": expires_at,
             }))
         }
@@ -947,6 +962,8 @@ fn build_channels(
                 .slack
                 .as_ref()
                 .expect("configuration was validated");
+            let affixes =
+                agentix_slack::CommandAffixes::new(&slack.command_prefix, &slack.command_suffix)?;
             let mut adapter = agentix_slack::SlackAdapter::with_client(
                 config.network.http_client(
                     reqwest::Client::builder().connect_timeout(std::time::Duration::from_secs(10)),
@@ -955,7 +972,8 @@ fn build_channels(
                 slack.bot_token.clone(),
                 slack.app_token.clone(),
                 slack.owner_user_ids.clone(),
-            )?;
+            )?
+            .with_command_affixes(affixes.clone());
             if let Some(app_id) = &slack.app_id {
                 let mut commands = agentix_core::command_menu(true).commands;
                 if config.enabled_task_board().is_some() {
@@ -972,14 +990,17 @@ fn build_channels(
                         }),
                     );
                 }
-                adapter = adapter.with_command_sync(agentix_slack::SlackCommandSync::new(
-                    config
-                        .slack_cli_path
-                        .clone()
-                        .unwrap_or_else(|| PathBuf::from("slack")),
-                    app_id.clone(),
-                    commands,
-                ));
+                adapter = adapter.with_command_sync(
+                    agentix_slack::SlackCommandSync::new(
+                        config
+                            .slack_cli_path
+                            .clone()
+                            .unwrap_or_else(|| PathBuf::from("slack")),
+                        app_id.clone(),
+                        commands,
+                    )
+                    .with_command_affixes(affixes),
+                );
             }
             if slack.owner_user_ids.is_empty() {
                 adapter = adapter.with_owner_claimer(Arc::new(MemoryStringOwnerClaimer {
@@ -2131,6 +2152,7 @@ mod tests {
             directory.path().join("config.toml"),
             Arc::new(super::ClaimRegistry::default()),
             true,
+            agentix_core::OutputConfig::default(),
             std::time::Duration::from_millis(10),
             {
                 let shutdown = shutdown.clone();
@@ -2192,6 +2214,7 @@ mod tests {
             directory.path().join("config.toml"),
             Arc::new(super::ClaimRegistry::default()),
             true,
+            agentix_core::OutputConfig::default(),
             std::time::Duration::from_secs(1),
             {
                 let shutdown = shutdown.clone();
@@ -2295,6 +2318,7 @@ mod tests {
             directory.path().join("config.toml"),
             Arc::new(super::ClaimRegistry::default()),
             true,
+            agentix_core::OutputConfig::default(),
             Duration::from_millis(50),
             {
                 let shutdown = shutdown.clone();
@@ -2356,6 +2380,7 @@ mod tests {
                 config_path.clone(),
                 Arc::new(super::ClaimRegistry::default()),
                 true,
+                agentix_core::OutputConfig::default(),
                 std::time::Duration::from_secs(5),
                 {
                     let shutdown = shutdown.clone();
@@ -2477,6 +2502,7 @@ mod tests {
             directory.path().join("config.toml"),
             Arc::new(super::ClaimRegistry::default()),
             true,
+            agentix_core::OutputConfig::default(),
             std::time::Duration::from_millis(10),
             async { Ok(()) },
         )

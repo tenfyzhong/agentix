@@ -3,6 +3,8 @@ mod command;
 mod deferred;
 mod dispatch;
 mod engine;
+mod output;
+pub use output::OutputConfig;
 mod registry;
 mod session;
 

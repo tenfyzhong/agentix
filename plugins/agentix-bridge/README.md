@@ -61,13 +61,14 @@ endpoint = "unix:///path/to/custom-control.sock"
 ```sh
 AGENTIX_CONTROL_ENDPOINT=unix:///path/to/custom-control.sock pi
 AGENTIX_CONTROL_ENDPOINT=unix:///path/to/custom-control.sock omp
+AGENTIX_CONTROL_ENDPOINT=unix:///path/to/custom-control.sock claude
 ```
 
 The default needs no environment variable. `AGENTIX_BRIDGE_DIR` is no longer used. Restart Agentix and reload the host extensions when upgrading from the separate bridge listener. Existing old bridge files are ignored.
 
 If Agentix is unavailable, extensions retry in the background without blocking the CLI. Reconnection preserves the original process/session and refreshes Agentix state; it does not resend prompts. Service shutdown closes native connections, and extensions reconnect when the control listener returns.
 
-Native bridging requires a Unix `server.endpoint` (Linux/macOS); the existing TCP control transport remains available for non-native configurations. A missing session usually means the extension is not loaded, its session file is outside `session_dir`, or its `AGENTIX_CONTROL_ENDPOINT` does not match the service. A second live connection for an already registered backend/session is rejected until the first disconnects.
+Native bridging supports `unix://` on Linux/macOS and loopback `tcp://` endpoints on all platforms. For TCP, set `[server].endpoint = "tcp://127.0.0.1:4150"` and launch each host with `AGENTIX_CONTROL_ENDPOINT=tcp://127.0.0.1:4150`. IPv6 loopback uses `tcp://[::1]:4150`. TCP uses the existing local control trust boundary; no separate authentication token is added. A missing session usually means the extension is not loaded, its session file is outside `session_dir`, or its `AGENTIX_CONTROL_ENDPOINT` does not match the service. A second live connection for an already registered backend/session is rejected until the first disconnects.
 
 The native loader smoke tests have passed with Pi 0.84.4 and OMP 17.3.7. They exercise public extension APIs without model requests. Run them against installed hosts with:
 

@@ -33,3 +33,19 @@ test('Claude transcript import waits for a terminating newline before accepting 
     writeFileSync(path, line + '\n');
     assert.equal(readTranscript(path, 's').length, 1);
 });
+
+test('Claude history retains visible reasoning and tool inputs and outputs as items', t => {
+    const root = mkdtempSync(join(tmpdir(), 'ax-process-history-'));
+    t.after(() => rmSync(root, { recursive: true, force: true }));
+    const path = join(root, 's.jsonl');
+    const entries = [
+        { type: 'user', uuid: 'u', sessionId: 's', message: { content: 'hello' } },
+        { type: 'assistant', uuid: 'a', sessionId: 's', message: { content: [{ type: 'thinking', thinking: 'Visible reasoning' }, { type: 'tool_use', id: 't', name: 'Read', input: { file_path: '/tmp/a' } }] } },
+        { type: 'user', uuid: 'r', sessionId: 's', message: { content: [{ type: 'tool_result', tool_use_id: 't', content: 'contents' }] } },
+    ];
+    writeFileSync(path, entries.map(JSON.stringify).join('\n') + '\n');
+    const items = readTranscript(path, 's')[0].items;
+    assert.equal(items.find(i => i.kind === 'reasoning')?.text, 'Visible reasoning');
+    assert.match(items.find(i => i.id === 't')?.text ?? '', /file_path.*\/tmp\/a/);
+    assert.match(items.find(i => i.id === 't')?.text ?? '', /contents/);
+});

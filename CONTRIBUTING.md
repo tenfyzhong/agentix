@@ -57,8 +57,8 @@ marketplaces and plugins are not targeted.
 The installation recipes only add marketplaces, plugins, and extensions. They do
 not build the workspace, copy or delete the `taskix` binary, or configure Obsidian.
 Run the build and Obsidian setup separately when needed. Installation failures
-make the target fail. Codex, Claude Code, and Pi cleanup is best-effort so missing
-installations do not prevent setup; OMP uninstall failures stop the target.
+make the target fail. Codex, Claude Code, Pi, and OMP cleanup is best-effort so
+missing installations do not prevent setup.
 
 Uninstalling the OMP package before linking a checkout avoids
 `EPERM: operation not permitted, unlink` when a previous GitHub installation is a

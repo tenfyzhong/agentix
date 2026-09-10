@@ -79,6 +79,7 @@ pub enum EngineError {
 struct TurnBuffer {
     user_text: String,
     agent_text: String,
+    process_items: Vec<(String, String)>,
     status: TurnStatus,
     started_at: Option<Instant>,
     rendered_elapsed_seconds: Option<u64>,
@@ -263,6 +264,7 @@ pub struct Engine {
     interactions: InteractionCoordinator,
     rmux: RmuxController,
     background_turn_notifications: bool,
+    output: crate::OutputConfig,
 }
 
 impl Engine {
@@ -287,7 +289,15 @@ impl Engine {
             interactions: InteractionCoordinator::default(),
             rmux,
             background_turn_notifications: true,
+            output: crate::OutputConfig::default(),
         }
+    }
+
+    #[must_use]
+    pub fn with_output(mut self, output: crate::OutputConfig) -> Self {
+        self.output = output;
+        self.tasks.output = output;
+        self
     }
 
     /// Enable or disable completion notices for sessions without an IM binding.
@@ -548,6 +558,7 @@ impl Engine {
     }
 
     pub async fn handle_agent_event(&self, event: AgentEvent) -> Result<(), EngineError> {
+        let event = self.output.project_event(event);
         let tasks = self.tasks.view(self);
         self.tasks.record_job_message(&event).await;
 

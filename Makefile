@@ -45,12 +45,12 @@ remove-plugin:
 	claude plugin marketplace remove agentix || true
 	pi remove . || true
 	pi remove git:github.com/tenfyzhong/agentix || true
-	omp plugin uninstall agentix-plugins
+	omp plugin uninstall agentix-plugins || true
 
 dev-test: remove-plugin
 	codex plugin marketplace add .
 	codex plugin add taskix-manager@agentix
-	claude plugin marketplace add .
+	claude plugin marketplace add ./
 	claude plugin install taskix-manager@agentix
 	claude plugin install agentix-bridge@agentix
 	pi install .

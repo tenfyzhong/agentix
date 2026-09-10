@@ -375,3 +375,23 @@ unixTest('registration remains available when native history cannot be projected
     assert.equal((await client.request('info')).ok, true);
     assert.equal((await client.request('history')).ok, false);
 });
+
+for (const kind of ['pi', 'omp']) {
+    unixTest(`${kind}: emits reasoning and tool input for process output`, async t => {
+        const directory = await mkdtemp(join(tmpdir(), 'ax-process-'));
+        const server = await listen(directory, t);
+        const host = hostFixture();
+        const bridge = registerBridge(host.api, kind, { endpoint: `unix://${join(directory, 'control.sock')}` });
+        t.after(async () => { await bridge.close(); await rm(directory, { recursive: true, force: true }); });
+        await host.emit('session_start');
+        const client = await server.next();
+        await client.request('snapshot');
+        await host.emit('message_update', { assistantMessageEvent: { type: 'thinking_end', contentIndex: 0, content: 'Visible reasoning' } });
+        await host.emit('tool_execution_start', { toolCallId: 'tool', toolName: 'bash', args: { command: 'pwd' } });
+        await host.emit('tool_execution_end', { toolCallId: 'tool', toolName: 'bash', result: { content: [{ type: 'text', text: '/tmp' }] } });
+        const reasoning = await waitFor(() => client.frames.find(f => f.event?.ItemCompleted?.item.kind === 'reasoning'));
+        assert.equal(reasoning.event.ItemCompleted.item.text, 'Visible reasoning');
+        const tool = await waitFor(() => client.frames.find(f => f.event?.ItemCompleted?.item.id === 'tool'));
+        assert.match(tool.event.ItemCompleted.item.text, /pwd/);
+    });
+}

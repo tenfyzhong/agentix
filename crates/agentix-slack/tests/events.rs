@@ -136,3 +136,32 @@ fn native_slash_commands_translate_to_unified_commands_without_arguments() {
         assert!(normalize_event(&envelope, "T1", "BOT", &["U2".into()]).is_none());
     }
 }
+
+#[test]
+fn slash_affixes_are_removed_without_changing_arguments_or_dm_text() {
+    use agentix_slack::CommandAffixes;
+    let affixes = CommandAffixes::new("ax-", "-dev").unwrap();
+    for (command, arguments, expected) in [
+        ("/ax-sessions-dev", "pi", "/sessions pi"),
+        ("/ax-agentix-dev", "/status", "/status"),
+    ] {
+        let input = json!({"type":"slash_commands","envelope_id":"env","payload":{"team_id":"T1","user_id":"U1","channel_id":"D1","command":command,"text":arguments}});
+        let normalized = affixes.normalize(&input).unwrap();
+        assert_eq!(
+            normalize_event(&normalized, "T1", "BOT", &["U1".into()])
+                .unwrap()
+                .payload,
+            InboundPayload::Text(expected.into())
+        );
+    }
+    let claim =
+        json!({"type":"slash_commands","payload":{"command":"/ax-claim-dev","text":"code"}});
+    assert_eq!(
+        affixes.normalize(&claim).unwrap()["payload"]["command"],
+        "/claim"
+    );
+    let wrong = json!({"type":"slash_commands","payload":{"command":"/sessions"}});
+    assert!(affixes.normalize(&wrong).is_none());
+    let dm = event(json!({"type":"message","text":"/sessions"}));
+    assert_eq!(affixes.normalize(&dm).unwrap(), dm);
+}

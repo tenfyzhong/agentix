@@ -79,7 +79,7 @@ impl BridgeHub {
             }),
         }
     }
-    /// Accept a registration already read from the protected Unix control socket.
+    /// Accept a registration already read from the local control endpoint.
     /// The supplied stream retains any bytes buffered beyond the first frame.
     pub async fn accept<S>(&self, frame: Value, stream: S) -> Result<(), AgentError>
     where
@@ -150,25 +150,47 @@ impl BridgeHub {
             .collect()
     }
     /// Query the running service without binding or taking ownership of its listener.
-    #[cfg(unix)]
     pub async fn live_count(
         endpoint: &str,
         flavor: BridgeKind,
         root: &Path,
     ) -> Result<usize, AgentError> {
-        let path = endpoint
-            .strip_prefix("unix://")
-            .ok_or_else(|| unavailable("native bridges require a Unix control endpoint"))?;
-        let stream = tokio::net::UnixStream::connect(path)
-            .await
-            .map_err(unavailable)?;
-        let (reader, mut writer) = stream.into_split();
+        let (reader, mut writer): (Reader, Writer) =
+            if let Some(address) = endpoint.strip_prefix("tcp://") {
+                let address: std::net::SocketAddr = address.parse().map_err(unavailable)?;
+                if !address.ip().is_loopback() {
+                    return Err(unavailable(
+                        "control TCP endpoint must use a loopback address",
+                    ));
+                }
+                let stream = tokio::net::TcpStream::connect(address)
+                    .await
+                    .map_err(unavailable)?;
+                let (reader, writer) = stream.into_split();
+                (BufReader::new(Box::new(reader)), Box::new(writer))
+            } else {
+                #[cfg(unix)]
+                {
+                    let path = endpoint
+                        .strip_prefix("unix://")
+                        .ok_or_else(|| unavailable("invalid control endpoint"))?;
+                    let stream = tokio::net::UnixStream::connect(path)
+                        .await
+                        .map_err(unavailable)?;
+                    let (reader, writer) = stream.into_split();
+                    (BufReader::new(Box::new(reader)), Box::new(writer))
+                }
+                #[cfg(not(unix))]
+                return Err(unavailable(
+                    "control endpoint must use tcp:// on this platform",
+                ));
+            };
         let request = json!({"id":"inspect","method":"inspect","params":{"version":wire::PROTOCOL_VERSION,"agent":flavor.as_str(),"session_root":root}});
         writer
             .write_all(format!("{request}\n").as_bytes())
             .await
             .map_err(unavailable)?;
-        let mut reader: Reader = BufReader::new(Box::new(reader));
+        let mut reader = reader;
         let response = tokio::time::timeout(Duration::from_secs(3), read_frame(&mut reader))
             .await
             .map_err(unavailable)??;
@@ -176,14 +198,6 @@ impl BridgeHub {
             .as_u64()
             .and_then(|n| usize::try_from(n).ok())
             .ok_or_else(|| unavailable("bridge inspection failed"))
-    }
-    #[cfg(not(unix))]
-    pub async fn live_count(
-        _endpoint: &str,
-        _flavor: BridgeKind,
-        _root: &Path,
-    ) -> Result<usize, AgentError> {
-        Err(unavailable("Native live bridges require Unix sockets"))
     }
 }
 async fn inspect(state: &State, frame: &Value, writer: &mut Writer) -> Result<(), AgentError> {

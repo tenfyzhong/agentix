@@ -480,3 +480,48 @@ async fn throttled_render_does_not_wait_for_the_session_cache() {
     );
     drop(cache);
 }
+
+#[tokio::test]
+async fn configured_process_output_survives_final_answer_and_deduplicates_items() {
+    for (reasoning, tools) in [(false, false), (true, false), (false, true), (true, true)] {
+        let engine = Engine::new(
+            Arc::new(UnusedAgent),
+            SqliteState::in_memory().await.unwrap(),
+            vec![],
+        )
+        .with_output(crate::OutputConfig {
+            show_reasoning: reasoning,
+            show_tool_calls: tools,
+        });
+        let session = SessionId::new("s");
+        for (id, kind, text) in [
+            ("r", "reasoning", "Consider options"),
+            ("t", "commandExecution", "cargo test"),
+            ("t", "commandExecution", "cargo test"),
+            ("a", "agentMessage", "Final answer"),
+        ] {
+            engine
+                .apply_completed_item(
+                    &session,
+                    "turn",
+                    &crate::ItemSummary {
+                        id: id.into(),
+                        kind: kind.into(),
+                        text: Some(text.into()),
+                        status: Some("completed".into()),
+                    },
+                )
+                .await;
+        }
+        let buffers = engine.turns.buffers.lock().await;
+        let body = super::presentation::live_turn_body(
+            "Test",
+            &buffers[&(session, "turn".into())],
+            DeliveryClass::Live,
+        );
+        assert_eq!(body.contains("Consider options"), reasoning);
+        assert_eq!(body.contains("cargo test"), tools);
+        assert!(body.contains("Final answer"));
+        assert!(body.matches("cargo test").count() <= 1);
+    }
+}

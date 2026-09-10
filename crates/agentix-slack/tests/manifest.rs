@@ -102,3 +102,45 @@ fn reserves_prefix_only_for_names_rejected_by_slack() {
     );
     assert_eq!(merge_command_manifest(&merged, &commands).unwrap(), merged);
 }
+
+#[test]
+fn command_affixes_apply_consistently_and_preserve_unrelated_commands() {
+    use agentix_slack::CommandAffixes;
+    let affixes = CommandAffixes::new("ax-", "-dev").unwrap();
+    let remote = json!({"settings":{"socket_mode_enabled":true},"features":{"slash_commands":[{"command":"/other","description":"Keep"}]}});
+    let commands = ["sessions", "rename", "status"].map(|name| ChannelCommand::new(name, "test"));
+    let merged = affixes.merge_manifest(&remote, &commands).unwrap();
+    let names: Vec<_> = merged["features"]["slash_commands"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["command"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "/other",
+            "/ax-agentix-dev",
+            "/ax-sessions-dev",
+            "/ax-rename-dev",
+            "/ax-status-dev"
+        ]
+    );
+    assert_eq!(affixes.merge_manifest(&merged, &commands).unwrap(), merged);
+    for (input, expected) in [
+        ("/ax-sessions-dev", "sessions"),
+        ("/ax-agentix-dev", "agentix"),
+        ("/ax-claim-dev", "claim"),
+    ] {
+        assert_eq!(affixes.decode(input), Some(expected));
+    }
+    assert_eq!(affixes.decode("/sessions"), None);
+    assert!(CommandAffixes::new("bad prefix", "").is_err());
+    assert!(CommandAffixes::new("", "/").is_err());
+    assert!(
+        CommandAffixes::new(&"a".repeat(30), "")
+            .unwrap()
+            .merge_manifest(&remote, &commands)
+            .is_err()
+    );
+}
