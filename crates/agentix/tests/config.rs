@@ -868,3 +868,67 @@ fn claude_named_backend_uses_plugin_bridge() {
     let config = Config::from_toml("[channel]\nkind='telegram'\n[channel.telegram]\ntoken='test'\n[storage]\npath='/tmp/state.db'\n[agent.claude]\nsession_dir='~/.claude/projects'\n").unwrap();
     assert_eq!(config.selected_agents()[0].kind().as_str(), "claude");
 }
+
+#[test]
+fn slack_configuration_requires_both_tokens_and_accepts_ownerless_bootstrap() {
+    let credentials = "[channel.slack]\nbot_token='xoxb-test'\napp_token='xapp-test'";
+    let config = Config::from_toml(&credential_config("slack", credentials)).unwrap();
+    assert!(format!("{:?}", config.channel).contains("Slack"));
+    for invalid in [
+        "",
+        "[channel.slack]\nbot_token='xoxb-test'",
+        "[channel.slack]\napp_token='xapp-test'",
+        "[channel.slack]\nbot_token=' '\napp_token='xapp-test'",
+        "[channel.slack]\nbot_token='xoxb-test'\napp_token=' '",
+        "[channel.slack]\nbot_token='xoxb-test'\napp_token='xapp-test'\nowner_user_ids=[' ']",
+    ] {
+        assert!(Config::from_toml(&credential_config("slack", invalid)).is_err());
+    }
+    let debug = format!("{config:?}");
+    assert!(!debug.contains("xoxb-test"));
+    assert!(!debug.contains("xapp-test"));
+}
+
+#[test]
+fn slack_owner_persistence_preserves_comments_and_deduplicates() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("agentix.toml");
+    std::fs::write(
+        &path,
+        credential_config(
+            "slack",
+            "[channel.slack]\n# credentials\nbot_token='bot'\napp_token='app'\n",
+        ),
+    )
+    .unwrap();
+    agentix::add_slack_owner(&path, "U1").unwrap();
+    agentix::add_slack_owner(&path, "U1").unwrap();
+    let text = std::fs::read_to_string(&path).unwrap();
+    assert!(text.contains("# credentials"));
+    assert_eq!(
+        Config::from_toml(&text)
+            .unwrap()
+            .channel
+            .slack
+            .unwrap()
+            .owner_user_ids,
+        vec!["U1"]
+    );
+    assert!(agentix::add_slack_owner(&path, " ").is_err());
+}
+
+#[test]
+fn slack_cli_path_is_global_and_requires_an_absolute_override() {
+    let credentials = "[channel.slack]\nbot_token='bot'\napp_token='app'\napp_id='A123'";
+    let base = credential_config("slack", credentials);
+    let path = std::env::current_exe().unwrap();
+    let input = format!("slack_cli_path = '{}'\n{base}", path.display());
+    let config = Config::from_toml(&input).unwrap();
+    assert_eq!(config.slack_cli_path.as_deref(), Some(path.as_path()));
+    assert_eq!(
+        config.channel.slack.unwrap().app_id.as_deref(),
+        Some("A123")
+    );
+    assert!(Config::from_toml(&format!("slack_cli_path = 'relative/slack'\n{base}")).is_err());
+    assert!(Config::from_toml(&base.replace("A123", " ")).is_err());
+}

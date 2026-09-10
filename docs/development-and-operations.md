@@ -2,13 +2,17 @@
 
 ## Configuration
 
-Copy `config/agentix.example.toml` to `$HOME/.config/agentix/config.toml` and enable one or more named backend tables: `[agent.codex]`, `[agent.pi]`, `[agent.omp]`, `[agent.claude]`. The table name selects the backend, so omit its `kind` field. This is the default path when `--config` is omitted. The required `[channel].kind` field selects exactly one active IM transport: `telegram` or `feishu`. Its matching `[channel.telegram]` or `[channel.feishu]` table must exist. Either channel may start with an empty owner list so its one-time claim flow can initialize the allowlist. The inactive nested channel table may remain in the file, but Agentix does not validate its owner list, read its credentials, or start its adapter.
+Copy `config/agentix.example.toml` to `$HOME/.config/agentix/config.toml` and enable one or more named backend tables: `[agent.codex]`, `[agent.pi]`, `[agent.omp]`, `[agent.claude]`. The table name selects the backend, so omit its `kind` field. This is the default path when `--config` is omitted. The required `[channel].kind` field selects exactly one active IM transport: `telegram`, `feishu`, or `slack`. Its matching `[channel.telegram]`, `[channel.feishu]`, or `[channel.slack]` table must exist. Any channel may start with an empty owner list so its one-time claim flow can initialize the allowlist. Inactive nested channel tables may remain in the file, but Agentix does not validate their owner lists, read their credentials, or start their adapters.
 
-Store the actual credentials in TOML: `channel.telegram.token` for Telegram, or `channel.feishu.app_id` and `channel.feishu.app_secret` for Feishu. The selected channel's credentials must be present and nonblank. Agentix reads them directly from the file, so Homebrew services need no credential environment variables. Restrict the file to your user (`chmod 600 ~/.config/agentix/config.toml` on macOS/Linux).
+Store the actual credentials in TOML: `channel.telegram.token` for Telegram, or `channel.feishu.app_id` and `channel.feishu.app_secret` for Feishu; `channel.slack.bot_token` and `channel.slack.app_token` for Slack. The selected channel's credentials must be present and nonblank. Agentix reads them directly from the file, so Homebrew services need no credential environment variables. Restrict the file to your user (`chmod 600 ~/.config/agentix/config.toml` on macOS/Linux).
 
-Every filesystem path accepts `~` or `~/...` and expands it to the current user's home directory. This includes `storage.path`, agent commands, Pi/OMP session directories, and the path portion of Agentix or Codex `unix://` endpoints. Named-user forms such as `~someone` and environment variables such as `$HOME` are not expanded.
+Filesystem paths other than the absolute `slack_cli_path` override accept `~` or `~/...` and expands it to the current user's home directory. This includes `storage.path`, agent commands, Pi/OMP session directories, and the path portion of Agentix or Codex `unix://` endpoints. Named-user forms such as `~someone` and environment variables such as `$HOME` are not expanded.
 
 Set `agent.rmux_directory` to choose the workspace used when `/rmux` creates a session, window, or pane; it defaults to the current user's home directory. The former `agent.multiplexer_directory` key remains available as a compatibility alias.
+
+### Slack CLI startup synchronization
+
+Set `channel.slack.app_id` to enable startup slash-command synchronization through a logged-in Slack CLI. Run `slack login` as the service user. The global `slack_cli_path` option, placed before all TOML tables, optionally specifies an absolute executable path when `slack` is not on PATH. CLI authorization and refresh are managed by Slack CLI; Agentix does not store management tokens. Synchronization failures log a warning and allow Socket Mode to start with existing commands. See [Slack initialization and integration](slack-initialization.md).
 
 ### Global outbound proxy
 
@@ -21,7 +25,7 @@ proxy = "http://127.0.0.1:7890"
 
 `network.proxy` accepts `http://`, `https://`, `socks5://`, and `socks5h://` URLs. Use `socks5h://127.0.0.1:1080` when the proxy should resolve destination hostnames. Authentication can be supplied as URL-encoded user information, for example `http://username:password@127.0.0.1:7890`. Proxy URLs must have a host and may have a port; paths, query strings, fragments, and blank values are rejected during configuration validation.
 
-The configured proxy takes precedence over environment proxy settings, including bypass rules, for clients using this setting. It covers all Telegram requests, including polling, menus, messages, edits, and callback acknowledgements. Proxy failures return errors; these requests do not fall back to a direct connection. Omit `network.proxy` to retain the client's existing routing behavior.
+The configured proxy takes precedence over environment proxy settings, including bypass rules, for clients using this setting. It covers all Telegram requests and Slack API/WebSocket traffic. Telegram coverage includes polling, menus, messages, edits, and callback acknowledgements. Proxy failures return errors; these requests do not fall back to a direct connection. Omit `network.proxy` to retain the client's existing routing behavior.
 
 The Feishu SDK does not use `network.proxy`. Its token requests, OpenAPI calls, WebSocket bootstrap, and WebSocket connections retain their existing network behavior.
 
@@ -116,10 +120,11 @@ Initialize taskix separately, then set `[task_board].config` to its configuratio
 
 ## Owner claim setup
 
-For first-time Telegram or Feishu setup, omit the selected channel's owner list or set it to `[]`:
+For first-time Telegram, Feishu, or Slack setup, omit the selected channel's owner list or set it to `[]`:
 
 - Telegram: `channel.telegram.owner_user_ids`
 - Feishu: `channel.feishu.owner_open_ids`
+- Slack: `channel.slack.owner_user_ids` (see [Slack setup](slack.md))
 
 Start `agentix serve`, then generate a temporary claim code from another local terminal:
 
@@ -136,7 +141,7 @@ The command prints a ready-to-send line such as:
 
 The default lifetime is 10 minutes; `--ttl-minutes` accepts 1 through 1440. The plaintext is written only to the command's stdout and is never logged. The running server keeps one pending code and its expiry only in memory. Generating a new code replaces the previous code, and restarting `serve` invalidates it. Neither the code, a hash, nor its expiry is written to TOML or SQLite.
 
-Send the command to the selected bot in a private chat. The adapter compares it with the shared in-memory registry and obtains the numeric Telegram user ID or Feishu `open_id` from the official message event. A successful match atomically adds that ID to the selected channel's owner list in the config file, consumes the code, and enables the owner immediately. There is no `--write` option or restart step. The claim message is consumed by the channel and is never forwarded to the coding agent. Generation exists only through the local Agentix control client; it is not available from remote IM. Claims are rejected after expiry, after the first success, when an owner is already configured, and in group messages.
+Send the command to the selected bot in a private chat. Slack initially registers only `/claim`; successful enrollment replaces it with the normal command menu. The adapter compares it with the shared in-memory registry and obtains the numeric Telegram user ID, Feishu `open_id`, or Slack member ID from the official message event. A successful match atomically adds that ID to the selected channel's owner list in the config file, consumes the code, and enables the owner immediately. There is no `--write` option or restart step. The claim message is consumed by the channel and is never forwarded to the coding agent. Generation exists only through the local Agentix control client; it is not available from remote IM. Claims are rejected after expiry, after the first success, when an owner is already configured, and in group messages.
 
 ## Feishu app setup
 

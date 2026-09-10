@@ -1,4 +1,5 @@
 //! `SQLite` runtime persistence and disposable turn storage.
+mod channel_identity;
 mod notification_outbox;
 mod state;
 pub use notification_outbox::TaskNotification;

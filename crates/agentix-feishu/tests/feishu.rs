@@ -1441,3 +1441,13 @@ async fn stale_invalid_token_response_does_not_discard_a_concurrently_refreshed_
         "a late error for the old token must reuse the already refreshed token"
     );
 }
+
+#[tokio::test]
+async fn identity_tracks_feishu_app_not_secret() {
+    for secret in ["old-secret", "rotated-secret"] {
+        let adapter = FeishuAdapter::new("app-a", secret, ["owner"]).unwrap();
+        assert_eq!(adapter.identity().await.unwrap().as_deref(), Some("app-a"));
+    }
+    let other = FeishuAdapter::new("app-b", "secret", ["owner"]).unwrap();
+    assert_eq!(other.identity().await.unwrap().as_deref(), Some("app-b"));
+}

@@ -346,3 +346,49 @@ async fn checkpoint_does_not_wait_for_an_active_reader_and_preserves_bindings() 
         Some(SessionId::new("saved"))
     );
 }
+
+#[tokio::test]
+async fn slack_thread_bindings_and_event_deduplication_survive_restart() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("slack.sqlite3");
+    let chat = ConversationRef::new(ChannelKind::Slack, "T1:C1:1.000001");
+    let sibling = ConversationRef::new(ChannelKind::Slack, "T1:C1:2.000001");
+    let state = SqliteState::open(&path).await.unwrap();
+    state
+        .attach(&chat, &SessionId::new("thr_slack"))
+        .await
+        .unwrap();
+    state
+        .attach(&sibling, &SessionId::new("thr_other"))
+        .await
+        .unwrap();
+    assert!(
+        state
+            .record_event(ChannelKind::Slack, "T1:1.000001:C1")
+            .await
+            .unwrap()
+    );
+    drop(state);
+    let state = SqliteState::open(&path).await.unwrap();
+    assert_eq!(
+        state.current_session(&chat).await.unwrap(),
+        Some(SessionId::new("thr_slack"))
+    );
+    assert_eq!(
+        state.current_session(&sibling).await.unwrap(),
+        Some(SessionId::new("thr_other"))
+    );
+    assert!(
+        !state
+            .record_event(ChannelKind::Slack, "T1:1.000001:C1")
+            .await
+            .unwrap()
+    );
+    assert!(
+        state
+            .record_event(ChannelKind::Telegram, "T1:1.000001:C1")
+            .await
+            .unwrap()
+    );
+    assert_eq!(state.list_bindings().await.unwrap().len(), 2);
+}

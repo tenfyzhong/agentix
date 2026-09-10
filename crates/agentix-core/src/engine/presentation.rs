@@ -149,7 +149,9 @@ pub(super) fn is_shell_command(command: &str) -> bool {
         })
 }
 
-pub(super) fn command_menu(attached: bool) -> CommandMenu {
+/// Unified built-in commands, also used by adapters with app-wide menus.
+#[must_use]
+pub fn command_menu(attached: bool) -> CommandMenu {
     let mut commands = [
         ("sessions", "Browse running sessions"),
         ("rmux", "Manage rmux workspaces"),

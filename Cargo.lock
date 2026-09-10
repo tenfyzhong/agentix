@@ -27,6 +27,7 @@ dependencies = [
  "agentix-codex",
  "agentix-core",
  "agentix-feishu",
+ "agentix-slack",
  "agentix-task",
  "agentix-telegram",
  "anyhow",
@@ -156,6 +157,23 @@ dependencies = [
  "tempfile",
  "thiserror",
  "tokio",
+]
+
+[[package]]
+name = "agentix-slack"
+version = "0.0.0-dev"
+dependencies = [
+ "agentix-domain",
+ "async-trait",
+ "futures-util",
+ "reqwest",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-tungstenite 0.28.0",
+ "tokio-util",
+ "tracing",
+ "url",
 ]
 
 [[package]]

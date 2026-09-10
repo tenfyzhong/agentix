@@ -1,6 +1,6 @@
 # Agentix
 
-Agentix connects local Codex, Pi, Oh My Pi, and Claude Code sessions to Telegram or Feishu. Attach a session from chat, send prompts, and follow the agent's replies.
+Agentix connects local Codex, Pi, Oh My Pi, and Claude Code sessions to Telegram, Feishu, or Slack. Attach a session from chat, send prompts, and follow the agent's replies.
 
 ## Features
 
@@ -56,11 +56,11 @@ Copy-Item .\agentix\agentix.example.toml "$HOME\.config\agentix\config.toml"
 Edit `~/.config/agentix/config.toml`:
 
 1. Enable one or more of `[agent.codex]`, `[agent.pi]`, `[agent.omp]`, and `[agent.claude]`; each table selects its backend without a `kind` field. For Pi/OMP, install the [live-session bridge](plugins/agentix-bridge/README.md) in the original terminal. For Claude Code, install the [bridge plugin](docs/claude-code.md); the default non-Channel mode requires installing rmux and starting Claude inside an rmux terminal.
-2. Select `telegram` or `feishu` in `[channel].kind`.
-3. Fill in the Telegram bot `token`, or the Feishu `app_id` and `app_secret`, in the matching channel table.
+2. Select `telegram`, `feishu`, or `slack` in `[channel].kind`.
+3. Fill in the Telegram bot `token`, the Feishu `app_id` and `app_secret`, or Slack `bot_token` and `app_token`, in the matching channel table.
 4. Leave the selected channel's owner list empty for first-time claiming.
 
-For Feishu bot setup, proxies, and other settings, see [Configuration and operations](docs/development-and-operations.md).
+For Slack, follow [Slack setup](docs/slack.md). For Feishu bot setup, proxies, and other settings, see [Configuration and operations](docs/development-and-operations.md).
 
 ## Start
 

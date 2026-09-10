@@ -207,3 +207,15 @@ This includes original-process loader checks and the controlled real-rmux draft-
 ### Verification after runtime layering and dispatch changes
 
 The follow-up architecture acceptance run passed `make check`: formatting, strict workspace Clippy, 725 Rust tests (11 existing opt-in/helper exclusions), and 190 Node tests (four native opt-in skips). New coverage includes queue statistics, snapshot admission guards, per-conversation overload rejection and recovery, durable notification cursor/lease/retry invariants, and independent notification delivery through the production runtime. Existing concurrency, global limits, dynamic bindings, uncertainty fencing and bounded offline notifications remain covered. Both IM end-to-end suites wait for actual notification delivery through that same runtime. See [Architecture optimization review](architecture-review.md) for current evidence and the earlier 22-test explicit native-host validation.
+
+## Slack coverage
+
+- [Startup CLI tests](../crates/agentix-slack/tests/startup.rs) and [manifest tests](../crates/agentix-slack/tests/manifest.rs): fetch/merge/install/verify, unchanged skips, retained settings, native command routing, timeouts, and failure isolation. CLI process fixtures run on Unix; manifest and event tests run on all platforms.
+
+- [Protocol and API tests](../crates/agentix-slack/tests/adapter.rs): bot/app credentials, send/edit/disable, thread destination, rate-limit retry, Socket Mode ACK/reconnect/shutdown, private one-time owner claims.
+- [Event tests](../crates/agentix-slack/tests/events.rs): workspace and owner rejection, bot filtering, mentions, thread isolation, edit versions, action references, and slash commands.
+- [Render tests](../crates/agentix-slack/tests/render.rs): Unicode limits, escaped mentions, code text, and action bounds.
+- [Codex end-to-end test](../crates/agentix/tests/support/slack_e2e.rs): real local WebSocket and HTTP transports through Engine and Codex RPC, command approval callback, and final streamed update.
+- [Core state tests](../crates/agentix-core/tests/state_and_render.rs): SQLite restart recovery, thread isolation, and cross-platform event deduplication. Critical interaction/Stop regressions also run for Slack in `engine.rs`.
+
+These fixtures require no Slack credentials. They do not prove workspace installation or permissions; follow [Slack setup](slack.md) for a live smoke test.

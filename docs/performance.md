@@ -77,3 +77,7 @@ Idle queues and queues with all workers occupied skip binding/action snapshot cr
 Each IM conversation can have 16 unfinished inbound operations, including its active operation. Excess requests are atomically marked rejected and represented by a coalesced, durable Session busy notice. They are not sent to the agent or replayed automatically. Resend rejected requests after the conversation queue clears. Duplicate pending event IDs use no extra quota; retirement releases quota. The global 256-operation / 32-worker bound and shared IM rate limits still apply. A workload occupying all workers can still backpressure new conversations.
 
 The production flood regression holds one prompt and submits 300 further inputs to that conversation. It verifies that an independent conversation completes, exactly 15 following requests remain accepted, rejected requests cannot replay, and another request succeeds after the quota drains. The production outbox regression holds one IM send while both an existing and a newly staged notification reach other conversations, then checks the held conversation's delivery order.
+
+## Slack transport
+
+See the [Slack architecture and performance review](slack-review.md) for bounded rendering measurements, retained payload limits, and channel/method pacing tests. The reusable benchmark is `cargo +1.95.0 bench -p agentix-slack --bench render`.

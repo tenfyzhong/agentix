@@ -18,8 +18,9 @@ use agentix::{
 };
 use agentix_bridge::{BridgeAdapter, BridgeHub, BridgeKind};
 use agentix_codex::{CodexClient, CodexEndpoint};
+use agentix_core::OwnerClaimer;
 use agentix_core::{AgentAdapter, AgentError, ChannelAdapter, Engine, SqliteState};
-use agentix_feishu::{FeishuAdapter, FeishuOwnerClaimer};
+use agentix_feishu::FeishuAdapter;
 use agentix_telegram::{TelegramAdapter, TelegramOwnerClaimer, TelegramPolicy};
 use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
@@ -782,7 +783,8 @@ fn constant_time_eq(left: &str, right: &str) -> bool {
 }
 
 #[derive(Debug)]
-struct MemoryFeishuOwnerClaimer {
+struct MemoryStringOwnerClaimer {
+    kind: ImChannel,
     path: PathBuf,
     claims: Arc<ClaimRegistry>,
 }
@@ -817,7 +819,7 @@ impl TelegramOwnerClaimer for MemoryTelegramOwnerClaimer {
 }
 
 #[async_trait]
-impl FeishuOwnerClaimer for MemoryFeishuOwnerClaimer {
+impl OwnerClaimer for MemoryStringOwnerClaimer {
     async fn claim(&self, code: &str, owner_open_id: &str) -> std::result::Result<bool, String> {
         let now = unix_timestamp().map_err(|error| error.to_string())?;
         if !self.claims.matches(code, now).await {
@@ -826,15 +828,20 @@ impl FeishuOwnerClaimer for MemoryFeishuOwnerClaimer {
         let path = self.path.clone();
         let code = code.to_owned();
         let owner_open_id = owner_open_id.to_owned();
-        tokio::task::spawn_blocking(move || add_feishu_owner(&path, &owner_open_id))
-            .await
-            .map_err(|error| format!("owner config update task failed: {error}"))?
-            .map_err(|error| {
-                format!(
-                    "failed to read or update {}: {error:#}",
-                    self.path.display()
-                )
-            })?;
+        let kind = self.kind;
+        tokio::task::spawn_blocking(move || match kind {
+            ImChannel::Slack => agentix::add_slack_owner(&path, &owner_open_id),
+            ImChannel::Feishu => add_feishu_owner(&path, &owner_open_id),
+            ImChannel::Telegram => anyhow::bail!("Telegram requires a numeric owner ID"),
+        })
+        .await
+        .map_err(|error| format!("owner config update task failed: {error}"))?
+        .map_err(|error| {
+            format!(
+                "failed to read or update {}: {error:#}",
+                self.path.display()
+            )
+        })?;
         self.claims.consume(&code).await;
         Ok(true)
     }
@@ -871,6 +878,18 @@ async fn handle_control_request(
         control::ControlRequest::Claim { ttl_minutes } => {
             let config = Config::load(config_path).map_err(|error| error.to_string())?;
             match config.channel.kind {
+                ImChannel::Slack => {
+                    if !config
+                        .channel
+                        .slack
+                        .as_ref()
+                        .expect("configuration was validated")
+                        .owner_user_ids
+                        .is_empty()
+                    {
+                        return Err("Slack already has a configured owner".into());
+                    }
+                }
                 ImChannel::Telegram => {
                     let telegram = config
                         .channel
@@ -922,6 +941,55 @@ fn build_channels(
     claims: Arc<ClaimRegistry>,
 ) -> Result<Vec<Arc<dyn ChannelAdapter>>> {
     let channel: Arc<dyn ChannelAdapter> = match config.channel.kind {
+        ImChannel::Slack => {
+            let slack = config
+                .channel
+                .slack
+                .as_ref()
+                .expect("configuration was validated");
+            let mut adapter = agentix_slack::SlackAdapter::with_client(
+                config.network.http_client(
+                    reqwest::Client::builder().connect_timeout(std::time::Duration::from_secs(10)),
+                )?,
+                "https://slack.com/api/".parse()?,
+                slack.bot_token.clone(),
+                slack.app_token.clone(),
+                slack.owner_user_ids.clone(),
+            )?;
+            if let Some(app_id) = &slack.app_id {
+                let mut commands = agentix_core::command_menu(true).commands;
+                if config.enabled_task_board().is_some() {
+                    commands.extend(
+                        [
+                            ("dashboard", "Browse projects and task boards"),
+                            ("board", "Show this session's task board"),
+                            ("jobs", "Browse this session's jobs"),
+                            ("inboxes", "Browse this project's inbox"),
+                            ("inbox", "Append a requirement to this project's inbox"),
+                        ]
+                        .map(|(name, description)| {
+                            agentix_core::ChannelCommand::new(name, description)
+                        }),
+                    );
+                }
+                adapter = adapter.with_command_sync(agentix_slack::SlackCommandSync::new(
+                    config
+                        .slack_cli_path
+                        .clone()
+                        .unwrap_or_else(|| PathBuf::from("slack")),
+                    app_id.clone(),
+                    commands,
+                ));
+            }
+            if slack.owner_user_ids.is_empty() {
+                adapter = adapter.with_owner_claimer(Arc::new(MemoryStringOwnerClaimer {
+                    kind: ImChannel::Slack,
+                    path: config_path.to_owned(),
+                    claims,
+                }));
+            }
+            Arc::new(adapter)
+        }
         ImChannel::Telegram => {
             let telegram = config
                 .channel
@@ -953,7 +1021,8 @@ fn build_channels(
                 feishu.owner_open_ids.clone(),
             )?;
             if feishu.owner_open_ids.is_empty() {
-                adapter = adapter.with_owner_claimer(Arc::new(MemoryFeishuOwnerClaimer {
+                adapter = adapter.with_owner_claimer(Arc::new(MemoryStringOwnerClaimer {
+                    kind: ImChannel::Feishu,
                     path: config_path.to_owned(),
                     claims,
                 }));
@@ -2518,7 +2587,8 @@ path = "/tmp/agentix-test.sqlite3"
         let claims = std::sync::Arc::new(super::ClaimRegistry::default());
         let now = super::unix_timestamp().unwrap();
         let (code, _) = claims.generate(1, now).await.unwrap();
-        let claimer = super::MemoryFeishuOwnerClaimer {
+        let claimer = super::MemoryStringOwnerClaimer {
+            kind: ImChannel::Feishu,
             path: path.clone(),
             claims: claims.clone(),
         };
@@ -2541,11 +2611,61 @@ path = "/tmp/agentix-test.sqlite3"
         assert!(!claims.matches(&code, now).await);
     }
 
+    #[tokio::test]
+    async fn slack_claim_matches_server_memory_and_persists_only_the_owner() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("agentix.toml");
+        std::fs::write(
+            &path,
+            r#"[channel]
+kind = "slack"
+
+[channel.slack]
+bot_token = "bot"
+app_token = "app"
+owner_user_ids = []
+
+[agent]
+kind = "codex"
+
+[storage]
+path = "/tmp/agentix-test.sqlite3"
+"#,
+        )
+        .unwrap();
+        let claims = std::sync::Arc::new(super::ClaimRegistry::default());
+        let now = super::unix_timestamp().unwrap();
+        let (code, _) = claims.generate(1, now).await.unwrap();
+        let claimer = super::MemoryStringOwnerClaimer {
+            kind: ImChannel::Slack,
+            path: path.clone(),
+            claims: claims.clone(),
+        };
+
+        assert!(
+            !agentix_slack::SlackOwnerClaimer::claim(&claimer, "WRONG", "U1")
+                .await
+                .unwrap()
+        );
+        assert!(
+            agentix_slack::SlackOwnerClaimer::claim(&claimer, &code, "U1")
+                .await
+                .unwrap()
+        );
+
+        let persisted = std::fs::read_to_string(path).unwrap();
+        assert!(persisted.contains("owner_user_ids = [\"U1\"]"));
+        assert!(!persisted.contains("claim_code"));
+        assert!(!persisted.contains("claim_expires"));
+        assert!(!claims.matches(&code, now).await);
+    }
+
     #[test]
     fn builds_only_the_explicitly_selected_channel() {
         for (selected, expected) in [
             ("telegram", ChannelKind::Telegram),
             ("feishu", ChannelKind::Feishu),
+            ("slack", ChannelKind::Slack),
         ] {
             let config = Config::from_toml(&format!(
                 r#"
@@ -2566,6 +2686,10 @@ owner_user_ids = [42]
 app_id = "cli_mock"
 app_secret = "mock-secret"
 owner_open_ids = ["ou_owner"]
+[channel.slack]
+bot_token = "bot"
+app_token = "app"
+owner_user_ids = ["U1"]
 "#
             ))
             .unwrap();
@@ -2581,6 +2705,7 @@ owner_open_ids = ["ou_owner"]
                 match selected {
                     "telegram" => ImChannel::Telegram,
                     "feishu" => ImChannel::Feishu,
+                    "slack" => ImChannel::Slack,
                     _ => unreachable!(),
                 }
             );

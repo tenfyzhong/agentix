@@ -1,0 +1,40 @@
+{
+  "command": "cargo +1.95.0 bench -p agentix-slack --bench render",
+  "platform": "macOS aarch64",
+  "toolchain": "Rust 1.95.0",
+  "warmups": 5,
+  "before": [
+    {
+      "input_bytes": 4088,
+      "iterations": 100,
+      "ns_per_render": 85277
+    },
+    {
+      "input_bytes": 1048572,
+      "iterations": 100,
+      "ns_per_render": 6976129
+    },
+    {
+      "input_bytes": 8388604,
+      "iterations": 100,
+      "ns_per_render": 63122965
+    }
+  ],
+  "after": [
+    {
+      "input_bytes": 4088,
+      "iterations": 100,
+      "ns_per_render": 31859
+    },
+    {
+      "input_bytes": 1048572,
+      "iterations": 100,
+      "ns_per_render": 414108
+    },
+    {
+      "input_bytes": 8388604,
+      "iterations": 100,
+      "ns_per_render": 378660
+    }
+  ]
+}

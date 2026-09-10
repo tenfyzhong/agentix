@@ -49,3 +49,7 @@ Final follow-up validation: `make check` passed formatting, strict workspace Cli
 Shutdown uses a passive WAL checkpoint so an active reader or a cancelled background query cannot make checkpointing wait before offline notifications. Committed WAL records remain durable and are recovered on reopen; a regression holds a read snapshot while verifying checkpoint completion and persisted bindings.
 
 Claude mailbox watchers resolve directory aliases before invoking libuv, including Windows short temporary paths. Protocol checks convert file URLs to native paths and generated contracts retain LF line endings. Cold-cache package installation tests allow two minutes per npm command and avoid shell descendants that can keep temporary directories locked after timeout.
+
+## Slack transport addition
+
+The [Slack review](slack-review.md) records the subsequent architecture findings, test-driven fixes, and measured performance improvements for the third IM adapter.

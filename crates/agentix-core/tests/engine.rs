@@ -809,6 +809,8 @@ impl SessionControlPort for FakeAgent {
 
 #[derive(Clone, Default)]
 struct FakeChannel {
+    bot_identity: Option<String>,
+    fail_identity: bool,
     channel_kind: Option<ChannelKind>,
     streaming_interval: Option<std::time::Duration>,
     sent: Arc<Mutex<Vec<(ConversationRef, OutboundView)>>>,
@@ -864,6 +866,13 @@ impl FakeChannel {
 
 #[async_trait]
 impl ChannelAdapter for FakeChannel {
+    async fn identity(&self) -> Result<Option<String>, ChannelError> {
+        if self.fail_identity {
+            return Err(ChannelError::Transport("identity unavailable".into()));
+        }
+        Ok(self.bot_identity.clone())
+    }
+
     async fn read_inbox_message(
         &self,
         _message: &MessageRef,
@@ -2727,7 +2736,11 @@ fn visible_stop_messages(channel: &FakeChannel) -> Vec<MessageRef> {
 
 #[tokio::test]
 async fn attach_stop_button_moves_to_only_the_latest_attached_running_turn() {
-    for kind in [ChannelKind::Telegram, ChannelKind::Feishu] {
+    for kind in [
+        ChannelKind::Telegram,
+        ChannelKind::Feishu,
+        ChannelKind::Slack,
+    ] {
         let agent = Arc::new(FakeAgent::with_history(vec![TurnSummary {
             id: "turn_running".into(),
             status: TurnStatus::InProgress,
@@ -3279,6 +3292,7 @@ async fn external_approval_resolution_clears_buttons_without_inventing_a_decisio
     for (kind, label) in [
         (ChannelKind::Telegram, "Telegram"),
         (ChannelKind::Feishu, "Feishu"),
+        (ChannelKind::Slack, "Slack"),
     ] {
         let agent = Arc::new(FakeAgent::new());
         let channel = Arc::new(FakeChannel {
@@ -3502,6 +3516,7 @@ async fn external_plan_resolution_clears_buttons_and_pending_text_reply() {
     for (kind, label) in [
         (ChannelKind::Telegram, "Telegram"),
         (ChannelKind::Feishu, "Feishu"),
+        (ChannelKind::Slack, "Slack"),
     ] {
         let agent = Arc::new(FakeAgent::new());
         let channel = Arc::new(FakeChannel {
@@ -5154,4 +5169,115 @@ async fn refresh_and_deliver_tasks(engine: &Engine) -> Result<(), agentix_core::
             engine.deliver_task_notification(notification).await?;
         }
     }
+}
+
+#[tokio::test]
+async fn bot_identity_switch_invalidates_only_its_channel_before_restoration() {
+    for kind in [
+        ChannelKind::Telegram,
+        ChannelKind::Feishu,
+        ChannelKind::Slack,
+    ] {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("state.sqlite3");
+        let state = SqliteState::open(&path).await.unwrap();
+        let conversation = ConversationRef::new(kind, "old-chat");
+        let other_kind = if kind == ChannelKind::Slack {
+            ChannelKind::Feishu
+        } else {
+            ChannelKind::Slack
+        };
+        let other = ConversationRef::new(other_kind, "other-chat");
+        let agent = Arc::new(FakeAgent::new());
+        let channel = Arc::new(FakeChannel {
+            channel_kind: Some(kind),
+            bot_identity: Some("bot-a".into()),
+            ..FakeChannel::default()
+        });
+        let engine = Engine::new(agent.clone(), state.clone(), vec![channel.clone()]);
+        engine.restore_bindings_deferred().await.unwrap();
+        state
+            .attach(&conversation, &SessionId::new("thr_a"))
+            .await
+            .unwrap();
+        state
+            .attach(&other, &SessionId::new("other-session"))
+            .await
+            .unwrap();
+        drop(engine);
+        drop(state);
+        let state = SqliteState::open(&path).await.unwrap();
+        let same = Engine::new(agent.clone(), state.clone(), vec![channel.clone()]);
+        assert_eq!(
+            same.restore_bindings_deferred()
+                .await
+                .unwrap()
+                .restored_count(),
+            1
+        );
+        state
+            .reject_overloaded("test-consumer", &conversation, "old-event", 1)
+            .await
+            .unwrap();
+        drop(same);
+        drop(state);
+        let state = SqliteState::open(&path).await.unwrap();
+        let changed = Arc::new(FakeChannel {
+            channel_kind: Some(kind),
+            bot_identity: Some("bot-b".into()),
+            ..FakeChannel::default()
+        });
+        let restarted = Engine::new(agent.clone(), state.clone(), vec![changed.clone()]);
+        assert_eq!(restarted.restore_bindings().await.unwrap(), 0);
+        assert!(changed.sent().is_empty());
+        assert!(
+            state
+                .claim_notifications("test-consumer", i64::MAX / 2, 60, 10)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(state.current_session(&conversation).await.unwrap(), None);
+        assert_eq!(
+            state.current_session(&other).await.unwrap(),
+            Some(SessionId::new("other-session"))
+        );
+        // Switching back must not revive the stale route.
+        let back = Engine::new(agent, state.clone(), vec![channel]);
+        assert_eq!(back.restore_bindings().await.unwrap(), 0);
+    }
+}
+
+#[tokio::test]
+async fn unknown_legacy_bot_is_detached_but_identity_failure_preserves_state() {
+    let state = SqliteState::in_memory().await.unwrap();
+    let conversation = ConversationRef::new(ChannelKind::Telegram, "old-chat");
+    state
+        .attach(&conversation, &SessionId::new("thr_a"))
+        .await
+        .unwrap();
+    let failed = Arc::new(FakeChannel {
+        fail_identity: true,
+        ..FakeChannel::default()
+    });
+    let engine = Engine::new(Arc::new(FakeAgent::new()), state.clone(), vec![failed]);
+    assert!(engine.restore_bindings_deferred().await.is_err());
+    assert!(
+        state
+            .current_session(&conversation)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    let known = Arc::new(FakeChannel {
+        bot_identity: Some("bot-a".into()),
+        ..FakeChannel::default()
+    });
+    let engine = Engine::new(
+        Arc::new(FakeAgent::new()),
+        state.clone(),
+        vec![known.clone()],
+    );
+    assert_eq!(engine.restore_bindings().await.unwrap(), 0);
+    assert!(known.sent().is_empty());
 }
