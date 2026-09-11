@@ -1124,3 +1124,51 @@ async fn identity_survives_telegram_token_rotation() {
         assert_eq!(adapter.identity().await.unwrap().as_deref(), Some("9001"));
     }
 }
+
+#[tokio::test]
+async fn reload_receiver_handoff_preserves_pending_updates_and_order_on_local_api() {
+    let server = MockTelegramApi::start().await;
+    let (sender, mut receiver) = mpsc::channel(16);
+    let update = |id| {
+        serde_json::json!({
+            "update_id": id,
+            "message": {"message_id": id, "date": 1,
+                "chat": {"id": 42, "type": "private", "first_name": "Owner"},
+                "from": {"id": 42, "is_bot": false, "first_name": "Owner"},
+                "text": format!("message-{id}")}
+        })
+    };
+    let mut event_ids = Vec::new();
+    for (token, ids) in [("old-token", vec![100, 101]), ("new-token", vec![102, 103])] {
+        // These updates exist before the replacement poller starts.
+        server
+            .push_updates(ids.iter().map(|id| update(*id)).collect())
+            .await;
+        let adapter = TelegramAdapter::with_bot(
+            Bot::new(token).set_api_url(server.api_url().parse().unwrap()),
+            TelegramPolicy::new([42]),
+        );
+        adapter.prepare_connection().await.unwrap();
+        let shutdown = CancellationToken::new();
+        let task = tokio::spawn({
+            let sender = sender.clone();
+            let shutdown = shutdown.clone();
+            async move { adapter.run(sender, shutdown).await }
+        });
+        for _ in ids {
+            let envelope = tokio::time::timeout(std::time::Duration::from_secs(3), receiver.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            event_ids.push(envelope.event_id);
+        }
+        shutdown.cancel();
+        tokio::time::timeout(std::time::Duration::from_secs(3), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+    }
+    assert_eq!(event_ids, ["42:100", "42:101", "42:102", "42:103"]);
+    assert!(receiver.try_recv().is_err());
+}

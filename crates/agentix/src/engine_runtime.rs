@@ -10,7 +10,7 @@ use agentix_core::{
     EngineError, EngineWork, InboundEnvelope, SessionId,
 };
 use tokio::{
-    sync::{broadcast, mpsc},
+    sync::{broadcast, mpsc, watch},
     task::{Id, JoinError, JoinSet},
 };
 use tokio_util::{sync::CancellationToken, task::AbortOnDropHandle};
@@ -35,21 +35,34 @@ struct Worker {
 pub async fn run_engine_loop(
     engine: Arc<Engine>,
     agent: Arc<dyn AgentAdapter>,
+    inbound: mpsc::Receiver<InboundEnvelope>,
+    shutdown: CancellationToken,
+) {
+    let (_configuration, snapshots) = watch::channel(engine);
+    run_engine_loop_with_config(snapshots, agent, inbound, shutdown).await;
+}
+
+/// Switch settings without replacing admission queues, workers or unchanged subscriptions.
+#[allow(clippy::too_many_lines)]
+pub async fn run_engine_loop_with_config(
+    mut snapshots: watch::Receiver<Arc<Engine>>,
+    mut agent: Arc<dyn AgentAdapter>,
     mut inbound: mpsc::Receiver<InboundEnvelope>,
     shutdown: CancellationToken,
 ) {
     let notification_shutdown = shutdown.child_token();
     let notifications = AbortOnDropHandle::new(tokio::spawn(super::notification_runtime::run(
-        engine.clone(),
+        snapshots.clone(),
         notification_shutdown.clone(),
     )));
     let (sources_tx, mut sources_rx) = mpsc::channel(32);
-    let source_engine = engine.clone();
+    let source_snapshots = snapshots.clone();
     let source_poll = AbortOnDropHandle::new(tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(30));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             interval.tick().await;
+            let source_engine = source_snapshots.borrow().clone();
             if let Err(error) = source_engine.observe_delivery_state().await {
                 tracing::warn!(%error, "delivery state observation failed");
             }
@@ -73,7 +86,23 @@ pub async fn run_engine_loop(
     let mut telemetry = tokio::time::interval(Duration::from_secs(30));
     telemetry.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let (mut inbound_open, mut events_open, mut sources_open) = (true, true, true);
+    let mut configuration_open = true;
+    let mut recover_pending = false;
     loop {
+        let engine = snapshots.borrow_and_update().clone();
+        let next_agent = engine.agent_adapter();
+        if !Arc::ptr_eq(&agent, &next_agent) {
+            events = next_agent.subscribe();
+            agent = next_agent;
+            events_open = true;
+            recover_pending = true;
+        }
+        if recover_pending && !pool.queue.is_full() {
+            pool.queue
+                .try_push(EngineWork::Recover)
+                .expect("recovery capacity");
+            recover_pending = false;
+        }
         if shutdown.is_cancelled() {
             break;
         }
@@ -83,6 +112,9 @@ pub async fn run_engine_loop(
         }
         tokio::select! {
             () = shutdown.cancelled() => break,
+            changed = snapshots.changed(), if configuration_open => {
+                configuration_open = changed.is_ok();
+            }
             _ = telemetry.tick() => pool.queue.statistics().record("engine"),
             completed = pool.workers.join_next_with_id(), if !pool.workers.is_empty() => {
                 let completed = completed.expect("an active worker");
@@ -124,6 +156,7 @@ pub async fn run_engine_loop(
             }
         }
     }
+    let engine = snapshots.borrow().clone();
     source_poll.abort();
     let _ = source_poll.await;
     notification_shutdown.cancel();

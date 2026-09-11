@@ -3,7 +3,7 @@
 mod config_file;
 mod engine_runtime;
 mod notification_runtime;
-pub use engine_runtime::{run_engine_loop, shutdown_engine};
+pub use engine_runtime::{run_engine_loop, run_engine_loop_with_config, shutdown_engine};
 mod network;
 
 pub use network::NetworkConfig;

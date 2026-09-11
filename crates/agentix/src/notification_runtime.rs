@@ -7,12 +7,16 @@ use tokio_util::sync::CancellationToken;
 
 const CONCURRENCY: usize = 32;
 
-pub(crate) async fn run(engine: Arc<Engine>, shutdown: CancellationToken) {
+pub(crate) async fn run(
+    snapshots: tokio::sync::watch::Receiver<Arc<Engine>>,
+    shutdown: CancellationToken,
+) {
     let mut workers = JoinSet::new();
     let mut poll = tokio::time::interval(Duration::from_secs(1));
     poll.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     let mut admission_first = false;
     loop {
+        let engine = snapshots.borrow().clone();
         if shutdown.is_cancelled() {
             break;
         }

@@ -322,6 +322,17 @@ impl TelegramAdapter {
 
 #[async_trait]
 impl ChannelAdapter for TelegramAdapter {
+    async fn replace_owners(&self, owners: &[String]) {
+        *self
+            .policy
+            .owner_user_ids
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = owners
+            .iter()
+            .filter_map(|owner| owner.parse::<u64>().ok())
+            .collect();
+    }
+
     async fn identity(&self) -> Result<Option<String>, ChannelError> {
         let me = self
             .request(self.bot.get_me(), "getMe", None)
@@ -921,5 +932,18 @@ fn strip_ascii_case_insensitive(text: &str, needle: &str) -> String {
             return result;
         };
         result.replace_range(position..position + needle.len(), "");
+    }
+}
+
+#[cfg(test)]
+mod reload_tests {
+    use super::*;
+    #[tokio::test]
+    async fn owner_reload_updates_existing_connection_clones() {
+        let adapter = TelegramAdapter::new("mock", [1]);
+        let live = adapter.clone();
+        adapter.replace_owners(&["2".into()]).await;
+        assert!(live.policy.is_owner(2));
+        assert!(!live.policy.is_owner(1));
     }
 }

@@ -3,6 +3,7 @@ mod control_runtime;
 mod reload;
 #[cfg(test)]
 use agentix::run_engine_loop;
+#[cfg(test)]
 use control_runtime::run_control_handler;
 #[cfg(all(test, unix))]
 mod native_control_tests;
@@ -374,6 +375,7 @@ async fn serve(
     .await
 }
 
+#[allow(clippy::too_many_lines)]
 async fn build_service(
     config: Config,
     previous: Option<Arc<reload::PreparedService>>,
@@ -449,14 +451,28 @@ async fn build_service(
         }
         agents.push((agent.kind(), built.adapter));
     }
-    let adapter: Arc<dyn AgentAdapter> = Arc::new(agentix_core::AgentRegistry::new(agents)?);
+    let adapter: Arc<dyn AgentAdapter> = if let Some(previous) = previous
+        .as_ref()
+        .filter(|previous| previous.config.selected_agents() == config.selected_agents())
+    {
+        previous.adapter.clone()
+    } else {
+        Arc::new(agentix_core::AgentRegistry::new(agents)?)
+    };
     tracing::info!(
         phase = "agent_connection",
         elapsed_ms = started.elapsed().as_millis(),
         "startup phase completed"
     );
     let started = Instant::now();
-    let channels = build_channels(&config, &config_path, claims)?;
+    let channels = if let Some(previous) = previous
+        .as_ref()
+        .filter(|previous| reload::same_channel_connection(&previous.config, &config))
+    {
+        previous.channels.clone()
+    } else {
+        build_channels(&config, &config_path, claims)?
+    };
     let task_board = build_task_board(&config).await?;
     tracing::info!(
         phase = "channel_and_task_setup",
@@ -1127,7 +1143,8 @@ mod tests {
     use tokio_util::sync::CancellationToken;
     use tracing_subscriber::fmt::{format::Writer, time::FormatTime};
 
-    struct LifecycleAgent {
+    pub(super) struct LifecycleAgent {
+        history: StdMutex<Vec<agentix_core::TurnSummary>>,
         events: broadcast::Sender<AgentEvent>,
         attached: StdMutex<Vec<String>>,
         turn_blocked: CancellationToken,
@@ -1136,9 +1153,10 @@ mod tests {
     }
 
     impl LifecycleAgent {
-        fn new() -> Self {
+        pub(super) fn new() -> Self {
             let (events, _) = broadcast::channel(8);
             Self {
+                history: StdMutex::new(Vec::new()),
                 events,
                 attached: StdMutex::new(Vec::new()),
                 turn_blocked: CancellationToken::new(),
@@ -1187,7 +1205,7 @@ mod tests {
             _limit: u32,
         ) -> Result<HistoryPage, AgentError> {
             Ok(HistoryPage {
-                turns: Vec::new(),
+                turns: self.history.lock().unwrap().clone(),
                 older_cursor: None,
                 newer_cursor: None,
             })
@@ -1256,10 +1274,11 @@ mod tests {
     }
 
     struct LifecycleChannel {
+        starts: std::sync::atomic::AtomicUsize,
         views: StdMutex<Vec<OutboundView>>,
         deliveries: StdMutex<Vec<String>>,
         stop_on_shutdown: bool,
-        identity_error: bool,
+        identity_error: std::sync::atomic::AtomicBool,
         started: CancellationToken,
         blocked_operation: Option<StartupOperation>,
         blocked_working_conversation: Option<String>,
@@ -1272,10 +1291,11 @@ mod tests {
     impl LifecycleChannel {
         fn new() -> Self {
             Self {
+                starts: std::sync::atomic::AtomicUsize::new(0),
                 views: StdMutex::new(Vec::new()),
                 deliveries: StdMutex::new(Vec::new()),
                 stop_on_shutdown: true,
-                identity_error: false,
+                identity_error: false.into(),
                 started: CancellationToken::new(),
                 blocked_operation: None,
                 blocked_working_conversation: None,
@@ -1304,7 +1324,10 @@ mod tests {
     #[async_trait]
     impl ChannelAdapter for LifecycleChannel {
         async fn identity(&self) -> Result<Option<String>, ChannelError> {
-            if self.identity_error {
+            if self
+                .identity_error
+                .load(std::sync::atomic::Ordering::SeqCst)
+            {
                 Err(ChannelError::Rejected(
                     "invalid replacement credentials".into(),
                 ))
@@ -1322,6 +1345,8 @@ mod tests {
             _inbound: tokio::sync::mpsc::Sender<agentix_core::InboundEnvelope>,
             shutdown: CancellationToken,
         ) -> Result<(), ChannelError> {
+            self.starts
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             self.started.cancel();
             if self.stop_on_shutdown {
                 shutdown.cancelled().await;
@@ -1727,6 +1752,275 @@ mod tests {
             ))
             .await
             .unwrap();
+        let fast_result = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if channel
+                    .deliveries
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .any(|id| id == "fast")
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        let before_release = channel.deliveries.lock().unwrap().clone();
+        agent.turn_release.cancel();
+        let ordered = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                if channel
+                    .deliveries
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .filter(|id| *id == "slow")
+                    .count()
+                    >= 2
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        shutdown.cancel();
+        runtime.await.unwrap();
+        assert!(
+            fast_result.is_ok(),
+            "another conversation waited for a slow prompt acknowledgement"
+        );
+        assert!(
+            !before_release.iter().any(|id| id == "slow"),
+            "same-conversation request overtook its prompt"
+        );
+        assert!(ordered.is_ok(), "ordered request did not resume");
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)] // One registry handoff and history recovery scenario.
+    async fn reload_backend_registry_recovers_existing_turn_when_events_arrive_during_switch() {
+        use agentix_core::{AgentKind, AgentRegistry, Engine, InboundEnvelope};
+        let existing = Arc::new(LifecycleAgent::new());
+        let original = Arc::new(
+            AgentRegistry::new(vec![(
+                AgentKind::Pi,
+                existing.clone() as Arc<dyn AgentAdapter>,
+            )])
+            .unwrap(),
+        );
+        let channel = Arc::new(LifecycleChannel::new());
+        let state = SqliteState::in_memory().await.unwrap();
+        let engine = Arc::new(Engine::new(
+            original.clone(),
+            state.clone(),
+            vec![channel.clone()],
+        ));
+        let conversation = ConversationRef::new(ChannelKind::Telegram, "live");
+        engine
+            .handle_inbound(InboundEnvelope::text(
+                "attach",
+                conversation,
+                "42",
+                "/attach pi:thr_saved",
+            ))
+            .await
+            .unwrap();
+        engine
+            .handle_inbound(InboundEnvelope::text(
+                "prompt",
+                ConversationRef::new(ChannelKind::Telegram, "live"),
+                "42",
+                "work",
+            ))
+            .await
+            .unwrap();
+        existing
+            .history
+            .lock()
+            .unwrap()
+            .push(agentix_core::TurnSummary {
+                id: "turn_test".into(),
+                status: agentix_core::TurnStatus::Completed,
+                user_text: Some("work".into()),
+                agent_text: Some("Output across reload".into()),
+                tools: vec![],
+                items: vec![],
+            });
+        let (settings, snapshots) = tokio::sync::watch::channel(engine.clone());
+        let (_sender, inbound) = tokio::sync::mpsc::channel(8);
+        let shutdown = CancellationToken::new();
+        let runtime = tokio::spawn(agentix::run_engine_loop_with_config(
+            snapshots,
+            original,
+            inbound,
+            shutdown.clone(),
+        ));
+        let next_agent = Arc::new(
+            AgentRegistry::new(vec![
+                (AgentKind::Pi, existing.clone() as Arc<dyn AgentAdapter>),
+                (
+                    AgentKind::Omp,
+                    Arc::new(LifecycleAgent::new()) as Arc<dyn AgentAdapter>,
+                ),
+            ])
+            .unwrap(),
+        );
+        let mut next = Engine::new(next_agent, state.clone(), vec![channel.clone()]);
+        next.inherit_runtime(&engine);
+        settings.send_replace(Arc::new(next));
+        // The retained backend emits while the registry subscription changes.
+        existing
+            .events
+            .send(AgentEvent::AgentMessageDelta {
+                session_id: "thr_saved".into(),
+                turn_id: "turn_test".into(),
+                item_id: "answer".into(),
+                delta: "Output across reload".into(),
+            })
+            .unwrap();
+        existing
+            .events
+            .send(AgentEvent::TurnCompleted {
+                session_id: "thr_saved".into(),
+                turn_id: "turn_test".into(),
+                status: agentix_core::TurnStatus::Completed,
+                error: None,
+            })
+            .unwrap();
+        let result = tokio::time::timeout(std::time::Duration::from_secs(3), async {
+            loop {
+                if channel.views.lock().unwrap().iter().any(|view| {
+                    view.status == agentix_core::ViewStatus::Success
+                        && view.body.contains("Output across reload")
+                }) {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        shutdown.cancel();
+        runtime.await.unwrap();
+        result.unwrap();
+        assert_eq!(
+            state
+                .current_session(&ConversationRef::new(ChannelKind::Telegram, "live"))
+                .await
+                .unwrap(),
+            Some(SessionId::new("pi:thr_saved"))
+        );
+    }
+
+    #[tokio::test]
+    async fn reload_updates_event_subscription_even_before_runtime_polls() {
+        let old = Arc::new(LifecycleAgent::new());
+        let next = Arc::new(LifecycleAgent::new());
+        let state = agentix_core::SqliteState::in_memory().await.unwrap();
+        let original = Arc::new(agentix_core::Engine::new(
+            old.clone(),
+            state.clone(),
+            vec![],
+        ));
+        let mut replacement = agentix_core::Engine::new(next.clone(), state, vec![]);
+        replacement.inherit_runtime(&original);
+        let (settings, snapshots) = tokio::sync::watch::channel(original);
+        settings.send_replace(Arc::new(replacement));
+        let (_sender, inbound) = tokio::sync::mpsc::channel(8);
+        let shutdown = CancellationToken::new();
+        let runtime = tokio::spawn(agentix::run_engine_loop_with_config(
+            snapshots,
+            old,
+            inbound,
+            shutdown.clone(),
+        ));
+        let subscribed = tokio::time::timeout(std::time::Duration::from_millis(200), async {
+            while next.events.receiver_count() == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await;
+        shutdown.cancel();
+        runtime.await.unwrap();
+        assert!(
+            subscribed.is_ok(),
+            "replacement backend events were not subscribed"
+        );
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn engine_runtime_reload_preserves_inflight_and_queued_work() {
+        use agentix_core::{Engine, InboundEnvelope, SqliteState};
+        use std::time::Duration;
+        let agent = Arc::new(LifecycleAgent::new());
+        let channel = Arc::new(LifecycleChannel::new());
+        let state = SqliteState::in_memory().await.unwrap();
+        let engine = Arc::new(Engine::new(
+            agent.clone(),
+            state.clone(),
+            vec![channel.clone()],
+        ));
+        let slow = ConversationRef::new(ChannelKind::Telegram, "slow");
+        let fast = ConversationRef::new(ChannelKind::Telegram, "fast");
+        engine
+            .handle_inbound(InboundEnvelope::text(
+                "attach",
+                slow.clone(),
+                "owner",
+                "/attach thr_saved",
+            ))
+            .await
+            .unwrap();
+        engine
+            .handle_inbound(InboundEnvelope::text(
+                "attach-fast",
+                fast.clone(),
+                "owner",
+                "/attach thr_fast",
+            ))
+            .await
+            .unwrap();
+        channel.deliveries.lock().unwrap().clear();
+        let (sender, inbound) = tokio::sync::mpsc::channel(8);
+        let shutdown = CancellationToken::new();
+        let mut replacement = Engine::new(agent.clone(), state, vec![channel.clone()]);
+        replacement.inherit_runtime(&engine);
+        let (configuration, snapshots) = tokio::sync::watch::channel(engine);
+        let runtime = tokio::spawn(agentix::run_engine_loop_with_config(
+            snapshots,
+            agent.clone(),
+            inbound,
+            shutdown.clone(),
+        ));
+        sender
+            .send(InboundEnvelope::text(
+                "slow-prompt",
+                slow.clone(),
+                "owner",
+                "blocked-prompt",
+            ))
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(2), agent.turn_blocked.cancelled())
+            .await
+            .unwrap();
+        sender
+            .send(InboundEnvelope::text("slow-help", slow, "owner", "/help"))
+            .await
+            .unwrap();
+        sender
+            .send(InboundEnvelope::text(
+                "fast-prompt",
+                fast,
+                "owner",
+                "independent prompt",
+            ))
+            .await
+            .unwrap();
+        configuration.send_replace(Arc::new(replacement));
         let fast_result = tokio::time::timeout(Duration::from_secs(2), async {
             loop {
                 if channel
@@ -2751,7 +3045,7 @@ owner_user_ids = ["U1"]
     }
     #[tokio::test]
     #[allow(clippy::too_many_lines)]
-    async fn reload_service_switches_channels_and_keeps_bindings_after_invalid_config() {
+    async fn reload_service_keeps_connections_and_bindings_after_invalid_config() {
         use super::reload::{PreparedService, run};
         use std::time::Duration;
         let directory = tempfile::tempdir().unwrap();
@@ -2806,6 +3100,7 @@ owner_user_ids = ["U1"]
         .await
         .unwrap();
         let channels = Arc::new(StdMutex::new(Vec::new()));
+        let live_channel = first.clone();
         let seen_owners = Arc::new(StdMutex::new(Vec::new()));
         let preparing = CancellationToken::new();
         let release = CancellationToken::new();
@@ -2822,6 +3117,7 @@ owner_user_ids = ["U1"]
                 let preparing = preparing.clone();
                 let release = release.clone();
                 move |config: Config, previous: Arc<PreparedService>| {
+                    let live_channel = live_channel.clone();
                     let channels = channels.clone();
                     let seen_owners = seen_owners.clone();
                     let preparing = preparing.clone();
@@ -2844,7 +3140,7 @@ owner_user_ids = ["U1"]
                         }
                         if owners == [97] {
                             let channel = Arc::new(LifecycleChannel {
-                                identity_error: true,
+                                identity_error: true.into(),
                                 ..LifecycleChannel::new()
                             });
                             return PreparedService::new(
@@ -2857,8 +3153,12 @@ owner_user_ids = ["U1"]
                             )
                             .await;
                         }
-                        seen_owners.lock().unwrap().push(owners);
-                        let channel = Arc::new(LifecycleChannel::new());
+                        seen_owners.lock().unwrap().push(owners.clone());
+                        let channel = if owners == [45] {
+                            Arc::new(LifecycleChannel::new())
+                        } else {
+                            live_channel.clone()
+                        };
                         channels.lock().unwrap().push(channel.clone());
                         PreparedService::new(
                             config,
@@ -2924,6 +3224,7 @@ owner_user_ids = ["U1"]
                 .is_ok()
             );
             assert!(channels.lock().unwrap().is_empty());
+            assert_eq!(first.starts.load(std::sync::atomic::Ordering::SeqCst), 1);
         }
         std::fs::write(&path, source.replace("[42]", "[98]")).unwrap();
         let pending = tokio::spawn({
@@ -2956,13 +3257,23 @@ owner_user_ids = ["U1"]
         assert!(busy.to_string().contains("already in progress"));
         release.cancel();
         assert!(pending.await.unwrap().is_err());
-        for owner in [43, 44] {
+        for owner in [43, 44, 45] {
+            if owner == 45 {
+                first
+                    .identity_error
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
+            }
             std::fs::write(&path, source.replace("[42]", &format!("[{owner}]"))).unwrap();
             let result =
                 super::control::request(&endpoint, &super::control::ControlRequest::Reload)
                     .await
                     .unwrap();
             assert_eq!(result["reloaded"], true);
+            assert_eq!(
+                first.starts.load(std::sync::atomic::Ordering::SeqCst),
+                1,
+                "reload must preserve the live IM connection"
+            );
             let channel = channels.lock().unwrap().last().unwrap().clone();
             tokio::time::timeout(Duration::from_secs(2), channel.started.cancelled())
                 .await
@@ -3012,7 +3323,7 @@ owner_user_ids = ["U1"]
         })
         .await
         .unwrap();
-        assert_eq!(*seen_owners.lock().unwrap(), [vec![43], vec![44]]);
+        assert_eq!(*seen_owners.lock().unwrap(), [vec![43], vec![44], vec![45]]);
         assert!(
             !first
                 .views
@@ -3031,6 +3342,115 @@ owner_user_ids = ["U1"]
             state.current_session(&conversation).await.unwrap(),
             Some(SessionId::new("thr_saved"))
         );
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn reload_preparation_timeout_and_shutdown_leave_no_restarted_connections() {
+        use super::reload::{PreparedService, run};
+        use std::time::Duration;
+        for stop_during_reload in [false, true] {
+            let directory = tempfile::tempdir().unwrap();
+            let path = directory.path().join("config.toml");
+            let endpoint = format!("tcp://{}", unused_loopback_address());
+            let source = format!(
+                "[channel]\nkind='telegram'\n[channel.telegram]\ntoken='mock'\n[agent]\nkind='codex'\n[storage]\npath='{}'\n[server]\nendpoint='{}'\n",
+                directory.path().join("state.db").display(),
+                endpoint
+            );
+            std::fs::write(&path, source).unwrap();
+            let channel = Arc::new(LifecycleChannel::new());
+            let agent = Arc::new(LifecycleAgent::new());
+            let initial = PreparedService::new(
+                Config::load(&path).unwrap(),
+                agent,
+                None,
+                vec![channel.clone()],
+                None,
+                vec![],
+            )
+            .await
+            .unwrap();
+            let preparing = CancellationToken::new();
+            let shutdown = CancellationToken::new();
+            let signal = shutdown.clone();
+            let marker = preparing.clone();
+            let server = tokio::spawn(run(
+                initial,
+                path,
+                agentix_codex::ProxyOptions::default(),
+                None,
+                Arc::new(super::ClaimRegistry::default()),
+                move |_, _| {
+                    let marker = marker.clone();
+                    async move {
+                        marker.cancel();
+                        std::future::pending::<anyhow::Result<PreparedService>>().await
+                    }
+                },
+                async move {
+                    signal.cancelled().await;
+                    Ok(())
+                },
+                Duration::from_millis(50),
+            ));
+            let sessions = super::control::ControlRequest::Sessions {
+                cursor: None,
+                limit: 1,
+            };
+            tokio::time::timeout(Duration::from_secs(2), async {
+                while super::control::request(&endpoint, &sessions).await.is_err() {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
+            let client = tokio::spawn({
+                let endpoint = endpoint.clone();
+                async move {
+                    super::control::request(&endpoint, &super::control::ControlRequest::Reload)
+                        .await
+                }
+            });
+            tokio::time::timeout(Duration::from_secs(2), preparing.cancelled())
+                .await
+                .unwrap();
+            if stop_during_reload {
+                shutdown.cancel();
+            } else {
+                tokio::time::pause();
+                tokio::time::advance(Duration::from_secs(31)).await;
+                tokio::time::resume();
+                let error = tokio::time::timeout(Duration::from_secs(2), client)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .unwrap_err();
+                assert!(error.to_string().contains("timed out"));
+                assert!(super::control::request(&endpoint, &sessions).await.is_ok());
+                assert_eq!(channel.starts.load(std::sync::atomic::Ordering::SeqCst), 1);
+                shutdown.cancel();
+                tokio::time::timeout(Duration::from_secs(2), server)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .unwrap();
+                continue;
+            }
+            tokio::time::timeout(Duration::from_secs(2), server)
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+            assert!(
+                tokio::time::timeout(Duration::from_secs(2), client)
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .is_err()
+            );
+            assert_eq!(channel.starts.load(std::sync::atomic::Ordering::SeqCst), 1);
+        }
     }
 
     #[tokio::test]
@@ -3073,6 +3493,10 @@ owner_user_ids = ["U1"]
         let prepared = super::build_service(next, Some(initial.clone()), hub, claims, path)
             .await
             .unwrap();
+        assert!(
+            Arc::ptr_eq(&initial.channels[0], &prepared.channels[0]),
+            "adding a backend must not reconnect IM"
+        );
         assert_eq!(prepared.backends.len(), 2);
         let (_, pi) = prepared
             .backends

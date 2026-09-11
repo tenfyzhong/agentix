@@ -1,9 +1,8 @@
 //! A stable control listener supervising replaceable, validated service generations.
 use super::{
-    BuiltAgent, ClaimRegistry, control, run_control_handler, spawn_startup_notifications,
-    wait_for_channel_shutdown,
+    BuiltAgent, ClaimRegistry, control, spawn_startup_notifications, wait_for_channel_shutdown,
 };
-use agentix::{AgentConfig, Config, run_engine_loop};
+use agentix::{AgentConfig, Config, run_engine_loop_with_config};
 use agentix_bridge::BridgeHub;
 use agentix_codex::{CodexClient, ProxyOptions};
 use agentix_core::{AgentAdapter, ChannelAdapter, Engine, RestoredBindings, SqliteState};
@@ -26,7 +25,8 @@ pub(super) struct PreparedService {
     pub notification_setting: Arc<std::sync::atomic::AtomicBool>,
     codex: Option<CodexClient>,
     engine: Arc<Engine>,
-    channels: Vec<Arc<dyn ChannelAdapter>>,
+    pub channels: Vec<Arc<dyn ChannelAdapter>>,
+    identities: std::collections::HashMap<agentix_core::ChannelKind, Option<String>>,
 }
 
 impl PreparedService {
@@ -74,6 +74,7 @@ impl PreparedService {
             codex,
             engine: Arc::new(engine),
             channels,
+            identities: std::collections::HashMap::new(),
         })
     }
 }
@@ -106,13 +107,45 @@ pub(super) fn load_candidate(
     Ok(next)
 }
 
+struct RunningChannel {
+    adapter: Arc<dyn ChannelAdapter>,
+    shutdown: CancellationToken,
+    task: JoinHandle<()>,
+}
+
+impl RunningChannel {
+    fn start(
+        adapter: Arc<dyn ChannelAdapter>,
+        inbound: mpsc::Sender<agentix_core::InboundEnvelope>,
+    ) -> Self {
+        let shutdown = CancellationToken::new();
+        let task = tokio::spawn({
+            let channel = adapter.clone();
+            let token = shutdown.clone();
+            async move {
+                if let Err(error) = channel.run(inbound, token).await {
+                    tracing::error!(%error, channel = %channel.kind(), "IM channel stopped");
+                }
+            }
+        });
+        Self {
+            adapter,
+            shutdown,
+            task,
+        }
+    }
+}
+
 struct RunningService {
     prepared: Arc<PreparedService>,
     shutdown: CancellationToken,
     control: mpsc::Sender<control::ControlCall>,
     handler: JoinHandle<()>,
     engine: JoinHandle<()>,
-    channels: Vec<JoinHandle<()>>,
+    inbound: mpsc::Sender<agentix_core::InboundEnvelope>,
+    settings: tokio::sync::watch::Sender<Arc<Engine>>,
+    control_settings: tokio::sync::watch::Sender<super::control_runtime::ControlConfig>,
+    channels: Vec<RunningChannel>,
     startup: Option<AbortOnDropHandle<()>>,
 }
 
@@ -123,16 +156,13 @@ impl RunningService {
         claims: Arc<ClaimRegistry>,
         path: PathBuf,
     ) -> Self {
-        prepared.notification_setting.store(
-            prepared.config.notifications.background_turns,
-            std::sync::atomic::Ordering::Relaxed,
-        );
         let shutdown = CancellationToken::new();
         let (control, calls) = mpsc::channel(32);
-        let handler = tokio::spawn(run_control_handler(
+        let (control_settings, control_snapshots) =
+            tokio::sync::watch::channel((prepared.adapter.clone(), prepared.codex.clone()));
+        let handler = tokio::spawn(super::control_runtime::run_control_handler_with_config(
             calls,
-            prepared.adapter.clone(),
-            prepared.codex.clone(),
+            control_snapshots,
             claims,
             path,
             shutdown.clone(),
@@ -141,19 +171,11 @@ impl RunningService {
         let channels = prepared
             .channels
             .iter()
-            .map(|channel| {
-                let channel = channel.clone();
-                let inbound = inbound.clone();
-                let token = shutdown.clone();
-                tokio::spawn(async move {
-                    if let Err(error) = channel.run(inbound, token).await {
-                        tracing::error!(%error, channel = %channel.kind(), "IM channel stopped");
-                    }
-                })
-            })
+            .map(|channel| RunningChannel::start(channel.clone(), inbound.clone()))
             .collect();
-        let engine = tokio::spawn(run_engine_loop(
-            prepared.engine.clone(),
+        let (settings, snapshots) = tokio::sync::watch::channel(prepared.engine.clone());
+        let engine = tokio::spawn(run_engine_loop_with_config(
+            snapshots,
             prepared.adapter.clone(),
             receiver,
             shutdown.clone(),
@@ -166,37 +188,143 @@ impl RunningService {
             control,
             handler,
             engine,
+            inbound,
+            settings,
+            control_settings,
             channels,
             startup,
         }
     }
 
-    async fn stop(self, final_shutdown: bool, grace: Duration) -> Arc<PreparedService> {
+    async fn replace(&mut self, prepared: PreparedService, grace: Duration) {
+        // The admission queues and their workers survive the switch. Only changed
+        // transports are stopped; old snapshots stay alive until their work finishes.
+        let mut retained = Vec::new();
+        let mut retiring = Vec::new();
+        for channel in self.channels.drain(..) {
+            if !channel.task.is_finished()
+                && prepared
+                    .channels
+                    .iter()
+                    .any(|next| Arc::ptr_eq(next, &channel.adapter))
+            {
+                retained.push(channel);
+            } else {
+                channel.shutdown.cancel();
+                retiring.push(channel.task);
+            }
+        }
+        // Avoid competing consumers (notably Telegram getUpdates) on one bot.
+        // The engine continues draining the shared inbound queue during handoff.
+        wait_for_channel_shutdown(retiring, grace).await;
+        for channel in &prepared.channels {
+            if !retained
+                .iter()
+                .any(|running| Arc::ptr_eq(channel, &running.adapter))
+            {
+                retained.push(RunningChannel::start(channel.clone(), self.inbound.clone()));
+            }
+        }
+        let owners = configured_owners(&prepared.config);
+        for channel in &prepared.channels {
+            channel.replace_owners(&owners).await;
+        }
+        prepared.notification_setting.store(
+            prepared.config.notifications.background_turns,
+            std::sync::atomic::Ordering::Relaxed,
+        );
+        self.settings.send_replace(prepared.engine.clone());
+        self.control_settings
+            .send_replace((prepared.adapter.clone(), prepared.codex.clone()));
+        self.prepared = Arc::new(prepared);
+        self.channels = retained;
+    }
+
+    async fn stop(self, grace: Duration) {
         self.shutdown.cancel();
         if let Some(startup) = self.startup {
             startup.abort();
             let _ = startup.await;
         }
         let _ = self.engine.await;
-        if final_shutdown {
-            match agentix::shutdown_engine(self.prepared.engine.clone(), grace).await {
-                Ok(notified) => {
-                    tracing::info!(notified, "saved bindings and notified IM conversations");
-                }
-                Err(error) => {
-                    tracing::error!(%error, "failed to finish graceful shutdown preparation");
-                }
+        match agentix::shutdown_engine(self.prepared.engine.clone(), grace).await {
+            Ok(notified) => {
+                tracing::info!(notified, "saved bindings and notified IM conversations");
             }
+            Err(error) => tracing::error!(%error, "failed to finish graceful shutdown preparation"),
         }
-        wait_for_channel_shutdown(self.channels, grace).await;
+        let tasks = self
+            .channels
+            .into_iter()
+            .map(|channel| {
+                channel.shutdown.cancel();
+                channel.task
+            })
+            .collect();
+        wait_for_channel_shutdown(tasks, grace).await;
         let _ = self.handler.await;
-        self.prepared
     }
+}
+
+fn configured_owners(config: &Config) -> Vec<String> {
+    match config.channel.kind {
+        agentix_core::ChannelKind::Telegram => config
+            .channel
+            .telegram
+            .as_ref()
+            .unwrap()
+            .owner_user_ids
+            .iter()
+            .map(ToString::to_string)
+            .collect(),
+        agentix_core::ChannelKind::Feishu => config
+            .channel
+            .feishu
+            .as_ref()
+            .unwrap()
+            .owner_open_ids
+            .clone(),
+        agentix_core::ChannelKind::Slack => config
+            .channel
+            .slack
+            .as_ref()
+            .unwrap()
+            .owner_user_ids
+            .clone(),
+    }
+}
+
+async fn prepare_reload(
+    mut next: PreparedService,
+    previous: Arc<PreparedService>,
+) -> Result<PreparedService> {
+    next.identities = previous.identities.clone();
+    for channel in &next.channels {
+        if previous
+            .channels
+            .iter()
+            .any(|old| Arc::ptr_eq(old, channel))
+        {
+            continue;
+        }
+        channel.prepare_connection().await?;
+        let identity = channel.identity().await?;
+        if let Some(old_identity) = previous.identities.get(&channel.kind())
+            && &identity != old_identity
+        {
+            bail!("changing the bot identity requires restarting agentix serve");
+        }
+        next.identities.insert(channel.kind(), identity);
+    }
+    Arc::get_mut(&mut next.engine)
+        .context("replacement engine is already running")?
+        .inherit_runtime(&previous.engine);
+    Ok(next)
 }
 
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 pub(super) async fn run<B, BF, S>(
-    initial: PreparedService,
+    mut initial: PreparedService,
     path: PathBuf,
     proxy: ProxyOptions,
     bridge: Option<Arc<BridgeHub>>,
@@ -212,6 +340,11 @@ where
 {
     let started = Instant::now();
     let updates = initial.engine.restore_bindings_deferred().await?;
+    for channel in &initial.channels {
+        initial
+            .identities
+            .insert(channel.kind(), channel.identity().await?);
+    }
     tracing::info!(
         restored = updates.restored_count(),
         phase = "binding_restore",
@@ -236,6 +369,10 @@ where
         control::ControlCall,
         std::pin::Pin<Box<tokio::time::Timeout<BF>>>,
     )>;
+    let mut validating = None::<(
+        control::ControlCall,
+        std::pin::Pin<Box<dyn Future<Output = Result<PreparedService>> + Send>>,
+    )>;
     tokio::pin!(signal);
     tracing::info!(%endpoint, "Agentix is running");
     let mut listener_finished = false;
@@ -253,36 +390,31 @@ where
             }
             result = async { pending.as_mut().expect("pending preparation").1.as_mut().await }, if pending.is_some() => {
                 let (call, _) = pending.take().expect("completed preparation");
-                let prepared = result.context("preparing the replacement timed out").and_then(|result| result);
-                match prepared {
+                match result.context("preparing the replacement timed out").and_then(|result| result) {
                     Err(error) => call.respond(Err(format!("configuration reload failed: {error:#}"))),
                     Ok(prepared) => {
-                        // Drain the old generation before restoring the replacement.
-                        // Do not detach upstream sessions or send offline notices.
-                        let previous = running.stop(false, grace).await;
-                        match tokio::time::timeout(RELOAD_TIMEOUT, prepared.engine.restore_bindings_deferred()).await {
-                            Ok(Ok(updates)) => {
-                                running = RunningService::start(Arc::new(prepared), Some(updates), claims.clone(), path.clone());
-                                call.respond(Ok(serde_json::json!({"reloaded": true, "config": path})));
-                                tracing::info!(config = %path.display(), "configuration reloaded");
-                            }
-                            failed => {
-                                running = RunningService::start(previous, None, claims.clone(), path.clone());
-                                let error = match failed {
-                                    Ok(Err(error)) => error.to_string(),
-                                    Err(_) => "restoring the replacement timed out".into(),
-                                    Ok(Ok(_)) => unreachable!(),
-                                };
-                                call.respond(Err(format!("configuration reload failed: {error}")));
-                            }
-                        }
+                        let previous = running.prepared.clone();
+                        validating = Some((call, Box::pin(async move {
+                            tokio::time::timeout(RELOAD_TIMEOUT, prepare_reload(prepared, previous)).await.context("validating the replacement timed out")?
+                        })));
+                    }
+                }
+            }
+            result = async { validating.as_mut().expect("pending validation").1.as_mut().await }, if validating.is_some() => {
+                let (call, _) = validating.take().expect("completed validation");
+                match result {
+                    Err(error) => call.respond(Err(format!("configuration reload failed: {error:#}"))),
+                    Ok(prepared) => {
+                        running.replace(prepared, grace).await;
+                        call.respond(Ok(serde_json::json!({"reloaded": true, "config": path})));
+                        tracing::info!(config = %path.display(), "configuration reloaded");
                     }
                 }
             }
             call = calls.recv() => {
                 let Some(call) = call else { break Err(anyhow::anyhow!("control request channel closed")); };
                 if call.request == control::ControlRequest::Reload {
-                    if pending.is_some() {
+                    if pending.is_some() || validating.is_some() {
                         call.respond(Err("configuration reload is already in progress".into()));
                         continue;
                     }
@@ -300,10 +432,45 @@ where
         }
     };
     drop(pending);
+    drop(validating);
     shutdown.cancel();
-    running.stop(true, grace).await;
+    running.stop(grace).await;
     if !listener_finished {
         let _ = listener.await;
     }
     result
 }
+
+/// Compare connection settings, excluding the authorization policy updated in place.
+pub(super) fn same_channel_connection(old: &Config, next: &Config) -> bool {
+    if old.channel.kind != next.channel.kind || old.network.proxy != next.network.proxy {
+        return false;
+    }
+    match old.channel.kind {
+        agentix_core::ChannelKind::Telegram => {
+            match (&old.channel.telegram, &next.channel.telegram) {
+                (Some(a), Some(b)) => a.token == b.token,
+                _ => false,
+            }
+        }
+        agentix_core::ChannelKind::Feishu => match (&old.channel.feishu, &next.channel.feishu) {
+            (Some(a), Some(b)) => a.app_id == b.app_id && a.app_secret == b.app_secret,
+            _ => false,
+        },
+        agentix_core::ChannelKind::Slack => match (&old.channel.slack, &next.channel.slack) {
+            (Some(a), Some(b)) => {
+                a.app_id == b.app_id
+                    && a.bot_token == b.bot_token
+                    && a.app_token == b.app_token
+                    && a.command_prefix == b.command_prefix
+                    && a.command_suffix == b.command_suffix
+                    && old.slack_cli_path == next.slack_cli_path
+            }
+            _ => false,
+        },
+    }
+}
+
+#[cfg(test)]
+#[path = "reload_tests.rs"]
+mod tests;

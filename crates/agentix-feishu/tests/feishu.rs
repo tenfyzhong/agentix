@@ -1633,3 +1633,34 @@ fn legacy_views_without_sections_still_render_plain_markdown() {
     assert_eq!(card["body"]["elements"][0]["content"], view.body);
     assert_eq!(card["body"]["elements"].as_array().unwrap().len(), 1);
 }
+
+#[tokio::test]
+async fn reload_preflight_validates_rotated_secret_before_switching() {
+    let server = MockFeishuApi::start().await;
+    let client = LarkClient::builder("mock-app", "rotated-secret")
+        .base_url(server.base_url())
+        .max_retries(0)
+        .build()
+        .unwrap();
+    let adapter = FeishuAdapter::with_client(client, ["ou_owner"]);
+    server
+        .fail_next(
+            "/open-apis/auth/v3/tenant_access_token/internal",
+            10003,
+            "invalid secret",
+        )
+        .await;
+    assert!(adapter.prepare_connection().await.is_err());
+    adapter.prepare_connection().await.unwrap();
+    assert_eq!(
+        server
+            .requests()
+            .await
+            .iter()
+            .filter(|r| r
+                .target
+                .starts_with("/open-apis/auth/v3/tenant_access_token/internal"))
+            .count(),
+        2
+    );
+}
