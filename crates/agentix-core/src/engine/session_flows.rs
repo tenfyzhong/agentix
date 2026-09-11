@@ -67,10 +67,10 @@ impl Engine {
         let body = self.available_commands(conversation).await;
         let body = if self.tasks.backend.is_some() {
             let mut body = format!(
-                "{body}\n\n/dashboard — Browse projects; click a project to open its board."
+                "{body}\n\n**/dashboard** — Browse projects; click a project to open its board."
             );
             if self.sessions.current(conversation).await.is_some() {
-                body.push_str("\n/board — Current session's task board\n/jobs — Current session's jobs\n/tasks [job-id] — List tasks for the current session or a job.\n/task <id> — Read a task and its Markdown details.\n/inboxes — Current project's human queue\n/inbox <content> — Append a human requirement\nClick tasks and jobs to read their Markdown details.");
+                body.push_str("\n**/board** — Current session's task board\n**/jobs** — Current session's jobs\n**/tasks [job-id]** — List tasks for the current session or a job.\n**/task <id>** — Read a task and its Markdown details.\n**/inboxes** — Current project's human queue\n**/inbox <content>** — Append a human requirement");
             }
             body
         } else {

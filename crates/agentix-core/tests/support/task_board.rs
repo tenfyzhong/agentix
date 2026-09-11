@@ -286,11 +286,33 @@ async fn disabled_task_board_has_no_board_menus_or_help_entries() {
 async fn configured_menus_have_dashboard_and_attached_secondary_commands() {
     let (_dir, service, _) = task_fixture().await;
     let (engine, channel) = engine(service).await;
+    engine.handle_inbound(input("/help")).await.unwrap();
+    let detached = last(&channel).body;
+    assert!(detached.contains("**/dashboard** — "));
+    assert!(!detached.contains("/board"));
+    assert!(!detached.contains("Click tasks and jobs to read their Markdown details."));
     engine.handle_inbound(input("/attach thr_a")).await.unwrap();
     engine.handle_inbound(input("/help")).await.unwrap();
     let help = last(&channel).body;
-    for name in ["dashboard", "board", "jobs"] {
-        assert!(help.contains(&format!("/{name}")));
+    for usage in [
+        "/dashboard",
+        "/board",
+        "/jobs",
+        "/tasks [job-id]",
+        "/task <id>",
+        "/inboxes",
+        "/inbox <content>",
+    ] {
+        assert!(
+            help.contains(&format!("**{usage}** — ")),
+            "missing bold usage: {usage}"
+        );
+    }
+    assert!(!help.contains("Click tasks and jobs to read their Markdown details."));
+    for line in help.lines().filter(|line| line.contains(" — ")) {
+        let (usage, description) = line.split_once(" — ").unwrap();
+        assert!(usage.starts_with("**/") && usage.ends_with("**"));
+        assert!(!description.contains("**"));
     }
     assert!(!help.contains("/projects"));
     assert!(!help.contains("/sessionboard"));
