@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::time::Duration;
 
 use agentix_domain::{
@@ -117,7 +117,7 @@ pub struct CodexClient {
     subscriptions: Arc<Mutex<HashSet<SessionId>>>,
     observed: Arc<Mutex<HashMap<SessionId, Option<TurnSummary>>>>,
     completed_turns: Arc<Mutex<HashMap<SessionId, String>>>,
-    background_turn_notifications: bool,
+    background_turn_notifications: Arc<AtomicBool>,
     process_sessions: Arc<Mutex<HashSet<SessionId>>>,
     exited_process_sessions: Arc<Mutex<HashSet<SessionId>>>,
     pending_resumes: Arc<Mutex<HashSet<SessionId>>>,
@@ -161,7 +161,7 @@ impl CodexClient {
             endpoint,
             command,
             rmux_directory,
-            background_turn_notifications,
+            Arc::new(AtomicBool::new(background_turn_notifications)),
             None,
         )
         .await
@@ -207,15 +207,35 @@ impl CodexClient {
         background_turn_notifications: bool,
         options: &crate::ProxyOptions,
     ) -> anyhow::Result<Self> {
+        Self::connect_with_proxy_notification_setting(
+            listen,
+            upstream,
+            command,
+            rmux_directory,
+            Arc::new(AtomicBool::new(background_turn_notifications)),
+            options,
+        )
+        .await
+    }
+
+    /// Use a shared notification switch so deferred connections follow runtime reloads.
+    pub async fn connect_with_proxy_notification_setting(
+        listen: &str,
+        upstream: CodexEndpoint,
+        command: &Path,
+        rmux_directory: &Path,
+        background_turn_notifications: Arc<AtomicBool>,
+        options: &crate::ProxyOptions,
+    ) -> anyhow::Result<Self> {
         let runtime =
             crate::connection::ConnectionManager::start(listen, &upstream, command, options)
                 .await?;
-        let mut client = Self::connect_with_registry(
+        let mut client = Self::connect_inner(
             upstream,
             command,
             rmux_directory,
             background_turn_notifications,
-            runtime.proxy.registry(),
+            Some(runtime.proxy.registry()),
         )
         .await?;
         client.rmux = RmuxManager::native(
@@ -238,7 +258,7 @@ impl CodexClient {
             endpoint,
             command,
             rmux_directory,
-            background_turn_notifications,
+            Arc::new(AtomicBool::new(background_turn_notifications)),
             Some(registry),
         )
         .await
@@ -248,7 +268,7 @@ impl CodexClient {
         endpoint: CodexEndpoint,
         command: &Path,
         rmux_directory: &Path,
-        background_turn_notifications: bool,
+        background_turn_notifications: Arc<AtomicBool>,
         registry: Option<crate::ClientRegistry>,
     ) -> Result<Self, ClientError> {
         let process_discovery = if registry.is_some() {
@@ -316,6 +336,12 @@ impl CodexClient {
             monitor_task,
         ])));
         Ok(client)
+    }
+
+    /// Change background polling without replacing the live transport.
+    pub fn set_background_turn_notifications(&self, enabled: bool) {
+        self.background_turn_notifications
+            .store(enabled, Ordering::Relaxed);
     }
 
     pub fn client_bindings(&self) -> Vec<crate::ClientBinding> {
@@ -1501,7 +1527,7 @@ async fn monitor_running_sessions(client: CodexClient) {
         }
         client.poll_observed_sessions().await;
         let watched = client.process_sessions.lock().await.clone();
-        if !client.background_turn_notifications
+        if !client.background_turn_notifications.load(Ordering::Relaxed)
             && watched.is_empty()
             && client.pending_resumes.lock().await.is_empty()
         {
@@ -1552,7 +1578,7 @@ async fn monitor_running_sessions(client: CodexClient) {
                 tracing::warn!(%error, session = %session, "failed to release exited Codex session");
             }
         }
-        if client.background_turn_notifications {
+        if client.background_turn_notifications.load(Ordering::Relaxed) {
             background.poll(&client, &running).await;
         }
     }

@@ -35,13 +35,15 @@ fn error(error: impl std::fmt::Display) -> EngineError {
     EngineError::InvalidInput(error.to_string())
 }
 
+type ConversationCache = Arc<Mutex<HashMap<(String, String), Vec<serde_json::Value>>>>;
+
 /// Owns task-board state independently of the IM engine.
 pub(super) struct TaskBoardService {
     pub(super) backend: Option<Arc<Service>>,
     pub(super) output: crate::OutputConfig,
-    conversations: Mutex<HashMap<(String, String), Vec<serde_json::Value>>>,
-    inputs: Mutex<HashMap<ConversationRef, PendingTaskInput>>,
-    refresh: Mutex<()>,
+    conversations: ConversationCache,
+    inputs: Arc<Mutex<HashMap<ConversationRef, PendingTaskInput>>>,
+    refresh: Arc<Mutex<()>>,
     state: crate::SqliteState,
     pub(super) consumer: String,
 }
@@ -79,11 +81,17 @@ impl TaskBoardService {
             backend,
             output: crate::OutputConfig::default(),
             state,
-            conversations: Mutex::new(HashMap::new()),
-            inputs: Mutex::new(HashMap::new()),
-            refresh: Mutex::new(()),
+            conversations: Arc::default(),
+            inputs: Arc::default(),
+            refresh: Arc::default(),
             consumer: "default".into(),
         }
+    }
+
+    pub(super) fn inherit_runtime(&mut self, previous: &Self) {
+        self.conversations = previous.conversations.clone();
+        self.inputs = previous.inputs.clone();
+        self.refresh = previous.refresh.clone();
     }
 
     pub(super) async fn take_input(

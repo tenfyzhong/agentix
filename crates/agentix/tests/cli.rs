@@ -11,6 +11,84 @@ mod unix {
     use tokio_tungstenite::tungstenite::Message;
 
     #[tokio::test]
+    async fn reload_requests_server_config_and_reports_the_result() {
+        for success in [true, false] {
+            let directory = tempdir().unwrap();
+            let socket = directory.path().join("control.sock");
+            let config = write_control_config(directory.path(), &socket);
+            let listener = UnixListener::bind(&socket).unwrap();
+            let server = tokio::spawn(async move {
+                let (request, mut stream) = next_control_request(&listener).await;
+                assert_eq!(request, json!({"method":"reload"}));
+                let response = if success {
+                    json!({"ok":true,"result":{"reloaded":true}})
+                } else {
+                    json!({"ok":false,"error":"invalid server configuration"})
+                };
+                stream
+                    .write_all(format!("{response}\n").as_bytes())
+                    .await
+                    .unwrap();
+            });
+            let output = Command::new(env!("CARGO_BIN_EXE_agentix"))
+                .arg("--config")
+                .arg(config)
+                .arg("reload")
+                .output()
+                .await
+                .unwrap();
+            assert_eq!(
+                output.status.success(),
+                success,
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            if success {
+                let value: Value = serde_json::from_slice(&output.stdout).unwrap();
+                assert_eq!(value["reloaded"], true);
+            } else {
+                assert!(
+                    String::from_utf8_lossy(&output.stderr)
+                        .contains("invalid server configuration")
+                );
+            }
+            server.await.unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn reload_endpoint_override_does_not_require_a_valid_local_config() {
+        let directory = tempdir().unwrap();
+        let socket = directory.path().join("control.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let server = tokio::spawn(async move {
+            let (request, mut stream) = next_control_request(&listener).await;
+            assert_eq!(request, json!({"method":"reload"}));
+            stream
+                .write_all(b"{\"ok\":true,\"result\":{\"reloaded\":true}}\n")
+                .await
+                .unwrap();
+        });
+        let output = Command::new(env!("CARGO_BIN_EXE_agentix"))
+            .arg("--config")
+            .arg(directory.path().join("missing.toml"))
+            .args([
+                "reload",
+                "--endpoint",
+                &format!("unix://{}", socket.display()),
+            ])
+            .output()
+            .await
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
     async fn client_session_operations_use_backend_neutral_control_requests() {
         for session in ["codex:native", "pi:native", "omp:native", "claude:native"] {
             for (args, expected) in [

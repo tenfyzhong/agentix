@@ -230,6 +230,15 @@ pub enum ChannelError {
 
 #[async_trait]
 pub trait ChannelAdapter: Send + Sync {
+    /// Validate replacement credentials without starting another event consumer.
+    async fn prepare_connection(&self) -> Result<(), ChannelError> {
+        self.identity().await.map(|_| ())
+    }
+
+    /// Replace the authorization policy shared by existing receive callbacks.
+    /// Owners have already been validated by the service configuration loader.
+    async fn replace_owners(&self, _owners: &[String]) {}
+
     /// Minimum interval for non-terminal stream and working-duration updates.
     fn streaming_update_interval(&self) -> std::time::Duration {
         std::time::Duration::from_secs(1)

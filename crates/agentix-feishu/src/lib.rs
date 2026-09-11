@@ -66,22 +66,13 @@ impl FeishuPolicy {
             .insert(sender_open_id);
     }
 
-    fn channel_policy(&self, owner_claim_enabled: bool) -> ChannelPolicy {
-        let policy = ChannelPolicy::default()
+    fn channel_policy() -> ChannelPolicy {
+        // The SDK policy is fixed for the lifetime of its websocket. Authorization
+        // stays in handle_message/card callbacks, which read the live owner set.
+        ChannelPolicy::default()
             .allow_message_type("text")
-            .require_mention(true);
-        if owner_claim_enabled {
-            return policy.dm_mode(DmMode::Open);
-        }
-        self.owner_open_ids
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .iter()
-            .fold(policy.dm_mode(DmMode::Allowlist), |policy, owner| {
-                policy
-                    .allow_sender(owner.clone())
-                    .allow_dm_sender(owner.clone())
-            })
+            .require_mention(true)
+            .dm_mode(DmMode::Open)
     }
 }
 
@@ -168,6 +159,34 @@ impl FeishuAdapter {
 
 #[async_trait]
 impl ChannelAdapter for FeishuAdapter {
+    async fn prepare_connection(&self) -> Result<(), ChannelError> {
+        let request = larksuite_oapi_sdk_rs::token::SelfBuiltTenantTokenReq {
+            app_id: self.client.config().app_id().to_owned(),
+            app_secret: self.client.config().app_secret().to_owned(),
+        };
+        let (http, response) = self
+            .client
+            .get_tenant_access_token_by_self_built_app(&request)
+            .await
+            .map_err(|error| ChannelError::Transport(error.to_string()))?;
+        if http.status_code != 200 || !response.success() || response.tenant_access_token.is_empty()
+        {
+            return Err(ChannelError::Rejected(format!(
+                "Feishu credential validation failed (code {})",
+                response.code
+            )));
+        }
+        Ok(())
+    }
+
+    async fn replace_owners(&self, owners: &[String]) {
+        *self
+            .policy
+            .owner_open_ids
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = owners.iter().cloned().collect();
+    }
+
     async fn identity(&self) -> Result<Option<String>, ChannelError> {
         // App secrets can rotate without changing the bot's application identity.
         Ok(Some(self.client.config().app_id().to_owned()))
@@ -260,7 +279,7 @@ impl ChannelAdapter for FeishuAdapter {
         let action_policy = self.policy.clone();
         let action_messages = self.messages.clone();
         let channel = Channel::builder(&self.client, EventDispatcher::new("", ""))
-            .policy(self.policy.channel_policy(self.owner_claim.is_some()))
+            .policy(FeishuPolicy::channel_policy())
             .on_message(move |message| {
                 let inbound = message_inbound.clone();
                 let adapter = message_adapter.clone();
@@ -893,5 +912,24 @@ mod tests {
         assert_eq!(next.await.unwrap(), 42);
         assert!(tokio::time::Instant::now() >= deadline);
         assert_eq!(attempts.load(Ordering::SeqCst), 2);
+    }
+}
+
+#[cfg(test)]
+mod reload_tests {
+    use super::*;
+    #[tokio::test]
+    async fn owner_reload_updates_existing_connection_clones() {
+        let adapter = FeishuAdapter::new("app", "secret", ["1"]).unwrap();
+        let receive_policy = FeishuPolicy::channel_policy();
+        assert_eq!(receive_policy.dm_mode, DmMode::Open);
+        assert!(
+            receive_policy.sender_allowlist.is_none(),
+            "static SDK allowlists must not reject newly added owners"
+        );
+        let live = adapter.clone();
+        adapter.replace_owners(&["2".into()]).await;
+        assert!(live.policy.accept("2", true, false));
+        assert!(!live.policy.accept("1", true, false));
     }
 }

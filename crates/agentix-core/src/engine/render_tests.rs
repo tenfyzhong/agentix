@@ -980,3 +980,42 @@ async fn late_commentary_classification_replaces_output_and_survives_cold_restor
         );
     }
 }
+
+#[tokio::test]
+async fn reconfigured_engine_preserves_live_state_and_changes_output_policy() {
+    let state = SqliteState::in_memory().await.unwrap();
+    let previous = Engine::new(Arc::new(UnusedAgent), state.clone(), vec![]);
+    previous
+        .turns
+        .active
+        .lock()
+        .await
+        .insert(SessionId::new("live"), "turn".into());
+    let mut next = Engine::new(Arc::new(UnusedAgent), state, vec![])
+        .with_output(crate::OutputConfig {
+            show_reasoning: true,
+            show_tool_calls: true,
+        })
+        .with_background_turn_notifications(false);
+    next.inherit_runtime(&previous);
+    assert_eq!(
+        next.turns.active.lock().await.get(&SessionId::new("live")),
+        Some(&"turn".into())
+    );
+    next.turns
+        .active
+        .lock()
+        .await
+        .insert(SessionId::new("later"), "turn2".into());
+    assert!(
+        previous
+            .turns
+            .active
+            .lock()
+            .await
+            .contains_key(&SessionId::new("later"))
+    );
+    assert!(next.output.show_reasoning);
+    assert!(!next.background_turn_notifications);
+    assert!(!previous.output.show_reasoning);
+}

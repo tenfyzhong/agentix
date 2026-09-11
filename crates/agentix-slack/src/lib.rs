@@ -138,6 +138,21 @@ fn destination(conversation: &ConversationRef, body: &mut Value) -> Result<(), C
 
 #[async_trait]
 impl ChannelAdapter for SlackAdapter {
+    async fn prepare_connection(&self) -> Result<(), ChannelError> {
+        self.identity().await?;
+        let response = self.api.call("apps.connections.open", &json!({})).await?;
+        if response["url"].as_str().is_none() {
+            return Err(ChannelError::InvalidPayload(
+                "missing Slack socket URL".into(),
+            ));
+        }
+        Ok(())
+    }
+
+    async fn replace_owners(&self, owners: &[String]) {
+        *self.owners.lock().await = owners.to_vec();
+    }
+
     async fn identity(&self) -> Result<Option<String>, ChannelError> {
         let auth = self.api.call("auth.test", &json!({})).await?;
         let field = |key| {
@@ -211,5 +226,24 @@ impl ChannelAdapter for SlackAdapter {
         menu: &CommandMenu,
     ) -> Result<(), ChannelError> {
         self.refresh_menu(conversation, menu).await
+    }
+}
+
+#[cfg(test)]
+mod reload_tests {
+    use super::*;
+    #[tokio::test]
+    async fn owner_reload_updates_existing_connection_clones() {
+        let adapter = SlackAdapter::with_client(
+            reqwest::Client::new(),
+            "https://slack.com/api/".parse().unwrap(),
+            "bot",
+            "app",
+            vec!["1".into()],
+        )
+        .unwrap();
+        let live = adapter.clone();
+        adapter.replace_owners(&["2".into()]).await;
+        assert_eq!(*live.owners.lock().await, vec!["2".to_owned()]);
     }
 }

@@ -48,6 +48,38 @@ Override the endpoint with `[server].endpoint`. Explicit TCP endpoints are accep
 
 Ordinary control clients exchange one request and one response per connection. Native extensions register on the same Unix listener and retain a bidirectional connection. `client send`, `stop`, `history`, and `command` use shared session operations; `client sessions` goes through the running adapter, `client call` is passed through the server's existing Codex app-server connection, and `client claim` creates claim state inside the running server. Consequently, all client commands require `agentix serve` to be running and use the same backend state as the IM channel.
 
+### Reloading configuration
+
+After editing the configuration used by the running service, run:
+
+```sh
+agentix reload
+# For a service started with a custom configuration:
+agentix --config /path/to/config.toml reload
+# Connect directly if the local file is invalid or its endpoint was edited:
+agentix reload --endpoint unix:///path/to/control.sock
+agentix reload --endpoint tcp://127.0.0.1:46783
+```
+
+The command sends a `{"method":"reload"}` request to the local control endpoint. The server reads its own original configuration path; `--config` on the client only selects the endpoint. Explicit `--endpoint` skips loading the client's configuration. A successful command prints JSON containing `reloaded: true` and the server's configuration path. Invalid configuration, setup failures, and unsupported changes return an error and a nonzero exit status.
+
+Reload supports the selected IM channel and credentials, owner lists, Slack command names and CLI path, network proxy, output settings, background-turn notifications, task-board settings (including rereading the referenced taskix configuration), and Pi/OMP/Claude backend additions, changes, and removals. Existing unchanged agent connections and the native bridge listener are retained. CLI proxy authentication options supplied to `serve` keep their precedence after every reload.
+
+Changes to `server.endpoint`, `storage.path`, or any logging setting require restarting the service. Changing or removing an already configured Codex backend also requires a restart because its proxy owns a live listener. These changes reject the entire reload; they are never silently ignored. Adding Codex to a service that does not yet configure it is supported.
+
+Preparation and replacement-credential validation run while the current service continues processing requests, each with a 30-second deadline. Overlapping reload requests receive a busy error. A failed preparation or validation leaves the current settings and connections intact.
+
+Owner lists, output, notifications, and task-board settings switch in place. The control listener, native bridge hub, inbound queue, dispatch queues, and in-flight workers stay alive. Unchanged IM connections and backend adapters are reused, including their event subscriptions. Live binding epochs, pending interactions, and turn buffers are shared across configuration snapshots; reload does not restore bindings from disk or send online/offline notices. Already running work finishes with its original snapshot; subsequent work uses the new settings.
+
+When IM credentials, proxy settings, or Slack command configuration change, Agentix validates the replacement before stopping only the affected receiver. It then starts the replacement on the same inbound queue. This is a best-effort handoff: protocols such as Telegram polling cannot run two consumers for the same bot, and establishing the new connection can still cause a brief receive delay. A successful reload means the configuration is installed, not that an external websocket or polling connection is already ready. Subsequent transport failures follow the adapter's normal behavior and are logged. If the receiver has exited, a subsequent reload retries it even when its connection settings are unchanged. Changing a bot's identity requires restart so its old bindings are reconciled safely. Backend changes can likewise require host reconnection and event-state recovery; finish active work before changing or removing its backend.
+
+Reload regression tests cover receiver handoff under concurrent traffic, restart of a receiver that failed after credential validation, output and notification settings, task-board enable/disable and pending input, and recovery of an existing backend turn when the registry changes. The Telegram transport test uses the real adapter against a local mock HTTP API. Output visibility changes apply to subsequent items; already rendered process items remain in the turn history. Registry replacement relies on backend history to recover events missed during subscription handoff, so this does not guarantee delivery of transient events absent from history.
+
+These deterministic tests do not certify live Telegram/Feishu/Slack delivery across a network outage. Live acceptance requires dedicated test bots and conversations: send uniquely numbered messages before, during, and after credential/proxy changes, compare accepted IDs and reply order, and exercise server redelivery and connection rejection. No live messages are sent by the normal test suite.
+
+
+Task-board commands and help use the new settings immediately. Existing external command menus refresh on the next attachment or channel startup; the global Telegram menu and Slack manifest registration refresh at channel startup.
+
 ### Codex
 
 The Codex adapter requires Codex CLI 0.153.0 or newer from OpenAI's official standalone installer:
@@ -119,7 +151,7 @@ command = "claude"
 session_dir = "~/.claude/projects"
 ```
 
-Omit a backend table to disable it. Existing backend-specific fields retain their meanings and defaults; Pi/OMP still require `session_dir`. Unknown names, unknown backend fields, and a `kind` field inside a named table are rejected. Legacy `[agent]` with `kind` and `[[agents]]` arrays remain accepted for migration, but cannot be mixed with named tables. Restart `agentix serve` after changing configuration. An old unqualified binding database must first be opened with its original single backend so migration does not guess ownership.
+Omit a backend table to disable it. Existing backend-specific fields retain their meanings and defaults; Pi/OMP still require `session_dir`. Unknown names, unknown backend fields, and a `kind` field inside a named table are rejected. Legacy `[agent]` with `kind` and `[[agents]]` arrays remain accepted for migration, but cannot be mixed with named tables. Run `agentix reload` after changing supported runtime configuration; see [reload limitations](#reloading-configuration). An old unqualified binding database must first be opened with its original single backend so migration does not guess ownership.
 
 ## Optional task coordination
 

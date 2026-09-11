@@ -267,10 +267,10 @@ pub struct Engine {
     operations: crate::SessionOperations,
     state: SqliteState,
     channels: HashMap<ChannelKind, Arc<dyn ChannelAdapter>>,
-    sessions: SessionService,
-    turns: TurnCoordinator,
-    interactions: InteractionCoordinator,
-    rmux: RmuxController,
+    sessions: Arc<SessionService>,
+    turns: Arc<TurnCoordinator>,
+    interactions: Arc<InteractionCoordinator>,
+    rmux: Arc<RmuxController>,
     background_turn_notifications: bool,
     output: crate::OutputConfig,
 }
@@ -292,13 +292,28 @@ impl Engine {
                 .into_iter()
                 .map(|channel| (channel.kind(), channel))
                 .collect(),
-            sessions: SessionService::new(state),
-            turns: TurnCoordinator::default(),
-            interactions: InteractionCoordinator::default(),
-            rmux,
+            sessions: Arc::new(SessionService::new(state)),
+            turns: Arc::new(TurnCoordinator::default()),
+            interactions: Arc::new(InteractionCoordinator::default()),
+            rmux: Arc::new(rmux),
             background_turn_notifications: true,
             output: crate::OutputConfig::default(),
         }
+    }
+
+    #[must_use]
+    pub fn agent_adapter(&self) -> Arc<dyn AgentAdapter> {
+        self.agent.clone()
+    }
+
+    /// Share live coordination state with a new configuration snapshot. The caller
+    /// must retain the same storage, channels and agent transports.
+    pub fn inherit_runtime(&mut self, previous: &Self) {
+        self.sessions = previous.sessions.clone();
+        self.turns = previous.turns.clone();
+        self.interactions = previous.interactions.clone();
+        self.rmux = previous.rmux.clone();
+        self.tasks.inherit_runtime(&previous.tasks);
     }
 
     #[must_use]

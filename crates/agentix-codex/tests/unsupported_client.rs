@@ -27,6 +27,7 @@ async fn unsupported_client_constructors_report_transport_unavailability() {
             .unwrap_err(),
     ];
     for enabled in [false, true] {
+        CodexClient.set_background_turn_notifications(enabled);
         errors.push(
             CodexClient::connect_with_background_turn_notifications(
                 endpoint.clone(),
@@ -54,6 +55,18 @@ async fn unsupported_client_constructors_report_transport_unavailability() {
 
 #[tokio::test]
 async fn unsupported_proxy_constructor_reports_unavailability() {
+    let error = CodexClient::connect_with_proxy_notification_setting(
+        "unix://",
+        CodexEndpoint::default_upstream().unwrap(),
+        Path::new("codex"),
+        Path::new("~"),
+        std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        &ProxyOptions::default(),
+    )
+    .await
+    .unwrap_err();
+    assert!(error.to_string().contains("unavailable on this platform"));
+
     let error = CodexClient::connect_with_proxy_options(
         "stdio://",
         CodexEndpoint::default_upstream().unwrap(),

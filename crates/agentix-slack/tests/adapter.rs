@@ -535,3 +535,44 @@ async fn identity_uses_authenticated_workspace_and_bot_user() {
     let invalid = Server::new(|_| (200, vec![], json!({"ok":true}))).await;
     assert!(adapter(&invalid).identity().await.is_err());
 }
+
+#[tokio::test]
+async fn reload_preflight_checks_the_app_token() {
+    let mut server = support::Server::new(|request| {
+        if request.path.ends_with("auth.test") {
+            (
+                200,
+                vec![],
+                serde_json::json!({"ok":true,"team_id":"T","user_id":"U"}),
+            )
+        } else {
+            (
+                200,
+                vec![],
+                serde_json::json!({"ok":false,"error":"invalid_auth"}),
+            )
+        }
+    })
+    .await;
+    let adapter = agentix_slack::SlackAdapter::with_client(
+        reqwest::Client::new(),
+        server.url.parse().unwrap(),
+        "bot",
+        "bad-app",
+        vec![],
+    )
+    .unwrap();
+    assert!(adapter.prepare_connection().await.is_err());
+    assert!(
+        server
+            .requests
+            .recv()
+            .await
+            .unwrap()
+            .path
+            .ends_with("auth.test")
+    );
+    let socket = server.requests.recv().await.unwrap();
+    assert!(socket.path.ends_with("apps.connections.open"));
+    assert_eq!(socket.authorization, "Bearer bad-app");
+}

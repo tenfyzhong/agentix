@@ -28,6 +28,9 @@ _agentix() {
             agentix,help)
                 cmd="agentix__subcmd__help"
                 ;;
+            agentix,reload)
+                cmd="agentix__subcmd__reload"
+                ;;
             agentix,serve)
                 cmd="agentix__subcmd__serve"
                 ;;
@@ -91,6 +94,9 @@ _agentix() {
             agentix__subcmd__help,help)
                 cmd="agentix__subcmd__help__subcmd__help"
                 ;;
+            agentix__subcmd__help,reload)
+                cmd="agentix__subcmd__help__subcmd__reload"
+                ;;
             agentix__subcmd__help,serve)
                 cmd="agentix__subcmd__help__subcmd__serve"
                 ;;
@@ -122,7 +128,7 @@ _agentix() {
 
     case "${cmd}" in
         agentix)
-            opts="-c -h -V --config --help --version serve doctor client completions help"
+            opts="-c -h -V --config --help --version serve reload doctor client completions help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 1 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -460,7 +466,7 @@ _agentix() {
             return 0
             ;;
         agentix__subcmd__help)
-            opts="serve doctor client completions help"
+            opts="serve reload doctor client completions help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -627,6 +633,20 @@ _agentix() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
+        agentix__subcmd__help__subcmd__reload)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
         agentix__subcmd__help__subcmd__serve)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
@@ -634,6 +654,24 @@ _agentix() {
                 return 0
             fi
             case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        agentix__subcmd__reload)
+            opts="-h --endpoint --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --endpoint)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
                 *)
                     COMPREPLY=()
                     ;;

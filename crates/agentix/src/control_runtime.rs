@@ -63,19 +63,34 @@ fn request_scope(
         control::ControlRequest::Call { .. } => {
             DispatchScope::Keys(vec![Resource::Backend(AgentKind::Codex)])
         }
-        control::ControlRequest::Claim { .. } => DispatchScope::Keys(vec![Resource::Claims]),
+        control::ControlRequest::Reload | control::ControlRequest::Claim { .. } => {
+            DispatchScope::Keys(vec![Resource::Claims])
+        }
     }
 }
 
+#[cfg(test)]
 pub(super) async fn run_control_handler(
-    mut calls: mpsc::Receiver<control::ControlCall>,
+    calls: mpsc::Receiver<control::ControlCall>,
     agent: Arc<dyn AgentAdapter>,
     codex: Option<CodexClient>,
     claims: Arc<ClaimRegistry>,
     config_path: PathBuf,
     shutdown: CancellationToken,
 ) {
-    let backends = agent.session_backends();
+    let (_settings, snapshots) = tokio::sync::watch::channel((agent, codex));
+    run_control_handler_with_config(calls, snapshots, claims, config_path, shutdown).await;
+}
+
+pub(super) type ControlConfig = (Arc<dyn AgentAdapter>, Option<CodexClient>);
+
+pub(super) async fn run_control_handler_with_config(
+    mut calls: mpsc::Receiver<control::ControlCall>,
+    snapshots: tokio::sync::watch::Receiver<ControlConfig>,
+    claims: Arc<ClaimRegistry>,
+    config_path: PathBuf,
+    shutdown: CancellationToken,
+) {
     let mut queue = DispatchQueue::new(256, 32);
     let mut workers = JoinSet::new();
     let mut active = HashMap::new();
@@ -83,6 +98,8 @@ pub(super) async fn run_control_handler(
     let mut telemetry = tokio::time::interval(std::time::Duration::from_secs(30));
     telemetry.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
+        let (agent, codex) = snapshots.borrow().clone();
+        let backends = agent.session_backends();
         while !shutdown.is_cancelled()
             && let Some(job) = queue
                 .next_ready(|call: &control::ControlCall| request_scope(&call.request, &backends))

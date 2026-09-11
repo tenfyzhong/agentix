@@ -20,6 +20,7 @@ const MAX_CONTROL_MESSAGE_BYTES: u64 = 16 * 1024 * 1024;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(tag = "method", content = "params", rename_all = "snake_case")]
 pub enum ControlRequest {
+    Reload,
     Session(agentix_core::SessionOperation),
     Sessions {
         cursor: Option<String>,

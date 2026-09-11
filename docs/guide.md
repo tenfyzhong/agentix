@@ -262,7 +262,7 @@ Only the current attached session's writable active turn message has Stop; switc
 
 Startup recovery, automatic reattachment, and shutdown notifications only use channels enabled in the current configuration. Saved bindings and turn messages for other channels are retained for when those channels are enabled again. Each IM adapter and its clones share a duplex FIFO message center. Normalized incoming messages use an independent inbound queue; sends, edits, menus, owner-claim replies, callback acknowledgements, and Feishu reply lookups use the outbound queue. A rate-limited request stays at the head until it succeeds, fails permanently, or is cancelled, so later requests cannot overtake its retries. Telegram honors `retry_after` and spaces requests globally and per chat. Feishu HTTP 429 responses use exponential backoff from one second up to 60 seconds because its SDK does not expose the server retry delay. Cancelling a request removes that operation while preserving the channel cooldown. Telegram streams and working-duration updates refresh at most once every five seconds. Final turn updates bypass that refresh interval while still respecting Telegram cooldowns. Telegram rate-limit logs include the API method and chat ID.
 
-To disable completion notices for unattached sessions, add this to `config.toml` and restart Agentix:
+To disable completion notices for unattached sessions, add this to `config.toml` and run `agentix reload`:
 
 ```toml
 [notifications]
@@ -275,7 +275,7 @@ The default is `true`. Disabling notifications also stops automatic background t
 
 Task document cleanup preserves unrelated files at destinations where projection failed. Authored Plan frontmatter supports LF and CRLF delimiters and quoted YAML keys. Pi/OMP lease injection accepts full Task IDs and unambiguous Task prefixes.
 
-Add the following to `~/.config/agentix/config.toml`, then restart Agentix to browse work in Telegram, Feishu, or Slack:
+Add the following to `~/.config/agentix/config.toml`, then run `agentix reload` to browse work in Telegram, Feishu, or Slack:
 
 ```toml
 [task_board]
@@ -283,7 +283,7 @@ enable = true
 config = "~/.config/taskix/config.toml"
 ```
 
-`task_board.enable` defaults to `false`, including when the section contains only a `config` path. When disabled, Agentix does not load the taskix configuration or start the task board, and IM menus and help omit task-board commands. Set `enable = true` to enable the integration. The referenced taskix configuration must then already exist. Agentix opens the database specified there and creates it if missing; use the same configuration as your taskix writers to see their existing work. Restart Agentix after changing this section. When disabled, typed board commands report `Task board is not configured.`
+`task_board.enable` defaults to `false`, including when the section contains only a `config` path. When disabled, Agentix does not load the taskix configuration or start the task board, and IM menus and help omit task-board commands. Set `enable = true` to enable the integration. The referenced taskix configuration must then already exist. Agentix opens the database specified there and creates it if missing; use the same configuration as your taskix writers to see their existing work. Run `agentix reload` after changing this section. When disabled, typed board commands report `Task board is not configured.`
 
 | Command | View |
 | --- | --- |

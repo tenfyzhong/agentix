@@ -5301,3 +5301,199 @@ async fn unknown_legacy_bot_is_detached_but_identity_failure_preserves_state() {
     assert_eq!(engine.restore_bindings().await.unwrap(), 0);
     assert!(known.sent().is_empty());
 }
+
+#[tokio::test]
+async fn reload_background_notifications_toggle_without_losing_owners_or_deduplication() {
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel::default());
+    let state = SqliteState::in_memory().await.unwrap();
+    let mut engine = Engine::new(agent.clone(), state.clone(), vec![channel.clone()]);
+    engine
+        .handle_inbound(inbound_as("chat-a", "owner-42", "/help"))
+        .await
+        .unwrap();
+    let initial = channel.sent().len();
+    let mut notices = 0;
+    for (enabled, turn, expected) in [
+        (false, "off", 0),
+        (true, "on", 1),
+        (true, "on", 1),
+        (false, "off2", 1),
+        (true, "on2", 2),
+    ] {
+        let mut next = Engine::new(agent.clone(), state.clone(), vec![channel.clone()])
+            .with_background_turn_notifications(enabled);
+        next.inherit_runtime(&engine);
+        engine = next;
+        engine
+            .handle_agent_event(AgentEvent::TurnCompleted {
+                session_id: "thr_b".into(),
+                turn_id: turn.into(),
+                status: TurnStatus::Completed,
+                error: None,
+            })
+            .await
+            .unwrap();
+        notices = expected;
+        assert_eq!(channel.sent().len(), initial + notices);
+    }
+    assert_eq!(notices, 2);
+}
+
+#[tokio::test]
+async fn reload_output_policy_changes_rendered_sections_during_a_live_turn() {
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel::default());
+    let state = SqliteState::in_memory().await.unwrap();
+    let mut engine = Engine::new(agent.clone(), state.clone(), vec![channel.clone()]);
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::AgentMessageDelta {
+            session_id: "thr_a".into(),
+            turn_id: "live".into(),
+            item_id: "answer".into(),
+            delta: "Still working".into(),
+        })
+        .await
+        .unwrap();
+    for (index, visible) in [true, false, true].into_iter().enumerate() {
+        let mut next = Engine::new(agent.clone(), state.clone(), vec![channel.clone()])
+            .with_output(agentix_core::OutputConfig {
+                show_reasoning: visible,
+                show_tool_calls: visible,
+            });
+        next.inherit_runtime(&engine);
+        engine = next;
+        for (kind, text) in [
+            ("reasoning", "Think carefully"),
+            ("commandExecution", "cargo test"),
+        ] {
+            engine
+                .handle_agent_event(AgentEvent::ItemCompleted {
+                    session_id: "thr_a".into(),
+                    turn_id: "live".into(),
+                    item: ItemSummary {
+                        id: format!("{kind}-{index}"),
+                        kind: kind.into(),
+                        text: Some(format!("{text}-{index}")),
+                        status: Some("completed".into()),
+                    },
+                })
+                .await
+                .unwrap();
+        }
+        engine
+            .handle_agent_event(AgentEvent::TurnCompleted {
+                session_id: "thr_a".into(),
+                turn_id: "live".into(),
+                status: TurnStatus::Completed,
+                error: None,
+            })
+            .await
+            .unwrap();
+        let updated = channel.updated();
+        let view = &updated.last().unwrap().1;
+        assert!(view.body.contains("Still working"));
+        assert_eq!(
+            view.body.contains(&format!("Think carefully-{index}")),
+            visible
+        );
+        assert_eq!(view.body.contains(&format!("cargo test-{index}")), visible);
+    }
+}
+
+#[tokio::test]
+async fn reload_task_board_preserves_pending_action_input() {
+    let (_dir, service, id) = task_fixture().await;
+    let channel = Arc::new(FakeChannel::default());
+    let agent = Arc::new(FakeAgent::new());
+    let state = SqliteState::in_memory().await.unwrap();
+    let engine = Engine::new(agent.clone(), state.clone(), vec![channel.clone()])
+        .with_task_board(service.clone());
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound("chat-a", &format!("/task {id}")))
+        .await
+        .unwrap();
+    let token = channel
+        .sent()
+        .last()
+        .unwrap()
+        .1
+        .actions
+        .iter()
+        .find(|a| a.label == "Block")
+        .unwrap()
+        .token
+        .clone();
+    engine
+        .handle_inbound(InboundEnvelope::action(
+            "block-before-reload",
+            ConversationRef::new(ChannelKind::Telegram, "chat-a"),
+            "owner",
+            token,
+        ))
+        .await
+        .unwrap();
+    let mut next = Engine::new(agent, state, vec![channel]).with_task_board(service.clone());
+    next.inherit_runtime(&engine);
+    next.handle_inbound(inbound("chat-a", "Reason after reload"))
+        .await
+        .unwrap();
+    let snapshot = service.store().snapshot().await.unwrap();
+    assert_eq!(snapshot.tasks[0].status.to_string(), "BLOCKED");
+    assert_eq!(
+        snapshot.tasks[0].reason.as_deref(),
+        Some("Reason after reload")
+    );
+}
+
+#[tokio::test]
+async fn reload_task_board_enable_disable_changes_help_and_commands() {
+    let (_dir, service, _) = task_fixture().await;
+    let channel = Arc::new(FakeChannel::default());
+    let agent = Arc::new(FakeAgent::new());
+    let state = SqliteState::in_memory().await.unwrap();
+    let mut engine = Engine::new(agent.clone(), state.clone(), vec![channel.clone()]);
+    for enabled in [true, false, true] {
+        let mut next = Engine::new(agent.clone(), state.clone(), vec![channel.clone()]);
+        if enabled {
+            next = next.with_task_board(service.clone());
+        }
+        next.inherit_runtime(&engine);
+        engine = next;
+        engine
+            .handle_inbound(InboundEnvelope::text(
+                uuid::Uuid::new_v4().to_string(),
+                ConversationRef::new(ChannelKind::Telegram, "chat-a"),
+                "owner",
+                "/help",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            channel.sent().last().unwrap().1.body.contains("/dashboard"),
+            enabled
+        );
+        let result = engine
+            .handle_inbound(InboundEnvelope::text(
+                uuid::Uuid::new_v4().to_string(),
+                ConversationRef::new(ChannelKind::Telegram, "chat-a"),
+                "owner",
+                "/dashboard",
+            ))
+            .await;
+        if enabled {
+            result.unwrap();
+            assert_eq!(channel.sent().last().unwrap().1.title, "Dashboard");
+        } else {
+            assert!(result.unwrap_err().to_string().contains("not configured"));
+        }
+    }
+}

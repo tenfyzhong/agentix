@@ -43,6 +43,13 @@ _arguments "${_arguments_options[@]}" : \
 '--help[Print help]' \
 && ret=0
 ;;
+(reload)
+_arguments "${_arguments_options[@]}" : \
+'--endpoint=[Connect directly, even if the local configuration is invalid]:ENDPOINT:_default' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
 (doctor)
 _arguments "${_arguments_options[@]}" : \
 '-h[Print help]' \
@@ -195,6 +202,10 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
+(reload)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
 (doctor)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
@@ -264,6 +275,7 @@ esac
 _agentix_commands() {
     local commands; commands=(
 'serve:Run the Agentix bridge until interrupted' \
+'reload:Reload the running server configuration without restarting the process' \
 'doctor:Validate configuration, credentials, and the selected agent transport' \
 'client:Use the running Agentix server for local diagnostics and setup' \
 'completions:Print a shell completion script to stdout' \
@@ -388,6 +400,7 @@ _agentix__subcmd__doctor_commands() {
 _agentix__subcmd__help_commands() {
     local commands; commands=(
 'serve:Run the Agentix bridge until interrupted' \
+'reload:Reload the running server configuration without restarting the process' \
 'doctor:Validate configuration, credentials, and the selected agent transport' \
 'client:Use the running Agentix server for local diagnostics and setup' \
 'completions:Print a shell completion script to stdout' \
@@ -458,10 +471,20 @@ _agentix__subcmd__help__subcmd__help_commands() {
     local commands; commands=()
     _describe -t commands 'agentix help help commands' commands "$@"
 }
+(( $+functions[_agentix__subcmd__help__subcmd__reload_commands] )) ||
+_agentix__subcmd__help__subcmd__reload_commands() {
+    local commands; commands=()
+    _describe -t commands 'agentix help reload commands' commands "$@"
+}
 (( $+functions[_agentix__subcmd__help__subcmd__serve_commands] )) ||
 _agentix__subcmd__help__subcmd__serve_commands() {
     local commands; commands=()
     _describe -t commands 'agentix help serve commands' commands "$@"
+}
+(( $+functions[_agentix__subcmd__reload_commands] )) ||
+_agentix__subcmd__reload_commands() {
+    local commands; commands=()
+    _describe -t commands 'agentix reload commands' commands "$@"
 }
 (( $+functions[_agentix__subcmd__serve_commands] )) ||
 _agentix__subcmd__serve_commands() {
