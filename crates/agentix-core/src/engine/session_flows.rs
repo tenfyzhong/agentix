@@ -90,6 +90,7 @@ impl Engine {
         self.send_view(
             conversation,
             &OutboundView {
+                sections: Vec::new(),
                 title: "Invalid command".into(),
                 subtitle: None,
                 body: format!("**Error:** {error}\n\n**Available commands**\n\n{commands}"),
@@ -256,6 +257,7 @@ impl Engine {
         self.send_view(
             conversation,
             &OutboundView {
+                sections: Vec::new(),
                 title: format!("Existing {} sessions", self.agent.display_name()),
                 subtitle: None,
                 body,
@@ -358,6 +360,7 @@ impl Engine {
         self.send_view(
             conversation,
             &OutboundView {
+                sections: Vec::new(),
                 title: format!("{} · Attach failed", self.agent.display_name()),
                 subtitle: Some(session.to_string()),
                 body: format!("{error}\n\nRetry below or use /sessions to choose another session."),
@@ -390,6 +393,7 @@ impl Engine {
         self.send_view(
             conversation,
             &OutboundView {
+                sections: Vec::new(),
                 title: format!("{name} · Read-only session"),
                 subtitle: None,
                 body,
@@ -418,6 +422,7 @@ impl Engine {
         self.send_view(
             conversation,
             &OutboundView {
+                sections: Vec::new(),
                 title: format!("{} · {session_label}", self.agent.display_name()),
                 subtitle: active.as_ref().map(|turn| format!("Turn {turn} · running")),
                 body: active.map_or_else(
@@ -552,6 +557,7 @@ impl Engine {
                 self.send_view(
                     conversation,
                     &OutboundView {
+                        sections: Vec::new(),
                         title: "Agentix · Session command".into(),
                         subtitle: Some("Not attached".into()),
                         body: "Attach a session with `/sessions` before using this command.".into(),
@@ -618,6 +624,7 @@ impl Engine {
             self.send_view(
                 conversation,
                 &OutboundView {
+                    sections: Vec::new(),
                     title: format!("{} · Command unavailable", self.agent.display_name()),
                     subtitle: Some(self.session_label(&session).await),
                     body: "Wait for the active turn to finish, or use `/stop` first.".into(),
@@ -632,6 +639,7 @@ impl Engine {
             self.send_view(
                 conversation,
                 &OutboundView {
+                    sections: Vec::new(),
                     title: "Agentix · Session command".into(),
                     subtitle: Some("Unsupported".into()),
                     body: format!(
@@ -652,6 +660,7 @@ impl Engine {
                 self.send_view(
                     conversation,
                     &OutboundView {
+                        sections: Vec::new(),
                         title: format!("{} · Command failed", self.agent.display_name()),
                         subtitle: Some(session_label),
                         body: error.to_string(),
@@ -696,6 +705,7 @@ impl Engine {
         self.send_view(
             conversation,
             &OutboundView {
+                sections: Vec::new(),
                 title: result.title,
                 subtitle: Some(target_label),
                 body: result.body,
@@ -794,6 +804,7 @@ impl Engine {
                 .send_view(
                     &displaced,
                     &OutboundView {
+                        sections: Vec::new(),
                         title: format!("{} session moved", self.agent.display_name()),
                         subtitle: Some(session_label),
                         body: "This session was attached from another IM conversation.".into(),
@@ -983,6 +994,7 @@ impl Engine {
         self.send_view(
             conversation,
             &OutboundView {
+                sections: Vec::new(),
                 title: format!("{} · Queued", self.agent.display_name()),
                 subtitle: position.map(|position| format!("Position #{position}")),
                 body: format!("**👤 You**\n\n{}", markdown_quote(prompt)),
@@ -1068,6 +1080,7 @@ impl Engine {
         self.send_view(
             conversation,
             &OutboundView {
+                sections: Vec::new(),
                 title: format!("{} · {session_label}", self.agent.display_name()),
                 subtitle: Some(format!(
                     "Queue · {count} {}",

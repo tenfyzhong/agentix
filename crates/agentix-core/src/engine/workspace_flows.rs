@@ -115,6 +115,7 @@ impl Engine {
             self.send_view(
                 conversation,
                 &OutboundView {
+                    sections: Vec::new(),
                     title: "Terminal multiplexer".into(),
                     subtitle: Some("Unsupported".into()),
                     body: format!(
@@ -133,6 +134,7 @@ impl Engine {
             self.send_view(
                 conversation,
                 &OutboundView {
+                    sections: Vec::new(),
                     title: "Terminal multiplexer".into(),
                     subtitle: Some("Not running".into()),
                     body: "The rmux server is unavailable.".into(),
@@ -157,6 +159,7 @@ impl Engine {
         self.send_view(
             conversation,
             &OutboundView {
+                sections: Vec::new(),
                 title: "Terminal · rmux".into(),
                 subtitle: Some(format!(
                     "{} {} · {window_count} {} · {pane_count} {}",
@@ -275,6 +278,7 @@ impl Engine {
         self.send_view(
             conversation,
             &OutboundView {
+                sections: Vec::new(),
                 title: format!("rmux · {}", session.name),
                 subtitle: Some(format!(
                     "{} {}",
@@ -431,6 +435,7 @@ impl Engine {
         self.send_view(
             conversation,
             &OutboundView {
+                sections: Vec::new(),
                 title: format!(
                     "rmux · {} · {} ({})",
                     session.name, window.index, window.name
@@ -618,6 +623,7 @@ impl Engine {
                 self.send_view(
                     conversation,
                     &OutboundView {
+                        sections: Vec::new(),
                         title: "Terminal · rmux".into(),
                         subtitle: Some("Operation failed".into()),
                         body: error.to_string(),
@@ -657,6 +663,7 @@ impl Engine {
         self.send_view(
             conversation,
             &OutboundView {
+                sections: Vec::new(),
                 title: "Terminal · rmux".into(),
                 subtitle: Some(subtitle),
                 body: result.message,

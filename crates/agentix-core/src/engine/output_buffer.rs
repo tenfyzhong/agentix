@@ -2,6 +2,59 @@
 use super::{TurnBuffer, TurnOutputItem};
 
 impl TurnBuffer {
+    pub(super) fn append_commentary(&mut self, id: &str, delta: &str) {
+        if self
+            .output_items
+            .iter()
+            .any(|item| item.id.as_deref() == Some(id) && item.text.is_empty())
+        {
+            self.record_output(Some(id), "**Reasoning**\n\n", true, false);
+        }
+        self.record_output(Some(id), delta, true, true);
+    }
+
+    pub(super) fn view_sections(&self, agent_name: &str) -> Vec<agentix_domain::ViewSection> {
+        use agentix_domain::ViewSection;
+        let mut sections = Vec::new();
+        if !self.user_text.trim().is_empty() {
+            sections.push(ViewSection {
+                title: "👤 You".into(),
+                body: self.user_text.clone(),
+                collapsible: false,
+            });
+        }
+        for item in self
+            .output_items
+            .iter()
+            .filter(|item| item.process && !item.text.trim().is_empty())
+        {
+            let (title, body) = if let Some(text) = item.text.strip_prefix("**Reasoning**\n\n") {
+                ("🧠 Reasoning", text.to_owned())
+            } else {
+                (
+                    "🔨 Tool Call",
+                    item.text
+                        .strip_prefix("**Tool call**: ")
+                        .unwrap_or(&item.text)
+                        .to_owned(),
+                )
+            };
+            sections.push(ViewSection {
+                title: title.into(),
+                body,
+                collapsible: true,
+            });
+        }
+        if !self.agent_text.trim().is_empty() {
+            sections.push(ViewSection {
+                title: format!("🤖 {agent_name}"),
+                body: self.agent_text.clone(),
+                collapsible: false,
+            });
+        }
+        sections
+    }
+
     pub(super) fn record_output(
         &mut self,
         id: Option<&str>,
@@ -20,8 +73,9 @@ impl TurnBuffer {
         if let Some(existing) = self
             .output_items
             .iter_mut()
-            .find(|item| id.is_some() && item.id.as_deref() == id && item.process == process)
+            .find(|item| id.is_some() && item.id.as_deref() == id)
         {
+            existing.process = process;
             if append {
                 existing.text.push_str(text);
             } else {

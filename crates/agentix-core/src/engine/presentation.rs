@@ -220,6 +220,7 @@ pub(super) fn history_views(
         HistoryPresentation::History => "History",
     };
     let mut views = vec![OutboundView {
+        sections: Vec::new(),
         title: format!("{agent_name} · {session_label}"),
         subtitle: Some(subtitle.into()),
         body,
@@ -243,6 +244,7 @@ pub(super) fn history_turn_view(agent_name: &str, turn: &TurnSummary) -> Outboun
     );
 
     OutboundView {
+        sections: Vec::new(),
         title: format!("{agent_name} · Turn {}", short_identifier(&turn.id)),
         subtitle: Some(turn_status_label(&turn.status).into()),
         body,
@@ -277,6 +279,7 @@ pub(super) fn live_turn_view(
     delivery: DeliveryClass,
 ) -> OutboundView {
     OutboundView {
+        sections: buffer.view_sections(agent_name),
         title: format!("{agent_name} · {session_label}"),
         subtitle: Some(format!(
             "{} {} · {}",

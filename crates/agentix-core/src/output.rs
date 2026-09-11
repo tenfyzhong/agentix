@@ -20,7 +20,7 @@ impl OutputConfig {
         } = &event
         {
             // Start labels describe the item type, not reasoning content.
-            if matches!(kind.as_str(), "reasoning" | "thinking") {
+            if matches!(kind.as_str(), "reasoning" | "thinking" | "commentary") {
                 return event;
             }
             let item = ItemSummary {
@@ -41,7 +41,7 @@ impl OutputConfig {
     }
 
     pub(crate) fn process_text(self, item: &ItemSummary) -> Option<String> {
-        let reasoning = matches!(item.kind.as_str(), "reasoning" | "thinking");
+        let reasoning = matches!(item.kind.as_str(), "reasoning" | "thinking" | "commentary");
         if matches!(
             item.kind.as_str(),
             "agentMessage" | "userMessage" | "plan" | "unknown"

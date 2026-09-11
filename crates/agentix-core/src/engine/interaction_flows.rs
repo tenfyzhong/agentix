@@ -116,6 +116,7 @@ impl Engine {
             None
         };
         let view = OutboundView {
+            sections: Vec::new(),
             title: format!("{} · {}", request.title, session_label),
             subtitle: Some(format!(
                 "Turn {} · {}",

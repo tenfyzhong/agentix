@@ -690,3 +690,145 @@ async fn streamed_output_updates_its_own_block_without_replacing_process_message
         assert_eq!(body.matches(text).count(), 1);
     }
 }
+
+#[tokio::test]
+async fn commentary_is_reasoning_and_turn_view_has_ordered_sections() {
+    let engine = Engine::new(
+        Arc::new(UnusedAgent),
+        SqliteState::in_memory().await.unwrap(),
+        vec![],
+    )
+    .with_output(crate::OutputConfig {
+        show_reasoning: true,
+        show_tool_calls: true,
+    });
+    let session = SessionId::new("sections");
+    for (id, kind, text) in [
+        ("u", "userMessage", "Question"),
+        ("c1", "commentary", "I will check the card implementation."),
+        ("t1", "commandExecution", "Check source"),
+        ("c2", "commentary", "I found the component."),
+        ("t2", "commandExecution", "Run tests"),
+        ("a", "agentMessage", "Final answer"),
+    ] {
+        engine
+            .apply_completed_item(
+                &session,
+                "turn",
+                &crate::ItemSummary {
+                    id: id.into(),
+                    kind: kind.into(),
+                    text: Some(text.into()),
+                    status: None,
+                },
+            )
+            .await;
+    }
+    let buffers = engine.turns.buffers.lock().await;
+    let view = super::presentation::live_turn_view(
+        "Codex",
+        "session",
+        "turn",
+        &buffers[&(session, "turn".into())],
+        DeliveryClass::Live,
+    );
+    assert!(view.body.contains("**Reasoning**\n>\n> I will check"));
+    let json = serde_json::to_value(view).unwrap();
+    let sections = json["sections"].as_array().expect("structured sections");
+    let titles: Vec<_> = sections
+        .iter()
+        .map(|s| s["title"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        titles,
+        [
+            "👤 You",
+            "🧠 Reasoning",
+            "🔨 Tool Call",
+            "🧠 Reasoning",
+            "🔨 Tool Call",
+            "🤖 Codex"
+        ]
+    );
+    assert_eq!(sections[1]["body"], "I will check the card implementation.");
+    assert_eq!(sections[5]["body"], "Final answer");
+}
+
+#[tokio::test]
+async fn commentary_deltas_remain_in_reasoning_and_obey_visibility() {
+    for visible in [false, true] {
+        let channel = Arc::new(CompletedTurnChannel::default());
+        let engine = Engine::new(
+            Arc::new(UnusedAgent),
+            SqliteState::in_memory().await.unwrap(),
+            vec![channel],
+        )
+        .with_output(crate::OutputConfig {
+            show_reasoning: visible,
+            show_tool_calls: true,
+        });
+        let session = SessionId::new("commentary-stream");
+        let conversation = ConversationRef::new(ChannelKind::Telegram, "chat");
+        engine
+            .handle_routed_event(
+                conversation.clone(),
+                session.clone(),
+                AgentEvent::ItemStarted {
+                    session_id: session.to_string(),
+                    turn_id: "turn".into(),
+                    item_id: "c".into(),
+                    kind: "commentary".into(),
+                    label: "agentMessage".into(),
+                },
+                DeliveryClass::Live,
+            )
+            .await
+            .unwrap();
+        for delta in ["I will ", "check."] {
+            engine
+                .handle_message_delta(
+                    &conversation,
+                    &session,
+                    "turn",
+                    "c",
+                    delta,
+                    DeliveryClass::Live,
+                )
+                .await
+                .unwrap();
+            let buffers = engine.turns.buffers.lock().await;
+            let buffer = &buffers[&(session.clone(), "turn".into())];
+            assert!(buffer.agent_text.is_empty());
+            let sections = buffer.view_sections("Codex");
+            assert_eq!(sections.len(), usize::from(visible));
+            if visible {
+                assert_eq!(sections[0].title, "🧠 Reasoning");
+            }
+        }
+        for (id, kind, text) in [
+            ("c", "commentary", "I will check."),
+            ("a", "agentMessage", "Answer"),
+        ] {
+            engine
+                .apply_completed_item(
+                    &session,
+                    "turn",
+                    &crate::ItemSummary {
+                        id: id.into(),
+                        kind: kind.into(),
+                        text: Some(text.into()),
+                        status: None,
+                    },
+                )
+                .await;
+        }
+        let buffers = engine.turns.buffers.lock().await;
+        let buffer = &buffers[&(session, "turn".into())];
+        let sections = buffer.view_sections("Codex");
+        assert_eq!(sections.len(), 1 + usize::from(visible));
+        assert_eq!(sections.last().unwrap().body, "Answer");
+        if visible {
+            assert_eq!(sections[0].body, "I will check.");
+        }
+    }
+}

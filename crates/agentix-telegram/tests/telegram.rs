@@ -245,6 +245,7 @@ async fn telegram_replaces_the_chat_scoped_menu_when_attachment_changes() {
 #[test]
 fn telegram_views_are_labeled_and_bounded() {
     let view = OutboundView {
+        sections: Vec::new(),
         title: "Codex · 9f31c2ab".into(),
         subtitle: Some("Turn 0187 · running".into()),
         body: "\u{2603}".repeat(2_000),
@@ -261,6 +262,7 @@ fn telegram_views_are_labeled_and_bounded() {
 #[test]
 fn agent_markdown_is_rendered_as_telegram_markdown_v2() {
     let view = OutboundView {
+        sections: Vec::new(),
         title: "Codex (development)".into(),
         subtitle: Some("Turn 0187 · Completed".into()),
         body: "## Result\n\nUse **bold text**, `cargo test`, and [the docs](https://example.com)."
@@ -282,6 +284,7 @@ fn agent_markdown_is_rendered_as_telegram_markdown_v2() {
 #[test]
 fn agent_reply_blockquotes_keep_markdown_formatting() {
     let view = OutboundView {
+        sections: Vec::new(),
         title: "Codex".into(),
         subtitle: Some("Turn 0187 · Completed".into()),
         body: "**🤖 Codex**\n\n> Updated **README.md**:\n>\n> - Preserved [the link](https://example.com)."
@@ -836,6 +839,7 @@ async fn write_json_response(stream: &mut TcpStream, body: &str) {
 #[test]
 fn background_turns_have_a_distinct_marker_and_preserve_quotes() {
     let mut view = OutboundView {
+        sections: Vec::new(),
         title: "Codex · Background task".into(),
         subtitle: Some("Background turn 12345678 · Completed".into()),
         body: "**🤖 Codex**\n\n> Completed **the task**.".into(),

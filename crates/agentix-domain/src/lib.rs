@@ -22,8 +22,8 @@ pub use agent::{
 pub use binding::{AttachOutcome, BindingTable, DeliveryClass, EventImportance};
 pub use channel::{
     ActionButton, ActionStyle, ChannelAdapter, ChannelCommand, ChannelError, CommandMenu,
-    InboundEnvelope, InboundPayload, MessageRef, OutboundView, OwnerClaimer, ViewStatus,
-    include_reply_context,
+    InboundEnvelope, InboundPayload, MessageRef, OutboundView, OwnerClaimer, ViewSection,
+    ViewStatus, include_reply_context,
 };
 pub use identity::{AgentKind, SessionKey, SessionRef};
 pub use message_center::MessageCenter;

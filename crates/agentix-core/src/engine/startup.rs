@@ -161,6 +161,7 @@ impl Engine {
             }
             let view = if status == RestoredBindingStatus::Offline {
                 OutboundView {
+                    sections: Vec::new(),
                     title: "Agentix serve".into(),
                     subtitle: Some("Online · Waiting for agent".into()),
                     body: format!(
@@ -173,6 +174,7 @@ impl Engine {
                 }
             } else if status == RestoredBindingStatus::Attached {
                 OutboundView {
+                    sections: Vec::new(),
                     title: "Agentix serve".into(),
                     subtitle: Some("Online · Reattached".into()),
                     body: format!(
@@ -185,6 +187,7 @@ impl Engine {
                 }
             } else {
                 OutboundView {
+                    sections: Vec::new(),
                     title: "Agentix serve".into(),
                     subtitle: Some("Online · Detached".into()),
                     body: format!(
@@ -286,6 +289,7 @@ impl Engine {
                 conversation,
                 turn_views,
                 offline_view: OutboundView {
+                    sections: Vec::new(),
                     title: "Agentix serve".into(),
                     subtitle: Some("Offline · Detached".into()),
                     body: format!(

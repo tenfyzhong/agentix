@@ -53,6 +53,7 @@ fn policy_accepts_only_owners_and_requires_group_mentions() {
 #[test]
 fn card_uses_v2_shared_schema_and_opaque_callback_tokens() {
     let view = OutboundView {
+        sections: Vec::new(),
         title: "Codex · 12345678".into(),
         subtitle: Some("Turn turn-7 · running".into()),
         body: "Compiling the workspace".into(),
@@ -103,6 +104,7 @@ async fn feishu_send_and_update_use_the_mock_openapi() {
     let adapter = FeishuAdapter::with_client(client, ["ou_owner"]);
     let conversation = ConversationRef::new(ChannelKind::Feishu, "oc_mock_chat");
     let initial = OutboundView {
+        sections: Vec::new(),
         title: "Approval".into(),
         subtitle: Some("Waiting".into()),
         body: "Allow **cargo test**?".into(),
@@ -468,6 +470,7 @@ async fn feishu_invalid_tenant_token_refreshes_all_outbound_mutations() {
     let adapter = FeishuAdapter::with_client(client, ["ou_owner"]);
     let conversation = ConversationRef::new(ChannelKind::Feishu, "oc_mock_chat");
     let actionable = OutboundView {
+        sections: Vec::new(),
         title: "Approval".into(),
         subtitle: None,
         body: "Allow?".into(),
@@ -1181,6 +1184,7 @@ async fn feishu_mock_long_connection_forwards_messages_and_card_actions() {
 #[test]
 fn background_turn_cards_use_supported_background_style_and_keep_actions() {
     let view = OutboundView {
+        sections: Vec::new(),
         title: "Codex · Background task".into(),
         subtitle: Some("Background turn 12345678 · Completed".into()),
         body: "**👤 You**\n\n> Run checks\n\n**🤖 Codex**\n\n> All checks passed".into(),
@@ -1450,4 +1454,41 @@ async fn identity_tracks_feishu_app_not_secret() {
     }
     let other = FeishuAdapter::new("app-b", "secret", ["owner"]).unwrap();
     assert_eq!(other.identity().await.unwrap().as_deref(), Some("app-b"));
+}
+
+#[test]
+fn turn_sections_render_as_independent_collapsible_process_panels() {
+    let sections = serde_json::json!([
+        {"title":"👤 You", "body":"Question\n🧠 Reasoning is user text", "collapsible":false},
+        {"title":"🧠 Reasoning", "body":"I will check\nFirst thought", "collapsible":true},
+        {"title":"🔨 Tool Call", "body":"commandExecution\nFirst result", "collapsible":true},
+        {"title":"🧠 Reasoning", "body":"Second thought", "collapsible":true},
+        {"title":"🔨 Tool Call", "body":"Second result", "collapsible":true},
+        {"title":"🤖 Codex", "body":"Final answer", "collapsible":false}
+    ]);
+    let view: OutboundView = serde_json::from_value(serde_json::json!({
+        "title":"Codex", "subtitle":null, "body":"Text fallback", "status":"success",
+        "actions":[], "sections":sections
+    }))
+    .unwrap();
+    let card = serde_json::to_value(render_card(&view).unwrap().card()).unwrap();
+    let elements = card["body"]["elements"].as_array().unwrap();
+    assert_eq!(elements.len(), 6);
+    for (index, section) in sections.as_array().unwrap().iter().enumerate() {
+        let element = &elements[index];
+        if section["collapsible"] == true {
+            assert_eq!(element["tag"], "collapsible_panel");
+            assert_eq!(element["expanded"], false);
+            assert_eq!(element["header"]["title"]["content"], section["title"]);
+            assert_eq!(element["elements"][0]["content"], section["body"]);
+        } else {
+            assert_eq!(element["tag"], "markdown");
+            assert!(
+                element["content"]
+                    .as_str()
+                    .unwrap()
+                    .contains(section["body"].as_str().unwrap())
+            );
+        }
+    }
 }

@@ -32,6 +32,21 @@ impl Engine {
                 )
                 .await?;
             }
+            AgentEvent::ItemStarted {
+                turn_id,
+                item_id,
+                kind,
+                ..
+            } if kind == "commentary" => {
+                self.restore_cold_turn(&session_id, &turn_id).await?;
+                self.turns
+                    .buffers
+                    .lock()
+                    .await
+                    .entry((session_id, turn_id))
+                    .or_default()
+                    .record_output(Some(&item_id), "", true, false);
+            }
             AgentEvent::ItemCompleted { turn_id, item, .. } => {
                 self.handle_completed_item(&conversation, &session_id, &turn_id, &item, delivery)
                     .await?;
@@ -223,6 +238,7 @@ impl Engine {
             self.send_view(
                 &conversation,
                 &OutboundView {
+                    sections: Vec::new(),
                     title: format!("{} · {session_label}", self.agent.display_name()),
                     subtitle: Some(format!(
                         "Background turn {} · {}",
@@ -286,7 +302,17 @@ impl Engine {
         let mut buffers = self.turns.buffers.lock().await;
         let buffer = buffers.entry(key).or_default();
         buffer.ensure_started();
-        buffer.record_output(Some(item_id), delta, false, true);
+        let commentary = buffer
+            .output_items
+            .iter()
+            .any(|item| item.id.as_deref() == Some(item_id) && item.process);
+        if commentary {
+            if self.output.show_reasoning {
+                buffer.append_commentary(item_id, delta);
+            }
+        } else {
+            buffer.record_output(Some(item_id), delta, false, true);
+        }
         drop(buffers);
         self.render_turn(conversation, session_id, turn_id, delivery, false)
             .await?;
@@ -520,6 +546,7 @@ impl Engine {
             .send_view(
                 &conversation,
                 &OutboundView {
+                    sections: Vec::new(),
                     title: format!("{} session resumed", self.agent.display_name()),
                     subtitle: Some("Automatically reattached".into()),
                     body: format!(
@@ -601,6 +628,7 @@ impl Engine {
         self.send_view(
             conversation,
             &OutboundView {
+                sections: Vec::new(),
                 title: format!("{} session exited", self.agent.display_name()),
                 subtitle: Some("Automatically detached".into()),
                 body: format!(
@@ -622,7 +650,11 @@ impl Engine {
         item: &ItemSummary,
     ) -> bool {
         let process = self.output.process_text(item);
-        if !matches!(item.kind.as_str(), "agentMessage" | "userMessage") && process.is_none() {
+        if !matches!(
+            item.kind.as_str(),
+            "agentMessage" | "userMessage" | "commentary"
+        ) && process.is_none()
+        {
             return false;
         }
         let mut buffers = self.turns.buffers.lock().await;
@@ -635,6 +667,12 @@ impl Engine {
                 Some(&item.id),
                 item.text.as_deref().unwrap_or_default(),
                 false,
+                false,
+            ),
+            "commentary" => buffer.record_output(
+                Some(&item.id),
+                process.as_deref().unwrap_or_default(),
+                true,
                 false,
             ),
             "userMessage" => buffer.user_text = item.text.clone().unwrap_or_default(),

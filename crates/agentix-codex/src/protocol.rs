@@ -276,11 +276,7 @@ fn decode_notification(method: &str, params: &Value) -> Result<ServerMessage, Pr
                 session_id: required_string(params, method, "threadId")?,
                 turn_id: required_string(params, method, "turnId")?,
                 item_id: required_string(item, method, "id")?,
-                kind: item
-                    .get("type")
-                    .and_then(Value::as_str)
-                    .unwrap_or("unknown")
-                    .to_owned(),
+                kind: item_kind(item).to_owned(),
                 label: item_label(item),
             }
         }
@@ -357,14 +353,19 @@ pub(crate) fn parse_turn_status(value: Option<&str>) -> TurnStatus {
     }
 }
 
+fn item_kind(item: &Value) -> &str {
+    let kind = item["type"].as_str().unwrap_or("unknown");
+    if kind == "agentMessage" && item["phase"].as_str() == Some("commentary") {
+        "commentary"
+    } else {
+        kind
+    }
+}
+
 pub(crate) fn item_summary(item: &Value, method: &str) -> Result<ItemSummary, ProtocolError> {
-    let kind = item
-        .get("type")
-        .and_then(Value::as_str)
-        .unwrap_or("unknown")
-        .to_owned();
+    let kind = item_kind(item).to_owned();
     let text = match kind.as_str() {
-        "agentMessage" | "plan" => item
+        "agentMessage" | "commentary" | "plan" => item
             .get("text")
             .or_else(|| item.get("content"))
             .and_then(Value::as_str)

@@ -156,3 +156,35 @@ fn stdio_endpoint_is_distinct_from_unix_default() {
     );
     assert!(CodexEndpoint::parse("stdio://extra").is_err());
 }
+
+#[test]
+fn commentary_phase_is_distinct_from_the_final_answer() {
+    for method in ["item/started", "item/completed"] {
+        for (phase, expected) in [
+            ("commentary", "commentary"),
+            ("final_answer", "agentMessage"),
+        ] {
+            let message = decode_server_frame(&json!({
+                "method": method,
+                "params": {"threadId": "s", "turnId": "t", "item": {
+                    "id": "a", "type": "agentMessage", "phase": phase,
+                    "text": "I will check the card implementation."
+                }}
+            }))
+            .unwrap();
+            match message {
+                ServerMessage::Event(AgentEvent::ItemStarted { kind, .. }) => {
+                    assert_eq!(kind, expected);
+                }
+                ServerMessage::Event(AgentEvent::ItemCompleted { item, .. }) => {
+                    assert_eq!(item.kind, expected);
+                    assert_eq!(
+                        item.text.as_deref(),
+                        Some("I will check the card implementation.")
+                    );
+                }
+                other => panic!("unexpected event: {other:?}"),
+            }
+        }
+    }
+}
