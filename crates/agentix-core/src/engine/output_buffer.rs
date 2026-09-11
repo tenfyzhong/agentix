@@ -39,6 +39,14 @@ impl TurnBuffer {
                         .to_owned(),
                 )
             };
+            if let Some(previous) = sections.last_mut()
+                && previous.collapsible
+                && previous.title == title
+            {
+                previous.body.push_str("\n\n");
+                previous.body.push_str(&body);
+                continue;
+            }
             sections.push(ViewSection {
                 title: title.into(),
                 body,
@@ -102,17 +110,35 @@ impl TurnBuffer {
             return self.agent_text.clone();
         }
         let has_process = self.output_items.iter().any(|item| item.process);
-        self.output_items
+        let mut output = String::new();
+        let mut previous_process = None;
+        for item in self
+            .output_items
             .iter()
             .filter(|item| !item.text.is_empty())
-            .map(|item| {
-                if has_process && !item.process {
-                    format!("**Output**\n\n{}", item.text)
-                } else {
-                    item.text.clone()
+        {
+            let process = item
+                .process
+                .then(|| item.text.starts_with("**Reasoning**\n\n"));
+            if process.is_some() && process == previous_process {
+                output.push_str("\n\n");
+                output.push_str(
+                    item.text
+                        .strip_prefix("**Reasoning**\n\n")
+                        .or_else(|| item.text.strip_prefix("**Tool call**: "))
+                        .unwrap_or(&item.text),
+                );
+            } else {
+                if !output.is_empty() {
+                    output.push_str("\n\n\n");
                 }
-            })
-            .collect::<Vec<_>>()
-            .join("\n\n\n")
+                if has_process && !item.process {
+                    output.push_str("**Output**\n\n");
+                }
+                output.push_str(&item.text);
+            }
+            previous_process = process;
+        }
+        output
     }
 }

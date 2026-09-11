@@ -559,6 +559,87 @@ async fn configured_process_output_survives_final_answer_and_deduplicates_items(
 }
 
 #[tokio::test]
+async fn consecutive_process_blocks_merge_and_survive_updates_and_cold_storage() {
+    for structured in [false, true] {
+        let engine = Engine::new(
+            Arc::new(UnusedAgent),
+            SqliteState::in_memory().await.unwrap(),
+            vec![],
+        )
+        .with_output(crate::OutputConfig {
+            show_reasoning: true,
+            show_tool_calls: true,
+        });
+        let session = SessionId::new("consecutive");
+        for (id, kind, text) in [
+            ("r1", "reasoning", "First thought"),
+            ("r2", "commentary", "Next thought"),
+            ("t1", "commandExecution", "First command"),
+            ("t2", "fileChange", "Pending change"),
+            ("r3", "thinking", "Last thought"),
+            ("t3", "commandExecution", "Last command"),
+            ("a", "agentMessage", "Final answer"),
+            ("t2", "fileChange", "Updated change"),
+            ("t2", "fileChange", "Updated change"),
+        ] {
+            engine
+                .apply_completed_item(
+                    &session,
+                    "turn",
+                    &crate::ItemSummary {
+                        id: id.into(),
+                        kind: kind.into(),
+                        text: Some(text.into()),
+                        status: Some("completed".into()),
+                    },
+                )
+                .await;
+        }
+        for restored in [false, true] {
+            if restored {
+                engine.archive_turn(&session, "turn").await.unwrap();
+                engine.restore_cold_turn(&session, "turn").await.unwrap();
+            }
+            let buffers = engine.turns.buffers.lock().await;
+            let buffer = &buffers[&(session.clone(), "turn".into())];
+            if structured {
+                let sections = buffer.view_sections("Test");
+                assert_eq!(
+                    sections
+                        .iter()
+                        .map(|s| s.title.as_str())
+                        .collect::<Vec<_>>(),
+                    [
+                        "🧠 Reasoning",
+                        "🔨 Tool Call",
+                        "🧠 Reasoning",
+                        "🔨 Tool Call",
+                        "🤖 Test"
+                    ]
+                );
+                assert_eq!(sections[0].body, "First thought\n\nNext thought");
+                assert_eq!(
+                    sections[1].body,
+                    "commandExecution (completed)\n\nFirst command\n\nfileChange (completed)\n\nUpdated change"
+                );
+                assert_eq!(sections[4].body, "Final answer");
+            } else {
+                let output = buffer.render_output();
+                assert_eq!(output.matches("**Reasoning**").count(), 2, "{output}");
+                assert_eq!(output.matches("**Tool call**").count(), 2, "{output}");
+                assert!(output.contains("First thought\n\nNext thought"));
+                assert!(
+                    output.contains("First command\n\nfileChange (completed)\n\nUpdated change")
+                );
+                assert_eq!(output.matches("Updated change").count(), 1);
+                assert!(!output.contains("Pending change"));
+                assert!(output.ends_with("**Output**\n\nFinal answer"));
+            }
+        }
+    }
+}
+
+#[tokio::test]
 async fn interleaved_process_and_output_blocks_survive_updates_and_cold_storage() {
     let engine = Engine::new(
         Arc::new(UnusedAgent),

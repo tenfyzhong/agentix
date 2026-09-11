@@ -11,6 +11,7 @@ structured process output changes.
 | Reasoning start labels, process visibility policy | `agentix-core/src/output.rs::tests` |
 | Commentary/final answer classification, null and unknown phase compatibility | `agentix-codex/tests/protocol.rs` |
 | Multiline interleaving, duplicate item completion, final answer retention, errors | `agentix-core/src/engine/render_tests.rs` |
+| Consecutive reasoning/tool grouping in cards and Markdown, item updates, duplicate completion, cold restore | `consecutive_process_blocks_merge_and_survive_updates_and_cold_storage` |
 | Structured sections under all four reasoning/tool visibility combinations | `configured_process_output_survives_final_answer_and_deduplicates_items` |
 | Streamed commentary, late completion classification, repeated start events, cold restore | Commentary tests in `render_tests.rs` |
 | You/Agent single-newline spacing, alternating collapsed process panels | `turn_sections_render_as_independent_collapsible_process_panels` |
