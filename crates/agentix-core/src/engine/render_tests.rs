@@ -519,6 +519,17 @@ async fn configured_process_output_survives_final_answer_and_deduplicates_items(
             &buffers[&(session, "turn".into())],
             DeliveryClass::Live,
         );
+        let sections = buffers.values().next().unwrap().view_sections("Test");
+        assert_eq!(
+            sections.len(),
+            1 + usize::from(reasoning) + usize::from(tools)
+        );
+        assert_eq!(sections.last().unwrap().body, "Final answer");
+        assert_eq!(
+            sections.iter().any(|s| s.title == "🧠 Reasoning"),
+            reasoning
+        );
+        assert_eq!(sections.iter().any(|s| s.title == "🔨 Tool Call"), tools);
         assert_eq!(body.contains("Consider options"), reasoning);
         assert_eq!(body.contains("cargo test"), tools);
         assert!(body.contains("Final answer"));
@@ -830,5 +841,142 @@ async fn commentary_deltas_remain_in_reasoning_and_obey_visibility() {
         if visible {
             assert_eq!(sections[0].body, "I will check.");
         }
+    }
+}
+
+#[tokio::test]
+async fn repeated_commentary_start_preserves_streamed_and_completed_content() {
+    let engine = Engine::new(
+        Arc::new(UnusedAgent),
+        SqliteState::in_memory().await.unwrap(),
+        vec![Arc::new(CompletedTurnChannel::default())],
+    )
+    .with_output(crate::OutputConfig {
+        show_reasoning: true,
+        show_tool_calls: true,
+    });
+    let session = SessionId::new("repeat");
+    let conversation = ConversationRef::new(ChannelKind::Telegram, "chat");
+    for completed in [false, true] {
+        engine
+            .handle_routed_event(
+                conversation.clone(),
+                session.clone(),
+                AgentEvent::ItemStarted {
+                    session_id: session.to_string(),
+                    turn_id: "turn".into(),
+                    item_id: "c".into(),
+                    kind: "commentary".into(),
+                    label: "agentMessage".into(),
+                },
+                DeliveryClass::Live,
+            )
+            .await
+            .unwrap();
+        if completed {
+            engine
+                .apply_completed_item(
+                    &session,
+                    "turn",
+                    &crate::ItemSummary {
+                        id: "c".into(),
+                        kind: "commentary".into(),
+                        text: Some("I will check.".into()),
+                        status: None,
+                    },
+                )
+                .await;
+        } else {
+            engine
+                .handle_message_delta(
+                    &conversation,
+                    &session,
+                    "turn",
+                    "c",
+                    "I will check.",
+                    DeliveryClass::Live,
+                )
+                .await
+                .unwrap();
+        }
+        engine
+            .handle_routed_event(
+                conversation.clone(),
+                session.clone(),
+                AgentEvent::ItemStarted {
+                    session_id: session.to_string(),
+                    turn_id: "turn".into(),
+                    item_id: "c".into(),
+                    kind: "commentary".into(),
+                    label: "agentMessage".into(),
+                },
+                DeliveryClass::Live,
+            )
+            .await
+            .unwrap();
+        let buffers = engine.turns.buffers.lock().await;
+        let sections = buffers[&(session.clone(), "turn".into())].view_sections("Codex");
+        assert_eq!(sections.len(), 1);
+        assert_eq!(sections[0].title, "🧠 Reasoning");
+        assert_eq!(sections[0].body, "I will check.");
+    }
+}
+
+#[tokio::test]
+async fn late_commentary_classification_replaces_output_and_survives_cold_restore() {
+    for visible in [false, true] {
+        let engine = Engine::new(
+            Arc::new(UnusedAgent),
+            SqliteState::in_memory().await.unwrap(),
+            vec![Arc::new(CompletedTurnChannel::default())],
+        )
+        .with_output(crate::OutputConfig {
+            show_reasoning: visible,
+            show_tool_calls: true,
+        });
+        let session = SessionId::new("late-phase");
+        let conversation = ConversationRef::new(ChannelKind::Telegram, "chat");
+        engine
+            .handle_message_delta(
+                &conversation,
+                &session,
+                "turn",
+                "c",
+                "Checking",
+                DeliveryClass::Live,
+            )
+            .await
+            .unwrap();
+        for (id, kind, text) in [
+            ("c", "commentary", "Checking"),
+            ("a", "agentMessage", "Answer"),
+            ("c", "commentary", "Checking"),
+        ] {
+            engine
+                .apply_completed_item(
+                    &session,
+                    "turn",
+                    &crate::ItemSummary {
+                        id: id.into(),
+                        kind: kind.into(),
+                        text: Some(text.into()),
+                        status: None,
+                    },
+                )
+                .await;
+        }
+        let before = engine.turns.buffers.lock().await[&(session.clone(), "turn".into())]
+            .view_sections("Codex");
+        assert_eq!(before.len(), 1 + usize::from(visible));
+        assert_eq!(before.last().unwrap().body, "Answer");
+        if visible {
+            assert_eq!(before[0].body, "Checking");
+        }
+        engine.archive_turn(&session, "turn").await.unwrap();
+        engine.restore_cold_turn(&session, "turn").await.unwrap();
+        assert_eq!(
+            engine.turns.buffers.lock().await[&(session, "turn".into())].view_sections("Codex"),
+            before
+        );
     }
 }

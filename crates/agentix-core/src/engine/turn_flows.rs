@@ -39,13 +39,15 @@ impl Engine {
                 ..
             } if kind == "commentary" => {
                 self.restore_cold_turn(&session_id, &turn_id).await?;
-                self.turns
-                    .buffers
-                    .lock()
-                    .await
-                    .entry((session_id, turn_id))
-                    .or_default()
-                    .record_output(Some(&item_id), "", true, false);
+                let mut buffers = self.turns.buffers.lock().await;
+                let buffer = buffers.entry((session_id, turn_id)).or_default();
+                if !buffer
+                    .output_items
+                    .iter()
+                    .any(|item| item.id.as_deref() == Some(&item_id))
+                {
+                    buffer.record_output(Some(&item_id), "", true, false);
+                }
             }
             AgentEvent::ItemCompleted { turn_id, item, .. } => {
                 self.handle_completed_item(&conversation, &session_id, &turn_id, &item, delivery)

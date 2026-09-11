@@ -1494,3 +1494,142 @@ fn turn_sections_render_as_independent_collapsible_process_panels() {
         }
     }
 }
+
+fn process_view() -> OutboundView {
+    let mut view = OutboundView::text("Codex", "Fallback");
+    view.sections = vec![
+        agentix_domain::ViewSection {
+            title: "👤 You".into(),
+            body: "Question".into(),
+            collapsible: false,
+        },
+        agentix_domain::ViewSection {
+            title: "🧠 Reasoning".into(),
+            body: "Checking".into(),
+            collapsible: true,
+        },
+        agentix_domain::ViewSection {
+            title: "🔨 Tool Call".into(),
+            body: "cargo test".into(),
+            collapsible: true,
+        },
+    ];
+    view.actions.push(ActionButton {
+        label: "Cancel".into(),
+        token: "cancel-token".into(),
+        style: ActionStyle::Primary,
+    });
+    view
+}
+
+#[tokio::test]
+async fn structured_cards_survive_send_update_and_action_disabling() {
+    let server = MockFeishuApi::start().await;
+    let client = LarkClient::builder("mock-app", "mock-secret")
+        .base_url(server.base_url())
+        .max_retries(1)
+        .build()
+        .unwrap();
+    let adapter = FeishuAdapter::with_client(client, ["ou_owner"]);
+    let conversation = ConversationRef::new(ChannelKind::Feishu, "oc_mock_chat");
+    let mut view = process_view();
+    let message = adapter.send(&conversation, &view).await.unwrap();
+    view.sections.push(agentix_domain::ViewSection {
+        title: "🤖 Codex".into(),
+        body: "Answer".into(),
+        collapsible: false,
+    });
+    adapter
+        .update(&conversation, &message, &view)
+        .await
+        .unwrap();
+    adapter.disable_actions(&message).await.unwrap();
+    let requests = server.requests().await;
+    let cards: Vec<serde_json::Value> = requests
+        .iter()
+        .skip(1)
+        .map(|request| {
+            let body: serde_json::Value = serde_json::from_str(&request.body).unwrap();
+            serde_json::from_str(body["content"].as_str().unwrap()).unwrap()
+        })
+        .collect();
+    assert_eq!(cards.len(), 3);
+    for card in &cards[1..] {
+        for index in 0..3 {
+            assert_eq!(
+                card["body"]["elements"][index],
+                cards[0]["body"]["elements"][index]
+            );
+        }
+        assert_eq!(
+            card["body"]["elements"][3]["content"],
+            "**🤖 Codex**\nAnswer"
+        );
+    }
+    assert_eq!(cards[2]["body"]["elements"][4]["disabled"], true);
+    assert_eq!(
+        cards[1]["body"]["elements"][4]["behaviors"][0]["value"]["token"],
+        "cancel-token"
+    );
+}
+
+#[test]
+fn background_sections_keep_panels_and_actions() {
+    let mut view = process_view();
+    view.status = ViewStatus::Background;
+    let card = serde_json::to_value(render_card(&view).unwrap().card()).unwrap();
+    let quote = &card["body"]["elements"][0]["columns"][0];
+    assert_eq!(quote["background_style"], "grey");
+    assert_eq!(quote["elements"][1]["tag"], "collapsible_panel");
+    assert_eq!(quote["elements"][1]["expanded"], false);
+    assert_eq!(quote["elements"][2]["elements"][0]["content"], "cargo test");
+    assert_eq!(card["body"]["elements"][1]["tag"], "button");
+}
+
+#[test]
+fn long_unicode_sections_and_many_panels_retain_the_final_answer() {
+    for count in [1, 40] {
+        let mut view = OutboundView::text("Codex", "Fallback");
+        for index in 0..count {
+            view.sections.push(agentix_domain::ViewSection {
+                title: format!("🧠 Reasoning {index}"),
+                body: "中文🧠\n".repeat(10_000),
+                collapsible: true,
+            });
+        }
+        view.sections.push(agentix_domain::ViewSection {
+            title: "🤖 Codex".into(),
+            body: "Final answer".into(),
+            collapsible: false,
+        });
+        let card = serde_json::to_value(render_card(&view).unwrap().card()).unwrap();
+        let elements = card["body"]["elements"].as_array().unwrap();
+        assert_eq!(elements.len(), count + 1);
+        let mut ids = std::collections::HashSet::new();
+        for element in &elements[..count] {
+            assert!(ids.insert(element["element_id"].as_str().unwrap()));
+            let text = element["elements"][0]["content"].as_str().unwrap();
+            assert!(text.starts_with("中文🧠\n"));
+            assert!(text.ends_with('…'));
+            assert!(!text.contains('\u{fffd}'));
+        }
+        assert_eq!(
+            elements.last().unwrap()["content"],
+            "**🤖 Codex**\nFinal answer"
+        );
+        assert!(serde_json::to_string(&card).unwrap().len() < 100_000);
+    }
+}
+
+#[test]
+fn legacy_views_without_sections_still_render_plain_markdown() {
+    let view: OutboundView = serde_json::from_value(serde_json::json!({
+        "title":"Legacy", "subtitle":null, "body":"**Reasoning**\n\nLiteral text",
+        "status":"success", "actions":[]
+    }))
+    .unwrap();
+    assert!(view.sections.is_empty());
+    let card = serde_json::to_value(render_card(&view).unwrap().card()).unwrap();
+    assert_eq!(card["body"]["elements"][0]["content"], view.body);
+    assert_eq!(card["body"]["elements"].as_array().unwrap().len(), 1);
+}
