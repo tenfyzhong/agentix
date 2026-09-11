@@ -32,6 +32,14 @@ complete -c agentix -n "__fish_agentix_needs_command" -f -a "doctor" -d 'Validat
 complete -c agentix -n "__fish_agentix_needs_command" -f -a "client" -d 'Use the running Agentix server for local diagnostics and setup'
 complete -c agentix -n "__fish_agentix_needs_command" -f -a "completions" -d 'Print a shell completion script to stdout'
 complete -c agentix -n "__fish_agentix_needs_command" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c agentix -n "__fish_agentix_using_subcommand serve" -l ws-auth -d 'Authentication for the Codex proxy WebSocket listener' -r -f -a "capability-token\t''
+signed-bearer-token\t''"
+complete -c agentix -n "__fish_agentix_using_subcommand serve" -l ws-token-file -d 'Absolute path to the capability-token file' -r -F
+complete -c agentix -n "__fish_agentix_using_subcommand serve" -l ws-token-sha256 -d 'SHA-256 verifier for the capability token (64 hex digits)' -r
+complete -c agentix -n "__fish_agentix_using_subcommand serve" -l ws-shared-secret-file -d 'Absolute path to the HS256 JWT shared-secret file (at least 32 bytes)' -r -F
+complete -c agentix -n "__fish_agentix_using_subcommand serve" -l ws-issuer -r
+complete -c agentix -n "__fish_agentix_using_subcommand serve" -l ws-audience -r
+complete -c agentix -n "__fish_agentix_using_subcommand serve" -l ws-max-clock-skew-seconds -d 'JWT validation clock tolerance; defaults to 30 seconds' -r
 complete -c agentix -n "__fish_agentix_using_subcommand serve" -s h -l help -d 'Print help'
 complete -c agentix -n "__fish_agentix_using_subcommand doctor" -s h -l help -d 'Print help'
 complete -c agentix -n "__fish_agentix_using_subcommand client; and not __fish_seen_subcommand_from claim sessions send stop history command call help" -s h -l help -d 'Print help'

@@ -49,7 +49,10 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum CliCommand {
     /// Run the Agentix bridge until interrupted.
-    Serve,
+    Serve {
+        #[command(flatten)]
+        proxy: agentix_codex::ProxyOptions,
+    },
     /// Validate configuration, credentials, and the selected agent transport.
     Doctor,
     /// Use the running Agentix server for local diagnostics and setup.
@@ -124,10 +127,13 @@ async fn main() -> Result<()> {
         );
         return Ok(());
     }
-    let config = Config::load(&config_path)?;
+    let mut config = Config::load(&config_path)?;
     let _log_guard = init_logging(&config.logging)?;
     match command {
-        CliCommand::Serve => serve(config, &config_path).await,
+        CliCommand::Serve { proxy } => {
+            config.apply_codex_proxy_options(&proxy)?;
+            serve(config, &config_path).await
+        }
         CliCommand::Doctor => doctor(&config).await,
         CliCommand::Client { command } => client(&config.server.endpoint, command).await,
         CliCommand::Completions { .. } => {
@@ -306,6 +312,14 @@ async fn build_task_board(config: &Config) -> Result<Option<Arc<agentix_task::Se
     Ok(service)
 }
 
+fn retryable_backend_error(error: anyhow::Error) -> Result<anyhow::Error> {
+    if agentix_codex::is_fatal_startup_error(&error) {
+        tracing::error!(%error, "Codex proxy_endpoint startup failed; exiting");
+        return Err(error);
+    }
+    Ok(error)
+}
+
 async fn serve(config: Config, config_path: &Path) -> Result<()> {
     let started = Instant::now();
     let bridge_hub = if config
@@ -329,6 +343,7 @@ async fn serve(config: Config, config_path: &Path) -> Result<()> {
         {
             Ok(built) => built,
             Err(error) => {
+                let error = retryable_backend_error(error)?;
                 tracing::warn!(%error, backend = agent.kind().as_str(), "backend startup failed; continuing with retries");
                 let retry = agent.clone();
                 let bridge_hub = bridge_hub.clone();
@@ -587,6 +602,8 @@ async fn doctor(config: &Config) -> Result<()> {
             }
             AgentConfig::Codex {
                 endpoint,
+                proxy_endpoint: _,
+                proxy: _,
                 command,
                 rmux_directory,
             } => {
@@ -669,15 +686,19 @@ async fn build_agent(
         }),
         AgentConfig::Codex {
             endpoint,
+            proxy_endpoint,
+            proxy,
             command,
             rmux_directory,
         } => {
             let endpoint = CodexEndpoint::parse(endpoint)?;
-            let client = CodexClient::connect_with_background_turn_notifications(
+            let client = CodexClient::connect_with_proxy_options(
+                proxy_endpoint,
                 endpoint,
                 command,
                 rmux_directory,
                 background_turn_notifications,
+                proxy,
             )
             .await?;
             Ok(BuiltAgent {

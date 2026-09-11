@@ -7,7 +7,7 @@ use support::{MockCodexAppServer, MockThread, MockTurn};
 
 #[tokio::test]
 async fn managed_session_matching_excludes_subagents_before_assigning_terminal_slots() {
-    use crate::process::{DaemonClient, RunningProcessSnapshot};
+    use crate::process::{DaemonClient, RunningProcessSnapshot, resolve_running_sessions};
 
     for source in [
         json!({"subAgent": {"thread_spawn": {"parent_thread_id": "parent", "depth": 1}}}),
@@ -197,4 +197,147 @@ async fn detaching_an_observed_session_clears_all_lifecycle_tracking() {
             .iter()
             .any(|m| m == "thread/unsubscribe")
     );
+}
+
+#[tokio::test]
+async fn final_client_drop_releases_background_tasks_and_upstream_state() {
+    for proxied in [false, true] {
+        let server = MockCodexAppServer::start();
+        let directory = tempfile::tempdir().unwrap();
+        let client = if proxied {
+            CodexClient::connect_with_proxy(
+                &format!("unix://{}", directory.path().join("proxy.sock").display()),
+                server.endpoint(),
+                Path::new("must-not-launch"),
+                directory.path(),
+                false,
+            )
+            .await
+            .unwrap()
+        } else {
+            CodexClient::connect(server.endpoint()).await.unwrap()
+        };
+        let writer = Arc::downgrade(&client.writer);
+        let pending = Arc::downgrade(&client.pending);
+        let clone = client.clone();
+        drop(client);
+        clone
+            .request("thread/loaded/list", json!({}))
+            .await
+            .unwrap();
+        assert!(writer.upgrade().is_some());
+        drop(clone);
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while writer.upgrade().is_some() || pending.upgrade().is_some() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("background reader/monitor retained the dropped client's upstream state");
+        if proxied {
+            assert!(!directory.path().join("proxy.sock").exists());
+        }
+    }
+}
+
+#[tokio::test]
+async fn managed_proxy_tracks_same_directory_clients_and_releases_its_runtime() {
+    for listen_ws in [false, true] {
+        let server = MockCodexAppServer::start();
+        for id in ["a", "b"] {
+            server.add_thread(MockThread::new(id, id, "/same")).await;
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let listen = if listen_ws {
+            "ws://127.0.0.1:0".to_owned()
+        } else {
+            format!("unix://{}", directory.path().join("proxy.sock").display())
+        };
+        let client = CodexClient::connect_with_proxy(
+            &listen,
+            server.endpoint(),
+            Path::new("must-not-launch"),
+            directory.path(),
+            false,
+        )
+        .await
+        .unwrap();
+        let endpoint = client.runtime.as_ref().unwrap().proxy.endpoint().to_owned();
+        let registry = client.registry.as_ref().unwrap().clone();
+        assert!(
+            client
+                .list_sessions(None, 25)
+                .await
+                .unwrap()
+                .sessions
+                .is_empty()
+        );
+        let mut clients = Vec::new();
+        for id in ["a", "b"] {
+            let mut socket = crate::proxy::open_socket(&endpoint).await.unwrap();
+            socket
+                .send(Message::text(
+                    json!({
+                        "id": 1, "method": "thread/resume", "params": {"threadId": id, "excludeTurns": true}
+                    })
+                    .to_string(),
+                ))
+                .await
+                .unwrap();
+            loop {
+                let message = socket.next().await.unwrap().unwrap();
+                let value: Value = serde_json::from_str(message.to_text().unwrap()).unwrap();
+                if value["id"] == 1 {
+                    assert_eq!(value["result"]["thread"]["id"], id, "{value}");
+                    break;
+                }
+            }
+            clients.push(socket);
+        }
+        assert_eq!(
+            client.list_sessions(None, 25).await.unwrap().sessions.len(),
+            2
+        );
+        drop(clients.pop());
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while registry.snapshot().len() != 1 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        let page = client.list_sessions(None, 25).await.unwrap();
+        assert_eq!(page.sessions.len(), 1);
+        assert_eq!(page.sessions[0].id.as_str(), "a");
+        let loaded = client
+            .request("thread/loaded/list", json!({}))
+            .await
+            .unwrap();
+        assert!(loaded["data"].as_array().unwrap().contains(&json!("b")));
+        assert!(
+            AgentAdapter::attach(&client, &SessionId::new("b"))
+                .await
+                .is_err()
+        );
+        drop(client);
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !registry.snapshot().is_empty() {
+                tokio::task::yield_now().await;
+            }
+            let remaining = clients[0].next().await;
+            assert!(remaining.is_none() || remaining.unwrap().is_err());
+            if !listen_ws {
+                while directory.path().join("proxy.sock").exists() {
+                    tokio::task::yield_now().await;
+                }
+            }
+        })
+        .await
+        .unwrap();
+        let direct = CodexClient::connect(server.endpoint()).await.unwrap();
+        direct
+            .request("thread/loaded/list", json!({}))
+            .await
+            .unwrap();
+    }
 }

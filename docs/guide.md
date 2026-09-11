@@ -160,8 +160,36 @@ For Codex, keep the standalone binary path explicit:
 ```toml
 [agent.codex]
 command = "~/.codex/packages/standalone/current/codex"
-endpoint = "unix://"
+proxy_endpoint = "unix://~/.codex/app-server-control/app-server-control.sock"
+endpoint = "unix://~/.codex/app-server-control/app-server-control-upstream.sock"
 ```
+
+Agentix owns `proxy_endpoint` and forwards each client to `endpoint` (the upstream). Both settings are optional; the defaults use the paths above, respecting `CODEX_HOME`. Agentix starts a missing local upstream with `codex app-server --listen ENDPOINT`. Its own requests and notifications connect directly to that upstream. A successfully started upstream survives Agentix shutdown; its socket is preserved. Agentix cleans only its own proxy socket on graceful exit. Existing upstreams are reused on restart. OS adoption of the orphaned process does not provide automatic crash restart.
+
+Start Agentix first, then connect terminals with `codex --remote unix://`. For a custom proxy, pass its exact address to `--remote`. Existing clients that bypass the proxy are not registered; reconnect them through the proxy. If the old Codex daemon occupies the default proxy socket, stop it before migration or choose another proxy path. Agentix never removes an existing listener to take its place.
+
+Unix and `ws://HOST:PORT` support separate connections for multiple clients. `proxy_endpoint = "stdio://"` accepts one newline-delimited JSON client on Agentix's stdin/stdout; its upstream must still be Unix or WS. Standard I/O is not a discoverable shared listener. Unix peer credentials provide the client PID. WS connections always leave PID unknown, including local connections. Stdio has no authenticated peer PID. Session registration still follows the connection in those cases.
+
+Sessions are registered from successful client `thread/start`, `thread/resume`, and `thread/fork` responses and removed on unsubscribe or connection close. `/sessions` reads this registry rather than matching working directories or listing every loaded app-server thread. `agentix client call agentix/clients` exposes connection IDs, client names, PIDs, and session IDs for diagnostics. Restarting the proxy closes its clients; they must reconnect to register again.
+
+For a WS proxy listening beyond loopback, authentication is mandatory. Configure the inbound proxy separately from the upstream:
+
+```toml
+[agent.codex.proxy]
+ws_auth = "capability-token"
+ws_token_file = "/absolute/path/codex-proxy.token"
+# Alternatively use ws_token_sha256 = "<64 hex digits>" instead of ws_token_file.
+```
+
+For signed bearer tokens, use `ws_auth = "signed-bearer-token"` with `ws_shared_secret_file` (at least 32 bytes after trimming), and optionally `ws_issuer`, `ws_audience`, and `ws_max_clock_skew_seconds` (default 30). Tokens must use HS256 with an integer `exp`; `nbf`, issuer, and audience are validated when present/configured. Token and secret file paths must be absolute after home expansion. Authentication files are loaded at startup; restart Agentix after rotation.
+
+`agentix serve` accepts the equivalent seven `--ws-...` flags; explicitly supplied flags override corresponding TOML fields. These options authenticate the proxy's inbound WebSocket handshake, not the upstream connection. They are invalid on Unix/stdio listeners. Capability token file and digest are mutually exclusive. Invalid configuration terminates startup. Missing or invalid credentials receive HTTP 401 before upstream connection; browser Origin headers receive HTTP 403.
+
+Native clients send the bearer through `codex --remote ws://HOST:PORT --remote-auth-token-env CODEX_PROXY_TOKEN`, with the token exported in that environment variable. For authenticated WS, configure the client environment/launcher accordingly; Agentix's rmux launcher does not distribute tokens. The proxy itself serves plaintext WS; use a trusted TLS terminator or SSH tunnel for encrypted remote access. Keep the shared upstream private; upstream bearer authentication is not configured by these flags.
+
+The CLI receives a successful WebSocket upgrade only after the upstream confirms it. Upstream HTTP rejections are forwarded; unavailable or invalid upstream connections return HTTP 502, and an upstream handshake exceeding ten seconds returns HTTP 504. Authentication failures still return 401/403 before opening an upstream connection. Handshake response writes have a ten-second deadline; HTTP rejections close as soon as their declared Content-Length or chunked body completes, without waiting for upstream keep-alive closure. These deadlines do not apply to established WebSocket traffic. IPv6 addresses are supported for both the proxy and internal upstream connections using bracketed URLs such as ws://[::1]:4500; an unavailable IPv6 loopback upstream can be started locally. WS URLs default to port 80, including an explicit :80. Proxy and upstream must refer to different Unix sockets even when their paths use directory aliases or symbolic links; collisions are rejected at startup. WS upstreams also cannot resolve to the proxy’s own TCP listener, even with a different URL path or hostname.
+
+The proxy does not send periodic Ping frames or disconnect clients for missing Pongs. It forwards Ping/Pong unchanged in both directions without responding locally. Neither endpoint gains proactive heartbeats from the proxy; see native Codex v0.154.0 [CLI](https://github.com/openai/codex/blob/rust-v0.154.0/codex-rs/app-server-client/src/remote.rs) and [app-server](https://github.com/openai/codex/blob/rust-v0.154.0/codex-rs/app-server-transport/src/transport/websocket.rs) direct WS behavior. Idle connections remain registered. Both Close frames are forwarded before the proxy shuts down and releases the two connections and clears their associations. EOF or a transport error also triggers cleanup; a network partition without such a signal has no guaranteed detection deadline. If message observation fails or exceeds its size limit, raw forwarding continues but session tracking in that direction stops until reconnection; cleanup then relies on transport termination. The proxy adds no closing timeout. The periodic registry reconciliation is not a network heartbeat. `stdio://` is a JSONL protocol adapter, so it has no frontend WS control frames; it still terminates upstream Ping/Pong locally. After upstream Close, its registration and upstream socket are released before queued stdout data drains. Pipe/terminal I/O is cancellable, so shutdown does not wait for an extra input byte.
 
 Fill in the actual credentials for the selected channel in `config.toml`:
 
@@ -190,12 +218,13 @@ See [Configuration and operations](development-and-operations.md) for backend de
 
 ### Start
 
-Validate the configuration, then start the bridge:
+Start Agentix:
 
 ```sh
-agentix doctor
 agentix serve
 ```
+
+With Codex, run `agentix doctor` from another terminal after startup, then connect the CLI with `codex --remote unix://`. The `proxy_endpoint` socket is reserved for Agentix: do not launch app-server on it. An occupied address causes an ERROR log and immediate nonzero exit. See [proxy setup and recovery](development-and-operations.md#codex).
 
 On Windows, use `agentix.exe doctor` and `agentix.exe serve`. A Homebrew installation can run in the background instead:
 
@@ -227,7 +256,7 @@ While `agentix serve` is running, Agentix checks running Codex sessions for comp
 
 Before a Codex session's first user message, background history reads may report that the thread is not materialized yet. Agentix logs this expected condition at debug level and keeps polling; other background read errors remain warnings.
 
-Attaching a session restores its latest turn with a Stop button when that turn is running and writable. If another Codex process owns the session's writer, Agentix connects read-only, restores the latest saved content, and checks for updates every ten seconds. With process discovery enabled, read-only attachments also report process exit and reappearance; reappearance preserves read-only access without acquiring the writer. Detaching stops their lifecycle monitoring. The menu keeps history and navigation commands; sending prompts and changing the session require the original Codex process. Session lists infer external-session activity from the latest saved turn when live status is unavailable. Other attachment failures show their reason and a fresh Retry attach action.
+Attaching a session restores its latest turn with a Stop button when that turn is running and writable. If another Codex process owns the session's writer, Agentix connects read-only, restores the latest saved content, and checks for updates every ten seconds. Proxy-backed attachments also follow client disconnection and reconnection; reappearance preserves read-only access without acquiring the writer. Detaching stops their lifecycle monitoring. The menu keeps history and navigation commands; sending prompts and changing the session require the original Codex process. Session lists infer external-session activity from the latest saved turn when live status is unavailable. Other attachment failures show their reason and a fresh Retry attach action.
 
 Only the current attached session's writable active turn message has Stop; switching sessions, moving the attachment to another conversation, detaching, or finishing the turn removes it from the previous message. Copies shown by `/history` never include Stop.
 

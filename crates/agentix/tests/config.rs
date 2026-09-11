@@ -360,6 +360,7 @@ owner_user_ids = [42]
         command,
         endpoint,
         rmux_directory,
+        ..
     } = config.agent.unwrap()
     else {
         panic!("expected Codex configuration");
@@ -960,4 +961,45 @@ fn process_output_switches_default_off_and_can_be_enabled_independently() {
         assert_eq!(config.output.show_reasoning, reasoning);
         assert_eq!(config.output.show_tool_calls, tools);
     }
+}
+
+#[test]
+fn codex_proxy_and_upstream_have_separate_configurable_endpoints() {
+    let base = "[channel]\nkind='telegram'\n[channel.telegram]\ntoken='test'\n[storage]\npath='/tmp/state'\n[agent]\nkind='codex'\n";
+    let AgentConfig::Codex {
+        endpoint,
+        proxy_endpoint,
+        ..
+    } = Config::from_toml(base).unwrap().agent.unwrap()
+    else {
+        panic!()
+    };
+    assert_eq!(proxy_endpoint, "unix://");
+    assert!(endpoint.ends_with("/app-server-control/app-server-control-upstream.sock"));
+    let AgentConfig::Codex {
+        endpoint,
+        proxy_endpoint,
+        ..
+    } = Config::from_toml(&format!(
+        "{base}endpoint='unix://~/upstream.sock'\nproxy_endpoint='ws://127.0.0.1:4501'\n"
+    ))
+    .unwrap()
+    .agent
+    .unwrap()
+    else {
+        panic!()
+    };
+    assert!(endpoint.ends_with("/upstream.sock"));
+    assert_eq!(proxy_endpoint, "ws://127.0.0.1:4501");
+}
+
+#[test]
+fn codex_proxy_authentication_configuration_is_owned_by_connection_layer() {
+    let text = "[channel]\nkind='telegram'\n[channel.telegram]\ntoken='test'\n[storage]\npath='/tmp/state'\n[agent.codex]\nproxy_endpoint='ws://0.0.0.0:9000'\n[agent.codex.proxy]\nws_auth='capability-token'\nws_token_file='~/token'\n";
+    let config = Config::from_toml(text).unwrap();
+    let AgentConfig::Codex { proxy, .. } = &config.selected_agents()[0] else {
+        panic!()
+    };
+    assert!(proxy.ws_token_file.as_ref().unwrap().is_absolute());
+    assert!(Config::from_toml(&text.replace("ws_token_file", "ws_typo")).is_err());
 }

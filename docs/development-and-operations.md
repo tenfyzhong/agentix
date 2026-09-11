@@ -56,29 +56,35 @@ The Codex adapter requires Codex CLI 0.153.0 or newer from OpenAI's official sta
 curl -fsSL https://chatgpt.com/codex/install.sh | sh
 ```
 
-The Homebrew package is not compatible with this integration because it does not install the managed standalone app-server layout. Configure `agent.command = "~/.codex/packages/standalone/current/codex"`; do not point Agentix at a Homebrew `codex` executable.
+The Homebrew package is not compatible with this integration because it does not install the managed standalone app-server layout. Configure `agent.codex.command = "~/.codex/packages/standalone/current/codex"`; do not point Agentix at a Homebrew `codex` executable.
 
-Agentix starts the managed daemon automatically when the default control socket is missing or refusing connections, waits for it to become ready, and then completes the app-server handshake. Verify the integration with:
+`agentix serve` first binds `[agent.codex].proxy_endpoint`, then connects to the shared upstream configured by `endpoint`. The defaults are `unix://~/.codex/app-server-control/app-server-control.sock` and `unix://~/.codex/app-server-control/app-server-control-upstream.sock`, respectively; omitted values honor `CODEX_HOME`.
+
+**The proxy endpoint belongs exclusively to Agentix. Do not start `codex app-server` on this address.** An existing listener, stale Unix socket, ordinary file, or occupied WS port makes `serve` log an ERROR and exit nonzero without retrying or deleting the existing path. If migrating from a daemon on the default address, stop it after active work finishes or select a different proxy endpoint. After an ungraceful Agentix exit, remove a residual proxy socket only after confirming no process is listening there. Agentix removes only its own unchanged socket on graceful shutdown.
+
+When a local upstream is missing or refuses connections, Agentix runs the configured `command` with `app-server --listen ENDPOINT` and waits for readiness. Custom Unix and loopback WS upstreams support automatic startup too; remote WS upstreams must already be running. The ready upstream survives Agentix exit, and its socket is preserved for reuse. Adoption by init does not provide automatic crash restart.
+
+Start `agentix serve`, then use another terminal:
 
 ```sh
-~/.codex/packages/standalone/current/codex --version
-~/.codex/packages/standalone/current/codex app-server daemon version
 agentix doctor
+codex --remote unix://
+agentix client call agentix/clients
 ```
 
-`endpoint = "unix://"` resolves to the current Codex home control socket. `command = "codex"` selects the executable used for `codex app-server daemon start`; it is resolved using the login shell PATH described below. An absolute or `~/...` path is also supported. A custom endpoint must resolve to an absolute Unix socket path, for example `unix://~/.codex/custom.sock`, and is never auto-started. TCP WebSocket endpoints are intentionally rejected by this release.
+With a custom proxy endpoint, pass that address to `codex --remote`. Unix and WS proxy listeners each forward clients through separate upstream connections. Each direction progresses independently under backpressure. Accept failures log an error and retry with 25 ms–1 s exponential backoff while existing clients remain connected. A CLI upgrade succeeds only after the upstream upgrade; upstream HTTP errors are forwarded, while connection/protocol failures return 502 and handshake timeouts return 504. `stdio://` is a newline-delimited JSON frontend for one client; the shared upstream must use Unix or WS. Its bounded output queue allows stdin EOF to cancel blocked stdout writes. Upstream Close releases the registration and network socket before output drains. Cancellable Unix standard I/O prevents runtime shutdown from waiting for input; descriptor flags are restored on drop. HTTP response writes are bounded to ten seconds, and rejection forwarding ends at the declared body boundary. Both listener and upstream support bracketed IPv6 URLs. Unix connections expose the kernel peer PID. WS and stdio leave PID unknown; session ownership is keyed by connection. Non-loopback WS requires proxy authentication; see the [seven authentication options and client setup](guide.md). Ping/Pong pass through unchanged without local replies. Both Close frames are forwarded before socket shutdown and registration cleanup. Observation errors disable only message inspection in that direction; raw forwarding continues until transport termination. No proactive heartbeat or Pong timeout is imposed; transport closure/errors clear registrations, while silent network partitions have no fixed detection deadline.
+
+The live session registry follows successful `thread/start`, `thread/resume`, and `thread/fork` responses, successful unsubscribe, and connection closure. `/sessions` reads this registry and fetches thread metadata; it does not match working directories or treat `thread/loaded/list` as evidence of a connected CLI. Streamed notifications are inspected without building their complete JSON object; tracked responses are parsed fully. WebSocket payloads are forwarded unchanged. Clients that bypass the proxy are not listed, and clients must reconnect through it after an Agentix restart.
 
 ### Login shell environment
 
-Before starting the managed Codex daemon, Agentix looks up the effective user's login shell in the system account database and runs it with `-lc` to read all exported environment variables. The complete snapshot becomes the Codex startup command's environment, including PATH, newly exported variables, overridden values, and removals made with `unset`. Agentix's own environment is unchanged. The Homebrew formula can continue to run `agentix serve` directly, without a fish dependency or a fixed user-specific PATH.
+Before starting the shared Codex upstream, Agentix looks up the effective user's login shell in the system account database and runs it with `-lc` to read all exported environment variables. The complete snapshot becomes the Codex startup command's environment, including PATH, newly exported variables, overridden values, and removals made with `unset`. Agentix's own environment is unchanged. The Homebrew formula can continue to run `agentix serve` directly, without a fish dependency or a fixed user-specific PATH.
 
 Shell configuration must export variables for noninteractive login shells (for example, `set -gx` in fish). Shell-local variables are not inherited. For fish, keep these settings outside `if status is-interactive` blocks. Variables set temporarily in a terminal are not recovered. To select a different shell, set `AGENTIX_LOGIN_SHELL` to its absolute executable path in Agentix's service environment. This override must support `-lc` and the environment snapshot command (for example fish, bash, or zsh).
 
 The lookup has a three-second timeout. If the account lookup or shell fails, or the environment output is malformed, Agentix logs a warning and starts Codex with its original inherited environment. No partial snapshot is applied. NUL-delimited entries preserve empty values, spaces, newlines, equals signs, and non-UTF-8 bytes; shell startup output is separated from the snapshot. Environment values are not written to logs.
 
-An already running Codex daemon is reused and retains its existing environment. To apply this behavior to an old daemon, stop Agentix and the Codex daemon when active work has finished, then start Agentix again so it creates the daemon with the login shell environment. Custom socket endpoints remain externally managed.
-
-For the managed `unix://` endpoint, Agentix uses `ps` and `lsof` to correlate interactive Codex TUI processes with standalone writer locks and daemon-backed threads. Both commands must be available on `PATH`. Inactive sessions persisted on disk, orphaned daemon threads, and Codex subagent threads are not listed. Subagents are excluded before matching daemon-backed clients by working directory, so they cannot displace their parent session and trigger a false exit notification. Custom socket endpoints fall back to the app-server's `thread/loaded/list` view.
+An already running upstream is reused and retains its existing environment. To apply changed environment settings, stop Agentix and the upstream after active work finishes, then start Agentix again so it creates the upstream with the login shell environment.
 
 ### Pi
 
@@ -97,7 +103,8 @@ Configure `[agent.claude]` and install `agentix-bridge@agentix`. For default IM 
 ```toml
 [agent.codex]
 command = "~/.codex/packages/standalone/current/codex"
-endpoint = "unix://"
+proxy_endpoint = "unix://"
+endpoint = "unix://~/.codex/app-server-control/app-server-control-upstream.sock"
 
 [agent.omp]
 command = "omp"
@@ -173,7 +180,7 @@ Agentix restores durable bindings and turn state before starting its control and
 
 If the agent rejects a saved session because it is no longer attachable, Agentix removes that stale binding, keeps the IM detached, and reports the result.
 
-For the managed Codex socket, Agentix polls the local interactive process set every ten seconds and confirms an attached-session exit after two consecutive missing snapshots. It then notifies the bound IM conversation, removes live controls, and suspends the binding while continuing to watch that session ID. Running `codex resume` for the same session restores the app-server subscription and IM binding automatically. A manual detach or attaching another session cancels that watch. App-server disconnects, `thread/closed`, and `notLoaded` do not suspend the durable binding. Custom Codex sockets do not automatically detect process exit or resume because their process tree is not locally discoverable.
+Codex proxy registry changes wake lifecycle monitoring immediately, with a ten-second reconciliation fallback. Disconnecting a client removes its session associations; another connected owner keeps the same session live. An attached session that loses all clients suspends its binding. Reconnecting through the proxy and resuming the same session can restore the binding. Manual detach cancels that watch. Agentix's internal upstream transport reconnects separately; an app-server loaded thread alone does not establish a live CLI connection.
 
 ## Diagnostics
 
@@ -185,7 +192,7 @@ Startup logs include `phase` and `elapsed_ms` for the agent connection, channel/
 - required credentials in the configuration file without printing values
 - global proxy URL validity (proxy connectivity is exercised when the service connects)
 - state directory existence
-- Codex managed-daemon startup plus initialize/list handshake, or Pi/OMP/Claude executable checks and live registration discovery
+- Codex upstream initialize/list handshake (start `serve` first to launch a missing upstream), or Pi/OMP/Claude executable checks and live registration discovery
 
 Useful operational checks:
 
@@ -195,7 +202,7 @@ agentix client sessions
 agentix client call thread/loaded/list --params '{"limit":10}' | jq
 agentix client call thread/queue/list --params '{"threadId":"019...","limit":100}' | jq
 agentix client claim --ttl-minutes 10
-codex app-server daemon version
+agentix client call agentix/clients
 RUST_LOG=agentix=debug agentix serve
 ```
 
@@ -219,3 +226,16 @@ For the development workflow, test architecture, CI, and release process, see [C
 ### CI test cost
 
 Plugin tests run in parallel with Rust tests on each supported operating system. CI disables dev/test debug symbols to reduce Windows linker work and cache size; local Cargo profiles are unchanged. Windows retains the workspace check, native TCP control tests, task-board tests, and three system-time-zone checks. Compare GitHub Actions step timings on equivalent revisions and cache states before claiming a speedup; the baseline Windows run `34441426541` took 17m26s, including 3m43s for workspace checking, 4m31s for the TCP test step, and 5m57s for task-board tests.
+
+## Codex proxy verification
+
+The reusable test suites cover the following boundaries:
+
+| Boundary | Coverage |
+| --- | --- |
+| Actual `serve` startup | Active and stale Unix sockets, regular files, and occupied WS ports fail with error logs, preserve existing paths, and do not launch the upstream |
+| Transport | Unix and WS listeners, WS upstream, stdio JSON lines, independent client request IDs, unchanged text frames, server requests, and streamed notifications |
+| Lifecycle | Client and upstream disconnect cleanup, unsubscribe, multiple owners, socket permissions and replacement inode protection, detached upstream survival and reuse |
+| Discovery | Registry-backed listing, sessions without rollout files, stale attach rejection, and PID-to-terminal association |
+
+Run `cargo test -p agentix-codex -p agentix --lib --tests` and `cargo clippy -p agentix-codex -p agentix --all-targets -- -D warnings`. The ignored subprocess fixture is invoked by its parent integration test. Run the optional allocation-path timing comparison with `cargo test -p agentix-codex --test proxy_registry benchmark_stream_notification_observation -- --ignored --nocapture`; it has no timing threshold and is not an end-to-end throughput benchmark.

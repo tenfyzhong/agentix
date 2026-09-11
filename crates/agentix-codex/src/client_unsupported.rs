@@ -18,6 +18,27 @@ pub struct ClientError;
 pub struct CodexClient;
 
 impl CodexClient {
+    pub async fn connect_with_proxy_options(
+        _listen: &str,
+        _upstream: CodexEndpoint,
+        _command: &Path,
+        _rmux_directory: &Path,
+        _background_turn_notifications: bool,
+        _options: &crate::ProxyOptions,
+    ) -> anyhow::Result<Self> {
+        anyhow::bail!("Codex transport is unavailable on this platform")
+    }
+
+    pub async fn connect_with_proxy(
+        _listen: &str,
+        _upstream: CodexEndpoint,
+        _command: &Path,
+        _rmux_directory: &Path,
+        _background_turn_notifications: bool,
+    ) -> anyhow::Result<Self> {
+        Err(ClientError.into())
+    }
+
     pub async fn connect(_endpoint: CodexEndpoint) -> Result<Self, ClientError> {
         Err(ClientError)
     }

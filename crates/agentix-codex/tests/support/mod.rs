@@ -142,7 +142,7 @@ impl MockThread {
             "id": self.id,
             "sessionId": self.id,
             "name": self.name,
-            "preview": self.turns.last().map(|turn| turn.user_text.as_str()),
+            "preview": self.turns.last().map_or("", |turn| turn.user_text.as_str()),
             "cwd": self.cwd,
             "cliVersion": MOCK_CODEX_CLI_VERSION,
             "createdAt": 1_000,
@@ -188,6 +188,7 @@ struct ServerState {
     threads: BTreeMap<String, MockThread>,
     queues: HashMap<String, Vec<QueuedSubmission>>,
     request_methods: Vec<String>,
+    native_thread_ids: bool,
     active_writers: HashSet<String>,
     turn_reads: HashMap<String, usize>,
     background_turn_reads: HashMap<String, usize>,
@@ -247,6 +248,11 @@ impl MockCodexAppServer {
 
     pub fn endpoint(&self) -> CodexEndpoint {
         CodexEndpoint::from_socket_path(&self.socket_path).unwrap()
+    }
+
+    #[allow(dead_code)] // Used by the opt-in native TUI benchmark.
+    pub async fn enable_native_thread_ids(&self) {
+        self.shared.state.lock().await.native_thread_ids = true;
     }
 
     pub async fn add_thread(&self, thread: MockThread) {
@@ -417,6 +423,10 @@ impl MockCodexAppServer {
     }
 
     pub async fn complete_turn(&self, thread_id: &str, turn_id: &str, answer: &str) {
+        self.finish_turn(thread_id, turn_id, answer, answer).await;
+    }
+
+    pub async fn finish_turn(&self, thread_id: &str, turn_id: &str, answer: &str, delta: &str) {
         {
             let mut state = self.shared.state.lock().await;
             let thread = state.threads.get_mut(thread_id).unwrap();
@@ -434,7 +444,7 @@ impl MockCodexAppServer {
                 "threadId": thread_id,
                 "turnId": turn_id,
                 "itemId": format!("{turn_id}_agent"),
-                "delta": answer
+                "delta": delta
             }
         }))
         .await;
@@ -636,7 +646,7 @@ impl MockCodexAppServer {
         receiver
     }
 
-    async fn send_notification(&self, notification: Value) {
+    pub async fn send_notification(&self, notification: Value) {
         self.shared
             .state
             .lock()
@@ -800,6 +810,16 @@ async fn handle_request(
         return (Err(error), notifications);
     }
     let result = match method {
+        "configRequirements/read" => Ok(json!({"requirements": null})),
+        "collaborationMode/list" | "hooks/list" => Ok(json!({"data": []})),
+        "account/read" => Ok(json!({"account": null, "requiresOpenaiAuth": false})),
+        "config/read" => Ok(json!({
+            "config": {"model": "gpt-6", "projects": {
+                params.get("cwd").and_then(Value::as_str).unwrap_or("/work"): {"trust_level": "trusted"}
+            }},
+            "origins": {}, "layers": []
+        })),
+
         "initialize" => Ok(json!({
             "codexHome": "/mock/.codex",
             "platformFamily": "unix",
@@ -847,7 +867,11 @@ async fn handle_request(
             }
         }
         "thread/start" => {
-            let id = format!("thr_started_{}", state.threads.len() + 1);
+            let id = if state.native_thread_ids {
+                format!("01900000-0000-7000-8000-{:012x}", state.threads.len() + 1)
+            } else {
+                format!("thr_started_{}", state.threads.len() + 1)
+            };
             let cwd = string_param(params, "cwd").unwrap_or("/work");
             let mut thread = MockThread::new(&id, "Untitled", cwd);
             if let Some(model) = string_param(params, "model") {

@@ -103,6 +103,57 @@ impl CodexProcessDiscovery {
 pub(crate) struct RunningSessionSelection {
     pub ids: HashSet<SessionId>,
     pub terminals: HashMap<SessionId, TerminalLocation>,
+    clients: HashMap<u32, SessionId>,
+}
+
+#[derive(Default)]
+pub(crate) struct RunningSessionResolver {
+    bindings: HashMap<u32, SessionId>,
+}
+
+impl RunningSessionResolver {
+    pub(crate) fn resolve(
+        &mut self,
+        loaded: &[SessionSummary],
+        snapshot: &RunningProcessSnapshot,
+    ) -> RunningSessionSelection {
+        let loaded_ids = loaded
+            .iter()
+            .map(|session| &session.id)
+            .collect::<HashSet<_>>();
+        let clients = snapshot
+            .daemon_clients
+            .iter()
+            .map(|client| client.pid)
+            .collect::<HashSet<_>>();
+        self.bindings.retain(|pid, session| {
+            clients.contains(pid)
+                && loaded_ids.contains(session)
+                && !snapshot.direct_session_ids.contains(session)
+        });
+        let mut unresolved = RunningProcessSnapshot {
+            direct_session_ids: snapshot.direct_session_ids.clone(),
+            direct_terminal_locations: snapshot.direct_terminal_locations.clone(),
+            daemon_clients: Vec::new(),
+        };
+        for client in &snapshot.daemon_clients {
+            if let Some(session) = self.bindings.get(&client.pid) {
+                unresolved.direct_session_ids.insert(session.clone());
+                if let Some(terminal) = &client.terminal {
+                    unresolved
+                        .direct_terminal_locations
+                        .insert(session.clone(), terminal.clone());
+                }
+            } else {
+                unresolved.daemon_clients.push(client.clone());
+            }
+        }
+        let selection = resolve_running_sessions(loaded, &unresolved);
+        for (pid, session) in &selection.clients {
+            self.bindings.insert(*pid, session.clone());
+        }
+        selection
+    }
 }
 
 pub(crate) fn resolve_running_sessions(
@@ -112,6 +163,7 @@ pub(crate) fn resolve_running_sessions(
     let mut result = RunningSessionSelection {
         ids: snapshot.direct_session_ids.clone(),
         terminals: snapshot.direct_terminal_locations.clone(),
+        clients: HashMap::new(),
     };
     if snapshot.daemon_clients.is_empty() {
         return result;
@@ -151,6 +203,7 @@ pub(crate) fn resolve_running_sessions(
         candidates.sort_by(priority);
         for (session, client) in candidates.into_iter().zip(clients) {
             result.ids.insert(session.id.clone());
+            result.clients.insert(client.pid, session.id.clone());
             // A client without a terminal still occupies its priority slot.
             if let Some(terminal) = &client.terminal {
                 result
@@ -341,6 +394,130 @@ mod tests {
 
     thread_local! {
         pub(super) static SESSION_VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    #[test]
+    fn concurrent_clients_keep_their_sessions_when_the_newer_client_exits() {
+        let mut resolver = super::RunningSessionResolver::default();
+        let a = terminal("a", "0", "shell", "0", "%1");
+        let b = terminal("b", "0", "shell", "0", "%2");
+        let mut snapshot = RunningProcessSnapshot {
+            daemon_clients: vec![DaemonClient {
+                pid: 1,
+                cwd: "/work".into(),
+                terminal: Some(a.clone()),
+            }],
+            ..RunningProcessSnapshot::default()
+        };
+        let mut loaded = vec![session("a", "/work", SessionStatus::Idle, 100)];
+        assert_eq!(
+            resolver.resolve(&loaded, &snapshot).ids,
+            HashSet::from([SessionId::new("a")])
+        );
+        loaded.push(session("b", "/work", SessionStatus::Active, 200));
+        snapshot.daemon_clients.push(DaemonClient {
+            pid: 2,
+            cwd: "/work".into(),
+            terminal: Some(b.clone()),
+        });
+        let both = resolver.resolve(&loaded, &snapshot);
+        assert_eq!(
+            both.terminals,
+            HashMap::from([
+                (SessionId::new("a"), a.clone()),
+                (SessionId::new("b"), b.clone())
+            ])
+        );
+        // Activity changes must not swap process ownership or terminal locations.
+        loaded[0].status = SessionStatus::Active;
+        loaded[0].updated_at = Some(300);
+        assert_eq!(
+            resolver.resolve(&loaded, &snapshot).terminals,
+            both.terminals
+        );
+        snapshot.daemon_clients.pop();
+        loaded[1].updated_at = Some(400);
+        let remaining = resolver.resolve(&loaded, &snapshot);
+        assert_eq!(remaining.ids, HashSet::from([SessionId::new("a")]));
+        assert_eq!(
+            remaining.terminals,
+            HashMap::from([(SessionId::new("a"), a)])
+        );
+        snapshot.daemon_clients.clear();
+        assert!(resolver.resolve(&loaded, &snapshot).ids.is_empty());
+    }
+
+    #[test]
+    fn resolver_preserves_sessions_across_directory_changes_and_releases_exited_clients() {
+        let mut resolver = super::RunningSessionResolver::default();
+        let loaded = vec![
+            session("a", "/work", SessionStatus::Idle, 100),
+            session("b", "/work", SessionStatus::Idle, 200),
+            session("elsewhere", "/other", SessionStatus::Active, 300),
+        ];
+        let mut snapshot = RunningProcessSnapshot {
+            daemon_clients: vec![
+                DaemonClient {
+                    pid: 1,
+                    cwd: "/work".into(),
+                    terminal: None,
+                },
+                DaemonClient {
+                    pid: 2,
+                    cwd: "/work".into(),
+                    terminal: None,
+                },
+            ],
+            ..RunningProcessSnapshot::default()
+        };
+        assert_eq!(resolver.resolve(&loaded, &snapshot).ids.len(), 2);
+        snapshot.daemon_clients.remove(0);
+        let moved = terminal("moved", "1", "shell", "0", "%3");
+        snapshot.daemon_clients[0].terminal = Some(moved.clone());
+        let remaining = resolver.resolve(&loaded, &snapshot);
+        assert_eq!(remaining.ids, HashSet::from([SessionId::new("b")]));
+        assert_eq!(
+            remaining.terminals,
+            HashMap::from([(SessionId::new("b"), moved)])
+        );
+        // Changing directories does not change the process or its current session.
+        // A more active thread in the destination must not replace the binding.
+        snapshot.daemon_clients[0].cwd = "/other".into();
+        let changed = resolver.resolve(&loaded, &snapshot);
+        assert_eq!(changed.ids, remaining.ids);
+        assert_eq!(changed.terminals, remaining.terminals);
+        snapshot.daemon_clients.clear();
+        assert!(resolver.resolve(&loaded, &snapshot).ids.is_empty());
+        snapshot.daemon_clients.push(DaemonClient {
+            pid: 2,
+            cwd: "/work".into(),
+            terminal: None,
+        });
+        assert_eq!(
+            resolver.resolve(&loaded[..1], &snapshot).ids,
+            HashSet::from([SessionId::new("a")])
+        );
+    }
+
+    #[test]
+    fn resolver_does_not_assign_an_unobserved_exited_client_to_a_survivor() {
+        let mut resolver = super::RunningSessionResolver::default();
+        let snapshot = RunningProcessSnapshot {
+            daemon_clients: vec![DaemonClient {
+                pid: 1,
+                cwd: "/work".into(),
+                terminal: None,
+            }],
+            ..RunningProcessSnapshot::default()
+        };
+        let mut loaded = vec![session("a", "/work", SessionStatus::Idle, 100)];
+        resolver.resolve(&loaded, &snapshot);
+        // B starts and exits entirely between discovery polls, leaving its thread loaded.
+        loaded.push(session("b", "/work", SessionStatus::Active, 200));
+        assert_eq!(
+            resolver.resolve(&loaded, &snapshot).ids,
+            HashSet::from([SessionId::new("a")])
+        );
     }
 
     #[test]

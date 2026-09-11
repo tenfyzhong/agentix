@@ -32,6 +32,13 @@ _agentix() {
         case $line[1] in
             (serve)
 _arguments "${_arguments_options[@]}" : \
+'--ws-auth=[Authentication for the Codex proxy WebSocket listener]:WS_AUTH:(capability-token signed-bearer-token)' \
+'--ws-token-file=[Absolute path to the capability-token file]:WS_TOKEN_FILE:_files' \
+'--ws-token-sha256=[SHA-256 verifier for the capability token (64 hex digits)]:WS_TOKEN_SHA256:_default' \
+'--ws-shared-secret-file=[Absolute path to the HS256 JWT shared-secret file (at least 32 bytes)]:WS_SHARED_SECRET_FILE:_files' \
+'--ws-issuer=[]:WS_ISSUER:_default' \
+'--ws-audience=[]:WS_AUDIENCE:_default' \
+'--ws-max-clock-skew-seconds=[JWT validation clock tolerance; defaults to 30 seconds]:WS_MAX_CLOCK_SKEW_SECONDS:_default' \
 '-h[Print help]' \
 '--help[Print help]' \
 && ret=0

@@ -1,0 +1,332 @@
+{
+  "date": "2026-09-11",
+  "platform": "macOS arm64",
+  "codex_version": "0.154.0",
+  "proxy_build": "release",
+  "frontend": "unix",
+  "upstream": "unix",
+  "rounds": 10,
+  "measurement": "PTY Enter write to receipt of first/completion marker in native TUI output; not pure proxy time",
+  "samples": [
+    {
+      "input_to_complete_ms": 12.218042,
+      "input_to_first_ms": 11.862209,
+      "launch_to_ready_ms": 147.7505,
+      "paced": false,
+      "proxied": false,
+      "round": 0
+    },
+    {
+      "input_to_complete_ms": 10.32125,
+      "input_to_first_ms": 10.021708,
+      "launch_to_ready_ms": 144.608958,
+      "paced": false,
+      "proxied": true,
+      "round": 0
+    },
+    {
+      "input_to_complete_ms": 414.204125,
+      "input_to_first_ms": 22.17925,
+      "launch_to_ready_ms": 141.787834,
+      "paced": true,
+      "proxied": false,
+      "round": 0
+    },
+    {
+      "input_to_complete_ms": 406.461375,
+      "input_to_first_ms": 21.187042,
+      "launch_to_ready_ms": 144.384541,
+      "paced": true,
+      "proxied": true,
+      "round": 0
+    },
+    {
+      "input_to_complete_ms": 14.009375,
+      "input_to_first_ms": 13.554958,
+      "launch_to_ready_ms": 151.154125,
+      "paced": false,
+      "proxied": true,
+      "round": 1
+    },
+    {
+      "input_to_complete_ms": 12.413208,
+      "input_to_first_ms": 11.914542,
+      "launch_to_ready_ms": 140.452917,
+      "paced": false,
+      "proxied": false,
+      "round": 1
+    },
+    {
+      "input_to_complete_ms": 419.565125,
+      "input_to_first_ms": 20.373708,
+      "launch_to_ready_ms": 142.376209,
+      "paced": true,
+      "proxied": true,
+      "round": 1
+    },
+    {
+      "input_to_complete_ms": 407.949625,
+      "input_to_first_ms": 20.823333,
+      "launch_to_ready_ms": 146.208166,
+      "paced": true,
+      "proxied": false,
+      "round": 1
+    },
+    {
+      "input_to_complete_ms": 11.609375,
+      "input_to_first_ms": 11.125666,
+      "launch_to_ready_ms": 146.261334,
+      "paced": false,
+      "proxied": false,
+      "round": 2
+    },
+    {
+      "input_to_complete_ms": 11.959625,
+      "input_to_first_ms": 11.791667,
+      "launch_to_ready_ms": 644.6635,
+      "paced": false,
+      "proxied": true,
+      "round": 2
+    },
+    {
+      "input_to_complete_ms": 400.771,
+      "input_to_first_ms": 20.764958,
+      "launch_to_ready_ms": 161.384333,
+      "paced": true,
+      "proxied": false,
+      "round": 2
+    },
+    {
+      "input_to_complete_ms": 398.587792,
+      "input_to_first_ms": 21.349,
+      "launch_to_ready_ms": 142.762958,
+      "paced": true,
+      "proxied": true,
+      "round": 2
+    },
+    {
+      "input_to_complete_ms": 12.1985,
+      "input_to_first_ms": 11.902708,
+      "launch_to_ready_ms": 153.388042,
+      "paced": false,
+      "proxied": true,
+      "round": 3
+    },
+    {
+      "input_to_complete_ms": 11.284417,
+      "input_to_first_ms": 11.049875,
+      "launch_to_ready_ms": 141.870167,
+      "paced": false,
+      "proxied": false,
+      "round": 3
+    },
+    {
+      "input_to_complete_ms": 403.677416,
+      "input_to_first_ms": 21.594333,
+      "launch_to_ready_ms": 142.28825,
+      "paced": true,
+      "proxied": true,
+      "round": 3
+    },
+    {
+      "input_to_complete_ms": 388.655458,
+      "input_to_first_ms": 20.95425,
+      "launch_to_ready_ms": 144.365792,
+      "paced": true,
+      "proxied": false,
+      "round": 3
+    },
+    {
+      "input_to_complete_ms": 12.1365,
+      "input_to_first_ms": 11.936791,
+      "launch_to_ready_ms": 147.391416,
+      "paced": false,
+      "proxied": false,
+      "round": 4
+    },
+    {
+      "input_to_complete_ms": 11.613042,
+      "input_to_first_ms": 11.371959,
+      "launch_to_ready_ms": 152.680958,
+      "paced": false,
+      "proxied": true,
+      "round": 4
+    },
+    {
+      "input_to_complete_ms": 394.234709,
+      "input_to_first_ms": 21.743209,
+      "launch_to_ready_ms": 145.215333,
+      "paced": true,
+      "proxied": false,
+      "round": 4
+    },
+    {
+      "input_to_complete_ms": 397.4265,
+      "input_to_first_ms": 20.766875,
+      "launch_to_ready_ms": 152.887917,
+      "paced": true,
+      "proxied": true,
+      "round": 4
+    },
+    {
+      "input_to_complete_ms": 11.323042,
+      "input_to_first_ms": 10.44925,
+      "launch_to_ready_ms": 158.682417,
+      "paced": false,
+      "proxied": true,
+      "round": 5
+    },
+    {
+      "input_to_complete_ms": 10.7805,
+      "input_to_first_ms": 10.519833,
+      "launch_to_ready_ms": 142.811334,
+      "paced": false,
+      "proxied": false,
+      "round": 5
+    },
+    {
+      "input_to_complete_ms": 412.625667,
+      "input_to_first_ms": 23.237917,
+      "launch_to_ready_ms": 150.667667,
+      "paced": true,
+      "proxied": true,
+      "round": 5
+    },
+    {
+      "input_to_complete_ms": 425.030417,
+      "input_to_first_ms": 21.956709,
+      "launch_to_ready_ms": 143.102625,
+      "paced": true,
+      "proxied": false,
+      "round": 5
+    },
+    {
+      "input_to_complete_ms": 24.385791,
+      "input_to_first_ms": 24.304208,
+      "launch_to_ready_ms": 156.501833,
+      "paced": false,
+      "proxied": false,
+      "round": 6
+    },
+    {
+      "input_to_complete_ms": 11.892041,
+      "input_to_first_ms": 11.51025,
+      "launch_to_ready_ms": 155.658875,
+      "paced": false,
+      "proxied": true,
+      "round": 6
+    },
+    {
+      "input_to_complete_ms": 411.183084,
+      "input_to_first_ms": 20.882959,
+      "launch_to_ready_ms": 153.679833,
+      "paced": true,
+      "proxied": false,
+      "round": 6
+    },
+    {
+      "input_to_complete_ms": 394.197334,
+      "input_to_first_ms": 22.528584,
+      "launch_to_ready_ms": 143.580417,
+      "paced": true,
+      "proxied": true,
+      "round": 6
+    },
+    {
+      "input_to_complete_ms": 12.519292,
+      "input_to_first_ms": 12.157,
+      "launch_to_ready_ms": 143.591666,
+      "paced": false,
+      "proxied": true,
+      "round": 7
+    },
+    {
+      "input_to_complete_ms": 12.802125,
+      "input_to_first_ms": 12.656875,
+      "launch_to_ready_ms": 143.171167,
+      "paced": false,
+      "proxied": false,
+      "round": 7
+    },
+    {
+      "input_to_complete_ms": 398.060625,
+      "input_to_first_ms": 22.97975,
+      "launch_to_ready_ms": 148.511333,
+      "paced": true,
+      "proxied": true,
+      "round": 7
+    },
+    {
+      "input_to_complete_ms": 405.880375,
+      "input_to_first_ms": 20.754417,
+      "launch_to_ready_ms": 151.812917,
+      "paced": true,
+      "proxied": false,
+      "round": 7
+    },
+    {
+      "input_to_complete_ms": 10.90675,
+      "input_to_first_ms": 10.597625,
+      "launch_to_ready_ms": 152.24625,
+      "paced": false,
+      "proxied": false,
+      "round": 8
+    },
+    {
+      "input_to_complete_ms": 12.113959,
+      "input_to_first_ms": 10.94025,
+      "launch_to_ready_ms": 151.406583,
+      "paced": false,
+      "proxied": true,
+      "round": 8
+    },
+    {
+      "input_to_complete_ms": 403.951084,
+      "input_to_first_ms": 21.324792,
+      "launch_to_ready_ms": 152.835375,
+      "paced": true,
+      "proxied": false,
+      "round": 8
+    },
+    {
+      "input_to_complete_ms": 400.296084,
+      "input_to_first_ms": 20.864292,
+      "launch_to_ready_ms": 156.35925,
+      "paced": true,
+      "proxied": true,
+      "round": 8
+    },
+    {
+      "input_to_complete_ms": 14.399834,
+      "input_to_first_ms": 13.853292,
+      "launch_to_ready_ms": 172.29525,
+      "paced": false,
+      "proxied": true,
+      "round": 9
+    },
+    {
+      "input_to_complete_ms": 12.075333,
+      "input_to_first_ms": 11.781042,
+      "launch_to_ready_ms": 153.205833,
+      "paced": false,
+      "proxied": false,
+      "round": 9
+    },
+    {
+      "input_to_complete_ms": 402.206792,
+      "input_to_first_ms": 21.6895,
+      "launch_to_ready_ms": 152.184959,
+      "paced": true,
+      "proxied": true,
+      "round": 9
+    },
+    {
+      "input_to_complete_ms": 387.507792,
+      "input_to_first_ms": 26.611958,
+      "launch_to_ready_ms": 141.538958,
+      "paced": true,
+      "proxied": false,
+      "round": 9
+    }
+  ]
+}

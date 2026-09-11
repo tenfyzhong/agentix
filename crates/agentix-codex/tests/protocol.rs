@@ -133,3 +133,26 @@ fn completed_reasoning_and_tool_items_preserve_visible_details() {
         assert!(item.text.unwrap_or_default().contains(expected));
     }
 }
+
+#[test]
+fn websocket_endpoints_and_upstream_default_are_supported() {
+    let e = CodexEndpoint::parse("ws://127.0.0.1:4500").unwrap();
+    assert_eq!(e.address(), "ws://127.0.0.1:4500/");
+    assert_eq!(
+        CodexEndpoint::default_upstream()
+            .unwrap()
+            .socket_path()
+            .file_name()
+            .unwrap(),
+        "app-server-control-upstream.sock"
+    );
+}
+
+#[test]
+fn stdio_endpoint_is_distinct_from_unix_default() {
+    assert_eq!(
+        CodexEndpoint::parse("stdio://").unwrap().address(),
+        "stdio://"
+    );
+    assert!(CodexEndpoint::parse("stdio://extra").is_err());
+}

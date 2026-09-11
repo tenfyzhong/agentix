@@ -28,13 +28,12 @@ use thiserror::Error;
 use tokio::net::UnixStream;
 use tokio::process::Command;
 use tokio::sync::{Mutex, Notify, broadcast, oneshot};
-use tokio_tungstenite::WebSocketStream;
 use tokio_tungstenite::tungstenite::Message;
 
 use crate::endpoint::CodexEndpoint;
 use crate::multiplexer::{RmuxManager, started_session};
 use crate::process::{
-    CodexProcessDiscovery, confirm_exited_sessions, reappeared_sessions, resolve_running_sessions,
+    CodexProcessDiscovery, RunningSessionResolver, confirm_exited_sessions, reappeared_sessions,
 };
 use crate::protocol::{
     ModelDescriptor, ModelListResult, ProtocolError, QueueAddResult, QueueListResult,
@@ -42,7 +41,7 @@ use crate::protocol::{
     decode_server_frame, item_summary, parse_session_status, parse_turn_status,
 };
 
-type Socket = WebSocketStream<UnixStream>;
+type Socket = crate::proxy::Socket;
 type Writer = SplitSink<Socket, Message>;
 type Reader = SplitStream<Socket>;
 type PendingMap = HashMap<i64, oneshot::Sender<Result<Value, RpcError>>>;
@@ -92,6 +91,8 @@ pub enum ClientError {
     Timeout,
     #[error("Codex response has an invalid shape: {0}")]
     InvalidResponse(&'static str),
+    #[error("Codex session {0} has no connected Codex client")]
+    ClientDisconnected(SessionId),
     #[error("invalid running-session cursor")]
     InvalidCursor,
     #[error("Codex session {0} has no rollout and cannot be attached")]
@@ -122,6 +123,10 @@ pub struct CodexClient {
     pending_resumes: Arc<Mutex<HashSet<SessionId>>>,
     token_usage: Arc<Mutex<HashMap<SessionId, Value>>>,
     process_discovery: Option<CodexProcessDiscovery>,
+    registry: Option<crate::ClientRegistry>,
+    runtime: Option<Arc<crate::connection::ConnectionManager>>,
+    tasks: Option<Arc<crate::connection::ClientTasks>>,
+    running_session_resolver: Arc<Mutex<RunningSessionResolver>>,
     rmux: RmuxManager,
 }
 
@@ -152,7 +157,105 @@ impl CodexClient {
         rmux_directory: &Path,
         background_turn_notifications: bool,
     ) -> Result<Self, ClientError> {
-        let process_discovery = CodexProcessDiscovery::for_endpoint(&endpoint);
+        Self::connect_inner(
+            endpoint,
+            command,
+            rmux_directory,
+            background_turn_notifications,
+            None,
+        )
+        .await
+    }
+
+    fn ensure_registered(&self, session: &SessionId) -> Result<(), AgentError> {
+        if let Some(registry) = &self.registry
+            && !registry
+                .snapshot()
+                .iter()
+                .any(|c| c.sessions.iter().any(|id| id == session.as_str()))
+        {
+            return Err(agent_error(ClientError::ClientDisconnected(
+                session.clone(),
+            )));
+        }
+        Ok(())
+    }
+
+    pub async fn connect_with_proxy(
+        listen: &str,
+        upstream: CodexEndpoint,
+        command: &Path,
+        rmux_directory: &Path,
+        background_turn_notifications: bool,
+    ) -> anyhow::Result<Self> {
+        Self::connect_with_proxy_options(
+            listen,
+            upstream,
+            command,
+            rmux_directory,
+            background_turn_notifications,
+            &crate::ProxyOptions::default(),
+        )
+        .await
+    }
+
+    pub async fn connect_with_proxy_options(
+        listen: &str,
+        upstream: CodexEndpoint,
+        command: &Path,
+        rmux_directory: &Path,
+        background_turn_notifications: bool,
+        options: &crate::ProxyOptions,
+    ) -> anyhow::Result<Self> {
+        let runtime =
+            crate::connection::ConnectionManager::start(listen, &upstream, command, options)
+                .await?;
+        let mut client = Self::connect_with_registry(
+            upstream,
+            command,
+            rmux_directory,
+            background_turn_notifications,
+            runtime.proxy.registry(),
+        )
+        .await?;
+        client.rmux = RmuxManager::native(
+            command,
+            vec!["--remote".into(), runtime.proxy.endpoint().to_owned()],
+            rmux_directory,
+        );
+        client.runtime = Some(Arc::new(runtime));
+        Ok(client)
+    }
+
+    pub async fn connect_with_registry(
+        endpoint: CodexEndpoint,
+        command: &Path,
+        rmux_directory: &Path,
+        background_turn_notifications: bool,
+        registry: crate::ClientRegistry,
+    ) -> Result<Self, ClientError> {
+        Self::connect_inner(
+            endpoint,
+            command,
+            rmux_directory,
+            background_turn_notifications,
+            Some(registry),
+        )
+        .await
+    }
+
+    async fn connect_inner(
+        endpoint: CodexEndpoint,
+        command: &Path,
+        rmux_directory: &Path,
+        background_turn_notifications: bool,
+        registry: Option<crate::ClientRegistry>,
+    ) -> Result<Self, ClientError> {
+        let process_discovery = if registry.is_some() {
+            None
+        } else {
+            CodexProcessDiscovery::for_endpoint(&endpoint)
+        };
         let rmux = RmuxManager::new(command, endpoint.socket_path(), rmux_directory);
         let websocket = connect_managed_socket(&endpoint, command).await?;
         let (writer, reader) = websocket.split();
@@ -169,7 +272,7 @@ impl CodexClient {
             generation: AtomicU64::new(NEXT_GENERATION.fetch_add(1, Ordering::Relaxed)),
             changed: Notify::new(),
         });
-        tokio::spawn(read_loop(
+        let reader_task = tokio::spawn(read_loop(
             reader,
             Arc::clone(&writer),
             Arc::clone(&pending),
@@ -181,7 +284,7 @@ impl CodexClient {
             Arc::clone(&connection),
         ));
 
-        let client = Self {
+        let mut client = Self {
             writer,
             pending,
             next_id: Arc::new(AtomicI64::new(2)),
@@ -196,13 +299,30 @@ impl CodexClient {
             pending_resumes,
             token_usage,
             process_discovery,
+            registry,
+            runtime: None,
+            tasks: None,
+            running_session_resolver: Arc::new(Mutex::new(RunningSessionResolver::default())),
             rmux,
         };
         let _ = client.events.send(AgentEvent::Connected {
             generation: client.connection.generation.load(Ordering::Acquire),
         });
-        tokio::spawn(monitor_running_sessions(client.clone()));
+        // The monitor borrows shared state through a clone without task/runtime
+        // ownership. Otherwise its own lifetime would retain the final owner.
+        let monitor_task = tokio::spawn(monitor_running_sessions(client.clone()));
+        client.tasks = Some(Arc::new(crate::connection::ClientTasks(vec![
+            reader_task,
+            monitor_task,
+        ])));
         Ok(client)
+    }
+
+    pub fn client_bindings(&self) -> Vec<crate::ClientBinding> {
+        self.registry
+            .as_ref()
+            .map(crate::ClientRegistry::snapshot)
+            .unwrap_or_default()
     }
 
     pub async fn list_sessions(
@@ -210,16 +330,47 @@ impl CodexClient {
         cursor: Option<String>,
         limit: u32,
     ) -> Result<SessionPage, ClientError> {
+        if let Some(registry) = &self.registry {
+            let ids = registry
+                .snapshot()
+                .into_iter()
+                .flat_map(|c| c.sessions)
+                .collect::<std::collections::BTreeSet<_>>();
+            let ids = ids.into_iter().map(SessionId::new).collect::<Vec<_>>();
+            let mut sessions = self.read_sessions(&ids).await?;
+            let panes = crate::multiplexer::rmux_process_locations()
+                .await
+                .unwrap_or_default();
+            let terminals = registry.session_terminals(&panes);
+            let current = registry
+                .snapshot()
+                .into_iter()
+                .flat_map(|c| c.sessions)
+                .collect::<std::collections::HashSet<_>>();
+            sessions.retain(|s| current.contains(s.id.as_str()));
+            for session in &mut sessions {
+                session.terminal = terminals.get(session.id.as_str()).cloned();
+            }
+            sessions.sort_by(|a, b| {
+                b.updated_at
+                    .cmp(&a.updated_at)
+                    .then_with(|| b.id.as_str().cmp(a.id.as_str()))
+            });
+            return page_running_sessions(&sessions, cursor.as_deref(), limit);
+        }
         let Some(discovery) = self.process_discovery.clone() else {
             return self.list_loaded_sessions(cursor, limit).await;
         };
+        // Serialize snapshots as well as matching across foreground and monitor queries.
+        let mut resolver = self.running_session_resolver.lock().await;
         let (loaded_ids, _) = self.loaded_session_ids(None, None).await?;
         let loaded = self.read_sessions(&loaded_ids).await?;
         let snapshot = discovery
             .discover()
             .await
             .map_err(|error| ClientError::ProcessDiscovery(error.to_string()))?;
-        let selection = resolve_running_sessions(&loaded, &snapshot);
+        let selection = resolver.resolve(&loaded, &snapshot);
+        drop(resolver);
         let selected = selection.ids;
         let terminal_locations = selection.terminals;
         let loaded_ids = loaded_ids.into_iter().collect::<HashSet<_>>();
@@ -297,7 +448,7 @@ impl CodexClient {
     async fn read_sessions(&self, ids: &[SessionId]) -> Result<Vec<SessionSummary>, ClientError> {
         let sessions = try_join_all(ids.iter().map(|id| async move {
             let thread = self.read_thread(id, false).await?;
-            if !thread_has_rollout(&thread)
+            if (self.registry.is_none() && !thread_has_rollout(&thread))
                 || (self.process_discovery.is_some() && thread_is_subagent(&thread))
             {
                 return Ok(None);
@@ -462,6 +613,9 @@ impl CodexClient {
     }
 
     pub async fn request(&self, method: &str, params: Value) -> Result<Value, ClientError> {
+        if method == "agentix/clients" {
+            return Ok(json!({"clients":self.client_bindings()}));
+        }
         if let Some(id) = params["threadId"].as_str()
             && self.observed.lock().await.contains_key(&SessionId::new(id))
             && !matches!(
@@ -1322,8 +1476,19 @@ impl CodexClient {
 async fn monitor_running_sessions(client: CodexClient) {
     let mut missing_counts = HashMap::new();
     let mut background = background::BackgroundTurns::new();
+    let mut registry_changes = client
+        .registry
+        .as_ref()
+        .map(crate::ClientRegistry::subscribe);
     loop {
-        tokio::time::sleep(RUNNING_SESSION_POLL_INTERVAL).await;
+        if let Some(changes) = &mut registry_changes {
+            tokio::select! {
+                _ = changes.changed() => {},
+                () = tokio::time::sleep(RUNNING_SESSION_POLL_INTERVAL) => {},
+            }
+        } else {
+            tokio::time::sleep(RUNNING_SESSION_POLL_INTERVAL).await;
+        }
         client.poll_observed_sessions().await;
         let watched = client.process_sessions.lock().await.clone();
         if !client.background_turn_notifications
@@ -1352,7 +1517,12 @@ async fn monitor_running_sessions(client: CodexClient) {
             }
         }
         let online = watched.difference(&exited).cloned().collect::<HashSet<_>>();
-        for session in confirm_exited_sessions(&online, &running, &mut missing_counts) {
+        let departed = if client.registry.is_some() {
+            online.difference(&running).cloned().collect()
+        } else {
+            confirm_exited_sessions(&online, &running, &mut missing_counts)
+        };
+        for session in departed {
             client.subscriptions.lock().await.remove(&session);
             client.pending_resumes.lock().await.remove(&session);
             client
@@ -1381,6 +1551,14 @@ async fn monitor_running_sessions(client: CodexClient) {
 async fn discover_running_sessions(
     client: &CodexClient,
 ) -> Result<HashSet<SessionId>, ClientError> {
+    if let Some(registry) = &client.registry {
+        return Ok(registry
+            .snapshot()
+            .into_iter()
+            .flat_map(|c| c.sessions)
+            .map(SessionId::new)
+            .collect());
+    }
     let mut running = HashSet::new();
     let mut cursor = None;
     loop {
@@ -1460,8 +1638,28 @@ fn daemon_can_fix(error: &std::io::Error) -> bool {
 }
 
 async fn connect_socket(endpoint: &CodexEndpoint) -> Result<Socket, ClientError> {
-    let stream = UnixStream::connect(endpoint.socket_path()).await?;
-    let (mut websocket, _) = tokio_tungstenite::client_async("ws://localhost/", stream).await?;
+    if endpoint.is_stdio() {
+        return Err(ClientError::InvalidResponse(
+            "stdio is a proxy client transport, not a shared upstream",
+        ));
+    }
+    let (stream, url): (Box<dyn crate::proxy::IoStream>, String) = if endpoint.is_websocket() {
+        let address = endpoint.address();
+        let url =
+            url::Url::parse(&address).map_err(|_| ClientError::InvalidResponse("WebSocket URL"))?;
+        let host = crate::proxy::socket_host(&url)
+            .map_err(|_| ClientError::InvalidResponse("WebSocket host"))?;
+        let stream =
+            tokio::net::TcpStream::connect((host.as_str(), url.port_or_known_default().unwrap()))
+                .await?;
+        (Box::new(stream), address)
+    } else {
+        (
+            Box::new(UnixStream::connect(endpoint.socket_path()).await?),
+            "ws://localhost/".into(),
+        )
+    };
+    let (mut websocket, _) = tokio_tungstenite::client_async(url, stream).await?;
     let initialize_id = 1;
     websocket
         .send(Message::Text(
@@ -1577,6 +1775,7 @@ impl AgentAdapter for CodexClient {
     }
 
     async fn attach(&self, session_id: &SessionId) -> Result<(), AgentError> {
+        self.ensure_registered(session_id)?;
         if self.observed.lock().await.contains_key(session_id) {
             return Ok(());
         }
@@ -1584,7 +1783,7 @@ impl AgentAdapter for CodexClient {
             .read_thread(session_id, false)
             .await
             .map_err(agent_error)?;
-        if !thread_has_rollout(&thread) {
+        if self.registry.is_none() && !thread_has_rollout(&thread) {
             return Err(agent_error(ClientError::NoRollout(session_id.clone())));
         }
         match self
@@ -1621,7 +1820,7 @@ impl AgentAdapter for CodexClient {
                     .await
                     .insert(session_id.clone(), latest);
                 self.exited_process_sessions.lock().await.remove(session_id);
-                if self.process_discovery.is_some() {
+                if self.process_discovery.is_some() || self.registry.is_some() {
                     self.process_sessions
                         .lock()
                         .await
@@ -1632,7 +1831,7 @@ impl AgentAdapter for CodexClient {
             Err(error) => return Err(agent_error(error)),
         }
         self.subscriptions.lock().await.insert(session_id.clone());
-        if self.process_discovery.is_some() {
+        if self.process_discovery.is_some() || self.registry.is_some() {
             self.process_sessions
                 .lock()
                 .await
