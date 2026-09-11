@@ -171,7 +171,16 @@ pub struct ActionButton {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ViewSection {
+    pub title: String,
+    pub body: String,
+    pub collapsible: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct OutboundView {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sections: Vec<ViewSection>,
     pub title: String,
     pub subtitle: Option<String>,
     pub body: String,
@@ -183,6 +192,7 @@ impl OutboundView {
     #[must_use]
     pub fn text(title: impl Into<String>, body: impl Into<String>) -> Self {
         Self {
+            sections: Vec::new(),
             title: title.into(),
             subtitle: None,
             body: body.into(),

@@ -519,9 +519,464 @@ async fn configured_process_output_survives_final_answer_and_deduplicates_items(
             &buffers[&(session, "turn".into())],
             DeliveryClass::Live,
         );
+        let sections = buffers.values().next().unwrap().view_sections("Test");
+        assert_eq!(
+            sections.len(),
+            1 + usize::from(reasoning) + usize::from(tools)
+        );
+        assert_eq!(sections.last().unwrap().body, "Final answer");
+        assert_eq!(
+            sections.iter().any(|s| s.title == "🧠 Reasoning"),
+            reasoning
+        );
+        assert_eq!(sections.iter().any(|s| s.title == "🔨 Tool Call"), tools);
         assert_eq!(body.contains("Consider options"), reasoning);
         assert_eq!(body.contains("cargo test"), tools);
         assert!(body.contains("Final answer"));
+        if reasoning {
+            assert!(body.contains("**Reasoning**\n>\n> Consider options"));
+        }
+        if tools {
+            assert!(body.contains("**Tool call**: commandExecution (completed)\n>\n> cargo test"));
+        }
+        if reasoning || tools {
+            let last_process = if tools {
+                "cargo test"
+            } else {
+                "Consider options"
+            };
+            assert!(body.contains(&format!(
+                "{last_process}\n>\n>\n> **Output**\n>\n> Final answer"
+            )));
+        } else {
+            assert!(!body.contains("**Output**"));
+        }
+        if reasoning && tools {
+            assert!(body.contains("Consider options\n>\n>\n> **Tool call**"));
+        }
         assert!(body.matches("cargo test").count() <= 1);
+    }
+}
+
+#[tokio::test]
+async fn interleaved_process_and_output_blocks_survive_updates_and_cold_storage() {
+    let engine = Engine::new(
+        Arc::new(UnusedAgent),
+        SqliteState::in_memory().await.unwrap(),
+        vec![],
+    )
+    .with_output(crate::OutputConfig {
+        show_reasoning: true,
+        show_tool_calls: true,
+    });
+    let session = SessionId::new("interleaved");
+    for (id, kind, text) in [
+        ("r1", "reasoning", "First thought\nMore thought"),
+        ("t1", "commandExecution", "First command\nFirst result"),
+        ("a1", "agentMessage", "Progress report\nStill working"),
+        ("r2", "reasoning", "Second thought\nAnother thought"),
+        ("t2", "commandExecution", "Second command\nPending"),
+        ("a2", "agentMessage", "Final answer\nDetails"),
+        ("t2", "commandExecution", "Second command\nSecond result"),
+        ("a2", "agentMessage", "Final answer\nDetails"),
+    ] {
+        engine
+            .apply_completed_item(
+                &session,
+                "turn",
+                &crate::ItemSummary {
+                    id: id.into(),
+                    kind: kind.into(),
+                    text: Some(text.into()),
+                    status: Some("completed".into()),
+                },
+            )
+            .await;
+    }
+    engine.archive_turn(&session, "turn").await.unwrap();
+    engine.restore_cold_turn(&session, "turn").await.unwrap();
+    let buffers = engine.turns.buffers.lock().await;
+    let body = super::presentation::live_turn_body(
+        "Test",
+        &buffers[&(session, "turn".into())],
+        DeliveryClass::Live,
+    );
+    let mut remaining = body.as_str();
+    for block in [
+        "**Reasoning**\n>\n> First thought\n> More thought",
+        "**Tool call**: commandExecution (completed)\n>\n> First command\n> First result",
+        "**Output**\n>\n> Progress report\n> Still working",
+        "**Reasoning**\n>\n> Second thought\n> Another thought",
+        "**Tool call**: commandExecution (completed)\n>\n> Second command\n> Second result",
+        "**Output**\n>\n> Final answer\n> Details",
+    ] {
+        remaining = remaining
+            .split_once(block)
+            .unwrap_or_else(|| panic!("missing or reordered block {block}: {body}"))
+            .1;
+    }
+    assert_eq!(body.matches("Final answer").count(), 1);
+    assert_eq!(body.matches("Second command").count(), 1);
+    assert!(!body.contains("Pending"));
+}
+
+#[tokio::test]
+async fn streamed_output_updates_its_own_block_without_replacing_process_messages() {
+    let channel = Arc::new(CompletedTurnChannel::default());
+    let engine = Engine::new(
+        Arc::new(UnusedAgent),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    )
+    .with_output(crate::OutputConfig {
+        show_reasoning: true,
+        show_tool_calls: true,
+    });
+    let session = SessionId::new("streamed");
+    let conversation = ConversationRef::new(ChannelKind::Telegram, "chat");
+    for (id, kind, text) in [
+        ("r", "reasoning", "Thinking\nCarefully"),
+        ("a1", "delta", "Checking"),
+        ("t", "commandExecution", "Run tests"),
+        ("a1", "delta", " now"),
+        ("a1", "agentMessage", "Checking now"),
+        ("a2", "delta", "Done"),
+        ("a2", "agentMessage", "Done!"),
+    ] {
+        if kind == "delta" {
+            engine
+                .handle_message_delta(
+                    &conversation,
+                    &session,
+                    "turn",
+                    id,
+                    text,
+                    DeliveryClass::Live,
+                )
+                .await
+                .unwrap();
+        } else {
+            engine
+                .handle_completed_item(
+                    &conversation,
+                    &session,
+                    "turn",
+                    &crate::ItemSummary {
+                        id: id.into(),
+                        kind: kind.into(),
+                        text: Some(text.into()),
+                        status: Some("completed".into()),
+                    },
+                    DeliveryClass::Live,
+                )
+                .await
+                .unwrap();
+        }
+    }
+    engine
+        .handle_turn_completed(
+            &conversation,
+            &session,
+            "turn".into(),
+            crate::TurnStatus::Failed,
+            Some("Example error".into()),
+            DeliveryClass::Live,
+        )
+        .await
+        .unwrap();
+    let updates = channel.updates.lock().await;
+    for (_, view) in updates.iter() {
+        assert!(view.body.contains("Thinking\n> Carefully"));
+    }
+    let body = &updates.last().unwrap().1.body;
+    let mut remaining = body.as_str();
+    for text in [
+        "Thinking",
+        "Checking now",
+        "Run tests",
+        "Done!",
+        "Error: Example error",
+    ] {
+        remaining = remaining.split_once(text).unwrap().1;
+        assert_eq!(body.matches(text).count(), 1);
+    }
+}
+
+#[tokio::test]
+async fn commentary_is_reasoning_and_turn_view_has_ordered_sections() {
+    let engine = Engine::new(
+        Arc::new(UnusedAgent),
+        SqliteState::in_memory().await.unwrap(),
+        vec![],
+    )
+    .with_output(crate::OutputConfig {
+        show_reasoning: true,
+        show_tool_calls: true,
+    });
+    let session = SessionId::new("sections");
+    for (id, kind, text) in [
+        ("u", "userMessage", "Question"),
+        ("c1", "commentary", "I will check the card implementation."),
+        ("t1", "commandExecution", "Check source"),
+        ("c2", "commentary", "I found the component."),
+        ("t2", "commandExecution", "Run tests"),
+        ("a", "agentMessage", "Final answer"),
+    ] {
+        engine
+            .apply_completed_item(
+                &session,
+                "turn",
+                &crate::ItemSummary {
+                    id: id.into(),
+                    kind: kind.into(),
+                    text: Some(text.into()),
+                    status: None,
+                },
+            )
+            .await;
+    }
+    let buffers = engine.turns.buffers.lock().await;
+    let view = super::presentation::live_turn_view(
+        "Codex",
+        "session",
+        "turn",
+        &buffers[&(session, "turn".into())],
+        DeliveryClass::Live,
+    );
+    assert!(view.body.contains("**Reasoning**\n>\n> I will check"));
+    let json = serde_json::to_value(view).unwrap();
+    let sections = json["sections"].as_array().expect("structured sections");
+    let titles: Vec<_> = sections
+        .iter()
+        .map(|s| s["title"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        titles,
+        [
+            "👤 You",
+            "🧠 Reasoning",
+            "🔨 Tool Call",
+            "🧠 Reasoning",
+            "🔨 Tool Call",
+            "🤖 Codex"
+        ]
+    );
+    assert_eq!(sections[1]["body"], "I will check the card implementation.");
+    assert_eq!(sections[5]["body"], "Final answer");
+}
+
+#[tokio::test]
+async fn commentary_deltas_remain_in_reasoning_and_obey_visibility() {
+    for visible in [false, true] {
+        let channel = Arc::new(CompletedTurnChannel::default());
+        let engine = Engine::new(
+            Arc::new(UnusedAgent),
+            SqliteState::in_memory().await.unwrap(),
+            vec![channel],
+        )
+        .with_output(crate::OutputConfig {
+            show_reasoning: visible,
+            show_tool_calls: true,
+        });
+        let session = SessionId::new("commentary-stream");
+        let conversation = ConversationRef::new(ChannelKind::Telegram, "chat");
+        engine
+            .handle_routed_event(
+                conversation.clone(),
+                session.clone(),
+                AgentEvent::ItemStarted {
+                    session_id: session.to_string(),
+                    turn_id: "turn".into(),
+                    item_id: "c".into(),
+                    kind: "commentary".into(),
+                    label: "agentMessage".into(),
+                },
+                DeliveryClass::Live,
+            )
+            .await
+            .unwrap();
+        for delta in ["I will ", "check."] {
+            engine
+                .handle_message_delta(
+                    &conversation,
+                    &session,
+                    "turn",
+                    "c",
+                    delta,
+                    DeliveryClass::Live,
+                )
+                .await
+                .unwrap();
+            let buffers = engine.turns.buffers.lock().await;
+            let buffer = &buffers[&(session.clone(), "turn".into())];
+            assert!(buffer.agent_text.is_empty());
+            let sections = buffer.view_sections("Codex");
+            assert_eq!(sections.len(), usize::from(visible));
+            if visible {
+                assert_eq!(sections[0].title, "🧠 Reasoning");
+            }
+        }
+        for (id, kind, text) in [
+            ("c", "commentary", "I will check."),
+            ("a", "agentMessage", "Answer"),
+        ] {
+            engine
+                .apply_completed_item(
+                    &session,
+                    "turn",
+                    &crate::ItemSummary {
+                        id: id.into(),
+                        kind: kind.into(),
+                        text: Some(text.into()),
+                        status: None,
+                    },
+                )
+                .await;
+        }
+        let buffers = engine.turns.buffers.lock().await;
+        let buffer = &buffers[&(session, "turn".into())];
+        let sections = buffer.view_sections("Codex");
+        assert_eq!(sections.len(), 1 + usize::from(visible));
+        assert_eq!(sections.last().unwrap().body, "Answer");
+        if visible {
+            assert_eq!(sections[0].body, "I will check.");
+        }
+    }
+}
+
+#[tokio::test]
+async fn repeated_commentary_start_preserves_streamed_and_completed_content() {
+    let engine = Engine::new(
+        Arc::new(UnusedAgent),
+        SqliteState::in_memory().await.unwrap(),
+        vec![Arc::new(CompletedTurnChannel::default())],
+    )
+    .with_output(crate::OutputConfig {
+        show_reasoning: true,
+        show_tool_calls: true,
+    });
+    let session = SessionId::new("repeat");
+    let conversation = ConversationRef::new(ChannelKind::Telegram, "chat");
+    for completed in [false, true] {
+        engine
+            .handle_routed_event(
+                conversation.clone(),
+                session.clone(),
+                AgentEvent::ItemStarted {
+                    session_id: session.to_string(),
+                    turn_id: "turn".into(),
+                    item_id: "c".into(),
+                    kind: "commentary".into(),
+                    label: "agentMessage".into(),
+                },
+                DeliveryClass::Live,
+            )
+            .await
+            .unwrap();
+        if completed {
+            engine
+                .apply_completed_item(
+                    &session,
+                    "turn",
+                    &crate::ItemSummary {
+                        id: "c".into(),
+                        kind: "commentary".into(),
+                        text: Some("I will check.".into()),
+                        status: None,
+                    },
+                )
+                .await;
+        } else {
+            engine
+                .handle_message_delta(
+                    &conversation,
+                    &session,
+                    "turn",
+                    "c",
+                    "I will check.",
+                    DeliveryClass::Live,
+                )
+                .await
+                .unwrap();
+        }
+        engine
+            .handle_routed_event(
+                conversation.clone(),
+                session.clone(),
+                AgentEvent::ItemStarted {
+                    session_id: session.to_string(),
+                    turn_id: "turn".into(),
+                    item_id: "c".into(),
+                    kind: "commentary".into(),
+                    label: "agentMessage".into(),
+                },
+                DeliveryClass::Live,
+            )
+            .await
+            .unwrap();
+        let buffers = engine.turns.buffers.lock().await;
+        let sections = buffers[&(session.clone(), "turn".into())].view_sections("Codex");
+        assert_eq!(sections.len(), 1);
+        assert_eq!(sections[0].title, "🧠 Reasoning");
+        assert_eq!(sections[0].body, "I will check.");
+    }
+}
+
+#[tokio::test]
+async fn late_commentary_classification_replaces_output_and_survives_cold_restore() {
+    for visible in [false, true] {
+        let engine = Engine::new(
+            Arc::new(UnusedAgent),
+            SqliteState::in_memory().await.unwrap(),
+            vec![Arc::new(CompletedTurnChannel::default())],
+        )
+        .with_output(crate::OutputConfig {
+            show_reasoning: visible,
+            show_tool_calls: true,
+        });
+        let session = SessionId::new("late-phase");
+        let conversation = ConversationRef::new(ChannelKind::Telegram, "chat");
+        engine
+            .handle_message_delta(
+                &conversation,
+                &session,
+                "turn",
+                "c",
+                "Checking",
+                DeliveryClass::Live,
+            )
+            .await
+            .unwrap();
+        for (id, kind, text) in [
+            ("c", "commentary", "Checking"),
+            ("a", "agentMessage", "Answer"),
+            ("c", "commentary", "Checking"),
+        ] {
+            engine
+                .apply_completed_item(
+                    &session,
+                    "turn",
+                    &crate::ItemSummary {
+                        id: id.into(),
+                        kind: kind.into(),
+                        text: Some(text.into()),
+                        status: None,
+                    },
+                )
+                .await;
+        }
+        let before = engine.turns.buffers.lock().await[&(session.clone(), "turn".into())]
+            .view_sections("Codex");
+        assert_eq!(before.len(), 1 + usize::from(visible));
+        assert_eq!(before.last().unwrap().body, "Answer");
+        if visible {
+            assert_eq!(before[0].body, "Checking");
+        }
+        engine.archive_turn(&session, "turn").await.unwrap();
+        engine.restore_cold_turn(&session, "turn").await.unwrap();
+        assert_eq!(
+            engine.turns.buffers.lock().await[&(session, "turn".into())].view_sections("Codex"),
+            before
+        );
     }
 }

@@ -104,10 +104,10 @@ async fn task_service_records_configured_process_items_without_an_im_connection(
     assert_eq!(messages[&("pi:same".into(), "turn".into())].len(), 1);
     assert_eq!(
         messages[&("pi:same".into(), "turn".into())][0]["text"],
-        "Reasoning\n\nupdated"
+        "**Reasoning**\n\nupdated"
     );
     assert_eq!(
         messages[&("omp:same".into(), "turn".into())][0]["text"],
-        "Reasoning\n\nother"
+        "**Reasoning**\n\nother"
     );
 }

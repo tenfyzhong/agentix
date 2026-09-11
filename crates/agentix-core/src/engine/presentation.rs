@@ -220,6 +220,7 @@ pub(super) fn history_views(
         HistoryPresentation::History => "History",
     };
     let mut views = vec![OutboundView {
+        sections: Vec::new(),
         title: format!("{agent_name} · {session_label}"),
         subtitle: Some(subtitle.into()),
         body,
@@ -243,6 +244,7 @@ pub(super) fn history_turn_view(agent_name: &str, turn: &TurnSummary) -> Outboun
     );
 
     OutboundView {
+        sections: Vec::new(),
         title: format!("{agent_name} · Turn {}", short_identifier(&turn.id)),
         subtitle: Some(turn_status_label(&turn.status).into()),
         body,
@@ -261,14 +263,7 @@ pub(super) fn live_turn_body(
     buffer: &TurnBuffer,
     delivery: DeliveryClass,
 ) -> String {
-    let output = buffer
-        .process_items
-        .iter()
-        .map(|(_, text)| text.as_str())
-        .chain(std::iter::once(buffer.agent_text.as_str()))
-        .filter(|text| !text.is_empty())
-        .collect::<Vec<_>>()
-        .join("\n\n");
+    let output = buffer.render_output();
     let mut body = turn_conversation_body(agent_name, Some(&buffer.user_text), Some(&output));
     if delivery == DeliveryClass::Draining {
         body.push_str("\n\nThis is a background session after switching.");
@@ -284,6 +279,7 @@ pub(super) fn live_turn_view(
     delivery: DeliveryClass,
 ) -> OutboundView {
     OutboundView {
+        sections: buffer.view_sections(agent_name),
         title: format!("{agent_name} · {session_label}"),
         subtitle: Some(format!(
             "{} {} · {}",

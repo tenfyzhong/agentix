@@ -11,8 +11,8 @@ use agentix_domain::{
 };
 use async_trait::async_trait;
 use larksuite_oapi_sdk_rs::card::v2::{
-    BackgroundStyle, Behavior, Body, Button, ButtonType, Card, CardDocument, Color, Column,
-    ColumnSet, Config, Element, Header, Markdown, TemplateColor, Text,
+    Behavior, Body, Button, ButtonType, Card, CardDocument, Config, Element, Header, Markdown,
+    TemplateColor, Text,
 };
 use larksuite_oapi_sdk_rs::channel::{
     Channel, ChannelPolicy, DmMode, NormalizedMessage, SendInput,
@@ -20,6 +20,8 @@ use larksuite_oapi_sdk_rs::channel::{
 use larksuite_oapi_sdk_rs::{EventDispatcher, LarkClient, LarkError, RequestOption};
 use tokio::sync::{Mutex, mpsc};
 use tokio_util::sync::CancellationToken;
+
+mod card_sections;
 
 const CARD_BODY_LIMIT: usize = 25_000;
 const ATTACHED_COMMAND_MARKER: &str = "✌️ ";
@@ -784,17 +786,7 @@ fn render_card_with_action_state(
     if let Some(subtitle) = &view.subtitle {
         header = header.subtitle(Text::plain(subtitle));
     }
-    let content = Element::Markdown(Markdown::new(truncate_utf8(&view.body, CARD_BODY_LIMIT)));
-    let content = if view.status == ViewStatus::Background {
-        let mut quote = Column::new().element(content);
-        // Feishu rejects CSS RGBA strings here; use a predefined palette color.
-        quote.background_style = Some(BackgroundStyle::Color(Color::Grey));
-        quote.padding = Some("12px".into());
-        Element::ColumnSet(ColumnSet::new().column(quote))
-    } else {
-        content
-    };
-    let mut body = Body::new().element(content);
+    let mut body = card_sections::view_body(view);
     for action in &view.actions {
         let button_type = match action.style {
             ActionStyle::Primary => ButtonType::Primary,
