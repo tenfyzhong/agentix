@@ -48,6 +48,27 @@ Override the endpoint with `[server].endpoint`. Explicit TCP endpoints are accep
 
 Ordinary control clients exchange one request and one response per connection. Native extensions register on the same Unix listener and retain a bidirectional connection. `client send`, `stop`, `history`, and `command` use shared session operations; `client sessions` goes through the running adapter, `client call` is passed through the server's existing Codex app-server connection, and `client claim` creates claim state inside the running server. Consequently, all client commands require `agentix serve` to be running and use the same backend state as the IM channel.
 
+### Reloading configuration
+
+After editing the configuration used by the running service, run:
+
+```sh
+agentix reload
+# For a service started with a custom configuration:
+agentix --config /path/to/config.toml reload
+# Connect directly if the local file is invalid or its endpoint was edited:
+agentix reload --endpoint unix:///path/to/control.sock
+agentix reload --endpoint tcp://127.0.0.1:46783
+```
+
+The command sends a `{"method":"reload"}` request to the local control endpoint. The server reads its own original configuration path; `--config` on the client only selects the endpoint. Explicit `--endpoint` skips loading the client's configuration. A successful command prints JSON containing `reloaded: true` and the server's configuration path. Invalid configuration, setup failures, and unsupported changes return an error and a nonzero exit status.
+
+Reload supports the selected IM channel and credentials, owner lists, Slack command names and CLI path, network proxy, output settings, background-turn notifications, task-board settings (including rereading the referenced taskix configuration), and Pi/OMP/Claude backend additions, changes, and removals. Existing unchanged agent connections and the native bridge listener are retained. CLI proxy authentication options supplied to `serve` keep their precedence after every reload.
+
+Changes to `server.endpoint`, `storage.path`, or any logging setting require restarting the service. Changing or removing an already configured Codex backend also requires a restart because its proxy owns a live listener. These changes reject the entire reload; they are never silently ignored. Adding Codex to a service that does not yet configure it is supported.
+
+Preparation runs while the old service continues processing requests. Only one reload is prepared at a time; overlapping reload requests receive a busy error. Preparation and binding restoration each have a 30-second timeout. During the switch, Agentix drains the old runtime and reconnects the IM channel, so IM handling pauses briefly and in-flight control requests may need retrying. The process and control listener remain running. Reload does not send offline/detach notices or stop upstream turns; durable bindings and turn displays are restored. Normal identity reconciliation still applies: changing the bot identity or removing a backend can disable its old bindings. If preparation or restoration fails, Agentix resumes the previous runtime. External IM menu synchronization finishes asynchronously, as it does at startup.
+
 ### Codex
 
 The Codex adapter requires Codex CLI 0.153.0 or newer from OpenAI's official standalone installer:
@@ -119,7 +140,7 @@ command = "claude"
 session_dir = "~/.claude/projects"
 ```
 
-Omit a backend table to disable it. Existing backend-specific fields retain their meanings and defaults; Pi/OMP still require `session_dir`. Unknown names, unknown backend fields, and a `kind` field inside a named table are rejected. Legacy `[agent]` with `kind` and `[[agents]]` arrays remain accepted for migration, but cannot be mixed with named tables. Restart `agentix serve` after changing configuration. An old unqualified binding database must first be opened with its original single backend so migration does not guess ownership.
+Omit a backend table to disable it. Existing backend-specific fields retain their meanings and defaults; Pi/OMP still require `session_dir`. Unknown names, unknown backend fields, and a `kind` field inside a named table are rejected. Legacy `[agent]` with `kind` and `[[agents]]` arrays remain accepted for migration, but cannot be mixed with named tables. Run `agentix reload` after changing supported runtime configuration; see [reload limitations](#reloading-configuration). An old unqualified binding database must first be opened with its original single backend so migration does not guess ownership.
 
 ## Optional task coordination
 

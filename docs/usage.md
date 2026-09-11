@@ -177,6 +177,6 @@ show_reasoning = true
 show_tool_calls = true
 ```
 
-Both default to `false`. Restart Agentix after changing them. Enabled host-exposed reasoning summaries and tool details appear alongside the final answer and are written into the associated Obsidian Job’s Agent output when the turn ends, including sessions without an IM attachment. This does not change the model’s reasoning level.
+Both default to `false`. Run `agentix reload` after changing them. Enabled host-exposed reasoning summaries and tool details appear alongside the final answer and are written into the associated Obsidian Job’s Agent output when the turn ends, including sessions without an IM attachment. This does not change the model’s reasoning level.
 
 Codex supplies completed reasoning summaries and tool items; Pi/OMP report completed thinking blocks and tool execution results. Claude imports visible thinking blocks and tool inputs/results from the matching transcript turn at completion. Content unavailable from the host is not reconstructed. Tool text may be shortened by the host bridge’s existing size limits. Standalone Taskix hooks retain their ordinary visible-message capture.

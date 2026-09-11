@@ -1,5 +1,7 @@
 mod control;
 mod control_runtime;
+mod reload;
+#[cfg(test)]
 use agentix::run_engine_loop;
 use control_runtime::run_control_handler;
 #[cfg(all(test, unix))]
@@ -7,6 +9,7 @@ mod native_control_tests;
 #[cfg(test)]
 mod proxy_tests;
 
+#[cfg(test)]
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -19,7 +22,7 @@ use agentix::{
 use agentix_bridge::{BridgeAdapter, BridgeHub, BridgeKind};
 use agentix_codex::{CodexClient, CodexEndpoint};
 use agentix_core::OwnerClaimer;
-use agentix_core::{AgentAdapter, AgentError, ChannelAdapter, Engine, SqliteState};
+use agentix_core::{AgentAdapter, AgentError, ChannelAdapter, Engine};
 use agentix_feishu::FeishuAdapter;
 use agentix_telegram::{TelegramAdapter, TelegramOwnerClaimer, TelegramPolicy};
 use anyhow::{Context, Result, bail};
@@ -28,7 +31,10 @@ use clap::{CommandFactory, Parser, Subcommand};
 use clap_complete::Shell;
 use serde::Serialize;
 use serde_json::{Value, json};
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::Mutex;
+#[cfg(test)]
+use tokio::sync::mpsc;
+#[cfg(test)]
 use tokio_util::sync::CancellationToken;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_appender::rolling::{Builder as RollingBuilder, Rotation};
@@ -52,6 +58,12 @@ enum CliCommand {
     Serve {
         #[command(flatten)]
         proxy: agentix_codex::ProxyOptions,
+    },
+    /// Reload the running server configuration without restarting the process.
+    Reload {
+        /// Connect directly, even if the local configuration is invalid.
+        #[arg(long)]
+        endpoint: Option<String>,
     },
     /// Validate configuration, credentials, and the selected agent transport.
     Doctor,
@@ -127,17 +139,24 @@ async fn main() -> Result<()> {
         );
         return Ok(());
     }
+    if let CliCommand::Reload { endpoint } = command {
+        let endpoint = match endpoint {
+            Some(endpoint) => endpoint,
+            None => Config::load(&config_path)?.server.endpoint,
+        };
+        return print_json(&control::request(&endpoint, &control::ControlRequest::Reload).await?);
+    }
     let mut config = Config::load(&config_path)?;
     let _log_guard = init_logging(&config.logging)?;
     match command {
         CliCommand::Serve { proxy } => {
             config.apply_codex_proxy_options(&proxy)?;
-            serve(config, &config_path).await
+            serve(config, &config_path, proxy).await
         }
         CliCommand::Doctor => doctor(&config).await,
         CliCommand::Client { command } => client(&config.server.endpoint, command).await,
-        CliCommand::Completions { .. } => {
-            unreachable!("completions are generated before loading config")
+        CliCommand::Completions { .. } | CliCommand::Reload { .. } => {
+            unreachable!("completions and reload are handled before runtime initialization")
         }
     }
 }
@@ -320,62 +339,111 @@ fn retryable_backend_error(error: anyhow::Error) -> Result<anyhow::Error> {
     Ok(error)
 }
 
-async fn serve(config: Config, config_path: &Path) -> Result<()> {
+async fn serve(
+    config: Config,
+    config_path: &Path,
+    proxy: agentix_codex::ProxyOptions,
+) -> Result<()> {
+    // Keep this hub and the control listener alive across runtime generations.
+    let bridge = Arc::new(BridgeHub::new());
+    let claims = Arc::new(ClaimRegistry::default());
+    let path = std::path::absolute(config_path)?;
+    let initial = build_service(config, None, bridge.clone(), claims.clone(), path.clone()).await?;
+    reload::run(
+        initial,
+        path.clone(),
+        proxy,
+        Some(bridge.clone()),
+        claims.clone(),
+        move |config, previous| {
+            build_service(
+                config,
+                Some(previous),
+                bridge.clone(),
+                claims.clone(),
+                path.clone(),
+            )
+        },
+        async {
+            tokio::signal::ctrl_c()
+                .await
+                .context("signal handler failed")
+        },
+        Duration::from_secs(5),
+    )
+    .await
+}
+
+async fn build_service(
+    config: Config,
+    previous: Option<Arc<reload::PreparedService>>,
+    bridge: Arc<BridgeHub>,
+    claims: Arc<ClaimRegistry>,
+    config_path: PathBuf,
+) -> Result<reload::PreparedService> {
     let started = Instant::now();
-    let bridge_hub = if config
-        .selected_agents()
-        .iter()
-        .any(|agent| !matches!(agent, AgentConfig::Codex { .. }))
-    {
-        Some(Arc::new(BridgeHub::new()))
-    } else {
-        None
-    };
+    let bridge_hub = Some(bridge);
+    let notification_setting = previous.as_ref().map_or_else(
+        || {
+            Arc::new(std::sync::atomic::AtomicBool::new(
+                config.notifications.background_turns,
+            ))
+        },
+        |previous| previous.notification_setting.clone(),
+    );
     let mut agents = Vec::new();
     let mut codex = None;
+    let mut backends = Vec::new();
     for agent in config.selected_agents() {
-        let built = match build_agent(
-            agent,
-            config.notifications.background_turns,
-            bridge_hub.clone(),
-        )
-        .await
-        {
-            Ok(built) => built,
-            Err(error) => {
-                let error = retryable_backend_error(error)?;
-                tracing::warn!(%error, backend = agent.kind().as_str(), "backend startup failed; continuing with retries");
-                let retry = agent.clone();
-                let bridge_hub = bridge_hub.clone();
-                let background = config.notifications.background_turns;
-                let directory = match agent {
-                    AgentConfig::Codex { rmux_directory, .. }
-                    | AgentConfig::Claude { rmux_directory, .. }
-                    | AgentConfig::Pi { rmux_directory, .. }
-                    | AgentConfig::OhMyPi { rmux_directory, .. } => {
-                        rmux_directory.to_string_lossy().into_owned()
-                    }
-                };
-                let adapter = agentix_core::DeferredAgent::new(
-                    agent.kind().display_name(),
-                    directory,
-                    move || {
-                        let retry = retry.clone();
-                        let bridge_hub = bridge_hub.clone();
-                        async move {
-                            build_agent(&retry, background, bridge_hub)
-                                .await
-                                .map(|built| built.adapter)
-                                .map_err(|error| AgentError::Unavailable(error.to_string()))
+        let reused = previous.as_ref().and_then(|previous| {
+            previous
+                .backends
+                .iter()
+                .find(|(old, _)| old == agent)
+                .map(|(_, built)| built.clone())
+        });
+        let built = if let Some(built) = reused {
+            built
+        } else {
+            match build_agent(agent, notification_setting.clone(), bridge_hub.clone()).await {
+                Ok(built) => built,
+                Err(error) => {
+                    let error = retryable_backend_error(error)?;
+                    tracing::warn!(%error, backend = agent.kind().as_str(), "backend startup failed; continuing with retries");
+                    let retry = agent.clone();
+                    let bridge_hub = bridge_hub.clone();
+                    let background = notification_setting.clone();
+                    let directory = match agent {
+                        AgentConfig::Codex { rmux_directory, .. }
+                        | AgentConfig::Claude { rmux_directory, .. }
+                        | AgentConfig::Pi { rmux_directory, .. }
+                        | AgentConfig::OhMyPi { rmux_directory, .. } => {
+                            rmux_directory.to_string_lossy().into_owned()
                         }
-                    },
-                );
-                BuiltAgent {
-                    adapter: Arc::new(adapter),
-                    codex: None,
+                    };
+                    let adapter = agentix_core::DeferredAgent::new(
+                        agent.kind().display_name(),
+                        directory,
+                        move || {
+                            let retry = retry.clone();
+                            let bridge_hub = bridge_hub.clone();
+                            let background = background.clone();
+                            async move {
+                                build_agent(&retry, background, bridge_hub)
+                                    .await
+                                    .map(|built| built.adapter)
+                                    .map_err(|error| AgentError::Unavailable(error.to_string()))
+                            }
+                        },
+                    );
+                    BuiltAgent {
+                        adapter: Arc::new(adapter),
+                        codex: None,
+                    }
                 }
             }
         };
+        backends.push((agent.clone(), built.clone()));
         if built.codex.is_some() {
             codex = built.codex;
         }
@@ -388,36 +456,21 @@ async fn serve(config: Config, config_path: &Path) -> Result<()> {
         "startup phase completed"
     );
     let started = Instant::now();
-    let claims = Arc::new(ClaimRegistry::default());
-    let channels = build_channels(&config, config_path, claims.clone())?;
+    let channels = build_channels(&config, &config_path, claims)?;
     let task_board = build_task_board(&config).await?;
     tracing::info!(
         phase = "channel_and_task_setup",
         elapsed_ms = started.elapsed().as_millis(),
         "startup phase completed"
     );
-    run_service_until_shutdown(
-        adapter,
-        codex,
-        channels,
-        task_board,
-        config.storage.path,
-        config.server.endpoint,
-        bridge_hub,
-        config_path.to_owned(),
-        claims,
-        config.notifications.background_turns,
-        config.output,
-        Duration::from_secs(5),
-        async {
-            tokio::signal::ctrl_c()
-                .await
-                .context("signal handler failed")
-        },
-    )
-    .await
+    let mut prepared =
+        reload::PreparedService::new(config, adapter, codex, channels, task_board, backends)
+            .await?;
+    prepared.notification_setting = notification_setting;
+    Ok(prepared)
 }
 
+#[cfg(test)]
 #[allow(clippy::too_many_arguments)]
 async fn run_service_until_shutdown<F>(
     adapter: Arc<dyn AgentAdapter>,
@@ -437,107 +490,26 @@ async fn run_service_until_shutdown<F>(
 where
     F: Future<Output = Result<()>> + Send,
 {
-    let started = Instant::now();
-    if let Some(parent) = state_path.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .with_context(|| format!("failed to create state directory {}", parent.display()))?;
-    }
-    let state = SqliteState::open(&state_path).await?;
-    let backends = adapter.session_backends();
-    if !backends.is_empty() {
-        state
-            .qualify_sessions((backends.len() == 1).then(|| backends[0]))
-            .await?;
-    }
-    tracing::info!(
-        phase = "state_storage",
-        elapsed_ms = started.elapsed().as_millis(),
-        "startup phase completed"
-    );
-    let restore_started = Instant::now();
-    let mut engine = Engine::new(adapter.clone(), state, channels.clone())
-        .with_background_turn_notifications(background_turn_notifications)
-        .with_output(output);
-    if let Some(task_board) = task_board {
-        engine = engine
-            .with_task_board(task_board)
-            .with_task_consumer(state_path.to_string_lossy().into_owned());
-    }
-    let engine = Arc::new(engine);
-    let updates = engine.restore_bindings_deferred().await?;
-    tracing::info!(
-        restored = updates.restored_count(),
-        phase = "binding_restore",
-        elapsed_ms = restore_started.elapsed().as_millis(),
-        "restored durable conversation bindings"
-    );
-
-    let shutdown = CancellationToken::new();
-    let (control_tx, control_rx) = mpsc::channel(32);
-    let advertised_control_endpoint = control_endpoint.clone();
-    let control_shutdown = shutdown.clone();
-    let mut control_task = tokio::spawn(async move {
-        control::serve_with_bridge(&control_endpoint, control_tx, control_shutdown, bridge).await
-    });
-    let control_handler_task = tokio::spawn(run_control_handler(
-        control_rx,
-        adapter.clone(),
-        codex,
-        claims,
+    let mut config = Config::from_toml(
+        "[channel]\nkind='telegram'\n[channel.telegram]\ntoken='mock-token'\n[agent]\nkind='codex'\n[storage]\npath='/tmp/unused.sqlite3'\n",
+    )?;
+    config.storage.path = state_path;
+    config.server.endpoint = control_endpoint;
+    config.notifications.background_turns = background_turn_notifications;
+    config.output = output;
+    let initial =
+        reload::PreparedService::new(config, adapter, codex, channels, task_board, vec![]).await?;
+    reload::run(
+        initial,
         config_path,
-        shutdown.clone(),
-    ));
-    let (inbound_tx, inbound_rx) = mpsc::channel(256);
-    let mut channel_tasks = Vec::new();
-    for channel in channels {
-        let inbound = inbound_tx.clone();
-        let token = shutdown.clone();
-        channel_tasks.push(tokio::spawn(async move {
-            if let Err(error) = channel.run(inbound, token).await {
-                tracing::error!(%error, channel = %channel.kind(), "IM channel stopped");
-            }
-        }));
-    }
-    drop(inbound_tx);
-
-    let engine_task = tokio::spawn(run_engine_loop(
-        engine.clone(),
-        adapter,
-        inbound_rx,
-        shutdown.clone(),
-    ));
-
-    let startup_task = spawn_startup_notifications(engine.clone(), updates);
-
-    tracing::info!(endpoint = %advertised_control_endpoint, elapsed_ms = started.elapsed().as_millis(), "Agentix is running");
-    tokio::pin!(shutdown_signal);
-    let control_failure = tokio::select! {
-        signal = &mut shutdown_signal => {
-            signal?;
-            None
-        }
-        result = &mut control_task => Some(match result {
-            Ok(Ok(())) => anyhow::anyhow!("Agentix control server stopped unexpectedly"),
-            Ok(Err(error)) => error,
-            Err(error) => anyhow::anyhow!("Agentix control server task failed: {error}"),
-        }),
-    };
-    shutdown.cancel();
-    startup_task.abort();
-    let _ = startup_task.await;
-    let _ = engine_task.await;
-    match agentix::shutdown_engine(engine.clone(), channel_shutdown_grace).await {
-        Ok(notified) => tracing::info!(notified, "saved bindings and notified IM conversations"),
-        Err(error) => tracing::error!(%error, "failed to finish graceful shutdown preparation"),
-    }
-
-    wait_for_channel_shutdown(channel_tasks, channel_shutdown_grace).await;
-    if control_failure.is_none() {
-        let _ = control_task.await;
-    }
-    let _ = control_handler_task.await;
-    control_failure.map_or(Ok(()), Err)
+        agentix_codex::ProxyOptions::default(),
+        bridge,
+        claims,
+        |_, _| async { bail!("reload unavailable in this fixture") },
+        shutdown_signal,
+        channel_shutdown_grace,
+    )
+    .await
 }
 
 fn spawn_startup_notifications(
@@ -653,6 +625,7 @@ async fn doctor(config: &Config) -> Result<()> {
     Ok(())
 }
 
+#[derive(Clone)]
 struct BuiltAgent {
     adapter: Arc<dyn AgentAdapter>,
     codex: Option<CodexClient>,
@@ -665,7 +638,7 @@ fn claude_workspace_args() -> Vec<String> {
 
 async fn build_agent(
     config: &AgentConfig,
-    background_turn_notifications: bool,
+    background_turn_notifications: Arc<std::sync::atomic::AtomicBool>,
     bridge_hub: Option<Arc<BridgeHub>>,
 ) -> Result<BuiltAgent> {
     match config {
@@ -692,7 +665,7 @@ async fn build_agent(
             rmux_directory,
         } => {
             let endpoint = CodexEndpoint::parse(endpoint)?;
-            let client = CodexClient::connect_with_proxy_options(
+            let client = CodexClient::connect_with_proxy_notification_setting(
                 proxy_endpoint,
                 endpoint,
                 command,
@@ -879,6 +852,9 @@ async fn handle_control_request(
     config_path: &Path,
 ) -> std::result::Result<Value, String> {
     match request {
+        control::ControlRequest::Reload => {
+            Err("configuration reload is unavailable in this handler".into())
+        }
         control::ControlRequest::Session(operation) => {
             agentix_core::SessionOperations::new(agent.clone())
                 .execute(operation)
@@ -1130,6 +1106,7 @@ fn default_config_path() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    use agentix_core::SqliteState;
     #[test]
     fn claude_terminal_launch_does_not_require_channels() {
         assert!(super::claude_workspace_args().is_empty());
@@ -1282,6 +1259,7 @@ mod tests {
         views: StdMutex<Vec<OutboundView>>,
         deliveries: StdMutex<Vec<String>>,
         stop_on_shutdown: bool,
+        identity_error: bool,
         started: CancellationToken,
         blocked_operation: Option<StartupOperation>,
         blocked_working_conversation: Option<String>,
@@ -1297,6 +1275,7 @@ mod tests {
                 views: StdMutex::new(Vec::new()),
                 deliveries: StdMutex::new(Vec::new()),
                 stop_on_shutdown: true,
+                identity_error: false,
                 started: CancellationToken::new(),
                 blocked_operation: None,
                 blocked_working_conversation: None,
@@ -1324,6 +1303,16 @@ mod tests {
 
     #[async_trait]
     impl ChannelAdapter for LifecycleChannel {
+        async fn identity(&self) -> Result<Option<String>, ChannelError> {
+            if self.identity_error {
+                Err(ChannelError::Rejected(
+                    "invalid replacement credentials".into(),
+                ))
+            } else {
+                Ok(None)
+            }
+        }
+
         fn kind(&self) -> ChannelKind {
             ChannelKind::Telegram
         }
@@ -1542,7 +1531,7 @@ mod tests {
     #[tokio::test]
     #[allow(clippy::too_many_lines)] // One production-runtime durable delivery scenario.
     async fn engine_runtime_delivers_task_outbox_per_conversation_while_one_im_send_is_blocked() {
-        use agentix_core::{Engine, SqliteState};
+        use agentix_core::Engine;
         use std::time::Duration;
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir(dir.path().join(".obsidian")).unwrap();
@@ -2760,6 +2749,379 @@ owner_user_ids = ["U1"]
             assert_eq!(channels[0].kind(), expected);
         }
     }
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn reload_service_switches_channels_and_keeps_bindings_after_invalid_config() {
+        use super::reload::{PreparedService, run};
+        use std::time::Duration;
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.toml");
+        let endpoint = format!("tcp://{}", unused_loopback_address());
+        let source = format!(
+            "[channel]\nkind='telegram'\n[channel.telegram]\ntoken='mock-token'\nowner_user_ids=[42]\n[agent]\nkind='codex'\n[storage]\npath='{}'\n[server]\nendpoint='{}'\n",
+            directory.path().join("state.sqlite3").display(),
+            endpoint,
+        );
+        std::fs::write(&path, &source).unwrap();
+        let config = Config::load(&path).unwrap();
+        let state = agentix_core::SqliteState::open(&config.storage.path)
+            .await
+            .unwrap();
+        let conversation = ConversationRef::new(ChannelKind::Telegram, "saved");
+        state
+            .attach(&conversation, &SessionId::new("thr_saved"))
+            .await
+            .unwrap();
+        let agent = Arc::new(LifecycleAgent::new());
+        let first = Arc::new(LifecycleChannel::new());
+        let bootstrap =
+            agentix_core::Engine::new(agent.clone(), state.clone(), vec![first.clone()]);
+        bootstrap.restore_bindings_deferred().await.unwrap();
+        bootstrap
+            .handle_inbound(agentix_core::InboundEnvelope::text(
+                "reload-test-prompt",
+                conversation.clone(),
+                "42",
+                "continue working",
+            ))
+            .await
+            .unwrap();
+        assert!(
+            state
+                .list_turn_views()
+                .await
+                .unwrap()
+                .iter()
+                .any(|view| view.turn_id == "turn_test")
+        );
+        drop(bootstrap);
+        let initial = PreparedService::new(
+            config,
+            agent.clone(),
+            None,
+            vec![first.clone()],
+            None,
+            vec![],
+        )
+        .await
+        .unwrap();
+        let channels = Arc::new(StdMutex::new(Vec::new()));
+        let seen_owners = Arc::new(StdMutex::new(Vec::new()));
+        let preparing = CancellationToken::new();
+        let release = CancellationToken::new();
+        let shutdown = CancellationToken::new();
+        let server = tokio::spawn(run(
+            initial,
+            path.clone(),
+            agentix_codex::ProxyOptions::default(),
+            None,
+            Arc::new(super::ClaimRegistry::default()),
+            {
+                let channels = channels.clone();
+                let seen_owners = seen_owners.clone();
+                let preparing = preparing.clone();
+                let release = release.clone();
+                move |config: Config, previous: Arc<PreparedService>| {
+                    let channels = channels.clone();
+                    let seen_owners = seen_owners.clone();
+                    let preparing = preparing.clone();
+                    let release = release.clone();
+                    async move {
+                        let owners = config
+                            .channel
+                            .telegram
+                            .as_ref()
+                            .unwrap()
+                            .owner_user_ids
+                            .clone();
+                        if owners == [99] {
+                            anyhow::bail!("replacement setup failed");
+                        }
+                        if owners == [98] {
+                            preparing.cancel();
+                            release.cancelled().await;
+                            anyhow::bail!("delayed setup failed");
+                        }
+                        if owners == [97] {
+                            let channel = Arc::new(LifecycleChannel {
+                                identity_error: true,
+                                ..LifecycleChannel::new()
+                            });
+                            return PreparedService::new(
+                                config,
+                                previous.adapter.clone(),
+                                None,
+                                vec![channel],
+                                None,
+                                vec![],
+                            )
+                            .await;
+                        }
+                        seen_owners.lock().unwrap().push(owners);
+                        let channel = Arc::new(LifecycleChannel::new());
+                        channels.lock().unwrap().push(channel.clone());
+                        PreparedService::new(
+                            config,
+                            previous.adapter.clone(),
+                            None,
+                            vec![channel],
+                            None,
+                            vec![],
+                        )
+                        .await
+                    }
+                }
+            },
+            {
+                let shutdown = shutdown.clone();
+                async move {
+                    shutdown.cancelled().await;
+                    Ok(())
+                }
+            },
+            Duration::from_millis(50),
+        ));
+        tokio::time::timeout(Duration::from_secs(2), first.started.cancelled())
+            .await
+            .unwrap();
+        // Wait for the listener rather than relying on scheduling or fixed sleeps.
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while super::control::request(
+                &endpoint,
+                &super::control::ControlRequest::Sessions {
+                    cursor: None,
+                    limit: 1,
+                },
+            )
+            .await
+            .is_err()
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        for invalid in [
+            "broken = [".to_owned(),
+            source.replace("[42]", "[99]"),
+            source.replace("[42]", "[97]"),
+        ] {
+            std::fs::write(&path, invalid).unwrap();
+            assert!(
+                super::control::request(&endpoint, &super::control::ControlRequest::Reload)
+                    .await
+                    .is_err()
+            );
+            assert!(
+                super::control::request(
+                    &endpoint,
+                    &super::control::ControlRequest::Sessions {
+                        cursor: None,
+                        limit: 1
+                    }
+                )
+                .await
+                .is_ok()
+            );
+            assert!(channels.lock().unwrap().is_empty());
+        }
+        std::fs::write(&path, source.replace("[42]", "[98]")).unwrap();
+        let pending = tokio::spawn({
+            let endpoint = endpoint.clone();
+            async move {
+                super::control::request(&endpoint, &super::control::ControlRequest::Reload).await
+            }
+        });
+        tokio::time::timeout(Duration::from_secs(2), preparing.cancelled())
+            .await
+            .unwrap();
+        assert!(
+            tokio::time::timeout(
+                Duration::from_secs(2),
+                super::control::request(
+                    &endpoint,
+                    &super::control::ControlRequest::Sessions {
+                        cursor: None,
+                        limit: 1
+                    }
+                )
+            )
+            .await
+            .unwrap()
+            .is_ok()
+        );
+        let busy = super::control::request(&endpoint, &super::control::ControlRequest::Reload)
+            .await
+            .unwrap_err();
+        assert!(busy.to_string().contains("already in progress"));
+        release.cancel();
+        assert!(pending.await.unwrap().is_err());
+        for owner in [43, 44] {
+            std::fs::write(&path, source.replace("[42]", &format!("[{owner}]"))).unwrap();
+            let result =
+                super::control::request(&endpoint, &super::control::ControlRequest::Reload)
+                    .await
+                    .unwrap();
+            assert_eq!(result["reloaded"], true);
+            let channel = channels.lock().unwrap().last().unwrap().clone();
+            tokio::time::timeout(Duration::from_secs(2), channel.started.cancelled())
+                .await
+                .unwrap();
+            assert_eq!(
+                state.current_session(&conversation).await.unwrap(),
+                Some(SessionId::new("thr_saved"))
+            );
+        }
+        // The replacement continues the persisted turn on the same agent transport.
+        assert!(
+            state
+                .list_turn_views()
+                .await
+                .unwrap()
+                .iter()
+                .any(|view| view.turn_id == "turn_test"
+                    && view.status == agentix_core::TurnStatus::InProgress)
+        );
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while agent.events.receiver_count() == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        agent
+            .events
+            .send(AgentEvent::TurnCompleted {
+                session_id: "thr_saved".into(),
+                turn_id: "turn_test".into(),
+                status: agentix_core::TurnStatus::Completed,
+                error: None,
+            })
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            // Completed cards move to cold storage and leave the active view table.
+            while state
+                .list_turn_views()
+                .await
+                .unwrap()
+                .iter()
+                .any(|view| view.turn_id == "turn_test")
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(*seen_owners.lock().unwrap(), [vec![43], vec![44]]);
+        assert!(
+            !first
+                .views
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|view| view.subtitle.as_deref() == Some("Offline · Detached"))
+        );
+        shutdown.cancel();
+        tokio::time::timeout(Duration::from_secs(2), server)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            state.current_session(&conversation).await.unwrap(),
+            Some(SessionId::new("thr_saved"))
+        );
+    }
+
+    #[tokio::test]
+    async fn reload_preparation_reuses_existing_backends_when_adding_a_native_agent() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.toml");
+        let source = format!(
+            "[channel]\nkind='telegram'\n[channel.telegram]\ntoken='mock-token'\n[agent.pi]\nsession_dir='{}'\n[storage]\npath='{}'\n",
+            directory.path().display(),
+            directory.path().join("state.sqlite3").display()
+        );
+        std::fs::write(&path, &source).unwrap();
+        let hub = Arc::new(super::BridgeHub::new());
+        let claims = Arc::new(super::ClaimRegistry::default());
+        let initial = Arc::new(
+            super::build_service(
+                Config::load(&path).unwrap(),
+                None,
+                hub.clone(),
+                claims.clone(),
+                path.clone(),
+            )
+            .await
+            .unwrap(),
+        );
+        std::fs::write(
+            &path,
+            format!(
+                "{source}\n[agent.omp]\nsession_dir='{}'\n",
+                directory.path().display()
+            ),
+        )
+        .unwrap();
+        let next = super::reload::load_candidate(
+            &path,
+            &initial.config,
+            &agentix_codex::ProxyOptions::default(),
+        )
+        .unwrap();
+        let prepared = super::build_service(next, Some(initial.clone()), hub, claims, path)
+            .await
+            .unwrap();
+        assert_eq!(prepared.backends.len(), 2);
+        let (_, pi) = prepared
+            .backends
+            .iter()
+            .find(|(config, _)| config.kind() == agentix_core::AgentKind::Pi)
+            .unwrap();
+        assert!(Arc::ptr_eq(&initial.backends[0].1.adapter, &pi.adapter));
+        assert_eq!(prepared.adapter.session_backends().len(), 2);
+    }
+
+    #[test]
+    fn reload_rejects_static_resource_changes_and_preserves_proxy_overrides() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("config.toml");
+        let source = "[channel]\nkind='telegram'\n[channel.telegram]\ntoken='mock-token'\n[agent]\nkind='codex'\n[storage]\npath='/tmp/state.sqlite3'\n";
+        std::fs::write(&path, source).unwrap();
+        let mut current = Config::load(&path).unwrap();
+        let options = agentix_codex::ProxyOptions {
+            ws_max_clock_skew_seconds: Some(60),
+            ..Default::default()
+        };
+        current.apply_codex_proxy_options(&options).unwrap();
+        let next = super::reload::load_candidate(&path, &current, &options).unwrap();
+        assert_eq!(next.selected_agents(), current.selected_agents());
+        for suffix in [
+            "[server]\nendpoint='tcp://127.0.0.1:9876'",
+            "[logging]\nlevel='debug'",
+        ] {
+            std::fs::write(&path, format!("{source}\n{suffix}")).unwrap();
+            assert!(
+                super::reload::load_candidate(&path, &current, &options)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("requires restarting")
+            );
+        }
+        std::fs::write(
+            &path,
+            source.replace("/tmp/state.sqlite3", "/tmp/other.sqlite3"),
+        )
+        .unwrap();
+        assert!(
+            super::reload::load_candidate(&path, &current, &options)
+                .unwrap_err()
+                .to_string()
+                .contains("storage.path")
+        );
+    }
+
     fn task_board_test_config(setting: Option<&str>, path: &Path) -> Config {
         let mut source = String::from(
             "[channel]\nkind='telegram'\n[channel.telegram]\ntoken='mock-token'\n\

@@ -2165,6 +2165,44 @@ impl ChannelAdapter for RecordingChannel {
 }
 
 #[tokio::test]
+async fn background_notifications_can_be_disabled_and_enabled_on_a_live_connection() {
+    let server = MockCodexAppServer::start();
+    server
+        .add_thread(MockThread::new("thr_reload", "Reload", "/work"))
+        .await;
+    let client = CodexClient::connect(server.endpoint()).await.unwrap();
+    let original_generation = client.generation();
+    client.clone().set_background_turn_notifications(false);
+    tokio::time::sleep(Duration::from_secs(11)).await;
+    assert_eq!(server.request_methods().await, ["initialize"]);
+    client.set_background_turn_notifications(true);
+    tokio::time::timeout(Duration::from_secs(12), async {
+        loop {
+            if server
+                .request_methods()
+                .await
+                .contains(&"thread/loaded/list".into())
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(client.generation(), original_generation);
+    assert_eq!(
+        server
+            .request_methods()
+            .await
+            .iter()
+            .filter(|method| *method == "initialize")
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
 async fn disabled_background_notifications_do_not_poll_sessions_or_turns() {
     let server = MockCodexAppServer::start();
     server

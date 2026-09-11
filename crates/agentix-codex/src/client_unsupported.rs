@@ -18,6 +18,20 @@ pub struct ClientError;
 pub struct CodexClient;
 
 impl CodexClient {
+    #[allow(clippy::trivially_copy_pass_by_ref, clippy::unused_self)]
+    pub fn set_background_turn_notifications(&self, _enabled: bool) {}
+
+    pub async fn connect_with_proxy_notification_setting(
+        _listen: &str,
+        _upstream: CodexEndpoint,
+        _command: &Path,
+        _rmux_directory: &Path,
+        _background_turn_notifications: std::sync::Arc<std::sync::atomic::AtomicBool>,
+        _options: &crate::ProxyOptions,
+    ) -> anyhow::Result<Self> {
+        anyhow::bail!("Codex transport is unavailable on this platform")
+    }
+
     pub async fn connect_with_proxy_options(
         _listen: &str,
         _upstream: CodexEndpoint,

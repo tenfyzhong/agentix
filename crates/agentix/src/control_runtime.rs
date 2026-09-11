@@ -63,7 +63,9 @@ fn request_scope(
         control::ControlRequest::Call { .. } => {
             DispatchScope::Keys(vec![Resource::Backend(AgentKind::Codex)])
         }
-        control::ControlRequest::Claim { .. } => DispatchScope::Keys(vec![Resource::Claims]),
+        control::ControlRequest::Reload | control::ControlRequest::Claim { .. } => {
+            DispatchScope::Keys(vec![Resource::Claims])
+        }
     }
 }
 
