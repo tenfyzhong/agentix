@@ -289,11 +289,13 @@ async fn configured_menus_have_dashboard_and_attached_secondary_commands() {
     engine.handle_inbound(input("/help")).await.unwrap();
     let detached = last(&channel).body;
     assert!(detached.contains("**/dashboard** — "));
+    assert!(!detached.contains("\n\n**/dashboard**"));
     assert!(!detached.contains("/board"));
     assert!(!detached.contains("Click tasks and jobs to read their Markdown details."));
     engine.handle_inbound(input("/attach thr_a")).await.unwrap();
     engine.handle_inbound(input("/help")).await.unwrap();
     let help = last(&channel).body;
+    assert!(!help.contains("\n\n**/dashboard**"));
     for usage in [
         "/dashboard",
         "/board",
