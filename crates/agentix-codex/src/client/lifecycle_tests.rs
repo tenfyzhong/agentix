@@ -6,6 +6,78 @@ mod support;
 use support::{MockCodexAppServer, MockThread, MockTurn};
 
 #[tokio::test]
+async fn offline_proxy_attachment_waits_for_registration_and_recovers() {
+    for read_only in [false, true] {
+        let server = MockCodexAppServer::start();
+        server
+            .add_thread(MockThread::new("saved", "Saved", "/work"))
+            .await;
+        if read_only {
+            server.set_active_writer("saved").await;
+        }
+        let registry = crate::ClientRegistry::default();
+        let client = CodexClient::connect_with_registry(
+            server.endpoint(),
+            Path::new("must-not-launch"),
+            Path::new("/tmp"),
+            false,
+            registry.clone(),
+        )
+        .await
+        .unwrap();
+        let session = SessionId::new("saved");
+        let mut events = client.subscribe();
+        let error = client.attach(&session).await.unwrap_err();
+        assert!(matches!(error, AgentError::Unavailable(_)), "{error}");
+        assert!(client.process_sessions.lock().await.contains(&session));
+        assert!(
+            client
+                .exited_process_sessions
+                .lock()
+                .await
+                .contains(&session)
+        );
+        assert!(
+            !server
+                .request_methods()
+                .await
+                .iter()
+                .any(|m| m == "thread/resume")
+        );
+
+        let connection = registry.connect(None);
+        registry.client_message(connection, &json!({"id": 1, "method": "thread/resume"}));
+        registry.server_message(
+            connection,
+            &json!({"id": 1, "result": {"thread": {"id": "saved"}}}),
+        );
+        tokio::time::timeout(Duration::from_secs(12), async {
+            loop {
+                if let AgentEvent::SessionResumed { session_id } = events.recv().await.unwrap() {
+                    assert_eq!(session_id, "saved");
+                    break;
+                }
+            }
+        })
+        .await
+        .expect("saved attachment must recover after client registration");
+        assert_eq!(client.is_read_only(&session).await, read_only);
+        assert_eq!(
+            client.subscriptions.lock().await.contains(&session),
+            !read_only
+        );
+        assert!(
+            !client
+                .exited_process_sessions
+                .lock()
+                .await
+                .contains(&session)
+        );
+        assert!(!client.resume_exited_session(&session).await.unwrap());
+    }
+}
+
+#[tokio::test]
 async fn managed_session_matching_excludes_subagents_before_assigning_terminal_slots() {
     use crate::process::{DaemonClient, RunningProcessSnapshot, resolve_running_sessions};
 

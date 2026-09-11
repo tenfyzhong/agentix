@@ -573,7 +573,7 @@ impl CodexClient {
         }
     }
 
-    async fn resume_exited_session(&self, session_id: &SessionId) -> Result<bool, ClientError> {
+    async fn resume_exited_session(&self, session_id: &SessionId) -> Result<bool, AgentError> {
         if !self
             .exited_process_sessions
             .lock()
@@ -583,6 +583,16 @@ impl CodexClient {
             return Ok(false);
         }
         let observed = self.observed.lock().await.contains_key(session_id);
+        if self.registry.is_some() && !observed {
+            // A binding restored before its client registered has no known access
+            // mode yet. Attach normally so an existing writer becomes read-only.
+            self.attach(session_id).await?;
+            self.exited_process_sessions.lock().await.remove(session_id);
+            let _ = self.events.send(AgentEvent::SessionResumed {
+                session_id: session_id.to_string(),
+            });
+            return Ok(true);
+        }
         let provisional = if observed {
             false
         } else {
@@ -592,7 +602,7 @@ impl CodexClient {
             {
                 Ok(_) => false,
                 Err(error) if is_rollout_initializing(&error) => true,
-                Err(error) => return Err(error),
+                Err(error) => return Err(agent_error(error)),
             }
         };
         if !self.exited_process_sessions.lock().await.remove(session_id) {
@@ -1775,7 +1785,19 @@ impl AgentAdapter for CodexClient {
     }
 
     async fn attach(&self, session_id: &SessionId) -> Result<(), AgentError> {
-        self.ensure_registered(session_id)?;
+        if let Err(error) = self.ensure_registered(session_id) {
+            // Keep offline saved bindings eligible for recovery when the proxy
+            // observes the original client reconnecting.
+            self.exited_process_sessions
+                .lock()
+                .await
+                .insert(session_id.clone());
+            self.process_sessions
+                .lock()
+                .await
+                .insert(session_id.clone());
+            return Err(error);
+        }
         if self.observed.lock().await.contains_key(session_id) {
             return Ok(());
         }
@@ -2484,6 +2506,7 @@ fn request_timeout(method: &str) -> ClientError {
 fn agent_error(error: ClientError) -> AgentError {
     match error {
         ClientError::Connect(error) => AgentError::Unavailable(error.to_string()),
+        ClientError::ClientDisconnected(_) => AgentError::Unavailable(error.to_string()),
         ClientError::Rpc { code, message } => AgentError::Rejected(format!("{code}: {message}")),
         ClientError::NoRollout(_) | ClientError::ReadOnlySession => {
             AgentError::Rejected(error.to_string())
