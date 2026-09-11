@@ -107,8 +107,16 @@ impl AgentRegistry {
                     .preview
                     .as_deref()
                     .and_then(|preview| preview.lines().next())
+                    .filter(|preview| !preview.trim().is_empty())
             })
-            .unwrap_or_else(|| session.id.short())
+            .unwrap_or_else(|| {
+                session
+                    .id
+                    .native_str()
+                    .rsplit('-')
+                    .next()
+                    .unwrap_or_default()
+            })
             .chars()
             .take(80)
             .collect::<String>();
@@ -528,4 +536,58 @@ fn spawn_backend(
             }
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unnamed_sessions_use_the_last_native_id_segment() {
+        for (id, name, preview, title) in [
+            (
+                "01a08e65-8f58-74b3-8b99-06423a09a510",
+                None,
+                None,
+                "06423a09a510",
+            ),
+            (
+                "01a08e65-8f58-74b3-8b99-06423a09a511",
+                None,
+                Some("   "),
+                "06423a09a511",
+            ),
+            ("native_session_id", None, Some(""), "native_session_id"),
+            ("a-b-c", Some("My session"), Some("Preview"), "My session"),
+            (
+                "a-b-c",
+                None,
+                Some("First prompt\nNext line"),
+                "First prompt",
+            ),
+        ] {
+            for kind in [
+                AgentKind::Codex,
+                AgentKind::Pi,
+                AgentKind::Omp,
+                AgentKind::Claude,
+            ] {
+                let mut session = SessionSummary {
+                    id: SessionId::new(id),
+                    name: name.map(str::to_owned),
+                    preview: preview.map(str::to_owned),
+                    cwd: None,
+                    updated_at: None,
+                    status: SessionStatus::Idle,
+                    terminal: None,
+                };
+                AgentRegistry::qualify(kind, &mut session);
+                assert_eq!(
+                    session.name,
+                    Some(format!("{} · {title}", kind.display_name()))
+                );
+                assert_eq!(session.id.native_str(), id);
+            }
+        }
+    }
 }

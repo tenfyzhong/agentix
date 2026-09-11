@@ -522,6 +522,10 @@ async fn configured_process_output_survives_final_answer_and_deduplicates_items(
         assert_eq!(body.contains("Consider options"), reasoning);
         assert_eq!(body.contains("cargo test"), tools);
         assert!(body.contains("Final answer"));
+        if reasoning {
+            assert!(body.contains("Reasoning\n>\n> Consider options"));
+            assert!(body.contains("Output\n>\n> Final answer"));
+        }
         assert!(body.matches("cargo test").count() <= 1);
     }
 }

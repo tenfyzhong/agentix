@@ -19,6 +19,10 @@ impl OutputConfig {
             label,
         } = &event
         {
+            // Start labels describe the item type, not reasoning content.
+            if matches!(kind.as_str(), "reasoning" | "thinking") {
+                return event;
+            }
             let item = ItemSummary {
                 id: item_id.clone(),
                 kind: kind.clone(),
@@ -56,5 +60,31 @@ impl OutputConfig {
                 .trim_end()
                 .to_owned(),
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reasoning_started_labels_are_not_projected_as_content() {
+        let config = OutputConfig {
+            show_reasoning: true,
+            show_tool_calls: true,
+        };
+        for kind in ["reasoning", "thinking"] {
+            let event = crate::AgentEvent::ItemStarted {
+                session_id: "s".into(),
+                turn_id: "t".into(),
+                item_id: "r".into(),
+                kind: kind.into(),
+                label: kind.into(),
+            };
+            assert!(matches!(
+                config.project_event(event),
+                crate::AgentEvent::ItemStarted { .. }
+            ));
+        }
     }
 }

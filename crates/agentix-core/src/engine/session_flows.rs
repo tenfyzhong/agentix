@@ -7,6 +7,39 @@ use super::{
     history_views, markdown_quote, session_display_label, session_status_label, session_title,
 };
 
+const SESSION_COMMAND_HELP: &[(&str, &str)] = &[
+    (
+        "/fast [on|off]",
+        "Show or change fast mode for subsequent turns.",
+    ),
+    (
+        "/clear [name]",
+        "Start a fresh session, optionally with a name.",
+    ),
+    ("/exit", "End the IM connection to the current session."),
+    ("/diff", "Show workspace changes."),
+    ("/rename <name>", "Change the current session name."),
+    ("/compact", "Compact the current session context."),
+    (
+        "/fork",
+        "Create a new session from the current conversation.",
+    ),
+    ("/model [id]", "Show available models or select a model."),
+    ("/reasoning [effort]", "Show or change reasoning effort."),
+    ("/skills", "List skills available to the agent."),
+    (
+        "/plan [prompt|off]",
+        "Enter plan mode with an optional prompt, or leave plan mode.",
+    ),
+    (
+        "/goal [objective|pause|resume|clear]",
+        "Show, set, pause, resume, or clear the session goal.",
+    ),
+    ("/review", "Start a review of workspace changes."),
+    ("/status", "Show session settings and usage."),
+    ("/mcp", "Show MCP server status."),
+];
+
 impl Engine {
     pub(super) async fn steer_current(
         &self,
@@ -37,7 +70,7 @@ impl Engine {
                 "{body}\n\n/dashboard — Browse projects; click a project to open its board."
             );
             if self.sessions.current(conversation).await.is_some() {
-                body.push_str("\n/board — Current session's task board\n/jobs — Current session's jobs\n/inboxes — Current project's human queue\n/inbox <content> — Append a human requirement\nClick tasks and jobs to read their Markdown details.");
+                body.push_str("\n/board — Current session's task board\n/jobs — Current session's jobs\n/tasks [job-id] — List tasks for the current session or a job.\n/task <id> — Read a task and its Markdown details.\n/inboxes — Current project's human queue\n/inbox <content> — Append a human requirement\nClick tasks and jobs to read their Markdown details.");
             }
             body
         } else {
@@ -69,50 +102,80 @@ impl Engine {
     }
 
     pub(super) async fn available_commands(&self, conversation: &ConversationRef) -> String {
-        if let Some(session) = self.sessions.current(conversation).await
-            && !self.agent.session_access(&session).await.can_write()
-        {
-            return "/sessions · /rmux · /current · /history · /detach · /help · /cancel\n\nThis session is connected read-only.".into();
-        }
-        let attached = self
-            .sessions
-            .bindings
-            .lock()
-            .await
-            .current_session(conversation)
-            .is_some();
-        let base = if attached && self.agent.capabilities().session_control {
-            "/sessions · /rmux · /current · /history · /queue · /stop · /detach\n\n/fast [on|off] · /clear [name] · /exit · /diff · /rename <name> · /compact · /fork · /model [id] · /reasoning [effort] · /skills · /plan [prompt|off] · /goal [objective|pause|resume|clear] · /review · /status · /mcp"
+        let session = self.sessions.current(conversation).await;
+        let read_only = if let Some(session) = &session {
+            !self.agent.session_access(session).await.can_write()
         } else {
-            "/sessions · /rmux · /attach <thread-id>"
+            false
         };
-        if let Some(session) = self.sessions.current(conversation).await {
-            let mut sections = Vec::new();
-            for section in base.split("\n\n") {
-                let mut commands = Vec::new();
-                for command in section.split(" · ") {
-                    let name = command
-                        .split_whitespace()
-                        .next()
-                        .unwrap_or_default()
-                        .trim_start_matches('/');
-                    if !matches!(
-                        crate::parse_input(&format!("/{name}")),
-                        Ok(ParsedInput::Command(AgentCommand::Session(_)))
-                    ) || name == "exit"
-                        || self.agent.supports_command(&session, name).await
-                    {
-                        commands.push(command);
-                    }
+        let mut commands = vec![
+            ("/help", "Show available commands and their purpose."),
+            (
+                "/sessions [backend]",
+                "List existing sessions, optionally filtered by backend.",
+            ),
+            (
+                "/rmux [backend]",
+                "Browse terminal sessions and create or attach an agent session.",
+            ),
+            (
+                "/attach <thread-id>",
+                "Connect this conversation to an existing session.",
+            ),
+            ("/cancel", "Cancel the pending command input."),
+        ];
+        if session.is_some() {
+            commands.extend([
+                (
+                    "/current",
+                    "Show the session attached to this conversation.",
+                ),
+                (
+                    "/history [recent|older|newer]",
+                    "Browse the attached session history.",
+                ),
+                ("/detach", "Disconnect this conversation from its session."),
+            ]);
+            if !read_only {
+                commands.extend([
+                    (
+                        "/queue [resume|clear]",
+                        "Show, resume, or clear queued prompts.",
+                    ),
+                    ("/stop", "Interrupt the active turn."),
+                    (
+                        "/steer <text>",
+                        "Steer the active turn with additional instructions.",
+                    ),
+                ]);
+                if self.agent.capabilities().session_control {
+                    commands.extend_from_slice(SESSION_COMMAND_HELP);
                 }
-                sections.push(commands.join(" · "));
             }
-            return format!(
-                "{}\n\n/steer <text> — Steer the active turn",
-                sections.join("\n\n")
-            );
         }
-        base.into()
+        let mut lines = Vec::new();
+        for (usage, description) in commands {
+            let name = usage
+                .split_whitespace()
+                .next()
+                .unwrap_or_default()
+                .trim_start_matches('/');
+            if let Some(session) = &session
+                && matches!(
+                    crate::parse_input(&format!("/{name}")),
+                    Ok(ParsedInput::Command(AgentCommand::Session(_)))
+                )
+                && name != "exit"
+                && !self.agent.supports_command(session, name).await
+            {
+                continue;
+            }
+            lines.push(format!("{usage} — {description}"));
+        }
+        if read_only {
+            lines.push("\nThis session is connected read-only.".into());
+        }
+        lines.join("\n")
     }
 
     pub(super) async fn show_sessions(

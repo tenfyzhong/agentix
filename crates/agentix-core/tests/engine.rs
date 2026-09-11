@@ -2482,6 +2482,24 @@ async fn help_reflects_whether_a_session_is_attached() {
     assert!(attached.body.contains("/current"));
     assert!(attached.body.contains("/model [id]"));
     assert!(attached.body.contains("/mcp"));
+    for view in [&detached, &attached] {
+        for command in ["/help", "/cancel", "/sessions", "/rmux", "/attach"] {
+            assert!(
+                view.body
+                    .lines()
+                    .any(|line| line.starts_with(command) && line.contains(" — ")),
+                "missing description for {command}: {}",
+                view.body
+            );
+        }
+        for line in view.body.lines().filter(|line| line.starts_with('/')) {
+            let (_, description) = line
+                .split_once(" — ")
+                .expect("each command needs a description");
+            assert!(!description.trim().is_empty());
+            assert!(!line.contains(" · /"));
+        }
+    }
 }
 
 #[tokio::test]

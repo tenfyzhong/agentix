@@ -261,11 +261,16 @@ pub(super) fn live_turn_body(
     buffer: &TurnBuffer,
     delivery: DeliveryClass,
 ) -> String {
+    let agent_text = if !buffer.process_items.is_empty() && !buffer.agent_text.is_empty() {
+        format!("Output\n\n{}", buffer.agent_text)
+    } else {
+        buffer.agent_text.clone()
+    };
     let output = buffer
         .process_items
         .iter()
         .map(|(_, text)| text.as_str())
-        .chain(std::iter::once(buffer.agent_text.as_str()))
+        .chain(std::iter::once(agent_text.as_str()))
         .filter(|text| !text.is_empty())
         .collect::<Vec<_>>()
         .join("\n\n");
