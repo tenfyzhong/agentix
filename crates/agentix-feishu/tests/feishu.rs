@@ -1483,11 +1483,13 @@ fn turn_sections_render_as_independent_collapsible_process_panels() {
             assert_eq!(element["elements"][0]["content"], section["body"]);
         } else {
             assert_eq!(element["tag"], "markdown");
-            assert!(
-                element["content"]
-                    .as_str()
-                    .unwrap()
-                    .contains(section["body"].as_str().unwrap())
+            assert_eq!(
+                element["content"],
+                format!(
+                    "**{}**\n{}",
+                    section["title"].as_str().unwrap(),
+                    section["body"].as_str().unwrap()
+                )
             );
         }
     }

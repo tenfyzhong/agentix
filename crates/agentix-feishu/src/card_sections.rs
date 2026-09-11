@@ -29,7 +29,7 @@ pub(super) fn view_body(view: &OutboundView) -> Body {
                     panel.margin = Some("8px 0px 8px 0px".into());
                     Element::CollapsiblePanel(panel)
                 } else {
-                    Element::Markdown(Markdown::new(format!("**{}**\n\n{content}", section.title)))
+                    Element::Markdown(Markdown::new(format!("**{}**\n{content}", section.title)))
                 }
             })
             .collect()
