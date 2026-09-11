@@ -52,11 +52,11 @@ impl OutputConfig {
         }
         let text = item.text.as_deref().unwrap_or_default().trim();
         if reasoning {
-            return (!text.is_empty()).then(|| format!("Reasoning\n\n{text}"));
+            return (!text.is_empty()).then(|| format!("**Reasoning**\n\n{text}"));
         }
         let status = item.status.as_deref().unwrap_or("completed");
         Some(
-            format!("Tool call: {} ({status})\n\n{text}", item.kind)
+            format!("**Tool call**: {} ({status})\n\n{text}", item.kind)
                 .trim_end()
                 .to_owned(),
         )

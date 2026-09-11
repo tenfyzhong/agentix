@@ -262,7 +262,7 @@ pub(super) fn live_turn_body(
     delivery: DeliveryClass,
 ) -> String {
     let agent_text = if !buffer.process_items.is_empty() && !buffer.agent_text.is_empty() {
-        format!("Output\n\n{}", buffer.agent_text)
+        format!("**Output**\n\n{}", buffer.agent_text)
     } else {
         buffer.agent_text.clone()
     };
@@ -273,7 +273,7 @@ pub(super) fn live_turn_body(
         .chain(std::iter::once(agent_text.as_str()))
         .filter(|text| !text.is_empty())
         .collect::<Vec<_>>()
-        .join("\n\n");
+        .join("\n\n\n");
     let mut body = turn_conversation_body(agent_name, Some(&buffer.user_text), Some(&output));
     if delivery == DeliveryClass::Draining {
         body.push_str("\n\nThis is a background session after switching.");

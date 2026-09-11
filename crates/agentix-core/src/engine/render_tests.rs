@@ -523,8 +523,25 @@ async fn configured_process_output_survives_final_answer_and_deduplicates_items(
         assert_eq!(body.contains("cargo test"), tools);
         assert!(body.contains("Final answer"));
         if reasoning {
-            assert!(body.contains("Reasoning\n>\n> Consider options"));
-            assert!(body.contains("Output\n>\n> Final answer"));
+            assert!(body.contains("**Reasoning**\n>\n> Consider options"));
+        }
+        if tools {
+            assert!(body.contains("**Tool call**: commandExecution (completed)\n>\n> cargo test"));
+        }
+        if reasoning || tools {
+            let last_process = if tools {
+                "cargo test"
+            } else {
+                "Consider options"
+            };
+            assert!(body.contains(&format!(
+                "{last_process}\n>\n>\n> **Output**\n>\n> Final answer"
+            )));
+        } else {
+            assert!(!body.contains("**Output**"));
+        }
+        if reasoning && tools {
+            assert!(body.contains("Consider options\n>\n>\n> **Tool call**"));
         }
         assert!(body.matches("cargo test").count() <= 1);
     }

@@ -368,9 +368,9 @@ async fn job_conversation_records_enabled_process_output_in_agent_quote() {
             .join(job["document_path"].as_str().unwrap()),
     )
     .unwrap();
-    assert!(document.contains("> Tool call: commandExecution"));
+    assert!(document.contains("> **Tool call**: commandExecution"));
     assert!(document.contains("> secret tool result"));
-    assert!(document.contains("> Reasoning"));
+    assert!(document.contains("> **Reasoning**"));
     assert!(document.contains("> private reasoning"));
     assert!(document.contains("> Visible answer"));
 }
