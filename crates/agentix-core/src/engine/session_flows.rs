@@ -171,7 +171,7 @@ impl Engine {
             {
                 continue;
             }
-            lines.push(format!("{usage} — {description}"));
+            lines.push(format!("**{usage}** — {description}"));
         }
         if read_only {
             lines.push("\nThis session is connected read-only.".into());
