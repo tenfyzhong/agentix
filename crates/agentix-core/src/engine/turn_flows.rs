@@ -8,6 +8,71 @@ use super::{
 };
 
 impl Engine {
+    pub(super) async fn handle_routed_event(
+        &self,
+        conversation: ConversationRef,
+        session_id: SessionId,
+        event: AgentEvent,
+        delivery: DeliveryClass,
+    ) -> Result<(), EngineError> {
+        match event {
+            AgentEvent::AgentMessageDelta {
+                turn_id,
+                item_id,
+                delta,
+                ..
+            } => {
+                self.handle_message_delta(
+                    &conversation,
+                    &session_id,
+                    &turn_id,
+                    &item_id,
+                    &delta,
+                    delivery,
+                )
+                .await?;
+            }
+            AgentEvent::ItemCompleted { turn_id, item, .. } => {
+                self.handle_completed_item(&conversation, &session_id, &turn_id, &item, delivery)
+                    .await?;
+            }
+            AgentEvent::TurnCompleted {
+                turn_id,
+                status,
+                error,
+                ..
+            } => {
+                self.handle_turn_completed(
+                    &conversation,
+                    &session_id,
+                    turn_id,
+                    status,
+                    error,
+                    delivery,
+                )
+                .await?;
+            }
+            AgentEvent::InteractionRequested(request) => {
+                self.render_interaction(&conversation, &request, delivery)
+                    .await?;
+            }
+            AgentEvent::InteractionResolved { request_id, .. } => {
+                self.resolve_external_request(&conversation, session_id, request_id)
+                    .await?;
+            }
+            AgentEvent::SessionStatusChanged { .. }
+            | AgentEvent::SessionExited { .. }
+            | AgentEvent::SessionResumed { .. }
+            | AgentEvent::QueueChanged { .. }
+            | AgentEvent::UserMessage { .. }
+            | AgentEvent::ItemStarted { .. }
+            | AgentEvent::Connected { .. }
+            | AgentEvent::Disconnected { .. }
+            | AgentEvent::TurnStarted { .. } => {}
+        }
+        Ok(())
+    }
+
     pub(super) async fn hydrate_running_turn(
         &self,
         conversation: &ConversationRef,
@@ -23,7 +88,7 @@ impl Engine {
             TurnBuffer {
                 user_text: turn.user_text.clone().unwrap_or_default(),
                 agent_text: turn.agent_text.clone().unwrap_or_default(),
-                process_items: Vec::new(),
+                output_items: Vec::new(),
                 status: turn.status.clone(),
                 started_at: Some(Instant::now()),
                 rendered_elapsed_seconds: None,
@@ -80,7 +145,7 @@ impl Engine {
         buffer.ensure_started();
         buffer.status = status;
         if let Some(error) = error {
-            buffer.agent_text.push_str(&format!("\n\nError: {error}"));
+            buffer.record_output(None, &format!("Error: {error}"), false, false);
         }
         drop(buffers);
         self.render_turn(conversation, session_id, &turn_id, delivery, true)
@@ -212,6 +277,7 @@ impl Engine {
         conversation: &ConversationRef,
         session_id: &SessionId,
         turn_id: &str,
+        item_id: &str,
         delta: &str,
         delivery: DeliveryClass,
     ) -> Result<(), EngineError> {
@@ -220,7 +286,7 @@ impl Engine {
         let mut buffers = self.turns.buffers.lock().await;
         let buffer = buffers.entry(key).or_default();
         buffer.ensure_started();
-        buffer.agent_text.push_str(delta);
+        buffer.record_output(Some(item_id), delta, false, true);
         drop(buffers);
         self.render_turn(conversation, session_id, turn_id, delivery, false)
             .await?;
@@ -565,19 +631,16 @@ impl Engine {
             .or_default();
         buffer.ensure_started();
         match item.kind.as_str() {
-            "agentMessage" => buffer.agent_text = item.text.clone().unwrap_or_default(),
+            "agentMessage" => buffer.record_output(
+                Some(&item.id),
+                item.text.as_deref().unwrap_or_default(),
+                false,
+                false,
+            ),
             "userMessage" => buffer.user_text = item.text.clone().unwrap_or_default(),
             _ => {
                 if let Some(text) = process {
-                    if let Some(existing) = buffer
-                        .process_items
-                        .iter_mut()
-                        .find(|(id, _)| id == &item.id)
-                    {
-                        existing.1 = text;
-                    } else {
-                        buffer.process_items.push((item.id.clone(), text));
-                    }
+                    buffer.record_output(Some(&item.id), &text, true, false);
                 }
             }
         }

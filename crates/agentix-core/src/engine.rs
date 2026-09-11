@@ -10,6 +10,7 @@ use uuid::Uuid;
 mod cold_turns;
 mod coordinator;
 mod dispatch;
+mod output_buffer;
 pub use dispatch::{EngineDispatchSnapshot, EngineResource, EngineWork};
 mod interaction_flows;
 mod presentation;
@@ -75,11 +76,18 @@ pub enum EngineError {
     InvalidAction,
 }
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct TurnOutputItem {
+    id: Option<String>,
+    text: String,
+    process: bool,
+}
+
 #[derive(Debug, Clone, Default)]
 struct TurnBuffer {
     user_text: String,
     agent_text: String,
-    process_items: Vec<(String, String)>,
+    output_items: Vec<TurnOutputItem>,
     status: TurnStatus,
     started_at: Option<Instant>,
     rendered_elapsed_seconds: Option<u64>,
@@ -615,50 +623,8 @@ impl Engine {
             return Ok(());
         };
 
-        match event {
-            AgentEvent::AgentMessageDelta { turn_id, delta, .. } => {
-                self.handle_message_delta(&conversation, &session_id, &turn_id, &delta, delivery)
-                    .await?;
-            }
-            AgentEvent::ItemCompleted { turn_id, item, .. } => {
-                self.handle_completed_item(&conversation, &session_id, &turn_id, &item, delivery)
-                    .await?;
-            }
-            AgentEvent::TurnCompleted {
-                turn_id,
-                status,
-                error,
-                ..
-            } => {
-                self.handle_turn_completed(
-                    &conversation,
-                    &session_id,
-                    turn_id,
-                    status,
-                    error,
-                    delivery,
-                )
-                .await?;
-            }
-            AgentEvent::InteractionRequested(request) => {
-                self.render_interaction(&conversation, &request, delivery)
-                    .await?;
-            }
-            AgentEvent::InteractionResolved { request_id, .. } => {
-                self.resolve_external_request(&conversation, session_id, request_id)
-                    .await?;
-            }
-            AgentEvent::SessionStatusChanged { .. }
-            | AgentEvent::SessionExited { .. }
-            | AgentEvent::SessionResumed { .. }
-            | AgentEvent::QueueChanged { .. }
-            | AgentEvent::UserMessage { .. }
-            | AgentEvent::ItemStarted { .. }
-            | AgentEvent::Connected { .. }
-            | AgentEvent::Disconnected { .. }
-            | AgentEvent::TurnStarted { .. } => {}
-        }
-        Ok(())
+        self.handle_routed_event(conversation, session_id, event, delivery)
+            .await
     }
 
     async fn send_view(

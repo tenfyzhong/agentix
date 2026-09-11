@@ -546,3 +546,147 @@ async fn configured_process_output_survives_final_answer_and_deduplicates_items(
         assert!(body.matches("cargo test").count() <= 1);
     }
 }
+
+#[tokio::test]
+async fn interleaved_process_and_output_blocks_survive_updates_and_cold_storage() {
+    let engine = Engine::new(
+        Arc::new(UnusedAgent),
+        SqliteState::in_memory().await.unwrap(),
+        vec![],
+    )
+    .with_output(crate::OutputConfig {
+        show_reasoning: true,
+        show_tool_calls: true,
+    });
+    let session = SessionId::new("interleaved");
+    for (id, kind, text) in [
+        ("r1", "reasoning", "First thought\nMore thought"),
+        ("t1", "commandExecution", "First command\nFirst result"),
+        ("a1", "agentMessage", "Progress report\nStill working"),
+        ("r2", "reasoning", "Second thought\nAnother thought"),
+        ("t2", "commandExecution", "Second command\nPending"),
+        ("a2", "agentMessage", "Final answer\nDetails"),
+        ("t2", "commandExecution", "Second command\nSecond result"),
+        ("a2", "agentMessage", "Final answer\nDetails"),
+    ] {
+        engine
+            .apply_completed_item(
+                &session,
+                "turn",
+                &crate::ItemSummary {
+                    id: id.into(),
+                    kind: kind.into(),
+                    text: Some(text.into()),
+                    status: Some("completed".into()),
+                },
+            )
+            .await;
+    }
+    engine.archive_turn(&session, "turn").await.unwrap();
+    engine.restore_cold_turn(&session, "turn").await.unwrap();
+    let buffers = engine.turns.buffers.lock().await;
+    let body = super::presentation::live_turn_body(
+        "Test",
+        &buffers[&(session, "turn".into())],
+        DeliveryClass::Live,
+    );
+    let mut remaining = body.as_str();
+    for block in [
+        "**Reasoning**\n>\n> First thought\n> More thought",
+        "**Tool call**: commandExecution (completed)\n>\n> First command\n> First result",
+        "**Output**\n>\n> Progress report\n> Still working",
+        "**Reasoning**\n>\n> Second thought\n> Another thought",
+        "**Tool call**: commandExecution (completed)\n>\n> Second command\n> Second result",
+        "**Output**\n>\n> Final answer\n> Details",
+    ] {
+        remaining = remaining
+            .split_once(block)
+            .unwrap_or_else(|| panic!("missing or reordered block {block}: {body}"))
+            .1;
+    }
+    assert_eq!(body.matches("Final answer").count(), 1);
+    assert_eq!(body.matches("Second command").count(), 1);
+    assert!(!body.contains("Pending"));
+}
+
+#[tokio::test]
+async fn streamed_output_updates_its_own_block_without_replacing_process_messages() {
+    let channel = Arc::new(CompletedTurnChannel::default());
+    let engine = Engine::new(
+        Arc::new(UnusedAgent),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    )
+    .with_output(crate::OutputConfig {
+        show_reasoning: true,
+        show_tool_calls: true,
+    });
+    let session = SessionId::new("streamed");
+    let conversation = ConversationRef::new(ChannelKind::Telegram, "chat");
+    for (id, kind, text) in [
+        ("r", "reasoning", "Thinking\nCarefully"),
+        ("a1", "delta", "Checking"),
+        ("t", "commandExecution", "Run tests"),
+        ("a1", "delta", " now"),
+        ("a1", "agentMessage", "Checking now"),
+        ("a2", "delta", "Done"),
+        ("a2", "agentMessage", "Done!"),
+    ] {
+        if kind == "delta" {
+            engine
+                .handle_message_delta(
+                    &conversation,
+                    &session,
+                    "turn",
+                    id,
+                    text,
+                    DeliveryClass::Live,
+                )
+                .await
+                .unwrap();
+        } else {
+            engine
+                .handle_completed_item(
+                    &conversation,
+                    &session,
+                    "turn",
+                    &crate::ItemSummary {
+                        id: id.into(),
+                        kind: kind.into(),
+                        text: Some(text.into()),
+                        status: Some("completed".into()),
+                    },
+                    DeliveryClass::Live,
+                )
+                .await
+                .unwrap();
+        }
+    }
+    engine
+        .handle_turn_completed(
+            &conversation,
+            &session,
+            "turn".into(),
+            crate::TurnStatus::Failed,
+            Some("Example error".into()),
+            DeliveryClass::Live,
+        )
+        .await
+        .unwrap();
+    let updates = channel.updates.lock().await;
+    for (_, view) in updates.iter() {
+        assert!(view.body.contains("Thinking\n> Carefully"));
+    }
+    let body = &updates.last().unwrap().1.body;
+    let mut remaining = body.as_str();
+    for text in [
+        "Thinking",
+        "Checking now",
+        "Run tests",
+        "Done!",
+        "Error: Example error",
+    ] {
+        remaining = remaining.split_once(text).unwrap().1;
+        assert_eq!(body.matches(text).count(), 1);
+    }
+}
