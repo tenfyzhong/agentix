@@ -53,3 +53,22 @@ Claude mailbox watchers resolve directory aliases before invoking libuv, includi
 ## Slack transport addition
 
 The [Slack review](slack-review.md) records the subsequent architecture findings, test-driven fixes, and measured performance improvements for the third IM adapter.
+
+## Codex proxy ownership review (September 11, 2026)
+
+The proxy belongs to the Codex connection layer. The executable assembles configuration and the adapter; Engine and IM handlers do not accept Codex sockets or infer terminal ownership. The audit covered startup, upstream reuse, authentication, transport transparency, registration, discovery and final-owner cleanup.
+
+| Contract | Owner and evidence |
+| --- | --- |
+| Bind before upstream startup; reject occupied or aliased endpoints without deleting another owner's socket | ConnectionManager and proxy_address; CLI occupation tests and proxy endpoint regressions |
+| Preserve a ready shared app-server across Agentix shutdown | UpstreamServer; subprocess survival/process-group test and runtime reuse test |
+| Authenticate inbound WS before opening upstream; validate remote credentials in one layer | proxy_auth/proxy_handshake; real handshake tests for all seven options and failure ordering |
+| Forward established Unix/WS frames without local Pong or added Close deadline | proxy_wire and paired relay tasks; control-frame, fragmentation, backpressure and closure tests |
+| Adapt a single stdio client with bounded queues and cancellable I/O | proxy_stdio_io and stdio relay; blocked-stdout, EOF, shared-descriptor and subprocess-exit tests |
+| Bind successful session replies to the actual connection, independent of cwd or PID | ClientRegistry; concurrent-client, request-ID, failed-response and broadcast regressions |
+| Keep internal upstream subscriptions out of terminal discovery | CodexClient; production-runtime test with two same-directory clients and a disconnected but still loaded thread |
+| Release background state when the last public client disappears | ClientTasks; final-owner regression for both direct and proxy clients, plus surviving-clone and frontend EOF checks |
+
+The audit found a missing owner for the internal reader/reconnect and lifecycle-monitor tasks. A failing regression demonstrated that they retained upstream state after the public client was dropped. A connection-layer task guard now aborts both tasks on final-owner drop. Monitor clones deliberately omit the guard and proxy runtime to avoid retaining their own owner. Cancellation is processed asynchronously by Tokio; ready shared upstream processes remain detached.
+
+The resulting ownership boundaries match the intended architecture. Transparency applies to established Unix/WS frames: authentication and HTTP routing are explicit proxy boundaries, and stdio is a JSONL adapter. Silent network partitions have no guaranteed detection deadline without a transport error; observation failure leaves forwarding intact but stops tracking that direction. These limitations are documented in the [guide](guide.md) and are not hidden by claiming app-server loaded threads prove terminal liveness. See [integration coverage](integration-coverage.md#codex-proxy-lifecycle) for executable checks and verification scope.

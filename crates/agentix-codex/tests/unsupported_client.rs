@@ -6,7 +6,7 @@ mod unsupported;
 
 use std::path::Path;
 
-use agentix_codex::CodexEndpoint;
+use agentix_codex::{CodexEndpoint, ProxyOptions};
 use serde_json::json;
 use unsupported::CodexClient;
 
@@ -50,4 +50,30 @@ async fn unsupported_client_constructors_report_transport_unavailability() {
             "the Codex app-server Unix socket transport is unavailable on this platform"
         );
     }
+}
+
+#[tokio::test]
+async fn unsupported_proxy_constructor_reports_unavailability() {
+    let error = CodexClient::connect_with_proxy_options(
+        "stdio://",
+        CodexEndpoint::default_upstream().unwrap(),
+        Path::new("codex"),
+        Path::new("~"),
+        false,
+        &ProxyOptions::default(),
+    )
+    .await
+    .unwrap_err();
+    assert!(error.to_string().contains("unavailable on this platform"));
+
+    let error = CodexClient::connect_with_proxy(
+        "unix://",
+        CodexEndpoint::default_upstream().unwrap(),
+        Path::new("codex"),
+        Path::new("~"),
+        false,
+    )
+    .await
+    .unwrap_err();
+    assert!(error.to_string().contains("unavailable on this platform"));
 }

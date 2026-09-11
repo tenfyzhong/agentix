@@ -10,6 +10,10 @@ repository.workspace = true
 agentix-rmux = { path = "../agentix-rmux" }
 agentix-domain = { path = "../agentix-domain" }
 anyhow.workspace = true
+clap.workspace = true
+sha2.workspace = true
+subtle = "2.6"
+jsonwebtoken = { version = "10", default-features = false, features = ["rust_crypto"] }
 async-trait.workspace = true
 dirs.workspace = true
 futures-util.workspace = true
@@ -19,12 +23,13 @@ serde_json.workspace = true
 thiserror.workspace = true
 time = { workspace = true, features = ["formatting"] }
 tokio.workspace = true
+tokio-util.workspace = true
 tokio-tungstenite.workspace = true
 tracing.workspace = true
 url.workspace = true
 
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.31", default-features = false, features = ["user"] }
+nix = { version = "0.31", default-features = false, features = ["user", "socket", "process", "net", "fs"] }
 
 [dev-dependencies]
 agentix-core = { path = "../agentix-core" }

@@ -153,6 +153,10 @@ pub enum AgentConfig {
     Codex {
         #[serde(default = "default_codex_endpoint")]
         endpoint: String,
+        #[serde(default = "default_codex_proxy_endpoint")]
+        proxy_endpoint: String,
+        #[serde(default)]
+        proxy: agentix_codex::ProxyOptions,
         #[serde(default = "default_codex_command")]
         command: PathBuf,
         #[serde(default = "default_rmux_directory", alias = "multiplexer_directory")]
@@ -271,6 +275,27 @@ impl AgentConfig {
 }
 
 impl Config {
+    pub fn apply_codex_proxy_options(
+        &mut self,
+        options: &agentix_codex::ProxyOptions,
+    ) -> Result<()> {
+        if options == &agentix_codex::ProxyOptions::default() {
+            return Ok(());
+        }
+        let mut found = false;
+        for agent in self.agent.iter_mut().chain(&mut self.agents) {
+            if let AgentConfig::Codex { proxy, .. } = agent {
+                proxy.overlay(options);
+                found = true;
+            }
+        }
+        anyhow::ensure!(
+            found,
+            "WebSocket proxy flags require a configured Codex backend"
+        );
+        self.expand_home_paths()
+    }
+
     #[must_use]
     pub fn selected_agents(&self) -> Vec<&AgentConfig> {
         self.agent.iter().chain(self.agents.iter()).collect()
@@ -410,12 +435,22 @@ impl Config {
                 }
                 AgentConfig::Codex {
                     endpoint,
+                    proxy_endpoint,
+                    proxy,
                     command,
                     rmux_directory,
                 } => {
                     *command = expand_home_path(command, home.as_deref())?;
                     *rmux_directory = expand_home_path(rmux_directory, home.as_deref())?;
                     *endpoint = expand_home_in_unix_endpoint(endpoint, home.as_deref())?;
+                    *proxy_endpoint =
+                        expand_home_in_unix_endpoint(proxy_endpoint, home.as_deref())?;
+                    for path in [&mut proxy.ws_token_file, &mut proxy.ws_shared_secret_file]
+                        .into_iter()
+                        .flatten()
+                    {
+                        *path = expand_home_path(path, home.as_deref())?;
+                    }
                 }
                 AgentConfig::Pi {
                     command,
@@ -587,6 +622,13 @@ fn default_server_endpoint() -> String {
 }
 
 fn default_codex_endpoint() -> String {
+    agentix_codex::CodexEndpoint::default_upstream().map_or_else(
+        |_| "unix://~/.codex/app-server-control/app-server-control-upstream.sock".into(),
+        |e| e.address(),
+    )
+}
+
+fn default_codex_proxy_endpoint() -> String {
     "unix://".into()
 }
 

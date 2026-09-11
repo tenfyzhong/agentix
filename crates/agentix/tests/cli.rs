@@ -478,6 +478,110 @@ owner_user_ids = [42]
         config
     }
 
+    #[tokio::test]
+    async fn serve_exits_and_logs_when_proxy_endpoint_is_occupied() {
+        use std::os::unix::fs::MetadataExt;
+        for kind in ["active", "stale", "file", "ws"] {
+            let d = tempdir().unwrap();
+            let path = d.path().join("proxy.sock");
+            let mut unix_listener = None;
+            let mut tcp_listener = None;
+            let endpoint = if kind == "ws" {
+                let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                let endpoint = format!("ws://{}", listener.local_addr().unwrap());
+                tcp_listener = Some(listener);
+                endpoint
+            } else {
+                if kind == "file" {
+                    std::fs::write(&path, "preserve").unwrap();
+                } else {
+                    let listener = UnixListener::bind(&path).unwrap();
+                    if kind == "active" {
+                        unix_listener = Some(listener);
+                    }
+                }
+                format!("unix://{}", path.display())
+            };
+            let inode = std::fs::symlink_metadata(&path).ok().map(|m| m.ino());
+            let config = write_config(d.path(), &d.path().join("upstream.sock"));
+            let mut source = std::fs::read_to_string(&config).unwrap();
+            source = source.replace(
+                "kind = \"codex\"",
+                &format!(
+                    "kind = \"codex\"\nproxy_endpoint = {endpoint:?}\ncommand = \"must-not-launch\""
+                ),
+            );
+            let log = d.path().join("agentix.log");
+            source.push_str(&format!(
+                "\n[server]\nendpoint='unix://{}'\n[logging.file]\nenabled=true\npath='{}'\nrotation='never'\n",
+                d.path().join("control.sock").display(),
+                log.display()
+            ));
+            std::fs::write(&config, source).unwrap();
+            let output = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                Command::new(env!("CARGO_BIN_EXE_agentix"))
+                    .arg("--config")
+                    .arg(&config)
+                    .arg("serve")
+                    .kill_on_drop(true)
+                    .output(),
+            )
+            .await
+            .expect("occupied proxy must fail startup promptly")
+            .unwrap();
+            assert!(!output.status.success());
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            assert!(stderr.contains("proxy_endpoint"), "{kind}: {stderr}");
+            let logs = std::fs::read_to_string(log).unwrap();
+            assert!(
+                logs.contains("ERROR") && logs.contains("proxy_endpoint"),
+                "{logs}"
+            );
+            assert!(!logs.contains("continuing with retries"));
+            assert!(!d.path().join("upstream.sock").exists());
+            assert_eq!(
+                std::fs::symlink_metadata(&path).ok().map(|m| m.ino()),
+                inode
+            );
+            if kind == "file" {
+                assert_eq!(std::fs::read_to_string(&path).unwrap(), "preserve");
+            }
+            drop((unix_listener, tcp_listener));
+        }
+    }
+
+    #[tokio::test]
+    async fn serve_rejects_public_ws_without_auth_before_launching_upstream() {
+        let d = tempdir().unwrap();
+        let config = write_config(d.path(), &d.path().join("upstream.sock"));
+        let source = std::fs::read_to_string(&config).unwrap().replace(
+            "kind = \"codex\"",
+            "kind = \"codex\"\nproxy_endpoint = \"ws://0.0.0.0:0\"\ncommand = \"must-not-launch\"",
+        );
+        std::fs::write(&config, source).unwrap();
+        let output = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            Command::new(env!("CARGO_BIN_EXE_agentix"))
+                .arg("--config")
+                .arg(&config)
+                .arg("serve")
+                .kill_on_drop(true)
+                .output(),
+        )
+        .await
+        .expect("invalid authentication must fail promptly")
+        .unwrap();
+        assert!(!output.status.success());
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("ERROR") && stderr.contains("authentication"),
+            "{stderr}"
+        );
+        assert!(!stderr.contains("continuing with retries"));
+        assert!(!d.path().join("upstream.sock").exists());
+    }
+
     fn write_config(directory: &std::path::Path, socket: &std::path::Path) -> std::path::PathBuf {
         let config = directory.join("agentix.toml");
         std::fs::write(
@@ -543,5 +647,26 @@ owner_user_ids = [42]
             ))
             .await
             .unwrap();
+    }
+}
+
+#[test]
+fn serve_exposes_codex_proxy_websocket_auth_flags() {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_agentix"))
+        .args(["serve", "--help"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let help = String::from_utf8(output.stdout).unwrap();
+    for flag in [
+        "--ws-auth",
+        "--ws-token-file",
+        "--ws-token-sha256",
+        "--ws-shared-secret-file",
+        "--ws-issuer",
+        "--ws-audience",
+        "--ws-max-clock-skew-seconds",
+    ] {
+        assert!(help.contains(flag), "missing {flag}");
     }
 }
