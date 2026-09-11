@@ -57,7 +57,7 @@ dev-test: remove-plugin
 	claude plugin install taskix-manager@agentix
 	claude plugin install agentix-bridge@agentix
 	pi install .
-	omp plugin marketplace add .
+	omp plugin marketplace add ./
 	omp plugin install taskix-manager@agentix
 	omp plugin install agentix-bridge@agentix
 

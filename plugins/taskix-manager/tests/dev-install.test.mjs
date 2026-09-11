@@ -112,7 +112,7 @@ for (const target of ["dev-test", "prod-test"]) {
             "claude plugin install taskix-manager@agentix",
             "claude plugin install agentix-bridge@agentix",
             `pi install ${target === "dev-test" ? "." : "git:github.com/tenfyzhong/agentix"}`,
-            `omp plugin marketplace add ${source}`,
+            `omp plugin marketplace add ${target === "dev-test" ? "./" : source}`,
             "omp plugin install taskix-manager@agentix",
             "omp plugin install agentix-bridge@agentix",
         ]);
