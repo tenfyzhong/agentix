@@ -1,4 +1,4 @@
-import { visibleMessage, transcriptMessages, recordMessages } from "./conversation.mjs";
+import { visibleMessage, transcriptConversation, recordMessages } from "./conversation.mjs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
@@ -103,7 +103,8 @@ export async function runHook(event, runner = runTaskix) {
     const options = { cwd: event.cwd, session: event.session_id };
     await runner(["hook", operation], options);
     if (event.hook_event_name === "Stop" && event.transcript_path) {
-        await recordMessages(await transcriptMessages(event.transcript_path), runner, options);
+        const conversation = await transcriptConversation(event.transcript_path);
+        await recordMessages(conversation.messages, runner, options, conversation.planning);
     }
     if (operation === "session-start") {
         const context = await runner(["context"], options);

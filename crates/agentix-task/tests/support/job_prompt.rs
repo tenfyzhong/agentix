@@ -495,3 +495,70 @@ async fn conversation_history_replay_does_not_adopt_an_old_id_for_a_repeated_pro
         );
     }
 }
+
+#[tokio::test]
+async fn planning_capture_restores_original_prompt_and_order_without_changing_review() {
+    for original in [
+        "Implement the plan.",
+        "An explicitly authored original request",
+    ] {
+        let f = Fixture::new().await;
+        f.service
+            .execute(
+                json!({"command":"job.update","job":f.job,"prompt":original}),
+                WriteOptions::default(),
+            )
+            .await
+            .unwrap();
+        let task = f.task("Implement plan").await;
+        let claim = f.start(&task, "planning").await;
+        let options = WriteOptions {
+            session_ref: Some("planning".into()),
+            ..WriteOptions::default()
+        };
+        let implementation = json!({"id":"i:u","role":"user","text":"Implement the plan."});
+        f.service.execute(json!({"command":"session.record","session":"planning","messages":[implementation.clone()]}), options.clone()).await.unwrap();
+        f.service
+            .execute(json!({"command":"task.done","task":task}), owner(&claim))
+            .await
+            .unwrap();
+        let messages = json!([
+            {"id":"p:u","role":"user","text":"Plan the change"},
+            {"id":"p:q","role":"assistant","text":"Which scope?\n\n- Local\n- Global"},
+            {"id":"p:r","role":"user","text":"Which scope?\nLocal"},
+            {"id":"p:a","role":"assistant","text":"<proposed_plan>\n# Plan\nUse local scope\n</proposed_plan>"},
+            implementation,
+            {"id":"i:a","role":"assistant","text":"Implemented"}
+        ]);
+        let request = json!({"command":"session.record","session":"planning","messages":messages,"planning":{"prompt":"Plan the change","implementation_prompt":"Implement the plan."}});
+        f.service
+            .execute(request.clone(), options.clone())
+            .await
+            .unwrap();
+        let first = f.service.store().snapshot().await.unwrap().jobs[0].clone();
+        assert_eq!(
+            first.prompt,
+            if original == "Implement the plan." {
+                "Plan the change"
+            } else {
+                original
+            }
+        );
+        assert_eq!(first.status, agentix_task::JobStatus::PendingReview);
+        assert_eq!(
+            first
+                .conversation
+                .iter()
+                .map(|m| m.id.as_str())
+                .collect::<Vec<_>>(),
+            ["p:u", "p:q", "p:r", "p:a", "i:u", "i:a"]
+        );
+        f.service.execute(request, options).await.unwrap();
+        assert_eq!(first, f.service.store().snapshot().await.unwrap().jobs[0]);
+        let doc =
+            std::fs::read_to_string(f.service.config().output_dir().join(&first.document_path))
+                .unwrap();
+        assert!(doc.contains("> <proposed_plan>\n> # Plan\n> Use local scope\n> </proposed_plan>"));
+        assert!(doc.contains("    Which scope?\n    Local"));
+    }
+}
