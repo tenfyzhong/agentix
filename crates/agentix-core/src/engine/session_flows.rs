@@ -117,15 +117,20 @@ impl Engine {
                 "List existing sessions, optionally filtered by backend.",
             ),
             (
-                workspace_command.as_str(),
-                "Browse terminal sessions and create or attach an agent session.",
-            ),
-            (
                 "/attach <thread-id>",
                 "Connect this conversation to an existing session.",
             ),
             ("/cancel", "Cancel the pending command input."),
         ];
+        if self.multiplexer_enabled {
+            commands.insert(
+                2,
+                (
+                    workspace_command.as_str(),
+                    "Browse terminal sessions and create or attach an agent session.",
+                ),
+            );
+        }
         if session.is_some() {
             commands.extend([
                 (
@@ -867,7 +872,7 @@ impl Engine {
     ) -> crate::CommandMenu {
         let mut menu = super::command_menu_for(
             attached && self.agent.capabilities().session_control,
-            self.multiplexer_kind,
+            self.multiplexer_enabled.then_some(self.multiplexer_kind),
         );
         if attached && let Some(session) = self.sessions.current(conversation).await {
             let mut commands = Vec::new();

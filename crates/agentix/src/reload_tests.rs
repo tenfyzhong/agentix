@@ -379,3 +379,19 @@ fn multiplexer_changes_require_restart() {
         );
     }
 }
+
+#[test]
+fn reload_preserves_startup_detection_without_reprobing() {
+    let mut fixture = Fixture::new();
+    let path = fixture.directory.path().join("config.toml");
+    for kind in [
+        None,
+        Some(agentix_core::MultiplexerKind::Rmux),
+        Some(agentix_core::MultiplexerKind::Tmux),
+    ] {
+        fixture.config.multiplexer.resolved_kind = kind;
+        let candidate = load_candidate(&path, &fixture.config, &ProxyOptions::default()).unwrap();
+        assert_eq!(candidate.multiplexer.resolved_kind, kind);
+        assert_eq!(candidate.multiplexer.kind, agentix::MultiplexerMode::Auto);
+    }
+}

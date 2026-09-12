@@ -4,7 +4,9 @@ mod config_file;
 mod engine_runtime;
 mod notification_runtime;
 pub use engine_runtime::{run_engine_loop, run_engine_loop_with_config, shutdown_engine};
+mod multiplexer;
 mod network;
+pub use multiplexer::MultiplexerMode;
 
 pub use network::NetworkConfig;
 
@@ -44,13 +46,17 @@ pub struct Config {
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(default, deny_unknown_fields)]
 pub struct MultiplexerConfig {
-    pub kind: agentix_core::MultiplexerKind,
+    pub kind: MultiplexerMode,
+    /// Startup probe result; never read from the configuration file.
+    #[serde(skip)]
+    pub resolved_kind: Option<agentix_core::MultiplexerKind>,
     pub working_dir: PathBuf,
 }
 impl Default for MultiplexerConfig {
     fn default() -> Self {
         Self {
-            kind: agentix_core::MultiplexerKind::default(),
+            kind: MultiplexerMode::default(),
+            resolved_kind: None,
             working_dir: PathBuf::from("~"),
         }
     }

@@ -57,7 +57,7 @@ impl PreparedService {
             "startup phase completed"
         );
         let mut engine = Engine::new(adapter.clone(), state, channels.clone())
-            .with_multiplexer_kind(config.multiplexer.kind)
+            .with_multiplexer_kind(config.multiplexer.resolved_kind)
             .with_background_turn_notifications(config.notifications.background_turns)
             .with_output(config.output);
         if let Some(task_board) = task_board {
@@ -87,6 +87,7 @@ pub(super) fn load_candidate(
 ) -> Result<Config> {
     let mut next = Config::load(path)?;
     next.apply_codex_proxy_options(proxy)?;
+    next.multiplexer.resolved_kind = current.multiplexer.resolved_kind;
     if next.multiplexer != current.multiplexer {
         bail!("changing multiplexer requires restarting agentix serve");
     }

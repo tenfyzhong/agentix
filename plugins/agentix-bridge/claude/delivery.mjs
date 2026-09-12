@@ -29,6 +29,7 @@ export class TerminalDelivery {
         this.configured = undefined;
         if (this.mode !== 'multiplexer') return;
         const kind = result?.multiplexer?.kind;
+        if (kind === null) return;
         if (!['rmux', 'tmux'].includes(kind)) throw failure('invalid_request', 'Bridge registration is missing valid multiplexer configuration');
         this.configured = new TerminalAdapter(kind, this.options);
     }

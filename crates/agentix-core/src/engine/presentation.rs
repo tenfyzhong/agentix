@@ -156,16 +156,25 @@ pub fn command_menu(attached: bool) -> CommandMenu {
 }
 
 #[must_use]
-pub fn command_menu_for(attached: bool, kind: crate::MultiplexerKind) -> CommandMenu {
+pub fn command_menu_for(
+    attached: bool,
+    kind: impl Into<Option<crate::MultiplexerKind>>,
+) -> CommandMenu {
+    let kind = kind.into();
     let mut commands = [
         ("sessions", "Browse running sessions"),
-        (kind.as_str(), "Manage terminal workspaces"),
         ("cancel", "Cancel pending input"),
         ("help", "Show available commands"),
     ]
     .into_iter()
     .map(|(name, description)| ChannelCommand::new(name, description))
     .collect::<Vec<_>>();
+    if let Some(kind) = kind {
+        commands.insert(
+            1,
+            ChannelCommand::new(kind.as_str(), "Manage terminal workspaces"),
+        );
+    }
     if attached {
         commands.splice(
             2..2,

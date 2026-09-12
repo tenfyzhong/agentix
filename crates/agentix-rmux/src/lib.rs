@@ -42,6 +42,11 @@ impl MultiplexerDriver for RmuxDriver {
     }
 }
 impl RmuxDriver {
+    /// Verify the native protocol without starting a daemon.
+    pub async fn probe() -> Result<bool, RmuxManagerError> {
+        probe_endpoint(RmuxEndpoint::Default).await
+    }
+
     async fn execute_sdk(
         &self,
         prepared: &PreparedMutation,
@@ -118,6 +123,16 @@ impl RmuxDriver {
         Ok(RmuxOutcome { location })
     }
 }
+async fn probe_endpoint(endpoint: RmuxEndpoint) -> Result<bool, RmuxManagerError> {
+    let rmux = Rmux::builder()
+        .endpoint(endpoint)
+        .default_timeout(RMUX_OPERATION_TIMEOUT)
+        .connect()
+        .await?;
+    rmux.find_sessions().all().await?;
+    Ok(true)
+}
+
 async fn connect_rmux(start: bool) -> Result<Option<Rmux>, RmuxManagerError> {
     let builder = Rmux::builder()
         .endpoint(RmuxEndpoint::Default)
@@ -337,6 +352,47 @@ mod tests {
     use super::{launch_in_pane, persistent_launch_argv};
 
     #[cfg(unix)]
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn probe_verifies_native_protocol_and_never_starts_a_server() {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("probe.sock");
+        assert!(
+            super::probe_endpoint(RmuxEndpoint::UnixSocket(socket.clone()))
+                .await
+                .is_err()
+        );
+        assert!(!socket.exists());
+        let listener = UnixListener::bind(&socket).unwrap();
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let server = spawn_mock_rmux(listener, requests.clone());
+        assert!(
+            super::probe_endpoint(RmuxEndpoint::UnixSocket(socket))
+                .await
+                .unwrap()
+        );
+        assert!(!requests.lock().await.is_empty());
+        server.abort();
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn probe_rejects_a_socket_that_does_not_speak_rmux() {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("foreign.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            stream.write_all(b"not the rmux protocol\n").await.unwrap();
+        });
+        assert!(
+            super::probe_endpoint(RmuxEndpoint::UnixSocket(socket))
+                .await
+                .is_err()
+        );
+        server.await.unwrap();
+    }
+
     #[tokio::test]
     async fn reused_pane_clear_and_codex_launch_cross_the_rmux_sdk_wire() {
         let directory = tempfile::tempdir().unwrap();
@@ -686,6 +742,9 @@ mod tests {
     fn mock_rmux_response(request: Request) -> Response {
         match request {
             Request::Handshake(_) => Response::Handshake(HandshakeResponse::current()),
+            Request::ListSessions(_) => Response::ListSessions(rmux_proto::ListSessionsResponse {
+                output: CommandOutput::from_stdout(""),
+            }),
             Request::HasSession(_) => Response::HasSession(HasSessionResponse { exists: true }),
             Request::ListPanes(_) => Response::ListPanes(ListPanesResponse {
                 output: CommandOutput::from_stdout("0:0:%1\n1:0:%2\n"),

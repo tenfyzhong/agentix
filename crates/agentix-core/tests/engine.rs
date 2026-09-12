@@ -5921,3 +5921,42 @@ async fn check_pane_agent_launch(
             .is_err()
     );
 }
+
+#[tokio::test]
+async fn disabled_multiplexer_has_no_commands_or_workspace_access() {
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    )
+    .with_multiplexer_kind(None);
+    for command in ["/rmux", "/tmux"] {
+        let error = engine
+            .handle_inbound(inbound("disabled-mux", command))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("unavailable"));
+    }
+    assert!(!agent.calls().iter().any(|call| call.starts_with("mux-")));
+    engine
+        .handle_inbound(inbound("disabled-mux", "/help"))
+        .await
+        .unwrap();
+    assert!(
+        channel
+            .sent()
+            .iter()
+            .all(|(_, view)| !view.body.contains("/rmux") && !view.body.contains("/tmux"))
+    );
+    for attached in [false, true] {
+        let menu = agentix_core::command_menu_for(attached, None);
+        assert!(
+            menu.commands
+                .iter()
+                .all(|c| c.name != "rmux" && c.name != "tmux")
+        );
+        assert!(menu.commands.iter().any(|c| c.name == "sessions"));
+    }
+}

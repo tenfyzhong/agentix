@@ -31,7 +31,7 @@ max_files = 7
 # One terminal multiplexer and initial working directory shared by every agent.
 # Changing these settings requires restarting Agentix.
 [multiplexer]
-kind = "rmux" # rmux or tmux; controls the /rmux or /tmux menu
+kind = "auto" # auto (default), rmux or tmux; only live services enable a terminal menu
 working_dir = "~"
 
 [agent.codex]
