@@ -10,7 +10,7 @@ Filesystem paths other than the absolute `slack_cli_path` override accept `~` or
 
 Set `multiplexer.kind` to `rmux` (default) or `tmux`. `multiplexer.working_dir` is shared by every agent and defaults to `"~"`, expanded to the current user’s home directory. The selected menu is `/rmux` or `/tmux`. Both settings require a service restart. Per-agent `rmux_directory` and `multiplexer_directory` have been removed and are rejected.
 
-On macOS and Linux, agents launched from the `/rmux` menu return to an interactive `$SHELL` (or `/bin/sh` when unset) after exiting, including unsuccessful exits. The pane remains usable in the configured working directory. This applies to new sessions, windows, splits, and reused panes; already dead panes are not revived by this change.
+On macOS and Linux, agents launched from the `/rmux` or `/tmux` menu return to an interactive `$SHELL` (or `/bin/sh` when unset) after exiting, including unsuccessful exits. The pane remains usable in the configured working directory. This applies to new sessions, windows, splits, and reused panes; already dead panes are not revived by this change.
 
 ### Slack CLI startup synchronization
 

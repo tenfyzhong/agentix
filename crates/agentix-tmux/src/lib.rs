@@ -76,6 +76,12 @@ impl TmuxDriver {
             "--",
             "/usr/bin/env",
             "--",
+            // Interactive mode preserves foreground job control and Ctrl-C.
+            "/bin/sh",
+            "-i",
+            "-c",
+            r#""$@"; exec "${SHELL:-/bin/sh}" -i"#,
+            "agentix",
         ]);
         command_args.extend(argv.iter().map(|value| {
             // tmux parses command separators even with structured argv.
