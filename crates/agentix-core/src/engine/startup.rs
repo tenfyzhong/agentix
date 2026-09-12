@@ -147,21 +147,17 @@ impl Engine {
             if self.sessions.epoch(&conversation).await != epoch {
                 continue;
             }
-            // Telegram updates a native menu without posting a message. Feishu
-            // and Slack render menus as chat messages, which startup must not send.
-            if conversation.channel == crate::ChannelKind::Telegram {
-                self.update_command_menu_best_effort(
-                    &conversation,
-                    status != RestoredBindingStatus::Detached,
-                )
-                .await;
-                if self.sessions.epoch(&conversation).await != epoch {
-                    // A slow old request may have overwritten the newer binding's menu.
-                    let attached_now = self.sessions.current(&conversation).await.is_some();
-                    self.update_command_menu_best_effort(&conversation, attached_now)
-                        .await;
-                    continue;
-                }
+            self.sync_command_menu_best_effort(
+                &conversation,
+                status != RestoredBindingStatus::Detached,
+            )
+            .await;
+            if self.sessions.epoch(&conversation).await != epoch {
+                // A slow old request may have overwritten the newer binding's menu.
+                let attached_now = self.sessions.current(&conversation).await.is_some();
+                self.sync_command_menu_best_effort(&conversation, attached_now)
+                    .await;
+                continue;
             }
             let view = if status == RestoredBindingStatus::Offline {
                 OutboundView {

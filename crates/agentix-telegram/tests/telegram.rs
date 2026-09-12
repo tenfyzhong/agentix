@@ -197,6 +197,33 @@ async fn telegram_registers_commands_and_the_private_chat_menu_button() {
 }
 
 #[tokio::test]
+async fn telegram_sync_command_menu_only_updates_native_commands() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let requests = tokio::spawn(capture_boolean_requests(listener, 1));
+    let bot = Bot::new("test-token").set_api_url(format!("http://{address}/").parse().unwrap());
+    let adapter = TelegramAdapter::with_bot(bot, TelegramPolicy::new([42]));
+    let conversation = ConversationRef::new(ChannelKind::Telegram, "42");
+    let menu = CommandMenu::new(vec![
+        ChannelCommand::new("current", "Current session").contextual(),
+    ]);
+    adapter
+        .sync_command_menu(&conversation, &menu)
+        .await
+        .unwrap();
+    let requests = tokio::time::timeout(std::time::Duration::from_secs(2), requests)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(requests.len(), 1);
+    assert!(requests[0].0.ends_with("/SetMyCommands"));
+    let body: serde_json::Value = serde_json::from_str(&requests[0].1).unwrap();
+    assert_eq!(body["scope"]["chat_id"], 42);
+    assert_eq!(body["commands"][0]["command"], "current");
+    assert_eq!(body["commands"][0]["description"], "✌️ Current session");
+}
+
+#[tokio::test]
 async fn telegram_replaces_the_chat_scoped_menu_when_attachment_changes() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();

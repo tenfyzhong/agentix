@@ -312,6 +312,11 @@ async fn command_menu_reuses_one_message_and_skips_unchanged_updates() {
     let conversation = ConversationRef::new(ChannelKind::Slack, "T1:D1");
     let menu = CommandMenu::new(vec![ChannelCommand::new("sessions", "List sessions")]);
     adapter
+        .sync_command_menu(&conversation, &menu)
+        .await
+        .unwrap();
+    assert!(server.requests.try_recv().is_err());
+    adapter
         .set_command_menu(&conversation, &menu)
         .await
         .unwrap();

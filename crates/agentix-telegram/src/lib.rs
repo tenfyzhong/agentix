@@ -504,6 +504,14 @@ impl ChannelAdapter for TelegramAdapter {
         Ok(())
     }
 
+    async fn sync_command_menu(
+        &self,
+        conversation: &ConversationRef,
+        menu: &CommandMenu,
+    ) -> Result<(), ChannelError> {
+        self.set_command_menu(conversation, menu).await
+    }
+
     async fn set_command_menu(
         &self,
         conversation: &ConversationRef,

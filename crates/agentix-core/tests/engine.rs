@@ -819,6 +819,7 @@ struct FakeChannel {
     messages: Arc<Mutex<HashMap<MessageRef, OutboundView>>>,
     session_commands: Arc<Mutex<Vec<(ConversationRef, bool)>>>,
     menus: Arc<Mutex<Vec<CommandMenu>>>,
+    synced_menus: Arc<Mutex<Vec<CommandMenu>>>,
     fail_menu_updates: Arc<Mutex<bool>>,
     task_send_failures: Arc<Mutex<usize>>,
     inbox_send_failures: Arc<Mutex<usize>>,
@@ -955,6 +956,18 @@ impl ChannelAdapter for FakeChannel {
 
     async fn disable_actions(&self, message: &MessageRef) -> Result<(), ChannelError> {
         self.disabled_actions.lock().unwrap().push(message.clone());
+        Ok(())
+    }
+
+    async fn sync_command_menu(
+        &self,
+        conversation: &ConversationRef,
+        menu: &CommandMenu,
+    ) -> Result<(), ChannelError> {
+        self.synced_menus.lock().unwrap().push(menu.clone());
+        if self.kind() == ChannelKind::Telegram {
+            self.set_command_menu(conversation, menu).await?;
+        }
         Ok(())
     }
 
@@ -3749,6 +3762,7 @@ async fn startup_skips_command_cards_and_preserves_explicit_help() {
                 channel.session_commands().is_empty(),
                 "startup requested a command card for {kind:?} / {session}"
             );
+            assert_eq!(channel.synced_menus.lock().unwrap().len(), 1);
             let sent = channel.sent();
             assert_eq!(sent.len(), 1);
             assert_eq!(sent[0].1.title, "Agentix serve");
