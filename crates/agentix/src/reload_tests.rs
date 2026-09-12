@@ -370,7 +370,7 @@ fn multiplexer_changes_require_restart() {
     let path = fixture.directory.path().join("config.toml");
     let original = std::fs::read_to_string(&path).unwrap();
     assert!(load_candidate(&path, &fixture.config, &ProxyOptions::default()).is_ok());
-    for settings in ["kind='tmux'", "working_dir='/another-workspace'"] {
+    for settings in ["kind='tmux'", "kind='rmux'"] {
         std::fs::write(&path, format!("{original}\n[multiplexer]\n{settings}\n")).unwrap();
         let error = load_candidate(&path, &fixture.config, &ProxyOptions::default()).unwrap_err();
         assert!(

@@ -453,7 +453,7 @@ async fn build_service(
                     let retry = agent.clone();
                     let bridge_hub = bridge_hub.clone();
                     let background = notification_setting.clone();
-                    let directory = multiplexer.working_dir.to_string_lossy().into_owned();
+                    let directory = multiplexer.home_dir.to_string_lossy().into_owned();
                     let multiplexer = multiplexer.clone();
                     let adapter = agentix_core::DeferredAgent::new(
                         agent.kind().display_name(),
@@ -631,7 +631,7 @@ async fn doctor(config: &Config) -> Result<()> {
                 let client = CodexClient::connect_with_background_turn_notifications(
                     endpoint,
                     command,
-                    &config.multiplexer.working_dir,
+                    &config.multiplexer.home_dir,
                     false,
                 )
                 .await?
@@ -702,7 +702,7 @@ async fn build_agent(
     bridge_hub: Option<Arc<BridgeHub>>,
     multiplexer: &agentix::MultiplexerConfig,
 ) -> Result<BuiltAgent> {
-    let directory = &multiplexer.working_dir;
+    let directory = &multiplexer.home_dir;
     let driver = build_multiplexer(multiplexer.resolved_kind);
     match config {
         AgentConfig::Claude {

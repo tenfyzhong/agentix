@@ -18,8 +18,7 @@ The service configuration is global, shared by every agent:
 
 ```toml
 [multiplexer]
-kind = "tmux" # default: rmux
-working_dir = "~"
+kind = "tmux" # default: auto
 ```
 
 Both settings require restarting Agentix when changed. Per-agent working-directory keys have been removed.

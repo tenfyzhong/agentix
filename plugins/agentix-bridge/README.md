@@ -18,7 +18,6 @@ Enable each backend with its own named table. The table name determines the back
 ```toml
 [multiplexer]
 kind = "tmux"
-working_dir = "~/work"
 
 [agent.codex]
 

@@ -102,15 +102,7 @@ impl RmuxDriver {
             } => {
                 let pane = pane_by_text_id(&rmux, pane_id).await?;
                 let direction = sdk_split_direction(*direction);
-                let created = if let Some(argv) = argv {
-                    pane.split_with(direction)
-                        .spawn(persistent_launch_argv(argv))
-                        .cwd(&prepared.cwd)
-                        .keep_alive_on_exit(false)
-                        .await?
-                } else {
-                    pane.split(direction).await?
-                };
+                let created = split_in_pane(&pane, direction, argv, &prepared.cwd).await?;
                 required_pane_id(&created).await?
             }
             MultiplexerTarget::ExistingPane { pane_id } => {
@@ -249,6 +241,24 @@ async fn pane_by_text_id(rmux: &Rmux, pane_id: &str) -> Result<Pane, RmuxManager
         .await?)
 }
 
+async fn split_in_pane(
+    pane: &Pane,
+    direction: SplitDirection,
+    argv: Option<&[String]>,
+    cwd: &Path,
+) -> Result<Pane, RmuxManagerError> {
+    let split = pane
+        .split_with(direction)
+        .cwd(cwd)
+        .keep_alive_on_exit(false);
+    let split = if let Some(argv) = argv {
+        split.spawn(persistent_launch_argv(argv))
+    } else {
+        split
+    };
+    Ok(split.await?)
+}
+
 async fn launch_in_pane(
     pane: &Pane,
     argv: Option<&[String]>,
@@ -256,6 +266,10 @@ async fn launch_in_pane(
     input_clear_key: Option<&str>,
 ) -> Result<(), RmuxManagerError> {
     let Some(argv) = argv else {
+        if let Err(error) = pane.set_option("remain-on-exit", "off").await {
+            let _ = pane.clone().close().await;
+            return Err(error.into());
+        }
         return Ok(());
     };
     if let Some(key) = input_clear_key {
@@ -391,6 +405,36 @@ mod tests {
                 .is_err()
         );
         server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn blank_pane_disables_retention_without_respawning() {
+        let directory = tempfile::tempdir().unwrap();
+        let socket = directory.path().join("rmux.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let server = spawn_mock_rmux(listener, requests.clone());
+        let rmux = Rmux::builder()
+            .endpoint(RmuxEndpoint::UnixSocket(socket))
+            .connect()
+            .await
+            .unwrap();
+        let session = rmux
+            .session(SessionName::new("agentix").unwrap())
+            .await
+            .unwrap();
+        let pane = session.pane_by_id(PaneId::new(1)).await.unwrap();
+        launch_in_pane(&pane, None, directory.path(), None)
+            .await
+            .unwrap();
+        let requests = requests.lock().await;
+        assert!(requests.iter().any(|r| matches!(r, Request::PaneOptionSet(r) if r.name == "remain-on-exit" && r.value.as_deref() == Some("off"))));
+        assert!(
+            !requests
+                .iter()
+                .any(|r| matches!(r, Request::PaneRespawn(_) | Request::PaneInput(_)))
+        );
+        server.abort();
     }
 
     #[tokio::test]
@@ -540,6 +584,20 @@ mod tests {
             .await
             .unwrap();
         drop(split);
+        super::split_in_pane(
+            &pane,
+            SplitDirection::Right,
+            None,
+            Path::new("/work/blank-split"),
+        )
+        .await
+        .unwrap();
+        assert!(requests.lock().await.iter().any(
+            |request| matches!(request, Request::SplitWindowIdentity(request)
+            if request.action.process_command.is_none()
+                && request.action.start_directory.as_deref() == Some(Path::new("/work/blank-split"))
+                && request.action.keep_alive_on_exit == Some(false))
+        ));
         drop(pane);
         drop(window);
         drop(session);
@@ -585,6 +643,7 @@ mod tests {
     #[cfg(unix)]
     #[tokio::test]
     #[ignore = "requires an installed rmux daemon"]
+    #[allow(clippy::too_many_lines)]
     async fn live_rmux_agent_exit_restores_usable_pane() {
         use std::process::Command;
         use std::time::Duration;
@@ -618,6 +677,46 @@ mod tests {
             .session(SessionName::new("pane-test").unwrap())
             .await
             .unwrap();
+        let output = Command::new("rmux")
+            .arg("-S")
+            .arg(&server.0)
+            .args(["set-option", "-g", "remain-on-exit", "on"])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        let blank = session
+            .new_window_with()
+            .name("blank")
+            .cwd(directory.path())
+            .detached(true)
+            .await
+            .unwrap();
+        let blank_id = blank.panes().await.unwrap()[0].id;
+        let blank = session.pane_by_id(blank_id).await.unwrap();
+        launch_in_pane(&blank, None, directory.path(), None)
+            .await
+            .unwrap();
+        assert_ctrl_d_closes_pane(&rmux, &blank, blank_id).await;
+        let split_dir = directory.path().join("split cwd 中文");
+        std::fs::create_dir(&split_dir).unwrap();
+        let origin = session.pane(0, 0);
+        let split = super::split_in_pane(&origin, SplitDirection::Right, None, &split_dir)
+            .await
+            .unwrap();
+        split
+            .send_text("echo correct > split-result")
+            .await
+            .unwrap();
+        split.send_key("Enter").await.unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !split_dir.join("split-result").exists() {
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .expect("blank split must use the selected directory");
+        let split_id = super::required_pane_id(&split).await.unwrap();
+        assert_ctrl_d_closes_pane(&rmux, &split, split_id).await;
         let window = session
             .new_window_with()
             .name("agent")
@@ -681,6 +780,28 @@ mod tests {
             std::fs::read_to_string(directory.path().join("pane-result")).unwrap(),
             "usable\n"
         );
+        for status in [0, 7] {
+            launch_in_pane(
+                &pane,
+                Some(&["/bin/sh".into(), "-c".into(), format!("exit {status}")]),
+                directory.path(),
+                None,
+            )
+            .await
+            .unwrap();
+            let marker = format!("exit-{status}");
+            pane.send_text(format!("echo usable > {marker}"))
+                .await
+                .unwrap();
+            pane.send_key("Enter").await.unwrap();
+            tokio::time::timeout(Duration::from_secs(5), async {
+                while !directory.path().join(&marker).exists() {
+                    tokio::time::sleep(Duration::from_millis(25)).await;
+                }
+            })
+            .await
+            .expect("normal and nonzero agent exit must restore usable shell");
+        }
         assert_ctrl_d_closes_pane(&rmux, &pane, pane_id).await;
     }
 
@@ -762,6 +883,15 @@ mod tests {
             Request::PaneInput(request) => Response::SendKeys(SendKeysResponse {
                 key_count: request.keys.len(),
             }),
+            Request::PaneOptionSet(request) => {
+                Response::PaneOptionSet(Box::new(rmux_proto::PaneOptionSetResponse {
+                    pane_id: PaneId::new(1),
+                    name: request.name,
+                    old_value: None,
+                    new_value: request.value,
+                    changed: true,
+                }))
+            }
             Request::PaneRespawn(_) => Response::RespawnPane(RespawnPaneResponse {
                 target: PaneTarget::new(SessionName::new("agentix").unwrap(), 0),
             }),
