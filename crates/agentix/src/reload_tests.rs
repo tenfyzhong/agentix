@@ -220,3 +220,146 @@ async fn reload_connection_failure_after_preflight_keeps_control_alive_and_allow
     running.stop(Duration::from_secs(1)).await;
     assert_eq!(*fixture.traffic.delivered.lock().unwrap(), ["chat-0"]);
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn shutdown_signal_child() {
+    let Some(directory) = std::env::var_os("AGENTIX_SHUTDOWN_TEST_DIR") else {
+        return;
+    };
+    let directory = PathBuf::from(directory);
+    let mut fixture = Fixture::new();
+    fixture.config.server.endpoint = format!("unix://{}", directory.join("control.sock").display());
+    let proxy = agentix_codex::CodexProxy::bind(
+        &format!(
+            "unix://{}",
+            directory.join("app-server-control.sock").display()
+        ),
+        &format!("unix://{}", directory.join("upstream.sock").display()),
+    )
+    .await
+    .unwrap();
+    run(
+        fixture.prepare(false).await,
+        fixture.directory.path().join("config.toml"),
+        ProxyOptions::default(),
+        None,
+        Arc::new(ClaimRegistry::default()),
+        |_, _| async { anyhow::bail!("reload is not used by this fixture") },
+        crate::shutdown_signal(),
+        Duration::from_secs(1),
+    )
+    .await
+    .unwrap();
+    drop(proxy);
+}
+
+#[cfg(unix)]
+async fn assert_signal_cleans_sockets(signal: &str) {
+    let directory = tempfile::tempdir_in("/tmp").unwrap();
+    let control = directory.path().join("control.sock");
+    let proxy = directory.path().join("app-server-control.sock");
+    // Two runs on the same paths verify restart without manual cleanup.
+    for _ in 0..2 {
+        let mut child = tokio::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "reload::tests::shutdown_signal_child",
+                "--nocapture",
+            ])
+            .env("AGENTIX_SHUTDOWN_TEST_DIR", directory.path())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                assert!(
+                    child.try_wait().unwrap().is_none(),
+                    "service exited before readiness"
+                );
+                if proxy.exists()
+                    && control::request(
+                        &format!("unix://{}", control.display()),
+                        &control::ControlRequest::Sessions {
+                            cursor: None,
+                            limit: 1,
+                        },
+                    )
+                    .await
+                    .is_ok()
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("service must become ready");
+        assert!(
+            tokio::process::Command::new("kill")
+                .args([signal, &child.id().unwrap().to_string()])
+                .status()
+                .await
+                .unwrap()
+                .success()
+        );
+        let status = tokio::time::timeout(Duration::from_secs(10), child.wait())
+            .await
+            .expect("service must stop promptly")
+            .unwrap();
+        assert!(
+            !control.exists(),
+            "control.sock remains after {signal}: {status}"
+        );
+        assert!(
+            !proxy.exists(),
+            "app-server-control.sock remains after {signal}: {status}"
+        );
+        assert!(
+            status.success(),
+            "service must exit normally after {signal}: {status}"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn sigterm_removes_control_sockets_and_allows_restart() {
+    assert_signal_cleans_sockets("-TERM").await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn sigint_removes_control_sockets_and_allows_restart() {
+    assert_signal_cleans_sockets("-INT").await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn sighup_removes_control_sockets_and_allows_restart() {
+    assert_signal_cleans_sockets("-HUP").await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn sigquit_removes_control_sockets_and_allows_restart() {
+    assert_signal_cleans_sockets("-QUIT").await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn sigusr1_removes_control_sockets_and_allows_restart() {
+    assert_signal_cleans_sockets("-USR1").await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn sigusr2_removes_control_sockets_and_allows_restart() {
+    assert_signal_cleans_sockets("-USR2").await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn sigalrm_removes_control_sockets_and_allows_restart() {
+    assert_signal_cleans_sockets("-ALRM").await;
+}
