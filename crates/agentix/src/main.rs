@@ -340,6 +340,37 @@ fn retryable_backend_error(error: anyhow::Error) -> Result<anyhow::Error> {
     Ok(error)
 }
 
+async fn shutdown_signal() -> Result<()> {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+
+        let mut terminate =
+            signal(SignalKind::terminate()).context("failed to install SIGTERM handler")?;
+        let mut hangup =
+            signal(SignalKind::hangup()).context("failed to install SIGHUP handler")?;
+        let mut quit = signal(SignalKind::quit()).context("failed to install SIGQUIT handler")?;
+        let mut user1 =
+            signal(SignalKind::user_defined1()).context("failed to install SIGUSR1 handler")?;
+        let mut user2 =
+            signal(SignalKind::user_defined2()).context("failed to install SIGUSR2 handler")?;
+        let mut alarm = signal(SignalKind::alarm()).context("failed to install SIGALRM handler")?;
+        tokio::select! {
+            result = tokio::signal::ctrl_c() => result.context("signal handler failed"),
+            _ = terminate.recv() => Ok(()),
+            _ = hangup.recv() => Ok(()),
+            _ = quit.recv() => Ok(()),
+            _ = user1.recv() => Ok(()),
+            _ = user2.recv() => Ok(()),
+            _ = alarm.recv() => Ok(()),
+        }
+    }
+    #[cfg(not(unix))]
+    tokio::signal::ctrl_c()
+        .await
+        .context("signal handler failed")
+}
+
 async fn serve(
     config: Config,
     config_path: &Path,
@@ -365,11 +396,7 @@ async fn serve(
                 path.clone(),
             )
         },
-        async {
-            tokio::signal::ctrl_c()
-                .await
-                .context("signal handler failed")
-        },
+        shutdown_signal(),
         Duration::from_secs(5),
     )
     .await
