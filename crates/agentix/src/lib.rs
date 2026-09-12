@@ -18,6 +18,7 @@ use toml_edit::{Array, DocumentMut, Item, Table, Value};
 #[derive(Debug, Clone, Deserialize)]
 #[serde(try_from = "config_file::ConfigFile")]
 pub struct Config {
+    pub multiplexer: MultiplexerConfig,
     #[serde(default)]
     pub slack_cli_path: Option<PathBuf>,
     #[serde(default)]
@@ -38,6 +39,21 @@ pub struct Config {
     pub storage: StorageConfig,
     #[serde(default)]
     pub task_board: Option<TaskBoardConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(default, deny_unknown_fields)]
+pub struct MultiplexerConfig {
+    pub kind: agentix_core::MultiplexerKind,
+    pub working_dir: PathBuf,
+}
+impl Default for MultiplexerConfig {
+    fn default() -> Self {
+        Self {
+            kind: agentix_core::MultiplexerKind::default(),
+            working_dir: PathBuf::from("~"),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -147,8 +163,6 @@ pub enum AgentConfig {
         #[serde(default = "default_claude_command")]
         command: PathBuf,
         session_dir: PathBuf,
-        #[serde(default = "default_rmux_directory")]
-        rmux_directory: PathBuf,
     },
     Codex {
         #[serde(default = "default_codex_endpoint")]
@@ -159,8 +173,6 @@ pub enum AgentConfig {
         proxy: agentix_codex::ProxyOptions,
         #[serde(default = "default_codex_command")]
         command: PathBuf,
-        #[serde(default = "default_rmux_directory", alias = "multiplexer_directory")]
-        rmux_directory: PathBuf,
     },
     Pi {
         #[serde(default = "default_pi_command")]
@@ -168,8 +180,6 @@ pub enum AgentConfig {
         session_dir: PathBuf,
         #[serde(default)]
         bridge_extension: Option<PathBuf>,
-        #[serde(default = "default_rmux_directory")]
-        rmux_directory: PathBuf,
     },
     #[serde(alias = "omp")]
     OhMyPi {
@@ -178,8 +188,6 @@ pub enum AgentConfig {
         session_dir: PathBuf,
         #[serde(default)]
         bridge_extension: Option<PathBuf>,
-        #[serde(default = "default_rmux_directory")]
-        rmux_directory: PathBuf,
     },
 }
 
@@ -414,6 +422,8 @@ impl Config {
 
     fn expand_home_paths(&mut self) -> Result<()> {
         let home = dirs::home_dir();
+        self.multiplexer.working_dir =
+            expand_home_path(&self.multiplexer.working_dir, home.as_deref())?;
         if let Some(task_board) = &mut self.task_board {
             task_board.config = expand_home_path(&task_board.config, home.as_deref())?;
         }
@@ -427,21 +437,17 @@ impl Config {
                 AgentConfig::Claude {
                     command,
                     session_dir,
-                    rmux_directory,
                 } => {
                     *command = expand_home_path(command, home.as_deref())?;
                     *session_dir = expand_home_path(session_dir, home.as_deref())?;
-                    *rmux_directory = expand_home_path(rmux_directory, home.as_deref())?;
                 }
                 AgentConfig::Codex {
                     endpoint,
                     proxy_endpoint,
                     proxy,
                     command,
-                    rmux_directory,
                 } => {
                     *command = expand_home_path(command, home.as_deref())?;
-                    *rmux_directory = expand_home_path(rmux_directory, home.as_deref())?;
                     *endpoint = expand_home_in_unix_endpoint(endpoint, home.as_deref())?;
                     *proxy_endpoint =
                         expand_home_in_unix_endpoint(proxy_endpoint, home.as_deref())?;
@@ -456,17 +462,14 @@ impl Config {
                     command,
                     session_dir,
                     bridge_extension,
-                    rmux_directory,
                 }
                 | AgentConfig::OhMyPi {
                     command,
                     session_dir,
                     bridge_extension,
-                    rmux_directory,
                 } => {
                     *command = expand_home_path(command, home.as_deref())?;
                     *session_dir = expand_home_path(session_dir, home.as_deref())?;
-                    *rmux_directory = expand_home_path(rmux_directory, home.as_deref())?;
                     if let Some(path) = bridge_extension {
                         *path = expand_home_path(path, home.as_deref())?;
                     }
@@ -634,10 +637,6 @@ fn default_codex_proxy_endpoint() -> String {
 
 fn default_codex_command() -> PathBuf {
     "codex".into()
-}
-
-fn default_rmux_directory() -> PathBuf {
-    "~".into()
 }
 
 fn default_pi_command() -> PathBuf {

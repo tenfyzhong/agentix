@@ -2168,6 +2168,7 @@ async fn session_picker_shows_terminal_multiplexer_location() {
         updated_at: Some(1),
         status: SessionStatus::Active,
         terminal: Some(TerminalLocation {
+            multiplexer: agentix_domain::MultiplexerKind::default(),
             session: "agentix".into(),
             window_index: "1".into(),
             window_name: "codex:agentix".into(),
@@ -5682,4 +5683,31 @@ async fn reload_task_board_enable_disable_changes_help_and_commands() {
             assert!(result.unwrap_err().to_string().contains("not configured"));
         }
     }
+}
+
+#[tokio::test]
+async fn configured_tmux_routes_commands_and_rejects_rmux() {
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    )
+    .with_multiplexer_kind(agentix_core::MultiplexerKind::Tmux);
+    engine
+        .handle_inbound(inbound("tmux-chat", "/tmux"))
+        .await
+        .unwrap();
+    assert!(agent.calls().iter().any(|c| c == "mux-snapshot:auto"));
+    let count = agent.calls().len();
+    let error = engine
+        .handle_inbound(inbound("wrong-chat", "/rmux"))
+        .await
+        .unwrap_err();
+    assert_eq!(agent.calls().len(), count);
+    assert!(error.to_string().contains("tmux"));
+    let menu = agentix_core::command_menu_for(false, agentix_core::MultiplexerKind::Tmux);
+    assert!(menu.commands.iter().any(|c| c.name == "tmux"));
+    assert!(!menu.commands.iter().any(|c| c.name == "rmux"));
 }

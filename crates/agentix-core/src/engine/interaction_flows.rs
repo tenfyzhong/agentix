@@ -274,7 +274,7 @@ impl Engine {
                     .await?;
             }
             UiAction::MultiplexerBackend(kind) => {
-                self.rmux
+                self.multiplexer
                     .selected
                     .lock()
                     .await

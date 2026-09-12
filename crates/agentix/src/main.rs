@@ -377,7 +377,7 @@ async fn serve(
     proxy: agentix_codex::ProxyOptions,
 ) -> Result<()> {
     // Keep this hub and the control listener alive across runtime generations.
-    let bridge = Arc::new(BridgeHub::new());
+    let bridge = Arc::new(BridgeHub::with_multiplexer_kind(config.multiplexer.kind));
     let claims = Arc::new(ClaimRegistry::default());
     let path = std::path::absolute(config_path)?;
     let initial = build_service(config, None, bridge.clone(), claims.clone(), path.clone()).await?;
@@ -411,6 +411,7 @@ async fn build_service(
     config_path: PathBuf,
 ) -> Result<reload::PreparedService> {
     let started = Instant::now();
+    let multiplexer = config.multiplexer.clone();
     let bridge_hub = Some(bridge);
     let notification_setting = previous.as_ref().map_or_else(
         || {
@@ -434,7 +435,14 @@ async fn build_service(
         let built = if let Some(built) = reused {
             built
         } else {
-            match build_agent(agent, notification_setting.clone(), bridge_hub.clone()).await {
+            match build_agent(
+                agent,
+                notification_setting.clone(),
+                bridge_hub.clone(),
+                &multiplexer,
+            )
+            .await
+            {
                 Ok(built) => built,
                 Err(error) => {
                     let error = retryable_backend_error(error)?;
@@ -442,23 +450,18 @@ async fn build_service(
                     let retry = agent.clone();
                     let bridge_hub = bridge_hub.clone();
                     let background = notification_setting.clone();
-                    let directory = match agent {
-                        AgentConfig::Codex { rmux_directory, .. }
-                        | AgentConfig::Claude { rmux_directory, .. }
-                        | AgentConfig::Pi { rmux_directory, .. }
-                        | AgentConfig::OhMyPi { rmux_directory, .. } => {
-                            rmux_directory.to_string_lossy().into_owned()
-                        }
-                    };
+                    let directory = multiplexer.working_dir.to_string_lossy().into_owned();
+                    let multiplexer = multiplexer.clone();
                     let adapter = agentix_core::DeferredAgent::new(
                         agent.kind().display_name(),
                         directory,
                         move || {
                             let retry = retry.clone();
+                            let multiplexer = multiplexer.clone();
                             let bridge_hub = bridge_hub.clone();
                             let background = background.clone();
                             async move {
-                                build_agent(&retry, background, bridge_hub)
+                                build_agent(&retry, background, bridge_hub, &multiplexer)
                                     .await
                                     .map(|built| built.adapter)
                                     .map_err(|error| AgentError::Unavailable(error.to_string()))
@@ -620,16 +623,16 @@ async fn doctor(config: &Config) -> Result<()> {
                 proxy_endpoint: _,
                 proxy: _,
                 command,
-                rmux_directory,
             } => {
                 let endpoint = CodexEndpoint::parse(endpoint)?;
                 let client = CodexClient::connect_with_background_turn_notifications(
                     endpoint,
                     command,
-                    rmux_directory,
+                    &config.multiplexer.working_dir,
                     false,
                 )
-                .await?;
+                .await?
+                .with_multiplexer(build_multiplexer(config.multiplexer.kind));
                 let page = client.list_sessions(None, 1).await?;
                 println!(
                     "ok: Codex WebSocket-over-UDS handshake ({} loaded session sample)",
@@ -674,8 +677,17 @@ struct BuiltAgent {
     codex: Option<CodexClient>,
 }
 
+fn build_multiplexer(
+    kind: agentix_core::MultiplexerKind,
+) -> Arc<dyn agentix_multiplexer::MultiplexerDriver> {
+    match kind {
+        agentix_core::MultiplexerKind::Rmux => Arc::new(agentix_rmux::RmuxDriver),
+        agentix_core::MultiplexerKind::Tmux => Arc::new(agentix_tmux::TmuxDriver::default()),
+    }
+}
+
 fn claude_workspace_args() -> Vec<String> {
-    // Prompts use rmux input; ordinary plugin loading supplies the bridge hooks.
+    // Prompts use terminal input; ordinary plugin loading supplies the bridge hooks.
     Vec::new()
 }
 
@@ -683,12 +695,14 @@ async fn build_agent(
     config: &AgentConfig,
     background_turn_notifications: Arc<std::sync::atomic::AtomicBool>,
     bridge_hub: Option<Arc<BridgeHub>>,
+    multiplexer: &agentix::MultiplexerConfig,
 ) -> Result<BuiltAgent> {
+    let directory = &multiplexer.working_dir;
+    let driver = build_multiplexer(multiplexer.kind);
     match config {
         AgentConfig::Claude {
             command,
             session_dir,
-            rmux_directory,
         } => Ok(BuiltAgent {
             adapter: Arc::new(
                 BridgeAdapter::new(
@@ -696,7 +710,8 @@ async fn build_agent(
                     bridge_hub.context("native bridge hub is not configured")?,
                     session_dir,
                 )
-                .with_workspace(command, claude_workspace_args(), rmux_directory),
+                .with_workspace(command, claude_workspace_args(), directory)
+                .with_multiplexer(driver),
             ),
             codex: None,
         }),
@@ -705,18 +720,18 @@ async fn build_agent(
             proxy_endpoint,
             proxy,
             command,
-            rmux_directory,
         } => {
             let endpoint = CodexEndpoint::parse(endpoint)?;
             let client = CodexClient::connect_with_proxy_notification_setting(
                 proxy_endpoint,
                 endpoint,
                 command,
-                rmux_directory,
+                directory,
                 background_turn_notifications,
                 proxy,
             )
-            .await?;
+            .await?
+            .with_multiplexer(driver);
             Ok(BuiltAgent {
                 adapter: Arc::new(client.clone()),
                 codex: Some(client),
@@ -726,13 +741,11 @@ async fn build_agent(
             command,
             session_dir,
             bridge_extension,
-            rmux_directory,
         }
         | AgentConfig::OhMyPi {
             command,
             session_dir,
             bridge_extension,
-            rmux_directory,
         } => {
             let flavor = if matches!(config, AgentConfig::Pi { .. }) {
                 BridgeKind::Pi
@@ -753,7 +766,8 @@ async fn build_agent(
                         bridge_hub.context("native bridge hub is not configured")?,
                         session_dir,
                     )
-                    .with_workspace(command, args, rmux_directory),
+                    .with_workspace(command, args, directory)
+                    .with_multiplexer(driver),
                 ),
                 codex: None,
             })
@@ -980,7 +994,7 @@ async fn handle_control_request(
 }
 
 fn telegram_menu_commands(config: &Config) -> Vec<teloxide::types::BotCommand> {
-    let mut commands = agentix_telegram::menu_commands();
+    let mut commands = agentix_telegram::menu_commands_for(config.multiplexer.kind);
     if config.enabled_task_board().is_some() {
         commands.insert(
             1,
@@ -1015,7 +1029,8 @@ fn build_channels(
             )?
             .with_command_affixes(affixes.clone());
             if let Some(app_id) = &slack.app_id {
-                let mut commands = agentix_core::command_menu(true).commands;
+                let mut commands =
+                    agentix_core::command_menu_for(true, config.multiplexer.kind).commands;
                 if config.enabled_task_board().is_some() {
                     commands.extend(
                         [

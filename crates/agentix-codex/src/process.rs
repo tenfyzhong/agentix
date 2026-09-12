@@ -6,7 +6,7 @@ use std::process::{Command, Output};
 use agentix_domain::{SessionId, SessionStatus, SessionSummary, TerminalLocation};
 use thiserror::Error;
 
-use crate::{CodexEndpoint, multiplexer::rmux_process_locations};
+use crate::CodexEndpoint;
 
 #[derive(Debug, Error)]
 pub(crate) enum ProcessDiscoveryError {
@@ -14,8 +14,6 @@ pub(crate) enum ProcessDiscoveryError {
     Io(#[from] std::io::Error),
     #[error("process inspection command failed: {0}")]
     Command(String),
-    #[error("failed to inspect rmux panes: {0}")]
-    Rmux(String),
     #[error("the Codex daemon process could not be identified")]
     DaemonNotFound,
 }
@@ -48,13 +46,13 @@ impl CodexProcessDiscovery {
         })
     }
 
-    pub(crate) async fn discover(&self) -> Result<RunningProcessSnapshot, ProcessDiscoveryError> {
+    pub(crate) fn discover(
+        &self,
+        panes: &HashMap<u32, TerminalLocation>,
+    ) -> Result<RunningProcessSnapshot, ProcessDiscoveryError> {
         let interactive = interactive_codex_processes()?;
         let daemon_pid = daemon_pid(&self.socket_path)?;
         let lock_owners = writer_lock_owners(&self.codex_home)?;
-        let panes = rmux_process_locations()
-            .await
-            .map_err(|error| ProcessDiscoveryError::Rmux(error.to_string()))?;
         let direct_session_ids = lock_owners
             .iter()
             .filter(|(_, pid)| **pid != daemon_pid && interactive.contains_key(pid))
@@ -770,6 +768,7 @@ n/home/me/.codex/thread-writer-locks/01a0656e.lock
         pane_id: &str,
     ) -> TerminalLocation {
         TerminalLocation {
+            multiplexer: agentix_domain::MultiplexerKind::default(),
             session: session.into(),
             window_index: window_index.into(),
             window_name: window_name.into(),

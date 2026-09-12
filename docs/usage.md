@@ -17,8 +17,8 @@ In group chats, mention the bot. Direct messages are accepted only from configur
 These commands are available according to the conversation's current attachment state:
 
 - `/help` — show the commands currently available
-- `/sessions [codex|pi|omp|claude]` — list running sessions with their title, status, workspace, and rmux location; use an item's action to attach it
-- `/rmux` — browse rmux sessions, windows, and panes, or create a workspace and launch the selected agent
+- `/sessions [codex|pi|omp|claude]` — list running sessions with their title, status, workspace, and terminal location; use an item's action to attach it
+- `/rmux` or `/tmux` (selected by configuration) — browse terminal sessions, windows, and panes, or create a workspace and launch the selected agent
 - `/attach <session-id>` — attach the conversation to a running session
 - `/current` — show the attached session and running turn
 - `/history`, `/history older`, `/history newer` — browse turns with separate user and agent sections
@@ -80,7 +80,7 @@ See the [bridge installation and capabilities](../plugins/agentix-bridge/README.
 
 ### Claude Code controls
 
-Claude supports prompts, `/history`, `/status`, and `/queue` receipt recovery. `/detach` leaves Claude running. It does not expose remote stop, steering, model controls, or FIFO prompt submission; a busy session rejects another prompt. Handle permissions and interruptions locally. Default non-Channel input requires installing rmux and starting Claude inside rmux; [the Claude guide](claude-code.md) also documents optional Channel delivery.
+Claude supports prompts, `/history`, `/status`, and `/queue` receipt recovery. `/detach` leaves Claude running. It does not expose remote stop, steering, model controls, or FIFO prompt submission; a busy session rejects another prompt. Handle permissions and interruptions locally. Default non-Channel input requires installing rmux or tmux and starting Claude inside it; [the Claude guide](claude-code.md) also documents optional Channel delivery.
 
 ## Prompts, queues, and replies
 
@@ -118,9 +118,9 @@ Set `[notifications] background_turns = false` in `config.toml` and restart the 
 
 Slack synchronizes an app-wide slash-command menu through Slack CLI at startup and publishes a contextual command reference in chat. See [initialization](slack-initialization.md). Telegram uses native command menus that change with attachment state. Attachment silently synchronizes native menus without posting command cards to Feishu or Slack; use `/help` to view the available commands. Feishu can present an interactive command card for other menu updates. Contextual commands use a `✌️` marker. `/attach` remains available as typed input, but the normal path is the Attach action returned by `/sessions`.
 
-## rmux workspaces
+## Terminal workspaces
 
-`/rmux` connects to the local rmux daemon and starts it when needed. Choose a backend with `/rmux codex`, `/rmux pi`, or `/rmux omp`. An unbound chat with several configured backends gets a picker. You can attach an existing agent pane or replace an idle shell pane with a new session. Agentix can also create a session, window, or split in `agent.rmux_directory`, which defaults to the current user's home directory.
+Set the global `[multiplexer]` table to `kind = "rmux"` (default) or `kind = "tmux"`. The service exposes the matching `/rmux` or `/tmux` command and rejects the other command. Choose an agent with, for example, `/tmux codex`, `/tmux pi`, `/tmux omp`, or `/tmux claude`. An unbound chat with several agents gets a picker. Browse existing sessions, windows and panes, attach an agent, or launch one in an idle shell pane. New sessions, windows and splits use the global `multiplexer.working_dir` (default `"~"`); the UI lets you choose a different directory for each creation. Changing the global multiplexer settings requires restarting Agentix. tmux uses its local default server; the driver does not switch to rmux when tmux is unavailable.
 
 Before replacing an existing shell pane, Agentix sends `Ctrl-C` to discard any unsubmitted command line. It refuses to replace a pane running a non-shell process. New panes remain visible after the agent exits. Agentix waits for the real session before attaching. Pi/OMP must register a live bridge on the Agentix control socket associated with the new pane; if registration fails or times out, Agentix reports the error and leaves the terminal open. Configure `bridge_extension` when the host does not already discover the installed extension.
 
@@ -139,7 +139,7 @@ agentix client call thread/read --params '{"threadId":"019...","includeTurns":fa
 agentix client claim --ttl-minutes 10
 ```
 
-`client sessions` emits normalized JSON for available sessions. With managed Codex, it includes running standalone and daemon-backed TUI sessions and their rmux locations while excluding stored sessions and orphaned daemon threads. `client call` sends raw Codex JSON RPC through the server's existing app-server connection for protocol diagnostics; JSON goes to stdout and logs go to stderr. `client claim` creates a temporary in-memory owner claim and is not an IM command.
+`client sessions` emits normalized JSON for available sessions. With managed Codex, it includes running standalone and daemon-backed TUI sessions and their terminal locations while excluding stored sessions and orphaned daemon threads. `client call` sends raw Codex JSON RPC through the server's existing app-server connection for protocol diagnostics; JSON goes to stdout and logs go to stderr. `client claim` creates a temporary in-memory owner claim and is not an IM command.
 
 The backend-neutral commands use the same access and capability policy as IM. Raw `client call` remains Codex-specific. See [local control and host protocol](host-protocol.md) for payloads and native extension interfaces.
 

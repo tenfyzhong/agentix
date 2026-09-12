@@ -20,17 +20,18 @@ impl Engine {
             "pi" => crate::AgentKind::Pi,
             "omp" => crate::AgentKind::Omp,
             _ => {
-                return Err(EngineError::InvalidInput(
-                    "Use /rmux codex, /rmux pi, /rmux omp, or /rmux claude".into(),
-                ));
+                return Err(EngineError::InvalidInput(format!(
+                    "Use /{} codex, pi, omp, or claude",
+                    self.multiplexer_kind
+                )));
             }
         };
         if !self.agent.workspace_backends().contains(&kind) {
             return Err(EngineError::InvalidInput(
-                "Backend is not configured for rmux".into(),
+                "Agent backend is not configured for terminal workspaces".into(),
             ));
         }
-        self.rmux
+        self.multiplexer
             .selected
             .lock()
             .await
@@ -51,7 +52,12 @@ impl Engine {
         &self,
         conversation: &ConversationRef,
     ) -> Option<crate::AgentKind> {
-        self.rmux.selected.lock().await.get(conversation).copied()
+        self.multiplexer
+            .selected
+            .lock()
+            .await
+            .get(conversation)
+            .copied()
     }
 
     pub(super) async fn ensure_multiplexer_backend(
@@ -71,19 +77,22 @@ impl Engine {
                 .filter(|kind| backends.contains(kind))
                 .or_else(|| (backends.len() == 1).then(|| backends[0]))
             {
-                self.rmux
+                self.multiplexer
                     .selected
                     .lock()
                     .await
                     .insert(conversation.clone(), kind);
             } else if backends.len() > 1 {
-                let mut view = OutboundView::text("Terminal · rmux", "Choose the agent to launch.");
+                let mut view = OutboundView::text(
+                    format!("Terminal · {}", self.multiplexer_kind),
+                    "Choose the agent to launch.",
+                );
                 for kind in backends {
                     let token = self
                         .issue_action(
                             conversation,
                             owner_id,
-                            "rmux-backends",
+                            "multiplexer-backends",
                             UiAction::MultiplexerBackend(kind),
                         )
                         .await;
@@ -111,7 +120,11 @@ impl Engine {
         {
             return Ok(());
         }
-        let Some(workspace) = self.rmux.runtime(self.agent.as_ref(), conversation).await else {
+        let Some(workspace) = self
+            .multiplexer
+            .runtime(self.agent.as_ref(), conversation)
+            .await
+        else {
             self.send_view(
                 conversation,
                 &OutboundView {
@@ -137,7 +150,7 @@ impl Engine {
                     sections: Vec::new(),
                     title: "Terminal multiplexer".into(),
                     subtitle: Some("Not running".into()),
-                    body: "The rmux server is unavailable.".into(),
+                    body: format!("The {} server is unavailable.", self.multiplexer_kind),
                     status: ViewStatus::Muted,
                     actions: Vec::new(),
                 },
@@ -160,7 +173,7 @@ impl Engine {
             conversation,
             &OutboundView {
                 sections: Vec::new(),
-                title: "Terminal · rmux".into(),
+                title: format!("Terminal · {}", self.multiplexer_kind),
                 subtitle: Some(format!(
                     "{} {} · {window_count} {} · {pane_count} {}",
                     snapshot.sessions.len(),
@@ -187,7 +200,7 @@ impl Engine {
         let mut actions = Vec::new();
         let action_group = Uuid::new_v4().simple().to_string();
         let default_directory = self
-            .rmux
+            .multiplexer
             .default_directory(self.agent.as_ref(), conversation)
             .await;
         for session in &snapshot.sessions {
@@ -279,7 +292,7 @@ impl Engine {
             conversation,
             &OutboundView {
                 sections: Vec::new(),
-                title: format!("rmux · {}", session.name),
+                title: format!("{} · {}", self.multiplexer_kind, session.name),
                 subtitle: Some(format!(
                     "{} {}",
                     session.windows.len(),
@@ -304,7 +317,7 @@ impl Engine {
         let mut actions = Vec::new();
         let action_group = Uuid::new_v4().simple().to_string();
         let default_directory = self
-            .rmux
+            .multiplexer
             .default_directory(self.agent.as_ref(), conversation)
             .await;
         for window in &session.windows {
@@ -437,8 +450,8 @@ impl Engine {
             &OutboundView {
                 sections: Vec::new(),
                 title: format!(
-                    "rmux · {} · {} ({})",
-                    session.name, window.index, window.name
+                    "{} · {} · {} ({})",
+                    self.multiplexer_kind, session.name, window.index, window.name
                 ),
                 subtitle: Some(format!(
                     "{} {}",
@@ -522,7 +535,7 @@ impl Engine {
             .ok_or_else(|| EngineError::InvalidInput("multiplexer window has no panes".into()))?;
         let mut actions = Vec::new();
         let default_directory = self
-            .rmux
+            .multiplexer
             .default_directory(self.agent.as_ref(), conversation)
             .await;
         for (label, direction) in [
@@ -568,13 +581,15 @@ impl Engine {
         &self,
         conversation: &ConversationRef,
     ) -> Result<MultiplexerSnapshot, EngineError> {
-        self.rmux
+        self.multiplexer
             .runtime(self.agent.as_ref(), conversation)
             .await
             .ok_or_else(|| EngineError::InvalidInput("workspace runtime is unavailable".into()))?
             .snapshot()
             .await?
-            .ok_or_else(|| EngineError::InvalidInput("rmux is no longer running".into()))
+            .ok_or_else(|| {
+                EngineError::InvalidInput(format!("{} is no longer running", self.multiplexer_kind))
+            })
     }
 
     pub(super) async fn handle_multiplexer_action(
@@ -611,7 +626,7 @@ impl Engine {
         mutation: MultiplexerMutation,
     ) -> Result<(), EngineError> {
         let result = match self
-            .rmux
+            .multiplexer
             .runtime(self.agent.as_ref(), conversation)
             .await
             .ok_or_else(|| EngineError::InvalidInput("workspace runtime is unavailable".into()))?
@@ -624,7 +639,7 @@ impl Engine {
                     conversation,
                     &OutboundView {
                         sections: Vec::new(),
-                        title: "Terminal · rmux".into(),
+                        title: format!("Terminal · {}", self.multiplexer_kind),
                         subtitle: Some("Operation failed".into()),
                         body: error.to_string(),
                         status: ViewStatus::Error,
@@ -664,7 +679,7 @@ impl Engine {
             conversation,
             &OutboundView {
                 sections: Vec::new(),
-                title: "Terminal · rmux".into(),
+                title: format!("Terminal · {}", self.multiplexer_kind),
                 subtitle: Some(subtitle),
                 body: result.message,
                 status: ViewStatus::Success,

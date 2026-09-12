@@ -24,9 +24,34 @@ pub enum SessionStatus {
     Unknown,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MultiplexerKind {
+    #[default]
+    Rmux,
+    Tmux,
+}
+
+impl MultiplexerKind {
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Rmux => "rmux",
+            Self::Tmux => "tmux",
+        }
+    }
+}
+impl std::fmt::Display for MultiplexerKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TerminalLocation {
+    #[serde(default)]
+    pub multiplexer: MultiplexerKind,
     pub session: String,
     pub window_index: String,
     pub window_name: String,
@@ -466,6 +491,10 @@ pub trait SessionControlPort: Send + Sync {
 
 #[async_trait]
 pub trait WorkspaceRuntimePort: Send + Sync {
+    fn multiplexer_kind(&self) -> MultiplexerKind {
+        MultiplexerKind::default()
+    }
+
     fn default_directory(&self) -> String;
 
     async fn snapshot(&self) -> Result<Option<MultiplexerSnapshot>, AgentError>;

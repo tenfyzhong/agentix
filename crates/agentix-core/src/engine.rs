@@ -14,7 +14,7 @@ mod output_buffer;
 pub use dispatch::{EngineDispatchSnapshot, EngineResource, EngineWork};
 mod interaction_flows;
 mod presentation;
-pub use presentation::command_menu;
+pub use presentation::{command_menu, command_menu_for};
 mod session_flows;
 mod session_service;
 mod startup;
@@ -34,7 +34,7 @@ use session_service::{RestoredBindingStatus, SessionService};
 
 use task_board::{TaskAction, TaskBoardService, TaskBoardUi, TaskBrowse};
 
-use coordinator::{InteractionCoordinator, RmuxController, TurnCoordinator};
+use coordinator::{InteractionCoordinator, MultiplexerController, TurnCoordinator};
 
 use crate::{
     ActionButton, ActionScope, ActionStyle, AgentAdapter, AgentCommand, AgentError, AgentEvent,
@@ -270,19 +270,25 @@ pub struct Engine {
     sessions: Arc<SessionService>,
     turns: Arc<TurnCoordinator>,
     interactions: Arc<InteractionCoordinator>,
-    rmux: Arc<RmuxController>,
+    multiplexer: Arc<MultiplexerController>,
+    multiplexer_kind: crate::MultiplexerKind,
     background_turn_notifications: bool,
     output: crate::OutputConfig,
 }
 
 impl Engine {
     #[must_use]
+    pub fn with_multiplexer_kind(mut self, kind: crate::MultiplexerKind) -> Self {
+        self.multiplexer_kind = kind;
+        self
+    }
+    #[must_use]
     pub fn new(
         agent: Arc<dyn AgentAdapter>,
         state: SqliteState,
         channels: Vec<Arc<dyn ChannelAdapter>>,
     ) -> Self {
-        let rmux = RmuxController::new(agent.capabilities().workspace_runtime);
+        let multiplexer = MultiplexerController::new(agent.capabilities().workspace_runtime);
         Self {
             tasks: TaskBoardService::new(None, state.clone()),
             operations: crate::SessionOperations::new(agent.clone()),
@@ -295,7 +301,8 @@ impl Engine {
             sessions: Arc::new(SessionService::new(state)),
             turns: Arc::new(TurnCoordinator::default()),
             interactions: Arc::new(InteractionCoordinator::default()),
-            rmux: Arc::new(rmux),
+            multiplexer: Arc::new(multiplexer),
+            multiplexer_kind: agentix_domain::MultiplexerKind::default(),
             background_turn_notifications: true,
             output: crate::OutputConfig::default(),
         }
@@ -312,7 +319,7 @@ impl Engine {
         self.sessions = previous.sessions.clone();
         self.turns = previous.turns.clone();
         self.interactions = previous.interactions.clone();
-        self.rmux = previous.rmux.clone();
+        self.multiplexer = previous.multiplexer.clone();
         self.tasks.inherit_runtime(&previous.tasks);
     }
 
@@ -510,12 +517,19 @@ impl Engine {
                 self.show_sessions_filtered(conversation, owner_id, Some(kind))
                     .await?;
             }
-            AgentCommand::MultiplexerBackend(kind) => {
-                self.select_multiplexer_backend(conversation, owner_id, &kind)
-                    .await?;
-            }
-            AgentCommand::Multiplexer => {
-                self.show_multiplexer_root(conversation, owner_id).await?;
+            AgentCommand::Multiplexer { kind, backend } => {
+                if kind != self.multiplexer_kind {
+                    return Err(EngineError::InvalidInput(format!(
+                        "This service uses {}; use /{}",
+                        self.multiplexer_kind, self.multiplexer_kind
+                    )));
+                }
+                if let Some(backend) = backend {
+                    self.select_multiplexer_backend(conversation, owner_id, &backend)
+                        .await?;
+                } else {
+                    self.show_multiplexer_root(conversation, owner_id).await?;
+                }
             }
             AgentCommand::Attach(session_id) => {
                 self.attach(conversation, owner_id, SessionId::new(session_id))

@@ -7,7 +7,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-agentix-rmux = { path = "../agentix-rmux" }
+agentix-multiplexer = { path = "../agentix-multiplexer" }
 agentix-domain = { path = "../agentix-domain" }
 anyhow.workspace = true
 clap.workspace = true
@@ -17,7 +17,6 @@ jsonwebtoken = { version = "10", default-features = false, features = ["rust_cry
 async-trait.workspace = true
 dirs.workspace = true
 futures-util.workspace = true
-rmux-sdk.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
@@ -33,7 +32,6 @@ nix = { version = "0.31", default-features = false, features = ["user", "socket"
 
 [dev-dependencies]
 agentix-core = { path = "../agentix-core" }
-rmux-proto.workspace = true
 tempfile = "3.23"
 tracing-subscriber.workspace = true
 

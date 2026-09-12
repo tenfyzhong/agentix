@@ -15,6 +15,7 @@ struct Backend {
     events: broadcast::Sender<AgentEvent>,
 }
 pub(super) struct State {
+    multiplexer: agentix_domain::MultiplexerKind,
     registrations: Mutex<std::collections::HashMap<(String, SessionId), Arc<Connection>>>,
     pending_registrations: std::sync::Mutex<std::collections::HashSet<(String, SessionId)>>,
     closed: AtomicBool,
@@ -70,8 +71,13 @@ impl Default for BridgeHub {
 impl BridgeHub {
     #[must_use]
     pub fn new() -> Self {
+        Self::with_multiplexer_kind(agentix_domain::MultiplexerKind::default())
+    }
+    #[must_use]
+    pub fn with_multiplexer_kind(multiplexer: agentix_domain::MultiplexerKind) -> Self {
         Self {
             state: Arc::new(State {
+                multiplexer,
                 registrations: Mutex::default(),
                 pending_registrations: std::sync::Mutex::default(),
                 closed: AtomicBool::new(false),
@@ -292,7 +298,7 @@ async fn accept(
     }
     tokio::time::timeout(
         Duration::from_secs(3),
-        writer.write_all(format!("{}\n", json!({"id":frame["id"],"ok":true})).as_bytes()),
+        writer.write_all(format!("{}\n", json!({"id":frame["id"],"ok":true,"result":{"multiplexer":{"kind":state.multiplexer}}})).as_bytes()),
     )
     .await
     .map_err(unavailable)?
@@ -333,6 +339,20 @@ mod tests {
                 "snapshot": snapshot
             }
         })
+    }
+
+    #[tokio::test]
+    async fn registration_returns_effective_multiplexer_configuration() {
+        let hub = BridgeHub::with_multiplexer_kind(agentix_domain::MultiplexerKind::Tmux);
+        hub.configure(BridgeKind::Pi, Path::new("/tmp"));
+        let (stream, peer) = tokio::io::duplex(4096);
+        hub.accept(registration("configured"), stream)
+            .await
+            .unwrap();
+        let mut reader: Reader = BufReader::new(Box::new(peer));
+        let response = read_frame(&mut reader).await.unwrap();
+        assert_eq!(response["result"]["multiplexer"]["kind"], "tmux");
+        hub.shutdown().await;
     }
 
     #[tokio::test]

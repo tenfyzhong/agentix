@@ -148,7 +148,7 @@ export class ClaudeSession {
         if (value.session_id !== this.identity.session_id) return;
         this.identity.cwd = value.cwd ?? this.identity.cwd;
         if (value.hook_event_name === 'UserPromptSubmit' && !this.active) {
-            const match = this.delivery.kind === 'rmux' && [...this.receipts].find(([, r]) =>
+            const match = this.delivery.usesPromptHook && [...this.receipts].find(([, r]) =>
                 ['pending', 'uncertain'].includes(r.state) && r.text === value.prompt);
             if (match) this.acknowledge(match[0]);
             else this.begin(value.prompt ?? '');

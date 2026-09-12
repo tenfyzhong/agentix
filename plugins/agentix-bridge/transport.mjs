@@ -107,6 +107,9 @@ export class BridgeTransport {
                     try { frame = JSON.parse(line.toString('utf8')); } catch { socket.destroy(); return; }
                     if (frame.id === 'register') {
                         if (frame.ok !== true) return socket.destroy();
+                        try { this.#options.registered?.(frame.result); } catch (error) {
+                            this.#options.registrationError?.(error); socket.destroy(); return;
+                        }
                         socket.registered = true; clearTimeout(deadline); continue;
                     }
                     this.#options.dispatch(() => this.#handle(socket, frame, incarnation), frame.method).catch(() => socket.destroy());

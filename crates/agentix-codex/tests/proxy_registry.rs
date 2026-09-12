@@ -91,6 +91,7 @@ fn terminal_lookup_uses_registered_pid_and_drops_departed_clients() {
     registry.client_message(a, &json!({"id":1,"method":"thread/start"}));
     registry.server_message(a, &json!({"id":1,"result":{"thread":{"id":"a"}}}));
     let terminal = TerminalLocation {
+        multiplexer: agentix_domain::MultiplexerKind::default(),
         session: "s".into(),
         window_index: "1".into(),
         window_name: "w".into(),

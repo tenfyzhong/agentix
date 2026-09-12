@@ -152,9 +152,14 @@ pub(super) fn is_shell_command(command: &str) -> bool {
 /// Unified built-in commands, also used by adapters with app-wide menus.
 #[must_use]
 pub fn command_menu(attached: bool) -> CommandMenu {
+    command_menu_for(attached, crate::MultiplexerKind::default())
+}
+
+#[must_use]
+pub fn command_menu_for(attached: bool, kind: crate::MultiplexerKind) -> CommandMenu {
     let mut commands = [
         ("sessions", "Browse running sessions"),
-        ("rmux", "Manage rmux workspaces"),
+        (kind.as_str(), "Manage terminal workspaces"),
         ("cancel", "Cancel pending input"),
         ("help", "Show available commands"),
     ]

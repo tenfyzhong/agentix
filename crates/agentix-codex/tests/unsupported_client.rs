@@ -1,6 +1,11 @@
 // Exercise the non-Unix implementation on every CI host to catch API drift.
 // The compatibility methods must retain the Unix client's async signatures.
-#[allow(unknown_lints, clippy::unused_async, clippy::unused_async_trait_impl)]
+#[allow(
+    dead_code,
+    unknown_lints,
+    clippy::unused_async,
+    clippy::unused_async_trait_impl
+)]
 #[path = "../src/client_unsupported.rs"]
 mod unsupported;
 
@@ -22,9 +27,13 @@ async fn unsupported_client_constructors_report_transport_unavailability() {
         CodexClient::connect_with_command(endpoint.clone(), command)
             .await
             .unwrap_err(),
-        CodexClient::connect_with_command_and_rmux_directory(endpoint.clone(), command, directory)
-            .await
-            .unwrap_err(),
+        CodexClient::connect_with_command_and_working_directory(
+            endpoint.clone(),
+            command,
+            directory,
+        )
+        .await
+        .unwrap_err(),
     ];
     for enabled in [false, true] {
         CodexClient.set_background_turn_notifications(enabled);

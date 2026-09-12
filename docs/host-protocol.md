@@ -141,3 +141,7 @@ A new host needs an adapter tied to the original session for native identity, ac
 ## Claude Code
 
 The `claude` backend uses the same version 2 transport through its MCP plugin, with rmux prompt delivery by default and an explicit Channel alternative. See [Claude Code](claude-code.md) for registration, hook identity, explicit delivery acknowledgement, history, and supported capabilities. MCP is used only between Claude and the plugin, not on the Agentix socket. Claude advertises `prompt`, `history`, `status`, and `queue_control`; other methods in the table are not implied capabilities. Its history pages also contain at most 20 turns. Hooks and reads remain responsive during the seven-second prompt acknowledgement wait. Claude has no remote FIFO: queue methods inspect or clear uncertain receipts, and another prompt while busy is rejected.
+
+### Multiplexer configuration on registration
+
+Successful registration returns `result.multiplexer.kind` (`rmux` or `tmux`) from the service configuration. Clients refresh this value on every registration, including reconnects. Claude delivery mode `multiplexer` requires this value before accepting prompts; `auto` verifies its inherited terminal context independently.

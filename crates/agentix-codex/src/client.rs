@@ -31,7 +31,7 @@ use tokio::sync::{Mutex, Notify, broadcast, oneshot};
 use tokio_tungstenite::tungstenite::Message;
 
 use crate::endpoint::CodexEndpoint;
-use crate::multiplexer::{RmuxManager, started_session};
+use crate::multiplexer::{WorkspaceManager, started_session};
 use crate::process::{
     CodexProcessDiscovery, RunningSessionResolver, confirm_exited_sessions, reappeared_sessions,
 };
@@ -127,10 +127,15 @@ pub struct CodexClient {
     runtime: Option<Arc<crate::connection::ConnectionManager>>,
     tasks: Option<Arc<crate::connection::ClientTasks>>,
     running_session_resolver: Arc<Mutex<RunningSessionResolver>>,
-    rmux: RmuxManager,
+    workspace: WorkspaceManager,
 }
 
 impl CodexClient {
+    #[must_use]
+    pub fn with_multiplexer(self, driver: Arc<dyn agentix_multiplexer::MultiplexerDriver>) -> Self {
+        self.workspace.set_driver(driver);
+        self
+    }
     pub async fn connect(endpoint: CodexEndpoint) -> Result<Self, ClientError> {
         Self::connect_with_command(endpoint, Path::new("codex")).await
     }
@@ -139,28 +144,28 @@ impl CodexClient {
         endpoint: CodexEndpoint,
         command: &Path,
     ) -> Result<Self, ClientError> {
-        Self::connect_with_command_and_rmux_directory(endpoint, command, Path::new("~")).await
+        Self::connect_with_command_and_working_directory(endpoint, command, Path::new("~")).await
     }
 
-    pub async fn connect_with_command_and_rmux_directory(
+    pub async fn connect_with_command_and_working_directory(
         endpoint: CodexEndpoint,
         command: &Path,
-        rmux_directory: &Path,
+        working_directory: &Path,
     ) -> Result<Self, ClientError> {
-        Self::connect_with_background_turn_notifications(endpoint, command, rmux_directory, true)
+        Self::connect_with_background_turn_notifications(endpoint, command, working_directory, true)
             .await
     }
 
     pub async fn connect_with_background_turn_notifications(
         endpoint: CodexEndpoint,
         command: &Path,
-        rmux_directory: &Path,
+        working_directory: &Path,
         background_turn_notifications: bool,
     ) -> Result<Self, ClientError> {
         Self::connect_inner(
             endpoint,
             command,
-            rmux_directory,
+            working_directory,
             Arc::new(AtomicBool::new(background_turn_notifications)),
             None,
         )
@@ -185,14 +190,14 @@ impl CodexClient {
         listen: &str,
         upstream: CodexEndpoint,
         command: &Path,
-        rmux_directory: &Path,
+        working_directory: &Path,
         background_turn_notifications: bool,
     ) -> anyhow::Result<Self> {
         Self::connect_with_proxy_options(
             listen,
             upstream,
             command,
-            rmux_directory,
+            working_directory,
             background_turn_notifications,
             &crate::ProxyOptions::default(),
         )
@@ -203,7 +208,7 @@ impl CodexClient {
         listen: &str,
         upstream: CodexEndpoint,
         command: &Path,
-        rmux_directory: &Path,
+        working_directory: &Path,
         background_turn_notifications: bool,
         options: &crate::ProxyOptions,
     ) -> anyhow::Result<Self> {
@@ -211,7 +216,7 @@ impl CodexClient {
             listen,
             upstream,
             command,
-            rmux_directory,
+            working_directory,
             Arc::new(AtomicBool::new(background_turn_notifications)),
             options,
         )
@@ -223,7 +228,7 @@ impl CodexClient {
         listen: &str,
         upstream: CodexEndpoint,
         command: &Path,
-        rmux_directory: &Path,
+        working_directory: &Path,
         background_turn_notifications: Arc<AtomicBool>,
         options: &crate::ProxyOptions,
     ) -> anyhow::Result<Self> {
@@ -233,16 +238,15 @@ impl CodexClient {
         let mut client = Self::connect_inner(
             upstream,
             command,
-            rmux_directory,
+            working_directory,
             background_turn_notifications,
             Some(runtime.proxy.registry()),
         )
         .await?;
-        client.rmux = RmuxManager::native(
+        client.workspace.set_argv(crate::multiplexer::launch_argv(
             command,
-            vec!["--remote".into(), runtime.proxy.endpoint().to_owned()],
-            rmux_directory,
-        );
+            runtime.proxy.endpoint(),
+        ));
         client.runtime = Some(Arc::new(runtime));
         Ok(client)
     }
@@ -250,14 +254,14 @@ impl CodexClient {
     pub async fn connect_with_registry(
         endpoint: CodexEndpoint,
         command: &Path,
-        rmux_directory: &Path,
+        working_directory: &Path,
         background_turn_notifications: bool,
         registry: crate::ClientRegistry,
     ) -> Result<Self, ClientError> {
         Self::connect_inner(
             endpoint,
             command,
-            rmux_directory,
+            working_directory,
             Arc::new(AtomicBool::new(background_turn_notifications)),
             Some(registry),
         )
@@ -267,7 +271,7 @@ impl CodexClient {
     async fn connect_inner(
         endpoint: CodexEndpoint,
         command: &Path,
-        rmux_directory: &Path,
+        working_directory: &Path,
         background_turn_notifications: Arc<AtomicBool>,
         registry: Option<crate::ClientRegistry>,
     ) -> Result<Self, ClientError> {
@@ -276,7 +280,13 @@ impl CodexClient {
         } else {
             CodexProcessDiscovery::for_endpoint(&endpoint)
         };
-        let rmux = RmuxManager::new(command, endpoint.socket_path(), rmux_directory);
+        let workspace = WorkspaceManager::new(
+            crate::multiplexer::launch_argv(
+                command,
+                &format!("unix://{}", endpoint.socket_path().display()),
+            ),
+            working_directory,
+        );
         let websocket = connect_managed_socket(&endpoint, command).await?;
         let (writer, reader) = websocket.split();
         let writer = Arc::new(Mutex::new(writer));
@@ -323,7 +333,7 @@ impl CodexClient {
             runtime: None,
             tasks: None,
             running_session_resolver: Arc::new(Mutex::new(RunningSessionResolver::default())),
-            rmux,
+            workspace,
         };
         let _ = client.events.send(AgentEvent::Connected {
             generation: client.connection.generation.load(Ordering::Acquire),
@@ -364,9 +374,7 @@ impl CodexClient {
                 .collect::<std::collections::BTreeSet<_>>();
             let ids = ids.into_iter().map(SessionId::new).collect::<Vec<_>>();
             let mut sessions = self.read_sessions(&ids).await?;
-            let panes = crate::multiplexer::rmux_process_locations()
-                .await
-                .unwrap_or_default();
+            let panes = self.workspace.process_locations().await.unwrap_or_default();
             let terminals = registry.session_terminals(&panes);
             let current = registry
                 .snapshot()
@@ -392,8 +400,7 @@ impl CodexClient {
         let (loaded_ids, _) = self.loaded_session_ids(None, None).await?;
         let loaded = self.read_sessions(&loaded_ids).await?;
         let snapshot = discovery
-            .discover()
-            .await
+            .discover(&self.workspace.process_locations().await.unwrap_or_default())
             .map_err(|error| ClientError::ProcessDiscovery(error.to_string()))?;
         let selection = resolver.resolve(&loaded, &snapshot);
         drop(resolver);
@@ -519,7 +526,7 @@ impl CodexClient {
         .ok_or(ClientError::InvalidResponse("thread/read thread"))
     }
 
-    async fn wait_for_rmux_session(
+    async fn wait_for_workspace_session(
         &self,
         location: &TerminalLocation,
         known_sessions: &HashSet<SessionId>,
@@ -541,13 +548,15 @@ impl CodexClient {
                 Err(error) => Some(error.to_string()),
             };
 
-            let pane_exists = RmuxManager::pane_exists(location)
+            let pane_exists = self
+                .workspace
+                .pane_exists(location)
                 .await
                 .map_err(|error| AgentError::Rejected(error.to_string()))?;
             if !pane_exists {
                 return Err(AgentError::Rejected(format!(
-                    "Codex exited before creating a session in rmux pane {}",
-                    location.pane_id
+                    "Codex exited before creating a session in {} pane {}",
+                    location.multiplexer, location.pane_id
                 )));
             }
             if tokio::time::Instant::now() >= deadline {
@@ -555,8 +564,8 @@ impl CodexClient {
                     .map(|error| format!("; last discovery error: {error}"))
                     .unwrap_or_default();
                 return Err(AgentError::Rejected(format!(
-                    "timed out waiting for Codex to create a session in rmux pane {}{}",
-                    location.pane_id, detail
+                    "timed out waiting for Codex to create a session in {} pane {}{}",
+                    location.multiplexer, location.pane_id, detail
                 )));
             }
             tokio::time::sleep(MULTIPLEXER_SESSION_POLL_INTERVAL).await;
@@ -2051,8 +2060,14 @@ impl QueuedPromptPort for CodexClient {
 
 #[async_trait]
 impl WorkspaceRuntimePort for CodexClient {
+    fn multiplexer_kind(&self) -> agentix_domain::MultiplexerKind {
+        self.workspace.kind()
+    }
     fn default_directory(&self) -> String {
-        self.rmux.default_directory().to_string_lossy().into_owned()
+        self.workspace
+            .default_directory()
+            .to_string_lossy()
+            .into_owned()
     }
 
     async fn snapshot(&self) -> Result<Option<MultiplexerSnapshot>, AgentError> {
@@ -2061,7 +2076,8 @@ impl WorkspaceRuntimePort for CodexClient {
             .await
             .map_err(agent_error)?
             .sessions;
-        RmuxManager::snapshot(&sessions)
+        self.workspace
+            .snapshot(&sessions)
             .await
             .map_err(|error| AgentError::Rejected(error.to_string()))
     }
@@ -2070,7 +2086,9 @@ impl WorkspaceRuntimePort for CodexClient {
         &self,
         mutation: MultiplexerMutation,
     ) -> Result<MultiplexerMutationResult, AgentError> {
-        let prepared = RmuxManager::prepare(mutation)
+        let prepared = self
+            .workspace
+            .prepare(mutation)
             .await
             .map_err(|error| AgentError::Rejected(error.to_string()))?;
         let launch_agent = prepared.mutation.launch_agent;
@@ -2085,13 +2103,13 @@ impl WorkspaceRuntimePort for CodexClient {
             HashSet::new()
         };
         let outcome = self
-            .rmux
+            .workspace
             .execute(&prepared)
             .await
             .map_err(|error| AgentError::Rejected(error.to_string()))?;
         let session = if launch_agent {
             let session = self
-                .wait_for_rmux_session(&outcome.location, &known_sessions, &prepared.cwd)
+                .wait_for_workspace_session(&outcome.location, &known_sessions, &prepared.cwd)
                 .await?;
             self.subscriptions.lock().await.insert(session.id.clone());
             self.process_sessions
@@ -2106,13 +2124,21 @@ impl WorkspaceRuntimePort for CodexClient {
         let location = outcome.location;
         let message = if session.is_some() {
             format!(
-                "Codex started in `rmux · {} · {} ({}) · {}`.",
-                location.session, location.window_index, location.window_name, location.pane_index
+                "Codex started in `{} · {} · {} ({}) · {}`.",
+                location.multiplexer,
+                location.session,
+                location.window_index,
+                location.window_name,
+                location.pane_index
             )
         } else {
             format!(
-                "Shell created in `rmux · {} · {} ({}) · {}`.",
-                location.session, location.window_index, location.window_name, location.pane_index
+                "Shell created in `{} · {} · {} ({}) · {}`.",
+                location.multiplexer,
+                location.session,
+                location.window_index,
+                location.window_name,
+                location.pane_index
             )
         };
         Ok(MultiplexerMutationResult { message, session })

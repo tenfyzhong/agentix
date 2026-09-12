@@ -2,7 +2,7 @@
 
 This extension connects Agentix to the session running inside your original Pi or OMP process. Attaching, detaching, and restarting Agentix do not start a replacement agent or terminate the terminal.
 
-For Claude Code, install `agentix-bridge@agentix`, configure `[agent.claude]`, and start Agentix as described in the [plugin installation and protocol guide](../../docs/claude-code.md). Then run `claude` in your project directory inside an rmux terminal. IM prompts use rmux input; hooks report replies through the same Agentix socket. Channel flags are not required. See [startup options and third-party API limitations](../../docs/claude-code.md#start-claude-code).
+For Claude Code, install `agentix-bridge@agentix`, configure `[agent.claude]`, and start Agentix as described in the [plugin installation and protocol guide](../../docs/claude-code.md). Then run `claude` in your project directory inside an rmux or tmux terminal. IM prompts use the original terminal; hooks report replies through the same Agentix socket. Channel flags are not required. See [startup options and third-party API limitations](../../docs/claude-code.md#start-claude-code).
 
 ## Install and start
 
@@ -16,17 +16,19 @@ omp -e /path/to/agentix/plugins/agentix-bridge/extensions/omp.ts
 Enable each backend with its own named table. The table name determines the backend; no `kind` field is needed:
 
 ```toml
+[multiplexer]
+kind = "tmux"
+working_dir = "~/work"
+
 [agent.codex]
 
 [agent.pi]
 session_dir = "~/.pi/agent/sessions"
-rmux_directory = "~/work"
-# Optional explicit entrypoint for terminals created using /rmux:
+# Optional explicit entrypoint for terminals created using /rmux or /tmux:
 # bridge_extension = "/path/to/agentix/plugins/agentix-bridge/extensions/pi.ts"
 
 [agent.omp]
 session_dir = "~/.omp/agent/sessions"
-rmux_directory = "~/work"
 ```
 
 Only live, registered connections whose session file is under `session_dir` appear in Agentix. Start `agentix serve` to open the shared listener; extensions may start before or after the service. History queries return at most 20 turns per page; Pi/OMP visibly shorten exceptionally large message text in history responses. Session IDs are qualified as `codex:<id>`, `pi:<id>`, `omp:<id>`, and `claude:<id>`. `/sessions pi`, `/sessions omp`, and `/sessions claude` filter the picker. A bare ID works only when exactly one backend owns it. Taskix continues to store the native host ID.
@@ -35,7 +37,7 @@ Existing unqualified bindings must first be migrated by starting Agentix once wi
 
 ## Controls
 
-Pi and OMP expose prompts, streaming replies, history, stop, rename, model selection, reasoning level, compaction, status, skills, and Git diff. The service also provides IM detach/exit and rmux creation. Commands are shown according to the running host's capabilities. Model choices come from that host's available model registry; reasoning changes are applied by the host and report the effective level.
+Pi and OMP expose prompts, streaming replies, history, stop, rename, model selection, reasoning level, compaction, status, skills, and Git diff. The service also provides IM detach/exit and terminal workspace creation. Commands are shown according to the running host's capabilities. Model choices come from that host's available model registry; reasoning changes are applied by the host and report the effective level.
 
 Ordinary messages sent during a turn enter a durable FIFO. `/steer <text>` explicitly steers the active turn. `/stop` interrupts it and pauses pending work. `/queue`, `/queue resume`, and `/queue clear` inspect, resume, or discard pending work. Clearing pending work does not interrupt a running delivery. Queue records belong to their original session and are not replayed into a fork. Native terminal queues are separate; avoid mixing queue mechanisms when ordering matters.
 

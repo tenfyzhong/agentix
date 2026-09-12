@@ -37,6 +37,19 @@ fn dependencies(name: &str) -> toml::Table {
 }
 
 #[test]
+fn agent_adapters_do_not_depend_on_concrete_multiplexers() {
+    for layer in ["agentix-core", "agentix-codex", "agentix-bridge"] {
+        let deps = dependencies(layer);
+        for forbidden in ["agentix-rmux", "agentix-tmux", "rmux-sdk"] {
+            assert!(
+                !deps.contains_key(forbidden),
+                "{layer} must not depend on {forbidden}"
+            );
+        }
+    }
+}
+
+#[test]
 fn domain_and_storage_do_not_depend_on_application_or_host_adapters() {
     for layer in ["agentix-domain", "agentix-storage"] {
         let deps = dependencies(layer);

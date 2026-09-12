@@ -9,6 +9,8 @@ members = [
   "crates/agentix-feishu",
   "crates/agentix-slack",
   "crates/agentix-rmux",
+  "crates/agentix-multiplexer",
+  "crates/agentix-tmux",
   "crates/agentix-telegram",
   "crates/agentix-task",
   "crates/taskix",
