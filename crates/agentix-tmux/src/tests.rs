@@ -54,6 +54,7 @@ async fn native_workspace_creation_and_launch_preserve_arguments() {
     manager.set_driver(driver.clone());
     let _cleanup = Cleanup(socket);
     assert!(driver.inventory(false).await.unwrap().unwrap().is_empty());
+    assert!(!driver.probe().await.unwrap());
     let mutation = MultiplexerMutation {
         target: MultiplexerTarget::NewSession {
             name: "test".into(),
@@ -71,6 +72,7 @@ async fn native_workspace_creation_and_launch_preserve_arguments() {
                 .await
         ),
     };
+    assert!(driver.probe().await.unwrap());
     assert!(manager.pane_exists(&created.location).await.unwrap());
     let pane = created.location.pane_id;
     let session_id = driver.inventory(false).await.unwrap().unwrap()[0]
@@ -300,4 +302,48 @@ async fn assert_ctrl_d_closes_pane(driver: &TmuxDriver, pane: &str) {
     })
     .await
     .expect("Ctrl-D must remove the pane, not leave a dead pane");
+}
+
+#[tokio::test]
+async fn probe_requires_a_successful_command_response() {
+    let driver = TmuxDriver::with_command("/missing/agentix-test-tmux".into(), None);
+    assert!(driver.probe().await.is_err());
+}
+
+#[tokio::test]
+async fn probe_does_not_start_a_missing_server() {
+    if std::env::var_os("AGENTIX_TEST_TMUX").is_none() {
+        return;
+    }
+    let root = tempfile::tempdir().unwrap();
+    let socket = root.path().join("absent.sock");
+    let driver = TmuxDriver::with_command("tmux".into(), Some(socket.clone()));
+    assert!(!driver.probe().await.unwrap());
+    assert!(!socket.exists());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+#[ignore = "requires an installed rmux daemon"]
+async fn probe_accepts_rmux_compatibility_interface() {
+    struct Server(PathBuf);
+    impl Drop for Server {
+        fn drop(&mut self) {
+            let _ = std::process::Command::new("rmux")
+                .arg("-S")
+                .arg(&self.0)
+                .arg("kill-server")
+                .output();
+        }
+    }
+    let root = tempfile::tempdir().unwrap();
+    let socket = root.path().join("compat.sock");
+    let driver = TmuxDriver::with_command("rmux".into(), Some(socket.clone()));
+    let _cleanup = Server(socket);
+    assert!(!driver.probe().await.unwrap());
+    driver
+        .run(&strings(&["new-session", "-d", "-s", "probe-test"]))
+        .await
+        .unwrap();
+    assert!(driver.probe().await.unwrap());
 }

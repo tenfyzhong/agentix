@@ -25,6 +25,18 @@ impl Default for TmuxDriver {
     }
 }
 impl TmuxDriver {
+    /// Query the configured server without treating a missing server as available.
+    pub async fn probe(&self) -> Result<bool, MultiplexerError> {
+        let output = self
+            .output(&strings(&["list-panes", "-a", "-F", FORMAT]))
+            .await?;
+        if !output.status.success() {
+            return Ok(false);
+        }
+        parse_inventory(&String::from_utf8(output.stdout).map_err(error)?)?;
+        Ok(true)
+    }
+
     #[must_use]
     pub fn with_command(command: PathBuf, socket: Option<PathBuf>) -> Self {
         Self { command, socket }

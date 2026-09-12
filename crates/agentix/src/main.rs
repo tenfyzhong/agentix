@@ -372,12 +372,15 @@ async fn shutdown_signal() -> Result<()> {
 }
 
 async fn serve(
-    config: Config,
+    mut config: Config,
     config_path: &Path,
     proxy: agentix_codex::ProxyOptions,
 ) -> Result<()> {
+    config.multiplexer.detect().await;
     // Keep this hub and the control listener alive across runtime generations.
-    let bridge = Arc::new(BridgeHub::with_multiplexer_kind(config.multiplexer.kind));
+    let bridge = Arc::new(BridgeHub::with_multiplexer_kind(
+        config.multiplexer.resolved_kind,
+    ));
     let claims = Arc::new(ClaimRegistry::default());
     let path = std::path::absolute(config_path)?;
     let initial = build_service(config, None, bridge.clone(), claims.clone(), path.clone()).await?;
@@ -632,7 +635,7 @@ async fn doctor(config: &Config) -> Result<()> {
                     false,
                 )
                 .await?
-                .with_multiplexer(build_multiplexer(config.multiplexer.kind));
+                .with_optional_multiplexer(build_multiplexer(config.multiplexer.resolved_kind));
                 let page = client.list_sessions(None, 1).await?;
                 println!(
                     "ok: Codex WebSocket-over-UDS handshake ({} loaded session sample)",
@@ -678,12 +681,14 @@ struct BuiltAgent {
 }
 
 fn build_multiplexer(
-    kind: agentix_core::MultiplexerKind,
-) -> Arc<dyn agentix_multiplexer::MultiplexerDriver> {
-    match kind {
-        agentix_core::MultiplexerKind::Rmux => Arc::new(agentix_rmux::RmuxDriver),
+    kind: Option<agentix_core::MultiplexerKind>,
+) -> Option<Arc<dyn agentix_multiplexer::MultiplexerDriver>> {
+    kind.map(|kind| match kind {
+        agentix_core::MultiplexerKind::Rmux => {
+            Arc::new(agentix_rmux::RmuxDriver) as Arc<dyn agentix_multiplexer::MultiplexerDriver>
+        }
         agentix_core::MultiplexerKind::Tmux => Arc::new(agentix_tmux::TmuxDriver::default()),
-    }
+    })
 }
 
 fn claude_workspace_args() -> Vec<String> {
@@ -698,7 +703,7 @@ async fn build_agent(
     multiplexer: &agentix::MultiplexerConfig,
 ) -> Result<BuiltAgent> {
     let directory = &multiplexer.working_dir;
-    let driver = build_multiplexer(multiplexer.kind);
+    let driver = build_multiplexer(multiplexer.resolved_kind);
     match config {
         AgentConfig::Claude {
             command,
@@ -711,7 +716,7 @@ async fn build_agent(
                     session_dir,
                 )
                 .with_workspace(command, claude_workspace_args(), directory)
-                .with_multiplexer(driver),
+                .with_optional_multiplexer(driver),
             ),
             codex: None,
         }),
@@ -731,7 +736,7 @@ async fn build_agent(
                 proxy,
             )
             .await?
-            .with_multiplexer(driver);
+            .with_optional_multiplexer(driver);
             Ok(BuiltAgent {
                 adapter: Arc::new(client.clone()),
                 codex: Some(client),
@@ -767,7 +772,7 @@ async fn build_agent(
                         session_dir,
                     )
                     .with_workspace(command, args, directory)
-                    .with_multiplexer(driver),
+                    .with_optional_multiplexer(driver),
                 ),
                 codex: None,
             })
@@ -994,7 +999,7 @@ async fn handle_control_request(
 }
 
 fn telegram_menu_commands(config: &Config) -> Vec<teloxide::types::BotCommand> {
-    let mut commands = agentix_telegram::menu_commands_for(config.multiplexer.kind);
+    let mut commands = agentix_telegram::menu_commands_for(config.multiplexer.resolved_kind);
     if config.enabled_task_board().is_some() {
         commands.insert(
             1,
@@ -1030,7 +1035,7 @@ fn build_channels(
             .with_command_affixes(affixes.clone());
             if let Some(app_id) = &slack.app_id {
                 let mut commands =
-                    agentix_core::command_menu_for(true, config.multiplexer.kind).commands;
+                    agentix_core::command_menu_for(true, config.multiplexer.resolved_kind).commands;
                 if config.enabled_task_board().is_some() {
                     commands.extend(
                         [
@@ -3647,9 +3652,9 @@ owner_user_ids = ["U1"]
             let config = task_board_test_config(setting, Path::new("/missing/taskix.toml"));
             let commands = super::telegram_menu_commands(&config);
             let expected = if enabled {
-                vec!["sessions", "dashboard", "cancel", "rmux", "help"]
+                vec!["sessions", "dashboard", "cancel", "help"]
             } else {
-                vec!["sessions", "cancel", "rmux", "help"]
+                vec!["sessions", "cancel", "help"]
             };
             assert_eq!(
                 commands

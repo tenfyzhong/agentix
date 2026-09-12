@@ -19,6 +19,14 @@ pub struct CodexClient;
 
 impl CodexClient {
     #[must_use]
+    pub fn with_optional_multiplexer(
+        self,
+        _driver: Option<std::sync::Arc<dyn agentix_multiplexer::MultiplexerDriver>>,
+    ) -> Self {
+        self
+    }
+
+    #[must_use]
     pub fn with_multiplexer(
         self,
         _driver: std::sync::Arc<dyn agentix_multiplexer::MultiplexerDriver>,

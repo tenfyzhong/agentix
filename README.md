@@ -134,7 +134,7 @@ Keep the terminal running and idle, and select the session with `/sessions claud
 
 Mention the bot in group chats. If another Codex process owns the session's writer, Agentix attaches read-only; send prompts through that original process.
 
-To create sessions from chat, configure `[multiplexer]` with `kind = "rmux"` or `kind = "tmux"` and install the selected tool. Use the matching `/rmux` or `/tmux` command, optionally followed by an agent name; see [terminal workspaces](docs/usage.md#terminal-workspaces). The global `working_dir` defaults to `"~"` and applies to every agent. Pi and OMP attachments control the original process through the shared control socket.
+To create sessions from chat, install and start rmux or tmux before Agentix. The default `[multiplexer]` setting `kind = "auto"` detects rmux first, then tmux; explicit `"rmux"` or `"tmux"` restricts the probe. Only a successfully detected backend registers its `/rmux` or `/tmux` command, optionally followed by an agent name; see [terminal workspaces](docs/usage.md#terminal-workspaces). The global `working_dir` defaults to `"~"` and applies to every agent. Pi and OMP attachments control the original process through the shared control socket.
 
 With [task boards configured](docs/guide.md#im-task-boards), use `/dashboard`, `/board`, and `/jobs` to browse work. Use `/inboxes` to view the current project's human queue and `/inbox <content>` to append a requirement; explicitly ask the agent to take the next Job after reviewing its current result. See [Project inbox](docs/task-board.md#project-inbox) for document submission and cancellation.
 

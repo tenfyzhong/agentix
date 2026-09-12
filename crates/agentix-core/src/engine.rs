@@ -275,14 +275,35 @@ pub struct Engine {
     interactions: Arc<InteractionCoordinator>,
     multiplexer: Arc<MultiplexerController>,
     multiplexer_kind: crate::MultiplexerKind,
+    multiplexer_enabled: bool,
     background_turn_notifications: bool,
     output: crate::OutputConfig,
 }
 
 impl Engine {
+    fn require_multiplexer(&self, kind: crate::MultiplexerKind) -> Result<(), EngineError> {
+        if !self.multiplexer_enabled {
+            return Err(EngineError::InvalidInput(
+                "Terminal multiplexer is unavailable".into(),
+            ));
+        }
+        if kind != self.multiplexer_kind {
+            return Err(EngineError::InvalidInput(format!(
+                "This service uses {}; use /{}",
+                self.multiplexer_kind, self.multiplexer_kind
+            )));
+        }
+        Ok(())
+    }
+
     #[must_use]
-    pub fn with_multiplexer_kind(mut self, kind: crate::MultiplexerKind) -> Self {
-        self.multiplexer_kind = kind;
+    pub fn with_multiplexer_kind(
+        mut self,
+        kind: impl Into<Option<crate::MultiplexerKind>>,
+    ) -> Self {
+        let kind = kind.into();
+        self.multiplexer_enabled = kind.is_some();
+        self.multiplexer_kind = kind.unwrap_or_default();
         self
     }
     #[must_use]
@@ -306,6 +327,7 @@ impl Engine {
             interactions: Arc::new(InteractionCoordinator::default()),
             multiplexer: Arc::new(multiplexer),
             multiplexer_kind: agentix_domain::MultiplexerKind::default(),
+            multiplexer_enabled: true,
             background_turn_notifications: true,
             output: crate::OutputConfig::default(),
         }
@@ -521,12 +543,7 @@ impl Engine {
                     .await?;
             }
             AgentCommand::Multiplexer { kind, backend } => {
-                if kind != self.multiplexer_kind {
-                    return Err(EngineError::InvalidInput(format!(
-                        "This service uses {}; use /{}",
-                        self.multiplexer_kind, self.multiplexer_kind
-                    )));
-                }
+                self.require_multiplexer(kind)?;
                 if let Some(backend) = backend {
                     self.select_multiplexer_backend(conversation, owner_id, &backend)
                         .await?;

@@ -15,7 +15,7 @@ struct Backend {
     events: broadcast::Sender<AgentEvent>,
 }
 pub(super) struct State {
-    multiplexer: agentix_domain::MultiplexerKind,
+    multiplexer: Option<agentix_domain::MultiplexerKind>,
     registrations: Mutex<std::collections::HashMap<(String, SessionId), Arc<Connection>>>,
     pending_registrations: std::sync::Mutex<std::collections::HashSet<(String, SessionId)>>,
     closed: AtomicBool,
@@ -74,10 +74,12 @@ impl BridgeHub {
         Self::with_multiplexer_kind(agentix_domain::MultiplexerKind::default())
     }
     #[must_use]
-    pub fn with_multiplexer_kind(multiplexer: agentix_domain::MultiplexerKind) -> Self {
+    pub fn with_multiplexer_kind(
+        multiplexer: impl Into<Option<agentix_domain::MultiplexerKind>>,
+    ) -> Self {
         Self {
             state: Arc::new(State {
-                multiplexer,
+                multiplexer: multiplexer.into(),
                 registrations: Mutex::default(),
                 pending_registrations: std::sync::Mutex::default(),
                 closed: AtomicBool::new(false),
@@ -339,6 +341,19 @@ mod tests {
                 "snapshot": snapshot
             }
         })
+    }
+
+    #[tokio::test]
+    async fn registration_reports_disabled_multiplexer_without_rejecting_session() {
+        let hub = BridgeHub::with_multiplexer_kind(None);
+        hub.configure(BridgeKind::Pi, Path::new("/tmp"));
+        let (stream, peer) = tokio::io::duplex(4096);
+        hub.accept(registration("disabled"), stream).await.unwrap();
+        let mut reader: Reader = BufReader::new(Box::new(peer));
+        let response = read_frame(&mut reader).await.unwrap();
+        assert_eq!(response["ok"], true);
+        assert!(response["result"]["multiplexer"]["kind"].is_null());
+        hub.shutdown().await;
     }
 
     #[tokio::test]

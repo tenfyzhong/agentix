@@ -144,4 +144,4 @@ The `claude` backend uses the same version 2 transport through its MCP plugin, w
 
 ### Multiplexer configuration on registration
 
-Successful registration returns `result.multiplexer.kind` (`rmux` or `tmux`) from the service configuration. Clients refresh this value on every registration, including reconnects. Claude delivery mode `multiplexer` requires this value before accepting prompts; `auto` verifies its inherited terminal context independently.
+Successful registration returns `result.multiplexer.kind` (`rmux`, `tmux`, or `null`) from the startup detection result. `null` means terminal management is disabled. Clients refresh this value on every registration, including reconnects. Claude delivery mode `multiplexer` requires an enabled backend before accepting prompts; a `null` value clears terminal delivery without rejecting registration; `auto` verifies its inherited terminal context independently.

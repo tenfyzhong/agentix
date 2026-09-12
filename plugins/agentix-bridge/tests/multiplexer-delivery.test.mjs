@@ -61,3 +61,11 @@ test('auto preserves the original terminal context when the environment changes'
         env.TMUX = original;
     }
 });
+
+test('disabled multiplexer registration clears previous delivery without rejecting registration', async () => {
+    const { delivery, calls } = fixture('multiplexer', ['tmux']);
+    delivery.configure({ multiplexer: { kind: 'tmux' } });
+    assert.doesNotThrow(() => delivery.configure({ multiplexer: { kind: null } }));
+    await assert.rejects(delivery.send({ text: 'hello' }), /configuration/i);
+    assert.deepEqual(calls, []);
+});

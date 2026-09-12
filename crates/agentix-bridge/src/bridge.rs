@@ -242,6 +242,16 @@ impl BridgeAdapter {
         self
     }
     #[must_use]
+    pub fn with_optional_multiplexer(
+        self,
+        driver: Option<Arc<dyn agentix_multiplexer::MultiplexerDriver>>,
+    ) -> Self {
+        match driver {
+            Some(driver) => self.with_multiplexer(driver),
+            None => self,
+        }
+    }
+    #[must_use]
     pub fn with_multiplexer(self, driver: Arc<dyn agentix_multiplexer::MultiplexerDriver>) -> Self {
         if let Some(workspace) = &self.workspace {
             workspace.set_driver(driver);

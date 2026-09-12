@@ -73,7 +73,7 @@ The binaries are written to `target/release/agentix` and `target/release/taskix`
 
 ### Terminal multiplexer (optional)
 
-Install rmux or tmux to create new agent sessions from Telegram, Feishu, or Slack. Set `multiplexer.kind` to `rmux` (default) or `tmux`, then send the matching `/rmux` or `/tmux` command to browse workspaces. Creating a session, window, or split first opens an empty shell pane, then lets you choose a configured agent to launch in it. Existing idle panes also offer `Run agent`. Set the shared `multiplexer.working_dir` for new workspaces; it defaults to `"~"`. A multiplexer is optional for connecting to existing Codex sessions.
+Install and start rmux or tmux before Agentix to create new agent sessions from Telegram, Feishu, or Slack. The default `multiplexer.kind = "auto"` selects a responding rmux service first, then tmux. Explicit `rmux` verifies the native protocol; explicit `tmux` accepts a responding compatible interface. Only a detected backend exposes its `/rmux` or `/tmux` command; neither command appears when no backend is available. Restart Agentix to refresh detection. Creating a session, window, or split first opens an empty shell pane, then lets you choose a configured agent to launch in it. Existing idle panes also offer `Run agent`. Set the shared `multiplexer.working_dir` for new workspaces; it defaults to `"~"`. A multiplexer is optional for connecting to existing Codex sessions.
 
 See [terminal workspaces](usage.md#terminal-workspaces) for details.
 

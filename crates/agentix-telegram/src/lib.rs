@@ -623,14 +623,17 @@ pub fn menu_commands() -> Vec<BotCommand> {
 }
 
 #[must_use]
-pub fn menu_commands_for(kind: agentix_domain::MultiplexerKind) -> Vec<BotCommand> {
+pub fn menu_commands_for(
+    kind: impl Into<Option<agentix_domain::MultiplexerKind>>,
+) -> Vec<BotCommand> {
+    let kind = kind.into();
     BASE_MENU_COMMANDS
         .into_iter()
-        .map(|(command, description)| {
+        .filter_map(|(command, description)| {
             if command == "rmux" {
-                BotCommand::new(kind.as_str(), "Manage terminal workspaces")
+                kind.map(|kind| BotCommand::new(kind.as_str(), "Manage terminal workspaces"))
             } else {
-                BotCommand::new(command, description)
+                Some(BotCommand::new(command, description))
             }
         })
         .collect()

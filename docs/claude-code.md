@@ -9,7 +9,7 @@ Claude Code connects its original terminal session to Agentix through the `agent
 | Mode | Selection | Behavior |
 | --- | --- | --- |
 | Auto | Unset or `auto` | Read-only probes verify the inherited socket, pane and original process ancestry. Exactly one of rmux/tmux must match before any input is sent. |
-| Multiplexer | `multiplexer` | Uses the effective service `multiplexer.kind` received during Bridge registration, refreshed on every reconnect. Missing or invalid configuration rejects registration. |
+| Multiplexer | `multiplexer` | Uses the effective service `multiplexer.kind` received during Bridge registration, refreshed on every reconnect. Disabled (`null`) configuration permits registration but disables terminal prompt delivery; missing or invalid configuration rejects registration. |
 | Channel | `channel` | Uses Claude Channels with the startup flags below. No terminal multiplexer is needed for prompt delivery. |
 
 Terminal modes require installing the relevant rmux/tmux binary on PATH and starting Claude inside it. All modes require the bridge plugin. There is no fallback to another adapter after submission or an uncertain delivery.
@@ -104,7 +104,7 @@ This mode requires Claude to accept the development-channel confirmation and ena
 
 ## Protocol and lifecycle
 
-The registration acknowledgement includes `result.multiplexer.kind` from the running service configuration. The plugin does not reread a separate TOML file. The plugin reuses bridge protocol version 2, newline-delimited JSON registration, requests, responses, snapshots, and events on the existing control socket. MCP JSON-RPC is confined to the Claude-to-plugin stdio connection. No additional socket listener is created.
+The registration acknowledgement includes `result.multiplexer.kind` from the running service startup detection (`null` when disabled). The plugin does not reread a separate TOML file. The plugin reuses bridge protocol version 2, newline-delimited JSON registration, requests, responses, snapshots, and events on the existing control socket. MCP JSON-RPC is confined to the Claude-to-plugin stdio connection. No additional socket listener is created.
 
 Exec-form hooks and the MCP server run as children of the same Claude process. They exchange hook events through a private mailbox keyed by parent PID and process start time, so two terminals in the same working directory remain separate. Filesystem notifications wake the consumer; a one-second fallback scan covers unavailable or missed notifications. An event is removed only after handling succeeds, so a failed state write leaves it and subsequent events available for retry. SessionStart supplies the real session ID, transcript path, and working directory before or after MCP startup. A session switch replaces the bridge incarnation. Agentix reconnection preserves it. Reconnecting Agentix while the plugin remains running reconciles the turns observed by that plugin. The private store is not a continuous mirror of edits made to the transcript while the plugin and its hooks are absent; inspect native history locally if activity was not observed.
 
