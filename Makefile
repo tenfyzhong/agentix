@@ -1,13 +1,26 @@
 SHELL := /bin/sh
 
 CARGO ?= cargo
+BREW ?= brew
+DEBUG_TARGET_DIR = $(if $(CARGO_TARGET_DIR),$(CARGO_TARGET_DIR),target)
 
 .DEFAULT_GOAL := build
 
-.PHONY: build release completions check fmt clippy test plugin-deps clean help remove-plugin dev-test prod-test
+.PHONY: build release completions check fmt clippy test plugin-deps clean help remove-plugin dev-test prod-test link-debug
 
 build:
 	$(CARGO) build --workspace --all-features
+
+link-debug:
+	$(CARGO) build --package agentix --package taskix --all-features --target-dir "$(DEBUG_TARGET_DIR)"
+	@set -eu; \
+	debug_dir=$$(cd "$(DEBUG_TARGET_DIR)/debug" && pwd -P); \
+	test -x "$$debug_dir/agentix"; \
+	test -x "$$debug_dir/taskix"; \
+	prefix=$$($(BREW) --prefix); \
+	$(BREW) unlink agentix taskix; \
+	ln -sfn "$$debug_dir/agentix" "$$prefix/bin/agentix"; \
+	ln -sfn "$$debug_dir/taskix" "$$prefix/bin/taskix"
 
 release:
 	$(CARGO) build --workspace --all-features --release
@@ -81,6 +94,7 @@ help:
 		'make release  Build the workspace in release mode' \
 		'make completions  Regenerate bash, zsh, and fish completions for both CLIs' \
 		'make check    Run formatting, lint, and tests' \
+		'make link-debug  Build debug CLIs and replace Homebrew command links' \
 		'make dev-test  Install local plugins for Codex, Claude Code, Pi, and OMP' \
 		'make remove-plugin  Remove Agentix marketplaces, plugins, and extensions' \
 		'make prod-test  Install GitHub plugins for Codex, Claude Code, Pi, and OMP' \
