@@ -3782,6 +3782,66 @@ async fn startup_skips_command_cards_and_preserves_explicit_help() {
 }
 
 #[tokio::test]
+async fn restart_silently_syncs_menus_without_posting_command_cards() {
+    for kind in [
+        ChannelKind::Feishu,
+        ChannelKind::Slack,
+        ChannelKind::Telegram,
+    ] {
+        let agent = Arc::new(FakeAgent::new());
+        let channel = Arc::new(FakeChannel {
+            channel_kind: Some(kind),
+            ..FakeChannel::default()
+        });
+        let state = SqliteState::in_memory().await.unwrap();
+        let conversation = ConversationRef::new(kind, "chat-a");
+        state
+            .attach(&conversation, &SessionId::new("thr_a"))
+            .await
+            .unwrap();
+        let engine = Engine::new(agent.clone(), state.clone(), vec![channel.clone()]);
+        engine.restore_bindings().await.unwrap();
+
+        for notification in engine.prepare_shutdown_notifications().await.unwrap() {
+            engine
+                .send_shutdown_notification(notification)
+                .await
+                .unwrap();
+        }
+        if kind != ChannelKind::Telegram {
+            assert!(
+                channel.menus.lock().unwrap().is_empty(),
+                "shutdown requested a command card for {kind:?}"
+            );
+        }
+        assert_eq!(
+            state.current_session(&conversation).await.unwrap(),
+            Some(SessionId::new("thr_a"))
+        );
+
+        let restarted = Engine::new(agent, state, vec![channel.clone()]);
+        restarted.restore_bindings().await.unwrap();
+        if kind != ChannelKind::Telegram {
+            assert!(channel.menus.lock().unwrap().is_empty());
+        }
+        let contextual: Vec<_> = channel
+            .synced_menus
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|menu| menu.commands.iter().any(|command| command.contextual))
+            .collect();
+        assert_eq!(contextual, vec![true, false, true]);
+        let sent = channel.sent();
+        assert_eq!(sent.len(), 3);
+        assert!(sent.iter().all(|(_, view)| view.title == "Agentix serve"));
+        assert_eq!(sent[0].1.subtitle.as_deref(), Some("Online · Reattached"));
+        assert_eq!(sent[1].1.subtitle.as_deref(), Some("Offline · Detached"));
+        assert_eq!(sent[2].1.subtitle.as_deref(), Some("Online · Reattached"));
+    }
+}
+
+#[tokio::test]
 async fn deferred_startup_notifications_skip_changed_bindings() {
     for stale_session in ["thr_a", "thr_missing"] {
         let agent = Arc::new(FakeAgent::rejecting_attachment("thr_missing"));

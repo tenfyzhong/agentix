@@ -145,7 +145,7 @@ The backend-neutral commands use the same access and capability policy as IM. Ra
 
 ## Restarts and process exits
 
-During graceful shutdown, Agentix checkpoints bindings, removes live controls, restores detached command menus, and sends an offline notice without stopping coding-agent sessions. On startup, it sends an online notice and reattaches sessions that remain available. Stale saved sessions are discarded and reported as detached.
+During graceful shutdown, Agentix checkpoints bindings, removes live controls, silently restores detached native command menus, and sends an offline notice without stopping coding-agent sessions. On startup, it sends an online notice and reattaches sessions that remain available. Stale saved sessions are discarded and reported as detached. Neither startup nor shutdown posts command cards to Feishu or Slack; use `/help` to request commands.
 
 With managed Codex, exiting an attached Codex process temporarily detaches the IM conversation and starts watching for the same session ID. Running `codex resume` for that session restores the app-server subscription and binding automatically. Manually detaching or attaching another session cancels the watch.
 

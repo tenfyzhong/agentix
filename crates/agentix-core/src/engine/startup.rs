@@ -309,9 +309,8 @@ impl Engine {
         notification: ShutdownNotification,
     ) -> Result<(), EngineError> {
         let conversation = &notification.conversation;
-        if let Err(error) = self.update_command_menu(conversation, false).await {
-            tracing::warn!(%error, ?conversation, "failed to detach the IM command menu during shutdown");
-        }
+        self.sync_command_menu_best_effort(conversation, false)
+            .await;
         for (message, view) in notification.turn_views {
             if let Err(error) = self
                 .channel(conversation.channel)?
