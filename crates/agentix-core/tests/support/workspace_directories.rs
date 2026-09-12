@@ -421,3 +421,69 @@ async fn registry_disconnect_expires_only_selected_backend_drafts() {
         );
     }
 }
+
+#[tokio::test]
+async fn directory_controls_have_distinct_styles() {
+    let (engine, _, channel) = fixture().await;
+    engine
+        .handle_inbound(inbound("chat-a", "/rmux"))
+        .await
+        .unwrap();
+    click(&engine, &channel, "+ Session").await;
+    click(&engine, &channel, "Choose directory").await;
+    for (step, labels) in [
+        (
+            None,
+            vec![
+                "HOME",
+                "Parent",
+                "Next",
+                "Show hidden",
+                "Enter path",
+                "Back",
+                "Use this directory",
+            ],
+        ),
+        (Some("Next"), vec!["Previous", "HOME", "Back"]),
+        (Some("Show hidden"), vec!["Hide hidden", "Next"]),
+        (Some("Enter path"), vec!["Back"]),
+    ] {
+        if let Some(step) = step {
+            click(&engine, &channel, step).await;
+        }
+        let view = channel.sent().last().unwrap().1.clone();
+        for label in labels {
+            assert_eq!(
+                view.actions
+                    .iter()
+                    .rfind(|a| a.label == label)
+                    .unwrap()
+                    .style,
+                ActionStyle::Primary,
+                "control: {label}"
+            );
+        }
+        assert_eq!(
+            view.actions
+                .iter()
+                .find(|a| a.label == "Cancel")
+                .unwrap()
+                .style,
+            ActionStyle::Danger
+        );
+        if step != Some("Enter path") {
+            assert_eq!(
+                view.actions
+                    .iter()
+                    .find(|a| a.label == "HOME")
+                    .unwrap()
+                    .style,
+                ActionStyle::Default
+            );
+            assert!(view.actions.iter().any(|a| a.label == "child"));
+        }
+        for directory in view.actions.iter().filter(|a| a.label == "child") {
+            assert_eq!(directory.style, ActionStyle::Default);
+        }
+    }
+}

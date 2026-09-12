@@ -737,18 +737,21 @@ impl WorkspaceRuntimePort for FakeAgent {
     async fn list_directories(
         &self,
         directory: &str,
-        _page: usize,
+        page: usize,
         _hidden: bool,
     ) -> Result<agentix_core::WorkspaceDirectoryPage, AgentError> {
         Ok(agentix_core::WorkspaceDirectoryPage {
             directory: directory.into(),
             parent: Some("/".into()),
-            entries: vec![agentix_core::WorkspaceDirectoryEntry {
-                name: "child".into(),
-                path: format!("{directory}/child"),
-            }],
-            page: 0,
-            pages: 1,
+            entries: ["child", "HOME"]
+                .into_iter()
+                .map(|name| agentix_core::WorkspaceDirectoryEntry {
+                    name: name.into(),
+                    path: format!("{directory}/{name}"),
+                })
+                .collect(),
+            page,
+            pages: 2,
         })
     }
 

@@ -234,11 +234,11 @@ impl Engine {
         conversation: &ConversationRef,
         draft: DirectoryDraft,
         body: String,
-        choices: Vec<(String, DirectoryAction)>,
+        choices: Vec<(String, DirectoryAction, ActionStyle)>,
     ) -> Result<(), EngineError> {
         self.revoke_action_group(&draft.id).await;
         let mut view = OutboundView::text("Terminal · Directory", body);
-        for (label, action) in choices {
+        for (label, action, style) in choices {
             let token = self
                 .issue_action(
                     conversation,
@@ -256,7 +256,7 @@ impl Engine {
             view.actions.push(ActionButton {
                 label,
                 token,
-                style: ActionStyle::Default,
+                style,
             });
         }
         self.multiplexer
@@ -294,15 +294,20 @@ impl Engine {
         }
         let mut choices = Vec::new();
         if draft.candidates.len() > 1 {
-            choices.extend(
-                draft
-                    .candidates
-                    .iter()
-                    .map(|p| (p.clone(), DirectoryAction::Select(p.clone()))),
-            );
+            choices.extend(draft.candidates.iter().map(|p| {
+                (
+                    p.clone(),
+                    DirectoryAction::Select(p.clone()),
+                    ActionStyle::Default,
+                )
+            }));
         }
         choices.extend([
-            ("Create".into(), DirectoryAction::Confirm),
+            (
+                "Create".into(),
+                DirectoryAction::Confirm,
+                ActionStyle::Primary,
+            ),
             (
                 "Choose directory".into(),
                 DirectoryAction::Browse {
@@ -310,8 +315,13 @@ impl Engine {
                     page: 0,
                     hidden: false,
                 },
+                ActionStyle::Primary,
             ),
-            ("Cancel".into(), DirectoryAction::Cancel),
+            (
+                "Cancel".into(),
+                DirectoryAction::Cancel,
+                ActionStyle::Danger,
+            ),
         ]);
         self.directory_view(conversation, draft, body, choices)
             .await
@@ -348,10 +358,7 @@ impl Engine {
                     conversation,
                     draft,
                     body,
-                    vec![
-                        ("Back".into(), DirectoryAction::Preview),
-                        ("Cancel".into(), DirectoryAction::Cancel),
-                    ],
+                    Self::directory_back_actions().to_vec(),
                 )
                 .await
             }
@@ -435,6 +442,21 @@ impl Engine {
             .await
     }
 
+    fn directory_back_actions() -> [(String, DirectoryAction, ActionStyle); 2] {
+        [
+            (
+                "Back".into(),
+                DirectoryAction::Preview,
+                ActionStyle::Primary,
+            ),
+            (
+                "Cancel".into(),
+                DirectoryAction::Cancel,
+                ActionStyle::Danger,
+            ),
+        ]
+    }
+
     async fn browse_directory(
         &self,
         conversation: &ConversationRef,
@@ -461,6 +483,7 @@ impl Engine {
         let mut choices = vec![(
             "Use this directory".into(),
             DirectoryAction::Select(listing.directory.clone()),
+            ActionStyle::Primary,
         )];
         for entry in listing.entries {
             choices.push((
@@ -470,6 +493,7 @@ impl Engine {
                     page: 0,
                     hidden,
                 },
+                ActionStyle::Default,
             ));
         }
         if let Some(parent) = listing.parent {
@@ -480,6 +504,7 @@ impl Engine {
                     page: 0,
                     hidden,
                 },
+                ActionStyle::Primary,
             ));
         }
         choices.push((
@@ -489,6 +514,7 @@ impl Engine {
                 page: 0,
                 hidden,
             },
+            ActionStyle::Primary,
         ));
         if listing.page > 0 {
             choices.push((
@@ -498,6 +524,7 @@ impl Engine {
                     page: listing.page - 1,
                     hidden,
                 },
+                ActionStyle::Primary,
             ));
         }
         if listing.page + 1 < listing.pages {
@@ -508,6 +535,7 @@ impl Engine {
                     page: listing.page + 1,
                     hidden,
                 },
+                ActionStyle::Primary,
             ));
         }
         choices.extend([
@@ -518,11 +546,15 @@ impl Engine {
                     page: 0,
                     hidden: !hidden,
                 },
+                ActionStyle::Primary,
             ),
-            ("Enter path".into(), DirectoryAction::Input),
-            ("Back".into(), DirectoryAction::Preview),
-            ("Cancel".into(), DirectoryAction::Cancel),
+            (
+                "Enter path".into(),
+                DirectoryAction::Input,
+                ActionStyle::Primary,
+            ),
         ]);
+        choices.extend(Self::directory_back_actions());
         let body = format!(
             "`{}`\nPage {} / {}",
             listing.directory,
@@ -590,10 +622,7 @@ impl Engine {
                     conversation,
                     draft,
                     format!("{error}\nEnter another path or /cancel."),
-                    vec![
-                        ("Back".into(), DirectoryAction::Preview),
-                        ("Cancel".into(), DirectoryAction::Cancel),
-                    ],
+                    Self::directory_back_actions().to_vec(),
                 )
                 .await?;
             }
