@@ -222,6 +222,25 @@ impl WorkspaceRuntimePort for DeferredAgent {
     fn default_directory(&self) -> String {
         self.directory.clone()
     }
+    async fn resolve_directory(&self, input: &str, base: &str) -> Result<String, AgentError> {
+        self.agent()?
+            .workspace_runtime()
+            .ok_or_else(unsupported)?
+            .resolve_directory(input, base)
+            .await
+    }
+    async fn list_directories(
+        &self,
+        directory: &str,
+        page: usize,
+        show_hidden: bool,
+    ) -> Result<agentix_domain::WorkspaceDirectoryPage, AgentError> {
+        self.agent()?
+            .workspace_runtime()
+            .ok_or_else(unsupported)?
+            .list_directories(directory, page, show_hidden)
+            .await
+    }
     async fn snapshot(&self) -> Result<Option<MultiplexerSnapshot>, AgentError> {
         self.agent()?
             .workspace_runtime()

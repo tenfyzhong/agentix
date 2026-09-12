@@ -249,6 +249,7 @@ impl Engine {
         self.interactions.turn_action_groups.lock().await.clear();
         self.interactions.reply_modes.lock().await.clear();
         self.interactions.session_inputs.lock().await.clear();
+        self.expire_directory_drafts().await;
         self.turns.stop_actions.lock().await.clear();
 
         let mut notifications = Vec::new();

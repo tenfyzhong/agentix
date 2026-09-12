@@ -192,7 +192,7 @@ impl Engine {
         for (label, action) in [
             (
                 "+ Session",
-                MultiplexerUiAction::Mutate(MultiplexerMutation {
+                MultiplexerUiAction::BeginCreate(MultiplexerMutation {
                     target: MultiplexerTarget::NewSession {
                         name: "shell".into(),
                         cwd: default_directory,
@@ -306,7 +306,7 @@ impl Engine {
         for (label, action) in [
             (
                 "+ Window",
-                MultiplexerUiAction::Mutate(MultiplexerMutation {
+                MultiplexerUiAction::BeginCreate(MultiplexerMutation {
                     target: MultiplexerTarget::NewWindow {
                         session_id: session.id.clone(),
                         name: "shell".into(),
@@ -490,7 +490,7 @@ impl Engine {
         ] {
             let action = UiAction::Multiplexer(
                 self.multiplexer_backend(conversation).await,
-                MultiplexerUiAction::Mutate(MultiplexerMutation {
+                MultiplexerUiAction::BeginCreate(MultiplexerMutation {
                     target: MultiplexerTarget::SplitPane {
                         pane_id: pane_id.clone(),
                         direction,
@@ -551,8 +551,12 @@ impl Engine {
                 self.show_multiplexer_agent_picker(conversation, owner_id, &pane_id)
                     .await
             }
-            MultiplexerUiAction::Mutate(mutation) => {
-                self.execute_multiplexer_mutation(conversation, owner_id, mutation)
+            MultiplexerUiAction::BeginCreate(mutation) => {
+                self.begin_directory_draft(conversation, owner_id, mutation)
+                    .await
+            }
+            MultiplexerUiAction::Directory { id, action } => {
+                self.handle_directory_action(conversation, owner_id, &id, action)
                     .await
             }
         }

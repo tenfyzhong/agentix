@@ -70,7 +70,13 @@ impl From<&UiAction> for ActionRoute {
                 route.session = Some(interaction.session_id.clone());
             }
             UiAction::Task(action) => route.session = Some(action.session_id.clone()),
-            UiAction::Multiplexer(backend, MultiplexerUiAction::Mutate(_))
+            UiAction::Multiplexer(
+                backend,
+                MultiplexerUiAction::Directory {
+                    action: super::DirectoryAction::Confirm,
+                    ..
+                },
+            )
             | UiAction::MultiplexerLaunch(backend, _) => {
                 route.workspace_mutation = Some(
                     backend.map_or(WorkspaceMutation::AllBackends, WorkspaceMutation::Backend),

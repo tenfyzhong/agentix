@@ -8,6 +8,7 @@ use crate::{
 use async_trait::async_trait;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
 
@@ -48,8 +49,11 @@ impl AgentRegistry {
         let routes: Routes = Arc::default();
         let mut tasks = Vec::new();
         let mut known = BTreeMap::new();
+        let mut generations = BTreeMap::new();
         for (&kind, agent) in &map {
             let sessions = KnownSessions::default();
+            let generation = Arc::new(AtomicU64::new(0));
+            generations.insert(kind, generation.clone());
             known.insert(kind, sessions.clone());
             tasks.push(spawn_backend(
                 kind,
@@ -57,6 +61,7 @@ impl AgentRegistry {
                 events.clone(),
                 routes.clone(),
                 sessions,
+                generation,
             ));
         }
         let workspaces = map
@@ -66,6 +71,7 @@ impl AgentRegistry {
                 (
                     kind,
                     NamespacedWorkspace {
+                        generation: generations[&kind].clone(),
                         kind,
                         agent: agent.clone(),
                     },
@@ -385,16 +391,40 @@ impl SessionControlPort for AgentRegistry {
 }
 
 struct NamespacedWorkspace {
+    generation: Arc<AtomicU64>,
     kind: AgentKind,
     agent: Arc<dyn AgentAdapter>,
 }
 #[async_trait]
 impl WorkspaceRuntimePort for NamespacedWorkspace {
+    fn connection_generation(&self) -> u64 {
+        self.generation.load(Ordering::Acquire)
+    }
+
     fn default_directory(&self) -> String {
         self.agent
             .workspace_runtime()
             .expect("configured runtime")
             .default_directory()
+    }
+    async fn resolve_directory(&self, input: &str, base: &str) -> Result<String, AgentError> {
+        self.agent
+            .workspace_runtime()
+            .expect("configured runtime")
+            .resolve_directory(input, base)
+            .await
+    }
+    async fn list_directories(
+        &self,
+        directory: &str,
+        page: usize,
+        show_hidden: bool,
+    ) -> Result<agentix_domain::WorkspaceDirectoryPage, AgentError> {
+        self.agent
+            .workspace_runtime()
+            .expect("configured runtime")
+            .list_directories(directory, page, show_hidden)
+            .await
     }
     async fn snapshot(&self) -> Result<Option<MultiplexerSnapshot>, AgentError> {
         let mut snapshot = self
@@ -486,6 +516,7 @@ fn spawn_backend(
     events: broadcast::Sender<AgentEvent>,
     routes: Routes,
     known: KnownSessions,
+    generation: Arc<AtomicU64>,
 ) -> tokio::task::JoinHandle<()> {
     let mut source = agent.subscribe();
     tokio::spawn(async move {
@@ -493,6 +524,7 @@ fn spawn_backend(
             match source.recv().await {
                 Ok(AgentEvent::Disconnected { .. })
                 | Err(broadcast::error::RecvError::Lagged(_)) => {
+                    generation.fetch_add(1, Ordering::AcqRel);
                     routes
                         .lock()
                         .unwrap()
@@ -508,6 +540,7 @@ fn spawn_backend(
                     }
                 }
                 Ok(AgentEvent::Connected { .. }) => {
+                    generation.fetch_add(1, Ordering::AcqRel);
                     if let Ok(page) = agent.list_sessions(None, u32::MAX).await {
                         for session in page.sessions {
                             known.lock().unwrap().insert(session.id.clone().into());
@@ -532,7 +565,10 @@ fn spawn_backend(
                     });
                     let _ = events.send(event);
                 }
-                Err(broadcast::error::RecvError::Closed) => break,
+                Err(broadcast::error::RecvError::Closed) => {
+                    generation.fetch_add(1, Ordering::AcqRel);
+                    break;
+                }
             }
         }
     })

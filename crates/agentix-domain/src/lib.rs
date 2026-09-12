@@ -17,7 +17,7 @@ pub use agent::{
     MultiplexerSnapshot, MultiplexerTarget, MultiplexerWindow, PaneSplitDirection, QueuedPrompt,
     QueuedPromptPort, SessionCommand, SessionCommandChoice, SessionCommandResult,
     SessionControlPort, SessionPage, SessionStatus, SessionSummary, TerminalLocation, ToolSummary,
-    TurnStatus, TurnSummary, WorkspaceRuntimePort,
+    TurnStatus, TurnSummary, WorkspaceDirectoryEntry, WorkspaceDirectoryPage, WorkspaceRuntimePort,
 };
 pub use binding::{AttachOutcome, BindingTable, DeliveryClass, EventImportance};
 pub use channel::{

@@ -492,13 +492,50 @@ pub trait SessionControlPort: Send + Sync {
     ) -> Result<SessionCommandResult, AgentError>;
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceDirectoryEntry {
+    pub name: String,
+    pub path: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceDirectoryPage {
+    pub directory: String,
+    pub parent: Option<String>,
+    pub entries: Vec<WorkspaceDirectoryEntry>,
+    pub page: usize,
+    pub pages: usize,
+}
+
 #[async_trait]
 pub trait WorkspaceRuntimePort: Send + Sync {
+    /// Changes when the selected backend reconnects or loses events.
+    fn connection_generation(&self) -> u64 {
+        0
+    }
+
     fn multiplexer_kind(&self) -> MultiplexerKind {
         MultiplexerKind::default()
     }
 
     fn default_directory(&self) -> String;
+    async fn resolve_directory(&self, input: &str, base: &str) -> Result<String, AgentError> {
+        let _ = (input, base);
+        Err(AgentError::Rejected(
+            "directory selection is unavailable".into(),
+        ))
+    }
+    async fn list_directories(
+        &self,
+        directory: &str,
+        page: usize,
+        show_hidden: bool,
+    ) -> Result<WorkspaceDirectoryPage, AgentError> {
+        let _ = (directory, page, show_hidden);
+        Err(AgentError::Rejected(
+            "directory browsing is unavailable".into(),
+        ))
+    }
 
     async fn snapshot(&self) -> Result<Option<MultiplexerSnapshot>, AgentError>;
 

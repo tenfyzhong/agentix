@@ -4,15 +4,10 @@ const BASE: &str = "[channel]\nkind='telegram'\n[channel.telegram]\ntoken='test'
 
 #[test]
 fn accepts_global_multiplexer_configuration() {
-    let config = Config::from_toml(&format!(
-        "{BASE}\n[multiplexer]\nkind='tmux'\nworking_dir='~/work'\n"
-    ));
+    let config = Config::from_toml(&format!("{BASE}\n[multiplexer]\nkind='tmux'\n"));
     let config = config.unwrap();
     assert_eq!(config.multiplexer.kind, agentix::MultiplexerMode::Tmux);
-    assert_eq!(
-        config.multiplexer.working_dir,
-        dirs::home_dir().unwrap().join("work")
-    );
+    assert_eq!(config.multiplexer.home_dir, dirs::home_dir().unwrap());
 }
 
 #[test]
@@ -29,7 +24,7 @@ fn rejects_removed_agent_directory_fields() {
 fn multiplexer_defaults_and_invalid_kind() {
     let config = Config::from_toml(BASE).unwrap();
     assert_eq!(config.multiplexer.kind, agentix::MultiplexerMode::Auto);
-    assert_eq!(config.multiplexer.working_dir, dirs::home_dir().unwrap());
+    assert_eq!(config.multiplexer.home_dir, dirs::home_dir().unwrap());
     assert!(Config::from_toml(&format!("{BASE}\n[multiplexer]\nkind='unknown'\n")).is_err());
 }
 
@@ -102,4 +97,11 @@ async fn configured_mode_resolves_only_successful_probes() {
             usize::from(expected.is_some())
         );
     }
+}
+
+#[test]
+fn removed_working_directory_is_rejected() {
+    let error =
+        Config::from_toml(&format!("{BASE}\n[multiplexer]\nworking_dir='~/work'\n")).unwrap_err();
+    assert!(format!("{error:#}").contains("working_dir"));
 }

@@ -28,11 +28,11 @@ path = "~/.local/state/agentix/agentix.log"
 rotation = "daily"
 max_files = 7
 
-# One terminal multiplexer and initial working directory shared by every agent.
-# Changing these settings requires restarting Agentix.
+# One terminal multiplexer shared by every agent.
+# Changing the multiplexer requires restarting Agentix.
+# New terminals infer cwd from the attached agent or target pane, falling back to HOME.
 [multiplexer]
 kind = "auto" # auto (default), rmux or tmux; only live services enable a terminal menu
-working_dir = "~"
 
 [agent.codex]
 # Agentix requires Codex CLI 0.153.0+ from the official standalone installer.

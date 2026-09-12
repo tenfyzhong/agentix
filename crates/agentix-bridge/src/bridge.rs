@@ -564,6 +564,29 @@ impl WorkspaceRuntimePort for BridgeAdapter {
             |w| w.default_directory().to_string_lossy().into_owned(),
         )
     }
+    async fn resolve_directory(&self, input: &str, base: &str) -> Result<String, AgentError> {
+        (self
+            .workspace
+            .as_ref()
+            .ok_or_else(|| rejected("multiplexer is not configured"))?)
+        .resolve_directory(input, base)
+        .await
+        .map_err(|e| AgentError::Rejected(e.to_string()))
+    }
+    async fn list_directories(
+        &self,
+        directory: &str,
+        page: usize,
+        show_hidden: bool,
+    ) -> Result<agentix_domain::WorkspaceDirectoryPage, AgentError> {
+        (self
+            .workspace
+            .as_ref()
+            .ok_or_else(|| rejected("multiplexer is not configured"))?)
+        .list_directories(directory, page, show_hidden)
+        .await
+        .map_err(|e| AgentError::Rejected(e.to_string()))
+    }
     async fn snapshot(&self) -> Result<Option<MultiplexerSnapshot>, AgentError> {
         let sessions = self.list_sessions(None, u32::MAX).await?.sessions;
         self.workspace

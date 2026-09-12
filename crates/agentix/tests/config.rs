@@ -19,8 +19,8 @@ fn multi_backend_configuration_expands_paths_and_rejects_ambiguity() {
 }
 
 #[test]
-fn native_backends_accept_explicit_bridge_and_global_working_directory() {
-    let text = "[channel]\nkind='telegram'\n[channel.telegram]\ntoken='test'\n[storage]\npath='/tmp/state'\n[agent]\nkind='pi'\nsession_dir='/tmp/sessions'\nbridge_extension='~/bridge/pi.ts'\n[multiplexer]\nworking_dir='~/work'\n";
+fn native_backends_accept_explicit_bridge_and_use_home() {
+    let text = "[channel]\nkind='telegram'\n[channel.telegram]\ntoken='test'\n[storage]\npath='/tmp/state'\n[agent]\nkind='pi'\nsession_dir='/tmp/sessions'\nbridge_extension='~/bridge/pi.ts'\n";
     let config = Config::from_toml(text).unwrap();
     let AgentConfig::Pi {
         bridge_extension, ..
@@ -29,7 +29,7 @@ fn native_backends_accept_explicit_bridge_and_global_working_directory() {
         panic!("Pi config");
     };
     assert!(bridge_extension.unwrap().ends_with("bridge/pi.ts"));
-    assert!(config.multiplexer.working_dir.ends_with("work"));
+    assert_eq!(config.multiplexer.home_dir, dirs::home_dir().unwrap());
 }
 
 fn credential_config(kind: &str, tables: &str) -> String {
@@ -295,7 +295,7 @@ owner_user_ids = [42]
         panic!("expected Codex configuration");
     };
     assert_eq!(command, Path::new("codex"));
-    assert_eq!(config.multiplexer.working_dir, dirs::home_dir().unwrap());
+    assert_eq!(config.multiplexer.home_dir, dirs::home_dir().unwrap());
     assert_eq!(config.channel.telegram.unwrap().owner_user_ids, vec![42]);
 }
 
@@ -338,8 +338,6 @@ kind = "telegram"
 kind = "codex"
 command = "~/.local/bin/codex"
 endpoint = "unix://~/.codex/custom.sock"
-[multiplexer]
-working_dir = "~/workspace"
 
 [storage]
 path = "~/.local/share/agentix/state.sqlite3"
@@ -362,7 +360,7 @@ owner_user_ids = [42]
         endpoint,
         format!("unix://{}", home.join(".codex/custom.sock").display())
     );
-    assert_eq!(config.multiplexer.working_dir, home.join("workspace"));
+    assert_eq!(config.multiplexer.home_dir, home);
     assert_eq!(
         config.storage.path,
         home.join(".local/share/agentix/state.sqlite3")

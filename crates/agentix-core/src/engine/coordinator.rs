@@ -167,6 +167,7 @@ impl InteractionCoordinator {
 pub(super) struct MultiplexerController {
     enabled: bool,
     pub(super) selected: Mutex<HashMap<ConversationRef, crate::AgentKind>>,
+    pub(super) drafts: Mutex<HashMap<ConversationRef, super::DirectoryDraft>>,
 }
 
 impl MultiplexerController {
@@ -174,6 +175,7 @@ impl MultiplexerController {
         Self {
             enabled,
             selected: Mutex::default(),
+            drafts: Mutex::default(),
         }
     }
 

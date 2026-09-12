@@ -46,6 +46,8 @@ impl TmuxDriver {
             return Err(error("tmux control is unavailable on Windows"));
         }
         let mut command = Command::new(&self.command);
+        // Preserve Unicode paths in format output even under a C locale.
+        command.arg("-u");
         if let Some(socket) = &self.socket {
             command.arg("-S").arg(socket);
         } else {
@@ -55,7 +57,16 @@ impl TmuxDriver {
             .env_remove("TMUX")
             .env_remove("TMUX_PANE")
             .env("LC_ALL", "C");
-        command.args(args).stdin(Stdio::null()).kill_on_drop(true);
+        // tmux parses trailing semicolons even with structured argv. Protect
+        // every value, including cwd, names and input text, at the CLI boundary.
+        command
+            .args(args.iter().map(|value| {
+                value
+                    .strip_suffix(';')
+                    .map_or_else(|| value.clone(), |prefix| format!("{prefix}\\;"))
+            }))
+            .stdin(Stdio::null())
+            .kill_on_drop(true);
         tokio::time::timeout(TIMEOUT, command.output())
             .await
             .map_err(|_| error("tmux operation timed out"))?
@@ -68,7 +79,7 @@ impl TmuxDriver {
         }
         String::from_utf8(output.stdout).map_err(error)
     }
-    async fn launch(&self, pane: &str, cwd: &str, argv: &[String]) -> Result<(), MultiplexerError> {
+    async fn close_on_exit(&self, pane: &str) -> Result<(), MultiplexerError> {
         self.run(&strings(&[
             "set-option",
             "-p",
@@ -78,6 +89,10 @@ impl TmuxDriver {
             "off",
         ]))
         .await?;
+        Ok(())
+    }
+    async fn launch(&self, pane: &str, cwd: &str, argv: &[String]) -> Result<(), MultiplexerError> {
+        self.close_on_exit(pane).await?;
         let mut command_args = strings(&[
             "respawn-pane",
             "-k",
@@ -86,8 +101,6 @@ impl TmuxDriver {
             "-c",
             cwd,
             "--",
-            "/usr/bin/env",
-            "--",
             // Interactive mode preserves foreground job control and Ctrl-C.
             "/bin/sh",
             "-i",
@@ -95,12 +108,7 @@ impl TmuxDriver {
             r#""$@"; exec "${SHELL:-/bin/sh}" -i"#,
             "agentix",
         ]);
-        command_args.extend(argv.iter().map(|value| {
-            // tmux parses command separators even with structured argv.
-            value
-                .strip_suffix(';')
-                .map_or_else(|| value.clone(), |prefix| format!("{prefix}\\;"))
-        }));
+        command_args.extend_from_slice(argv);
         self.run(&command_args).await?;
         Ok(())
     }
@@ -221,8 +229,19 @@ impl MultiplexerDriver for TmuxDriver {
             }
         };
         let pane = pane.trim();
-        if let Some(argv) = argv {
-            self.launch(pane, &cwd, argv).await?;
+        let configured = if let Some(argv) = argv {
+            self.launch(pane, &cwd, argv).await
+        } else {
+            self.close_on_exit(pane).await
+        };
+        if let Err(error) = configured {
+            if !matches!(
+                prepared.mutation.target,
+                MultiplexerTarget::ExistingPane { .. }
+            ) {
+                let _ = self.run(&strings(&["kill-pane", "-t", pane])).await;
+            }
+            return Err(error);
         }
         Ok(MultiplexerOutcome {
             location: self.location(pane).await?,

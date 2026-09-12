@@ -50,7 +50,7 @@ async fn native_workspace_creation_and_launch_preserve_arguments() {
         "tmux".into(),
         Some(socket.clone()),
     ));
-    let mut manager = WorkspaceManager::new(vec!["sleep".into(), "30".into()], root.path());
+    let mut manager = WorkspaceManager::new(vec!["/bin/sleep".into(), "30".into()], root.path());
     manager.set_driver(driver.clone());
     let _cleanup = Cleanup(socket);
     assert!(driver.inventory(false).await.unwrap().unwrap().is_empty());
@@ -108,7 +108,7 @@ async fn native_workspace_creation_and_launch_preserve_arguments() {
         let result = manager.execute(&prepared).await.unwrap();
         assert!(manager.pane_exists(&result.location).await.unwrap());
     }
-    tokio::time::sleep(Duration::from_millis(150)).await;
+    wait_for_pane_command(&driver, &pane, "sleep").await;
     assert!(
         manager
             .prepare(MultiplexerMutation {
@@ -140,23 +140,27 @@ async fn native_workspace_creation_and_launch_preserve_arguments() {
         .await
         .unwrap();
     let result = manager.execute(&prepared).await.unwrap();
-    tokio::time::sleep(Duration::from_millis(150)).await;
-    let output = driver
-        .output(&[
-            "capture-pane".into(),
-            "-p".into(),
-            "-S".into(),
-            "-".into(),
-            "-t".into(),
-            result.location.pane_id,
-        ])
-        .await
-        .unwrap();
-    assert!(
-        String::from_utf8_lossy(&output.stdout).starts_with(&arguments.join("\n")),
-        "{:?}",
-        output.stdout
-    );
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let output = driver
+                .run(&strings(&[
+                    "capture-pane",
+                    "-p",
+                    "-S",
+                    "-",
+                    "-t",
+                    &result.location.pane_id,
+                ]))
+                .await
+                .unwrap();
+            if output.starts_with(&arguments.join("\n")) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .expect("structured arguments must arrive unchanged");
 }
 
 #[cfg(unix)]
@@ -258,7 +262,7 @@ async fn native_agent_exit_restores_usable_shell() {
 
 #[cfg(unix)]
 async fn wait_for_pane_command(driver: &TmuxDriver, pane: &str, command: &str) {
-    tokio::time::timeout(Duration::from_secs(5), async {
+    let result = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let current = driver
                 .run(&strings(&[
@@ -276,8 +280,34 @@ async fn wait_for_pane_command(driver: &TmuxDriver, pane: &str, command: &str) {
             tokio::time::sleep(Duration::from_millis(25)).await;
         }
     })
+    .await;
+    assert!(
+        result.is_ok(),
+        "foreground command {command}: {:?}; capture: {:?}",
+        driver.inventory(false).await,
+        driver
+            .run(&strings(&["capture-pane", "-p", "-t", pane]))
+            .await
+    );
+}
+
+#[cfg(unix)]
+async fn wait_for_shell_prompt(driver: &TmuxDriver, pane: &str) {
+    // Input sent before readline starts can be consumed during shell startup.
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let output = driver
+                .run(&strings(&["capture-pane", "-p", "-t", pane]))
+                .await
+                .unwrap();
+            if output.contains("agentix-ready>") {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
     .await
-    .expect("agent must be visible as the foreground command");
+    .expect("blank shell must be ready before sending Ctrl-D");
 }
 
 #[cfg(unix)]
@@ -290,7 +320,7 @@ async fn assert_ctrl_d_closes_pane(driver: &TmuxDriver, pane: &str) {
         .run(&strings(&["send-keys", "-t", pane, "C-d"]))
         .await
         .unwrap();
-    tokio::time::timeout(Duration::from_secs(5), async {
+    let closed = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let panes = driver.inventory(false).await.unwrap().unwrap();
             assert!(panes.iter().any(|p| p.pane_id == other.trim()));
@@ -300,8 +330,23 @@ async fn assert_ctrl_d_closes_pane(driver: &TmuxDriver, pane: &str) {
             tokio::time::sleep(Duration::from_millis(25)).await;
         }
     })
-    .await
-    .expect("Ctrl-D must remove the pane, not leave a dead pane");
+    .await;
+    assert!(
+        closed.is_ok(),
+        "Ctrl-D must remove pane {pane}; state: {:?}; output: {:?}",
+        driver
+            .run(&strings(&[
+                "display-message",
+                "-p",
+                "-t",
+                pane,
+                "#{pane_dead}|#{pane_current_command}|#{remain-on-exit}"
+            ]))
+            .await,
+        driver
+            .run(&strings(&["capture-pane", "-p", "-t", pane]))
+            .await
+    );
 }
 
 #[tokio::test]
@@ -346,4 +391,99 @@ async fn probe_accepts_rmux_compatibility_interface() {
         .await
         .unwrap();
     assert!(driver.probe().await.unwrap());
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn native_blank_panes_close_with_global_remain_on_exit_enabled() {
+    if std::env::var_os("AGENTIX_TEST_TMUX").is_none() {
+        return;
+    }
+    let root = tempfile::tempdir().unwrap();
+    let socket = root.path().join("blank.sock");
+    let driver = Arc::new(TmuxDriver::with_command(
+        "tmux".into(),
+        Some(socket.clone()),
+    ));
+    let _cleanup = Cleanup(socket);
+    driver
+        .run(&strings(&[
+            "-f",
+            "/dev/null",
+            "new-session",
+            "-d",
+            "-s",
+            "keep",
+        ]))
+        .await
+        .unwrap();
+    driver
+        .run(&strings(&["set-option", "-g", "remain-on-exit", "on"]))
+        .await
+        .unwrap();
+    driver
+        .run(&strings(&[
+            "set-option",
+            "-g",
+            "default-command",
+            "sleep 0.2; exec env PS1='agentix-ready> ' /bin/bash --noprofile --norc -i",
+        ]))
+        .await
+        .unwrap();
+    let inventory = driver.inventory(false).await.unwrap().unwrap();
+    let base = &inventory[0];
+    let working = root.path().join("work 中文 ' ;");
+    std::fs::create_dir(&working).unwrap();
+    let cwd = working.canonicalize().unwrap().display().to_string();
+    let targets = [
+        MultiplexerTarget::NewSession {
+            name: "blank".into(),
+            cwd: cwd.clone(),
+        },
+        MultiplexerTarget::NewWindow {
+            session_id: base.session_id.clone(),
+            name: "blank".into(),
+            cwd: cwd.clone(),
+        },
+        MultiplexerTarget::SplitPane {
+            pane_id: base.pane_id.clone(),
+            direction: PaneSplitDirection::Horizontal,
+            cwd: cwd.clone(),
+        },
+    ];
+    let manager = WorkspaceManager::new(vec!["unused".into()], root.path());
+    manager.set_driver(driver.clone());
+    for target in targets {
+        let prepared = manager
+            .prepare(MultiplexerMutation {
+                target,
+                launch_agent: false,
+            })
+            .await
+            .unwrap();
+        let created = manager.execute(&prepared).await.unwrap();
+        let pane = created.location.pane_id;
+        assert_eq!(
+            driver
+                .inventory(false)
+                .await
+                .unwrap()
+                .unwrap()
+                .iter()
+                .find(|p| p.pane_id == pane)
+                .unwrap()
+                .cwd,
+            cwd
+        );
+        wait_for_shell_prompt(&driver, &pane).await;
+        assert_ctrl_d_closes_pane(&driver, &pane).await;
+        assert_eq!(
+            driver
+                .run(&strings(&["show-options", "-g", "-v", "remain-on-exit"]))
+                .await
+                .unwrap()
+                .trim(),
+            "on"
+        );
+    }
 }

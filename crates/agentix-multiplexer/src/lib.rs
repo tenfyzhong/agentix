@@ -1,4 +1,6 @@
 //! Backend-independent terminal inventory, validation and workspace management.
+mod directories;
+
 use agentix_domain::{
     MultiplexerKind, MultiplexerMutation, MultiplexerPane, MultiplexerSession, MultiplexerSnapshot,
     MultiplexerTarget, MultiplexerWindow, SessionId, SessionSummary, TerminalLocation,

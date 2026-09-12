@@ -50,14 +50,16 @@ pub struct MultiplexerConfig {
     /// Startup probe result; never read from the configuration file.
     #[serde(skip)]
     pub resolved_kind: Option<agentix_core::MultiplexerKind>,
-    pub working_dir: PathBuf,
+    /// Resolved user HOME; never accepted from the configuration file.
+    #[serde(skip)]
+    pub home_dir: PathBuf,
 }
 impl Default for MultiplexerConfig {
     fn default() -> Self {
         Self {
             kind: MultiplexerMode::default(),
             resolved_kind: None,
-            working_dir: PathBuf::from("~"),
+            home_dir: PathBuf::new(),
         }
     }
 }
@@ -428,8 +430,9 @@ impl Config {
 
     fn expand_home_paths(&mut self) -> Result<()> {
         let home = dirs::home_dir();
-        self.multiplexer.working_dir =
-            expand_home_path(&self.multiplexer.working_dir, home.as_deref())?;
+        self.multiplexer.home_dir = home
+            .clone()
+            .context("cannot resolve the current user HOME directory")?;
         if let Some(task_board) = &mut self.task_board {
             task_board.config = expand_home_path(&task_board.config, home.as_deref())?;
         }

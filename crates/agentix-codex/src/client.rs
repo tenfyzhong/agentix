@@ -2080,6 +2080,23 @@ impl WorkspaceRuntimePort for CodexClient {
             .into_owned()
     }
 
+    async fn resolve_directory(&self, input: &str, base: &str) -> Result<String, AgentError> {
+        self.workspace
+            .resolve_directory(input, base)
+            .await
+            .map_err(|e| AgentError::Rejected(e.to_string()))
+    }
+    async fn list_directories(
+        &self,
+        directory: &str,
+        page: usize,
+        show_hidden: bool,
+    ) -> Result<agentix_domain::WorkspaceDirectoryPage, AgentError> {
+        self.workspace
+            .list_directories(directory, page, show_hidden)
+            .await
+            .map_err(|e| AgentError::Rejected(e.to_string()))
+    }
     async fn snapshot(&self) -> Result<Option<MultiplexerSnapshot>, AgentError> {
         let sessions = self
             .list_sessions(None, 100)

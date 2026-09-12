@@ -417,6 +417,7 @@ async fn registry_rejects_duplicate_backends() {
 
 #[derive(Clone)]
 struct FakeAgent {
+    snapshot: Arc<Mutex<MultiplexerSnapshot>>,
     refresh_count: Arc<std::sync::atomic::AtomicUsize>,
     calls: Arc<Mutex<Vec<String>>>,
     interaction_decisions: Arc<Mutex<Vec<InteractionDecision>>>,
@@ -438,6 +439,7 @@ impl FakeAgent {
     fn new() -> Self {
         let (events, _) = broadcast::channel(32);
         Self {
+            snapshot: Arc::new(Mutex::new(multiplexer_snapshot())),
             refresh_count: Arc::default(),
             calls: Arc::new(Mutex::new(Vec::new())),
             interaction_decisions: Arc::new(Mutex::new(Vec::new())),
@@ -720,9 +722,42 @@ impl WorkspaceRuntimePort for FakeAgent {
         "/work/multiplexer".into()
     }
 
+    async fn resolve_directory(&self, input: &str, base: &str) -> Result<String, AgentError> {
+        if input.contains("missing") || input.is_empty() {
+            return Err(AgentError::Rejected("missing directory".into()));
+        }
+        Ok(if input == "~" {
+            self.default_directory()
+        } else if input.starts_with('/') {
+            input.into()
+        } else {
+            format!("{base}/{input}")
+        })
+    }
+    async fn list_directories(
+        &self,
+        directory: &str,
+        page: usize,
+        _hidden: bool,
+    ) -> Result<agentix_core::WorkspaceDirectoryPage, AgentError> {
+        Ok(agentix_core::WorkspaceDirectoryPage {
+            directory: directory.into(),
+            parent: Some("/".into()),
+            entries: ["child", "HOME"]
+                .into_iter()
+                .map(|name| agentix_core::WorkspaceDirectoryEntry {
+                    name: name.into(),
+                    path: format!("{directory}/{name}"),
+                })
+                .collect(),
+            page,
+            pages: 2,
+        })
+    }
+
     async fn snapshot(&self) -> Result<Option<MultiplexerSnapshot>, AgentError> {
         self.calls.lock().unwrap().push("mux-snapshot:auto".into());
-        Ok(Some(multiplexer_snapshot()))
+        Ok(Some(self.snapshot.lock().unwrap().clone()))
     }
 
     async fn mutate(
@@ -2018,10 +2053,11 @@ async fn multiplexer_browser_auto_selects_one_backend_and_navigates_to_panes() {
         ))
         .await
         .unwrap();
+    workspace_directory_tests::click(&engine, &channel, "Create").await;
     assert!(agent.calls().iter().any(|call| {
         call.contains("SplitPane")
             && call.contains("%2")
-            && call.contains("cwd: \"/work/multiplexer\"")
+            && call.contains("cwd: \"/work/parser\"")
             && call.contains("launch_agent: false")
     }));
 }
@@ -2056,6 +2092,7 @@ async fn multiplexer_creation_waits_for_agent_selection_before_attaching() {
         .await
         .unwrap();
 
+    workspace_directory_tests::click(&engine, &channel, "Create").await;
     let picker = channel.sent().last().unwrap().1.clone();
     assert!(picker.body.contains("Choose the agent"));
     let token = picker
@@ -2141,11 +2178,12 @@ async fn multiplexer_window_creation_uses_defaults_and_waits_for_agent() {
         .await
         .unwrap();
 
+    workspace_directory_tests::click(&engine, &channel, "Create").await;
     assert!(agent.calls().iter().any(|call| {
         call.contains("NewWindow")
             && call.contains("session_id: \"$1\"")
             && call.contains("name: \"shell\"")
-            && call.contains("cwd: \"/work/multiplexer\"")
+            && call.contains("cwd: \"/work/parser\"")
             && call.contains("launch_agent: false")
     }));
     assert!(
@@ -5827,6 +5865,25 @@ async fn check_pane_agent_choice(
             .await
             .unwrap();
     }
+    if target != "ExistingPane" {
+        let view = channel.sent().last().unwrap().1.clone();
+        let token = view
+            .actions
+            .iter()
+            .find(|a| a.label == "Create")
+            .unwrap()
+            .token
+            .clone();
+        engine
+            .handle_inbound(InboundEnvelope::action(
+                "confirm-create",
+                conversation.clone(),
+                "owner",
+                token,
+            ))
+            .await
+            .unwrap();
+    }
     let creations: Vec<_> = agents[0]
         .1
         .calls()
@@ -5960,3 +6017,6 @@ async fn disabled_multiplexer_has_no_commands_or_workspace_access() {
         assert!(menu.commands.iter().any(|c| c.name == "sessions"));
     }
 }
+
+#[path = "support/workspace_directories.rs"]
+mod workspace_directory_tests;

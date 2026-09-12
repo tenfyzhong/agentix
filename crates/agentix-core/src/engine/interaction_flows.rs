@@ -204,6 +204,12 @@ impl Engine {
             .await
             .consume(token, conversation, owner_id, generation, binding_epoch)
             .map_err(|_| EngineError::InvalidAction)?;
+        if !matches!(
+            &action,
+            UiAction::Multiplexer(_, super::MultiplexerUiAction::Directory { .. })
+        ) {
+            self.cancel_directory_draft(conversation).await;
+        }
         self.disable_consumed_actions(conversation, message).await?;
         match action {
             UiAction::Task(action) => {

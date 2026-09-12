@@ -20,7 +20,9 @@ mod session_service;
 mod startup;
 mod task_board;
 mod turn_flows;
+mod workspace_directories;
 mod workspace_flows;
+use workspace_directories::{DirectoryAction, DirectoryDraft};
 
 use presentation::{
     background_completion_body, completed_input_body, decision_label, display_workspace,
@@ -175,7 +177,11 @@ enum MultiplexerUiAction {
     ChooseAgent {
         pane_id: String,
     },
-    Mutate(MultiplexerMutation),
+    BeginCreate(MultiplexerMutation),
+    Directory {
+        id: String,
+        action: DirectoryAction,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -442,6 +448,12 @@ impl Engine {
         text: &str,
         event_id: &str,
     ) -> Result<(), EngineError> {
+        if self
+            .handle_directory_text(conversation, owner_id, text)
+            .await?
+        {
+            return Ok(());
+        }
         let is_command = text.trim_start().starts_with('/');
         if !is_command && let Some(pending) = self.tasks.take_input(conversation).await {
             return self
@@ -597,6 +609,7 @@ impl Engine {
         self.interactions.pending.lock().await.clear();
         self.interactions.reply_modes.lock().await.clear();
         self.interactions.session_inputs.lock().await.clear();
+        self.expire_directory_drafts().await;
         for (conversation, session) in self.state.list_bindings().await? {
             if self.sessions.current(&conversation).await.as_ref() != Some(&session) {
                 continue;
@@ -622,6 +635,7 @@ impl Engine {
         match &event {
             AgentEvent::Connected { .. } => return Ok(()),
             AgentEvent::Disconnected { generation, .. } => {
+                self.expire_directory_drafts().await;
                 self.interactions
                     .actions
                     .lock()
