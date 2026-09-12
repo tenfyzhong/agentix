@@ -147,7 +147,7 @@ impl Engine {
             if self.sessions.epoch(&conversation).await != epoch {
                 continue;
             }
-            self.update_command_menu_best_effort(
+            self.sync_command_menu_best_effort(
                 &conversation,
                 status != RestoredBindingStatus::Detached,
             )
@@ -155,7 +155,7 @@ impl Engine {
             if self.sessions.epoch(&conversation).await != epoch {
                 // A slow old request may have overwritten the newer binding's menu.
                 let attached_now = self.sessions.current(&conversation).await.is_some();
-                self.update_command_menu_best_effort(&conversation, attached_now)
+                self.sync_command_menu_best_effort(&conversation, attached_now)
                     .await;
                 continue;
             }

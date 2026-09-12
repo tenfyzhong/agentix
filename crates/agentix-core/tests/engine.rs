@@ -819,6 +819,7 @@ struct FakeChannel {
     messages: Arc<Mutex<HashMap<MessageRef, OutboundView>>>,
     session_commands: Arc<Mutex<Vec<(ConversationRef, bool)>>>,
     menus: Arc<Mutex<Vec<CommandMenu>>>,
+    synced_menus: Arc<Mutex<Vec<CommandMenu>>>,
     fail_menu_updates: Arc<Mutex<bool>>,
     task_send_failures: Arc<Mutex<usize>>,
     inbox_send_failures: Arc<Mutex<usize>>,
@@ -955,6 +956,18 @@ impl ChannelAdapter for FakeChannel {
 
     async fn disable_actions(&self, message: &MessageRef) -> Result<(), ChannelError> {
         self.disabled_actions.lock().unwrap().push(message.clone());
+        Ok(())
+    }
+
+    async fn sync_command_menu(
+        &self,
+        conversation: &ConversationRef,
+        menu: &CommandMenu,
+    ) -> Result<(), ChannelError> {
+        self.synced_menus.lock().unwrap().push(menu.clone());
+        if self.kind() == ChannelKind::Telegram {
+            self.set_command_menu(conversation, menu).await?;
+        }
         Ok(())
     }
 
@@ -3715,6 +3728,57 @@ async fn restore_reopens_persisted_agent_subscriptions() {
         .await
         .unwrap();
     assert!(agent.calls().contains(&"start:thr_a:continue".to_string()));
+}
+
+#[tokio::test]
+async fn startup_skips_command_cards_and_preserves_explicit_help() {
+    for kind in [ChannelKind::Feishu, ChannelKind::Slack] {
+        for (session, subtitle) in [
+            ("thr_a", "Online · Reattached"),
+            ("thr_offline", "Online · Waiting for agent"),
+            ("thr_missing", "Online · Detached"),
+        ] {
+            let agent = Arc::new(FakeAgent::rejecting_attachment("thr_missing"));
+            agent
+                .unavailable_attachments
+                .lock()
+                .unwrap()
+                .push(SessionId::new("thr_offline"));
+            let channel = Arc::new(FakeChannel {
+                channel_kind: Some(kind),
+                ..FakeChannel::default()
+            });
+            let state = SqliteState::in_memory().await.unwrap();
+            let conversation = ConversationRef::new(kind, "chat-a");
+            state
+                .attach(&conversation, &SessionId::new(session))
+                .await
+                .unwrap();
+            let engine = Engine::new(agent, state, vec![channel.clone()]);
+
+            engine.restore_bindings().await.unwrap();
+
+            assert!(
+                channel.session_commands().is_empty(),
+                "startup requested a command card for {kind:?} / {session}"
+            );
+            assert_eq!(channel.synced_menus.lock().unwrap().len(), 1);
+            let sent = channel.sent();
+            assert_eq!(sent.len(), 1);
+            assert_eq!(sent[0].1.title, "Agentix serve");
+            assert_eq!(sent[0].1.subtitle.as_deref(), Some(subtitle));
+            engine
+                .handle_inbound(InboundEnvelope::text(
+                    "help",
+                    conversation,
+                    "owner",
+                    "/help",
+                ))
+                .await
+                .unwrap();
+            assert_eq!(channel.sent().last().unwrap().1.title, "Agentix commands");
+        }
+    }
 }
 
 #[tokio::test]

@@ -836,10 +836,34 @@ impl Engine {
         conversation: &ConversationRef,
         attached: bool,
     ) -> Result<(), EngineError> {
-        let channel = self
-            .channels
-            .get(&conversation.channel)
-            .ok_or(EngineError::MissingChannel(conversation.channel))?;
+        let channel = self.channel(conversation.channel)?;
+        let menu = self.conversation_command_menu(conversation, attached).await;
+        channel.set_command_menu(conversation, &menu).await?;
+        Ok(())
+    }
+
+    pub(super) async fn sync_command_menu_best_effort(
+        &self,
+        conversation: &ConversationRef,
+        attached: bool,
+    ) {
+        let result = async {
+            let channel = self.channel(conversation.channel)?;
+            let menu = self.conversation_command_menu(conversation, attached).await;
+            channel.sync_command_menu(conversation, &menu).await?;
+            Ok::<(), EngineError>(())
+        }
+        .await;
+        if let Err(error) = result {
+            tracing::warn!(%error, ?conversation, attached, "failed to synchronize the IM command menu");
+        }
+    }
+
+    async fn conversation_command_menu(
+        &self,
+        conversation: &ConversationRef,
+        attached: bool,
+    ) -> crate::CommandMenu {
         let mut menu = command_menu(attached && self.agent.capabilities().session_control);
         if attached && let Some(session) = self.sessions.current(conversation).await {
             let mut commands = Vec::new();
@@ -898,8 +922,7 @@ impl Engine {
                 .cmp(&rank(right))
                 .then_with(|| left.name.cmp(&right.name))
         });
-        channel.set_command_menu(conversation, &menu).await?;
-        Ok(())
+        menu
     }
 
     pub(super) async fn stop_current(

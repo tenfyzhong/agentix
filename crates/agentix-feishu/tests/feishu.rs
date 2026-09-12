@@ -196,6 +196,12 @@ async fn feishu_command_menu_is_sent_once_and_updated_for_attached_sessions() {
     ]);
 
     adapter
+        .sync_command_menu(&conversation, &attached)
+        .await
+        .unwrap();
+    assert!(server.requests().await.is_empty());
+
+    adapter
         .set_command_menu(&conversation, &detached)
         .await
         .unwrap();

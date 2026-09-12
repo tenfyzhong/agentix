@@ -214,6 +214,8 @@ Shutdown stops admission, gives active workers one second to settle, then aborts
 
 `ConversationRef` consists of channel kind and channel-native conversation ID. `SessionId` is opaque; `SessionKey` encodes the backend and native ID at the registry boundary. Multiple configured adapters can therefore expose identical native IDs without sharing binding, action, history, or dispatch state.
 
+Startup menu synchronization uses `ChannelAdapter::sync_command_menu`, whose contract forbids sending chat messages and defaults to no operation. Telegram implements it by updating native command metadata; Feishu and Slack inherit the default. Interactive menu presentation continues to use `set_command_menu`. The engine builds the shared command catalog and delegates both operations without selecting platform behavior.
+
 At startup, each configured channel adapter supplies its stable, non-secret bot identity before durable routes are restored. SQLite's `channel_identities` table associates all routing state for a channel with its configured bot (one bot per channel). A changed or unknown identity atomically invalidates that channel's bindings, message views, interactions, deduplication records, and notification outbox, while retaining monotonic binding epochs and notification cursors. Identity resolution belongs to adapters; reconciliation and restoration use the shared domain contract. See [changing the configured bot](usage.md#changing-the-configured-bot).
 
 ## 4. Binding state machine

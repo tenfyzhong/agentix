@@ -285,6 +285,17 @@ pub trait ChannelAdapter: Send + Sync {
         Ok(())
     }
 
+    /// Synchronizes native command metadata without sending chat messages.
+    /// Channels that present menus as messages may leave this as a no-op.
+    async fn sync_command_menu(
+        &self,
+        _conversation: &ConversationRef,
+        _menu: &CommandMenu,
+    ) -> Result<(), ChannelError> {
+        Ok(())
+    }
+
+    /// Presents or updates the command menu, potentially sending a chat message.
     async fn set_command_menu(
         &self,
         _conversation: &ConversationRef,

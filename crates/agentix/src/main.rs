@@ -1427,7 +1427,7 @@ mod tests {
             Ok(())
         }
 
-        async fn set_command_menu(
+        async fn sync_command_menu(
             &self,
             _conversation: &ConversationRef,
             menu: &agentix_core::CommandMenu,
