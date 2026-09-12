@@ -2141,7 +2141,11 @@ impl WorkspaceRuntimePort for CodexClient {
                 location.pane_index
             )
         };
-        Ok(MultiplexerMutationResult { message, session })
+        Ok(MultiplexerMutationResult {
+            pane_id: location.pane_id,
+            message,
+            session,
+        })
     }
 }
 

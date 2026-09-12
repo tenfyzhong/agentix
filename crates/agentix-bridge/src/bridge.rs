@@ -582,6 +582,7 @@ impl WorkspaceRuntimePort for BridgeAdapter {
         let outcome = workspace.execute(&prepared).await.map_err(unavailable)?;
         if !prepared.mutation.launch_agent {
             return Ok(MultiplexerMutationResult {
+                pane_id: outcome.location.pane_id.clone(),
                 message: "Shell created".into(),
                 session: None,
             });
@@ -598,6 +599,7 @@ impl WorkspaceRuntimePort for BridgeAdapter {
             }) {
                 self.attach(&session.id).await?;
                 return Ok(MultiplexerMutationResult {
+                    pane_id: outcome.location.pane_id.clone(),
                     message: format!(
                         "{} started in {} pane {}",
                         self.display_name(),

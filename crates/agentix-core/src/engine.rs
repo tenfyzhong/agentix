@@ -136,7 +136,7 @@ enum UiAction {
         command: SessionCommand,
     },
     Multiplexer(Option<crate::AgentKind>, MultiplexerUiAction),
-    MultiplexerBackend(crate::AgentKind),
+    MultiplexerLaunch(Option<crate::AgentKind>, String),
 }
 
 impl UiAction {
@@ -156,7 +156,7 @@ impl UiAction {
             | Self::BeginInput(interaction)
             | Self::SelectInput { interaction, .. }
             | Self::BeginCustomInput(interaction) => &interaction.session_id == session_id,
-            Self::Multiplexer(..) | Self::MultiplexerBackend(_) | Self::TaskBrowse(_) => false,
+            Self::Multiplexer(..) | Self::MultiplexerLaunch(..) | Self::TaskBrowse(_) => false,
             Self::Task(action) => &action.session_id == session_id,
         }
     }
@@ -171,6 +171,9 @@ enum MultiplexerUiAction {
     ShowWindow {
         session_id: String,
         window_id: String,
+    },
+    ChooseAgent {
+        pane_id: String,
     },
     Mutate(MultiplexerMutation),
 }

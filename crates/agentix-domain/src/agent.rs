@@ -146,6 +146,9 @@ pub struct MultiplexerMutation {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MultiplexerMutationResult {
+    /// The exact pane created or reused by this operation.
+    #[serde(default)]
+    pub pane_id: String,
     pub message: String,
     pub session: Option<SessionSummary>,
 }

@@ -39,15 +39,6 @@ impl Engine {
         self.show_multiplexer_root(conversation, owner_id).await
     }
 
-    pub(super) async fn multiplexer_agent_name(
-        &self,
-        conversation: &ConversationRef,
-    ) -> &'static str {
-        self.multiplexer_backend(conversation)
-            .await
-            .map_or(self.agent.display_name(), crate::AgentKind::display_name)
-    }
-
     pub(super) async fn multiplexer_backend(
         &self,
         conversation: &ConversationRef,
@@ -60,11 +51,7 @@ impl Engine {
             .copied()
     }
 
-    pub(super) async fn ensure_multiplexer_backend(
-        &self,
-        conversation: &ConversationRef,
-        owner_id: &str,
-    ) -> Result<bool, EngineError> {
+    async fn ensure_multiplexer_backend(&self, conversation: &ConversationRef) {
         let backends = self.agent.workspace_backends();
         if self.multiplexer_backend(conversation).await.is_none() {
             let attached = self
@@ -73,40 +60,19 @@ impl Engine {
                 .await
                 .and_then(|id| crate::SessionKey::decode(&id))
                 .map(|key| key.agent);
+            // Browsing and empty pane creation only need a workspace runtime.
+            // The launch backend is chosen explicitly after the pane exists.
             if let Some(kind) = attached
                 .filter(|kind| backends.contains(kind))
-                .or_else(|| (backends.len() == 1).then(|| backends[0]))
+                .or_else(|| backends.first().copied())
             {
                 self.multiplexer
                     .selected
                     .lock()
                     .await
                     .insert(conversation.clone(), kind);
-            } else if backends.len() > 1 {
-                let mut view = OutboundView::text(
-                    format!("Terminal · {}", self.multiplexer_kind),
-                    "Choose the agent to launch.",
-                );
-                for kind in backends {
-                    let token = self
-                        .issue_action(
-                            conversation,
-                            owner_id,
-                            "multiplexer-backends",
-                            UiAction::MultiplexerBackend(kind),
-                        )
-                        .await;
-                    view.actions.push(ActionButton {
-                        label: kind.display_name().into(),
-                        token,
-                        style: ActionStyle::Default,
-                    });
-                }
-                self.send_view(conversation, &view).await?;
-                return Ok(false);
             }
         }
-        Ok(true)
     }
 
     pub(super) async fn show_multiplexer_root(
@@ -114,12 +80,7 @@ impl Engine {
         conversation: &ConversationRef,
         owner_id: &str,
     ) -> Result<(), EngineError> {
-        if !self
-            .ensure_multiplexer_backend(conversation, owner_id)
-            .await?
-        {
-            return Ok(());
-        }
+        self.ensure_multiplexer_backend(conversation).await;
         let Some(workspace) = self
             .multiplexer
             .runtime(self.agent.as_ref(), conversation)
@@ -233,14 +194,10 @@ impl Engine {
                 "+ Session",
                 MultiplexerUiAction::Mutate(MultiplexerMutation {
                     target: MultiplexerTarget::NewSession {
-                        name: self
-                            .multiplexer_backend(conversation)
-                            .await
-                            .map_or("codex", |kind| kind.as_str())
-                            .into(),
+                        name: "shell".into(),
                         cwd: default_directory,
                     },
-                    launch_agent: true,
+                    launch_agent: false,
                 }),
             ),
             ("Refresh", MultiplexerUiAction::ShowRoot),
@@ -352,14 +309,10 @@ impl Engine {
                 MultiplexerUiAction::Mutate(MultiplexerMutation {
                     target: MultiplexerTarget::NewWindow {
                         session_id: session.id.clone(),
-                        name: self
-                            .multiplexer_backend(conversation)
-                            .await
-                            .map_or("codex", |kind| kind.as_str())
-                            .into(),
+                        name: "shell".into(),
                         cwd: default_directory,
                     },
-                    launch_agent: true,
+                    launch_agent: false,
                 }),
             ),
             ("← Back", MultiplexerUiAction::ShowRoot),
@@ -489,19 +442,12 @@ impl Engine {
                 )
             } else if is_shell_command(&pane.current_command) {
                 (
-                    format!(
-                        "{} · Run {}",
-                        pane.index,
-                        self.multiplexer_agent_name(conversation).await
-                    ),
+                    format!("{} · Run agent", pane.index),
                     UiAction::Multiplexer(
                         self.multiplexer_backend(conversation).await,
-                        MultiplexerUiAction::Mutate(MultiplexerMutation {
-                            target: MultiplexerTarget::ExistingPane {
-                                pane_id: pane.id.clone(),
-                            },
-                            launch_agent: true,
-                        }),
+                        MultiplexerUiAction::ChooseAgent {
+                            pane_id: pane.id.clone(),
+                        },
                     ),
                 )
             } else {
@@ -539,20 +485,8 @@ impl Engine {
             .default_directory(self.agent.as_ref(), conversation)
             .await;
         for (label, direction) in [
-            (
-                format!(
-                    "Split ↔ + {}",
-                    self.multiplexer_agent_name(conversation).await
-                ),
-                PaneSplitDirection::Horizontal,
-            ),
-            (
-                format!(
-                    "Split ↕ + {}",
-                    self.multiplexer_agent_name(conversation).await
-                ),
-                PaneSplitDirection::Vertical,
-            ),
+            ("Split ↔", PaneSplitDirection::Horizontal),
+            ("Split ↕", PaneSplitDirection::Vertical),
         ] {
             let action = UiAction::Multiplexer(
                 self.multiplexer_backend(conversation).await,
@@ -562,14 +496,14 @@ impl Engine {
                         direction,
                         cwd: default_directory.clone(),
                     },
-                    launch_agent: true,
+                    launch_agent: false,
                 }),
             );
             let token = self
                 .issue_action(conversation, owner_id, action_group, action)
                 .await;
             actions.push(ActionButton {
-                label,
+                label: label.into(),
                 token,
                 style: ActionStyle::Default,
             });
@@ -613,16 +547,87 @@ impl Engine {
                 self.show_multiplexer_window(conversation, owner_id, &session_id, &window_id)
                     .await
             }
+            MultiplexerUiAction::ChooseAgent { pane_id } => {
+                self.show_multiplexer_agent_picker(conversation, owner_id, &pane_id)
+                    .await
+            }
             MultiplexerUiAction::Mutate(mutation) => {
-                self.execute_multiplexer_mutation(conversation, mutation)
+                self.execute_multiplexer_mutation(conversation, owner_id, mutation)
                     .await
             }
         }
     }
 
+    pub(super) async fn launch_multiplexer_agent(
+        &self,
+        conversation: &ConversationRef,
+        owner_id: &str,
+        backend: Option<crate::AgentKind>,
+        pane_id: String,
+    ) -> Result<(), EngineError> {
+        if let Some(kind) = backend {
+            if !self.agent.workspace_backends().contains(&kind) {
+                return Err(EngineError::InvalidAction);
+            }
+            self.multiplexer
+                .selected
+                .lock()
+                .await
+                .insert(conversation.clone(), kind);
+        }
+        self.execute_multiplexer_mutation(
+            conversation,
+            owner_id,
+            MultiplexerMutation {
+                target: MultiplexerTarget::ExistingPane { pane_id },
+                launch_agent: true,
+            },
+        )
+        .await
+    }
+
+    async fn show_multiplexer_agent_picker(
+        &self,
+        conversation: &ConversationRef,
+        owner_id: &str,
+        pane_id: &str,
+    ) -> Result<(), EngineError> {
+        let mut view = OutboundView::text(
+            format!("Terminal · {}", self.multiplexer_kind),
+            format!("Pane `{pane_id}` is ready. Choose the agent to launch."),
+        );
+        let group = Uuid::new_v4().simple().to_string();
+        let backends = self.agent.workspace_backends();
+        let choices = if backends.is_empty() {
+            vec![None]
+        } else {
+            backends.into_iter().map(Some).collect()
+        };
+        for backend in choices {
+            let token = self
+                .issue_action(
+                    conversation,
+                    owner_id,
+                    &group,
+                    UiAction::MultiplexerLaunch(backend, pane_id.into()),
+                )
+                .await;
+            view.actions.push(ActionButton {
+                label: backend
+                    .map_or(self.agent.display_name(), crate::AgentKind::display_name)
+                    .into(),
+                token,
+                style: ActionStyle::Default,
+            });
+        }
+        self.send_view(conversation, &view).await?;
+        Ok(())
+    }
+
     pub(super) async fn execute_multiplexer_mutation(
         &self,
         conversation: &ConversationRef,
+        owner_id: &str,
         mutation: MultiplexerMutation,
     ) -> Result<(), EngineError> {
         let result = match self
@@ -650,6 +655,11 @@ impl Engine {
                 return Ok(());
             }
         };
+        if result.session.is_none() && !result.pane_id.is_empty() {
+            return self
+                .show_multiplexer_agent_picker(conversation, owner_id, &result.pane_id)
+                .await;
+        }
         let subtitle = if let Some(session) = result.session {
             let session_id = session.id.clone();
             let old = self

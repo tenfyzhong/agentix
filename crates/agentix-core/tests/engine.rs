@@ -354,14 +354,14 @@ async fn rmux_selects_backend_before_launch_and_keeps_chats_independent() {
             .1
             .actions
             .iter()
-            .any(|a| a.label == "Pi")
+            .any(|a| a.label == "+ Session")
     );
     engine
         .handle_inbound(inbound("chat-a", "/rmux pi"))
         .await
         .unwrap();
     assert!(pi.calls().iter().any(|c| c == "mux-snapshot:auto"));
-    assert!(codex.calls().is_empty());
+    assert!(codex.calls().iter().all(|c| c == "mux-snapshot:auto"));
     engine
         .handle_inbound(inbound("chat-b", "/rmux codex"))
         .await
@@ -734,6 +734,10 @@ impl WorkspaceRuntimePort for FakeAgent {
             .unwrap()
             .push(format!("mux-mutate:{mutation:?}"));
         Ok(MultiplexerMutationResult {
+            pane_id: match &mutation.target {
+                agentix_core::MultiplexerTarget::ExistingPane { pane_id } => pane_id.clone(),
+                _ => "%new".into(),
+            },
             message: if mutation.launch_agent {
                 "Codex started in the target pane.".into()
             } else {
@@ -1992,16 +1996,16 @@ async fn multiplexer_browser_auto_selects_one_backend_and_navigates_to_panes() {
         .map(|action| action.label.as_str())
         .collect::<Vec<_>>();
     assert!(labels.contains(&"0 · Attach"));
-    assert!(labels.contains(&"1 · Run Codex"));
+    assert!(labels.contains(&"1 · Run agent"));
     assert!(!labels.iter().any(|label| label.starts_with("2 ·")));
-    assert!(labels.contains(&"Split ↔ + Codex"));
-    assert!(labels.contains(&"Split ↕ + Codex"));
+    assert!(labels.contains(&"Split ↔"));
+    assert!(labels.contains(&"Split ↕"));
     assert!(!labels.iter().any(|label| label.contains("Shell")));
 
     let split_token = window
         .actions
         .iter()
-        .find(|action| action.label == "Split ↔ + Codex")
+        .find(|action| action.label == "Split ↔")
         .unwrap()
         .token
         .clone();
@@ -2018,12 +2022,12 @@ async fn multiplexer_browser_auto_selects_one_backend_and_navigates_to_panes() {
         call.contains("SplitPane")
             && call.contains("%2")
             && call.contains("cwd: \"/work/multiplexer\"")
-            && call.contains("launch_agent: true")
+            && call.contains("launch_agent: false")
     }));
 }
 
 #[tokio::test]
-async fn multiplexer_creation_can_start_codex_and_attach_the_new_thread() {
+async fn multiplexer_creation_waits_for_agent_selection_before_attaching() {
     let agent = Arc::new(FakeAgent::new());
     let channel = Arc::new(FakeChannel::default());
     let state = SqliteState::in_memory().await.unwrap();
@@ -2052,6 +2056,24 @@ async fn multiplexer_creation_can_start_codex_and_attach_the_new_thread() {
         .await
         .unwrap();
 
+    let picker = channel.sent().last().unwrap().1.clone();
+    assert!(picker.body.contains("Choose the agent"));
+    let token = picker
+        .actions
+        .iter()
+        .find(|a| a.label == "Codex")
+        .unwrap()
+        .token
+        .clone();
+    engine
+        .handle_inbound(InboundEnvelope::action(
+            "select-codex",
+            ConversationRef::new(ChannelKind::Telegram, "chat-a"),
+            "owner",
+            token,
+        ))
+        .await
+        .unwrap();
     let result = channel.sent().last().unwrap().1.clone();
     assert_eq!(
         result.subtitle.as_deref(),
@@ -2060,14 +2082,14 @@ async fn multiplexer_creation_can_start_codex_and_attach_the_new_thread() {
     assert!(result.body.contains("Codex started"));
     assert!(agent.calls().iter().any(|call| {
         call.contains("NewSession")
-            && call.contains("name: \"codex\"")
+            && call.contains("name: \"shell\"")
             && call.contains("cwd: \"/work/multiplexer\"")
-            && call.contains("launch_agent: true")
+            && call.contains("launch_agent: false")
     }));
 }
 
 #[tokio::test]
-async fn multiplexer_window_creation_uses_defaults_and_starts_codex_immediately() {
+async fn multiplexer_window_creation_uses_defaults_and_waits_for_agent() {
     let agent = Arc::new(FakeAgent::new());
     let channel = Arc::new(FakeChannel::default());
     let state = SqliteState::in_memory().await.unwrap();
@@ -2122,13 +2144,28 @@ async fn multiplexer_window_creation_uses_defaults_and_starts_codex_immediately(
     assert!(agent.calls().iter().any(|call| {
         call.contains("NewWindow")
             && call.contains("session_id: \"$1\"")
-            && call.contains("name: \"codex\"")
+            && call.contains("name: \"shell\"")
             && call.contains("cwd: \"/work/multiplexer\"")
-            && call.contains("launch_agent: true")
+            && call.contains("launch_agent: false")
     }));
-    assert_eq!(
-        channel.sent().last().unwrap().1.subtitle.as_deref(),
-        Some("Attached · Untitled · thr_mux_")
+    assert!(
+        channel
+            .sent()
+            .last()
+            .unwrap()
+            .1
+            .body
+            .contains("Choose the agent")
+    );
+    assert!(
+        channel
+            .sent()
+            .last()
+            .unwrap()
+            .1
+            .actions
+            .iter()
+            .any(|a| a.label == "Codex")
     );
 }
 
@@ -5710,4 +5747,177 @@ async fn configured_tmux_routes_commands_and_rejects_rmux() {
     let menu = agentix_core::command_menu_for(false, agentix_core::MultiplexerKind::Tmux);
     assert!(menu.commands.iter().any(|c| c.name == "tmux"));
     assert!(!menu.commands.iter().any(|c| c.name == "rmux"));
+}
+
+#[tokio::test]
+async fn multiplexer_creates_shell_then_selects_agent_for_exact_pane() {
+    use agentix_core::{AgentKind, MultiplexerKind};
+    for mux in [MultiplexerKind::Rmux, MultiplexerKind::Tmux] {
+        for (navigation, target) in [
+            (vec!["+ Session"], "NewSession"),
+            (vec!["agentix", "+ Window"], "NewWindow"),
+            (vec!["agentix", "0 · codex:agentix", "Split ↔"], "SplitPane"),
+            (vec!["agentix", "0 · codex:agentix", "Split ↕"], "SplitPane"),
+            (
+                vec!["agentix", "0 · codex:agentix", "1 · Run agent"],
+                "ExistingPane",
+            ),
+        ] {
+            for selected in [
+                AgentKind::Codex,
+                AgentKind::Claude,
+                AgentKind::Pi,
+                AgentKind::Omp,
+            ] {
+                check_pane_agent_choice(mux, &navigation, target, selected).await;
+            }
+        }
+    }
+}
+
+async fn check_pane_agent_choice(
+    mux: agentix_core::MultiplexerKind,
+    navigation: &[&str],
+    target: &str,
+    selected: agentix_core::AgentKind,
+) {
+    use agentix_core::{AgentKind, AgentRegistry};
+    let agents = [
+        AgentKind::Codex,
+        AgentKind::Claude,
+        AgentKind::Pi,
+        AgentKind::Omp,
+    ]
+    .map(|kind| (kind, Arc::new(FakeAgent::new())));
+    let registry = AgentRegistry::new(
+        agents
+            .iter()
+            .map(|(kind, agent)| (*kind, agent.clone() as Arc<dyn AgentAdapter>))
+            .collect(),
+    )
+    .unwrap();
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        Arc::new(registry),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    )
+    .with_multiplexer_kind(mux);
+    let conversation = ConversationRef::new(ChannelKind::Telegram, "chat-a");
+    engine
+        .handle_inbound(inbound("chat-a", &format!("/{mux} codex")))
+        .await
+        .unwrap();
+    for (i, label) in navigation.iter().enumerate() {
+        let view = channel.sent().last().unwrap().1.clone();
+        let token = view
+            .actions
+            .iter()
+            .find(|a| a.label == *label)
+            .unwrap_or_else(|| panic!("missing {label}: {view:?}"))
+            .token
+            .clone();
+        engine
+            .handle_inbound(InboundEnvelope::action(
+                format!("navigate-{i}"),
+                conversation.clone(),
+                "owner",
+                token,
+            ))
+            .await
+            .unwrap();
+    }
+    let creations: Vec<_> = agents[0]
+        .1
+        .calls()
+        .into_iter()
+        .filter(|c| c.starts_with("mux-mutate:"))
+        .collect();
+    if target == "ExistingPane" {
+        assert!(creations.is_empty());
+    } else {
+        assert_eq!(creations.len(), 1);
+        assert!(creations[0].contains(target));
+        assert!(
+            creations[0].contains("launch_agent: false"),
+            "must create an empty shell first: {creations:?}"
+        );
+    }
+    let picker = channel.sent().last().unwrap().1.clone();
+    for (kind, _) in &agents {
+        assert!(
+            picker
+                .actions
+                .iter()
+                .any(|a| a.label == kind.display_name())
+        );
+    }
+    let selected_agent = &agents.iter().find(|(kind, _)| *kind == selected).unwrap().1;
+    check_pane_agent_launch(&engine, &picker, selected_agent, selected, target).await;
+}
+
+async fn check_pane_agent_launch(
+    engine: &Engine,
+    picker: &OutboundView,
+    selected_agent: &FakeAgent,
+    selected: agentix_core::AgentKind,
+    target: &str,
+) {
+    let conversation = ConversationRef::new(ChannelKind::Telegram, "chat-a");
+    let token = picker
+        .actions
+        .iter()
+        .find(|a| a.label == selected.display_name())
+        .unwrap()
+        .token
+        .clone();
+    let other = picker
+        .actions
+        .iter()
+        .find(|a| a.label != selected.display_name())
+        .unwrap()
+        .token
+        .clone();
+    engine
+        .handle_inbound(InboundEnvelope::action(
+            "choose",
+            conversation.clone(),
+            "owner",
+            token,
+        ))
+        .await
+        .unwrap();
+    let expected_pane = if target == "ExistingPane" {
+        "%2"
+    } else {
+        "%new"
+    };
+    let calls = selected_agent.calls();
+    assert!(
+        calls.iter().any(|c| c.contains("ExistingPane")
+            && c.contains(expected_pane)
+            && c.contains("launch_agent: true")),
+        "{calls:?}"
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "hello selected agent"))
+        .await
+        .unwrap();
+    assert!(
+        selected_agent
+            .calls()
+            .iter()
+            .any(|c| c == "start:thr_mux_new:hello selected agent")
+    );
+    assert!(
+        engine
+            .handle_inbound(InboundEnvelope::action(
+                "reuse-choice",
+                conversation,
+                "owner",
+                other
+            ))
+            .await
+            .is_err()
+    );
 }
