@@ -817,8 +817,7 @@ impl Engine {
                 tracing::warn!(%error, ?displaced, "failed to notify a displaced conversation");
             }
         }
-        self.update_command_menu_best_effort(conversation, true)
-            .await;
+        self.sync_command_menu_best_effort(conversation, true).await;
     }
 
     pub(super) async fn update_command_menu_best_effort(

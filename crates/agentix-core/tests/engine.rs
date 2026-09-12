@@ -3731,6 +3731,68 @@ async fn restore_reopens_persisted_agent_subscriptions() {
 }
 
 #[tokio::test]
+async fn attachment_silently_syncs_commands_and_preserves_help() {
+    for kind in [
+        ChannelKind::Feishu,
+        ChannelKind::Slack,
+        ChannelKind::Telegram,
+    ] {
+        let agent = Arc::new(FakeAgent::new());
+        let channel = Arc::new(FakeChannel {
+            channel_kind: Some(kind),
+            ..FakeChannel::default()
+        });
+        let state = SqliteState::in_memory().await.unwrap();
+        let conversation = ConversationRef::new(kind, "chat-a");
+        let engine = Engine::new(agent, state.clone(), vec![channel.clone()]);
+
+        engine
+            .handle_inbound(InboundEnvelope::text(
+                "attach",
+                conversation.clone(),
+                "owner",
+                "/attach thr_a",
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            state.current_session(&conversation).await.unwrap(),
+            Some(SessionId::new("thr_a"))
+        );
+        if kind == ChannelKind::Telegram {
+            assert!(channel.session_commands().last().unwrap().1);
+        } else {
+            assert!(
+                channel.menus.lock().unwrap().is_empty(),
+                "attachment requested a command card for {kind:?}"
+            );
+        }
+        assert!(
+            channel
+                .synced_menus
+                .lock()
+                .unwrap()
+                .last()
+                .unwrap()
+                .commands
+                .iter()
+                .any(|command| command.contextual)
+        );
+        engine
+            .handle_inbound(InboundEnvelope::text(
+                "help",
+                conversation,
+                "owner",
+                "/help",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(channel.sent().last().unwrap().1.title, "Agentix commands");
+    }
+}
+
+#[tokio::test]
 async fn startup_skips_command_cards_and_preserves_explicit_help() {
     for kind in [ChannelKind::Feishu, ChannelKind::Slack] {
         for (session, subtitle) in [
