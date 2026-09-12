@@ -8,9 +8,8 @@ import { pathToFileURL } from "node:url";
 import { runHook, runTaskix } from "../runtime.mjs";
 import { loadPlugin, copy } from "./support/obsidian-plugin.mjs";
 
-// Cargo supplies its freshly compiled executable: these tests must never fall
-// back to a developer's installed taskix or normal task database.
-assert.ok(process.env.TASKIX_BIN, "Run through cargo test -p taskix");
+// Run through cargo test -p taskix, which prepends the compiled binary directory
+// to PATH. Each fixture uses an isolated configuration and database.
 
 async function fixture(t) {
     const dir = await mkdtemp(join(tmpdir(), "task-plugin \u{2603} "));
@@ -59,7 +58,7 @@ test("Obsidian bridge uses real CLI revisions, lease guards and manual Job revie
     const f = await fixture(t);
     const task = await f.run(["task", "add", "--job", f.job.id, "--title", "Bridge"]);
     const { SyncEngine, runCli } = loadPlugin();
-    const execute = (args) => runCli({ cliPath: process.env.TASKIX_BIN, configPath: process.env.TASKIX_CONFIG, vaultPath: f.root }, args);
+    const execute = (args) => runCli({ cliPath: "taskix", configPath: process.env.TASKIX_CONFIG, vaultPath: f.root }, args);
     const lookup = async (id) => (await execute(["obsidian", "show", id])).result;
     const files = new Map();
     const notices = [];
@@ -122,7 +121,7 @@ test("Inbox bridge edits real Markdown, enforces Job review and reopens complete
     const claimed = await f.run(["inbox", "claim-next", "--project", f.project.id], { session: "inbox-worker", executor: "agent:test" });
     const task = await f.run(["task", "add", "--job", claimed.job.id, "--title", "Implementation"]);
     const { SyncEngine, runCli, parseInbox, patchInbox } = loadPlugin();
-    const execute = (args) => runCli({ cliPath: process.env.TASKIX_BIN, configPath: process.env.TASKIX_CONFIG, vaultPath: f.root }, args);
+    const execute = (args) => runCli({ cliPath: "taskix", configPath: process.env.TASKIX_CONFIG, vaultPath: f.root }, args);
     const lookup = async (id) => (await execute(["obsidian", "show", id])).result;
     const note = await lookup(entry.id);
     const path = join(f.root, note.path);

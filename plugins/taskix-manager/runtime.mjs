@@ -34,7 +34,7 @@ export function buildArgs(args, options = {}) {
 export async function runTaskix(args, options = {}) {
     try {
         const { stdout } = await executeFile(
-            process.env.TASKIX_BIN || "taskix",
+            "taskix",
             buildArgs(args, options),
             {
                 cwd: options.cwd,

@@ -17,7 +17,7 @@ Codex and Claude share the common lifecycle hooks. Codex explicitly loads the sh
 
 ## Prerequisites and activation
 
-Install Node.js 24+ and put `taskix` on PATH, or set `TASKIX_BIN` to its executable path. Initialize taskix with your chosen document directory before enabling the plugin. Set `TASKIX_CONFIG` if its configuration is not in the default location.
+Install Node.js 24+ and put `taskix` on PATH. Initialize taskix with your chosen document directory before enabling the plugin. Set `TASKIX_CONFIG` if its configuration is not in the default location.
 
 ### Codex: marketplace
 

@@ -470,10 +470,17 @@ async fn killed_cli_after_database_commit_replays_without_duplicates_and_repairs
 fn plugin_entrypoints_execute_the_compiled_taskix() {
     let plugin =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins/taskix-manager");
+    let binary_dir = std::path::Path::new(env!("CARGO_BIN_EXE_taskix"))
+        .parent()
+        .unwrap();
+    let mut paths = vec![binary_dir.to_path_buf()];
+    paths.extend(std::env::split_paths(
+        &std::env::var_os("PATH").unwrap_or_default(),
+    ));
     let output = Command::new("node")
         .args(["--test", "tests/integration.mjs"])
         .current_dir(plugin)
-        .env("TASKIX_BIN", env!("CARGO_BIN_EXE_taskix"))
+        .env("PATH", std::env::join_paths(paths).unwrap())
         .output()
         .expect("Node.js 24+ is required for plugin integration tests");
     assert!(
