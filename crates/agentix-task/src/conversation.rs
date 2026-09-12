@@ -95,6 +95,31 @@ fn session_job_index(state: &Snapshot, request: &Value, session: &str) -> Result
     Ok(index)
 }
 
+fn planning_prompt<'a>(request: &'a Value, messages: &[Value]) -> Result<Option<&'a str>> {
+    request
+        .get("planning")
+        .map(|planning| -> Result<&str> {
+            let prompt = user_text(required(planning, "prompt")?);
+            let implementation = required(planning, "implementation_prompt")?;
+            ensure!(
+                !prompt.trim().is_empty()
+                    && implementation == "Implement the plan."
+                    && messages
+                        .iter()
+                        .find(|m| m["role"] == "user")
+                        .and_then(|m| m["text"].as_str())
+                        .map(user_text)
+                        == Some(prompt)
+                    && messages
+                        .iter()
+                        .any(|m| m["role"] == "user" && m["text"] == implementation),
+                "invalid: planning capture must include its original and implementation prompts"
+            );
+            Ok(prompt)
+        })
+        .transpose()
+}
+
 pub(crate) fn record(
     state: &mut Snapshot,
     request: &Value,
@@ -114,8 +139,17 @@ pub(crate) fn record(
         .as_array()
         .context("invalid: conversation messages")?;
     let job = &mut state.jobs[index];
+    let planning_prompt = planning_prompt(request, messages)?;
+    let mut prompt_changed = false;
+    if let Some(prompt) = planning_prompt
+        && (job.prompt.is_empty() || job.prompt == "Implement the plan.")
+        && job.prompt != prompt
+    {
+        job.prompt = prompt.into();
+        prompt_changed = true;
+    }
     let mut recorded = 0;
-    for message in messages {
+    for (position, message) in messages.iter().enumerate() {
         let id = required(message, "id")?;
         let role = required(message, "role")?;
         ensure!(
@@ -152,20 +186,35 @@ pub(crate) fn record(
         {
             pending.id = id.into();
         } else {
-            job.conversation.push(JobMessage {
-                id: id.into(),
-                session_id: session.into(),
-                role: role.into(),
-                text: text.into(),
-                recorded_at: now,
-            });
+            // The live bridge may already have recorded the execution turn.
+            // Insert recovered planning messages before the next known message
+            // in this ordered batch, preserving all other conversation entries.
+            let next = planning_prompt
+                .and_then(|_| {
+                    messages[position + 1..].iter().find_map(|following| {
+                        job.conversation.iter().position(|entry| {
+                            entry.session_id == session && following["id"] == entry.id
+                        })
+                    })
+                })
+                .unwrap_or(job.conversation.len());
+            job.conversation.insert(
+                next,
+                JobMessage {
+                    id: id.into(),
+                    session_id: session.into(),
+                    role: role.into(),
+                    text: text.into(),
+                    recorded_at: now,
+                },
+            );
         }
         if job.prompt.is_empty() && role == "user" {
             job.prompt = text.into();
         }
         recorded += 1;
     }
-    if recorded > 0 {
+    if recorded > 0 || prompt_changed {
         job.revision += 1;
         job.updated_at = now;
     }

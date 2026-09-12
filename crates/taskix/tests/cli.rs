@@ -1141,3 +1141,37 @@ fn hook_record_persists_only_text_in_its_sessions_job() {
         .clone();
     assert_eq!(current["conversation"][1]["text"], "Answer");
 }
+
+#[test]
+fn hook_record_accepts_planning_envelope() {
+    let cli = Cli::new();
+    let job = cli.job("Planning");
+    cli.ok(&["job", "update", &job, "--prompt", "Implement the plan."]);
+    let task = cli.task(&job, "Implement");
+    cli.claim(&task, "planning");
+    let file = cli.dir.path().join("planning.json");
+    std::fs::write(&file, serde_json::to_vec(&json!({
+        "messages":[
+            {"id":"p:u","role":"user","text":"Plan the feature"},
+            {"id":"p:a","role":"assistant","text":"<proposed_plan>Use local scope</proposed_plan>"},
+            {"id":"i:u","role":"user","text":"Implement the plan."}
+        ],
+        "planning":{"prompt":"Plan the feature","implementation_prompt":"Implement the plan."}
+    })).unwrap()).unwrap();
+    let args = [
+        "hook",
+        "record",
+        "--session",
+        "planning",
+        "--file",
+        file.to_str().unwrap(),
+    ];
+    assert_eq!(cli.ok(&args)["recorded"], 3);
+    assert_eq!(cli.ok(&args)["recorded"], 0);
+    let result = cli.ok(&["job", "show", &job]);
+    assert_eq!(result["prompt"], "Plan the feature");
+    assert_eq!(
+        result["conversation"][1]["text"],
+        "<proposed_plan>Use local scope</proposed_plan>"
+    );
+}

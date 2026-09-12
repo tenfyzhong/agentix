@@ -668,3 +668,38 @@ for (const host of ["pi", "omp"]) {
         assert.equal((await f.run(["plan", "show", task.id])).body, "# Revised prefix plan");
     });
 }
+
+test("Codex plan acceptance persists planning history through the real CLI", async (t) => {
+    const f = await fixture(t);
+    await f.run(["job", "update", f.job.id, "--prompt", "Implement the plan."]);
+    const task = await f.run(["task", "add", "--job", f.job.id, "--title", "Implement plan"]);
+    await f.run(["task", "claim", task.id], {executor:"agent:codex",session:"plan-session"});
+    const transcript = join(f.dir, "session.jsonl");
+    const rows = [
+        {type:"event_msg",payload:{type:"task_started",turn_id:"p"}},
+        {type:"turn_context",payload:{collaboration_mode:{mode:"plan"}}},
+        {type:"response_item",payload:{type:"message",id:"u",role:"user",content:"Plan the feature"}},
+        {type:"response_item",payload:{type:"function_call",name:"request_user_input",call_id:"q",arguments:JSON.stringify({questions:[{id:"scope",question:"Which scope?",options:[{label:"Local",description:"This project"}]}]})}},
+        {type:"response_item",payload:{type:"function_call_output",call_id:"q",output:JSON.stringify({answers:{scope:{answers:["Local"]}}})}},
+        {type:"response_item",payload:{type:"message",id:"a",role:"assistant",content:"<proposed_plan>\n# Feature\nUse local scope\n</proposed_plan>"}},
+        {type:"event_msg",payload:{type:"task_started",turn_id:"i"}},
+        {type:"turn_context",payload:{collaboration_mode:{mode:"default"}}},
+        {type:"response_item",payload:{type:"message",id:"u",role:"user",content:"Implement the plan."}},
+        {type:"response_item",payload:{type:"message",id:"a",role:"assistant",content:"Implemented"}},
+    ];
+    await writeFile(transcript, rows.map(row => JSON.stringify(row)).join("\n"));
+    const event = {hook_event_name:"Stop",session_id:"plan-session",cwd:f.dir,transcript_path:transcript};
+    await runHook(event);
+    const first = await f.run(["job", "show", f.job.id]);
+    await runHook(event);
+    assert.deepEqual(await f.run(["job", "show", f.job.id]), first);
+    assert.equal(first.prompt, "Plan the feature");
+    assert.deepEqual(first.conversation.map(message => message.text), [
+        "Plan the feature", "Which scope?\n\n- Local: This project", "Which scope?\nLocal",
+        "<proposed_plan>\n# Feature\nUse local scope\n</proposed_plan>", "Implement the plan.", "Implemented",
+    ]);
+    const doc = await readFile(join(f.root, "Tasks \u{2603}", first.document_path), "utf8");
+    assert.ok(doc.includes("    Plan the feature"));
+    assert.ok(doc.includes("> # Feature"));
+    assert.ok(doc.includes("    Which scope?\n    Local"));
+});

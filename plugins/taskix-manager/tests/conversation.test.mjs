@@ -158,3 +158,77 @@ test("Pi and OMP agent_end persist prompt and visible output only", async () => 
         await handlers.get("session_shutdown")({},ctx);
     }
 });
+
+const codexMessage = (role, content, id) => ({type:"response_item",payload:{type:"message",role,content,id}});
+const codexTurn = (id, mode, ...rows) => [
+    {type:"event_msg",payload:{type:"task_started",turn_id:id}},
+    {type:"turn_context",payload:{collaboration_mode:{mode}}},
+    ...rows,
+];
+const planQuestions = {questions:[{id:"scope",header:"Scope",question:"Which scope?",options:[
+    {label:"Local",description:"Only this project"}, {label:"Global",description:"All projects"},
+]}]};
+const questionCall = {type:"response_item",payload:{type:"function_call",name:"request_user_input",call_id:"choice",arguments:JSON.stringify(planQuestions)}};
+const questionAnswer = {type:"response_item",payload:{type:"function_call_output",call_id:"choice",output:JSON.stringify({answers:{scope:{answers:["Local"]}}})}};
+
+test("Codex planning captures questions, choices and answers but excludes other tools", async (t) => {
+    const batches = await captureHook(t, codexTurn("plan", "plan",
+        codexMessage("user", "Plan the change", "u"), questionCall, questionAnswer,
+        {type:"response_item",payload:{type:"function_call",name:"exec_command",call_id:"shell",arguments:'{"cmd":"private"}'}},
+        {type:"response_item",payload:{type:"function_call_output",call_id:"shell",output:'{"answers":{"secret":"private"}}'}},
+        codexMessage("assistant", "<proposed_plan>\n# Plan\n\nUse local scope.\n</proposed_plan>", "a"),
+    ));
+    assert.deepEqual(batches[0].map(({role,text}) => ({role,text})), [
+        {role:"user",text:"Plan the change"},
+        {role:"assistant",text:"Which scope?\n\n- Local: Only this project\n- Global: All projects"},
+        {role:"user",text:"Which scope?\nLocal"},
+        {role:"assistant",text:"<proposed_plan>\n# Plan\n\nUse local scope.\n</proposed_plan>"},
+    ]);
+    assert.equal(new Set(batches[0].map(message => message.id)).size, 4);
+});
+
+test("implementing a plan recovers consecutive planning turns with stable identities", async (t) => {
+    const plans = [
+        ...codexTurn("p1", "plan", codexMessage("user", "Plan the change", "u"), questionCall, questionAnswer,
+            codexMessage("assistant", "<proposed_plan>First plan</proposed_plan>", "a")),
+        ...codexTurn("p2", "plan", codexMessage("user", "Use HOME as fallback", "u"),
+            codexMessage("assistant", "<proposed_plan>Revised plan</proposed_plan>", "a")),
+    ];
+    const implementation = codexTurn("implementation", "default",
+        codexMessage("user", "Implement the plan.", "u"), codexMessage("assistant", "Implemented", "a"));
+    const prior = codexTurn("old", "default", codexMessage("user", "Unrelated work", "u"));
+    const batches = await captureHook(t, [...prior, ...plans, ...implementation]);
+    assert.equal(batches[0].messages[0].text, "Plan the change");
+    assert.equal(batches[0].messages.at(-1).text, "Implemented");
+    assert.equal(batches[0].messages.length, 8);
+    assert.deepEqual(batches[0].planning, {prompt:"Plan the change",implementation_prompt:"Implement the plan."});
+    const first = await captureHook(t, plans.slice(0, 6));
+    assert.deepEqual(batches[0].messages.slice(0, 4), first[0]);
+    const unrelated = await captureHook(t, [...plans, ...codexTurn("next", "default",
+        codexMessage("user", "Fix a different bug", "u"), codexMessage("assistant", "Fixed", "a"))]);
+    assert.deepEqual(unrelated[0].map(message => message.text), ["Fix a different bug", "Fixed"]);
+});
+
+test("planning recovery stops at execution turns and requires a proposed plan", async (t) => {
+    for (const previous of [
+        codexTurn("p", "plan", codexMessage("user", "Unfinished planning", "u")),
+        [...codexTurn("p", "plan", codexMessage("user", "Old plan", "u"),
+            codexMessage("assistant", "<proposed_plan>Old</proposed_plan>", "a")),
+        ...codexTurn("other", "default", codexMessage("user", "Other work", "u"))],
+    ]) {
+        const batches = await captureHook(t, [...previous, ...codexTurn("i", "default",
+            codexMessage("user", "Implement the plan.", "u"), codexMessage("assistant", "Done", "a"))]);
+        assert.deepEqual(batches[0].map(message => message.text), ["Implement the plan.", "Done"]);
+    }
+});
+
+test("question capture tolerates malformed results and keeps free text answers", async (t) => {
+    const malformed = {...questionCall,payload:{...questionCall.payload,call_id:"bad",arguments:"{"}};
+    const answers = {...questionAnswer,payload:{...questionAnswer.payload,output:JSON.stringify({answers:{scope:{answers:["Custom scope", "With exceptions"]}}})}};
+    const batches = await captureHook(t, codexTurn("p", "plan",
+        codexMessage("user", "Request", "u"), malformed, questionCall, answers,
+        {type:"response_item",payload:{type:"function_call_output",call_id:"choice",output:"Tool failed"}},
+    ));
+    assert.deepEqual(batches[0].map(message => message.text), ["Request",
+        "Which scope?\n\n- Local: Only this project\n- Global: All projects", "Which scope?\nCustom scope\nWith exceptions"]);
+});

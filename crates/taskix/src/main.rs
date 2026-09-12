@@ -1076,9 +1076,17 @@ async fn hook(cli: &Cli, service: &Service, action: &HookCommand) -> Result<Valu
         .context("hook requires session_id on stdin or --session")?;
     let command = match action {
         HookCommand::Record { file, job } => {
-            let messages: Value = serde_json::from_slice(&std::fs::read(file)?)?;
+            let capture: Value = serde_json::from_slice(&std::fs::read(file)?)?;
+            let messages = if capture.is_array() {
+                &capture
+            } else {
+                &capture["messages"]
+            };
             let mut request =
                 json!({"command":"session.record","session":session,"messages":messages});
+            if let Some(planning) = capture.get("planning") {
+                request["planning"] = planning.clone();
+            }
             if let Some(job) = job {
                 request["job"] = json!(job);
             }
