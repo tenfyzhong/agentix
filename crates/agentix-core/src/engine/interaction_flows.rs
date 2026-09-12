@@ -273,13 +273,9 @@ impl Engine {
                 self.run_session_command(conversation, owner_id, command)
                     .await?;
             }
-            UiAction::MultiplexerBackend(kind) => {
-                self.multiplexer
-                    .selected
-                    .lock()
-                    .await
-                    .insert(conversation.clone(), kind);
-                self.show_multiplexer_root(conversation, owner_id).await?;
+            UiAction::MultiplexerLaunch(backend, pane_id) => {
+                self.launch_multiplexer_agent(conversation, owner_id, backend, pane_id)
+                    .await?;
             }
             UiAction::Multiplexer(backend, action) => {
                 if self.multiplexer_backend(conversation).await != backend {

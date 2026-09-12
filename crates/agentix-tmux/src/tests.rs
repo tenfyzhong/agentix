@@ -156,3 +156,148 @@ async fn native_workspace_creation_and_launch_preserve_arguments() {
         output.stdout
     );
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn native_agent_exit_restores_usable_shell() {
+    if std::env::var_os("AGENTIX_TEST_TMUX").is_none() {
+        return;
+    }
+    let root = tempfile::tempdir().unwrap();
+    let socket = root.path().join("tmux.sock");
+    let driver = TmuxDriver::with_command("tmux".into(), Some(socket.clone()));
+    let _cleanup = Cleanup(socket);
+    let pane = driver
+        .run(&strings(&[
+            "new-session",
+            "-d",
+            "-P",
+            "-F",
+            "#{pane_id}",
+            "-s",
+            "exit-test",
+        ]))
+        .await
+        .unwrap();
+    let pane = pane.trim();
+    for status in ["0", "7", "interrupt"] {
+        let argv = if status == "interrupt" {
+            strings(&["/bin/sleep", "30"])
+        } else {
+            strings(&["/bin/sh", "-c", &format!("exit {status}")])
+        };
+        driver
+            .launch(pane, &root.path().display().to_string(), &argv)
+            .await
+            .unwrap();
+        if status == "interrupt" {
+            wait_for_pane_command(&driver, pane, "sleep").await;
+            driver
+                .run(&strings(&["send-keys", "-t", pane, "C-c"]))
+                .await
+                .unwrap();
+        }
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let state = driver
+                    .run(&strings(&[
+                        "display-message",
+                        "-p",
+                        "-t",
+                        pane,
+                        "#{pane_dead}|#{pane_current_command}",
+                    ]))
+                    .await
+                    .unwrap();
+                if state
+                    .trim()
+                    .strip_prefix("0|")
+                    .is_some_and(is_shell_command)
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .expect("agent exit must leave a live interactive shell");
+        let marker = format!("result-{status}");
+        driver
+            .run(&strings(&[
+                "send-keys",
+                "-t",
+                pane,
+                "-l",
+                &format!("echo usable > {marker}"),
+            ]))
+            .await
+            .unwrap();
+        driver
+            .run(&strings(&["send-keys", "-t", pane, "Enter"]))
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if std::fs::read_to_string(root.path().join(&marker))
+                    .ok()
+                    .as_deref()
+                    == Some("usable\n")
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .expect("shell must accept input in the requested directory");
+    }
+    assert_ctrl_d_closes_pane(&driver, pane).await;
+}
+
+#[cfg(unix)]
+async fn wait_for_pane_command(driver: &TmuxDriver, pane: &str, command: &str) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let current = driver
+                .run(&strings(&[
+                    "display-message",
+                    "-p",
+                    "-t",
+                    pane,
+                    "#{pane_current_command}",
+                ]))
+                .await
+                .unwrap();
+            if current.trim() == command {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .expect("agent must be visible as the foreground command");
+}
+
+#[cfg(unix)]
+async fn assert_ctrl_d_closes_pane(driver: &TmuxDriver, pane: &str) {
+    let other = driver
+        .run(&strings(&["new-window", "-d", "-P", "-F", "#{pane_id}"]))
+        .await
+        .unwrap();
+    driver
+        .run(&strings(&["send-keys", "-t", pane, "C-d"]))
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let panes = driver.inventory(false).await.unwrap().unwrap();
+            assert!(panes.iter().any(|p| p.pane_id == other.trim()));
+            if panes.iter().all(|p| p.pane_id != pane) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .expect("Ctrl-D must remove the pane, not leave a dead pane");
+}

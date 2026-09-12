@@ -99,9 +99,9 @@ impl RmuxDriver {
                 let direction = sdk_split_direction(*direction);
                 let created = if let Some(argv) = argv {
                     pane.split_with(direction)
-                        .spawn(argv.iter().cloned())
+                        .spawn(persistent_launch_argv(argv))
                         .cwd(&prepared.cwd)
-                        .keep_alive_on_exit(true)
+                        .keep_alive_on_exit(false)
                         .await?
                 } else {
                     pane.split(direction).await?
@@ -246,12 +246,34 @@ async fn launch_in_pane(
     if let Some(key) = input_clear_key {
         pane.send_key(key).await?;
     }
-    pane.spawn(argv.iter().cloned())
+    pane.spawn(persistent_launch_argv(argv))
         .cwd(cwd)
         .kill_existing(true)
-        .keep_alive_on_exit(true)
+        .keep_alive_on_exit(false)
         .await?;
     Ok(())
+}
+
+// Keep argv separate from shell syntax, then restore an interactive prompt even
+// when the agent exits unsuccessfully. A dead-pane setting alone cannot do this.
+#[cfg(unix)]
+fn persistent_launch_argv(argv: &[String]) -> Vec<String> {
+    let mut command = vec![
+        "/bin/sh".to_owned(),
+        // Give the agent its own foreground process group for detection and
+        // terminal signals while the wrapper waits for it to exit.
+        "-i".to_owned(),
+        "-c".to_owned(),
+        r#""$@"; exec "${SHELL:-/bin/sh}" -i"#.to_owned(),
+        "agentix".to_owned(),
+    ];
+    command.extend_from_slice(argv);
+    command
+}
+
+#[cfg(not(unix))]
+fn persistent_launch_argv(argv: &[String]) -> Vec<String> {
+    argv.to_vec()
 }
 
 fn input_clear_key_before_launch(target: &MultiplexerTarget) -> Option<&'static str> {
@@ -312,7 +334,7 @@ mod tests {
     #[cfg(unix)]
     use tokio::sync::Mutex;
 
-    use super::launch_in_pane;
+    use super::{launch_in_pane, persistent_launch_argv};
 
     #[cfg(unix)]
     #[tokio::test]
@@ -352,14 +374,73 @@ mod tests {
             Request::PaneInput(PaneInputRequest { keys, literal, .. })
                 if keys == &["C-c"] && !literal
         )));
-        assert!(requests.iter().any(|request| matches!(
-            request,
-            Request::PaneRespawn(request)
-                if request.kill
-                    && request.keep_alive_on_exit == Some(true)
-                    && request.start_directory.as_deref() == Some(Path::new("/work/agentix"))
-                    && request.process_command == Some(ProcessCommand::Argv(argv.clone()))
-        )));
+        let respawn = requests
+            .iter()
+            .find_map(|request| match request {
+                Request::PaneRespawn(request) => Some(request),
+                _ => None,
+            })
+            .unwrap();
+        assert!(respawn.kill);
+        assert_eq!(respawn.keep_alive_on_exit, Some(false));
+        assert_eq!(
+            respawn.start_directory.as_deref(),
+            Some(Path::new("/work/agentix"))
+        );
+        let Some(ProcessCommand::Argv(command)) = &respawn.process_command else {
+            panic!("expected structured argv");
+        };
+        assert_returns_to_shell(command, &argv);
+    }
+
+    #[cfg(unix)]
+    fn assert_returns_to_shell(command: &[String], agent_argv: &[String]) {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+
+        // Replace only the agent argv with a deterministic child, retaining the
+        // actual SDK launch wrapper. Exercise success, failure and literal args.
+        assert!(command.ends_with(agent_argv));
+        for (status, shell) in [(0, Some("/bin/sh")), (7, None), (0, Some(""))] {
+            let mut launch = command[..command.len() - agent_argv.len()].to_vec();
+            launch.extend([
+                "/bin/sh".to_owned(),
+                "-c".to_owned(),
+                format!("printf '%s\\n' \"$1\"; exit {status}"),
+                "test-agent".to_owned(),
+                "literal ' \" $HOME ; $(exit 99)".to_owned(),
+            ]);
+            let mut process = Command::new(&launch[0]);
+            if let Some(shell) = shell {
+                process.env("SHELL", shell);
+            } else {
+                process.env_remove("SHELL");
+            }
+            let mut child = process
+                .args(&launch[1..])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .unwrap();
+            child
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(b"echo pane-still-usable\nexit\n")
+                .unwrap();
+            let output = child.wait_with_output().unwrap();
+            let stdout = String::from_utf8(output.stdout).unwrap();
+            assert!(
+                stdout.contains("literal ' \" $HOME ; $(exit 99)"),
+                "{stdout}"
+            );
+            assert!(
+                stdout.contains("pane-still-usable"),
+                "agent exit {status} left no usable shell: {stdout}"
+            );
+            assert!(output.status.success());
+        }
     }
 
     #[cfg(unix)]
@@ -397,9 +478,9 @@ mod tests {
         let argv = vec!["/opt/codex".to_owned(), "--remote".to_owned()];
         let split = pane
             .split_with(SplitDirection::Right)
-            .spawn(argv.clone())
+            .spawn(persistent_launch_argv(&argv))
             .cwd("/work/split")
-            .keep_alive_on_exit(true)
+            .keep_alive_on_exit(false)
             .await
             .unwrap();
         drop(split);
@@ -410,6 +491,17 @@ mod tests {
         server.abort();
 
         let requests = requests.lock().await;
+        let split_command = requests
+            .iter()
+            .find_map(|request| match request {
+                Request::SplitWindowIdentity(request) => request.action.process_command.as_ref(),
+                _ => None,
+            })
+            .unwrap();
+        let ProcessCommand::Argv(command) = split_command else {
+            panic!("expected structured argv");
+        };
+        assert_returns_to_shell(command, &argv);
         assert!(requests.iter().any(|request| matches!(
             request,
             Request::NewSessionExt(request)
@@ -429,9 +521,134 @@ mod tests {
             request,
             Request::SplitWindowIdentity(request)
                 if request.action.start_directory.as_deref() == Some(Path::new("/work/split"))
-                    && request.action.keep_alive_on_exit == Some(true)
-                    && request.action.process_command == Some(ProcessCommand::Argv(argv.clone()))
+                    && request.action.keep_alive_on_exit == Some(false)
+                    && request.action.process_command == Some(ProcessCommand::Argv(persistent_launch_argv(&argv)))
         )));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    #[ignore = "requires an installed rmux daemon"]
+    async fn live_rmux_agent_exit_restores_usable_pane() {
+        use std::process::Command;
+        use std::time::Duration;
+
+        struct Server(std::path::PathBuf);
+        impl Drop for Server {
+            fn drop(&mut self) {
+                let _ = Command::new("rmux")
+                    .arg("-S")
+                    .arg(&self.0)
+                    .arg("kill-server")
+                    .output();
+            }
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let server = Server(directory.path().join("rmux.sock"));
+        let output = Command::new("rmux")
+            .arg("-S")
+            .arg(&server.0)
+            .args(["-f", "/dev/null", "new-session", "-d", "-s", "pane-test"])
+            .env("SHELL", "/bin/sh")
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        let rmux = Rmux::builder()
+            .endpoint(RmuxEndpoint::UnixSocket(server.0.clone()))
+            .connect()
+            .await
+            .unwrap();
+        let session = rmux
+            .session(SessionName::new("pane-test").unwrap())
+            .await
+            .unwrap();
+        let window = session
+            .new_window_with()
+            .name("agent")
+            .cwd(directory.path())
+            .detached(true)
+            .await
+            .unwrap();
+        let pane_id = window.panes().await.unwrap()[0].id;
+        let pane = session.pane_by_id(pane_id).await.unwrap();
+        launch_in_pane(
+            &pane,
+            Some(&["/bin/sleep".into(), "30".into()]),
+            directory.path(),
+            None,
+        )
+        .await
+        .unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let state = pane.foreground_state().await.unwrap();
+
+                if state
+                    .as_ref()
+                    .and_then(|s| s.command.as_deref())
+                    .is_some_and(|c| c.ends_with("sleep"))
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .expect("running agent must remain visible as the foreground command");
+        pane.send_key("C-c").await.unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let state = pane.foreground_state().await.unwrap();
+
+                if state
+                    .as_ref()
+                    .and_then(|s| s.command.as_deref())
+                    .is_some_and(|c| c.ends_with("sh"))
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .expect("agent interruption must restore a shell");
+        pane.send_text("echo usable > pane-result").await.unwrap();
+        pane.send_key("Enter").await.unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !directory.path().join("pane-result").exists() {
+                tokio::time::sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await
+        .expect("restored shell must accept commands in the launch directory");
+        assert_eq!(
+            std::fs::read_to_string(directory.path().join("pane-result")).unwrap(),
+            "usable\n"
+        );
+        assert_ctrl_d_closes_pane(&rmux, &pane, pane_id).await;
+    }
+
+    #[cfg(unix)]
+    async fn assert_ctrl_d_closes_pane(rmux: &Rmux, pane: &rmux_sdk::Pane, id: PaneId) {
+        pane.send_key("C-d").await.unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                match rmux.find_panes().all().await {
+                    Ok(panes) => {
+                        assert!(!panes.is_empty(), "the other window must stay open");
+                        if panes.iter().all(|pane| pane.pane_id != id) {
+                            break;
+                        }
+                    }
+                    // Discovery can race the pane disappearing between SDK requests.
+                    Err(rmux_sdk::RmuxError::PaneNotFound { pane_id, .. }) if pane_id == id => {}
+                    Err(error) => panic!("unexpected inventory failure: {error}"),
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .expect("Ctrl-D must remove the pane, not leave a dead pane");
     }
 
     #[cfg(unix)]

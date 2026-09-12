@@ -10,6 +10,10 @@ Filesystem paths other than the absolute `slack_cli_path` override accept `~` or
 
 Set `multiplexer.kind` to `rmux` (default) or `tmux`. `multiplexer.working_dir` is shared by every agent and defaults to `"~"`, expanded to the current user’s home directory. The selected menu is `/rmux` or `/tmux`. Both settings require a service restart. Per-agent `rmux_directory` and `multiplexer_directory` have been removed and are rejected.
 
+The `/rmux` and `/tmux` menus create an empty shell pane for `+ Session`, `+ Window`, and either split action, then show the configured agents (Codex, Claude Code, Pi, or Oh My Pi). Select an agent to start it in that exact pane and attach the IM conversation. Until a selection is made, the pane remains an ordinary shell. Existing idle panes expose `Run agent` with the same selection step, even when the conversation is already attached to a different agent.
+
+On macOS and Linux, agents launched from the `/rmux` or `/tmux` menu return to an interactive `$SHELL` (or `/bin/sh` when unset) after exiting, including unsuccessful exits. The pane remains usable in the configured working directory. Exiting that shell with Ctrl-D or `exit` closes the pane normally. This applies to new sessions, windows, splits, and reused panes; already dead panes are not revived by this change.
+
 ### Slack CLI startup synchronization
 
 Set `channel.slack.app_id` to enable startup slash-command synchronization through a logged-in Slack CLI. Run `slack login` as the service user. The global `slack_cli_path` option, placed before all TOML tables, optionally specifies an absolute executable path when `slack` is not on PATH. CLI authorization and refresh are managed by Slack CLI; Agentix does not store management tokens. Synchronization failures log a warning and allow Socket Mode to start with existing commands. See [Slack initialization and integration](slack-initialization.md).
