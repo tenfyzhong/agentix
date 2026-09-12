@@ -45,6 +45,20 @@ Documentation-only and configuration-only changes do not require a failing test 
 
 After changing CLI commands or options, run `make completions` and commit the updated files for both CLIs. Tests verify that the checked-in completions match their CLI and that taskix generation does not read configuration or create task state. Checked-in shell completions retain LF line endings on every platform through `.gitattributes`.
 
+## Using local debug binaries
+
+With both Homebrew formulas installed, run `make link-debug` to build debug
+versions of `agentix` and `taskix`, unlink the Homebrew formulas, and symlink
+the commands in `$(brew --prefix)/bin` to this checkout's build output. The
+target supports `CARGO_TARGET_DIR` (default: `target`) and can be run repeatedly.
+Build failures leave the existing Homebrew links intact.
+
+These links select the debug commands on your shell's PATH. Homebrew services
+use the formula's `opt` path, so run `agentix serve` directly for debug testing
+after stopping any existing service. Keep the checkout and build output while
+using the links. To restore the installed commands, run
+`brew link --overwrite agentix taskix`.
+
 ## Installing local plugins
 
 Run `make dev-test` to install plugins from the current checkout, or
