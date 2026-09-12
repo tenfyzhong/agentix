@@ -251,6 +251,7 @@ async fn native_agent_exit_restores_usable_shell() {
         .await
         .expect("shell must accept input in the requested directory");
     }
+    assert_ctrl_d_closes_pane(&driver, pane).await;
 }
 
 #[cfg(unix)]
@@ -275,4 +276,28 @@ async fn wait_for_pane_command(driver: &TmuxDriver, pane: &str, command: &str) {
     })
     .await
     .expect("agent must be visible as the foreground command");
+}
+
+#[cfg(unix)]
+async fn assert_ctrl_d_closes_pane(driver: &TmuxDriver, pane: &str) {
+    let other = driver
+        .run(&strings(&["new-window", "-d", "-P", "-F", "#{pane_id}"]))
+        .await
+        .unwrap();
+    driver
+        .run(&strings(&["send-keys", "-t", pane, "C-d"]))
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let panes = driver.inventory(false).await.unwrap().unwrap();
+            assert!(panes.iter().any(|p| p.pane_id == other.trim()));
+            if panes.iter().all(|p| p.pane_id != pane) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .expect("Ctrl-D must remove the pane, not leave a dead pane");
 }

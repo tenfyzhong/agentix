@@ -101,7 +101,7 @@ impl RmuxDriver {
                     pane.split_with(direction)
                         .spawn(persistent_launch_argv(argv))
                         .cwd(&prepared.cwd)
-                        .keep_alive_on_exit(true)
+                        .keep_alive_on_exit(false)
                         .await?
                 } else {
                     pane.split(direction).await?
@@ -249,7 +249,7 @@ async fn launch_in_pane(
     pane.spawn(persistent_launch_argv(argv))
         .cwd(cwd)
         .kill_existing(true)
-        .keep_alive_on_exit(true)
+        .keep_alive_on_exit(false)
         .await?;
     Ok(())
 }
@@ -382,6 +382,7 @@ mod tests {
             })
             .unwrap();
         assert!(respawn.kill);
+        assert_eq!(respawn.keep_alive_on_exit, Some(false));
         assert_eq!(
             respawn.start_directory.as_deref(),
             Some(Path::new("/work/agentix"))
@@ -479,7 +480,7 @@ mod tests {
             .split_with(SplitDirection::Right)
             .spawn(persistent_launch_argv(&argv))
             .cwd("/work/split")
-            .keep_alive_on_exit(true)
+            .keep_alive_on_exit(false)
             .await
             .unwrap();
         drop(split);
@@ -520,7 +521,7 @@ mod tests {
             request,
             Request::SplitWindowIdentity(request)
                 if request.action.start_directory.as_deref() == Some(Path::new("/work/split"))
-                    && request.action.keep_alive_on_exit == Some(true)
+                    && request.action.keep_alive_on_exit == Some(false)
                     && request.action.process_command == Some(ProcessCommand::Argv(persistent_launch_argv(&argv)))
         )));
     }
@@ -624,6 +625,30 @@ mod tests {
             std::fs::read_to_string(directory.path().join("pane-result")).unwrap(),
             "usable\n"
         );
+        assert_ctrl_d_closes_pane(&rmux, &pane, pane_id).await;
+    }
+
+    #[cfg(unix)]
+    async fn assert_ctrl_d_closes_pane(rmux: &Rmux, pane: &rmux_sdk::Pane, id: PaneId) {
+        pane.send_key("C-d").await.unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                match rmux.find_panes().all().await {
+                    Ok(panes) => {
+                        assert!(!panes.is_empty(), "the other window must stay open");
+                        if panes.iter().all(|pane| pane.pane_id != id) {
+                            break;
+                        }
+                    }
+                    // Discovery can race the pane disappearing between SDK requests.
+                    Err(rmux_sdk::RmuxError::PaneNotFound { pane_id, .. }) if pane_id == id => {}
+                    Err(error) => panic!("unexpected inventory failure: {error}"),
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .expect("Ctrl-D must remove the pane, not leave a dead pane");
     }
 
     #[cfg(unix)]

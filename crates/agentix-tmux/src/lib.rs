@@ -63,7 +63,7 @@ impl TmuxDriver {
             "-t",
             pane,
             "remain-on-exit",
-            "on",
+            "off",
         ]))
         .await?;
         let mut command_args = strings(&[
