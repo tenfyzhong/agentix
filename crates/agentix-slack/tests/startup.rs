@@ -86,22 +86,35 @@ async fn cli_failures_do_not_leak_output_and_never_attempt_update() {
     assert_projects_removed(&dir);
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn hung_cli_has_bounded_startup_time() {
     let (dir, sync) = fixture();
     std::fs::write(dir.path().join("hang"), "").unwrap();
-    let result = tokio::time::timeout(
-        Duration::from_secs(2),
-        sync.with_timeout(Duration::from_secs(1)).sync("T123"),
-    )
-    .await;
-    assert!(
-        result
-            .unwrap()
-            .unwrap_err()
-            .to_string()
-            .contains("timed out")
-    );
+    let sync = sync.with_timeout(Duration::from_secs(1));
+    let operation = sync.sync("T123");
+    tokio::pin!(operation);
+    let startup_deadline = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        assert!(
+            futures_util::poll!(&mut operation).is_pending(),
+            "sync completed before the hanging CLI became ready"
+        );
+        if std::fs::read(dir.path().join("hang-ready")).is_ok_and(|bytes| bytes == b"ready\n") {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < startup_deadline,
+            "hanging CLI did not become ready"
+        );
+        // Stay runnable so Tokio cannot auto-advance the paused clock while
+        // the real subprocess is still starting.
+        tokio::task::yield_now().await;
+    }
+    tokio::time::advance(Duration::from_secs(1)).await;
+    let result = tokio::time::timeout(Duration::from_secs(1), &mut operation)
+        .await
+        .expect("sync did not honor its timeout");
+    assert!(result.unwrap_err().to_string().contains("timed out"));
     assert_projects_removed(&dir);
 }
 

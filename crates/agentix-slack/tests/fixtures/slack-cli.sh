@@ -16,7 +16,10 @@ if [ -f "$fixture_dir/fail" ]; then
   printf 'secret-token-must-not-appear\n' >&2
   exit 7
 fi
-if [ -f "$fixture_dir/hang" ]; then exec sleep 30; fi
+if [ -f "$fixture_dir/hang" ]; then
+  printf 'ready\n' > "$fixture_dir/hang-ready"
+  exec sleep 30
+fi
 case "$1 $2" in
   'app link')
     [ ! -e manifest.json ] || exit 88
