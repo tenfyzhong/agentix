@@ -363,3 +363,19 @@ async fn sigusr2_removes_control_sockets_and_allows_restart() {
 async fn sigalrm_removes_control_sockets_and_allows_restart() {
     assert_signal_cleans_sockets("-ALRM").await;
 }
+
+#[test]
+fn multiplexer_changes_require_restart() {
+    let fixture = Fixture::new();
+    let path = fixture.directory.path().join("config.toml");
+    let original = std::fs::read_to_string(&path).unwrap();
+    assert!(load_candidate(&path, &fixture.config, &ProxyOptions::default()).is_ok());
+    for settings in ["kind='tmux'", "working_dir='/another-workspace'"] {
+        std::fs::write(&path, format!("{original}\n[multiplexer]\n{settings}\n")).unwrap();
+        let error = load_candidate(&path, &fixture.config, &ProxyOptions::default()).unwrap_err();
+        assert!(
+            error.to_string().contains("changing multiplexer"),
+            "{error}"
+        );
+    }
+}

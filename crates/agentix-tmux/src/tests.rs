@@ -1,0 +1,158 @@
+use super::*;
+use agentix_domain::MultiplexerMutation;
+use agentix_multiplexer::WorkspaceManager;
+use std::sync::Arc;
+
+struct Cleanup(PathBuf);
+impl Drop for Cleanup {
+    fn drop(&mut self) {
+        let _ = std::process::Command::new("tmux")
+            .args(["-S"])
+            .arg(&self.0)
+            .arg("kill-server")
+            .output();
+    }
+}
+#[test]
+fn parses_panes_without_splitting_names_or_directories_on_spaces() {
+    let panes = parse_inventory(
+        "$1|work space|@2|3|code ' test|%4|0|1|fish|/a path/'quote|42|/dev/pts/7\n",
+    )
+    .unwrap();
+    assert_eq!(panes[0].pane_id, "%4");
+    assert_eq!(panes[0].cwd, "/a path/'quote");
+    assert_eq!(panes[0].window_name, "code ' test");
+    assert_eq!(panes[0].multiplexer, MultiplexerKind::Tmux);
+    assert!(parse_inventory("$1|broken\n").is_err());
+}
+#[test]
+fn matches_descendant_processes_to_the_original_pane() {
+    let panes = parse_inventory("$1|work|@2|0|code|%4|0|1|fish|/tmp|42|/dev/pts/7\n").unwrap();
+    let locations = descendant_locations(&panes, "42 1\n43 42\n44 43\n55 1\n");
+    assert_eq!(locations[&44].pane_id, "%4");
+    assert!(!locations.contains_key(&55));
+}
+#[tokio::test]
+async fn missing_binary_is_reported_without_falling_back() {
+    let driver = TmuxDriver::with_command(PathBuf::from("/missing/agentix-test-tmux"), None);
+    assert!(driver.inventory(false).await.is_err());
+}
+#[cfg(unix)]
+#[tokio::test]
+#[allow(clippy::too_many_lines)]
+async fn native_workspace_creation_and_launch_preserve_arguments() {
+    if std::env::var_os("AGENTIX_TEST_TMUX").is_none() {
+        return;
+    }
+    let root = tempfile::tempdir().unwrap();
+    let socket = root.path().join("tmux.sock");
+    let driver = Arc::new(TmuxDriver::with_command(
+        "tmux".into(),
+        Some(socket.clone()),
+    ));
+    let mut manager = WorkspaceManager::new(vec!["sleep".into(), "30".into()], root.path());
+    manager.set_driver(driver.clone());
+    let _cleanup = Cleanup(socket);
+    assert!(driver.inventory(false).await.unwrap().unwrap().is_empty());
+    let mutation = MultiplexerMutation {
+        target: MultiplexerTarget::NewSession {
+            name: "test".into(),
+            cwd: root.path().display().to_string(),
+        },
+        launch_agent: false,
+    };
+    let prepared = manager.prepare(mutation).await.unwrap();
+    let created = match manager.execute(&prepared).await {
+        Ok(value) => value,
+        Err(error) => panic!(
+            "{error}: {:?}",
+            driver
+                .run(&strings(&["list-panes", "-a", "-F", FORMAT]))
+                .await
+        ),
+    };
+    assert!(manager.pane_exists(&created.location).await.unwrap());
+    let pane = created.location.pane_id;
+    let session_id = driver.inventory(false).await.unwrap().unwrap()[0]
+        .session_id
+        .clone();
+    for target in [
+        MultiplexerTarget::NewWindow {
+            session_id,
+            name: "second".into(),
+            cwd: root.path().display().to_string(),
+        },
+        MultiplexerTarget::SplitPane {
+            pane_id: pane.clone(),
+            direction: PaneSplitDirection::Horizontal,
+            cwd: root.path().display().to_string(),
+        },
+        MultiplexerTarget::SplitPane {
+            pane_id: pane.clone(),
+            direction: PaneSplitDirection::Vertical,
+            cwd: root.path().display().to_string(),
+        },
+        MultiplexerTarget::ExistingPane {
+            pane_id: pane.clone(),
+        },
+    ] {
+        let prepared = manager
+            .prepare(MultiplexerMutation {
+                target,
+                launch_agent: true,
+            })
+            .await
+            .unwrap();
+        let result = manager.execute(&prepared).await.unwrap();
+        assert!(manager.pane_exists(&result.location).await.unwrap());
+    }
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    assert!(
+        manager
+            .prepare(MultiplexerMutation {
+                target: MultiplexerTarget::ExistingPane { pane_id: pane },
+                launch_agent: true
+            })
+            .await
+            .is_err()
+    );
+    assert_eq!(driver.inventory(false).await.unwrap().unwrap().len(), 4);
+    let arguments = [
+        "space value",
+        "quote'\\\"",
+        "中文",
+        "$(touch /tmp/agentix-not-executed)",
+        "a;",
+    ];
+    let mut argv = vec!["/usr/bin/printf".to_owned(), "%s\\n".to_owned()];
+    argv.extend(arguments.iter().map(|value| (*value).to_owned()));
+    manager.set_argv(argv);
+    let prepared = manager
+        .prepare(MultiplexerMutation {
+            target: MultiplexerTarget::NewSession {
+                name: "arguments".into(),
+                cwd: root.path().display().to_string(),
+            },
+            launch_agent: true,
+        })
+        .await
+        .unwrap();
+    let result = manager.execute(&prepared).await.unwrap();
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    let output = driver
+        .output(&[
+            "capture-pane".into(),
+            "-p".into(),
+            "-S".into(),
+            "-".into(),
+            "-t".into(),
+            result.location.pane_id,
+        ])
+        .await
+        .unwrap();
+    assert!(
+        String::from_utf8_lossy(&output.stdout).starts_with(&arguments.join("\n")),
+        "{:?}",
+        output.stdout
+    );
+}

@@ -27,9 +27,12 @@ dependencies = [
  "agentix-codex",
  "agentix-core",
  "agentix-feishu",
+ "agentix-multiplexer",
+ "agentix-rmux",
  "agentix-slack",
  "agentix-task",
  "agentix-telegram",
+ "agentix-tmux",
  "anyhow",
  "async-trait",
  "clap",
@@ -61,7 +64,7 @@ name = "agentix-bridge"
 version = "0.0.0-dev"
 dependencies = [
  "agentix-domain",
- "agentix-rmux",
+ "agentix-multiplexer",
  "async-trait",
  "serde",
  "serde_json",
@@ -78,7 +81,7 @@ version = "0.0.0-dev"
 dependencies = [
  "agentix-core",
  "agentix-domain",
- "agentix-rmux",
+ "agentix-multiplexer",
  "anyhow",
  "async-trait",
  "clap",
@@ -86,8 +89,6 @@ dependencies = [
  "futures-util",
  "jsonwebtoken",
  "nix",
- "rmux-proto",
- "rmux-sdk",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -152,10 +153,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "agentix-multiplexer"
+version = "0.0.0-dev"
+dependencies = [
+ "agentix-domain",
+ "async-trait",
+ "dirs",
+ "tempfile",
+ "thiserror",
+ "tokio",
+]
+
+[[package]]
 name = "agentix-rmux"
 version = "0.0.0-dev"
 dependencies = [
  "agentix-domain",
+ "agentix-multiplexer",
+ "async-trait",
  "dirs",
  "rmux-proto",
  "rmux-sdk",
@@ -223,6 +238,19 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+]
+
+[[package]]
+name = "agentix-tmux"
+version = "0.0.0-dev"
+dependencies = [
+ "agentix-domain",
+ "agentix-multiplexer",
+ "async-trait",
+ "dirs",
+ "tempfile",
+ "thiserror",
+ "tokio",
 ]
 
 [[package]]

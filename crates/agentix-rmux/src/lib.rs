@@ -1,186 +1,55 @@
-use std::collections::{HashMap, HashSet};
-use std::ffi::OsStr;
-use std::path::{Path, PathBuf};
-use std::time::Duration;
-
-use agentix_domain::{
-    MultiplexerMutation, MultiplexerPane, MultiplexerSession, MultiplexerSnapshot,
-    MultiplexerTarget, MultiplexerWindow, PaneSplitDirection, SessionId, SessionSummary,
-    TerminalLocation,
+//! rmux SDK adapter. Application policy lives in agentix-multiplexer.
+use agentix_domain::{MultiplexerKind, MultiplexerTarget, PaneSplitDirection, TerminalLocation};
+use agentix_multiplexer::{
+    MultiplexerDriver, MultiplexerError, MultiplexerOutcome as RmuxOutcome,
+    PaneState as RmuxPaneState, PreparedMutation, command_basename, terminal_location,
 };
+use async_trait::async_trait;
 use rmux_sdk::{
     EnsureSession, Pane, PaneId, PaneProcessState, Rmux, RmuxEndpoint, SessionName, SplitDirection,
 };
+use std::path::Path;
+use std::time::Duration;
 use thiserror::Error;
-
 const RMUX_OPERATION_TIMEOUT: Duration = Duration::from_secs(5);
-
 #[derive(Debug, Error)]
 pub enum RmuxManagerError {
     #[error("rmux SDK request failed: {0}")]
     Sdk(#[from] rmux_sdk::RmuxError),
     #[error("invalid multiplexer target: {0}")]
     InvalidTarget(String),
-    #[error("invalid multiplexer name: use 1-64 ASCII letters, numbers, '.', '_' or '-'")]
-    InvalidName,
-    #[error("workspace is unavailable: {0}")]
-    InvalidWorkspace(String),
-    #[error("pane {pane_id} is busy running {command}")]
-    BusyPane { pane_id: String, command: String },
 }
-
-#[derive(Debug, Clone)]
-pub struct RmuxManager {
-    codex_command: PathBuf,
-    native_args: Option<Vec<String>>,
-    remote_address: String,
-    default_directory: PathBuf,
-}
-
-#[derive(Debug, Clone)]
-pub struct PreparedMutation {
-    pub mutation: MultiplexerMutation,
-    pub cwd: PathBuf,
-}
-
-#[derive(Debug, Clone)]
-pub struct RmuxOutcome {
-    pub location: TerminalLocation,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct RmuxPaneState {
-    session_id: String,
-    session_name: String,
-    window_id: String,
-    window_index: u32,
-    window_name: String,
-    pane_id: String,
-    pane_index: u32,
-    active: bool,
-    current_command: String,
-    cwd: String,
-    foreground_pid: Option<u32>,
-}
-
-impl RmuxManager {
-    #[must_use]
-    pub fn new(codex_command: &Path, socket_path: &Path, default_directory: &Path) -> Self {
-        Self {
-            codex_command: codex_command.to_owned(),
-            native_args: None,
-            remote_address: format!("unix://{}", socket_path.display()),
-            default_directory: default_directory.to_owned(),
-        }
+#[derive(Debug, Default)]
+pub struct RmuxDriver;
+#[async_trait]
+impl MultiplexerDriver for RmuxDriver {
+    fn kind(&self) -> MultiplexerKind {
+        MultiplexerKind::Rmux
     }
-
-    #[must_use]
-    pub fn native(command: &Path, args: Vec<String>, default_directory: &Path) -> Self {
-        Self {
-            codex_command: command.to_owned(),
-            native_args: Some(args),
-            remote_address: String::new(),
-            default_directory: default_directory.to_owned(),
-        }
+    async fn inventory(&self, start: bool) -> Result<Option<Vec<RmuxPaneState>>, MultiplexerError> {
+        rmux_inventory(start)
+            .await
+            .map_err(|e| MultiplexerError::Backend(e.to_string()))
     }
-
-    #[must_use]
-    pub fn launch_argv(&self, cwd: &Path) -> Vec<String> {
-        if let Some(args) = &self.native_args {
-            std::iter::once(self.codex_command.to_string_lossy().into_owned())
-                .chain(args.iter().cloned())
-                .collect()
-        } else {
-            build_codex_argv(&self.codex_command, &self.remote_address, cwd)
-        }
-    }
-
-    #[must_use]
-    pub fn default_directory(&self) -> &Path {
-        &self.default_directory
-    }
-
-    pub async fn snapshot(
-        codex_sessions: &[SessionSummary],
-    ) -> Result<Option<MultiplexerSnapshot>, RmuxManagerError> {
-        let Some(inventory) = rmux_inventory(true).await? else {
-            return Ok(None);
-        };
-        let codex_by_pane = codex_sessions_by_pane(codex_sessions);
-        Ok(Some(snapshot_from_inventory(&inventory, &codex_by_pane)))
-    }
-
-    pub async fn prepare(
-        mut mutation: MultiplexerMutation,
-    ) -> Result<PreparedMutation, RmuxManagerError> {
-        let snapshot = Self::snapshot(&[])
-            .await?
-            .ok_or_else(|| RmuxManagerError::InvalidTarget("rmux is not running".into()))?;
-        let cwd = match &mutation.target {
-            MultiplexerTarget::NewSession { name, cwd } => {
-                validate_name(name)?;
-                resolve_workspace(cwd)?
-            }
-            MultiplexerTarget::NewWindow {
-                session_id,
-                name,
-                cwd,
-            } => {
-                validate_name(name)?;
-                if !snapshot
-                    .sessions
-                    .iter()
-                    .any(|session| session.id == *session_id)
-                {
-                    return Err(RmuxManagerError::InvalidTarget(format!(
-                        "session {session_id} no longer exists"
-                    )));
-                }
-                resolve_workspace(cwd)?
-            }
-            MultiplexerTarget::SplitPane { pane_id, cwd, .. } => {
-                find_pane(&snapshot, pane_id).ok_or_else(|| {
-                    RmuxManagerError::InvalidTarget(format!("pane {pane_id} no longer exists"))
-                })?;
-                resolve_workspace(cwd)?
-            }
-            MultiplexerTarget::ExistingPane { pane_id } => {
-                let pane = find_pane(&snapshot, pane_id).ok_or_else(|| {
-                    RmuxManagerError::InvalidTarget(format!("pane {pane_id} no longer exists"))
-                })?;
-                if !is_shell_command(&pane.current_command) {
-                    return Err(RmuxManagerError::BusyPane {
-                        pane_id: pane.id.clone(),
-                        command: pane.current_command.clone(),
-                    });
-                }
-                resolve_workspace(&pane.cwd)?
-            }
-        };
-        if let MultiplexerTarget::NewSession { name, .. } = &mut mutation.target {
-            *name = available_session_name(&snapshot, name);
-        }
-        if !mutation.launch_agent
-            && matches!(mutation.target, MultiplexerTarget::ExistingPane { .. })
-        {
-            return Err(RmuxManagerError::InvalidTarget(
-                "an existing pane must launch an agent".into(),
-            ));
-        }
-        Ok(PreparedMutation { mutation, cwd })
-    }
-
-    pub async fn execute(
+    async fn execute(
         &self,
         prepared: &PreparedMutation,
+        argv: Option<&[String]>,
+    ) -> Result<RmuxOutcome, MultiplexerError> {
+        self.execute_sdk(prepared, argv)
+            .await
+            .map_err(|e| MultiplexerError::Backend(e.to_string()))
+    }
+}
+impl RmuxDriver {
+    async fn execute_sdk(
+        &self,
+        prepared: &PreparedMutation,
+        argv: Option<&[String]>,
     ) -> Result<RmuxOutcome, RmuxManagerError> {
         let rmux = connect_rmux(false).await?.ok_or_else(|| {
             RmuxManagerError::InvalidTarget("rmux stopped before the operation completed".into())
         })?;
-        let argv = prepared
-            .mutation
-            .launch_agent
-            .then(|| self.launch_argv(&prepared.cwd));
         let input_clear_key = input_clear_key_before_launch(&prepared.mutation.target);
         let pane_id = match &prepared.mutation.target {
             MultiplexerTarget::NewSession { name, .. } => {
@@ -194,7 +63,7 @@ impl RmuxManager {
                     )
                     .await?;
                 let pane = session.pane(0, 0);
-                launch_in_pane(&pane, argv.as_deref(), &prepared.cwd, input_clear_key).await?;
+                launch_in_pane(&pane, argv, &prepared.cwd, input_clear_key).await?;
                 required_pane_id(&pane).await?
             }
             MultiplexerTarget::NewWindow {
@@ -220,7 +89,7 @@ impl RmuxManager {
                         )
                     })?;
                 let pane = session.pane_by_id(pane_id).await?;
-                launch_in_pane(&pane, argv.as_deref(), &prepared.cwd, input_clear_key).await?;
+                launch_in_pane(&pane, argv, &prepared.cwd, input_clear_key).await?;
                 pane_id
             }
             MultiplexerTarget::SplitPane {
@@ -228,7 +97,7 @@ impl RmuxManager {
             } => {
                 let pane = pane_by_text_id(&rmux, pane_id).await?;
                 let direction = sdk_split_direction(*direction);
-                let created = if let Some(argv) = argv.as_deref() {
+                let created = if let Some(argv) = argv {
                     pane.split_with(direction)
                         .spawn(argv.iter().cloned())
                         .cwd(&prepared.cwd)
@@ -241,24 +110,14 @@ impl RmuxManager {
             }
             MultiplexerTarget::ExistingPane { pane_id } => {
                 let pane = pane_by_text_id(&rmux, pane_id).await?;
-                launch_in_pane(&pane, argv.as_deref(), &prepared.cwd, input_clear_key).await?;
+                launch_in_pane(&pane, argv, &prepared.cwd, input_clear_key).await?;
                 required_pane_id(&pane).await?
             }
         };
         let location = location_for_pane(pane_id).await?;
         Ok(RmuxOutcome { location })
     }
-
-    pub async fn pane_exists(location: &TerminalLocation) -> Result<bool, RmuxManagerError> {
-        let Some(inventory) = rmux_inventory(false).await? else {
-            return Ok(false);
-        };
-        Ok(inventory
-            .iter()
-            .any(|pane| pane.pane_id == location.pane_id))
-    }
 }
-
 async fn connect_rmux(start: bool) -> Result<Option<Rmux>, RmuxManagerError> {
     let builder = Rmux::builder()
         .endpoint(RmuxEndpoint::Default)
@@ -321,6 +180,7 @@ async fn rmux_inventory(start: bool) -> Result<Option<Vec<RmuxPaneState>>, RmuxM
                 }
             });
             inventory.push(RmuxPaneState {
+                multiplexer: MultiplexerKind::Rmux,
                 session_id: discovered.session_id.to_string(),
                 session_name: session_name.clone(),
                 window_id: discovered.window_id.to_string(),
@@ -336,19 +196,6 @@ async fn rmux_inventory(start: bool) -> Result<Option<Vec<RmuxPaneState>>, RmuxM
         }
     }
     Ok(Some(inventory))
-}
-
-pub async fn rmux_process_locations() -> Result<HashMap<u32, TerminalLocation>, RmuxManagerError> {
-    let Some(inventory) = rmux_inventory(false).await? else {
-        return Ok(HashMap::new());
-    };
-    Ok(inventory
-        .into_iter()
-        .filter_map(|pane| {
-            pane.foreground_pid
-                .map(|pid| (pid, terminal_location(&pane)))
-        })
-        .collect())
 }
 
 async fn session_name_for_id(session_id: &str) -> Result<SessionName, RmuxManagerError> {
@@ -429,205 +276,6 @@ async fn location_for_pane(pane_id: PaneId) -> Result<TerminalLocation, RmuxMana
         .ok_or_else(|| RmuxManagerError::InvalidTarget(format!("pane {pane_id} no longer exists")))
 }
 
-fn terminal_location(pane: &RmuxPaneState) -> TerminalLocation {
-    TerminalLocation {
-        session: pane.session_name.clone(),
-        window_index: pane.window_index.to_string(),
-        window_name: pane.window_name.clone(),
-        pane_index: pane.pane_index.to_string(),
-        pane_id: pane.pane_id.clone(),
-    }
-}
-
-fn snapshot_from_inventory(
-    inventory: &[RmuxPaneState],
-    codex_sessions: &HashMap<String, SessionId>,
-) -> MultiplexerSnapshot {
-    let mut sessions = Vec::<MultiplexerSession>::new();
-    for pane in inventory {
-        let session_position = sessions
-            .iter()
-            .position(|session| session.id == pane.session_id)
-            .unwrap_or_else(|| {
-                sessions.push(MultiplexerSession {
-                    id: pane.session_id.clone(),
-                    name: pane.session_name.clone(),
-                    windows: Vec::new(),
-                });
-                sessions.len() - 1
-            });
-        let session = &mut sessions[session_position];
-        let window_position = session
-            .windows
-            .iter()
-            .position(|window| window.id == pane.window_id)
-            .unwrap_or_else(|| {
-                session.windows.push(MultiplexerWindow {
-                    id: pane.window_id.clone(),
-                    index: pane.window_index.to_string(),
-                    name: pane.window_name.clone(),
-                    panes: Vec::new(),
-                });
-                session.windows.len() - 1
-            });
-        session.windows[window_position]
-            .panes
-            .push(MultiplexerPane {
-                id: pane.pane_id.clone(),
-                index: pane.pane_index.to_string(),
-                active: pane.active,
-                current_command: pane.current_command.clone(),
-                cwd: pane.cwd.clone(),
-                agent_session: codex_sessions.get(&pane.pane_id).cloned(),
-            });
-    }
-    sessions.sort_by(|left, right| left.name.cmp(&right.name));
-    for session in &mut sessions {
-        session
-            .windows
-            .sort_by_key(|window| window.index.parse::<u32>().unwrap_or(u32::MAX));
-        for window in &mut session.windows {
-            window
-                .panes
-                .sort_by_key(|pane| pane.index.parse::<u32>().unwrap_or(u32::MAX));
-        }
-    }
-    MultiplexerSnapshot { sessions }
-}
-
-#[must_use]
-pub fn session_at_location<'a>(
-    sessions: &'a [SessionSummary],
-    location: &TerminalLocation,
-) -> Option<&'a SessionSummary> {
-    sessions.iter().find(|session| {
-        session
-            .terminal
-            .as_ref()
-            .is_some_and(|terminal| terminal.pane_id == location.pane_id)
-    })
-}
-
-#[must_use]
-pub fn started_session<'a, S: std::hash::BuildHasher>(
-    sessions: &'a [SessionSummary],
-    location: &TerminalLocation,
-    known_sessions: &HashSet<SessionId, S>,
-    cwd: &Path,
-) -> Option<&'a SessionSummary> {
-    if let Some(session) = session_at_location(sessions, location)
-        .filter(|session| !known_sessions.contains(&session.id))
-    {
-        return Some(session);
-    }
-    let mut candidates = sessions.iter().filter(|session| {
-        !known_sessions.contains(&session.id)
-            && session
-                .cwd
-                .as_deref()
-                .is_some_and(|value| Path::new(value) == cwd)
-    });
-    let candidate = candidates.next()?;
-    candidates.next().is_none().then_some(candidate)
-}
-
-fn codex_sessions_by_pane(sessions: &[SessionSummary]) -> HashMap<String, SessionId> {
-    sessions
-        .iter()
-        .filter_map(|session| {
-            session
-                .terminal
-                .as_ref()
-                .map(|terminal| (terminal.pane_id.clone(), session.id.clone()))
-        })
-        .collect()
-}
-
-fn find_pane<'a>(snapshot: &'a MultiplexerSnapshot, pane_id: &str) -> Option<&'a MultiplexerPane> {
-    snapshot
-        .sessions
-        .iter()
-        .flat_map(|session| &session.windows)
-        .flat_map(|window| &window.panes)
-        .find(|pane| pane.id == pane_id)
-}
-
-fn available_session_name(snapshot: &MultiplexerSnapshot, requested: &str) -> String {
-    if !snapshot
-        .sessions
-        .iter()
-        .any(|session| session.name == requested)
-    {
-        return requested.into();
-    }
-    (2..=snapshot.sessions.len() + 2)
-        .map(|suffix| format!("{requested}-{suffix}"))
-        .find(|candidate| {
-            !snapshot
-                .sessions
-                .iter()
-                .any(|session| session.name == *candidate)
-        })
-        .expect("an available session suffix must exist")
-}
-
-fn validate_name(name: &str) -> Result<(), RmuxManagerError> {
-    if !name.is_empty()
-        && name.len() <= 64
-        && name
-            .chars()
-            .all(|character| character.is_ascii_alphanumeric() || "._-".contains(character))
-    {
-        Ok(())
-    } else {
-        Err(RmuxManagerError::InvalidName)
-    }
-}
-
-fn resolve_workspace(value: &str) -> Result<PathBuf, RmuxManagerError> {
-    let path = if value == "~" {
-        dirs::home_dir().ok_or_else(|| RmuxManagerError::InvalidWorkspace(value.into()))?
-    } else if let Some(suffix) = value.strip_prefix("~/") {
-        dirs::home_dir()
-            .ok_or_else(|| RmuxManagerError::InvalidWorkspace(value.into()))?
-            .join(suffix)
-    } else {
-        PathBuf::from(value)
-    };
-    std::fs::canonicalize(&path)
-        .map_err(|_| RmuxManagerError::InvalidWorkspace(path.display().to_string()))
-}
-
-fn is_shell_command(command: &str) -> bool {
-    Path::new(command)
-        .file_name()
-        .and_then(OsStr::to_str)
-        .is_some_and(|name| {
-            matches!(
-                name,
-                "bash" | "dash" | "elvish" | "fish" | "ksh" | "nu" | "sh" | "tcsh" | "zsh"
-            )
-        })
-}
-
-fn command_basename(command: &str) -> String {
-    Path::new(command)
-        .file_name()
-        .and_then(OsStr::to_str)
-        .unwrap_or(command)
-        .to_owned()
-}
-
-fn build_codex_argv(command: &Path, remote_address: &str, cwd: &Path) -> Vec<String> {
-    vec![
-        command.to_string_lossy().into_owned(),
-        "--remote".into(),
-        remote_address.into(),
-        "-C".into(),
-        cwd.to_string_lossy().into_owned(),
-    ]
-}
-
 fn sdk_split_direction(direction: PaneSplitDirection) -> SplitDirection {
     match direction {
         PaneSplitDirection::Horizontal => SplitDirection::Right,
@@ -645,14 +293,9 @@ fn parse_pane_id(value: &str) -> Result<PaneId, RmuxManagerError> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{HashMap, HashSet};
     use std::path::Path;
     use std::sync::Arc;
 
-    use agentix_domain::{
-        MultiplexerSession, MultiplexerSnapshot, MultiplexerTarget, MultiplexerWindow,
-        PaneSplitDirection, SessionId, SessionStatus, SessionSummary, TerminalLocation,
-    };
     #[cfg(unix)]
     use rmux_proto::{
         CommandOutput, FrameDecoder, HandshakeResponse, HasSessionResponse, ListPanesResponse,
@@ -669,10 +312,7 @@ mod tests {
     #[cfg(unix)]
     use tokio::sync::Mutex;
 
-    use super::{
-        RmuxPaneState, available_session_name, build_codex_argv, input_clear_key_before_launch,
-        launch_in_pane, session_at_location, snapshot_from_inventory, started_session,
-    };
+    use super::launch_in_pane;
 
     #[cfg(unix)]
     #[tokio::test]
@@ -858,206 +498,5 @@ mod tests {
             }
             request => panic!("unexpected mock rmux request: {request:?}"),
         }
-    }
-
-    fn snapshot() -> MultiplexerSnapshot {
-        MultiplexerSnapshot {
-            sessions: vec![MultiplexerSession {
-                id: "$1".into(),
-                name: "agentix".into(),
-                windows: vec![MultiplexerWindow {
-                    id: "@1".into(),
-                    index: "0".into(),
-                    name: "codex".into(),
-                    panes: Vec::new(),
-                }],
-            }],
-        }
-    }
-
-    #[test]
-    fn default_session_name_gets_the_first_available_suffix() {
-        let mut existing = snapshot();
-        existing.sessions.push(MultiplexerSession {
-            id: "$2".into(),
-            name: "codex".into(),
-            windows: Vec::new(),
-        });
-        existing.sessions.push(MultiplexerSession {
-            id: "$3".into(),
-            name: "codex-2".into(),
-            windows: Vec::new(),
-        });
-
-        assert_eq!(available_session_name(&existing, "codex"), "codex-3");
-    }
-
-    #[test]
-    fn converts_rmux_sdk_inventory_into_the_ui_hierarchy() {
-        let base = RmuxPaneState {
-            session_id: "$1".into(),
-            session_name: "agentix".into(),
-            window_id: "@1".into(),
-            window_index: 0,
-            window_name: "codex".into(),
-            pane_id: "%1".into(),
-            pane_index: 0,
-            active: true,
-            current_command: "codex".into(),
-            cwd: "/work/agentix".into(),
-            foreground_pid: Some(42),
-        };
-        let inventory = vec![
-            base.clone(),
-            RmuxPaneState {
-                pane_id: "%2".into(),
-                pane_index: 1,
-                active: false,
-                current_command: "fish".into(),
-                foreground_pid: Some(43),
-                ..base
-            },
-        ];
-        let codex_sessions = HashMap::from([("%1".into(), SessionId::new("thr_agentix"))]);
-
-        let snapshot = snapshot_from_inventory(&inventory, &codex_sessions);
-
-        assert_eq!(snapshot.sessions.len(), 1);
-        assert_eq!(snapshot.sessions[0].windows[0].panes.len(), 2);
-        assert!(snapshot.sessions[0].windows[0].panes[0].active);
-        assert_eq!(
-            snapshot.sessions[0].windows[0].panes[0].agent_session,
-            Some(SessionId::new("thr_agentix"))
-        );
-    }
-
-    #[test]
-    fn native_launch_preserves_argv_without_rpc_resume_flags() {
-        let manager = super::RmuxManager::native(
-            Path::new("/Applications/Pi CLI/pi"),
-            vec!["-e".into(), "/bridge dir/pi.ts".into()],
-            Path::new("/workspace"),
-        );
-        assert_eq!(
-            manager.launch_argv(Path::new("/other")),
-            vec!["/Applications/Pi CLI/pi", "-e", "/bridge dir/pi.ts"]
-        );
-    }
-
-    #[test]
-    fn codex_launch_uses_structured_argv() {
-        let command = build_codex_argv(
-            Path::new("/Applications/Codex CLI/codex"),
-            "unix:///tmp/codex socket.sock",
-            Path::new("/Users/Test Work/'quoted"),
-        );
-
-        assert_eq!(
-            command,
-            [
-                "/Applications/Codex CLI/codex",
-                "--remote",
-                "unix:///tmp/codex socket.sock",
-                "-C",
-                "/Users/Test Work/'quoted",
-            ]
-        );
-        assert!(!command.iter().any(|argument| argument == "resume"));
-    }
-
-    #[test]
-    fn only_reused_panes_clear_unsubmitted_shell_input_before_launch() {
-        assert_eq!(
-            input_clear_key_before_launch(&MultiplexerTarget::ExistingPane {
-                pane_id: "%1".into(),
-            }),
-            Some("C-c")
-        );
-        assert_eq!(
-            input_clear_key_before_launch(&MultiplexerTarget::NewSession {
-                name: "codex".into(),
-                cwd: "/work".into(),
-            }),
-            None
-        );
-        assert_eq!(
-            input_clear_key_before_launch(&MultiplexerTarget::NewWindow {
-                session_id: "$1".into(),
-                name: "codex".into(),
-                cwd: "/work".into(),
-            }),
-            None
-        );
-        assert_eq!(
-            input_clear_key_before_launch(&MultiplexerTarget::SplitPane {
-                pane_id: "%1".into(),
-                direction: PaneSplitDirection::Horizontal,
-                cwd: "/work".into(),
-            }),
-            None
-        );
-    }
-
-    #[test]
-    fn finds_only_the_session_running_in_the_created_pane() {
-        let target = TerminalLocation {
-            session: "agentix".into(),
-            window_index: "2".into(),
-            window_name: "codex".into(),
-            pane_index: "0".into(),
-            pane_id: "%9".into(),
-        };
-        let sessions = [SessionSummary {
-            id: SessionId::new("thr_target"),
-            name: None,
-            preview: None,
-            cwd: None,
-            updated_at: None,
-            status: SessionStatus::Active,
-            terminal: Some(target.clone()),
-        }];
-
-        assert_eq!(
-            session_at_location(&sessions, &target).map(|session| session.id.as_str()),
-            Some("thr_target")
-        );
-    }
-
-    #[test]
-    fn finds_the_only_new_session_when_terminal_discovery_is_still_stale() {
-        let target = TerminalLocation {
-            session: "agentix".into(),
-            window_index: "2".into(),
-            window_name: "codex".into(),
-            pane_index: "0".into(),
-            pane_id: "%9".into(),
-        };
-        let sessions = [
-            SessionSummary {
-                id: SessionId::new("thr_existing"),
-                name: None,
-                preview: None,
-                cwd: Some("/work/agentix".into()),
-                updated_at: None,
-                status: SessionStatus::Active,
-                terminal: Some(target.clone()),
-            },
-            SessionSummary {
-                id: SessionId::new("thr_started"),
-                name: None,
-                preview: None,
-                cwd: Some("/work/agentix".into()),
-                updated_at: None,
-                status: SessionStatus::Active,
-                terminal: None,
-            },
-        ];
-        let known = HashSet::from([SessionId::new("thr_existing")]);
-
-        assert_eq!(
-            started_session(&sessions, &target, &known, Path::new("/work/agentix"))
-                .map(|session| session.id.as_str()),
-            Some("thr_started")
-        );
     }
 }

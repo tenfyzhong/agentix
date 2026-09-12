@@ -164,12 +164,12 @@ impl InteractionCoordinator {
 }
 
 #[derive(Debug)]
-pub(super) struct RmuxController {
+pub(super) struct MultiplexerController {
     enabled: bool,
     pub(super) selected: Mutex<HashMap<ConversationRef, crate::AgentKind>>,
 }
 
-impl RmuxController {
+impl MultiplexerController {
     pub(super) fn new(enabled: bool) -> Self {
         Self {
             enabled,

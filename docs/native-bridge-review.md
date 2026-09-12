@@ -9,7 +9,7 @@ Keep one Agentix control listener and one `BridgeHub` connection registry. Route
 | Responsibility | Pi / OMP | Claude |
 | --- | --- | --- |
 | Native connection | In-process extension uses shared `BridgeTransport` | Plugin MCP child uses the same `BridgeTransport` |
-| Input | Public host API | `RmuxDelivery` by default, `ChannelDelivery` explicitly selected |
+| Input | Public host API | `TerminalDelivery` (auto or configured multiplexer), `ChannelDelivery` explicitly selected |
 | Output | Public streaming/tool events; host-specific settled event | Process-scoped hooks and completion; optional Channel reply tool |
 | Delivery state | `DurableQueue` and native custom-entry journal | `ClaudeSession` and private checkpoint/incremental journal |
 | History | Branch index and native message association | Bounded initial transcript import and subsequently observed turns |

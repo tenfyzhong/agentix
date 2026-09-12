@@ -67,7 +67,10 @@ fn commands_are_distinct_from_prompts() {
     );
     assert_eq!(
         parse_input("/rmux").unwrap(),
-        ParsedInput::Command(AgentCommand::Multiplexer)
+        ParsedInput::Command(AgentCommand::Multiplexer {
+            kind: agentix_core::MultiplexerKind::default(),
+            backend: None
+        })
     );
     assert!(parse_input("/mux").is_err());
     assert_eq!(
@@ -391,4 +394,10 @@ async fn slack_thread_bindings_and_event_deduplication_survive_restart() {
             .unwrap()
     );
     assert_eq!(state.list_bindings().await.unwrap().len(), 2);
+}
+
+#[test]
+fn tmux_command_is_a_workspace_command() {
+    assert!(parse_input("/tmux").is_ok());
+    assert!(parse_input("/tmux claude").is_ok());
 }

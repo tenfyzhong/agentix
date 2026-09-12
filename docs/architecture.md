@@ -9,7 +9,7 @@ flowchart LR
     IM["Telegram, Feishu, or Slack"]
     CLI["agentix client"]
     BACKEND["Codex app-server and Pi / OMP / Claude live bridges"]
-    RMUX["rmux daemon"]
+    RMUX["rmux or tmux server"]
 
     subgraph SERVICE["agentix serve"]
         subgraph CHANNEL["Selected ChannelAdapter and its clones"]
@@ -29,7 +29,7 @@ flowchart LR
             SC["SessionService: durable bindings, discovery and history cursors"]
             TC["TurnCoordinator: buffers and message references"]
             IC["InteractionCoordinator: actions and approvals"]
-            RC["RmuxController"]
+            RC["MultiplexerController"]
             DB[("SqliteState: bindings, event claims, checkpoints")]
         end
 
@@ -52,7 +52,7 @@ flowchart LR
     E -->|"Agent commands"| AA
     RC -->|"WorkspaceRuntimePort"| AA
     AA <-->|"Backend protocol"| BACKEND
-    AA <-->|"rmux SDK when supported"| RMUX
+    AA <-->|"MultiplexerDriver"| RMUX
     E -->|"ChannelAdapter calls: views, menus, action cleanup"| OUT
     LOCAL --> OUT
     OUT --> HEAD
@@ -67,7 +67,7 @@ The executable selects one or several backends and one IM channel from validated
 
 The local control handler runs separately from Engine dispatch and uses the shared registry for session listing and the existing Codex connection for raw requests. Its claim requests use the owner claim registry. SDK polling, connection setup, and WebSocket control frames are omitted from the application message paths shown above.
 
-`Engine` is the orchestration facade rather than the owner of one large shared state bag. `SessionService` owns durable binding transitions, restoration, discovery, session metadata, and history cursors; `TurnCoordinator` owns active turns, render buffers, and message references; `InteractionCoordinator` owns pending interactions and scoped actions; and `RmuxController` isolates workspace-runtime access. `TaskBoardService` owns task input prompts, conversation recording, notification ingestion, durable outbox staging, and its consumer cursor identity. Its views use a narrow `TaskBoardUi` port for session context, scoped actions, and channel output; the service can record conversations without constructing an Engine. Engine dispatches inbox edits returned by the source poller through normal inbound validation. Pure view construction lives in `engine/presentation.rs` and has no adapter or storage dependency. The Engine entry point dispatches to focused session, workspace, turn, interaction, and startup workflow modules. These modules coordinate existing services and explicit post-commit effects; they do not introduce additional state containers. `SessionService` serializes local binding commits separately from remote subscription and IM notification I/O. Pending task, rename, and interaction replies are taken as owned values before awaiting remote operations, so their shared state locks cannot block other conversations. Engine runtime admission resolves local conversation/session resources before starting owned workers; remote operations run inside those workers.
+`Engine` is the orchestration facade rather than the owner of one large shared state bag. `SessionService` owns durable binding transitions, restoration, discovery, session metadata, and history cursors; `TurnCoordinator` owns active turns, render buffers, and message references; `InteractionCoordinator` owns pending interactions and scoped actions; and `MultiplexerController` isolates workspace-runtime access. `TaskBoardService` owns task input prompts, conversation recording, notification ingestion, durable outbox staging, and its consumer cursor identity. Its views use a narrow `TaskBoardUi` port for session context, scoped actions, and channel output; the service can record conversations without constructing an Engine. Engine dispatches inbox edits returned by the source poller through normal inbound validation. Pure view construction lives in `engine/presentation.rs` and has no adapter or storage dependency. The Engine entry point dispatches to focused session, workspace, turn, interaction, and startup workflow modules. These modules coordinate existing services and explicit post-commit effects; they do not introduce additional state containers. `SessionService` serializes local binding commits separately from remote subscription and IM notification I/O. Pending task, rename, and interaction replies are taken as owned values before awaiting remote operations, so their shared state locks cannot block other conversations. Engine runtime admission resolves local conversation/session resources before starting owned workers; remote operations run inside those workers.
 
 ## Layer boundaries and ownership
 
@@ -86,7 +86,7 @@ flowchart TB
     HOST --> NATIVE["Original interactive process and native session log"]
     TRANSPORT --> CLAUDE["Claude MCP child + ClaudeSession"]
     CLAUDE --> STORE["Private checkpoint and incremental journal"]
-    CLAUDE --> INPUT["RmuxDelivery or ChannelDelivery"]
+    CLAUDE --> INPUT["TerminalDelivery or ChannelDelivery"]
     INPUT --> CC["Original Claude process"]
     CC --> HOOKS["Process-scoped hook mailbox"]
     HOOKS --> CLAUDE
@@ -101,7 +101,7 @@ flowchart TB
 | Agent adapters | Wire/domain conversion, host-specific capabilities and optional ports | Generated wire DTOs stay in `agentix-bridge`; explicit conversions produce core types |
 | Native connection ownership | Registration, duplicate rejection, online connections, one resume/offline lifecycle source | `BridgeHub` is authoritative; adapters do not maintain a second connection cache |
 | Extension | Original-process execution, native history projection and durable remote queue | Transport owns framing/reconnect; runtime coordinates; session owns turn association/history; queue owns receipts/replay; host adapter owns Pi/OMP API differences |
-| Claude plugin | Hook mailbox, observed turns, delivery receipts, rmux or Channel input | MCP tools and Channel capability are exposed only in Channel mode; hooks and delivery adapters own Claude-specific behavior |
+| Claude plugin | Hook mailbox, observed turns, delivery receipts, terminal or Channel input | MCP tools and Channel capability are exposed only in Channel mode; hooks and delivery adapters own Claude-specific behavior |
 | Infrastructure | SQLite state, channel transport, rmux SDK and native session storage | Pi/OMP queue records remain in native logs; Claude keeps a private checkpoint and incremental journal; Agentix SQLite stores IM bindings and coordination state |
 
 The registry does not poll every backend for lifecycle changes. Adapters publish them: the Codex adapter observes its client registry and transport lifecycle, deferred adapters retry unavailable backends, and BridgeHub owns native connection lifecycle. On event broadcast lag, Engine invalidates stale actions and reconciles history for active bindings.
@@ -129,7 +129,9 @@ application explicitly to verify a complete use case.
 | `agentix-core` | application coordinators, command parsing, session policy, routing and rendering orchestration |
 | `agentix-codex` | app-server protocol, native WebSocket-over-UDS client, history fallback, reconnect/resubscribe |
 | `agentix-bridge` | generic native extension protocol, connection ownership, RPC correlation, event conversion, and live adapter |
-| `agentix-rmux` | shared typed rmux SDK integration and terminal/process mapping |
+| `agentix-multiplexer` | shared driver contract, validation, inventory hierarchy and workspace manager |
+| `agentix-rmux` | typed rmux SDK driver |
+| `agentix-tmux` | bounded tmux CLI driver and process ancestry mapping |
 | `agentix-telegram` | owner policy, mention handling, native command menu, long polling, message edit, callback acknowledgment |
 | `agentix-slack` | Socket Mode, workspace/owner policy, thread identities, Block Kit messages and callbacks, edited Inbox events, bounded API retries, Slack CLI startup manifest synchronization |
 | `agentix-feishu` | owner policy, long connection, Card JSON 2.0 send/edit, dynamic command cards, reply-context lookup, card callbacks |
@@ -260,7 +262,7 @@ For Codex, ordinary input received during an active turn uses the experimental `
 
 This app-server queue is distinct from the Codex TUI's Tab queue in Codex CLI 0.153.0. The TUI stores Tab-submitted messages in process-local memory and currently ignores `thread/queue/changed`; app-server exposes no RPC for that local state. Agentix therefore cannot merge or deduplicate the two queues without a Codex protocol change. If both contain pending input when a turn completes, the TUI and app-server queue services may independently attempt to submit their respective heads, yielding back-to-back turns without a shared ordering guarantee. Terminal input injection and screen scraping are deliberately excluded because they can corrupt an existing draft, truncate long queues, and duplicate turns.
 
-Queueing is an optional `QueuedPromptPort`; attached-session commands use `SessionControlPort`; and rmux operations use `WorkspaceRuntimePort`. `AgentAdapter` contains only operations common to every backend and exposes an `AgentCapabilities` value derived from the optional ports. The engine uses those capabilities to construct help and command menus instead of relying on backend-name checks or a growing set of support booleans.
+Queueing is an optional `QueuedPromptPort`; attached-session commands use `SessionControlPort`; and terminal operations use `WorkspaceRuntimePort`. `AgentAdapter` contains only operations common to every backend and exposes an `AgentCapabilities` value derived from the optional ports. The engine uses those capabilities to construct help and command menus instead of relying on backend-name checks or a growing set of support booleans.
 
 Non-final event rendering uses the channel update interval: five seconds for Telegram, one second for Feishu, and two seconds for Slack. The engine loop ticks once per second, but working-duration refreshes share that same interval with streamed content instead of bypassing it. Buffered content and locally measured duration are refreshed even without new agent output. Timer refreshes reuse the current Stop action token; they do not create an action-invalidating race. Completion bypasses the refresh interval, flushes the accumulated text, records the final duration, and removes the turn from future ticks. Restored running turns start a fresh local measurement because upstream history does not expose a compatible monotonic start instant. Telegram sends, edits, command menus, owner-claim replies, and callback acknowledgements preserve order within each chat’s message-center queue. Pacing reservations are made under a brief shared lock, which is released before sleeping or sending HTTP requests. Request starts are spaced globally by at least 50 ms and within a chat by 1.1 seconds in private chats or 3.1 seconds in groups. A chat waiting for its pacing slot does not reserve the global lock. A 429 response stores a shared cooldown for the requested delay plus a 100 ms margin; cancelling one retry does not clear the cooldown. Completed-turn messages also respect these transport limits. Expired per-chat pacing entries are removed on subsequent requests. Telegram converts quoted sections independently to escaped MarkdownV2 before restoring their quote markers, preserving paragraph and list boundaries inside each visual block. Conversion happens before length enforcement so truncation cannot leave broken formatting delimiters.
 
@@ -309,7 +311,7 @@ Stable control-path responses are deserialized into protocol DTOs rather than in
 
 The Unix listener is owner-only (`0600`), removes stale sockets before binding, and removes its own socket during graceful shutdown. TCP listeners are restricted to numeric loopback addresses. The endpoint can be overridden by `[server].endpoint`.
 
-The workspace runtime is rmux-specific. The shared `agentix-rmux` crate talks to the official Rust SDK with typed requests for snapshots, session/window/pane creation, process launch, foreground state, and pane input. Reusing an existing shell pane sends `Ctrl-C` through the typed input request before the structured process respawn so an unsubmitted shell command cannot be combined with the launch; newly created panes do not need this reset. The selected agent backend belongs to the conversation and each action captures it. Registry workspace ports qualify native IDs on snapshots and mutation results. Native launch arguments are structured, and Pi/OMP attachment requires a live registration mapped to the newly created pane.
+The workspace runtime depends on `agentix-multiplexer`, which owns the `MultiplexerDriver` contract and common workspace validation, name allocation, session matching and UI inventory conversion. The application composition root selects `agentix-rmux` (typed SDK) or `agentix-tmux` (bounded CLI subprocesses); Codex, Bridge and core do not import concrete drivers. Global `multiplexer.kind` and `multiplexer.working_dir` apply to all agents. Reusing an idle shell pane clears its draft before a structured process launch. Each conversation action captures its selected agent, while terminal identity includes the multiplexer kind to prevent equal pane IDs from colliding. Native attachment requires a live registration in the created pane.
 
 ### Pi and Oh My Pi
 
@@ -371,7 +373,7 @@ Core message-center tests verify FIFO admission within a conversation across clo
 
 The Telegram fixture implements the Bot API methods used by the adapter and records requests while serving queued polling updates and injected failures. It verifies bot discovery, menus, owner filtering and claiming, callback acknowledgement, send/edit payloads, MarkdownV2, and inline-keyboard cleanup. The Feishu fixture implements the consumed token, bot, message, and WebSocket endpoints. It issues rotating tenant credentials, sends official SDK protobuf frames, and verifies inbound message/card-action delivery, frame acknowledgements, interactive cards, updates, authorization, owner claiming, and API error mapping. Invalid-token coverage exercises every Agentix-owned Feishu OpenAPI call site: sends, card edits, action cleanup, both command-menu mutations, reply lookup, and claim responses. Separate cases prove retry exhaustion, no retry for unrelated API errors, and no business-request replay when refreshing the token itself fails. CLI integration tests launch the compiled binary against a mock Agentix control endpoint, including terminal-only claim generation, while native Pi/OMP bridge fixtures run in original Node host processes; the retained legacy Pi RPC library has separate subprocess tests.
 
-rmux integration is split at the workspace-runtime boundary: Shared rmux tests validate typed SDK inventory conversion and both Codex/native launch arguments, core tests validate navigation and mutations against a fake runtime port, and a mock Unix daemon decodes the real `rmux-proto` packets sent by the public `rmux-sdk` client for pane clearing, process respawn, session/window creation, and splitting. Connecting to a live rmux daemon is retained as an environment smoke test because the daemon is maintained outside this workspace.
+Multiplexer tests cover shared validation and matching, core navigation through a fake runtime port, typed rmux protocol packets and a real isolated tmux server. `AGENTIX_TEST_TMUX=1` enables tmux creation, splitting, launch-argument preservation and Claude terminal-delivery tests; CI runs them on Linux and macOS.
 
 CI runs the full workspace suite on Linux and macOS. Windows checks the whole workspace and runs the native TCP control tests plus the task library, taskix, and plugin tests; it does not run the full workspace test suite. `agentix-codex` exposes a clear unsupported-transport result on Windows because Codex app-server integration currently requires WebSocket over a Unix-domain socket.
 
@@ -383,7 +385,7 @@ Focused scripted UDS tests remain useful for malformed, missing, or version-spec
 
 ### Claude Code plugin
 
-The `agentix-bridge@agentix` Claude plugin owns an MCP subprocess that reuses `BridgeTransport` and connects to the shared control socket. Exec-form lifecycle hooks supply process-scoped identity and completion events through private files. `ClaudeSession` delegates prompt submission to a delivery interface. The default `RmuxDelivery` checks the original pane and submits literal text; matching `UserPromptSubmit` hooks acknowledge delivery and completion hooks report replies. `ChannelDelivery` remains an explicit alternative. `BridgeAdapter` provides Rust-side routing using the unchanged bridge protocol. Capabilities expose prompt, history, status, and uncertain-delivery recovery; unsupported native controls stay hidden. Only Channel mode advertises Channel capabilities, instructions, and acknowledgement/reply tools to Claude. The mailbox uses filesystem notifications plus a one-second fallback scan and removes events only after handling succeeds. `ClaudeStateStore` loads the existing JSON checkpoint and appends changed turns/receipts to JSONL, avoiding a full-history rewrite on each event. Partial journal tails are repaired on load; complete corrupt records fail explicitly. See [Claude Code](claude-code.md) and the [architecture review](native-bridge-review.md).
+The `agentix-bridge@agentix` Claude plugin owns an MCP subprocess that reuses `BridgeTransport` and connects to the shared control socket. Exec-form lifecycle hooks supply process-scoped identity and completion events through private files. `ClaudeSession` delegates prompt submission to a delivery interface. `TerminalDelivery` resolves a rmux/tmux adapter through auto detection or Bridge registration configuration, then checks the original pane and submits literal text; matching `UserPromptSubmit` hooks acknowledge delivery and completion hooks report replies. `ChannelDelivery` remains an explicit alternative. `BridgeAdapter` provides Rust-side routing using the unchanged bridge protocol. Capabilities expose prompt, history, status, and uncertain-delivery recovery; unsupported native controls stay hidden. Only Channel mode advertises Channel capabilities, instructions, and acknowledgement/reply tools to Claude. The mailbox uses filesystem notifications plus a one-second fallback scan and removes events only after handling succeeds. `ClaudeStateStore` loads the existing JSON checkpoint and appends changed turns/receipts to JSONL, avoiding a full-history rewrite on each event. Partial journal tails are repaired on load; complete corrupt records fail explicitly. See [Claude Code](claude-code.md) and the [architecture review](native-bridge-review.md).
 
 The completed four-point optimization and its acceptance evidence are recorded in [Architecture optimization review](architecture-review.md).
 

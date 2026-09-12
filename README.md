@@ -32,7 +32,7 @@ curl -fsSL https://chatgpt.com/codex/install.sh | sh
 
 ### Windows (x86_64)
 
-Download and extract `agentix-<version>-x86_64-pc-windows-msvc.zip` from the [latest release](https://github.com/tenfyzhong/agentix/releases/latest), then add the extracted directory to `PATH`. Pi/OMP live bridges can use a configured loopback TCP endpoint on Windows. Codex Unix sockets and rmux terminal delivery require macOS/Linux; standalone taskix and task plugins also support Windows.
+Download and extract `agentix-<version>-x86_64-pc-windows-msvc.zip` from the [latest release](https://github.com/tenfyzhong/agentix/releases/latest), then add the extracted directory to `PATH`. Pi/OMP live bridges can use a configured loopback TCP endpoint on Windows. Codex Unix sockets and rmux/tmux terminal delivery require macOS/Linux; standalone taskix and task plugins also support Windows.
 
 For checksums, other release archives, or building from source, see the [installation guide](docs/guide.md#install).
 
@@ -55,7 +55,7 @@ Copy-Item .\agentix\agentix.example.toml "$HOME\.config\agentix\config.toml"
 
 Edit `~/.config/agentix/config.toml`:
 
-1. Enable one or more of `[agent.codex]`, `[agent.pi]`, `[agent.omp]`, and `[agent.claude]`; each table selects its backend without a `kind` field. For Pi/OMP, install the [live-session bridge](plugins/agentix-bridge/README.md) in the original terminal. For Claude Code, install the [bridge plugin](docs/claude-code.md); the default non-Channel mode requires installing rmux and starting Claude inside an rmux terminal.
+1. Enable one or more of `[agent.codex]`, `[agent.pi]`, `[agent.omp]`, and `[agent.claude]`; each table selects its backend without a `kind` field. For Pi/OMP, install the [live-session bridge](plugins/agentix-bridge/README.md) in the original terminal. For Claude Code, install the [bridge plugin](docs/claude-code.md); the default non-Channel mode requires installing rmux or tmux and starting Claude inside it.
 2. Select `telegram`, `feishu`, or `slack` in `[channel].kind`.
 3. Fill in the Telegram bot `token`, the Feishu `app_id` and `app_secret`, or Slack `bot_token` and `app_token`, in the matching channel table.
 4. Leave the selected channel's owner list empty for first-time claiming.
@@ -116,13 +116,13 @@ command = "claude"
 session_dir = "~/.claude/projects"
 ```
 
-Start or restart the current Agentix build. In an rmux terminal, change to your project directory and launch Claude:
+Start or restart the current Agentix build. In an rmux or tmux terminal, change to your project directory and launch Claude:
 
 ```sh
 claude
 ```
 
-Keep the terminal running and idle, and select the session with `/sessions claude` in IM. The plugin clears any terminal draft before sending IM prompts through rmux and reports replies through hooks; Channel flags are not required, including when using third-party API providers. `/rmux claude` creates a suitable terminal from IM. Channel delivery remains available through explicit configuration. See the [Claude startup guide](docs/claude-code.md#start-claude-code) for local build commands, setup, and terminal delivery limitations.
+Keep the terminal running and idle, and select the session with `/sessions claude` in IM. The plugin clears any terminal draft before sending IM prompts through the original terminal and reports replies through hooks; Channel flags are not required, including when using third-party API providers. `/rmux claude` or `/tmux claude` creates a terminal according to `multiplexer.kind`. Channel delivery remains available through explicit configuration. See the [Claude startup guide](docs/claude-code.md#start-claude-code) for local build commands, setup, and terminal delivery limitations.
 
 ## Basic use
 
@@ -134,7 +134,7 @@ Keep the terminal running and idle, and select the session with `/sessions claud
 
 Mention the bot in group chats. If another Codex process owns the session's writer, Agentix attaches read-only; send prompts through that original process.
 
-To create sessions from chat, install optional rmux and use `/rmux` (or `/rmux pi`, `/rmux omp`, `/rmux codex`); see [rmux workspaces](docs/usage.md#rmux-workspaces). Connecting to existing sessions does not require rmux. Pi and OMP attachments control the original process through the shared, owner-only Unix control socket.
+To create sessions from chat, configure `[multiplexer]` with `kind = "rmux"` or `kind = "tmux"` and install the selected tool. Use the matching `/rmux` or `/tmux` command, optionally followed by an agent name; see [terminal workspaces](docs/usage.md#terminal-workspaces). The global `working_dir` defaults to `"~"` and applies to every agent. Pi and OMP attachments control the original process through the shared control socket.
 
 With [task boards configured](docs/guide.md#im-task-boards), use `/dashboard`, `/board`, and `/jobs` to browse work. Use `/inboxes` to view the current project's human queue and `/inbox <content>` to append a requirement; explicitly ask the agent to take the next Job after reviewing its current result. See [Project inbox](docs/task-board.md#project-inbox) for document submission and cancellation.
 

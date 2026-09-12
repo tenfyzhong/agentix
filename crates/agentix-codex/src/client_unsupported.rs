@@ -18,6 +18,13 @@ pub struct ClientError;
 pub struct CodexClient;
 
 impl CodexClient {
+    #[must_use]
+    pub fn with_multiplexer(
+        self,
+        _driver: std::sync::Arc<dyn agentix_multiplexer::MultiplexerDriver>,
+    ) -> Self {
+        self
+    }
     #[allow(clippy::trivially_copy_pass_by_ref, clippy::unused_self)]
     pub fn set_background_turn_notifications(&self, _enabled: bool) {}
 
@@ -25,7 +32,7 @@ impl CodexClient {
         _listen: &str,
         _upstream: CodexEndpoint,
         _command: &Path,
-        _rmux_directory: &Path,
+        _working_directory: &Path,
         _background_turn_notifications: std::sync::Arc<std::sync::atomic::AtomicBool>,
         _options: &crate::ProxyOptions,
     ) -> anyhow::Result<Self> {
@@ -36,7 +43,7 @@ impl CodexClient {
         _listen: &str,
         _upstream: CodexEndpoint,
         _command: &Path,
-        _rmux_directory: &Path,
+        _working_directory: &Path,
         _background_turn_notifications: bool,
         _options: &crate::ProxyOptions,
     ) -> anyhow::Result<Self> {
@@ -47,7 +54,7 @@ impl CodexClient {
         _listen: &str,
         _upstream: CodexEndpoint,
         _command: &Path,
-        _rmux_directory: &Path,
+        _working_directory: &Path,
         _background_turn_notifications: bool,
     ) -> anyhow::Result<Self> {
         Err(ClientError.into())
@@ -64,10 +71,10 @@ impl CodexClient {
         Err(ClientError)
     }
 
-    pub async fn connect_with_command_and_rmux_directory(
+    pub async fn connect_with_command_and_working_directory(
         _endpoint: CodexEndpoint,
         _command: &Path,
-        _rmux_directory: &Path,
+        _working_directory: &Path,
     ) -> Result<Self, ClientError> {
         Err(ClientError)
     }
@@ -75,7 +82,7 @@ impl CodexClient {
     pub async fn connect_with_background_turn_notifications(
         _endpoint: CodexEndpoint,
         _command: &Path,
-        _rmux_directory: &Path,
+        _working_directory: &Path,
         _background_turn_notifications: bool,
     ) -> Result<Self, ClientError> {
         Err(ClientError)

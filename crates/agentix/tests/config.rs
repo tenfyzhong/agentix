@@ -19,18 +19,17 @@ fn multi_backend_configuration_expands_paths_and_rejects_ambiguity() {
 }
 
 #[test]
-fn native_backends_accept_explicit_bridge_and_rmux_directory() {
-    let text = "[channel]\nkind='telegram'\n[channel.telegram]\ntoken='test'\n[storage]\npath='/tmp/state'\n[agent]\nkind='pi'\nsession_dir='/tmp/sessions'\nbridge_extension='~/bridge/pi.ts'\nrmux_directory='~/work'\n";
+fn native_backends_accept_explicit_bridge_and_global_working_directory() {
+    let text = "[channel]\nkind='telegram'\n[channel.telegram]\ntoken='test'\n[storage]\npath='/tmp/state'\n[agent]\nkind='pi'\nsession_dir='/tmp/sessions'\nbridge_extension='~/bridge/pi.ts'\n[multiplexer]\nworking_dir='~/work'\n";
+    let config = Config::from_toml(text).unwrap();
     let AgentConfig::Pi {
-        bridge_extension,
-        rmux_directory,
-        ..
-    } = Config::from_toml(text).unwrap().agent.unwrap()
+        bridge_extension, ..
+    } = config.agent.unwrap()
     else {
         panic!("Pi config");
     };
     assert!(bridge_extension.unwrap().ends_with("bridge/pi.ts"));
-    assert!(rmux_directory.ends_with("work"));
+    assert!(config.multiplexer.working_dir.ends_with("work"));
 }
 
 fn credential_config(kind: &str, tables: &str) -> String {
@@ -292,16 +291,11 @@ owner_user_ids = [42]
     #[cfg(windows)]
     assert_eq!(config.server.endpoint, "tcp://127.0.0.1:32198");
 
-    let AgentConfig::Codex {
-        command,
-        rmux_directory,
-        ..
-    } = config.agent.unwrap()
-    else {
+    let AgentConfig::Codex { command, .. } = config.agent.unwrap() else {
         panic!("expected Codex configuration");
     };
     assert_eq!(command, Path::new("codex"));
-    assert_eq!(rmux_directory, dirs::home_dir().unwrap());
+    assert_eq!(config.multiplexer.working_dir, dirs::home_dir().unwrap());
     assert_eq!(config.channel.telegram.unwrap().owner_user_ids, vec![42]);
 }
 
@@ -344,7 +338,8 @@ kind = "telegram"
 kind = "codex"
 command = "~/.local/bin/codex"
 endpoint = "unix://~/.codex/custom.sock"
-rmux_directory = "~/workspace"
+[multiplexer]
+working_dir = "~/workspace"
 
 [storage]
 path = "~/.local/share/agentix/state.sqlite3"
@@ -357,10 +352,7 @@ owner_user_ids = [42]
     .unwrap();
 
     let AgentConfig::Codex {
-        command,
-        endpoint,
-        rmux_directory,
-        ..
+        command, endpoint, ..
     } = config.agent.unwrap()
     else {
         panic!("expected Codex configuration");
@@ -370,7 +362,7 @@ owner_user_ids = [42]
         endpoint,
         format!("unix://{}", home.join(".codex/custom.sock").display())
     );
-    assert_eq!(rmux_directory, home.join("workspace"));
+    assert_eq!(config.multiplexer.working_dir, home.join("workspace"));
     assert_eq!(
         config.storage.path,
         home.join(".local/share/agentix/state.sqlite3")
@@ -378,30 +370,13 @@ owner_user_ids = [42]
 }
 
 #[test]
-fn accepts_the_legacy_multiplexer_directory_alias() {
-    let config = Config::from_toml(
-        r#"
-[channel]
-kind = "telegram"
-
-[agent]
-kind = "codex"
-multiplexer_directory = "~/workspace"
-
-[storage]
-path = "~/.local/state/agentix/state.db"
-
-[channel.telegram]
-token = "mock-token"
-owner_user_ids = [42]
-"#,
-    )
-    .unwrap();
-
-    let AgentConfig::Codex { rmux_directory, .. } = config.agent.unwrap() else {
-        panic!("expected Codex configuration");
-    };
-    assert_eq!(rmux_directory, dirs::home_dir().unwrap().join("workspace"));
+fn rejects_the_removed_agent_directory_alias() {
+    let base = credential_config("telegram", "[channel.telegram]\ntoken='test'");
+    let text = base.replace(
+        "kind = \"codex\"",
+        "kind = \"codex\"\nmultiplexer_directory = \"~/workspace\"",
+    );
+    assert!(Config::from_toml(&text).is_err());
 }
 
 #[test]

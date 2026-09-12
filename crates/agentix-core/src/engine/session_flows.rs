@@ -3,7 +3,7 @@ use super::{
     ActionButton, ActionStyle, AgentCommand, AgentError, AttachOutcome, ChannelCommand,
     ConversationRef, DeliveryClass, Engine, EngineError, HistoryPage, HistoryPresentation, Instant,
     OutboundView, ParsedInput, PendingSessionInput, SessionCommand, SessionCommandChoice,
-    SessionId, TurnBuffer, TurnStatus, UiAction, Uuid, ViewStatus, command_menu, display_workspace,
+    SessionId, TurnBuffer, TurnStatus, UiAction, Uuid, ViewStatus, display_workspace,
     history_views, markdown_quote, session_display_label, session_status_label, session_title,
 };
 
@@ -109,6 +109,7 @@ impl Engine {
         } else {
             false
         };
+        let workspace_command = format!("/{} [backend]", self.multiplexer_kind);
         let mut commands = vec![
             ("/help", "Show available commands and their purpose."),
             (
@@ -116,7 +117,7 @@ impl Engine {
                 "List existing sessions, optionally filtered by backend.",
             ),
             (
-                "/rmux [backend]",
+                workspace_command.as_str(),
                 "Browse terminal sessions and create or attach an agent session.",
             ),
             (
@@ -228,7 +229,8 @@ impl Engine {
             );
             if let Some(terminal) = &session.terminal {
                 item.push_str(&format!(
-                    "\n🖥️ **rmux** · `{}` · `{}` (`{}`) · `{}`",
+                    "\n🖥️ **{}** · `{}` · `{}` (`{}`) · `{}`",
+                    terminal.multiplexer,
                     terminal.session,
                     terminal.window_index,
                     terminal.window_name,
@@ -863,7 +865,10 @@ impl Engine {
         conversation: &ConversationRef,
         attached: bool,
     ) -> crate::CommandMenu {
-        let mut menu = command_menu(attached && self.agent.capabilities().session_control);
+        let mut menu = super::command_menu_for(
+            attached && self.agent.capabilities().session_control,
+            self.multiplexer_kind,
+        );
         if attached && let Some(session) = self.sessions.current(conversation).await {
             let mut commands = Vec::new();
             for command in menu.commands.drain(..) {
@@ -886,7 +891,14 @@ impl Engine {
             menu.commands.retain(|command| {
                 matches!(
                     command.name.as_str(),
-                    "sessions" | "rmux" | "current" | "history" | "detach" | "cancel" | "help"
+                    "sessions"
+                        | "rmux"
+                        | "tmux"
+                        | "current"
+                        | "history"
+                        | "detach"
+                        | "cancel"
+                        | "help"
                 )
             });
         }
@@ -905,7 +917,13 @@ impl Engine {
                 ]);
             }
         }
-        let primary = ["sessions", "dashboard", "cancel", "rmux", "help"];
+        let primary = [
+            "sessions",
+            "dashboard",
+            "cancel",
+            self.multiplexer_kind.as_str(),
+            "help",
+        ];
         menu.commands.sort_by(|left, right| {
             let rank = |command: &ChannelCommand| {
                 if command.contextual {

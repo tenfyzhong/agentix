@@ -1,5 +1,5 @@
 [package]
-name = "agentix-rmux"
+name = "agentix-multiplexer"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -7,16 +7,13 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
-agentix-multiplexer = { path = "../agentix-multiplexer" }
-async-trait.workspace = true
 agentix-domain = { path = "../agentix-domain" }
+async-trait.workspace = true
 dirs.workspace = true
-rmux-sdk.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 
 [dev-dependencies]
-rmux-proto.workspace = true
 tempfile.workspace = true
 
 [lints]

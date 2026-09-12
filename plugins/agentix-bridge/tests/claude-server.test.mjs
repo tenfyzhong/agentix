@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { Mailbox, hostKey } from '../claude/mailbox.mjs';
 
-for (const [mode, notifications] of [['channel', true], ['rmux', true], ['rmux', false]]) test(`Claude MCP child bridges original session through Agentix socket in ${mode} mode (notifications=${notifications})`, { timeout: 15000, skip: process.platform === 'win32' }, async t => {
+for (const [mode, notifications] of [['channel', true], ['auto', true], ['multiplexer', false]]) test(`Claude MCP child bridges original session through Agentix socket in ${mode} mode (notifications=${notifications})`, { timeout: 15000, skip: process.platform === 'win32' }, async t => {
     const root = mkdtempSync(join(tmpdir(), 'ax-cc-'));
     cpSync(new URL('../', import.meta.url), join(root, 'plugin'), { recursive: true, filter: path => !path.includes('node_modules') });
     const mailbox = new Mailbox(root, hostKey(process.pid));
@@ -19,7 +19,7 @@ for (const [mode, notifications] of [['channel', true], ['rmux', true], ['rmux',
         peer = socket;
         createInterface({ input: socket }).on('line', line => {
             const frame = JSON.parse(line); frames.push(frame);
-            if (frame.method === 'register') socket.write(JSON.stringify({ id: 'register', ok: true, result: {} }) + '\n');
+            if (frame.method === 'register') socket.write(JSON.stringify({ id: 'register', ok: true, result: { multiplexer: { kind: 'tmux' } } }) + '\n');
         });
     });
     await new Promise(resolve => server.listen(join(root, 'control.sock'), resolve));
@@ -45,7 +45,7 @@ for (const [mode, notifications] of [['channel', true], ['rmux', true], ['rmux',
     assert.equal(registration.params.session_id, 'native-claude');
     send({ id: 10, method: 'tools/list', params: {} });
     const tools = (await waitFor(() => mcp.find(f => f.id === 10))).result.tools;
-    if (mode === 'rmux') {
+    if (mode !== 'channel') {
         assert.deepEqual(tools, []);
         send({ id: 11, method: 'tools/call', params: { name: 'agentix_acknowledge', arguments: { request_id: 'invented' } } });
         assert.equal((await waitFor(() => mcp.find(f => f.id === 11))).result.isError, true);

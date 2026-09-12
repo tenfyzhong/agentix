@@ -81,3 +81,34 @@ test('transport rejects malformed endpoints before reconnecting', () => {
         assert.throws(() => new BridgeTransport({ endpoint }), /endpoint/i, endpoint);
     }
 });
+
+test('registration configuration is delivered before requests and refreshed after reconnect', async t => {
+    const net = await import('node:net');
+    const { once } = await import('node:events');
+    const { peer } = await import('./support.mjs');
+    const received = [], clients = [];
+    let configured, generation = 0;
+    const server = net.createServer(socket => {
+        const client = peer(socket); clients.push(client);
+        const kind = generation++ === 0 ? 'rmux' : 'tmux';
+        waitFor(() => client.frames.some(f => f.method === 'register')).then(() => {
+            socket.write(JSON.stringify({ id: 'register', ok: true, result: { multiplexer: { kind } } }) + '\n' +
+                JSON.stringify({ id: 'read', method: 'status', params: {} }) + '\n');
+        });
+    });
+    server.listen(0, '127.0.0.1'); await once(server, 'listening');
+    const transport = new BridgeTransport({
+        endpoint: 'tcp://127.0.0.1:' + server.address().port, reconnectDelay: 5,
+        snapshot: () => ({}), dispatch: work => work(),
+        registered: result => { configured = result.multiplexer.kind; received.push(configured); },
+        handle: async () => ({ body: configured }),
+    });
+    t.after(async () => { await transport.close(); clients.forEach(c => c.socket.destroy()); await new Promise(resolve => server.close(resolve)); });
+    transport.open({ instance: 'config', agent: 'claude', session_id: 'native' });
+    const first = await waitFor(() => clients[0]?.frames.find(f => f.id === 'read'));
+    assert.equal(first.result.body, 'rmux');
+    clients[0].socket.destroy();
+    const second = await waitFor(() => clients[1]?.frames.find(f => f.id === 'read'));
+    assert.equal(second.result.body, 'tmux');
+    assert.deepEqual(received, ['rmux', 'tmux']);
+});

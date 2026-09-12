@@ -14,8 +14,10 @@ pub enum AgentCommand {
     Task(String),
     Sessions,
     SessionsBackend(String),
-    Multiplexer,
-    MultiplexerBackend(String),
+    Multiplexer {
+        kind: crate::MultiplexerKind,
+        backend: Option<String>,
+    },
     Attach(String),
     Current,
     Detach,
@@ -89,9 +91,14 @@ pub fn parse_input(input: &str) -> Result<ParsedInput, InputParseError> {
         "/sessions" => parts.next().map_or(AgentCommand::Sessions, |kind| {
             AgentCommand::SessionsBackend(kind.into())
         }),
-        "/rmux" => parts.next().map_or(AgentCommand::Multiplexer, |kind| {
-            AgentCommand::MultiplexerBackend(kind.into())
-        }),
+        "/rmux" | "/tmux" => AgentCommand::Multiplexer {
+            kind: if command == "/rmux" {
+                crate::MultiplexerKind::Rmux
+            } else {
+                crate::MultiplexerKind::Tmux
+            },
+            backend: parts.next().map(str::to_owned),
+        },
         "/attach" => AgentCommand::Attach(
             parts
                 .next()

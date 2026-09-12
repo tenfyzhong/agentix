@@ -1,4 +1,4 @@
-import { ChannelDelivery, RmuxDelivery } from './delivery.mjs';
+import { ChannelDelivery, TerminalDelivery, deliveryMode } from './delivery.mjs';
 import { Server, StdioServerTransport, CallToolRequestSchema, ListToolsRequestSchema } from './vendor/sdk.mjs';
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -10,15 +10,17 @@ import { Mailbox, dataRoot } from './mailbox.mjs';
 import { ClaudeStateStore } from './store.mjs';
 
 const mailbox = new Mailbox();
-const channelMode = process.env.AGENTIX_CLAUDE_DELIVERY === 'channel';
+const mode = deliveryMode(process.env.AGENTIX_CLAUDE_DELIVERY);
+const channelMode = mode === 'channel';
 let session, polling = false;
 const mcp = new Server({ name: 'agentix-bridge', version: '0.1.0' }, {
     capabilities: { ...(channelMode ? { experimental: { 'claude/channel': {} } } : {}), tools: {} },
     instructions: channelMode ? 'Messages from this channel are Agentix user requests for this original session. Before acting on each message, call agentix_acknowledge with its request_id. Send your response through agentix_reply with the same request_id. Do not invent IDs. A reply does not end the turn; finish your normal turn after replying.' : undefined,
 });
 const delivery = channelMode
-    ? new ChannelDelivery(value => mcp.notification(value)) : new RmuxDelivery();
-const transport = new BridgeTransport({ snapshot: () => session.info(),
+    ? new ChannelDelivery(value => mcp.notification(value)) : new TerminalDelivery({ mode });
+const transport = new BridgeTransport({ registered: result => delivery.configure?.(result),
+    registrationError: error => console.error('Agentix Claude registration: ' + error.message), snapshot: () => session.info(),
     handle: (method, params) => session.request(method, params), dispatch: work => work() });
 const string = { type: 'string', minLength: 1 };
 mcp.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: channelMode ? [
@@ -27,7 +29,7 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: channelMode 
 ] : [] }));
 mcp.setRequestHandler(CallToolRequestSchema, async request => {
     try {
-        if (!channelMode) throw new Error('Channel tools are disabled for rmux delivery');
+        if (!channelMode) throw new Error('Channel tools are disabled for terminal delivery');
         if (!session) throw new Error('Claude SessionStart hook has not registered');
         const args = request.params.arguments ?? {};
         if (request.params.name === 'agentix_acknowledge') session.acknowledge(args.request_id);

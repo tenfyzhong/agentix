@@ -619,9 +619,20 @@ async fn send_claim_response(adapter: &TelegramAdapter, chat_id: ChatId, text: &
 
 #[must_use]
 pub fn menu_commands() -> Vec<BotCommand> {
+    menu_commands_for(agentix_domain::MultiplexerKind::default())
+}
+
+#[must_use]
+pub fn menu_commands_for(kind: agentix_domain::MultiplexerKind) -> Vec<BotCommand> {
     BASE_MENU_COMMANDS
         .into_iter()
-        .map(|(command, description)| BotCommand::new(command, description))
+        .map(|(command, description)| {
+            if command == "rmux" {
+                BotCommand::new(kind.as_str(), "Manage terminal workspaces")
+            } else {
+                BotCommand::new(command, description)
+            }
+        })
         .collect()
 }
 

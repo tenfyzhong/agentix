@@ -8,7 +8,7 @@ repository.workspace = true
 
 [dependencies]
 agentix-domain = { path = "../agentix-domain" }
-agentix-rmux = { path = "../agentix-rmux" }
+agentix-multiplexer = { path = "../agentix-multiplexer" }
 async-trait.workspace = true
 serde.workspace = true
 serde_json.workspace = true

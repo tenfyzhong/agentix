@@ -8,7 +8,7 @@ Store the actual credentials in TOML: `channel.telegram.token` for Telegram, or 
 
 Filesystem paths other than the absolute `slack_cli_path` override accept `~` or `~/...` and expands it to the current user's home directory. This includes `storage.path`, agent commands, Pi/OMP session directories, and the path portion of Agentix or Codex `unix://` endpoints. Named-user forms such as `~someone` and environment variables such as `$HOME` are not expanded.
 
-Set `agent.rmux_directory` to choose the workspace used when `/rmux` creates a session, window, or pane; it defaults to the current user's home directory. The former `agent.multiplexer_directory` key remains available as a compatibility alias.
+Set `multiplexer.kind` to `rmux` (default) or `tmux`. `multiplexer.working_dir` is shared by every agent and defaults to `"~"`, expanded to the current user’s home directory. The selected menu is `/rmux` or `/tmux`. Both settings require a service restart. Per-agent `rmux_directory` and `multiplexer_directory` have been removed and are rejected.
 
 ### Slack CLI startup synchronization
 
@@ -128,7 +128,7 @@ Configure `[agent.omp]`, the `omp` executable, and its session root. Load the OM
 
 ### Claude Code
 
-Configure `[agent.claude]` and install `agentix-bridge@agentix`. For default IM input, install rmux on PATH and run Claude inside it. The optional Channel mode requires its environment selection and startup flag. Both use the existing Unix control socket; see [Claude setup and delivery modes](claude-code.md).
+Configure `[agent.claude]` and install `agentix-bridge@agentix`. For default IM input, install rmux or tmux on PATH and run Claude inside it. The optional Channel mode requires its environment selection and startup flag. All modes use the existing control socket; see [Claude setup and delivery modes](claude-code.md).
 
 ### Named backend configuration
 
@@ -192,7 +192,7 @@ Agentix requires a mention in groups. The Feishu SDK acknowledges card actions w
 
 Create a bot token and set `channel.telegram.token` to its value. Add numeric owner user IDs directly or initialize the first owner through the claim flow above. In group chats, privacy mode and bot permissions must still allow mentioned messages to reach the bot. Agentix ignores unmentioned group text.
 
-At channel startup, Agentix registers Telegram's primary commands in the order `/sessions`, `/dashboard`, `/cancel`, `/rmux`, `/help`, omitting `/dashboard` when `task_board.enable` is false or omitted. It selects the commands menu button for private chats. After attachment, contextual commands follow in alphabetical order, including `/board` and `/jobs` when task boards are enabled, and clickable `/model` and `/reasoning` selectors for Codex; `/thinking` is not exposed. Menu registration is refreshed on every restart, so BotFather command configuration is not required. `/attach` is intentionally omitted from the menu because it requires a session ID; use the title buttons from `/sessions` instead.
+At channel startup, Agentix registers Telegram's primary commands in the order `/sessions`, `/dashboard`, `/cancel`, `/rmux` (or `/tmux` according to configuration), `/help`, omitting `/dashboard` when `task_board.enable` is false or omitted. It selects the commands menu button for private chats. After attachment, contextual commands follow in alphabetical order, including `/board` and `/jobs` when task boards are enabled, and clickable `/model` and `/reasoning` selectors for Codex; `/thinking` is not exposed. Menu registration is refreshed on every restart, so BotFather command configuration is not required. `/attach` is intentionally omitted from the menu because it requires a session ID; use the title buttons from `/sessions` instead.
 
 ## Service operation
 
@@ -251,7 +251,7 @@ Tracing timestamps use RFC 3339 in the computer's local time zone and include it
 - Feishu card body output is bounded before transport.
 - Pi/OMP/Claude session listing queries live registered bridges using metadata-only RPCs. It does not discover offline JSONL files or spawn resumed RPC agents. Native bridging requires a Unix control endpoint.
 - Codex's persistent queue API is experimental. External queue entries execute automatically, but Codex CLI 0.153.0 keeps Tab-submitted follow-ups in a private, in-process TUI queue and ignores `thread/queue/changed`. That local queue and the app-server queue used by Agentix do not synchronize or deduplicate through the official protocol. The TUI may not show an Agentix queue entry until its turn starts, and Agentix cannot list a Tab-queued TUI entry; `/queue` is authoritative only for the app-server queue. If both queues contain input when a turn ends, each owner may try to submit its next item, producing back-to-back turns with no shared ordering guarantee. Do not use both queues concurrently for the same session.
-- Claude Code IM support uses the [plugin with rmux input](claude-code.md) with the existing Agentix bridge protocol. Native stop, steering, model controls, and approval relay are not advertised; terminal permissions remain local.
+- Claude Code IM support uses the [plugin with terminal input](claude-code.md) with the existing Agentix bridge protocol. Native stop, steering, model controls, and approval relay are not advertised; terminal permissions remain local.
 
 For the development workflow, test architecture, CI, and release process, see [Contributing to Agentix](../CONTRIBUTING.md).
 

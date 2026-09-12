@@ -28,6 +28,12 @@ path = "~/.local/state/agentix/agentix.log"
 rotation = "daily"
 max_files = 7
 
+# One terminal multiplexer and initial working directory shared by every agent.
+# Changing these settings requires restarting Agentix.
+[multiplexer]
+kind = "rmux" # rmux or tmux; controls the /rmux or /tmux menu
+working_dir = "~"
+
 [agent.codex]
 # Agentix requires Codex CLI 0.153.0+ from the official standalone installer.
 # Homebrew does not install the managed app-server layout.
@@ -36,8 +42,6 @@ command = "~/.codex/packages/standalone/current/codex"
 proxy_endpoint = "unix://~/.codex/app-server-control/app-server-control.sock"
 # Shared upstream: started or reused by Agentix; survives Agentix shutdown.
 endpoint = "unix://~/.codex/app-server-control/app-server-control-upstream.sock"
-# Used by /rmux when creating a session, window, or pane. Defaults to Home.
-rmux_directory = "~"
 
 # For a non-loopback ws:// proxy, authentication is required:
 # [agent.codex.proxy]
@@ -99,7 +103,6 @@ owner_user_ids = []
 # The table name selects the backend; do not add a kind field.
 # Pi/OMP require agentix-bridge in the original process.
 # Optional Pi/OMP fields (place inside the corresponding backend table):
-# rmux_directory = "~/work"
 # bridge_extension = "/path/to/agentix/plugins/agentix-bridge/extensions/omp.ts"
 # Legacy [agent] + kind and [[agents]] remain accepted, but cannot be mixed
 # with the named backend tables.

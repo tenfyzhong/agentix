@@ -210,7 +210,7 @@ impl Drop for PendingRequest<'_> {
 
 pub struct BridgeAdapter {
     flavor: BridgeKind,
-    workspace: Option<agentix_rmux::RmuxManager>,
+    workspace: Option<agentix_multiplexer::WorkspaceManager>,
     server: Arc<BridgeHub>,
     events: broadcast::Sender<AgentEvent>,
 }
@@ -233,7 +233,19 @@ impl BridgeAdapter {
     }
     #[must_use]
     pub fn with_workspace(mut self, command: &Path, args: Vec<String>, directory: &Path) -> Self {
-        self.workspace = Some(agentix_rmux::RmuxManager::native(command, args, directory));
+        self.workspace = Some(agentix_multiplexer::WorkspaceManager::new(
+            std::iter::once(command.to_string_lossy().into_owned())
+                .chain(args)
+                .collect(),
+            directory,
+        ));
+        self
+    }
+    #[must_use]
+    pub fn with_multiplexer(self, driver: Arc<dyn agentix_multiplexer::MultiplexerDriver>) -> Self {
+        if let Some(workspace) = &self.workspace {
+            workspace.set_driver(driver);
+        }
         self
     }
     async fn connection(&self, id: &SessionId) -> Result<Arc<Connection>, AgentError> {
@@ -327,9 +339,10 @@ impl AgentAdapter for BridgeAdapter {
     ) -> Result<SessionPage, AgentError> {
         let connections = self.server.connections(self.flavor).await;
         let mut sessions = Vec::new();
-        let locations = agentix_rmux::rmux_process_locations()
-            .await
-            .unwrap_or_default();
+        let locations = match &self.workspace {
+            Some(w) => w.process_locations().await.unwrap_or_default(),
+            None => std::collections::HashMap::default(),
+        };
         let mut pending = tokio::task::JoinSet::new();
         let mut connections = connections.into_iter();
         loop {
@@ -529,6 +542,12 @@ impl QueuedPromptPort for BridgeAdapter {
 
 #[async_trait]
 impl WorkspaceRuntimePort for BridgeAdapter {
+    fn multiplexer_kind(&self) -> agentix_domain::MultiplexerKind {
+        self.workspace.as_ref().map_or(
+            agentix_domain::MultiplexerKind::default(),
+            agentix_multiplexer::WorkspaceManager::kind,
+        )
+    }
     fn default_directory(&self) -> String {
         self.workspace.as_ref().map_or_else(
             || "~".into(),
@@ -537,7 +556,10 @@ impl WorkspaceRuntimePort for BridgeAdapter {
     }
     async fn snapshot(&self) -> Result<Option<MultiplexerSnapshot>, AgentError> {
         let sessions = self.list_sessions(None, u32::MAX).await?.sessions;
-        agentix_rmux::RmuxManager::snapshot(&sessions)
+        self.workspace
+            .as_ref()
+            .ok_or_else(|| rejected("multiplexer is not configured"))?
+            .snapshot(&sessions)
             .await
             .map_err(unavailable)
     }
@@ -548,10 +570,8 @@ impl WorkspaceRuntimePort for BridgeAdapter {
         let workspace = self
             .workspace
             .as_ref()
-            .ok_or_else(|| rejected("rmux launch is not configured"))?;
-        let prepared = agentix_rmux::RmuxManager::prepare(mutation)
-            .await
-            .map_err(unavailable)?;
+            .ok_or_else(|| rejected("multiplexer launch is not configured"))?;
+        let prepared = workspace.prepare(mutation).await.map_err(unavailable)?;
         let known: HashSet<_> = self
             .list_sessions(None, u32::MAX)
             .await?
@@ -571,22 +591,25 @@ impl WorkspaceRuntimePort for BridgeAdapter {
             let page = self.list_sessions(None, u32::MAX).await?;
             if let Some(session) = page.sessions.into_iter().find(|s| {
                 !known.contains(&s.id)
-                    && s.terminal
-                        .as_ref()
-                        .is_some_and(|t| t.pane_id == outcome.location.pane_id)
+                    && s.terminal.as_ref().is_some_and(|t| {
+                        t.multiplexer == outcome.location.multiplexer
+                            && t.pane_id == outcome.location.pane_id
+                    })
             }) {
                 self.attach(&session.id).await?;
                 return Ok(MultiplexerMutationResult {
                     message: format!(
-                        "{} started in rmux pane {}",
+                        "{} started in {} pane {}",
                         self.display_name(),
+                        outcome.location.multiplexer,
                         outcome.location.pane_id
                     ),
                     session: Some(session),
                 });
             }
             if tokio::time::Instant::now() >= deadline
-                || !agentix_rmux::RmuxManager::pane_exists(&outcome.location)
+                || !workspace
+                    .pane_exists(&outcome.location)
                     .await
                     .map_err(unavailable)?
             {

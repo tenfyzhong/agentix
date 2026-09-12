@@ -12,12 +12,12 @@ mod session;
 pub use action::{ActionRegistry, ActionScope, ActionTokenError};
 pub use agent::{
     AgentAdapter, AgentCapabilities, AgentError, AgentEvent, GoalCommand, HistoryPage,
-    InteractionDecision, InteractionKind, InteractionRequest, ItemSummary, MultiplexerMutation,
-    MultiplexerMutationResult, MultiplexerPane, MultiplexerSession, MultiplexerSnapshot,
-    MultiplexerTarget, MultiplexerWindow, PaneSplitDirection, QueuedPrompt, QueuedPromptPort,
-    SessionCommand, SessionCommandChoice, SessionCommandResult, SessionControlPort, SessionPage,
-    SessionStatus, SessionSummary, TerminalLocation, ToolSummary, TurnStatus, TurnSummary,
-    WorkspaceRuntimePort,
+    InteractionDecision, InteractionKind, InteractionRequest, ItemSummary, MultiplexerKind,
+    MultiplexerMutation, MultiplexerMutationResult, MultiplexerPane, MultiplexerSession,
+    MultiplexerSnapshot, MultiplexerTarget, MultiplexerWindow, PaneSplitDirection, QueuedPrompt,
+    QueuedPromptPort, SessionCommand, SessionCommandChoice, SessionCommandResult,
+    SessionControlPort, SessionPage, SessionStatus, SessionSummary, TerminalLocation, ToolSummary,
+    TurnStatus, TurnSummary, WorkspaceRuntimePort,
 };
 pub use binding::{AttachOutcome, BindingTable, DeliveryClass, EventImportance};
 pub use channel::{
