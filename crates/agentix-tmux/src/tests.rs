@@ -292,6 +292,25 @@ async fn wait_for_pane_command(driver: &TmuxDriver, pane: &str, command: &str) {
 }
 
 #[cfg(unix)]
+async fn wait_for_shell_prompt(driver: &TmuxDriver, pane: &str) {
+    // Input sent before readline starts can be consumed during shell startup.
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let output = driver
+                .run(&strings(&["capture-pane", "-p", "-t", pane]))
+                .await
+                .unwrap();
+            if output.contains("agentix-ready>") {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .expect("blank shell must be ready before sending Ctrl-D");
+}
+
+#[cfg(unix)]
 async fn assert_ctrl_d_closes_pane(driver: &TmuxDriver, pane: &str) {
     let other = driver
         .run(&strings(&["new-window", "-d", "-P", "-F", "#{pane_id}"]))
@@ -301,7 +320,7 @@ async fn assert_ctrl_d_closes_pane(driver: &TmuxDriver, pane: &str) {
         .run(&strings(&["send-keys", "-t", pane, "C-d"]))
         .await
         .unwrap();
-    tokio::time::timeout(Duration::from_secs(5), async {
+    let closed = tokio::time::timeout(Duration::from_secs(5), async {
         loop {
             let panes = driver.inventory(false).await.unwrap().unwrap();
             assert!(panes.iter().any(|p| p.pane_id == other.trim()));
@@ -311,8 +330,23 @@ async fn assert_ctrl_d_closes_pane(driver: &TmuxDriver, pane: &str) {
             tokio::time::sleep(Duration::from_millis(25)).await;
         }
     })
-    .await
-    .expect("Ctrl-D must remove the pane, not leave a dead pane");
+    .await;
+    assert!(
+        closed.is_ok(),
+        "Ctrl-D must remove pane {pane}; state: {:?}; output: {:?}",
+        driver
+            .run(&strings(&[
+                "display-message",
+                "-p",
+                "-t",
+                pane,
+                "#{pane_dead}|#{pane_current_command}|#{remain-on-exit}"
+            ]))
+            .await,
+        driver
+            .run(&strings(&["capture-pane", "-p", "-t", pane]))
+            .await
+    );
 }
 
 #[tokio::test]
@@ -373,11 +407,27 @@ async fn native_blank_panes_close_with_global_remain_on_exit_enabled() {
     ));
     let _cleanup = Cleanup(socket);
     driver
-        .run(&strings(&["new-session", "-d", "-s", "keep"]))
+        .run(&strings(&[
+            "-f",
+            "/dev/null",
+            "new-session",
+            "-d",
+            "-s",
+            "keep",
+        ]))
         .await
         .unwrap();
     driver
         .run(&strings(&["set-option", "-g", "remain-on-exit", "on"]))
+        .await
+        .unwrap();
+    driver
+        .run(&strings(&[
+            "set-option",
+            "-g",
+            "default-command",
+            "sleep 0.2; exec env PS1='agentix-ready> ' /bin/bash --noprofile --norc -i",
+        ]))
         .await
         .unwrap();
     let inventory = driver.inventory(false).await.unwrap().unwrap();
@@ -425,6 +475,7 @@ async fn native_blank_panes_close_with_global_remain_on_exit_enabled() {
                 .cwd,
             cwd
         );
+        wait_for_shell_prompt(&driver, &pane).await;
         assert_ctrl_d_closes_pane(&driver, &pane).await;
         assert_eq!(
             driver
