@@ -3718,6 +3718,56 @@ async fn restore_reopens_persisted_agent_subscriptions() {
 }
 
 #[tokio::test]
+async fn startup_skips_command_cards_and_preserves_explicit_help() {
+    for kind in [ChannelKind::Feishu, ChannelKind::Slack] {
+        for (session, subtitle) in [
+            ("thr_a", "Online · Reattached"),
+            ("thr_offline", "Online · Waiting for agent"),
+            ("thr_missing", "Online · Detached"),
+        ] {
+            let agent = Arc::new(FakeAgent::rejecting_attachment("thr_missing"));
+            agent
+                .unavailable_attachments
+                .lock()
+                .unwrap()
+                .push(SessionId::new("thr_offline"));
+            let channel = Arc::new(FakeChannel {
+                channel_kind: Some(kind),
+                ..FakeChannel::default()
+            });
+            let state = SqliteState::in_memory().await.unwrap();
+            let conversation = ConversationRef::new(kind, "chat-a");
+            state
+                .attach(&conversation, &SessionId::new(session))
+                .await
+                .unwrap();
+            let engine = Engine::new(agent, state, vec![channel.clone()]);
+
+            engine.restore_bindings().await.unwrap();
+
+            assert!(
+                channel.session_commands().is_empty(),
+                "startup requested a command card for {kind:?} / {session}"
+            );
+            let sent = channel.sent();
+            assert_eq!(sent.len(), 1);
+            assert_eq!(sent[0].1.title, "Agentix serve");
+            assert_eq!(sent[0].1.subtitle.as_deref(), Some(subtitle));
+            engine
+                .handle_inbound(InboundEnvelope::text(
+                    "help",
+                    conversation,
+                    "owner",
+                    "/help",
+                ))
+                .await
+                .unwrap();
+            assert_eq!(channel.sent().last().unwrap().1.title, "Agentix commands");
+        }
+    }
+}
+
+#[tokio::test]
 async fn deferred_startup_notifications_skip_changed_bindings() {
     for stale_session in ["thr_a", "thr_missing"] {
         let agent = Arc::new(FakeAgent::rejecting_attachment("thr_missing"));
