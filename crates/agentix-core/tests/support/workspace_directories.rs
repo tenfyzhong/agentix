@@ -197,7 +197,7 @@ async fn invalid_manual_path_can_be_retried_and_cancelled() {
 }
 
 #[tokio::test]
-async fn new_window_offers_distinct_directories_and_prefers_attached_pane() {
+async fn new_window_defaults_home_and_allows_explicit_pane_directory() {
     let (engine, agent, channel) = fixture().await;
     {
         let mut snapshot = agent.snapshot.lock().unwrap();
@@ -232,8 +232,13 @@ async fn new_window_offers_distinct_directories_and_prefers_attached_pane() {
     click(&engine, &channel, "agentix").await;
     click(&engine, &channel, "+ Window").await;
     let view = channel.sent().last().unwrap().1.clone();
-    assert!(view.body.contains("/work/parser"));
+    assert!(view.body.contains("/work/multiplexer"));
+    assert!(view.body.contains("Source: HOME"));
+    assert!(view.actions.iter().any(|a| a.label == "/work/parser"));
     assert!(!view.actions.iter().any(|a| a.label == "/other"));
+    click(&engine, &channel, "/work/parser").await;
+    click(&engine, &channel, "Create").await;
+    assert!(mutations(&agent)[1].contains("/work/parser"));
 }
 
 #[tokio::test]
@@ -530,5 +535,44 @@ async fn multiplexer_management_buttons_distinguish_existing_targets() {
                 click(&engine, &channel, label).await;
             }
         }
+    }
+}
+
+#[tokio::test]
+async fn new_window_defaults_to_home_even_when_panes_use_tmp() {
+    for (kind, attached) in [
+        (agentix_core::MultiplexerKind::Rmux, false),
+        (agentix_core::MultiplexerKind::Rmux, true),
+        (agentix_core::MultiplexerKind::Tmux, false),
+        (agentix_core::MultiplexerKind::Tmux, true),
+    ] {
+        let (engine, agent, channel) = fixture().await;
+        let engine = engine.with_multiplexer_kind(kind);
+        for pane in &mut agent.snapshot.lock().unwrap().sessions[0].windows[0].panes {
+            pane.cwd = "/private/tmp".into();
+        }
+        if attached {
+            engine
+                .handle_inbound(inbound("chat-a", "/attach thr_a"))
+                .await
+                .unwrap();
+        }
+        engine
+            .handle_inbound(inbound("chat-a", &format!("/{kind}")))
+            .await
+            .unwrap();
+        click(&engine, &channel, "agentix").await;
+        click(&engine, &channel, "+ Window").await;
+        let view = channel.sent().last().unwrap().1.clone();
+        assert!(
+            view.body.contains("/work/multiplexer"),
+            "{kind}, attached={attached}: {}",
+            view.body
+        );
+        assert!(view.body.contains("Source: HOME"), "{}", view.body);
+        assert!(!view.body.contains("/private/tmp"), "{}", view.body);
+        click(&engine, &channel, "Create").await;
+        assert!(mutations(&agent)[0].contains("/work/multiplexer"));
+        assert!(!mutations(&agent)[0].contains("/private/tmp"));
     }
 }

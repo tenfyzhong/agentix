@@ -100,7 +100,10 @@ impl Engine {
                 candidates.push(path);
             }
         }
-        let (directory, source) = if candidates.len() == 1 {
+        let (directory, source) = if matches!(mutation.target, MultiplexerTarget::NewWindow { .. })
+        {
+            (home.clone(), "HOME".to_owned())
+        } else if candidates.len() == 1 {
             (candidates[0].clone(), source.to_owned())
         } else {
             (
@@ -293,7 +296,13 @@ impl Engine {
             body.push_str(&format!("\n{error}"));
         }
         let mut choices = Vec::new();
-        if draft.candidates.len() > 1 {
+        if draft.candidates.len() > 1
+            || (matches!(draft.mutation.target, MultiplexerTarget::NewWindow { .. })
+                && draft
+                    .candidates
+                    .first()
+                    .is_some_and(|path| path != &draft.directory))
+        {
             choices.extend(draft.candidates.iter().map(|p| {
                 (
                     p.clone(),

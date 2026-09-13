@@ -128,7 +128,7 @@ Creation does not depend on task boards or registered projects:
 
 - A new session uses the attached agent’s current directory, or HOME when unavailable.
 - A split uses its target pane’s directory, or HOME when unavailable.
-- A new window prefers the attached pane in its target session. Otherwise it uses the active panes’ unique directory; when several directories differ, choose one of the candidates or HOME.
+- A new window defaults to HOME. The attached pane directory (or active pane directories when unattached) remains available as an explicit choice; it never replaces HOME automatically.
 
 Use `Choose directory` to browse immediate subdirectories (six per page), show hidden directories, go to the parent or HOME, or `Enter path`. Paths may be absolute, start with `~/`, or be relative to the displayed directory. Spaces and Unicode are supported; shell variables and substitutions are not expanded. Symlinks resolve to their directory, including worktrees. Invalid manually selected paths show an error instead of switching to HOME.
 
