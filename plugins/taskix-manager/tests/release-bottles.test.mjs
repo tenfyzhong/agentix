@@ -37,7 +37,7 @@ test("bottle overlay replaces compilation but preserves source and tap installat
         await writeFile(path, fixture);
         execFileSync("ruby", [overlay], { env: { ...process.env, FORMULA_PATH: path, PREBUILT_BINARY: binary, FORMULA: "agentix" } });
         const actual = await readFile(path, "utf8");
-        assert.match(actual, /bin.install .* => "agentix"/);
+        assert.match(actual, /bin.install buildpath\/"agentix"/);
         assert.doesNotMatch(actual, /system "cargo"|set-release-version|depends_on "rust"|depends_on "protobuf"/);
         for (const line of fixture.split("\n").filter(line => /url |sha256 |libiconv|pkgshare|bash_completion|service|opt_bin/.test(line))) {
             assert.ok(actual.includes(line), `must preserve ${line}`);
@@ -112,6 +112,8 @@ test("real Homebrew bottles a prebuilt executable, restores source metadata and 
     const { mkdir } = await import("node:fs/promises");
     const { createHash } = await import("node:crypto");
     const dir = await mkdtemp(join(tmpdir(), "bottle-integration-"));
+    // Keep the input outside Homebrew temporary directories, like release CI.
+    const inputDir = await mkdtemp(join(root, ".bottle-prebuilt-"));
     const name = `codex-bottle-fixture-${process.pid}`;
     const tap = `codex-fixture/release-${process.pid}`;
     const env = { ...process.env, HOMEBREW_NO_AUTO_UPDATE: "1", HOMEBREW_NO_INSTALL_CLEANUP: "1", HOMEBREW_NO_ENV_HINTS: "1" };
@@ -129,9 +131,10 @@ test("real Homebrew bottles a prebuilt executable, restores source metadata and 
         execFileSync("tar", ["-czf", archive, "-C", join(dir, "source"), "."]);
         const digest = createHash("sha256").update(await readFile(archive)).digest("hex");
         const c = join(dir, "fixture.c");
-        const binary = join(dir, name);
+        const binary = join(inputDir, name);
         await writeFile(c, `#include <stdio.h>\nint main(void) { puts("${name} 1.2.3"); return 0; }\n`);
         execFileSync("cc", [c, "-o", binary]);
+        const originalBinary = await readFile(binary);
         const klass = name.split("-").map(word => word[0].toUpperCase() + word.slice(1)).join("");
         const formula = fixture.replaceAll("agentix", name).replace("class Agentix", `class ${klass}`)
             .replace('  depends_on "libiconv"\n', "")
@@ -150,6 +153,7 @@ test("real Homebrew bottles a prebuilt executable, restores source metadata and 
             encoding: "utf8", timeout: 240_000,
         });
         assert.equal(result.status, 0, result.stdout + result.stderr);
+        assert.deepEqual(await readFile(binary), originalBinary, "packaging must preserve the release binary");
         assert.equal(await readFile(path, "utf8"), formula);
         const prefix = brew("--prefix", `${tap}/${name}`).trim();
         assert.equal(await readFile(join(prefix, ".brew", `${name}.rb`), "utf8"), formula);
@@ -157,6 +161,7 @@ test("real Homebrew bottles a prebuilt executable, restores source metadata and 
         assert.equal(receipt.poured_from_bottle, true);
         assert.equal(execFileSync(join(prefix, "bin", name), ["--version"], { encoding: "utf8" }).trim(), `${name} 1.2.3`);
     } finally {
+        await rm(inputDir, { recursive: true, force: true });
         try { brew("uninstall", "--force", `${tap}/${name}`); } catch { /* Uninstalled on failure before pour. */ }
         try { brew("untrust", "--formula", `${tap}/${name}`); brew("untrust", tap); } catch { /* Fixture may not have been trusted yet. */ }
         if (tapPath) await rm(tapPath, { recursive: true, force: true });
