@@ -159,6 +159,7 @@ dependencies = [
  "agentix-domain",
  "async-trait",
  "dirs",
+ "nix",
  "tempfile",
  "thiserror",
  "tokio",

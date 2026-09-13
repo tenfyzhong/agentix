@@ -93,22 +93,8 @@ impl TmuxDriver {
     }
     async fn launch(&self, pane: &str, cwd: &str, argv: &[String]) -> Result<(), MultiplexerError> {
         self.close_on_exit(pane).await?;
-        let mut command_args = strings(&[
-            "respawn-pane",
-            "-k",
-            "-t",
-            pane,
-            "-c",
-            cwd,
-            "--",
-            // Interactive mode preserves foreground job control and Ctrl-C.
-            "/bin/sh",
-            "-i",
-            "-c",
-            r#""$@"; exec "${SHELL:-/bin/sh}" -i"#,
-            "agentix",
-        ]);
-        command_args.extend_from_slice(argv);
+        let mut command_args = strings(&["respawn-pane", "-k", "-t", pane, "-c", cwd, "--"]);
+        command_args.extend(agentix_multiplexer::persistent_launch_argv(argv));
         self.run(&command_args).await?;
         Ok(())
     }

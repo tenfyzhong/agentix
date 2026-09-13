@@ -1,5 +1,6 @@
 //! rmux SDK adapter. Application policy lives in agentix-multiplexer.
 use agentix_domain::{MultiplexerKind, MultiplexerTarget, PaneSplitDirection, TerminalLocation};
+use agentix_multiplexer::persistent_launch_argv;
 use agentix_multiplexer::{
     MultiplexerDriver, MultiplexerError, MultiplexerOutcome as RmuxOutcome,
     PaneState as RmuxPaneState, PreparedMutation, command_basename, terminal_location,
@@ -315,28 +316,6 @@ async fn launch_in_pane(
     Ok(())
 }
 
-// Keep argv separate from shell syntax, then restore an interactive prompt even
-// when the agent exits unsuccessfully. A dead-pane setting alone cannot do this.
-#[cfg(unix)]
-fn persistent_launch_argv(argv: &[String]) -> Vec<String> {
-    let mut command = vec![
-        "/bin/sh".to_owned(),
-        // Give the agent its own foreground process group for detection and
-        // terminal signals while the wrapper waits for it to exit.
-        "-i".to_owned(),
-        "-c".to_owned(),
-        r#""$@"; exec "${SHELL:-/bin/sh}" -i"#.to_owned(),
-        "agentix".to_owned(),
-    ];
-    command.extend_from_slice(argv);
-    command
-}
-
-#[cfg(not(unix))]
-fn persistent_launch_argv(argv: &[String]) -> Vec<String> {
-    argv.to_vec()
-}
-
 fn input_clear_key_before_launch(target: &MultiplexerTarget) -> Option<&'static str> {
     matches!(target, MultiplexerTarget::ExistingPane { .. }).then_some("C-c")
 }
@@ -525,17 +504,25 @@ mod tests {
         assert_returns_to_shell(command, &argv);
     }
 
+    #[test]
+    #[cfg(unix)]
+    fn agent_launch_enters_login_shell() {
+        let command = persistent_launch_argv(&["claude".into()]);
+        assert!(
+            command.iter().any(|argument| argument.contains("-lc")),
+            "{command:?}"
+        );
+    }
+
     #[cfg(unix)]
     fn assert_returns_to_shell(command: &[String], agent_argv: &[String]) {
         use std::io::Write;
         use std::process::{Command, Stdio};
 
-        // Replace only the agent argv with a deterministic child, retaining the
-        // actual SDK launch wrapper. Exercise success, failure and literal args.
-        assert!(command.ends_with(agent_argv));
+        // Verify the SDK uses the shared launcher, then exercise its exit recovery.
+        assert_eq!(command, persistent_launch_argv(agent_argv));
         for (status, shell) in [(0, Some("/bin/sh")), (7, None), (0, Some(""))] {
-            let mut launch = command[..command.len() - agent_argv.len()].to_vec();
-            launch.extend([
+            let launch = persistent_launch_argv(&[
                 "/bin/sh".to_owned(),
                 "-c".to_owned(),
                 format!("printf '%s\\n' \"$1\"; exit {status}"),
