@@ -53,15 +53,23 @@ jobs:
           echo "tag=$release_tag" >> "$GITHUB_OUTPUT"
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-  build-release-binaries:
+  prepare-homebrew:
     needs: resolve-version
+    uses: ./.github/workflows/homebrew-prepare.yml
+    with:
+      tag: ${{ needs.resolve-version.outputs.tag }}
+    secrets:
+      HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+
+  build-release-binaries:
+    needs: [resolve-version, prepare-homebrew]
     strategy:
       fail-fast: false
       matrix:
         include:
           - runner: macos-15
             target: aarch64-apple-darwin
-          - runner: ubuntu-latest
+          - runner: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
           - runner: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
@@ -159,6 +167,24 @@ jobs:
             dist/taskix-*.zip
           if-no-files-found: error
 
+      - name: Check out packaging automation
+        if: runner.os != 'Windows'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: packaging-automation
+          sparse-checkout: |
+            .github/actions
+            .github/scripts
+          persist-credentials: false
+      - name: Build bottles from this platform binaries
+        if: runner.os != 'Windows'
+        uses: ./packaging-automation/.github/actions/build-bottles
+        with:
+          tag: ${{ needs.resolve-version.outputs.tag }}
+          binary-directory: target/${{ matrix.target }}/release
+          artifact-suffix: ${{ matrix.runner }}
+
   publish-release:
     needs:
       - resolve-version
@@ -173,9 +199,16 @@ jobs:
           pattern: release-*
           path: dist
           merge-multiple: true
+      - name: Download bottles
+        uses: actions/download-artifact@v4
+        with:
+          pattern: homebrew-bottle-*
+          path: bottle-artifacts
       - name: Create checksums
         working-directory: dist
         run: sha256sum agentix-* taskix-* > SHA256SUMS
+      - name: Collect bottle archives
+        run: cp bottle-artifacts/*/*.bottle.tar.gz dist/
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -202,7 +235,7 @@ jobs:
       - publish-release
     permissions:
       contents: write
-    uses: ./.github/workflows/homebrew.yml
+    uses: ./.github/workflows/homebrew-publish.yml
     with:
       tag: ${{ needs.resolve-version.outputs.tag }}
     secrets:

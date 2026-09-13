@@ -50,7 +50,7 @@ test("Homebrew updates existing formulas and discards stale bottle and revision 
 
 test("Homebrew formulas belong exclusively to the tap", async () => {
     await assert.rejects(access(new URL("homebrew/taskix.rb", repository)), { code: "ENOENT" });
-    const workflow = await readFile(new URL(".github/workflows/homebrew.yml", repository), "utf8");
+    const workflow = await readFile(new URL(".github/workflows/homebrew-publish.yml", repository), "utf8");
     assert.ok(!workflow.includes("FORMULA_TEMPLATE"));
     assert.ok(workflow.includes("repository: tenfyzhong/homebrew-tap"));
 });
@@ -69,40 +69,31 @@ function stepScript(workflow, name) {
 }
 
 test("Homebrew workflow parsing handles Windows checkout line endings", async () => {
-    const workflow = (await readFile(new URL(".github/workflows/homebrew.yml", repository), "utf8")).replace(/\r\n/g, "\n");
+    const workflow = (await readFile(new URL(".github/workflows/homebrew-publish.yml", repository), "utf8")).replace(/\r\n/g, "\n");
     const windowsWorkflow = workflow.replace(/\n/g, "\r\n");
-    for (const name of ["prepare-homebrew", "build-bottles", "publish-homebrew"]) {
+    for (const name of ["publish-homebrew"]) {
         assert.equal(job(windowsWorkflow, name), job(workflow, name));
     }
     assert.equal(stepScript(windowsWorkflow, "Add bottle metadata to formula"), stepScript(workflow, "Add bottle metadata to formula"));
 });
 
-test("Homebrew builds both formulas on three platforms before publishing one PR per formula", async () => {
-    const workflow = await readFile(new URL(".github/workflows/homebrew.yml", repository), "utf8");
-    const prepare = job(workflow, "prepare-homebrew");
-    const build = job(workflow, "build-bottles");
+test("Homebrew publishes one PR per formula only after all platform bottles succeed", async () => {
+    const manual = await readFile(new URL(".github/workflows/homebrew.yml", repository), "utf8");
+    const prepare = await readFile(new URL(".github/workflows/homebrew-prepare.yml", repository), "utf8");
+    const workflow = await readFile(new URL(".github/workflows/homebrew-publish.yml", repository), "utf8");
     const publish = job(workflow, "publish-homebrew");
     assert.match(prepare, /update-homebrew-formula\.rb/);
     assert.match(prepare, /name: homebrew-formula-\$\{\{ matrix\.formula \}\}/);
-    assert.match(build, /needs: prepare-homebrew/);
-    assert.match(build, /runner: \[macos-15, ubuntu-24\.04, ubuntu-24\.04-arm\]/);
-    assert.match(build, /runs-on: \$\{\{ matrix\.runner \}\}/);
-    assert.match(build, /Homebrew\/actions\/setup-homebrew@/);
-    assert.match(build, /name: homebrew-formula-\$\{\{ matrix\.formula \}\}/);
-    assert.match(build, /brew install --build-bottle/);
-    assert.match(build, /brew test/);
-    assert.match(build, /name: homebrew-bottle-\$\{\{ matrix\.formula \}\}-\$\{\{ matrix\.runner \}\}/);
-    assert.match(build, /if-no-files-found: error/);
-    assert.doesNotMatch(build, /create-pull-request/);
-    assert.match(publish, /needs: \[prepare-homebrew, build-bottles\]/);
-    assert.doesNotMatch(publish, /always\(\)|matrix\.runner/);
+    assert.match(job(manual, "build-bottles"), /needs: prepare-homebrew/);
+    assert.match(job(manual, "publish-homebrew"), /needs: build-bottles/);
+    assert.doesNotMatch(manual + workflow, /always\(\)/);
     assert.match(publish, /pattern: homebrew-bottle-\$\{\{ matrix\.formula \}\}-\*/);
     assert.match(publish, /merge-multiple: true/);
     assert.equal((workflow.match(/uses: peter-evans\/create-pull-request@/g) ?? []).length, 1);
 });
 
 test("Homebrew merges every platform JSON and refuses incomplete bottle sets", { skip: process.platform === "win32" }, async () => {
-    const workflow = await readFile(new URL(".github/workflows/homebrew.yml", repository), "utf8");
+    const workflow = await readFile(new URL(".github/workflows/homebrew-publish.yml", repository), "utf8");
     const merge = stepScript(workflow, "Add bottle metadata to formula");
     for (const formula of ["agentix", "taskix"]) {
         for (const count of [3, 2, 0]) {
@@ -144,3 +135,26 @@ test("Homebrew merges every platform JSON and refuses incomplete bottle sets", {
         }
     }
 });
+
+for (const path of [".github/workflows/homebrew-publish.yml", ".github/actions/build-bottles/action.yml"]) {
+    test(`Homebrew trusts a fresh tap before syntax validation in ${path}`, { skip: process.platform === "win32" }, async () => {
+        const workflow = await readFile(new URL(path, repository), "utf8");
+        const initialization = workflow.split(/\r?\n/)
+            .filter(line => /^\s*brew (tap|trust) "\$TAP_NAME"$/.test(line))
+            .map(line => line.trim()).join("\n");
+        assert.equal(initialization.split("\n").length, 2);
+        const mock = `trusted=0
+brew() {
+    [[ "$2" == "$TAP_NAME" ]] || return 2
+    case "$1" in
+        trust) trusted=1 ;;
+        tap) [[ "$trusted" == 1 ]] || { echo 'Refusing to load formula from untrusted tap' >&2; return 1; } ;;
+        *) return 2 ;;
+    esac
+}
+`;
+        execFileSync("bash", ["-euo", "pipefail", "-c", mock + initialization], {
+            env: { ...process.env, BASH_ENV: "/dev/null", TAP_NAME: "test/release-tap" }, stdio: "pipe",
+        });
+    });
+}

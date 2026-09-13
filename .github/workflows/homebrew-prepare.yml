@@ -1,0 +1,77 @@
+name: Homebrew Prepare
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+      formula:
+        default: all
+        type: string
+    secrets:
+      HOMEBREW_TAP_TOKEN:
+        required: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  prepare-homebrew:
+    strategy:
+      fail-fast: false
+      matrix:
+        formula: ${{ fromJSON(inputs.formula == 'agentix' && '["agentix"]' || inputs.formula == 'taskix' && '["taskix"]' || '["agentix", "taskix"]') }}
+    runs-on: macos-15
+    env:
+      FORMULA: ${{ matrix.formula }}
+      FORMULA_PATH: ${{ github.workspace }}/homebrew-tap/Formula/${{ matrix.formula }}.rb
+      RELEASE_TAG: ${{ inputs.tag }}
+      TAP_NAME: tenfyzhong/tap
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.tag }}
+      - name: Resolve release version
+        id: release
+        run: |
+          tag_commit="$(git rev-parse --verify "refs/tags/${RELEASE_TAG}^{commit}")"
+          head_commit="$(git rev-parse HEAD)"
+          if [[ "$tag_commit" != "$head_commit" ]]; then
+            echo "Tag '$RELEASE_TAG' does not point at the checked-out commit" >&2
+            exit 1
+          fi
+          version="$(.github/scripts/release-version.sh "$RELEASE_TAG")"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Check out Homebrew tap
+        uses: actions/checkout@v4
+        with:
+          repository: tenfyzhong/homebrew-tap
+          ref: main
+          path: homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          persist-credentials: false
+      - name: Update formula source
+        run: |
+          set -o pipefail
+          source_url="https://github.com/${GITHUB_REPOSITORY}/archive/refs/tags/${RELEASE_TAG}.tar.gz"
+          source_sha256="$(curl --fail --location --silent --show-error "$source_url" | shasum -a 256 | awk '{print $1}')"
+          if [[ -z "$source_sha256" ]]; then
+            echo "Could not calculate the source archive checksum" >&2
+            exit 1
+          fi
+          export SOURCE_URL="$source_url"
+          export SOURCE_SHA256="$source_sha256"
+          ruby .github/scripts/update-homebrew-formula.rb
+      - name: Save prepared formula
+        uses: actions/upload-artifact@v4
+        with:
+          name: homebrew-formula-${{ matrix.formula }}
+          path: ${{ env.FORMULA_PATH }}
+          if-no-files-found: error

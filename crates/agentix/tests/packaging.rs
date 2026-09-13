@@ -52,7 +52,7 @@ fn release_workflow_builds_tag_aligned_native_archives() {
     assert!(workflow.contains("gh release create"));
     assert!(workflow.contains("gh release upload"));
     assert!(workflow.lines().any(|line| line == "  publish-homebrew:"));
-    assert!(workflow.contains("uses: ./.github/workflows/homebrew.yml"));
+    assert!(workflow.contains("uses: ./.github/workflows/homebrew-publish.yml"));
     assert!(workflow.contains("HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}"));
 }
 
@@ -391,7 +391,13 @@ fn release_version_setter_updates_workspace_packages_from_the_tag() {
 
 #[test]
 fn homebrew_workflow_builds_a_bottle_and_updates_the_tap() {
-    let workflow = repository_file(".github/workflows/homebrew.yml");
+    let workflow = [
+        repository_file(".github/workflows/homebrew.yml"),
+        repository_file(".github/workflows/homebrew-prepare.yml"),
+        repository_file(".github/workflows/homebrew-publish.yml"),
+        repository_file(".github/scripts/build-homebrew-bottle.sh"),
+    ]
+    .join("\n");
 
     assert!(
         !repository_root()
@@ -421,17 +427,7 @@ fn homebrew_workflow_builds_a_bottle_and_updates_the_tap() {
 #[test]
 #[cfg(unix)]
 fn homebrew_bottle_asset_names_match_the_selected_formula() {
-    let workflow = repository_file(".github/workflows/homebrew.yml");
-    let script = workflow
-        .split("      - name: Normalize Homebrew bottle asset name\n")
-        .nth(1)
-        .unwrap()
-        .split("        run: |\n")
-        .nth(1)
-        .unwrap()
-        .split("      - name:")
-        .next()
-        .unwrap();
+    let script = repository_file(".github/scripts/normalize-homebrew-bottle.sh");
 
     for formula in ["agentix", "taskix"] {
         let directory = tempfile::tempdir().unwrap();
@@ -444,7 +440,7 @@ fn homebrew_bottle_asset_names_match_the_selected_formula() {
         )
         .unwrap();
         let output = Command::new("bash")
-            .args(["-eu", "-c", script])
+            .args(["-eu", "-c", &script])
             .env("FORMULA", formula)
             .current_dir(directory.path())
             .output()
@@ -467,7 +463,7 @@ fn homebrew_bottle_asset_names_match_the_selected_formula() {
         );
 
         let missing = Command::new("bash")
-            .args(["-eu", "-c", script])
+            .args(["-eu", "-c", &script])
             .env("FORMULA", formula)
             .current_dir(directory.path())
             .output()
@@ -482,7 +478,13 @@ fn homebrew_bottle_asset_names_match_the_selected_formula() {
 #[test]
 #[cfg(target_os = "macos")]
 fn homebrew_source_update_preserves_tap_customizations_and_removes_old_bottles() {
-    let workflow = repository_file(".github/workflows/homebrew.yml");
+    let workflow = [
+        repository_file(".github/workflows/homebrew.yml"),
+        repository_file(".github/workflows/homebrew-prepare.yml"),
+        repository_file(".github/workflows/homebrew-publish.yml"),
+        repository_file(".github/scripts/build-homebrew-bottle.sh"),
+    ]
+    .join("\n");
     assert!(workflow.contains("ruby .github/scripts/update-homebrew-formula.rb"));
     let ruby = repository_file(".github/scripts/update-homebrew-formula.rb");
     let temporary_tap = tempfile::tempdir().unwrap();
