@@ -3,13 +3,13 @@ import assert from 'node:assert/strict';
 import { TerminalDelivery, deliveryMode } from '../claude/delivery.mjs';
 
 const env = { TMUX: '/tmp/arbitrary-socket,123,0', TMUX_PANE: '%7' };
-function fixture(mode, available = ['tmux']) {
+function fixture(mode, available = ['tmux'], distinctRoots = false) {
     const calls = [];
     const run = async (command, args, input) => {
         calls.push({ command, args, input });
         if (command === 'ps') return args.includes('-p') ? '200 200' : '200 100\n100 1\n';
         if (!available.includes(command)) throw new Error('wrong server');
-        if (args.includes('display-message')) return '100|claude|2|1|0|0';
+        if (args.includes('display-message')) return `${distinctRoots && command === 'tmux' ? 200 : 100}|claude|2|1|0|0`;
         if (args.includes('capture-pane')) return '──────────\n❯ \n──────────\n';
         return '';
     };
@@ -31,7 +31,7 @@ for (const kind of ['rmux', 'tmux']) {
 }
 test('auto rejects ambiguous and unverified servers before input', async () => {
     for (const available of [[], ['rmux', 'tmux']]) {
-        const { delivery, calls } = fixture('auto', available);
+        const { delivery, calls } = fixture('auto', available, true);
         await assert.rejects(delivery.send({ text: 'hello' }), e => e.notSent === true);
         assert.ok(!calls.some(c => c.args.includes('load-buffer') || c.args.includes('send-keys')));
     }

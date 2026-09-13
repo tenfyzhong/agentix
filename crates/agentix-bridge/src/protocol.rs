@@ -89,6 +89,15 @@ impl From<wire::QueueItem> for core::QueuedPrompt {
 impl From<wire::Event> for core::AgentEvent {
     fn from(value: wire::Event) -> Self {
         match value {
+            wire::Event::SessionSwitchStarted(v) => Self::SessionSwitchStarted {
+                session_id: v.session_id,
+                client_id: v.client_id,
+            },
+            wire::Event::SessionSwitchFailed(v) => Self::SessionSwitchFailed {
+                session_id: v.session_id,
+                client_id: v.client_id,
+                reason: v.reason,
+            },
             wire::Event::SessionExited(v) => Self::SessionExited {
                 session_id: v.session_id,
             },

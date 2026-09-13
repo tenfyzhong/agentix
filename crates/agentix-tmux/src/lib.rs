@@ -125,6 +125,42 @@ impl TmuxDriver {
 
 #[async_trait]
 impl MultiplexerDriver for TmuxDriver {
+    async fn codex_terminal_input(
+        &self,
+        pid: u32,
+        clear: Option<&str>,
+    ) -> Result<Option<String>, MultiplexerError> {
+        let location = self
+            .process_locations()
+            .await?
+            .remove(&pid)
+            .ok_or_else(|| error("Original Codex pane is unavailable"))?;
+        let prefix = self.socket.as_ref().map_or_else(
+            || strings(&["-L", "default"]),
+            |socket| vec!["-S".into(), socket.to_string_lossy().into_owned()],
+        );
+        agentix_multiplexer::codex_terminal_input(
+            &self.command,
+            &prefix,
+            &location.pane_id,
+            pid,
+            clear,
+        )
+        .await
+    }
+    async fn new_codex_session(&self, pid: u32) -> Result<(), MultiplexerError> {
+        let location = self
+            .process_locations()
+            .await?
+            .remove(&pid)
+            .ok_or_else(|| error("Original Codex pane is unavailable"))?;
+        let prefix = self.socket.as_ref().map_or_else(
+            || strings(&["-L", "default"]),
+            |socket| vec!["-S".into(), socket.to_string_lossy().into_owned()],
+        );
+        agentix_multiplexer::send_codex_new(&self.command, &prefix, &location.pane_id, pid).await
+    }
+
     fn kind(&self) -> MultiplexerKind {
         MultiplexerKind::Tmux
     }

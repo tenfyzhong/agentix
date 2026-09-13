@@ -215,6 +215,7 @@ pub enum GoalCommand {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "command", content = "params", rename_all = "snake_case")]
 pub enum SessionCommand {
+    New,
     Compact,
     Fork,
     Fast(Option<bool>),
@@ -240,6 +241,7 @@ impl SessionCommand {
     pub const fn capability(&self) -> crate::SessionCapability {
         use crate::SessionCapability as C;
         match self {
+            Self::New => C::New,
             Self::Compact => C::Compact,
             Self::Fork => C::Fork,
             Self::Fast(_) => C::Fast,
@@ -261,6 +263,7 @@ impl SessionCommand {
     #[must_use]
     pub const fn name(&self) -> &'static str {
         match self {
+            Self::New => "new",
             Self::Compact => "compact",
             Self::Fork => "fork",
             Self::Fast(_) => "fast",
@@ -363,6 +366,20 @@ pub enum AgentEvent {
     SessionExited {
         session_id: String,
     },
+    SessionSwitchStarted {
+        session_id: String,
+        client_id: String,
+    },
+    SessionReplaced {
+        session_id: String,
+        replacement_session_id: String,
+        client_id: String,
+    },
+    SessionSwitchFailed {
+        session_id: String,
+        client_id: String,
+        reason: String,
+    },
     SessionResumed {
         session_id: String,
     },
@@ -411,9 +428,19 @@ pub enum AgentEvent {
 }
 
 impl AgentEvent {
-    pub fn map_session_id(&mut self, map: impl FnOnce(&str) -> String) {
+    pub fn map_session_id(&mut self, mut map: impl FnMut(&str) -> String) {
         match self {
-            Self::SessionStatusChanged { session_id, .. }
+            Self::SessionReplaced {
+                session_id,
+                replacement_session_id,
+                ..
+            } => {
+                *session_id = map(session_id);
+                *replacement_session_id = map(replacement_session_id);
+            }
+            Self::SessionSwitchStarted { session_id, .. }
+            | Self::SessionSwitchFailed { session_id, .. }
+            | Self::SessionStatusChanged { session_id, .. }
             | Self::SessionExited { session_id }
             | Self::SessionResumed { session_id }
             | Self::QueueChanged { session_id }
@@ -433,7 +460,10 @@ impl AgentEvent {
     pub fn session_id(&self) -> Option<&str> {
         match self {
             Self::Connected { .. } | Self::Disconnected { .. } => None,
-            Self::SessionStatusChanged { session_id, .. }
+            Self::SessionReplaced { session_id, .. }
+            | Self::SessionSwitchStarted { session_id, .. }
+            | Self::SessionSwitchFailed { session_id, .. }
+            | Self::SessionStatusChanged { session_id, .. }
             | Self::SessionExited { session_id }
             | Self::SessionResumed { session_id }
             | Self::QueueChanged { session_id }
@@ -547,6 +577,17 @@ pub trait WorkspaceRuntimePort: Send + Sync {
 
 #[async_trait]
 pub trait AgentAdapter: Send + Sync {
+    /// Inspect terminal input; clear only when it still equals the confirmed snapshot.
+    /// `None` means no draft remains (or this operation does not use terminal input).
+    async fn terminal_input(
+        &self,
+        _session: &SessionId,
+        _new_session: bool,
+        _clear: Option<&str>,
+    ) -> Result<Option<String>, AgentError> {
+        Ok(None)
+    }
+
     fn display_name(&self) -> &'static str;
     /// Refresh runtime discovery without sending prompts or changing sessions.
     async fn refresh(&self) -> Result<(), AgentError> {
@@ -586,6 +627,11 @@ pub trait AgentAdapter: Send + Sync {
         }
         capabilities
     }
+    /// Stable identity of the original client across native session replacement.
+    async fn session_client_id(&self, _session: &SessionId) -> Option<String> {
+        None
+    }
+
     async fn supports_command(&self, session: &SessionId, command: &str) -> bool {
         let capabilities = self.session_capabilities(session).await;
         crate::SessionCapability::from_name(command)

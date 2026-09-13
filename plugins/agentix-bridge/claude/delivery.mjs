@@ -53,8 +53,19 @@ export class TerminalDelivery {
             !Number.isInteger(Number(x)) || Number(x) < (row === top + 1 ? 2 : 0) ||
             /-- (?:NORMAL|VISUAL) --/.test(screen)) throw failure('busy', 'Claude input must be ready; dismiss dialogs and use insert mode');
         const empty = bottom === top + 2 && /^❯\s*$/.test(prompt) && Number(x) === 2;
-        if (!allowDraft && !empty) throw failure('busy', 'Claude input was not cleared; no IM text was pasted');
+        if (!allowDraft && !empty) throw failure('busy', 'Confirm clearing the existing terminal draft in IM before sending');
+        if (allowDraft) return empty ? null : lines.slice(top + 1, bottom).map(line => line.slice(2)).join('\n');
         return empty;
+    }
+    async draft(expected) {
+        const terminal = await this.resolve();
+        const current = await this.check(terminal, undefined, true);
+        if (expected === undefined || expected === null || current !== expected) return current;
+        await terminal.foreground();
+        await terminal.call(['send-keys', '-t', terminal.pane, 'C-c']);
+        await this.delay(150);
+        await this.check(terminal);
+        return null;
     }
     async send({ text, signal }) {
         let pasted = false, loaded = false;
@@ -64,14 +75,7 @@ export class TerminalDelivery {
         try {
             if (typeof text !== 'string' || !text.trim() || /^[\s]*[\/!]/.test(text) || /[\x00-\x08\x0b-\x1f\x7f]/.test(text) || Buffer.byteLength(text) > 65536) throw failure('invalid_request', 'Send plain prompt text up to 64 KiB, without terminal controls or leading slash/bang commands');
             terminal = await this.resolve(signal);
-            const empty = await this.check(terminal, signal, true);
-            if (!empty) {
-                // Cancel the entire idle draft, including multiline input. Never interrupt an empty prompt.
-                signal?.throwIfAborted();
-                await call(['send-keys', '-t', terminal.pane, 'C-c']);
-                await this.delay(150);
-                await this.check(terminal, signal);
-            }
+            await this.check(terminal, signal);
             loaded = true;
             await call(['load-buffer', '-b', buffer, '-'], text);
             await this.check(terminal, signal);

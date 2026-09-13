@@ -55,6 +55,8 @@ export interface Registration {
     cwd: string;
     session_file: string;
     snapshot: SessionInfo;
+    client_id?: string;
+    previous_session_id?: string;
 }
 export interface History {
     turns: Array<Turn>;
@@ -121,7 +123,7 @@ export interface TurnCompleted {
     status: TurnStatus;
     error: string | null;
 }
-export type Event = { SessionExited: SessionExited } | { QueueChanged: QueueChanged } | { TurnStarted: TurnStarted } | { AgentMessageDelta: AgentMessageDelta } | { ItemStarted: ItemStarted } | { ItemCompleted: ItemCompleted } | { TurnCompleted: TurnCompleted };
+export type Event = { SessionExited: SessionExited } | { QueueChanged: QueueChanged } | { TurnStarted: TurnStarted } | { AgentMessageDelta: AgentMessageDelta } | { ItemStarted: ItemStarted } | { ItemCompleted: ItemCompleted } | { TurnCompleted: TurnCompleted } | { SessionSwitchStarted: SessionSwitchStarted } | { SessionSwitchFailed: SessionSwitchFailed };
 export interface EventFrame {
     instance: string;
     seq: number;
@@ -132,4 +134,13 @@ export interface SessionInfo {
     seq: number;
     session: Session;
     capabilities: Array<string>;
+}
+export interface SessionSwitchStarted {
+    session_id: string;
+    client_id: string;
+}
+export interface SessionSwitchFailed {
+    session_id: string;
+    client_id: string;
+    reason: string;
 }

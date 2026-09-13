@@ -1,3 +1,4 @@
+import { NativeSessionControl } from '../new-session.mjs';
 import { ChannelDelivery, TerminalDelivery, deliveryMode } from './delivery.mjs';
 import { Server, StdioServerTransport, CallToolRequestSchema, ListToolsRequestSchema } from './vendor/sdk.mjs';
 import { mkdirSync } from 'node:fs';
@@ -6,9 +7,10 @@ import { createHash } from 'node:crypto';
 import { BridgeTransport } from '../transport.mjs';
 import { readTranscript } from './history.mjs';
 import { ClaudeSession } from './session.mjs';
-import { Mailbox, dataRoot } from './mailbox.mjs';
+import { Mailbox, dataRoot, hostKey } from './mailbox.mjs';
 import { ClaudeStateStore } from './store.mjs';
 
+const clientId = hostKey();
 const mailbox = new Mailbox();
 const mode = deliveryMode(process.env.AGENTIX_CLAUDE_DELIVERY);
 const channelMode = mode === 'channel';
@@ -45,19 +47,28 @@ async function poll() {
         const identity = mailbox.identity();
         if (!identity) return;
         if (session?.identity.session_id !== identity.session_id) {
-            session?.close(); await transport.close();
+            if (identity.previous_session_id && session?.identity.session_id === identity.previous_session_id) {
+                transport.event({ SessionSwitchStarted: { session_id: identity.previous_session_id, client_id: clientId } });
+            }
+            session?.close(); await transport.close(true);
             const directory = join(dataRoot(), 'sessions'); mkdirSync(directory, { recursive: true, mode: 0o700 });
             const path = join(directory, createHash('sha256').update(identity.transcript_path).digest('hex') + '.json');
             const store = new ClaudeStateStore(path);
             session = new ClaudeSession({ saved: store.load(() => readTranscript(identity.transcript_path, identity.session_id)), append: value => store.append(value),
-                delivery, event: value => transport.event(value), sequence: () => transport.sequence });
+                delivery, clientId,
+                nativeNew: delivery instanceof TerminalDelivery && process.env.TMUX_PANE ? busy => new NativeSessionControl('claude', {
+                    resolve: () => delivery.resolve(), ready: terminal => delivery.check(terminal),
+                }).newSession(busy) : undefined,
+                event: value => transport.event(value), sequence: () => transport.sequence });
             session.hook(identity);
-            transport.open({ agent: 'claude', instance: session.instance, pid: process.ppid,
+            transport.open({ agent: 'claude', instance: session.instance, pid: process.ppid, client_id: clientId,
+                ...(identity.previous_session_id ? { previous_session_id: identity.previous_session_id } : {}),
                 session_id: identity.session_id, cwd: identity.cwd, session_file: identity.transcript_path });
         }
         await mailbox.consume(async event => {
             session.hook(event);
             if (event.session_id === session.identity.session_id && event.hook_event_name === 'SessionEnd') {
+                if (event.reason === 'clear') transport.event({ SessionSwitchStarted: { session_id: event.session_id, client_id: clientId } });
                 transport.event({ SessionExited: { session_id: event.session_id } });
                 await transport.close(true);
             }

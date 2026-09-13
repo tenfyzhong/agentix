@@ -277,6 +277,12 @@
         },
         "snapshot": {
           "$ref": "#/$defs/SessionInfo"
+        },
+        "client_id": {
+          "type": "string"
+        },
+        "previous_session_id": {
+          "type": "string"
         }
       },
       "required": [
@@ -629,6 +635,30 @@
           "required": [
             "TurnCompleted"
           ]
+        },
+        {
+          "type": "object",
+          "properties": {
+            "SessionSwitchStarted": {
+              "$ref": "#/$defs/SessionSwitchStarted"
+            }
+          },
+          "required": [
+            "SessionSwitchStarted"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "SessionSwitchFailed": {
+              "$ref": "#/$defs/SessionSwitchFailed"
+            }
+          },
+          "required": [
+            "SessionSwitchFailed"
+          ],
+          "additionalProperties": false
         }
       ]
     },
@@ -678,6 +708,42 @@
         "session",
         "capabilities"
       ]
+    },
+    "SessionSwitchStarted": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string"
+        },
+        "client_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "client_id"
+      ],
+      "additionalProperties": false
+    },
+    "SessionSwitchFailed": {
+      "type": "object",
+      "properties": {
+        "session_id": {
+          "type": "string"
+        },
+        "client_id": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "session_id",
+        "client_id",
+        "reason"
+      ],
+      "additionalProperties": false
     }
   },
   "x-agentix": {

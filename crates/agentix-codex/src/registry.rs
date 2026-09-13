@@ -1,13 +1,16 @@
+use agentix_domain::AgentEvent;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tokio::sync::watch;
 
 /// A live transport connection. PID is absent when the OS cannot establish it.
 #[derive(Clone, Debug, Serialize)]
 pub struct ClientBinding {
     pub connection_id: u64,
+    pub client_id: String,
     pub pid: Option<u32>,
     pub client_name: Option<String>,
     pub sessions: Vec<String>,
@@ -15,6 +18,9 @@ pub struct ClientBinding {
 
 #[derive(Default)]
 struct Connection {
+    client_id: String,
+    previous: Option<(String, Instant)>,
+    fresh: Option<(String, Instant)>,
     pid: Option<u32>,
     client_name: Option<String>,
     sessions: BTreeSet<String>,
@@ -24,6 +30,9 @@ struct Connection {
 #[derive(Default)]
 struct State {
     next_id: u64,
+    sequence: u64,
+    reconnecting: HashMap<String, (String, Instant)>,
+    lifecycle: std::collections::VecDeque<(u64, AgentEvent)>,
     connections: BTreeMap<u64, Connection>,
 }
 
@@ -134,9 +143,17 @@ impl ClientRegistry {
         let mut state = self.state.lock().unwrap();
         state.next_id += 1;
         let id = state.next_id;
+        let client_id = process_identity(pid)
+            .unwrap_or_else(|| format!("connection:{}:{id}", std::process::id()));
+        state
+            .reconnecting
+            .retain(|_, (_, when)| when.elapsed() < Duration::from_mins(2));
+        let previous = state.reconnecting.remove(&client_id);
         state.connections.insert(
             id,
             Connection {
+                client_id,
+                previous,
                 pid,
                 ..Connection::default()
             },
@@ -145,7 +162,13 @@ impl ClientRegistry {
     }
 
     pub fn disconnect(&self, id: u64) {
-        self.state.lock().unwrap().connections.remove(&id);
+        let mut state = self.state.lock().unwrap();
+        if let Some(connection) = state.connections.remove(&id)
+            && let Some(previous) = connection.previous
+        {
+            state.reconnecting.insert(connection.client_id, previous);
+        }
+        drop(state);
         self.changed
             .send_modify(|version| *version = version.wrapping_add(1));
     }
@@ -159,10 +182,23 @@ impl ClientRegistry {
             .iter()
             .map(|(&id, c)| ClientBinding {
                 connection_id: id,
+                client_id: c.client_id.clone(),
                 pid: c.pid,
                 client_name: c.client_name.clone(),
                 sessions: c.sessions.iter().cloned().collect(),
             })
+            .collect()
+    }
+
+    #[must_use]
+    pub fn lifecycle_since(&self, sequence: u64) -> Vec<(u64, AgentEvent)> {
+        self.state
+            .lock()
+            .unwrap()
+            .lifecycle
+            .iter()
+            .filter(|(id, _)| *id > sequence)
+            .cloned()
             .collect()
     }
 
@@ -191,6 +227,9 @@ impl ClientRegistry {
             .get("id")
             .filter(|id| id.is_string() || id.is_number())
         {
+            if method == "thread/start" && message["params"]["ephemeral"] == true {
+                return;
+            }
             c.pending.insert(
                 id.to_string(),
                 (
@@ -217,19 +256,75 @@ impl ClientRegistry {
         let Some(result) = message.get("result") else {
             return;
         };
+        let mut events = Vec::new();
         if method == "thread/unsubscribe" {
             if matches!(
                 result["status"].as_str(),
                 Some("unsubscribed" | "notSubscribed" | "notLoaded")
             ) && let Some(thread) = thread
+                && c.sessions.remove(&thread)
             {
-                c.sessions.remove(&thread);
+                c.previous = Some((thread.clone(), Instant::now()));
+                events.push(AgentEvent::SessionSwitchStarted {
+                    session_id: thread.clone(),
+                    client_id: c.client_id.clone(),
+                });
+                if let Some((fresh, when)) = c.fresh.take()
+                    && fresh != thread
+                    && when.elapsed() < Duration::from_mins(2)
+                {
+                    c.previous = None;
+                    events.push(AgentEvent::SessionReplaced {
+                        session_id: thread,
+                        replacement_session_id: fresh,
+                        client_id: c.client_id.clone(),
+                    });
+                }
             }
         } else if let Some(thread) = result["thread"]["id"].as_str() {
+            if result["thread"]["ephemeral"] == true {
+                return;
+            }
             c.sessions.insert(thread.to_owned());
+            if method == "thread/start" && result["thread"]["source"].get("subAgent").is_none() {
+                if let Some((previous, when)) = c.previous.take()
+                    && when.elapsed() < Duration::from_mins(2)
+                    && previous != thread
+                {
+                    events.push(AgentEvent::SessionReplaced {
+                        session_id: previous,
+                        replacement_session_id: thread.into(),
+                        client_id: c.client_id.clone(),
+                    });
+                } else {
+                    c.fresh = Some((thread.into(), Instant::now()));
+                }
+            } else if method == "thread/resume" {
+                c.previous = None;
+                c.fresh = None;
+            }
+        }
+        for event in events {
+            state.sequence += 1;
+            let sequence = state.sequence;
+            state.lifecycle.push_back((sequence, event));
+            while state.lifecycle.len() > 1024 {
+                state.lifecycle.pop_front();
+            }
         }
         drop(state);
         self.changed
             .send_modify(|version| *version = version.wrapping_add(1));
     }
+}
+
+fn process_identity(pid: Option<u32>) -> Option<String> {
+    let pid = pid?;
+    let output = std::process::Command::new("ps")
+        .args(["-p", &pid.to_string(), "-o", "lstart="])
+        .output()
+        .ok()?;
+    let started = String::from_utf8(output.stdout).ok()?;
+    let started = started.trim();
+    (!started.is_empty()).then(|| format!("process:{pid}:{started}"))
 }

@@ -89,7 +89,7 @@ for (const kind of ['rmux', 'tmux']) {
         const session = new ClaudeSession({ delivery: { kind: 'multiplexer', usesPromptHook: true, send: async () => {} } }); session.hook(identity);
         assert.match((await session.request('command', { name: 'status' })).body, /Delivery: multiplexer/);
     });
-    test('native ' + kind + ' clears a multiline draft and submits only the IM prompt', {
+    test('native ' + kind + ' confirms a multiline draft before submitting only the IM prompt', {
         skip: !(kind === 'tmux' ? process.env.AGENTIX_TEST_TMUX : process.env.AGENTIX_TEST_NATIVE_HOSTS) || process.platform === 'win32', timeout: 15000,
     }, async t => {
         const { execFileSync } = await import('node:child_process');
@@ -116,6 +116,10 @@ for (const kind of ['rmux', 'tmux']) {
         assert.equal(state[4], '0', JSON.stringify(state));
         assert.equal(state[5], '0', JSON.stringify(state));
         delivery.mode = 'auto';
+        await assert.rejects(delivery.send({ request_id: 'native', text }), /confirm/i);
+        const draft = await delivery.draft();
+        assert.equal(draft, 'local draft\nsecond line');
+        assert.equal(await delivery.draft(draft), null);
         await delivery.send({ request_id: 'native', text });
         await waitFor(() => { try { return readFileSync(output, 'utf8') === text; } catch { return false; } });
         assert.equal(readFileSync(output, 'utf8'), text);
@@ -142,8 +146,13 @@ for (const kind of ['rmux', 'tmux']) {
         { state: '100|claude|4|1|0|0', screen: '──────────\n❯ local draft\n──────────\n' },
         { state: '100|claude|3|2|0|0', screen: '──────────\n❯ first line\n  second line\n──────────\n' },
     ]) {
-        test('clears the entire terminal draft before pasting IM text: ' + draft.state, async () => {
+        test('requires draft confirmation before pasting IM text: ' + draft.state, async () => {
             const { calls, delivery } = fixture(draft);
+            await assert.rejects(delivery.send({ text: 'remote only' }), /confirm/i);
+            assert.ok(!calls.some(c => c.args.includes('C-c') || c.args.includes('paste-buffer')));
+            const existing = await delivery.draft();
+            assert.ok(existing.includes('line') || existing.includes('draft'));
+            assert.equal(await delivery.draft(existing), null);
             await delivery.send({ text: 'remote only' });
             const clear = calls.findIndex(c => c.args.includes('C-c'));
             const paste = calls.findIndex(c => c.args.includes('paste-buffer'));
@@ -154,9 +163,14 @@ for (const kind of ['rmux', 'tmux']) {
     }
     test('does not paste or submit when draft clearing fails', async () => {
         const { calls, delivery } = fixture({ clearFails: true, screen: '──────────\n❯ draft\n──────────\n' });
-        await assert.rejects(delivery.send({ text: 'remote' }));
+        await assert.rejects(delivery.draft('draft'));
         assert.ok(calls.some(c => c.args.includes('C-c')));
         assert.ok(!calls.some(c => c.args.includes('paste-buffer') || c.args.includes('Enter')));
+    });
+    test(kind + ' returns a changed draft without clearing it', async () => {
+        const { calls, delivery } = fixture({ screen: '──────────\n❯ edited locally\n──────────\n' });
+        assert.equal(await delivery.draft('old draft'), 'edited locally');
+        assert.ok(!calls.some(c => c.args.includes('C-c') || c.args.includes('paste-buffer')));
     });
     test('an already empty input never receives Ctrl+C', async () => {
         const { calls, delivery } = fixture();

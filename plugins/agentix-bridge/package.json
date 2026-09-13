@@ -9,6 +9,7 @@
   ],
   "files": [
     "runtime.mjs",
+    "new-session.mjs",
     "extensions/",
     "README.md",
     "protocol/",

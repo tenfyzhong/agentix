@@ -42,6 +42,7 @@ pub enum SessionCapability {
     Stop,
     Queue,
     QueueControl,
+    New,
     Compact,
     Fork,
     Fast,
@@ -59,7 +60,8 @@ pub enum SessionCapability {
     Mcp,
 }
 impl SessionCapability {
-    pub const COMMANDS: [Self; 15] = [
+    pub const COMMANDS: [Self; 16] = [
+        Self::New,
         Self::Compact,
         Self::Fork,
         Self::Fast,

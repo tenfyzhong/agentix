@@ -317,6 +317,19 @@ async fn accept(
         Arc::downgrade(&state),
     );
     entries.insert(key, connection);
+    if let (Some(previous), Some(client)) = (record.previous_session_id, record.client_id)
+        && previous != record.session_id
+    {
+        let _ = events.send(AgentEvent::SessionSwitchStarted {
+            session_id: previous.clone(),
+            client_id: client.clone(),
+        });
+        let _ = events.send(AgentEvent::SessionReplaced {
+            session_id: previous,
+            replacement_session_id: record.session_id.clone(),
+            client_id: client,
+        });
+    }
     let _ = events.send(AgentEvent::SessionResumed {
         session_id: record.session_id,
     });

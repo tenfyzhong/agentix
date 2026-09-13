@@ -18,6 +18,7 @@ pub enum EngineWork {
     Working { session: SessionId, turn: String },
     Recover,
     TaskBoard,
+    SessionSwitch(ConversationRef),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -45,7 +46,11 @@ impl From<&UiAction> for ActionRoute {
     fn from(action: &UiAction) -> Self {
         let mut route = Self::default();
         match action {
-            UiAction::Attach(session)
+            UiAction::TerminalInput {
+                session_id: session,
+                ..
+            }
+            | UiAction::Attach(session)
             | UiAction::Stop {
                 session_id: session,
                 ..
@@ -106,6 +111,12 @@ impl EngineDispatchSnapshot {
         let mut shared = Vec::new();
         let mut exclusive = Vec::new();
         match work {
+            EngineWork::SessionSwitch(conversation) => {
+                exclusive.push(EngineResource::Conversation(conversation.clone()));
+                if let Some(session) = self.bindings.current_session(conversation) {
+                    self.reserve_session(session, &mut shared, &mut exclusive);
+                }
+            }
             EngineWork::Recover => return DispatchScope::Global,
             EngineWork::TaskBoard => exclusive.push(EngineResource::TaskBoard),
             EngineWork::Event(event) => {
@@ -113,6 +124,17 @@ impl EngineDispatchSnapshot {
                     return DispatchScope::Global;
                 };
                 self.reserve_session(&SessionId::new(session), &mut shared, &mut exclusive);
+                if let AgentEvent::SessionReplaced {
+                    replacement_session_id,
+                    ..
+                } = event
+                {
+                    self.reserve_session(
+                        &SessionId::new(replacement_session_id),
+                        &mut shared,
+                        &mut exclusive,
+                    );
+                }
             }
             EngineWork::Working { session, .. } => {
                 self.reserve_session(session, &mut shared, &mut exclusive);
@@ -273,6 +295,9 @@ impl Engine {
             }
             EngineWork::Recover => self.recover_event_gap().await,
             EngineWork::TaskBoard => self.refresh_task_board().await,
+            EngineWork::SessionSwitch(conversation) => {
+                self.refresh_session_switch(&conversation).await
+            }
         }
     }
 

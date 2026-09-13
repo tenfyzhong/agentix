@@ -174,6 +174,21 @@ impl AgentAdapter for AgentRegistry {
             .next()
             .map(|workspace| workspace as &dyn WorkspaceRuntimePort)
     }
+    async fn terminal_input(
+        &self,
+        session: &SessionId,
+        new_session: bool,
+        clear: Option<&str>,
+    ) -> Result<Option<String>, AgentError> {
+        let (key, agent) = self.target(session)?;
+        agent
+            .terminal_input(key.native_id.adapter_id(), new_session, clear)
+            .await
+    }
+    async fn session_client_id(&self, session: &SessionId) -> Option<String> {
+        let (key, agent) = self.target(session).ok()?;
+        agent.session_client_id(key.native_id.adapter_id()).await
+    }
     async fn session_capabilities(&self, session: &SessionId) -> crate::SessionCapabilities {
         match self.target(session) {
             Ok((key, agent)) => agent.session_capabilities(key.native_id.adapter_id()).await,

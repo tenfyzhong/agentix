@@ -101,6 +101,19 @@ impl AgentAdapter for DeferredAgent {
     fn workspace_runtime(&self) -> Option<&dyn WorkspaceRuntimePort> {
         Some(self)
     }
+    async fn terminal_input(
+        &self,
+        session: &SessionId,
+        new_session: bool,
+        clear: Option<&str>,
+    ) -> Result<Option<String>, AgentError> {
+        self.agent()?
+            .terminal_input(session, new_session, clear)
+            .await
+    }
+    async fn session_client_id(&self, session: &SessionId) -> Option<String> {
+        self.agent().ok()?.session_client_id(session).await
+    }
     async fn session_capabilities(&self, session: &SessionId) -> crate::SessionCapabilities {
         match self.agent() {
             Ok(agent) => agent.session_capabilities(session).await,

@@ -117,6 +117,7 @@ pub fn parse_input(input: &str) -> Result<ParsedInput, InputParseError> {
             Some(value) => return Err(InputParseError::UnknownCommand(format!("/queue {value}"))),
         },
         "/cancel" => AgentCommand::Cancel,
+        "/new" if parts.next().is_none() => AgentCommand::Session(SessionCommand::New),
         "/compact" => AgentCommand::Session(SessionCommand::Compact),
         "/fork" => AgentCommand::Session(SessionCommand::Fork),
         "/fast" => AgentCommand::Session(SessionCommand::Fast(match parts.next() {

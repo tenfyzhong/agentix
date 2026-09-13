@@ -1,5 +1,9 @@
 //! Backend-independent terminal inventory, validation and workspace management.
 mod directories;
+mod native_control;
+#[cfg(test)]
+use native_control::validate_codex_prompt;
+pub use native_control::{codex_terminal_input, send_codex_new};
 
 use agentix_domain::{
     MultiplexerKind, MultiplexerMutation, MultiplexerPane, MultiplexerSession, MultiplexerSnapshot,
@@ -45,6 +49,20 @@ pub trait MultiplexerDriver: std::fmt::Debug + Send + Sync {
         prepared: &PreparedMutation,
         argv: Option<&[String]>,
     ) -> Result<MultiplexerOutcome, MultiplexerError>;
+    async fn codex_terminal_input(
+        &self,
+        _pid: u32,
+        _clear: Option<&str>,
+    ) -> Result<Option<String>, MultiplexerError> {
+        Err(MultiplexerError::Backend(
+            "Terminal input inspection is unavailable".into(),
+        ))
+    }
+    async fn new_codex_session(&self, _pid: u32) -> Result<(), MultiplexerError> {
+        Err(MultiplexerError::Backend(
+            "Native session control is unavailable".into(),
+        ))
+    }
     async fn process_locations(&self) -> Result<HashMap<u32, TerminalLocation>, MultiplexerError> {
         Ok(self
             .inventory(false)
@@ -122,6 +140,16 @@ impl WorkspaceManager {
             return Ok(HashMap::new());
         };
         driver.process_locations().await
+    }
+    pub async fn codex_terminal_input(
+        &self,
+        pid: u32,
+        clear: Option<&str>,
+    ) -> Result<Option<String>, MultiplexerError> {
+        self.driver()?.codex_terminal_input(pid, clear).await
+    }
+    pub async fn new_codex_session(&self, pid: u32) -> Result<(), MultiplexerError> {
+        self.driver()?.new_codex_session(pid).await
     }
     pub async fn pane_exists(&self, location: &TerminalLocation) -> Result<bool, MultiplexerError> {
         let driver = self.driver()?;
@@ -600,6 +628,28 @@ mod tests {
             started_session(&sessions, &target, &known, Path::new("/work/agentix"))
                 .map(|session| session.id.as_str()),
             Some("thr_started")
+        );
+    }
+}
+
+#[cfg(test)]
+mod native_new_tests {
+    #[test]
+    fn native_new_requires_original_codex_and_empty_prompt() {
+        assert!(
+            super::validate_codex_prompt("codex|2|1|0|0", "header\n› Ask anything\nfooter").is_ok()
+        );
+        for state in [
+            "zsh|2|1|0|0",
+            "codex|8|1|0|0",
+            "codex|2|1|1|0",
+            "codex|2|1|0|1",
+        ] {
+            assert!(super::validate_codex_prompt(state, "header\n› draft\nfooter").is_err());
+        }
+        assert!(
+            super::validate_codex_prompt("codex|2|1|0|0", "header\nConfirm action?\nfooter")
+                .is_err()
         );
     }
 }

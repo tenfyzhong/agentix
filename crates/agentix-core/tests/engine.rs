@@ -417,6 +417,9 @@ async fn registry_rejects_duplicate_backends() {
 
 #[derive(Clone)]
 struct FakeAgent {
+    stalled_operation: Option<&'static str>,
+    terminal_draft: Arc<Mutex<Option<String>>>,
+    terminal_error: Arc<Mutex<Option<String>>>,
     snapshot: Arc<Mutex<MultiplexerSnapshot>>,
     refresh_count: Arc<std::sync::atomic::AtomicUsize>,
     calls: Arc<Mutex<Vec<String>>>,
@@ -439,6 +442,9 @@ impl FakeAgent {
     fn new() -> Self {
         let (events, _) = broadcast::channel(32);
         Self {
+            terminal_draft: Arc::default(),
+            stalled_operation: None,
+            terminal_error: Arc::default(),
             snapshot: Arc::new(Mutex::new(multiplexer_snapshot())),
             refresh_count: Arc::default(),
             calls: Arc::new(Mutex::new(Vec::new())),
@@ -540,6 +546,25 @@ impl FakeAgent {
 
 #[async_trait]
 impl AgentAdapter for FakeAgent {
+    async fn terminal_input(
+        &self,
+        _session: &SessionId,
+        _new: bool,
+        clear: Option<&str>,
+    ) -> Result<Option<String>, AgentError> {
+        if let Some(error) = self.terminal_error.lock().unwrap().clone() {
+            return Err(AgentError::Rejected(error));
+        }
+        let mut draft = self.terminal_draft.lock().unwrap();
+        if clear.is_some() && draft.as_deref() == clear {
+            self.calls.lock().unwrap().push("clear-draft".into());
+            *draft = None;
+        }
+        Ok(draft.clone())
+    }
+    async fn session_client_id(&self, _session: &SessionId) -> Option<String> {
+        Some("host".into())
+    }
     async fn refresh(&self) -> Result<(), AgentError> {
         self.refresh_count
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -602,6 +627,10 @@ impl AgentAdapter for FakeAgent {
     }
 
     async fn attach(&self, session_id: &SessionId) -> Result<(), AgentError> {
+        if self.stalled_operation == Some("attach") && session_id.as_str() == "thr_b" {
+            std::future::pending::<()>().await;
+        }
+
         self.calls
             .lock()
             .unwrap()
@@ -798,6 +827,9 @@ impl SessionControlPort for FakeAgent {
         session_id: &SessionId,
         command: SessionCommand,
     ) -> Result<SessionCommandResult, AgentError> {
+        if self.stalled_operation == Some("new") && matches!(command, SessionCommand::New) {
+            std::future::pending::<()>().await;
+        }
         self.calls
             .lock()
             .unwrap()
@@ -2632,14 +2664,14 @@ async fn unsupported_command_returns_attached_help_without_switching_the_attachm
         .await
         .unwrap();
     engine
-        .handle_inbound(inbound("chat-a", "/new"))
+        .handle_inbound(inbound("chat-a", "/does-not-exist"))
         .await
         .unwrap();
 
     let invalid = channel.sent().last().unwrap().1.clone();
     assert_eq!(invalid.title, "Invalid command");
     assert_eq!(invalid.status, agentix_core::ViewStatus::Warning);
-    assert!(invalid.body.contains("unknown command: /new"));
+    assert!(invalid.body.contains("unknown command: /does-not-exist"));
     assert!(invalid.body.contains("/current"));
     assert!(invalid.body.contains("/model [id]"));
     assert!(invalid.body.contains("/mcp"));
@@ -6020,3 +6052,838 @@ async fn disabled_multiplexer_has_no_commands_or_workspace_access() {
 
 #[path = "support/workspace_directories.rs"]
 mod workspace_directory_tests;
+
+#[tokio::test]
+async fn new_session_waits_through_exit_and_drains_gap_messages_in_order() {
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel::default());
+    let state = SqliteState::in_memory().await.unwrap();
+    let engine = Engine::new(agent.clone(), state.clone(), vec![channel.clone()]);
+    let chat = ConversationRef::new(ChannelKind::Telegram, "chat-a");
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound("chat-a", "/new"))
+        .await
+        .unwrap();
+    assert!(state.session_switch(&chat).await.unwrap().is_some());
+    engine
+        .handle_agent_event(AgentEvent::SessionExited {
+            session_id: "thr_a".into(),
+        })
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound("chat-a", "first"))
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound("chat-a", "second"))
+        .await
+        .unwrap();
+    assert!(!agent.calls().iter().any(|c| c.starts_with("start:")));
+    engine
+        .handle_agent_event(AgentEvent::SessionReplaced {
+            session_id: "thr_a".into(),
+            replacement_session_id: "thr_b".into(),
+            client_id: "host".into(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        state.current_session(&chat).await.unwrap(),
+        Some(SessionId::new("thr_b"))
+    );
+    assert!(agent.calls().contains(&"start:thr_b:first".into()));
+    assert!(!agent.calls().contains(&"start:thr_b:second".into()));
+    engine
+        .handle_agent_event(AgentEvent::TurnCompleted {
+            session_id: "thr_b".into(),
+            turn_id: "turn_new".into(),
+            status: TurnStatus::Completed,
+            error: None,
+        })
+        .await
+        .unwrap();
+    assert!(agent.calls().contains(&"start:thr_b:second".into()));
+    assert!(
+        !channel
+            .sent()
+            .iter()
+            .any(|(_, v)| v.body.contains("detached automatically"))
+    );
+}
+
+#[tokio::test]
+async fn native_new_session_follows_only_matching_client_and_honors_manual_detach() {
+    let agent = Arc::new(FakeAgent::new());
+    let state = SqliteState::in_memory().await.unwrap();
+    let engine = Engine::new(agent, state.clone(), vec![Arc::new(FakeChannel::default())]);
+    let chat = ConversationRef::new(ChannelKind::Telegram, "chat-a");
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::SessionSwitchStarted {
+            session_id: "thr_a".into(),
+            client_id: "host".into(),
+        })
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::SessionReplaced {
+            session_id: "thr_a".into(),
+            replacement_session_id: "thr_b".into(),
+            client_id: "other-host".into(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        state.current_session(&chat).await.unwrap(),
+        Some(SessionId::new("thr_a"))
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/detach"))
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::SessionReplaced {
+            session_id: "thr_a".into(),
+            replacement_session_id: "thr_b".into(),
+            client_id: "host".into(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(state.current_session(&chat).await.unwrap(), None);
+}
+
+#[tokio::test]
+async fn new_session_timeout_clears_flow_and_late_replacement_cannot_attach() {
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel::default());
+    let state = SqliteState::in_memory().await.unwrap();
+    let engine = Engine::new(agent.clone(), state.clone(), vec![channel.clone()]);
+    let chat = ConversationRef::new(ChannelKind::Telegram, "chat-a");
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound("chat-a", "/new"))
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound("chat-a", "saved prompt"))
+        .await
+        .unwrap();
+    let mut switch = state.session_switch(&chat).await.unwrap().unwrap();
+    switch.deadline = 0;
+    state.save_session_switch(&mut switch).await.unwrap();
+    engine.refresh_session_switch(&chat).await.unwrap();
+    assert!(state.session_switch(&chat).await.unwrap().is_none());
+    engine
+        .handle_inbound(inbound("chat-a", "/queue"))
+        .await
+        .unwrap();
+    assert!(
+        channel
+            .sent()
+            .iter()
+            .any(|(_, view)| view.body.contains("saved prompt"))
+    );
+    engine
+        .handle_agent_event(AgentEvent::SessionReplaced {
+            session_id: "thr_a".into(),
+            replacement_session_id: "thr_b".into(),
+            client_id: "host".into(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        state.current_session(&chat).await.unwrap(),
+        Some(SessionId::new("thr_a"))
+    );
+    assert!(!agent.calls().iter().any(|c| c.starts_with("start:")));
+    engine
+        .handle_inbound(inbound("chat-a", "after timeout"))
+        .await
+        .unwrap();
+    assert!(state.session_switch(&chat).await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn new_session_manual_attach_retains_old_queue_without_capturing_new_prompts() {
+    let agent = Arc::new(FakeAgent::new());
+    let state = SqliteState::in_memory().await.unwrap();
+    let engine = Engine::new(
+        agent.clone(),
+        state.clone(),
+        vec![Arc::new(FakeChannel::default())],
+    );
+    let chat = ConversationRef::new(ChannelKind::Telegram, "chat-a");
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound("chat-a", "/new"))
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound("chat-a", "old queued"))
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_b"))
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound("chat-a", "new direct"))
+        .await
+        .unwrap();
+    assert!(agent.calls().contains(&"start:thr_b:new direct".into()));
+    assert!(!agent.calls().contains(&"start:thr_b:old queued".into()));
+    assert!(
+        state
+            .session_switch(&chat)
+            .await
+            .unwrap()
+            .unwrap()
+            .paused
+            .is_some()
+    );
+}
+
+#[tokio::test]
+async fn new_session_retries_attachment_after_restart_without_replaying_uncertain_prompt() {
+    let agent = Arc::new(FakeAgent::new());
+    let state = SqliteState::in_memory().await.unwrap();
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(agent.clone(), state.clone(), vec![channel.clone()]);
+    let chat = ConversationRef::new(ChannelKind::Telegram, "chat-a");
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound("chat-a", "/new"))
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound("chat-a", "uncertain prompt"))
+        .await
+        .unwrap();
+    agent
+        .unavailable_attachments
+        .lock()
+        .unwrap()
+        .push(SessionId::new("thr_b"));
+    let _ = engine
+        .handle_agent_event(AgentEvent::SessionReplaced {
+            session_id: "thr_a".into(),
+            replacement_session_id: "thr_b".into(),
+            client_id: "host".into(),
+        })
+        .await;
+    drop(engine);
+    agent.unavailable_attachments.lock().unwrap().clear();
+    agent.fail_next_start();
+    let engine = Engine::new(agent.clone(), state.clone(), vec![channel]);
+    engine.restore_bindings().await.unwrap();
+    engine.refresh_session_switch(&chat).await.unwrap();
+    assert_eq!(
+        state.current_session(&chat).await.unwrap(),
+        Some(SessionId::new("thr_b"))
+    );
+    assert!(state.session_switch(&chat).await.unwrap().unwrap().messages[0].sending);
+    let calls = agent
+        .calls()
+        .iter()
+        .filter(|c| c.starts_with("start:"))
+        .count();
+    engine
+        .handle_inbound(inbound("chat-a", "/queue resume"))
+        .await
+        .unwrap();
+    engine.refresh_session_switch(&chat).await.unwrap();
+    assert_eq!(
+        agent
+            .calls()
+            .iter()
+            .filter(|c| c.starts_with("start:"))
+            .count(),
+        calls
+    );
+}
+
+#[tokio::test]
+async fn new_session_duplicate_requests_and_events_do_not_repeat_delivery() {
+    let agent = Arc::new(FakeAgent::new());
+    let state = SqliteState::in_memory().await.unwrap();
+    let engine = Engine::new(
+        agent.clone(),
+        state.clone(),
+        vec![Arc::new(FakeChannel::default())],
+    );
+    let chat = ConversationRef::new(ChannelKind::Telegram, "chat-a");
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    for _ in 0..2 {
+        engine
+            .handle_inbound(inbound("chat-a", "/new"))
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        agent
+            .calls()
+            .iter()
+            .filter(|c| c.as_str() == "command:thr_a:New")
+            .count(),
+        1
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "once"))
+        .await
+        .unwrap();
+    for _ in 0..2 {
+        engine
+            .handle_agent_event(AgentEvent::SessionReplaced {
+                session_id: "thr_a".into(),
+                replacement_session_id: "thr_b".into(),
+                client_id: "host".into(),
+            })
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        agent
+            .calls()
+            .iter()
+            .filter(|c| c.as_str() == "start:thr_b:once")
+            .count(),
+        1
+    );
+    assert_eq!(
+        state.current_session(&chat).await.unwrap(),
+        Some(SessionId::new("thr_b"))
+    );
+}
+
+#[tokio::test]
+async fn new_session_queue_limit_and_clear_preserve_the_pending_handoff() {
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel::default());
+    let state = SqliteState::in_memory().await.unwrap();
+    let engine = Engine::new(agent.clone(), state.clone(), vec![channel.clone()]);
+    let chat = ConversationRef::new(ChannelKind::Telegram, "chat-a");
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound("chat-a", "/new"))
+        .await
+        .unwrap();
+    for index in 0..101 {
+        engine
+            .handle_inbound(inbound("chat-a", &format!("queued {index}")))
+            .await
+            .unwrap();
+    }
+    let switch = state.session_switch(&chat).await.unwrap().unwrap();
+    assert_eq!(switch.messages.len(), 100);
+    assert_eq!(switch.messages.last().unwrap().text, "queued 99");
+    assert!(
+        channel
+            .sent()
+            .iter()
+            .any(|(_, view)| view.body.contains("100 messages"))
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/queue clear"))
+        .await
+        .unwrap();
+    assert!(
+        state
+            .session_switch(&chat)
+            .await
+            .unwrap()
+            .unwrap()
+            .messages
+            .is_empty()
+    );
+    engine
+        .handle_agent_event(AgentEvent::SessionReplaced {
+            session_id: "thr_a".into(),
+            replacement_session_id: "thr_b".into(),
+            client_id: "host".into(),
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        state.current_session(&chat).await.unwrap(),
+        Some(SessionId::new("thr_b"))
+    );
+    assert!(!agent.calls().iter().any(|c| c.starts_with("start:")));
+}
+
+#[tokio::test]
+async fn new_session_failure_from_old_client_cannot_pause_committed_replacement() {
+    let agent = Arc::new(FakeAgent::new());
+    let state = SqliteState::in_memory().await.unwrap();
+    let engine = Engine::new(
+        agent.clone(),
+        state.clone(),
+        vec![Arc::new(FakeChannel::default())],
+    );
+    let chat = ConversationRef::new(ChannelKind::Telegram, "chat-a");
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound("chat-a", "/new"))
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound("chat-a", "first"))
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound("chat-a", "second"))
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::SessionReplaced {
+            session_id: "thr_a".into(),
+            replacement_session_id: "thr_b".into(),
+            client_id: "host".into(),
+        })
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::SessionSwitchFailed {
+            session_id: "thr_a".into(),
+            client_id: "host".into(),
+            reason: "late terminal failure".into(),
+        })
+        .await
+        .unwrap();
+    assert!(
+        state
+            .session_switch(&chat)
+            .await
+            .unwrap()
+            .unwrap()
+            .paused
+            .is_none()
+    );
+    engine
+        .handle_agent_event(AgentEvent::TurnCompleted {
+            session_id: "thr_b".into(),
+            turn_id: "turn_new".into(),
+            status: TurnStatus::Completed,
+            error: None,
+        })
+        .await
+        .unwrap();
+    assert!(agent.calls().contains(&"start:thr_b:second".into()));
+}
+
+#[tokio::test]
+async fn terminal_draft_requires_confirmation_for_prompt_and_new() {
+    for request in ["remote prompt", "/new"] {
+        for confirm in [true, false] {
+            let agent = Arc::new(FakeAgent::new());
+            *agent.terminal_draft.lock().unwrap() = Some("local\n草稿".into());
+            let channel = Arc::new(FakeChannel::default());
+            let engine = Engine::new(
+                agent.clone(),
+                SqliteState::in_memory().await.unwrap(),
+                vec![channel.clone()],
+            );
+            engine
+                .handle_inbound(inbound("chat-a", "/attach thr_a"))
+                .await
+                .unwrap();
+            engine
+                .handle_inbound(inbound("chat-a", request))
+                .await
+                .unwrap();
+            let view = channel.sent().last().unwrap().1.clone();
+            assert!(view.body.contains("草稿"));
+            assert_eq!(
+                view.actions
+                    .iter()
+                    .map(|a| a.label.as_str())
+                    .collect::<Vec<_>>(),
+                ["Clear and send", "Cancel sending"]
+            );
+            assert!(!agent.calls().iter().any(|c| c == "clear-draft"
+                || c.starts_with("start:")
+                || c == "command:thr_a:New"));
+            let token = view.actions[usize::from(!confirm)].token.clone();
+            engine
+                .handle_inbound(InboundEnvelope::action(
+                    "draft-choice",
+                    ConversationRef::new(ChannelKind::Telegram, "chat-a"),
+                    "owner",
+                    token.clone(),
+                ))
+                .await
+                .unwrap();
+            assert_eq!(agent.calls().iter().any(|c| c == "clear-draft"), confirm);
+            assert_eq!(
+                agent
+                    .calls()
+                    .iter()
+                    .any(|c| c.starts_with("start:") || c == "command:thr_a:New"),
+                confirm
+            );
+            assert!(
+                engine
+                    .handle_inbound(InboundEnvelope::action(
+                        "draft-replay",
+                        ConversationRef::new(ChannelKind::Telegram, "chat-a"),
+                        "owner",
+                        token
+                    ))
+                    .await
+                    .is_err()
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn terminal_draft_changes_require_new_confirmation_and_attach_invalidates_it() {
+    let agent = Arc::new(FakeAgent::new());
+    *agent.terminal_draft.lock().unwrap() = Some("original".into());
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    let chat = ConversationRef::new(ChannelKind::Telegram, "chat-a");
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound("chat-a", "remote"))
+        .await
+        .unwrap();
+    let token = channel.sent().last().unwrap().1.actions[0].token.clone();
+    *agent.terminal_draft.lock().unwrap() = Some("edited locally".into());
+    engine
+        .handle_inbound(InboundEnvelope::action(
+            "confirm-old",
+            chat.clone(),
+            "owner",
+            token,
+        ))
+        .await
+        .unwrap();
+    let view = channel.sent().last().unwrap().1.clone();
+    assert!(view.body.contains("edited locally"));
+    assert!(
+        !agent
+            .calls()
+            .iter()
+            .any(|c| c == "clear-draft" || c.starts_with("start:"))
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_b"))
+        .await
+        .unwrap();
+    assert!(
+        engine
+            .handle_inbound(InboundEnvelope::action(
+                "confirm-after-attach",
+                chat,
+                "owner",
+                view.actions[0].token.clone()
+            ))
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        agent.terminal_draft.lock().unwrap().as_deref(),
+        Some("edited locally")
+    );
+}
+
+#[tokio::test]
+async fn terminal_draft_keeps_switch_queue_until_confirmation_or_cancellation() {
+    for choice in 0..3 {
+        let confirm = choice == 0;
+        let agent = Arc::new(FakeAgent::new());
+        let channel = Arc::new(FakeChannel::default());
+        let state = SqliteState::in_memory().await.unwrap();
+        let engine = Engine::new(agent.clone(), state.clone(), vec![channel.clone()]);
+        let chat = ConversationRef::new(ChannelKind::Telegram, "chat-a");
+        engine
+            .handle_inbound(inbound("chat-a", "/attach thr_a"))
+            .await
+            .unwrap();
+        engine
+            .handle_inbound(inbound("chat-a", "/new"))
+            .await
+            .unwrap();
+        engine
+            .handle_inbound(inbound("chat-a", "first"))
+            .await
+            .unwrap();
+        *agent.terminal_draft.lock().unwrap() = Some("local".into());
+        engine
+            .handle_agent_event(AgentEvent::SessionReplaced {
+                session_id: "thr_a".into(),
+                replacement_session_id: "thr_b".into(),
+                client_id: "host".into(),
+            })
+            .await
+            .unwrap();
+        let queue = state.session_switch(&chat).await.unwrap().unwrap();
+        assert_eq!(queue.messages.len(), 1);
+        assert!(!queue.messages[0].sending);
+        drop(engine);
+        let engine = Engine::new(agent.clone(), state.clone(), vec![channel.clone()]);
+        engine.restore_bindings().await.unwrap();
+        engine.refresh_session_switch(&chat).await.unwrap();
+        let token = channel
+            .sent()
+            .iter()
+            .rev()
+            .find(|(_, v)| v.title == "Terminal draft")
+            .unwrap()
+            .1
+            .actions[usize::from(!confirm)]
+        .token
+        .clone();
+        if choice == 2 {
+            engine
+                .handle_inbound(inbound("chat-a", "/cancel"))
+                .await
+                .unwrap();
+        } else {
+            engine
+                .handle_inbound(InboundEnvelope::action(
+                    "choice",
+                    chat.clone(),
+                    "owner",
+                    token,
+                ))
+                .await
+                .unwrap();
+        }
+        let queue = state.session_switch(&chat).await.unwrap();
+        assert!(queue.is_none_or(|q| q.messages.is_empty()));
+        assert_eq!(
+            agent
+                .calls()
+                .iter()
+                .filter(|c| *c == "start:thr_b:first")
+                .count(),
+            usize::from(confirm)
+        );
+    }
+}
+
+#[tokio::test]
+async fn terminal_input_failure_is_reported_in_im_without_sending() {
+    let agent = Arc::new(FakeAgent::new());
+    *agent.terminal_error.lock().unwrap() = Some("Cannot read the entire Codex input box".into());
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    assert!(
+        engine
+            .handle_inbound(inbound("chat-a", "/new"))
+            .await
+            .is_err()
+    );
+    assert!(
+        channel
+            .sent()
+            .last()
+            .unwrap()
+            .1
+            .body
+            .contains("Cannot read the entire Codex input box")
+    );
+    assert!(!agent.calls().contains(&"command:thr_a:New".into()));
+}
+
+#[tokio::test]
+async fn new_after_timeout_confirms_draft_without_old_gap_queue() {
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel::default());
+    let state = SqliteState::in_memory().await.unwrap();
+    let engine = Engine::new(agent.clone(), state.clone(), vec![channel.clone()]);
+    let chat = ConversationRef::new(ChannelKind::Telegram, "chat-a");
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound("chat-a", "/new"))
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound("chat-a", "queued"))
+        .await
+        .unwrap();
+    let mut switch = state.session_switch(&chat).await.unwrap().unwrap();
+    switch.deadline = 0;
+    state.save_session_switch(&mut switch).await.unwrap();
+    engine.refresh_session_switch(&chat).await.unwrap();
+    *agent.terminal_draft.lock().unwrap() = Some("/new\n".into());
+    engine
+        .handle_inbound(InboundEnvelope::text(
+            uuid::Uuid::new_v4().to_string(),
+            chat.clone(),
+            "owner",
+            "/new",
+        ))
+        .await
+        .unwrap();
+    let token = channel.sent().last().unwrap().1.actions[0].token.clone();
+    engine
+        .handle_inbound(InboundEnvelope::action(
+            "confirm-retry",
+            chat.clone(),
+            "owner",
+            token,
+        ))
+        .await
+        .unwrap();
+    assert_eq!(
+        agent
+            .calls()
+            .iter()
+            .filter(|c| *c == "command:thr_a:New")
+            .count(),
+        2
+    );
+    let switch = state.session_switch(&chat).await.unwrap().unwrap();
+    assert!(switch.paused.is_none());
+    assert!(switch.messages.is_empty());
+    *agent.terminal_draft.lock().unwrap() = Some("preserve while switching".into());
+    engine
+        .handle_inbound(InboundEnvelope::text(
+            uuid::Uuid::new_v4().to_string(),
+            chat.clone(),
+            "owner",
+            "/new",
+        ))
+        .await
+        .unwrap();
+    assert!(channel.sent().last().unwrap().1.actions.is_empty());
+    assert_eq!(
+        agent.terminal_draft.lock().unwrap().as_deref(),
+        Some("preserve while switching")
+    );
+}
+
+#[tokio::test]
+async fn new_session_deadline_is_thirty_seconds() {
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel::default());
+    let state = SqliteState::in_memory().await.unwrap();
+    let engine = Engine::new(agent, state.clone(), vec![channel]);
+    let chat = ConversationRef::new(ChannelKind::Telegram, "chat-a");
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    let before = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    engine
+        .handle_inbound(inbound("chat-a", "/new"))
+        .await
+        .unwrap();
+    let after = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let switch = state.session_switch(&chat).await.unwrap().unwrap();
+    assert!((before + 30..=after + 30).contains(&switch.deadline));
+}
+
+#[tokio::test]
+async fn new_session_stalled_command_is_cancelled_within_thirty_seconds() {
+    let mut agent = FakeAgent::new();
+    agent.stalled_operation = Some("new");
+    let state = SqliteState::in_memory().await.unwrap();
+    let engine = Engine::new(
+        Arc::new(agent),
+        state.clone(),
+        vec![Arc::new(FakeChannel::default())],
+    );
+    let chat = ConversationRef::new(ChannelKind::Telegram, "chat-a");
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(31),
+        engine.handle_inbound(inbound("chat-a", "/new")),
+    )
+    .await
+    .expect("new must stop waiting after thirty seconds")
+    .unwrap();
+    assert!(state.session_switch(&chat).await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn new_session_stalled_attachment_expires_without_committing() {
+    let mut agent = FakeAgent::new();
+    agent.stalled_operation = Some("attach");
+    let state = SqliteState::in_memory().await.unwrap();
+    let engine = Engine::new(
+        Arc::new(agent),
+        state.clone(),
+        vec![Arc::new(FakeChannel::default())],
+    );
+    let chat = ConversationRef::new(ChannelKind::Telegram, "chat-a");
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound("chat-a", "/new"))
+        .await
+        .unwrap();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(31),
+        engine.handle_agent_event(AgentEvent::SessionReplaced {
+            session_id: "thr_a".into(),
+            replacement_session_id: "thr_b".into(),
+            client_id: "host".into(),
+        }),
+    )
+    .await
+    .expect("attachment must respect the switch deadline")
+    .unwrap();
+    assert!(state.session_switch(&chat).await.unwrap().is_none());
+    assert_eq!(
+        state.current_session(&chat).await.unwrap(),
+        Some(SessionId::new("thr_a"))
+    );
+}

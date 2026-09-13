@@ -10,8 +10,18 @@ if (process.argv[4]) {
     host.ctx.cwd = process.argv[4];
     host.ctx.sessionManager.getSessionFile = () => `${process.argv[4]}/session.jsonl`;
 }
+const commands = new Map();
+host.api.registerCommand = (name, definition) => commands.set(name, definition);
 let abortGeneration = 0;
-host.api.sendUserMessage = async text => {
+host.api.sendUserMessage = async (text, options) => {
+    if (options?.expandPromptTemplates && commands.has(text.slice(1))) {
+        return commands.get(text.slice(1)).handler('', { ...host.ctx, newSession: async () => {
+            await host.emit('session_before_switch', { reason: 'new' });
+            host.ctx.sessionManager.getSessionId = () => 'replacement-id';
+            await host.emit('session_switch', { reason: 'new' });
+            return { cancelled: false };
+        } });
+    }
     const generation = abortGeneration;
     host.ctx.busy = true;
     if (text === 'wait-for-test-ack') {

@@ -198,3 +198,109 @@ fn notification_fast_path_preserves_pending_response_across_field_orders() {
     registry.server_frame(connection, r#"{"result":{"thread":{"id":"owned"}},"id":7}"#);
     assert_eq!(registry.snapshot()[0].sessions, vec!["owned"]);
 }
+
+#[test]
+fn native_new_handoff_survives_coalesced_changes_and_does_not_follow_forks() {
+    let registry = ClientRegistry::default();
+    let client = registry.connect(None);
+    for (id, method, session) in [(1, "thread/resume", "old"), (2, "thread/fork", "fork")] {
+        registry.client_message(
+            client,
+            &json!({"id":id,"method":method,"params":{"threadId":"old"}}),
+        );
+        registry.server_message(client, &json!({"id":id,"result":{"thread":{"id":session}}}));
+    }
+    assert!(registry.lifecycle_since(0).is_empty());
+    registry.client_message(
+        client,
+        &json!({"id":3,"method":"thread/unsubscribe","params":{"threadId":"old"}}),
+    );
+    registry.server_message(client, &json!({"id":3,"result":{"status":"unsubscribed"}}));
+    registry.client_message(client, &json!({"id":4,"method":"thread/start","params":{}}));
+    registry.server_message(client, &json!({"id":4,"result":{"thread":{"id":"new"}}}));
+    let events = registry.lifecycle_since(0);
+    assert_eq!(events.len(), 2);
+    assert!(
+        matches!(&events[0].1, agentix_domain::AgentEvent::SessionSwitchStarted { session_id, .. } if session_id == "old")
+    );
+    assert!(
+        matches!(&events[1].1, agentix_domain::AgentEvent::SessionReplaced { session_id, replacement_session_id, .. } if session_id == "old" && replacement_session_id == "new")
+    );
+    assert!(registry.lifecycle_since(events[1].0).is_empty());
+}
+
+#[test]
+fn native_new_follows_reconnect_of_same_process_and_start_before_unsubscribe() {
+    for reconnect in [true, false] {
+        let r = ClientRegistry::default();
+        let mut c = r.connect(Some(std::process::id()));
+        r.client_message(
+            c,
+            &json!({"id":1,"method":"thread/resume","params":{"threadId":"old"}}),
+        );
+        r.server_message(c, &json!({"id":1,"result":{"thread":{"id":"old"}}}));
+        let identity = r.snapshot()[0].client_id.clone();
+        if !reconnect {
+            r.client_message(c, &json!({"id":2,"method":"thread/start","params":{}}));
+            r.server_message(c, &json!({"id":2,"result":{"thread":{"id":"new"}}}));
+        }
+        r.client_message(
+            c,
+            &json!({"id":3,"method":"thread/unsubscribe","params":{"threadId":"old"}}),
+        );
+        r.server_message(c, &json!({"id":3,"result":{"status":"unsubscribed"}}));
+        if reconnect {
+            r.disconnect(c);
+            c = r.connect(Some(std::process::id()));
+            r.client_message(c, &json!({"id":2,"method":"thread/start","params":{}}));
+            r.server_message(c, &json!({"id":2,"result":{"thread":{"id":"new"}}}));
+        }
+        let events = r.lifecycle_since(0);
+        assert!(events.iter().any(|(_, event)| matches!(event, agentix_domain::AgentEvent::SessionReplaced { session_id, replacement_session_id, client_id } if session_id == "old" && replacement_session_id == "new" && client_id == &identity)));
+    }
+}
+
+#[test]
+fn native_new_ignores_ephemeral_starts_in_either_handoff_order() {
+    for unsubscribe_first in [true, false] {
+        for (request_flag, response_flag) in [(true, false), (false, true), (true, true)] {
+            let r = ClientRegistry::default();
+            let c = r.connect(None);
+            let start = |id, thread, request_flag, response_flag| {
+                r.client_message(
+                    c,
+                    &json!({"id":id,"method":"thread/start","params":{"ephemeral":request_flag}}),
+                );
+                r.server_message(
+                    c,
+                    &json!({"id":id,"result":{"thread":{"id":thread,"ephemeral":response_flag}}}),
+                );
+            };
+            let unsubscribe = || {
+                r.client_message(
+                    c,
+                    &json!({"id":4,"method":"thread/unsubscribe","params":{"threadId":"old"}}),
+                );
+                r.server_message(c, &json!({"id":4,"result":{"status":"unsubscribed"}}));
+            };
+            start(1, "old", false, false);
+            if unsubscribe_first {
+                unsubscribe();
+            } else {
+                start(2, "new", false, false);
+            }
+            start(3, "helper", request_flag, response_flag);
+            if unsubscribe_first {
+                start(2, "new", false, false);
+            } else {
+                unsubscribe();
+            }
+            let events = r.lifecycle_since(0);
+            assert_eq!(events.len(), 2);
+            assert!(events.iter().any(|(_, event)| matches!(event,
+                agentix_domain::AgentEvent::SessionReplaced { session_id, replacement_session_id, .. }
+                if session_id == "old" && replacement_session_id == "new")));
+            assert!(!r.snapshot()[0].sessions.contains(&"helper".to_owned()));
+        }
+    }
+}

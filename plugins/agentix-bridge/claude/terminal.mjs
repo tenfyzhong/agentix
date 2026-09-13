@@ -48,10 +48,12 @@ export class TerminalAdapter {
 export async function detectTerminal(options, signal) {
     const candidates = await Promise.all(['rmux', 'tmux'].map(async kind => {
         const adapter = new TerminalAdapter(kind, options);
-        try { await adapter.inspect(signal); return adapter; } catch { return null; }
+        try { const [root] = await adapter.inspect(signal); return { adapter, root }; } catch { return null; }
     }));
     signal?.throwIfAborted();
     const matches = candidates.filter(Boolean);
-    if (matches.length !== 1) throw failure('unsupported_method', 'Cannot uniquely verify the original rmux or tmux pane');
-    return matches[0];
+    // rmux can provide a tmux compatibility alias; both names may reach one pane.
+    const targets = new Set(matches.map(({ adapter, root }) => JSON.stringify([adapter.socket, adapter.pane, root])));
+    if (targets.size !== 1) throw failure('unsupported_method', 'Cannot uniquely verify the original rmux or tmux pane');
+    return matches[0].adapter;
 }

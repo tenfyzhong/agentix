@@ -77,7 +77,10 @@ impl Engine {
                 self.resolve_external_request(&conversation, session_id, request_id)
                     .await?;
             }
-            AgentEvent::SessionStatusChanged { .. }
+            AgentEvent::SessionSwitchStarted { .. }
+            | AgentEvent::SessionReplaced { .. }
+            | AgentEvent::SessionSwitchFailed { .. }
+            | AgentEvent::SessionStatusChanged { .. }
             | AgentEvent::SessionExited { .. }
             | AgentEvent::SessionResumed { .. }
             | AgentEvent::QueueChanged { .. }
@@ -369,6 +372,7 @@ impl Engine {
         Ok(())
     }
 
+    #[allow(clippy::too_many_lines)]
     pub(super) async fn handle_session_exit(
         &self,
         session_id: &SessionId,
@@ -398,6 +402,12 @@ impl Engine {
                 .retain(|(session, _), _| session != session_id);
             return Ok(());
         };
+        if self
+            .retain_switch_on_exit(&conversation, session_id)
+            .await?
+        {
+            return Ok(());
+        }
         let session_label = self.session_label(session_id).await;
 
         let epoch = self.state.suspend(&conversation).await?;

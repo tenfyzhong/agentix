@@ -9,6 +9,10 @@ use super::{
 
 const SESSION_COMMAND_HELP: &[(&str, &str)] = &[
     (
+        "/new",
+        "Start a new session in the original client and follow it automatically.",
+    ),
+    (
         "/fast [on|off]",
         "Show or change fast mode for subsequent turns.",
     ),
@@ -283,6 +287,12 @@ impl Engine {
         session_id: SessionId,
     ) -> Result<(), EngineError> {
         let session_id = self.agent.canonical_session(&session_id).await?;
+        self.interactions
+            .terminal_inputs
+            .lock()
+            .await
+            .remove(conversation);
+        self.cancel_session_switch(conversation).await?;
         let already_attached = self
             .sessions
             .bindings
@@ -521,6 +531,12 @@ impl Engine {
 
     pub(super) async fn detach(&self, conversation: &ConversationRef) -> Result<(), EngineError> {
         self.interactions
+            .terminal_inputs
+            .lock()
+            .await
+            .remove(conversation);
+        self.cancel_session_switch(conversation).await?;
+        self.interactions
             .session_inputs
             .lock()
             .await
@@ -599,6 +615,9 @@ impl Engine {
                 )
                 .await
                 .map(|_| ());
+        }
+        if matches!(command, SessionCommand::New) {
+            return self.request_new_session(conversation, &session).await;
         }
         if matches!(command, SessionCommand::Rename(None)) {
             self.interactions.session_inputs.lock().await.insert(
@@ -973,6 +992,12 @@ impl Engine {
         if !self.agent.session_access(&session).await.can_write() {
             return self.show_read_only_notice(conversation).await;
         }
+        if self
+            .check_terminal_input(conversation, &session, Some(prompt.to_owned()))
+            .await?
+        {
+            return Ok(());
+        }
         let active = self.turns.active_turn(&session).await;
         if let Some(turn) = active {
             if self
@@ -1055,6 +1080,9 @@ impl Engine {
         &self,
         conversation: &ConversationRef,
     ) -> Result<(), EngineError> {
+        if self.show_switch_queue(conversation).await? {
+            return Ok(());
+        }
         let session = self.current_session(conversation).await?;
         if !self.agent.session_access(&session).await.can_write() {
             return self.show_read_only_notice(conversation).await;
@@ -1145,6 +1173,9 @@ impl Engine {
         conversation: &ConversationRef,
         action: &str,
     ) -> Result<(), EngineError> {
+        if self.control_switch_queue(conversation, action).await? {
+            return Ok(());
+        }
         let session = self.current_session(conversation).await?;
         if !self.agent.session_access(&session).await.can_write() {
             return self.show_read_only_notice(conversation).await;
