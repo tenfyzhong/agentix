@@ -187,6 +187,7 @@ pub fn command_menu_for(
                 ("compact", "Compact the session context"),
                 ("fork", "Fork and attach a copy"),
                 ("fast", "Toggle Fast mode"),
+                ("new", "Start a new session and follow it"),
                 ("clear", "Start a fresh session"),
                 ("exit", "Detach the session"),
                 ("diff", "Show Git changes"),

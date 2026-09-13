@@ -265,3 +265,46 @@ The opt-in [native CLI benchmark](../crates/agentix-codex/tests/native_cli_perfo
 The rmux pane lifecycle also has an opt-in real-daemon regression test: `cargo test -p agentix-rmux live_rmux -- --ignored`. It uses an isolated socket and checks foreground process detection, Ctrl-C, and shell input after agent exit. The normal SDK wire tests execute the launch command with successful and unsuccessful child exits, literal arguments, and unset or empty `SHELL`.
 
 Native tmux lifecycle coverage runs with `AGENTIX_TEST_TMUX=1 cargo test -p agentix-tmux`. It verifies normal and unsuccessful agent exits, Ctrl-C with foreground process detection, and subsequent shell input in the requested working directory. The tmux CI jobs enable these tests on Linux and macOS.
+
+## Native `/new` coverage
+
+- Core regression tests cover the exit/create gap, ordered delivery after binding, foreign-client rejection, manual detach/attach cancellation, timeout and late arrival, restart with a temporarily unavailable replacement, and no replay of uncertain sends.
+- Storage tests cover atomic binding/FIFO transitions, epoch and revision fences, restart persistence, duplicate queue IDs, and bot-identity cleanup.
+- Pi/OMP bridge tests cover native lifecycle registration with stable client identity. Pi's command-context test checks stop-before-new without a model prompt. A Node subprocess and real Unix IPC exercise Rust registration and replacement events.
+- Codex registry tests cover coalesced notifications, fork exclusion, both start/unsubscribe orders, and reconnect of the same process. Terminal policy tests reject shell panes, drafts, dialogs, and copy/dead modes. Claude tests cover asynchronous acceptance and terminal failure.
+
+These are deterministic protocol/engine tests and isolated fixtures, not live Feishu/Slack or real model-provider acceptance. Real Codex/OMP/Claude input layouts, customized key bindings, competing terminal typing, extension cancellation by other plugins, and real-client restart timing need manual verification. Terminal checks are best effort and cannot atomically lock a human-operated terminal.
+
+### Handoff acceptance matrix
+
+| Behavior | Automated evidence |
+| --- | --- |
+| Exit/create gap and FIFO turn ordering | `engine.rs`: `new_session_waits_through_exit_and_drains_gap_messages_in_order` |
+| Repeated requests and replacement events | `engine.rs`: `new_session_duplicate_requests_and_events_do_not_repeat_delivery` |
+| Queue capacity, overflow feedback, clear without cancelling the pending handoff | `engine.rs`: `new_session_queue_limit_and_clear_preserve_the_pending_handoff` |
+| Late failure after successful replacement | `engine.rs`: `new_session_failure_from_old_client_cannot_pause_committed_replacement` |
+| Client identity isolation and explicit detach | `engine.rs`: `native_new_session_follows_only_matching_client_and_honors_manual_detach` |
+| Explicit attach with retained old messages | `engine.rs`: `new_session_manual_attach_retains_old_queue_without_capturing_new_prompts` |
+| Timeout, late arrival, queue inspection and discard | `engine.rs`: `new_session_timeout_clears_flow_and_late_replacement_cannot_attach` |
+| Restart, temporary attach failure, uncertain delivery and blocked replay | `engine.rs`: `new_session_retries_attachment_after_restart_without_replaying_uncertain_prompt` |
+| Destination already owned by another conversation | `state_and_render.rs`: `native_session_handoff_cannot_displace_another_conversation` |
+| Atomic binding/queue commit and stale worker rejection | `state_and_render.rs`: `native_session_binding_and_queue_commit_atomically_with_epoch_fence`, `session_switch_survives_restart_and_rejects_stale_queue_updates` |
+| Original terminal, drafts, copy mode, dead pane, foreground changes before Enter | `plugins/agentix-bridge/tests/new-session.test.mjs`; Codex prompt validation in `agentix-multiplexer` |
+| Stable registration identity across real local IPC | `agentix-bridge/tests/bridge.rs`: `native_new_crosses_ipc_with_stable_identity_and_replacement_registration` |
+
+The core test paths above are under `crates/agentix-core/tests/`. This matrix describes behavioral coverage, not a line-coverage percentage. Native terminal tests inject terminal state and failures; they do not certify every host version's actual screen layout. Real-client checks should exercise idle and active turns, two simultaneous clients in the same directory, manual native new, and service restart during the gap before rollout.
+
+### Terminal draft confirmation coverage
+
+Core `terminal_draft_*` tests cover prompt and `/new`, confirmation, cancellation, repeated buttons, changed drafts, attachment changes, and durable handoff queues across restart, confirmation and `/cancel`. Claude delivery tests cover multiline capture, refusal to auto-clear, conditional clearing, changed snapshots, empty inputs and clearing failures. The opt-in native rmux/tmux tests exercise these steps through real isolated panes using a deterministic terminal host; `AGENTIX_TEST_NATIVE_HOSTS=1 cargo test -p agentix-multiplexer --test native_input` covers Codex multiline capture and conditional clearing on both drivers, including their different treatment of background-only rows. Codex parser tests cover complete multiline boxes, a cursor at the beginning, disabled/dead/copy-mode panes, clipped boxes, and styled borderless composers with dim placeholders. The layout handling follows the upstream [Codex composer](https://github.com/openai/codex/blob/main/codex-rs/tui/src/bottom_pane/chat_composer.rs); customized themes, hidden paste payloads and host viewport clipping remain manual verification boundaries.
+
+Codex default-background composer regressions reproduce the v0.154.0 rmux screen layout, including dim placeholders, multiline drafts, status footers and Vim mode checks. The isolated native input test also submits `/new` after confirmation on both colored and default-background layouts in tmux/rmux. Core tests verify terminal inspection errors are returned to IM.
+
+
+Codex submission regressions model its unbracketed input burst: an early Enter inserts a newline. The terminal sender waits for two stable rendered command observations before submitting. Core retry coverage verifies that a timed-out switch can send a new command after draft confirmation with the old queue cancelled, and that an active switch preserves a newly typed draft.
+
+The opt-in real TUI test in `native_input.rs` accepts `AGENTIX_TEST_CODEX_BINARY` and `AGENTIX_TEST_CODEX_ENDPOINT`, then runs `cargo test -p agentix-multiplexer --test native_input real_codex`. It launches isolated tmux/rmux panes, trusts only their temporary test directory, submits `/new` from an empty composer and after conditional draft clearing, and verifies the composer returns to empty. Both drivers passed with Codex 0.154.0 on macOS. This test uses a supplied local app-server; it submits no model prompt and does not verify live Feishu delivery or IM reattachment.
+
+The Codex registry excludes ephemeral helper threads from ownership and native handoff candidates. Regression tests cover helpers between unsubscribe/start in either order, with ephemeral metadata on the request, response, or both. The opt-in `cargo test -p agentix-codex --test native_handoff` uses the same real-Codex environment variables to verify production proxy events, namespaced session IDs, and Engine conversation reattachment through an isolated local channel sink on both tmux and rmux. It does not send live IM messages.
+
+Terminal detection tests cover rmux with a tmux compatibility alias pointing to the same socket, pane and verified process root. Equivalent aliases count as one target; distinct roots and missing process ownership remain rejected.

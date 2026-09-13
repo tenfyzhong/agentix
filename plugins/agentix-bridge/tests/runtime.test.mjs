@@ -395,3 +395,74 @@ for (const kind of ['pi', 'omp']) {
         assert.match(tool.event.ItemCompleted.item.text, /pwd/);
     });
 }
+
+for (const kind of ['pi', 'omp']) {
+    unixTest(`${kind}: native new publishes a stable client handoff and ignores resume`, async t => {
+        const directory = await mkdtemp(join(tmpdir(), 'ax-new-'));
+        const server = await listen(directory, t);
+        const host = hostFixture();
+        const bridge = registerBridge(host.api, kind, { endpoint: `unix://${join(directory, 'control.sock')}` });
+        t.after(async () => { await bridge.close(); await rm(directory, { recursive: true, force: true }); });
+        await host.emit('session_start');
+        const old = await server.next();
+        await old.request("info");
+        assert.ok(old.record.client_id);
+        await host.emit('session_before_switch', { reason: 'new' });
+        await waitFor(() => old.frames.find(f => f.event?.SessionSwitchStarted));
+        host.ctx.sessionManager.getSessionId = () => 'replacement';
+        await host.emit('session_switch', { reason: 'new' });
+        const next = await server.next();
+        assert.equal(next.record.client_id, old.record.client_id);
+        assert.equal(next.record.previous_session_id, 'native-id');
+        assert.equal(next.record.session_id, 'replacement');
+        assert.notEqual(next.record.instance, old.record.instance);
+    });
+}
+
+unixTest('pi: IM new stops first and uses a command context without a model turn', async t => {
+    const directory = await mkdtemp(join(tmpdir(), 'ax-pnew-'));
+    const server = await listen(directory, t);
+    const host = hostFixture();
+    const commands = new Map();
+    host.api.registerCommand = (name, value) => commands.set(name, value);
+    host.api.sendUserMessage = async (text, options) => {
+        assert.equal(options.expandPromptTemplates, true);
+        await commands.get(text.slice(1)).handler('', { ...host.ctx, newSession: async () => {
+            assert.equal(host.ctx.isIdle(), true);
+            host.calls.push(['new']);
+            await host.emit('session_before_switch', { reason: 'new' });
+            host.ctx.sessionManager.getSessionId = () => 'new-pi';
+            await host.emit('session_switch', { reason: 'new' });
+            return { cancelled: false };
+        } });
+    };
+    const bridge = registerBridge(host.api, 'pi', { endpoint: `unix://${join(directory, 'control.sock')}` });
+    t.after(async () => { await bridge.close(); await rm(directory, { recursive: true, force: true }); });
+    await host.emit('session_start');
+    const client = await server.next();
+    host.ctx.busy = true;
+    const result = await client.request('command', { name: 'new' });
+    assert.equal(result.ok, true);
+    const next = await server.next();
+    assert.equal(next.record.session_id, 'new-pi');
+    assert.deepEqual(host.calls, [['abort'], ['new']]);
+});
+
+unixTest('native new bypasses a pending host command so it can interrupt active work', async t => {
+    const directory = await mkdtemp(join(tmpdir(), 'ax-nbusy-'));
+    const server = await listen(directory, t);
+    const host = hostFixture();
+    host.api.registerCommand = () => {};
+    let release, entered = false;
+    host.api.setModel = () => { entered = true; return new Promise(resolve => { release = resolve; }); };
+    const bridge = registerBridge(host.api, 'pi', { endpoint: `unix://${join(directory, 'control.sock')}` });
+    t.after(async () => { release?.(); await bridge.close(); await rm(directory, { recursive: true, force: true }); });
+    await host.emit('session_start');
+    const client = await server.next();
+    const pending = client.request('command', { name: 'model', value: 'openai/test' });
+    await waitFor(() => entered);
+    const fresh = client.request('command', { name: 'new' });
+    const result = await Promise.race([fresh, new Promise(resolve => setTimeout(() => resolve({ blocked: true }), 100))]);
+    release(); await pending; await fresh;
+    assert.equal(result.ok, true);
+});

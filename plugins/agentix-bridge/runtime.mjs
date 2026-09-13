@@ -1,3 +1,5 @@
+import { NativeSessionControl } from './new-session.mjs';
+import { detectTerminal } from './claude/terminal.mjs';
 import { BridgeTransport } from './transport.mjs';
 export { PROTOCOL_VERSION } from './transport.mjs';
 import { randomUUID } from 'node:crypto';
@@ -9,12 +11,15 @@ import { SessionState, textOf } from './session.mjs';
 /** In-process bridge. It never launches, resumes, or terminates another agent. */
 export function registerBridge(api, kind, options = {}) {
     const host = createHostAdapter(api, kind);
+    const identityKey = Symbol.for(`agentix.bridge.client.${kind}`);
+    const clientId = globalThis[identityKey] ??= randomUUID();
+    let previousSession;
     let ctx, record;
     let instance, session;
     let chain = Promise.resolve();
     let lifecycle = Promise.resolve();
-    const transport = new BridgeTransport({ ...options, snapshot: info, handle: command, dispatch: (work, method) => {
-        if (['info', 'snapshot', 'history', 'queue_state', 'stop'].includes(method)) return work();
+    const transport = new BridgeTransport({ ...options, snapshot: info, handle: command, dispatch: (work, method, params) => {
+        if ((method === 'command' && params?.name === 'new') || ['info', 'snapshot', 'history', 'queue_state', 'stop'].includes(method)) return work();
         chain = chain.then(work); return chain;
     } });
     let queue = new DurableQueue(), active = false;
@@ -45,7 +50,7 @@ export function registerBridge(api, kind, options = {}) {
     }
 
     const event = value => transport.event(value);
-    function info() { return { instance, seq: transport.sequence, session: session.summary(api.getSessionName?.() ?? null), capabilities: host.capabilities(ctx) }; }
+    function info() { return { instance, seq: transport.sequence, session: session.summary(api.getSessionName?.() ?? null), capabilities: [...host.capabilities(ctx), ...((kind === 'pi' && api.registerCommand) || (kind === 'omp' && process.env.TMUX_PANE && typeof ctx.ui?.getEditorText === 'function') ? ['new'] : [])] }; }
     function snapshot() { return { ...info(), turns: session.history().turns, queue: queue.view() }; }
     function start() {
         if (session.start()) event({ TurnStarted: { session_id: record.session_id, turn_id: session.turn.id } });
@@ -79,6 +84,34 @@ export function registerBridge(api, kind, options = {}) {
         }
         if (method === 'queue_resume') { queue.resume(); await pump(); return { message: 'Queue resumed' }; }
         if (method === 'queue_clear') { if (ctx.isIdle() && queue.view().uncertain) session.abandon(); queue.clear(ctx.isIdle()); return { message: 'Pending queue cleared' }; }
+        if (method === 'command' && params.name === 'new' && (kind === 'omp' || api.registerCommand)) {
+            if (previousSession === record.session_id) return { body: 'Session switch already requested', choices: [] };
+            const original = record.session_id;
+            previousSession = original;
+            queue.pause();
+            event({ SessionSwitchStarted: { session_id: original, client_id: clientId } });
+            setImmediate(async () => {
+                try {
+                    if (kind === 'pi') {
+                        if (!ctx.isIdle()) await ctx.abort();
+                        await api.sendUserMessage('/agentix-new', { expandPromptTemplates: true });
+                    } else {
+                        const control = new NativeSessionControl('omp', {
+                            resolve: () => detectTerminal({ pid: process.pid }),
+                            stop: () => ctx.abort(),
+                            ready: async () => {
+                                if (typeof ctx.ui?.getEditorText !== 'function' || ctx.ui.getEditorText() !== '') throw failure('busy', 'Clear the terminal editor before starting a new session');
+                            },
+                        });
+                        await control.newSession(() => !ctx.isIdle());
+                    }
+                } catch (error) {
+                    previousSession = undefined;
+                    event({ SessionSwitchFailed: { session_id: original, client_id: clientId, reason: error.message } });
+                }
+            });
+            return { body: 'Session switch requested', choices: [] };
+        }
         if (method === 'command') {
             const result = await host.command(ctx, record.session_id, queue.view(), params.name, params.value, ensureCurrent);
             ensureCurrent();
@@ -116,22 +149,48 @@ export function registerBridge(api, kind, options = {}) {
     }
     async function close() { active = false; await transport.close(); }
     async function open(context) {
-        await close();
+        await transport.close(true);
+        active = false;
         ctx = context;
         // Each session switch gets a new incarnation; reconnect preserves this identity.
         instance = randomUUID();
         chain = Promise.resolve();
         restoreQueue();
-        record = { agent: kind, instance, pid: process.pid,
+        record = { agent: kind, instance, pid: process.pid, client_id: clientId,
+            ...(previousSession ? { previous_session_id: previousSession } : {}),
             session_id: ctx.sessionManager.getSessionId(), cwd: ctx.cwd, session_file: ctx.sessionManager.getSessionFile?.() ?? null };
         active = true;
         transport.open(record);
         schedulePump();
     }
+    if (kind === 'pi' && api.registerCommand) api.registerCommand('agentix-new', {
+        description: 'Start a new session and retain the Agentix conversation',
+        handler: async (_args, commandContext) => {
+            const original = record?.session_id;
+            const result = await commandContext.newSession();
+            if (result?.cancelled) {
+                previousSession = undefined;
+                event({ SessionSwitchFailed: { session_id: original, client_id: clientId, reason: 'The host cancelled the new session.' } });
+            }
+        },
+    });
     const on = (name, fn) => api.on(name, async (value, context) => {
         try { if (name !== 'session_start') session?.touch(); await fn(value, context); } catch (error) { console.error(`Agentix bridge ${name}: ${error.message}`); }
     });
     on('session_start', (_event, context) => { active = false; lifecycle = lifecycle.then(() => open(context)); return lifecycle; });
+    on('session_before_switch', value => {
+        if (value.reason === 'new' && record) {
+            previousSession = record.session_id;
+            queue.pause();
+            event({ SessionSwitchStarted: { session_id: record.session_id, client_id: clientId } });
+        }
+    });
+    on('session_switch', (value, context) => {
+        if (value.reason !== 'new') previousSession = undefined;
+        active = false;
+        lifecycle = lifecycle.then(() => open(context));
+        return lifecycle;
+    });
     on('session_shutdown', () => {
         lifecycle = lifecycle.catch(() => {}).then(async () => {
             if (record) event({ SessionExited: { session_id: record.session_id } });

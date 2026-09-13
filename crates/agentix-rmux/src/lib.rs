@@ -23,6 +23,38 @@ pub enum RmuxManagerError {
 pub struct RmuxDriver;
 #[async_trait]
 impl MultiplexerDriver for RmuxDriver {
+    async fn codex_terminal_input(
+        &self,
+        pid: u32,
+        clear: Option<&str>,
+    ) -> Result<Option<String>, MultiplexerError> {
+        let location = self
+            .process_locations()
+            .await?
+            .remove(&pid)
+            .ok_or_else(|| {
+                MultiplexerError::Backend("Original Codex pane is unavailable".into())
+            })?;
+        agentix_multiplexer::codex_terminal_input(
+            Path::new("rmux"),
+            &[],
+            &location.pane_id,
+            pid,
+            clear,
+        )
+        .await
+    }
+    async fn new_codex_session(&self, pid: u32) -> Result<(), MultiplexerError> {
+        let location = self
+            .process_locations()
+            .await?
+            .remove(&pid)
+            .ok_or_else(|| {
+                MultiplexerError::Backend("Original Codex pane is unavailable".into())
+            })?;
+        agentix_multiplexer::send_codex_new(Path::new("rmux"), &[], &location.pane_id, pid).await
+    }
+
     fn kind(&self) -> MultiplexerKind {
         MultiplexerKind::Rmux
     }

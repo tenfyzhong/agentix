@@ -17,8 +17,10 @@ mod presentation;
 pub use presentation::{command_menu, command_menu_for};
 mod session_flows;
 mod session_service;
+mod session_switch;
 mod startup;
 mod task_board;
+mod terminal_input;
 mod turn_flows;
 mod workspace_directories;
 mod workspace_flows;
@@ -112,6 +114,13 @@ impl TurnBuffer {
 
 #[derive(Debug, Clone)]
 enum UiAction {
+    TerminalInput {
+        session_id: SessionId,
+        client_id: String,
+        draft: String,
+        prompt: Option<String>,
+        confirm: bool,
+    },
     Task(TaskAction),
     TaskBrowse(TaskBrowse),
     Attach(SessionId),
@@ -144,7 +153,10 @@ enum UiAction {
 impl UiAction {
     fn targets_session(&self, session_id: &SessionId) -> bool {
         match self {
-            Self::Attach(target)
+            Self::TerminalInput {
+                session_id: target, ..
+            }
+            | Self::Attach(target)
             | Self::Stop {
                 session_id: target, ..
             }
@@ -455,6 +467,13 @@ impl Engine {
             return Ok(());
         }
         let is_command = text.trim_start().starts_with('/');
+        if !is_command
+            && self
+                .enqueue_switch_prompt(conversation, event_id, text)
+                .await?
+        {
+            return Ok(());
+        }
         if !is_command && let Some(pending) = self.tasks.take_input(conversation).await {
             return self
                 .tasks
@@ -633,6 +652,42 @@ impl Engine {
         self.tasks.record_job_message(&event).await;
 
         match &event {
+            AgentEvent::SessionSwitchStarted {
+                session_id,
+                client_id,
+            } => {
+                let session = SessionId::new(session_id);
+                if let Some(conversation) = self.sessions.bound_conversation(&session).await
+                    && self
+                        .agent
+                        .session_client_id(&session)
+                        .await
+                        .as_deref()
+                        .is_none_or(|id| id == client_id)
+                {
+                    self.begin_session_switch(&conversation, &session, client_id)
+                        .await?;
+                }
+                return Ok(());
+            }
+            AgentEvent::SessionReplaced {
+                session_id,
+                replacement_session_id,
+                client_id,
+            } => {
+                return self
+                    .replace_session(session_id, replacement_session_id, client_id)
+                    .await;
+            }
+            AgentEvent::SessionSwitchFailed {
+                session_id,
+                client_id,
+                reason,
+            } => {
+                return self
+                    .fail_session_switch(session_id, client_id, reason)
+                    .await;
+            }
             AgentEvent::Connected { .. } => return Ok(()),
             AgentEvent::Disconnected { generation, .. } => {
                 self.expire_directory_drafts().await;
@@ -686,8 +741,13 @@ impl Engine {
             return Ok(());
         };
 
-        self.handle_routed_event(conversation, session_id, event, delivery)
-            .await
+        let completed = matches!(event, AgentEvent::TurnCompleted { .. });
+        self.handle_routed_event(conversation.clone(), session_id, event, delivery)
+            .await?;
+        if completed {
+            self.drain_session_switch(&conversation).await?;
+        }
+        Ok(())
     }
 
     async fn send_view(

@@ -1528,7 +1528,94 @@ impl CodexClient {
     }
 }
 
+impl CodexClient {
+    async fn request_native_new(
+        &self,
+        session: &SessionId,
+    ) -> Result<SessionCommandResult, AgentError> {
+        let client_id = self.session_client_id(session).await.ok_or_else(|| {
+            AgentError::Rejected("A unique original Codex client is required".into())
+        })?;
+        let pid = self
+            .registry
+            .as_ref()
+            .and_then(|r| r.snapshot().into_iter().find(|c| c.client_id == client_id))
+            .and_then(|c| c.pid)
+            .ok_or_else(|| AgentError::Rejected("The original client PID is unavailable".into()))?;
+        if !self
+            .workspace
+            .process_locations()
+            .await
+            .map_err(|e| AgentError::Rejected(e.to_string()))?
+            .contains_key(&pid)
+        {
+            return Err(AgentError::Rejected(
+                "Start Codex inside the configured rmux or tmux to use /new from IM".into(),
+            ));
+        }
+        let client = self.clone();
+        let session = session.clone();
+        tokio::spawn(async move {
+            let result: Result<(), AgentError> = async {
+                let thread = client
+                    .read_thread(&session, true)
+                    .await
+                    .map_err(agent_error)?;
+                if let Some(turn) = thread["turns"]
+                    .as_array()
+                    .and_then(|turns| turns.iter().find(|t| t["status"] == "inProgress"))
+                {
+                    let id = turn["id"]
+                        .as_str()
+                        .ok_or_else(|| AgentError::Rejected("Active turn has no ID".into()))?;
+                    client.interrupt(&session, id).await?;
+                    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+                    loop {
+                        let thread = client
+                            .read_thread(&session, true)
+                            .await
+                            .map_err(agent_error)?;
+                        if !thread["turns"]
+                            .as_array()
+                            .is_some_and(|turns| turns.iter().any(|t| t["status"] == "inProgress"))
+                        {
+                            break;
+                        }
+                        if tokio::time::Instant::now() >= deadline {
+                            return Err(AgentError::Rejected(
+                                "The active task did not stop".into(),
+                            ));
+                        }
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                    }
+                }
+                if client.session_client_id(&session).await.as_ref() != Some(&client_id) {
+                    return Err(AgentError::Rejected("The original client changed".into()));
+                }
+                client
+                    .workspace
+                    .new_codex_session(pid)
+                    .await
+                    .map_err(|e| AgentError::Rejected(e.to_string()))
+            }
+            .await;
+            if let Err(error) = result {
+                let _ = client.events.send(AgentEvent::SessionSwitchFailed {
+                    session_id: session.to_string(),
+                    client_id,
+                    reason: error.to_string(),
+                });
+            }
+        });
+        Ok(SessionCommandResult::message(
+            "New session",
+            "Session switch requested",
+        ))
+    }
+}
+
 async fn monitor_running_sessions(client: CodexClient) {
+    let mut lifecycle_sequence = 0;
     let mut missing_counts = HashMap::new();
     let mut background = background::BackgroundTurns::new();
     let mut registry_changes = client
@@ -1543,6 +1630,12 @@ async fn monitor_running_sessions(client: CodexClient) {
             }
         } else {
             tokio::time::sleep(RUNNING_SESSION_POLL_INTERVAL).await;
+        }
+        if let Some(registry) = &client.registry {
+            for (sequence, event) in registry.lifecycle_since(lifecycle_sequence) {
+                lifecycle_sequence = sequence;
+                let _ = client.events.send(event);
+            }
         }
         client.poll_observed_sessions().await;
         let watched = client.process_sessions.lock().await.clone();
@@ -1771,6 +1864,42 @@ fn page_running_sessions(
 
 #[async_trait]
 impl AgentAdapter for CodexClient {
+    async fn terminal_input(
+        &self,
+        session: &SessionId,
+        new_session: bool,
+        clear: Option<&str>,
+    ) -> Result<Option<String>, AgentError> {
+        // Ordinary prompts use the protocol, not terminal input.
+        if !new_session {
+            return Ok(None);
+        }
+        let client_id = self.session_client_id(session).await.ok_or_else(|| {
+            AgentError::Rejected("A unique original Codex client is required".into())
+        })?;
+        let pid = self
+            .registry
+            .as_ref()
+            .and_then(|r| r.snapshot().into_iter().find(|c| c.client_id == client_id))
+            .and_then(|c| c.pid)
+            .ok_or_else(|| AgentError::Rejected("The original client PID is unavailable".into()))?;
+        self.workspace
+            .codex_terminal_input(pid, clear)
+            .await
+            .map_err(|e| AgentError::Rejected(e.to_string()))
+    }
+    async fn session_client_id(&self, session: &SessionId) -> Option<String> {
+        let clients = self.registry.as_ref()?.snapshot();
+        let mut owners = clients
+            .iter()
+            .filter(|c| c.sessions.iter().any(|id| id == session.as_str()));
+        let owner = owners.next()?;
+        if owners.next().is_some() {
+            return None;
+        }
+        Some(owner.client_id.clone())
+    }
+
     fn display_name(&self) -> &'static str {
         "Codex"
     }
@@ -2187,6 +2316,7 @@ impl SessionControlPort for CodexClient {
             return Err(agent_error(ClientError::ReadOnlySession));
         }
         let result = match command {
+            SessionCommand::New => return self.request_native_new(session_id).await,
             SessionCommand::Compact => self
                 .request(
                     "thread/compact/start",

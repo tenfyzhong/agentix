@@ -124,6 +124,7 @@ impl TurnCoordinator {
 }
 
 pub(super) struct InteractionCoordinator {
+    pub(super) terminal_inputs: Mutex<HashMap<ConversationRef, SessionId>>,
     pub(super) actions: Mutex<ActionRegistry<UiAction>>,
     pub(super) pending: Mutex<HashMap<InteractionKey, PendingInteractionView>>,
     pub(super) turn_action_groups: Mutex<HashMap<(SessionId, String), String>>,
@@ -135,6 +136,7 @@ pub(super) struct InteractionCoordinator {
 impl Default for InteractionCoordinator {
     fn default() -> Self {
         Self {
+            terminal_inputs: Mutex::new(HashMap::new()),
             actions: Mutex::new(ActionRegistry::default()),
             pending: Mutex::new(HashMap::new()),
             turn_action_groups: Mutex::new(HashMap::new()),

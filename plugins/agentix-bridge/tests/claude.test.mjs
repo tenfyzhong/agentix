@@ -128,3 +128,15 @@ test('Claude forwards transcript process items before completion', () => {
     assert.equal(events.filter(e => e.ItemCompleted?.item.kind === 'reasoning').length, 1);
     assert.ok(events.findIndex(e => e.ItemCompleted?.item.kind === 'reasoning') < events.findIndex(e => e.TurnCompleted));
 });
+
+test('Claude accepts new asynchronously and reports terminal failure without a model prompt', async () => {
+    const events = [];
+    const session = new ClaudeSession({ clientId: 'host', nativeNew: async () => { throw new Error('pane changed'); }, event: value => events.push(value) });
+    session.hook(identity);
+    assert.ok(session.info().capabilities.includes('new'));
+    assert.match((await session.request('command', { name: 'new' })).body, /requested/);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(events[0].SessionSwitchStarted.client_id, 'host');
+    assert.equal(events[1].SessionSwitchFailed.reason, 'pane changed');
+    assert.equal(session.turns.length, 0);
+});

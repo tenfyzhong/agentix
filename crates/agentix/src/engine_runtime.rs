@@ -24,6 +24,7 @@ const SHUTDOWN_GRACE: Duration = Duration::from_secs(1);
 enum Refresh {
     Working(SessionId, String),
     TaskBoard,
+    SessionSwitch(agentix_core::ConversationRef),
 }
 
 struct Worker {
@@ -297,6 +298,9 @@ impl EngineWorkers {
                     Some(Refresh::Working(session.clone(), turn.clone()))
                 }
                 EngineWork::TaskBoard => Some(Refresh::TaskBoard),
+                EngineWork::SessionSwitch(conversation) => {
+                    Some(Refresh::SessionSwitch(conversation.clone()))
+                }
                 _ => None,
             };
             let inbound = match &job.work {
@@ -314,6 +318,7 @@ impl EngineWorkers {
                     EngineWork::Working { .. } => "working state refresh failed",
                     EngineWork::Recover => "failed to recover after agent event loss",
                     EngineWork::TaskBoard => "task board refresh failed",
+                    EngineWork::SessionSwitch(_) => "session switch refresh failed",
                 };
                 if let Err(error) = engine.execute_work(job.work).await {
                     if is_empty_rollout_metadata_error(&error) {
@@ -338,6 +343,19 @@ impl EngineWorkers {
     }
 
     async fn schedule_refreshes(&mut self, engine: &Engine) {
+        if let Ok(conversations) = engine.session_switch_conversations().await {
+            for conversation in conversations {
+                if !self.queue.is_full()
+                    && self
+                        .refreshes
+                        .insert(Refresh::SessionSwitch(conversation.clone()))
+                {
+                    self.queue
+                        .try_push(EngineWork::SessionSwitch(conversation))
+                        .expect("maintenance capacity");
+                }
+            }
+        }
         if !self.queue.is_full() && self.refreshes.insert(Refresh::TaskBoard) {
             self.queue
                 .try_push(EngineWork::TaskBoard)

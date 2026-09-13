@@ -119,6 +119,10 @@ pub struct Registration {
     pub cwd: String,
     pub session_file: String,
     pub snapshot: SessionInfo,
+    #[serde(default)]
+    pub client_id: Option<String>,
+    #[serde(default)]
+    pub previous_session_id: Option<String>,
 }
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct History {
@@ -211,6 +215,8 @@ pub enum Event {
     ItemStarted(ItemStarted),
     ItemCompleted(ItemCompleted),
     TurnCompleted(TurnCompleted),
+    SessionSwitchStarted(SessionSwitchStarted),
+    SessionSwitchFailed(SessionSwitchFailed),
 }
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct EventFrame {
@@ -224,4 +230,15 @@ pub struct SessionInfo {
     pub seq: u64,
     pub session: Session,
     pub capabilities: Vec<String>,
+}
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SessionSwitchStarted {
+    pub session_id: String,
+    pub client_id: String,
+}
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SessionSwitchFailed {
+    pub session_id: String,
+    pub client_id: String,
+    pub reason: String,
 }

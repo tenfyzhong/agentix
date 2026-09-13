@@ -85,7 +85,7 @@ fn commands_are_distinct_from_prompts() {
         parse_input("/queue").unwrap(),
         ParsedInput::Command(AgentCommand::Queue)
     );
-    assert!(parse_input("/new").is_err());
+    assert!(parse_input("/new").is_ok());
     assert_eq!(
         parse_input("/compact").unwrap(),
         ParsedInput::Command(AgentCommand::Session(SessionCommand::Compact))
@@ -400,4 +400,141 @@ async fn slack_thread_bindings_and_event_deduplication_survive_restart() {
 fn tmux_command_is_a_workspace_command() {
     assert!(parse_input("/tmux").is_ok());
     assert!(parse_input("/tmux claude").is_ok());
+}
+
+#[test]
+fn session_replacement_event_maps_both_session_ids() {
+    let mut event: agentix_core::AgentEvent = serde_json::from_value(serde_json::json!({
+        "SessionReplaced": {"session_id": "old", "replacement_session_id": "new", "client_id": "host"}
+    })).expect("replacement lifecycle must be understood");
+    event.map_session_id(|id| format!("pi:{id}"));
+    let value = serde_json::to_value(event).unwrap();
+    assert_eq!(value["SessionReplaced"]["session_id"], "pi:old");
+    assert_eq!(value["SessionReplaced"]["replacement_session_id"], "pi:new");
+    assert_eq!(value["SessionReplaced"]["client_id"], "host");
+}
+
+#[tokio::test]
+async fn session_switch_survives_restart_and_rejects_stale_queue_updates() {
+    use agentix_storage::SessionSwitch;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("switch.sqlite3");
+    let state = SqliteState::open(&path).await.unwrap();
+    let chat = ConversationRef::new(ChannelKind::Telegram, "chat");
+    let old = SessionId::new("pi:old");
+    let epoch = state.attach(&chat, &old).await.unwrap().epoch;
+    let mut pending = SessionSwitch::new(
+        "operation".into(),
+        chat.clone(),
+        old,
+        "process".into(),
+        epoch,
+        120,
+    );
+    assert!(state.save_session_switch(&mut pending).await.unwrap());
+    let mut outdated = pending.clone();
+    assert!(pending.enqueue("message-1", "first"));
+    assert!(!pending.enqueue("message-1", "first"));
+    assert!(pending.enqueue("message-2", "second"));
+    pending.messages[0].sending = true;
+    assert!(state.save_session_switch(&mut pending).await.unwrap());
+    assert!(!state.save_session_switch(&mut outdated).await.unwrap());
+    drop(state);
+    let state = SqliteState::open(&path).await.unwrap();
+    let saved = state.session_switch(&chat).await.unwrap().unwrap();
+    assert_eq!(
+        saved
+            .messages
+            .iter()
+            .map(|m| m.text.as_str())
+            .collect::<Vec<_>>(),
+        ["first", "second"]
+    );
+    assert!(saved.messages[0].sending);
+    assert!(!state.delete_session_switch(&outdated).await.unwrap());
+    assert!(state.delete_session_switch(&saved).await.unwrap());
+    assert!(state.session_switch(&chat).await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn native_session_binding_and_queue_commit_atomically_with_epoch_fence() {
+    use agentix_storage::SessionSwitch;
+    let state = SqliteState::in_memory().await.unwrap();
+    let chat = ConversationRef::new(ChannelKind::Telegram, "atomic-new");
+    let old = SessionId::new("old");
+    let epoch = state.attach(&chat, &old).await.unwrap().epoch;
+    let mut switch = SessionSwitch::new(
+        "handoff".into(),
+        chat.clone(),
+        old,
+        "host".into(),
+        epoch,
+        u64::MAX,
+    );
+    state.save_session_switch(&mut switch).await.unwrap();
+    switch.enqueue("message", "preserved");
+    state.save_session_switch(&mut switch).await.unwrap();
+    let mut outdated = switch.clone();
+    assert!(
+        state
+            .complete_session_switch(&mut switch, &SessionId::new("new"))
+            .await
+            .unwrap()
+    );
+    assert_eq!(
+        state.current_session(&chat).await.unwrap(),
+        Some(SessionId::new("new"))
+    );
+    assert_eq!(state.binding_epoch(&chat).await.unwrap(), switch.epoch);
+    assert_eq!(
+        state.session_switch(&chat).await.unwrap().unwrap().messages[0].text,
+        "preserved"
+    );
+    assert!(
+        !state
+            .complete_session_switch(&mut outdated, &SessionId::new("wrong"))
+            .await
+            .unwrap()
+    );
+}
+
+#[tokio::test]
+async fn native_session_handoff_cannot_displace_another_conversation() {
+    use agentix_storage::SessionSwitch;
+    let state = SqliteState::in_memory().await.unwrap();
+    let owner = ConversationRef::new(ChannelKind::Telegram, "owner");
+    let waiting = ConversationRef::new(ChannelKind::Telegram, "waiting");
+    let old = SessionId::new("old");
+    let target = SessionId::new("occupied");
+    state.attach(&owner, &target).await.unwrap();
+    let epoch = state.attach(&waiting, &old).await.unwrap().epoch;
+    let mut switch = SessionSwitch::new(
+        "conflict".into(),
+        waiting.clone(),
+        old.clone(),
+        "host".into(),
+        epoch,
+        u64::MAX,
+    );
+    switch.enqueue("saved", "keep this message");
+    state.save_session_switch(&mut switch).await.unwrap();
+    assert!(
+        !state
+            .complete_session_switch(&mut switch, &target)
+            .await
+            .unwrap()
+    );
+    assert_eq!(state.current_session(&owner).await.unwrap(), Some(target));
+    assert_eq!(state.current_session(&waiting).await.unwrap(), Some(old));
+    assert_eq!(state.binding_epoch(&waiting).await.unwrap(), epoch);
+    assert_eq!(
+        state
+            .session_switch(&waiting)
+            .await
+            .unwrap()
+            .unwrap()
+            .messages[0]
+            .text,
+        "keep this message"
+    );
 }

@@ -13,6 +13,16 @@ impl Engine {
         conversation: &ConversationRef,
         owner_id: &str,
     ) -> Result<(), EngineError> {
+        if let Some(session) = self
+            .interactions
+            .terminal_inputs
+            .lock()
+            .await
+            .remove(conversation)
+        {
+            self.cancel_terminal_queue(conversation, &session).await?;
+            self.interactions.actions.lock().await.retain(|a| !matches!(a, UiAction::TerminalInput { session_id, .. } if session_id == &session));
+        }
         self.tasks.take_input(conversation).await;
         self.interactions.take_session_input(conversation).await;
         if let Some(interaction) = self.interactions.take_reply_mode(conversation).await {
@@ -32,6 +42,11 @@ impl Engine {
         session_id: &str,
     ) -> Result<(), EngineError> {
         let id = SessionId::new(session_id);
+        self.interactions
+            .terminal_inputs
+            .lock()
+            .await
+            .retain(|_, session| session != &id);
         self.interactions
             .actions
             .lock()
@@ -187,6 +202,7 @@ impl Engine {
         actions
     }
 
+    #[allow(clippy::too_many_lines)]
     pub(super) async fn handle_action(
         &self,
         conversation: &ConversationRef,
@@ -212,6 +228,23 @@ impl Engine {
         }
         self.disable_consumed_actions(conversation, message).await?;
         match action {
+            UiAction::TerminalInput {
+                session_id,
+                client_id,
+                draft,
+                prompt,
+                confirm,
+            } => {
+                self.resolve_terminal_input(
+                    conversation,
+                    &session_id,
+                    &client_id,
+                    &draft,
+                    prompt,
+                    confirm,
+                )
+                .await?;
+            }
             UiAction::Task(action) => {
                 tasks
                     .run_task_action(conversation, owner_id, action)

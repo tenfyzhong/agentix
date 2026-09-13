@@ -34,7 +34,7 @@ export class ClaudeSession {
             session: { id: this.identity.session_id, cwd: this.identity.cwd, name: null,
                 preview: this.turns.at(-1)?.user_text ?? null, updatedAt: this.updatedAt,
                 status: this.active ? 'active' : 'idle', terminal: null },
-            capabilities: ['prompt', 'history', 'status', 'queue_control'] };
+            capabilities: ['prompt', 'history', 'status', 'queue_control', ...(this.options.nativeNew ? ['new'] : [])] };
     }
     snapshot() { return { ...this.info(), turns: this.history().turns, queue: this.queueState() }; }
     queueState() {
@@ -61,6 +61,7 @@ export class ClaudeSession {
     }
     async request(method, params = {}) {
         if (!this.identity) throw failure('session_changed', 'Claude session has not registered');
+        if (method === 'terminal_input') return { draft: this.delivery.draft ? await this.delivery.draft(params.clear) : null };
         if (method === 'info') return this.info();
         if (method === 'snapshot') return this.snapshot();
         if (method === 'history') return this.history(params.cursor, params.limit);
@@ -76,6 +77,20 @@ export class ClaudeSession {
             try { this.save(cleared); }
             catch (error) { for (const id of cleared) this.receipts.get(id).state = 'uncertain'; throw error; }
             return { message: 'Uncertain delivery cleared; no message was cancelled or resent' };
+        }
+        if (method === 'command' && params.name === 'new' && this.options.nativeNew) {
+            if (this.switching) return { body: 'Session switch already requested', choices: [] };
+            this.switching = true;
+            const session_id = this.identity.session_id, client_id = this.options.clientId;
+            this.emit({ SessionSwitchStarted: { session_id, client_id } });
+            setImmediate(async () => {
+                try { await this.options.nativeNew(() => Boolean(this.active)); }
+                catch (error) {
+                    this.switching = false;
+                    this.emit({ SessionSwitchFailed: { session_id, client_id, reason: error.message } });
+                }
+            });
+            return { body: 'Session switch requested', choices: [] };
         }
         if (method === 'command' && params.name === 'status') return { body: `Session: ${this.identity.session_id}\nWorkspace: ${this.identity.cwd}\nState: ${this.active ? 'active' : 'idle'}\nDelivery: ${this.delivery.kind}\nUnresolved deliveries: ${[...this.receipts].filter(([, r]) => ['pending', 'uncertain'].includes(r.state)).map(([id, r]) => `${id}: ${r.state}`).join(', ') || 'none'}`, choices: [] };
         if (method !== 'prompt') throw failure('unsupported_method', `Unsupported Claude operation: ${method}`);

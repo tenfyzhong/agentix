@@ -18,8 +18,10 @@ async fn main() -> anyhow::Result<()> {
     .await?;
     eprintln!("ready: {} -> {}", args[1], args[2]);
     let mut last = String::new();
+    let mut events = agentix_domain::AgentAdapter::subscribe(&client);
     loop {
         tokio::select! {
+            Ok(event) = events.recv() => eprintln!("event: {event:?}"),
             _ = tokio::signal::ctrl_c() => break,
             () = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
                 let current=serde_json::to_string(&client.client_bindings())?;

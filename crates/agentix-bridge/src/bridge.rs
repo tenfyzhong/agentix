@@ -29,6 +29,7 @@ fn rejected(message: &str) -> AgentError {
 
 pub(super) struct Connection {
     pid: Option<u32>,
+    client_id: Option<String>,
     pub(super) instance: String,
     writer: Arc<Mutex<Writer>>,
     pending: Arc<StdMutex<PendingResponses>>,
@@ -109,6 +110,7 @@ impl Connection {
         };
         Arc::new(Connection {
             pid: u32::try_from(record.pid).ok(),
+            client_id: record.client_id.clone(),
             instance,
             writer: Arc::new(Mutex::new(writer)),
             hub: state,
@@ -317,6 +319,30 @@ impl AgentAdapter for BridgeAdapter {
     }
     fn subscribe(&self) -> broadcast::Receiver<AgentEvent> {
         self.events.subscribe()
+    }
+    async fn terminal_input(
+        &self,
+        session: &SessionId,
+        _new_session: bool,
+        clear: Option<&str>,
+    ) -> Result<Option<String>, AgentError> {
+        let connection = self.connection(session).await?;
+        if connection.agent != "claude" {
+            return Ok(None);
+        }
+        let result = connection
+            .request("terminal_input", json!({"clear": clear}))
+            .await?;
+        if !result
+            .get("draft")
+            .is_some_and(|draft| draft.is_null() || draft.is_string())
+        {
+            return Err(rejected("Invalid terminal input response"));
+        }
+        Ok(result["draft"].as_str().map(str::to_owned))
+    }
+    async fn session_client_id(&self, session: &SessionId) -> Option<String> {
+        self.connection(session).await.ok()?.client_id.clone()
     }
     async fn session_capabilities(
         &self,
@@ -687,6 +713,8 @@ mod connection_tests {
         ))
         .unwrap();
         let record = wire::Registration {
+            client_id: None,
+            previous_session_id: None,
             version: 2,
             agent: "pi".into(),
             instance: "contract-instance".into(),

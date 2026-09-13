@@ -442,3 +442,58 @@ async fn claude_plugin_uses_existing_bridge_contract() {
         .unwrap()
         .unwrap();
 }
+
+#[tokio::test]
+async fn native_new_crosses_ipc_with_stable_identity_and_replacement_registration() {
+    let directory = tempfile::tempdir().unwrap();
+    let server = TestControl::bind(directory.path()).unwrap();
+    let adapter = BridgeAdapter::new(BridgeKind::Pi, server.hub.clone(), Path::new("/tmp"));
+    let mut events = adapter.subscribe();
+    let fixture =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../plugins/agentix-bridge/tests/host.mjs");
+    let mut host = tokio::process::Command::new("node")
+        .arg(fixture)
+        .arg(&server.endpoint)
+        .stdout(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let mut line = String::new();
+    tokio::time::timeout(
+        HOST_STARTUP_TIMEOUT,
+        BufReader::new(host.stdout.take().unwrap()).read_line(&mut line),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    wait_for_session(&adapter).await;
+    let old = SessionId::new("native-id");
+    let identity = adapter.session_client_id(&old).await.unwrap();
+    adapter
+        .session_control()
+        .unwrap()
+        .run_session_command(&old, agentix_domain::SessionCommand::New)
+        .await
+        .unwrap();
+    tokio::time::timeout(HOST_STARTUP_TIMEOUT, async {
+        loop {
+            if let AgentEvent::SessionReplaced {
+                session_id,
+                replacement_session_id,
+                client_id,
+            } = events.recv().await.unwrap()
+            {
+                assert_eq!(session_id, "native-id");
+                assert_eq!(replacement_session_id, "replacement-id");
+                assert_eq!(client_id, identity);
+                break;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    let new = SessionId::new("replacement-id");
+    adapter.attach(&new).await.unwrap();
+    assert_eq!(adapter.session_client_id(&new).await, Some(identity));
+    assert!(host.try_wait().unwrap().is_none());
+}

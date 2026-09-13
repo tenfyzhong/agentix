@@ -112,7 +112,7 @@ export class BridgeTransport {
                         }
                         socket.registered = true; clearTimeout(deadline); continue;
                     }
-                    this.#options.dispatch(() => this.#handle(socket, frame, incarnation), frame.method).catch(() => socket.destroy());
+                    this.#options.dispatch(() => this.#handle(socket, frame, incarnation), frame.method, frame.params).catch(() => socket.destroy());
                 }
             });
         } catch { this.#retry(incarnation); }

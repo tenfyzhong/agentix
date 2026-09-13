@@ -145,3 +145,15 @@ The `claude` backend uses the same version 2 transport through its MCP plugin, w
 ### Multiplexer configuration on registration
 
 Successful registration returns `result.multiplexer.kind` (`rmux`, `tmux`, or `null`) from the startup detection result. `null` means terminal management is disabled. Clients refresh this value on every registration, including reconnects. Claude delivery mode `multiplexer` requires an enabled backend before accepting prompts; a `null` value clears terminal delivery without rejecting registration; `auto` verifies its inherited terminal context independently.
+
+## Native new-session lifecycle
+
+Version 2 registration accepts optional string fields `client_id` and `previous_session_id`. Older registrations without these fields remain valid. A client identity must survive session replacement and reconnect, and must not be inferred from cwd or PID alone. Pi/OMP retain a process-scoped token; Claude uses the parent process identity including its start time. `instance` still changes for every session incarnation.
+
+A native new-session request returns acceptance promptly. `SessionSwitchStarted { session_id, client_id }` marks the gap; `SessionSwitchFailed { session_id, client_id, reason }` pauses it. Registration of the replacement carries the old session ID and the same client ID. The hub translates it into `SessionReplaced { session_id, replacement_session_id, client_id }`, followed by the normal resume event. Both session IDs are namespaced by the registry. Codex's proxy tracks successful thread start/unsubscribe responses in either order, retaining ordered lifecycle evidence through coalesced watch notifications.
+
+The engine records the source binding epoch before requesting the switch. It commits the new binding and FIFO state atomically, ignores stale/foreign replacements, and preserves queued messages on timeout, cancellation, or uncertain delivery. It reserves the source and destination sessions for the short binding operation; waiting does not reserve an entire backend.
+
+### Terminal draft preflight
+
+Claude bridges accept `terminal_input` with `clear: null` for inspection or `clear: "confirmed draft"` for conditional clearing. The response is `{ "draft": null }` for an empty input, or `{ "draft": "current text" }` when confirmation is needed. Changed content is returned without clearing. Unsupported or unrecognized terminal layouts fail before prompt delivery. Channel delivery returns no terminal draft. IM action tokens additionally fence the owner, conversation, binding epoch, backend generation and original client identity.

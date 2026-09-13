@@ -148,6 +148,14 @@ impl SessionService {
         conversation: &ConversationRef,
         session: &SessionId,
     ) -> Result<RestoredBindingStatus, EngineError> {
+        if let Some(switch) = self.state.session_switch(conversation).await?
+            && switch.target.is_none()
+            && switch.paused.is_none()
+        {
+            self.attach_at_epoch(conversation.clone(), session.clone(), false, switch.epoch)
+                .await;
+            return Ok(RestoredBindingStatus::Offline);
+        }
         let status = match agent.attach(session).await {
             Ok(()) => RestoredBindingStatus::Attached,
             Err(AgentError::Unavailable(reason)) => {

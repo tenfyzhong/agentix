@@ -46,6 +46,12 @@ impl SqliteState {
         .bind(&channel)
         .execute(&mut *tx)
         .await?;
+        sqlx::query(
+            "DELETE FROM session_switches WHERE json_extract(conversation, '$.channel') = ?",
+        )
+        .bind(&channel)
+        .execute(&mut *tx)
+        .await?;
         sqlx::query("INSERT INTO channel_identities(channel, identity) VALUES (?, ?) ON CONFLICT(channel) DO UPDATE SET identity = excluded.identity")
             .bind(&channel).bind(identity).execute(&mut *tx).await?;
         tx.commit().await?;
@@ -71,6 +77,15 @@ mod tests {
             .await
             .unwrap()
             .epoch;
+        let mut switch = crate::SessionSwitch::new(
+            "new".into(),
+            chat.clone(),
+            SessionId::new("session"),
+            "host".into(),
+            before,
+            u64::MAX,
+        );
+        assert!(state.save_session_switch(&mut switch).await.unwrap());
         sqlx::query("INSERT INTO turn_views (session_id,turn_id,channel,conversation_id,message_id,user_text,agent_text,status) VALUES ('session','turn','slack','T1:D1','message','','','in_progress')")
             .execute(&state.pool).await.unwrap();
         sqlx::query("INSERT INTO pending_interactions (token,channel,conversation_id,owner_id,session_id,turn_id,connection_generation,binding_epoch,kind,payload) VALUES ('token','slack','T1:D1','owner','session','turn',1,1,'approval','{}')")
@@ -97,6 +112,7 @@ mod tests {
         );
         for table in [
             "bindings",
+            "session_switches",
             "turn_views",
             "pending_interactions",
             "notification_outbox",

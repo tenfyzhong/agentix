@@ -19,3 +19,19 @@ fn shared_command_catalog_includes_contextual_commands_without_platform_names() 
             .any(|command| command.name == "rename")
     );
 }
+
+#[test]
+fn native_new_is_exposed_only_when_attached() {
+    assert!(
+        agentix_core::command_menu(true)
+            .commands
+            .iter()
+            .any(|command| command.name == "new")
+    );
+    assert!(
+        !agentix_core::command_menu(false)
+            .commands
+            .iter()
+            .any(|command| command.name == "new")
+    );
+}

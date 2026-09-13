@@ -31,7 +31,11 @@ export class Mailbox {
     identity() { return readJson(join(this.path, 'identity.json')); }
     publish(event) {
         if (typeof event.session_id !== 'string' || typeof event.cwd !== 'string' || typeof event.transcript_path !== 'string') throw new Error('Invalid Claude hook identity');
-        if (event.hook_event_name === 'SessionStart') atomicJson(join(this.path, 'identity.json'), event);
+        if (event.hook_event_name === 'SessionStart') {
+            const previous = this.identity();
+            const previous_session_id = event.source === 'clear' ? previous?.session_id : undefined;
+            atomicJson(join(this.path, 'identity.json'), { ...event, ...(previous_session_id ? { previous_session_id } : {}) });
+        }
         atomicJson(join(this.path, `${process.hrtime.bigint().toString().padStart(24, '0')}-${randomUUID()}.event.json`), event);
     }
     async consume(handle) {

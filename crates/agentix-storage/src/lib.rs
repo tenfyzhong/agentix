@@ -7,3 +7,6 @@ pub use sqlx::Error as StorageError;
 pub use state::{SqliteState, StoredTurnView};
 mod turn_cache;
 pub use turn_cache::TurnCache;
+
+mod session_switch;
+pub use session_switch::{SessionSwitch, SwitchPrompt};
