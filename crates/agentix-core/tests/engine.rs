@@ -2215,7 +2215,7 @@ async fn multiplexer_window_creation_uses_defaults_and_waits_for_agent() {
         call.contains("NewWindow")
             && call.contains("session_id: \"$1\"")
             && call.contains("name: \"shell\"")
-            && call.contains("cwd: \"/work/parser\"")
+            && call.contains("cwd: \"/work/multiplexer\"")
             && call.contains("launch_agent: false")
     }));
     assert!(
