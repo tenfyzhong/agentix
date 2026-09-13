@@ -180,13 +180,19 @@ Pushing the tag starts the `Release` workflow, which:
 
 1. verifies that the tag points at the checked-out commit and contains a supported semantic version;
 2. applies that version to the workspace manifest and lockfile, then builds native binaries for macOS arm64, Linux x86_64/arm64, and Windows x86_64;
-3. verifies each binary's `--version` against the tag;
+3. verifies each binary's `--version` against the tag; macOS/Linux jobs immediately reuse their binaries to package and test both Homebrew bottles, without waiting for Windows;
 4. publishes separate `agentix-<tag>-<target>` and `taskix-<tag>-<target>` archives, a shared `SHA256SUMS`, and generated notes to the matching GitHub Release;
-5. invokes the Homebrew workflow after the GitHub Release is available.
+5. publishes the prepared Homebrew formula PRs after all verified bottles and native archives are uploaded.
 
 Each tool's archive includes its own binary, example configuration, and shell completions. Only the taskix archive includes task documentation and the taskix-manager plugin. All targets have `.tar.gz` archives; Windows additionally has `.zip` archives for both tools. Packaging tests execute the workflow's packaging and checksum steps against fixture binaries to verify archive contents and separation.
 
-The Agentix Homebrew formula is maintained in [`tenfyzhong/homebrew-tap`](https://github.com/tenfyzhong/homebrew-tap/blob/main/Formula/agentix.rb); edit dependencies, installation steps, and service settings there. Keep formulas exclusively in the tap repository. The formula applies its source tag version to the Cargo metadata before its locked source build. The workflow checks out the tap, updates the existing formula's source URL and checksum, and removes stale bottle metadata while preserving the tap's other settings. It then builds an arm64 macOS bottle, uploads it to the release, adds its metadata, and opens or updates a PR in the tap. Automatic and manually dispatched publishing both require a `HOMEBREW_TAP_TOKEN` with permission to create branches and pull requests.
+The Agentix Homebrew formula is maintained in [`tenfyzhong/homebrew-tap`](https://github.com/tenfyzhong/homebrew-tap/blob/main/Formula/agentix.rb); edit dependencies, installation steps, and service settings there. Keep formulas exclusively in the tap repository. Shared preparation updates the source tag URL and checksum and removes stale bottle metadata. CI runs `brew trust` before `brew tap`: tapping can immediately validate formulae, so deferring trust until afterward fails on a fresh runner. Each macOS/Linux release job then installs its prebuilt binaries through a temporary formula overlay, preserving the tap's completion, configuration, service, and test definitions. The overlay skips Cargo and its compiler dependencies; the original source formula is restored in both the tap and installed keg before bottling. Source and HEAD installation recipes remain unchanged in the published formula.
+
+Bottles are built and tested on macOS arm64, Linux x86_64, and Linux arm64. Each bottle must pass version checks, `brew linkage --test`, and `brew test` both before and after uninstalling the staging installation and pouring the exported local bottle. Release publication waits for every platform; the subsequent tap PR step only merges bottle metadata and never recompiles. Linux builders are pinned to Ubuntu 24.04 for both native archives and bottles; reuse does not establish compatibility with older glibc versions. macOS compatibility is limited by the native binary's deployment target and the bottle's OS tag.
+
+Manual `Homebrew` dispatch remains available for an existing release and selected formula (`all`, `agentix`, or `taskix`). It downloads the corresponding native archives, verifies each against `SHA256SUMS`, and uses the same bottle packaging and installation tests. Missing or mismatched checksums fail before extraction. Automatic and manual publishing require a `HOMEBREW_TAP_TOKEN` with permission to create branches and pull requests.
+
+Run the focused packaging regressions with `cargo test -p agentix --all-features --test packaging` and `node --test plugins/taskix-manager/tests/homebrew.test.mjs plugins/taskix-manager/tests/release-bottles.test.mjs`. On a machine with Homebrew and a C compiler, `AGENTIX_TEST_HOMEBREW=1 node --test plugins/taskix-manager/tests/release-bottles.test.mjs` also exercises a real bottle install/export/pour using a uniquely named disposable formula. It does not replace installed Agentix or Taskix packages.
 
 When the source URL changes for a new tag, the Homebrew workflow also removes the formula's old `revision` so the new upstream version starts at revision zero. Re-running the same tag preserves its revision while rebuilding the bottle.
 
@@ -206,7 +212,7 @@ Maintain `Formula/taskix.rb` exclusively in `tenfyzhong/homebrew-tap`.
 The local tap repository is `/opt/homebrew/Library/Taps/tenfyzhong/homebrew-tap`;
 use its dedicated branch worktree for edits. Agentix contains no formula template.
 The release workflow checks out the tap and updates its formula with the published
-tag URL and archive SHA-256, then builds and tests the bottle and opens a tap PR.
+tag URL and source archive SHA-256, then packages the prebuilt Taskix binary, tests the bottle, and opens a tap PR.
 It also supports adding the first stable release to a HEAD-only tap formula.
 
 Merge the Taskix source change and tap formula before publishing the first

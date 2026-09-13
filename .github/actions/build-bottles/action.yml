@@ -1,0 +1,68 @@
+name: Build bottles from prebuilt binaries
+description: Install prebuilt binaries using the tap resources and verify exported bottles.
+inputs:
+  tag:
+    required: true
+    description: Release tag
+  formula:
+    default: all
+    description: all, agentix, or taskix
+  binary-directory:
+    required: true
+    description: Directory containing prebuilt binaries
+  staged-archives:
+    default: 'false'
+    description: Each binary is inside its own extracted archive directory
+  artifact-suffix:
+    required: true
+    description: Platform runner identifying bottle artifacts
+runs:
+  using: composite
+  steps:
+    - name: Set up Homebrew
+      uses: Homebrew/actions/setup-homebrew@1f8e202ffddf94def7f42f6fa3a482e821489f9c # 2026.07.10.1
+    - name: Download prepared formulas
+      uses: actions/download-artifact@v4
+      with:
+        pattern: homebrew-formula-*
+        path: prepared-formula
+        merge-multiple: true
+    - name: Package and test bottles
+      shell: bash
+      env:
+        RELEASE_TAG: ${{ inputs.tag }}
+        SELECTED_FORMULA: ${{ inputs.formula }}
+        BINARY_DIRECTORY: ${{ inputs.binary-directory }}
+        STAGED_ARCHIVES: ${{ inputs.staged-archives }}
+        BOTTLE_ROOT_URL: https://github.com/${{ github.repository }}/releases/download/${{ inputs.tag }}
+        BOTTLE_SCRIPT: ${{ github.action_path }}/../../scripts/build-homebrew-bottle.sh
+        TAP_NAME: tenfyzhong/tap
+        HOMEBREW_NO_AUTO_UPDATE: '1'
+        HOMEBREW_NO_INSTALL_CLEANUP: '1'
+      run: |
+        # Tapping can validate formulae immediately, before a later trust command.
+        brew trust "$TAP_NAME"
+        brew tap "$TAP_NAME"
+        for formula in agentix taskix; do
+          if [[ "$SELECTED_FORMULA" != all && "$SELECTED_FORMULA" != "$formula" ]]; then continue; fi
+          export FORMULA="$formula"
+          export FORMULA_PATH="$GITHUB_WORKSPACE/prepared-formula/$formula.rb"
+          export PREBUILT_BINARY="$GITHUB_WORKSPACE/$BINARY_DIRECTORY/$formula"
+          if [[ "$STAGED_ARCHIVES" == true ]]; then export PREBUILT_BINARY="$PREBUILT_BINARY/$formula"; fi
+          mkdir -p "bottles/$formula"
+          (cd "bottles/$formula" && bash "$BOTTLE_SCRIPT")
+        done
+    - name: Save Agentix bottle
+      if: inputs.formula == 'all' || inputs.formula == 'agentix'
+      uses: actions/upload-artifact@v4
+      with:
+        name: homebrew-bottle-agentix-${{ inputs.artifact-suffix }}
+        path: bottles/agentix/*
+        if-no-files-found: error
+    - name: Save Taskix bottle
+      if: inputs.formula == 'all' || inputs.formula == 'taskix'
+      uses: actions/upload-artifact@v4
+      with:
+        name: homebrew-bottle-taskix-${{ inputs.artifact-suffix }}
+        path: bottles/taskix/*
+        if-no-files-found: error

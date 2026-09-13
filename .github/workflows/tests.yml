@@ -36,6 +36,25 @@ jobs:
           npm ci --ignore-scripts --prefix plugins/taskix-manager
           node --test plugins/taskix-manager/tests/*.test.mjs plugins/agentix-bridge/tests/*.test.mjs
 
+  bottles:
+    name: Bottle packaging (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Set up Homebrew
+        uses: Homebrew/actions/setup-homebrew@1f8e202ffddf94def7f42f6fa3a482e821489f9c # 2026.07.10.1
+      - name: Verify bottle install and pour with an isolated fixture
+        env:
+          AGENTIX_TEST_HOMEBREW: '1'
+        run: node --test plugins/taskix-manager/tests/release-bottles.test.mjs
+
   test:
     name: ${{ matrix.name }}
     strategy:
