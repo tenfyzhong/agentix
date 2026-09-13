@@ -30,9 +30,8 @@ use presentation::{
     background_completion_body, completed_input_body, decision_label, display_workspace,
     history_views, input_progress_body, input_questions, input_response, is_shell_command,
     live_turn_view, markdown_quote, multiplexer_root_body, multiplexer_session_body,
-    multiplexer_session_contains, multiplexer_window_body, multiplexer_window_contains, plural,
-    session_display_label, session_status_label, session_title, short_identifier,
-    turn_conversation_body, turn_status_label,
+    multiplexer_window_body, plural, session_display_label, session_status_label, session_title,
+    short_identifier, turn_conversation_body, turn_status_label,
 };
 use session_service::{RestoredBindingStatus, SessionService};
 

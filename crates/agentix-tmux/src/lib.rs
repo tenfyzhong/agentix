@@ -93,22 +93,8 @@ impl TmuxDriver {
     }
     async fn launch(&self, pane: &str, cwd: &str, argv: &[String]) -> Result<(), MultiplexerError> {
         self.close_on_exit(pane).await?;
-        let mut command_args = strings(&[
-            "respawn-pane",
-            "-k",
-            "-t",
-            pane,
-            "-c",
-            cwd,
-            "--",
-            // Interactive mode preserves foreground job control and Ctrl-C.
-            "/bin/sh",
-            "-i",
-            "-c",
-            r#""$@"; exec "${SHELL:-/bin/sh}" -i"#,
-            "agentix",
-        ]);
-        command_args.extend_from_slice(argv);
+        let mut command_args = strings(&["respawn-pane", "-k", "-t", pane, "-c", cwd, "--"]);
+        command_args.extend(agentix_multiplexer::persistent_launch_argv(argv));
         self.run(&command_args).await?;
         Ok(())
     }
@@ -188,9 +174,10 @@ impl MultiplexerDriver for TmuxDriver {
         argv: Option<&[String]>,
     ) -> Result<MultiplexerOutcome, MultiplexerError> {
         let cwd = prepared.cwd.to_string_lossy();
+        let shell = agentix_multiplexer::interactive_login_shell_argv().unwrap_or_default();
         let pane = match &prepared.mutation.target {
             MultiplexerTarget::NewSession { name, .. } => {
-                self.run(&strings(&[
+                let mut command = strings(&[
                     "new-session",
                     "-d",
                     "-s",
@@ -202,13 +189,14 @@ impl MultiplexerDriver for TmuxDriver {
                     "-P",
                     "-F",
                     "#{pane_id}",
-                ]))
-                .await?
+                ]);
+                command.extend(shell.clone());
+                self.run(&command).await?
             }
             MultiplexerTarget::NewWindow {
                 session_id, name, ..
             } => {
-                self.run(&strings(&[
+                let mut command = strings(&[
                     "new-window",
                     "-d",
                     "-t",
@@ -220,8 +208,9 @@ impl MultiplexerDriver for TmuxDriver {
                     "-P",
                     "-F",
                     "#{pane_id}",
-                ]))
-                .await?
+                ]);
+                command.extend(shell.clone());
+                self.run(&command).await?
             }
             MultiplexerTarget::SplitPane {
                 pane_id, direction, ..
@@ -230,7 +219,7 @@ impl MultiplexerDriver for TmuxDriver {
                     PaneSplitDirection::Horizontal => "-h",
                     PaneSplitDirection::Vertical => "-v",
                 };
-                self.run(&strings(&[
+                let mut command = strings(&[
                     "split-window",
                     "-d",
                     flag,
@@ -241,8 +230,9 @@ impl MultiplexerDriver for TmuxDriver {
                     "-P",
                     "-F",
                     "#{pane_id}",
-                ]))
-                .await?
+                ]);
+                command.extend(shell.clone());
+                self.run(&command).await?
             }
             MultiplexerTarget::ExistingPane { pane_id } => {
                 if argv.is_none() {

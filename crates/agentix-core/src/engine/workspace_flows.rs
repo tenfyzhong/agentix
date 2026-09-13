@@ -3,8 +3,8 @@ use super::{
     ActionButton, ActionStyle, ConversationRef, Engine, EngineError, MultiplexerMutation,
     MultiplexerSession, MultiplexerSnapshot, MultiplexerTarget, MultiplexerUiAction,
     MultiplexerWindow, OutboundView, PaneSplitDirection, SessionId, UiAction, Uuid, ViewStatus,
-    is_shell_command, multiplexer_root_body, multiplexer_session_body,
-    multiplexer_session_contains, multiplexer_window_body, multiplexer_window_contains, plural,
+    is_shell_command, multiplexer_root_body, multiplexer_session_body, multiplexer_window_body,
+    plural,
 };
 
 impl Engine {
@@ -128,7 +128,7 @@ impl Engine {
             .cloned();
         let (body, window_count, pane_count) = multiplexer_root_body(&snapshot, current.as_ref());
         let actions = self
-            .multiplexer_root_actions(conversation, owner_id, &snapshot, current.as_ref())
+            .multiplexer_root_actions(conversation, owner_id, &snapshot)
             .await;
         self.send_view(
             conversation,
@@ -156,7 +156,6 @@ impl Engine {
         conversation: &ConversationRef,
         owner_id: &str,
         snapshot: &MultiplexerSnapshot,
-        current: Option<&SessionId>,
     ) -> Vec<ActionButton> {
         let mut actions = Vec::new();
         let action_group = Uuid::new_v4().simple().to_string();
@@ -165,7 +164,6 @@ impl Engine {
             .default_directory(self.agent.as_ref(), conversation)
             .await;
         for session in &snapshot.sessions {
-            let attached = multiplexer_session_contains(session, current);
             let token = self
                 .issue_action(
                     conversation,
@@ -182,11 +180,7 @@ impl Engine {
             actions.push(ActionButton {
                 label: session.name.clone(),
                 token,
-                style: if attached {
-                    ActionStyle::Primary
-                } else {
-                    ActionStyle::Default
-                },
+                style: ActionStyle::Default,
             });
         }
         for (label, action) in [
@@ -213,7 +207,7 @@ impl Engine {
             actions.push(ActionButton {
                 label: label.into(),
                 token,
-                style: ActionStyle::Default,
+                style: ActionStyle::Primary,
             });
         }
         actions
@@ -243,7 +237,7 @@ impl Engine {
             .cloned();
         let body = multiplexer_session_body(&session, current.as_ref());
         let actions = self
-            .multiplexer_session_actions(conversation, owner_id, &session, current.as_ref())
+            .multiplexer_session_actions(conversation, owner_id, &session)
             .await;
         self.send_view(
             conversation,
@@ -269,7 +263,6 @@ impl Engine {
         conversation: &ConversationRef,
         owner_id: &str,
         session: &MultiplexerSession,
-        current: Option<&SessionId>,
     ) -> Vec<ActionButton> {
         let mut actions = Vec::new();
         let action_group = Uuid::new_v4().simple().to_string();
@@ -278,7 +271,6 @@ impl Engine {
             .default_directory(self.agent.as_ref(), conversation)
             .await;
         for window in &session.windows {
-            let attached = multiplexer_window_contains(window, current);
             let token = self
                 .issue_action(
                     conversation,
@@ -296,11 +288,7 @@ impl Engine {
             actions.push(ActionButton {
                 label: format!("{} · {}", window.index, window.name),
                 token,
-                style: if attached {
-                    ActionStyle::Primary
-                } else {
-                    ActionStyle::Default
-                },
+                style: ActionStyle::Default,
             });
         }
         for (label, action) in [
@@ -328,7 +316,7 @@ impl Engine {
             actions.push(ActionButton {
                 label: label.into(),
                 token,
-                style: ActionStyle::Default,
+                style: ActionStyle::Primary,
             });
         }
         actions
@@ -396,7 +384,7 @@ impl Engine {
         actions.push(ActionButton {
             label: "← Back".into(),
             token: back_token,
-            style: ActionStyle::Default,
+            style: ActionStyle::Primary,
         });
         self.send_view(
             conversation,
@@ -459,7 +447,7 @@ impl Engine {
             actions.push(ActionButton {
                 label,
                 token,
-                style: ActionStyle::Primary,
+                style: ActionStyle::Default,
             });
         }
         actions
@@ -505,7 +493,7 @@ impl Engine {
             actions.push(ActionButton {
                 label: label.into(),
                 token,
-                style: ActionStyle::Default,
+                style: ActionStyle::Primary,
             });
         }
         Ok(actions)

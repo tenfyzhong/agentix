@@ -13,6 +13,9 @@ dirs.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.31", default-features = false, features = ["user"] }
+
 [dev-dependencies]
 tempfile.workspace = true
 
