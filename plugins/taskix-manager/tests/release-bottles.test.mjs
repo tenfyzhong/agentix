@@ -68,19 +68,21 @@ test("bottle overlay refuses changed compiler recipes or missing binaries withou
     }
 });
 
-test("each release platform bottles its own binaries before the shared publication barrier", async () => {
-    const release = await readFile(join(root, ".github/workflows/release.yml"), "utf8");
-    const build = release.split("\n  build-release-binaries:\n")[1].split("\n  publish-release:\n")[0];
-    assert.match(build, /uses: .\/packaging-automation\/.github\/actions\/build-bottles/);
-    assert.match(build, /ref: \$\{\{ github.workflow_sha \}\}/);
-    assert.doesNotMatch(build, /needs:.*publish-release/);
-    assert.ok(build.indexOf("Build release binary") < build.indexOf("uses: ./packaging-automation/.github/actions/build-bottles"));
-    assert.match(build, /if: runner.os != 'Windows'/);
-    const manual = await readFile(join(root, ".github/workflows/homebrew.yml"), "utf8");
-    assert.match(manual, /Download release binaries/);
-    assert.match(manual, /verify-release-archive/);
-    assert.doesNotMatch(manual, /cargo build|cargo install/);
-});
+for (const [label, newline] of [["LF", "\n"], ["CRLF", "\r\n"]]) {
+    test(`each release platform bottles its own binaries before the shared publication barrier (${label})`, async () => {
+        const release = (await readFile(join(root, ".github/workflows/release.yml"), "utf8")).replace(/\r?\n/g, newline);
+        const build = release.split(/\r?\n  build-release-binaries:\r?\n/)[1].split(/\r?\n  publish-release:\r?\n/)[0];
+        assert.match(build, /uses: .\/packaging-automation\/.github\/actions\/build-bottles/);
+        assert.match(build, /ref: \$\{\{ github.workflow_sha \}\}/);
+        assert.doesNotMatch(build, /needs:.*publish-release/);
+        assert.ok(build.indexOf("Build release binary") < build.indexOf("uses: ./packaging-automation/.github/actions/build-bottles"));
+        assert.match(build, /if: runner.os != 'Windows'/);
+        const manual = await readFile(join(root, ".github/workflows/homebrew.yml"), "utf8");
+        assert.match(manual, /Download release binaries/);
+        assert.match(manual, /verify-release-archive/);
+        assert.doesNotMatch(manual, /cargo build|cargo install/);
+    });
+}
 
 test("manual release reuse rejects missing, duplicate and corrupted archive checksums", { skip: !rubyAvailable }, async () => {
     const dir = await mkdtemp(join(tmpdir(), "release-checksum-"));
