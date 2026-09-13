@@ -59,9 +59,9 @@ jobs:
         run: |
           cargo test -p agentix-multiplexer -p agentix-tmux
           node --test plugins/agentix-bridge/tests/*.test.mjs
-      - name: Test fish foreground detection and exit recovery
+      - name: Test fish panes, foreground detection and exit recovery
         env:
           AGENTIX_TEST_TMUX: '1'
           AGENTIX_LOGIN_SHELL: fish
           XDG_CONFIG_HOME: ${{ runner.temp }}/agentix-fish-config
-        run: cargo test -p agentix-tmux native_agent_exit_restores_usable_shell
+        run: cargo test -p agentix-tmux native_

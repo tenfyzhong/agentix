@@ -1,7 +1,7 @@
 //! Backend-independent terminal inventory, validation and workspace management.
 mod directories;
 mod launch;
-pub use launch::persistent_launch_argv;
+pub use launch::{interactive_login_shell_argv, persistent_launch_argv};
 mod native_control;
 #[cfg(test)]
 use native_control::validate_codex_prompt;

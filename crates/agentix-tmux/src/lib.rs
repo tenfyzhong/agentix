@@ -174,9 +174,10 @@ impl MultiplexerDriver for TmuxDriver {
         argv: Option<&[String]>,
     ) -> Result<MultiplexerOutcome, MultiplexerError> {
         let cwd = prepared.cwd.to_string_lossy();
+        let shell = agentix_multiplexer::interactive_login_shell_argv().unwrap_or_default();
         let pane = match &prepared.mutation.target {
             MultiplexerTarget::NewSession { name, .. } => {
-                self.run(&strings(&[
+                let mut command = strings(&[
                     "new-session",
                     "-d",
                     "-s",
@@ -188,13 +189,14 @@ impl MultiplexerDriver for TmuxDriver {
                     "-P",
                     "-F",
                     "#{pane_id}",
-                ]))
-                .await?
+                ]);
+                command.extend(shell.clone());
+                self.run(&command).await?
             }
             MultiplexerTarget::NewWindow {
                 session_id, name, ..
             } => {
-                self.run(&strings(&[
+                let mut command = strings(&[
                     "new-window",
                     "-d",
                     "-t",
@@ -206,8 +208,9 @@ impl MultiplexerDriver for TmuxDriver {
                     "-P",
                     "-F",
                     "#{pane_id}",
-                ]))
-                .await?
+                ]);
+                command.extend(shell.clone());
+                self.run(&command).await?
             }
             MultiplexerTarget::SplitPane {
                 pane_id, direction, ..
@@ -216,7 +219,7 @@ impl MultiplexerDriver for TmuxDriver {
                     PaneSplitDirection::Horizontal => "-h",
                     PaneSplitDirection::Vertical => "-v",
                 };
-                self.run(&strings(&[
+                let mut command = strings(&[
                     "split-window",
                     "-d",
                     flag,
@@ -227,8 +230,9 @@ impl MultiplexerDriver for TmuxDriver {
                     "-P",
                     "-F",
                     "#{pane_id}",
-                ]))
-                .await?
+                ]);
+                command.extend(shell.clone());
+                self.run(&command).await?
             }
             MultiplexerTarget::ExistingPane { pane_id } => {
                 if argv.is_none() {

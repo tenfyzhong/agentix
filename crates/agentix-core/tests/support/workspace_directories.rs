@@ -487,3 +487,48 @@ async fn directory_controls_have_distinct_styles() {
         }
     }
 }
+
+#[tokio::test]
+async fn multiplexer_management_buttons_distinguish_existing_targets() {
+    for (kind, attached) in [
+        (agentix_core::MultiplexerKind::Rmux, false),
+        (agentix_core::MultiplexerKind::Rmux, true),
+        (agentix_core::MultiplexerKind::Tmux, false),
+        (agentix_core::MultiplexerKind::Tmux, true),
+    ] {
+        let (engine, _, channel) = fixture().await;
+        let engine = engine.with_multiplexer_kind(kind);
+        if attached {
+            engine
+                .handle_inbound(inbound("chat-a", "/attach thr_a"))
+                .await
+                .unwrap();
+        }
+        engine
+            .handle_inbound(inbound("chat-a", &format!("/{kind}")))
+            .await
+            .unwrap();
+        for next in [Some("agentix"), Some("0 · codex:agentix"), None] {
+            let view = channel.sent().last().unwrap().1.clone();
+            for action in &view.actions {
+                let management = matches!(
+                    action.label.as_str(),
+                    "+ Session" | "+ Window" | "Refresh" | "← Back" | "Split ↔" | "Split ↕"
+                );
+                assert_eq!(
+                    action.style,
+                    if management {
+                        ActionStyle::Primary
+                    } else {
+                        ActionStyle::Default
+                    },
+                    "{} (attached={attached})",
+                    action.label
+                );
+            }
+            if let Some(label) = next {
+                click(&engine, &channel, label).await;
+            }
+        }
+    }
+}

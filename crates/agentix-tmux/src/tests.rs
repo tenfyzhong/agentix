@@ -296,6 +296,17 @@ async fn wait_for_shell_prompt(driver: &TmuxDriver, pane: &str) {
     // Input sent before readline starts can be consumed during shell startup.
     tokio::time::timeout(Duration::from_secs(5), async {
         loop {
+            driver
+                .run(&strings(&[
+                    "send-keys",
+                    "-t",
+                    pane,
+                    "printf 'agentix-%s>\\n' ready",
+                    "Enter",
+                ]))
+                .await
+                .unwrap();
+            tokio::time::sleep(Duration::from_millis(25)).await;
             let output = driver
                 .run(&strings(&["capture-pane", "-p", "-t", pane]))
                 .await
@@ -395,6 +406,7 @@ async fn probe_accepts_rmux_compatibility_interface() {
 
 #[cfg(unix)]
 #[tokio::test]
+#[allow(clippy::too_many_lines)]
 async fn native_blank_panes_close_with_global_remain_on_exit_enabled() {
     if std::env::var_os("AGENTIX_TEST_TMUX").is_none() {
         return;
@@ -430,6 +442,24 @@ async fn native_blank_panes_close_with_global_remain_on_exit_enabled() {
         ]))
         .await
         .unwrap();
+    let shell = agentix_multiplexer::interactive_login_shell_argv().unwrap();
+    let fish = std::path::Path::new(&shell[0])
+        .file_name()
+        .is_some_and(|name| name == "fish");
+    if fish {
+        let config = root.path().join("fish");
+        std::fs::create_dir(&config).unwrap();
+        std::fs::write(config.join("config.fish"), "if status is-login; and status is-interactive\n    echo loaded > login-shell-ready\nend\n").unwrap();
+        driver
+            .run(&strings(&[
+                "set-environment",
+                "-g",
+                "XDG_CONFIG_HOME",
+                &root.path().to_string_lossy(),
+            ]))
+            .await
+            .unwrap();
+    }
     let inventory = driver.inventory(false).await.unwrap().unwrap();
     let base = &inventory[0];
     let working = root.path().join("work 中文 ' ;");
@@ -475,7 +505,28 @@ async fn native_blank_panes_close_with_global_remain_on_exit_enabled() {
                 .cwd,
             cwd
         );
+        let start_command = driver
+            .run(&strings(&[
+                "display-message",
+                "-p",
+                "-t",
+                &pane,
+                "#{pane_start_command}",
+            ]))
+            .await
+            .unwrap();
+        assert!(
+            start_command.contains("-il") && start_command.contains(&shell[0]),
+            "new pane must use an interactive login shell: {start_command}"
+        );
         wait_for_shell_prompt(&driver, &pane).await;
+        if fish {
+            assert_eq!(
+                std::fs::read_to_string(working.join("login-shell-ready")).unwrap(),
+                "loaded\n"
+            );
+            std::fs::remove_file(working.join("login-shell-ready")).unwrap();
+        }
         assert_ctrl_d_closes_pane(&driver, &pane).await;
         assert_eq!(
             driver

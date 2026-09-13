@@ -1,13 +1,14 @@
 //! rmux SDK adapter. Application policy lives in agentix-multiplexer.
 use agentix_domain::{MultiplexerKind, MultiplexerTarget, PaneSplitDirection, TerminalLocation};
-use agentix_multiplexer::persistent_launch_argv;
 use agentix_multiplexer::{
     MultiplexerDriver, MultiplexerError, MultiplexerOutcome as RmuxOutcome,
     PaneState as RmuxPaneState, PreparedMutation, command_basename, terminal_location,
 };
+use agentix_multiplexer::{interactive_login_shell_argv, persistent_launch_argv};
 use async_trait::async_trait;
 use rmux_sdk::{
-    EnsureSession, Pane, PaneId, PaneProcessState, Rmux, RmuxEndpoint, SessionName, SplitDirection,
+    EnsureSession, Pane, PaneId, PaneProcessState, Rmux, RmuxEndpoint, Session, SessionName,
+    SplitDirection, Window,
 };
 use std::path::Path;
 use std::time::Duration;
@@ -91,15 +92,7 @@ impl RmuxDriver {
         let input_clear_key = input_clear_key_before_launch(&prepared.mutation.target);
         let pane_id = match &prepared.mutation.target {
             MultiplexerTarget::NewSession { name, .. } => {
-                let session = rmux
-                    .ensure_session(
-                        EnsureSession::try_named(name)?
-                            .create_only()
-                            .detached(true)
-                            .working_directory(prepared.cwd.to_string_lossy())
-                            .window_name(name),
-                    )
-                    .await?;
+                let session = create_session(&rmux, name, &prepared.cwd).await?;
                 let pane = session.pane(0, 0);
                 launch_in_pane(&pane, argv, &prepared.cwd, input_clear_key).await?;
                 required_pane_id(&pane).await?
@@ -109,12 +102,7 @@ impl RmuxDriver {
             } => {
                 let session_name = session_name_for_id(session_id).await?;
                 let session = rmux.session(session_name).await?;
-                let window = session
-                    .new_window_with()
-                    .name(name)
-                    .cwd(&prepared.cwd)
-                    .detached(true)
-                    .await?;
+                let window = create_window(&session, name, &prepared.cwd).await?;
                 let pane_id = window
                     .panes()
                     .await?
@@ -274,6 +262,34 @@ async fn pane_by_text_id(rmux: &Rmux, pane_id: &str) -> Result<Pane, RmuxManager
         .await?)
 }
 
+async fn create_session(rmux: &Rmux, name: &str, cwd: &Path) -> Result<Session, RmuxManagerError> {
+    let options = EnsureSession::try_named(name)?
+        .create_only()
+        .detached(true)
+        .working_directory(cwd.to_string_lossy())
+        .window_name(name);
+    let options = if let Some(shell) = interactive_login_shell_argv() {
+        options.argv(shell)
+    } else {
+        options
+    };
+    Ok(rmux.ensure_session(options).await?)
+}
+
+async fn create_window(
+    session: &Session,
+    name: &str,
+    cwd: &Path,
+) -> Result<Window, RmuxManagerError> {
+    let window = session.new_window_with().name(name).cwd(cwd).detached(true);
+    let window = if let Some(shell) = interactive_login_shell_argv() {
+        window.spawn(shell)
+    } else {
+        window
+    };
+    Ok(window.await?)
+}
+
 async fn split_in_pane(
     pane: &Pane,
     direction: SplitDirection,
@@ -286,6 +302,8 @@ async fn split_in_pane(
         .keep_alive_on_exit(false);
     let split = if let Some(argv) = argv {
         split.spawn(persistent_launch_argv(argv))
+    } else if let Some(shell) = interactive_login_shell_argv() {
+        split.spawn(shell)
     } else {
         split
     };
@@ -366,7 +384,7 @@ mod tests {
         SplitWindowIdentityResponse, WindowTarget, encode_frame,
     };
     #[cfg(unix)]
-    use rmux_sdk::{EnsureSession, Rmux, RmuxEndpoint, SessionName, SplitDirection};
+    use rmux_sdk::{Rmux, RmuxEndpoint, SessionName, SplitDirection};
     #[cfg(unix)]
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     #[cfg(unix)]
@@ -575,22 +593,10 @@ mod tests {
             .connect()
             .await
             .unwrap();
-        let session = rmux
-            .ensure_session(
-                EnsureSession::try_named("created")
-                    .unwrap()
-                    .create_only()
-                    .detached(true)
-                    .working_directory("/work/created")
-                    .window_name("created"),
-            )
+        let session = super::create_session(&rmux, "created", Path::new("/work/created"))
             .await
             .unwrap();
-        let window = session
-            .new_window_with()
-            .name("codex")
-            .cwd("/work/window")
-            .detached(true)
+        let window = super::create_window(&session, "codex", Path::new("/work/window"))
             .await
             .unwrap();
         let pane = session.pane_by_id(PaneId::new(1)).await.unwrap();
@@ -613,7 +619,8 @@ mod tests {
         .unwrap();
         assert!(requests.lock().await.iter().any(
             |request| matches!(request, Request::SplitWindowIdentity(request)
-            if request.action.process_command.is_none()
+            if matches!(&request.action.process_command, Some(ProcessCommand::Argv(command))
+                    if command == &super::interactive_login_shell_argv().unwrap())
                 && request.action.start_directory.as_deref() == Some(Path::new("/work/blank-split"))
                 && request.action.keep_alive_on_exit == Some(false))
         ));
@@ -640,6 +647,7 @@ mod tests {
             Request::NewSessionExt(request)
                 if request.session_name.as_ref().is_some_and(|name| name.as_str() == "created")
                     && request.working_directory.as_deref() == Some("/work/created")
+                    && request.process_command == Some(ProcessCommand::Argv(super::interactive_login_shell_argv().unwrap()))
                     && request.window_name.as_deref() == Some("created")
                     && request.detached
         )));
@@ -647,6 +655,7 @@ mod tests {
             request,
             Request::NewWindow(request)
                 if request.name.as_deref() == Some("codex")
+                    && request.process_command == Some(ProcessCommand::Argv(super::interactive_login_shell_argv().unwrap()))
                     && request.start_directory.as_deref() == Some(Path::new("/work/window"))
                     && request.detached
         )));
@@ -678,12 +687,16 @@ mod tests {
             }
         }
         let directory = tempfile::tempdir().unwrap();
+        let config = directory.path().join("fish");
+        std::fs::create_dir(&config).unwrap();
+        std::fs::write(config.join("config.fish"), "if status is-login; and status is-interactive\n    echo loaded > login-shell-ready\nend\n").unwrap();
         let server = Server(directory.path().join("rmux.sock"));
         let output = Command::new("rmux")
             .arg("-S")
             .arg(&server.0)
             .args(["-f", "/dev/null", "new-session", "-d", "-s", "pane-test"])
             .env("SHELL", "/bin/sh")
+            .env("XDG_CONFIG_HOME", directory.path())
             .output()
             .unwrap();
         assert!(output.status.success(), "{output:?}");
@@ -703,11 +716,26 @@ mod tests {
             .output()
             .unwrap();
         assert!(output.status.success(), "{output:?}");
-        let blank = session
-            .new_window_with()
-            .name("blank")
-            .cwd(directory.path())
-            .detached(true)
+        // rmux stores pane environment separately from the daemon process environment.
+        let output = Command::new("rmux")
+            .arg("-S")
+            .arg(&server.0)
+            .args(["set-environment", "-g", "XDG_CONFIG_HOME"])
+            .arg(directory.path())
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        let created = super::create_session(&rmux, "blank-session", directory.path())
+            .await
+            .unwrap();
+        let created_pane = created.pane(0, 0);
+        launch_in_pane(&created_pane, None, directory.path(), None)
+            .await
+            .unwrap();
+        assert_fish_login_config(directory.path()).await;
+        let created_id = super::required_pane_id(&created_pane).await.unwrap();
+        assert_ctrl_d_closes_pane(&rmux, &created_pane, created_id).await;
+        let blank = super::create_window(&session, "blank", directory.path())
             .await
             .unwrap();
         let blank_id = blank.panes().await.unwrap()[0].id;
@@ -715,6 +743,7 @@ mod tests {
         launch_in_pane(&blank, None, directory.path(), None)
             .await
             .unwrap();
+        assert_fish_login_config(directory.path()).await;
         assert_ctrl_d_closes_pane(&rmux, &blank, blank_id).await;
         let split_dir = directory.path().join("split cwd 中文");
         std::fs::create_dir(&split_dir).unwrap();
@@ -734,6 +763,7 @@ mod tests {
         })
         .await
         .expect("blank split must use the selected directory");
+        assert_fish_login_config(&split_dir).await;
         let split_id = super::required_pane_id(&split).await.unwrap();
         assert_ctrl_d_closes_pane(&rmux, &split, split_id).await;
         let window = session
@@ -845,6 +875,27 @@ mod tests {
         })
         .await
         .expect("Ctrl-D must remove the pane, not leave a dead pane");
+    }
+
+    #[cfg(unix)]
+    async fn assert_fish_login_config(cwd: &Path) {
+        let shell = super::interactive_login_shell_argv().unwrap();
+        if Path::new(&shell[0])
+            .file_name()
+            .is_none_or(|name| name != "fish")
+        {
+            return;
+        }
+        let marker = cwd.join("login-shell-ready");
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while !marker.exists() {
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .expect("interactive fish must load its login configuration");
+        assert_eq!(std::fs::read_to_string(&marker).unwrap(), "loaded\n");
+        std::fs::remove_file(marker).unwrap();
     }
 
     #[cfg(unix)]

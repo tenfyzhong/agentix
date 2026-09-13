@@ -3,8 +3,26 @@
 #[cfg(unix)]
 #[must_use]
 pub fn persistent_launch_argv(argv: &[String]) -> Vec<String> {
+    persistent_launch_with_shell(argv, &login_shell())
+}
+
+/// Initial command for a Unix pane; other platforms retain their native default.
+#[must_use]
+pub fn interactive_login_shell_argv() -> Option<Vec<String>> {
+    #[cfg(unix)]
+    {
+        Some(vec![login_shell(), "-il".into()])
+    }
+    #[cfg(not(unix))]
+    {
+        None
+    }
+}
+
+#[cfg(unix)]
+fn login_shell() -> String {
     use nix::unistd::{Uid, User};
-    let shell = std::env::var("AGENTIX_LOGIN_SHELL")
+    std::env::var("AGENTIX_LOGIN_SHELL")
         .ok()
         .filter(|value| !value.is_empty())
         .or_else(|| {
@@ -19,8 +37,7 @@ pub fn persistent_launch_argv(argv: &[String]) -> Vec<String> {
                 .ok()
                 .filter(|value| !value.is_empty())
         })
-        .unwrap_or_else(|| "/bin/sh".into());
-    persistent_launch_with_shell(argv, &shell)
+        .unwrap_or_else(|| "/bin/sh".into())
 }
 
 #[cfg(unix)]
