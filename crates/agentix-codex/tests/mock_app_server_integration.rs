@@ -2307,3 +2307,60 @@ async fn status_reports_remaining_quota_windows_and_survives_quota_errors() {
     assert!(status.body.contains("not reported"));
     assert!(!status.body.contains("100% remaining"));
 }
+
+#[tokio::test]
+async fn restarted_engine_receives_discovered_background_completion_without_new_im_input() {
+    let server = MockCodexAppServer::start();
+    server
+        .add_thread(
+            MockThread::new("thr_restart", "Existing session", "/work").with_turn(
+                MockTurn::in_progress_with_output("turn_restart", "Finish existing work", ""),
+            ),
+        )
+        .await;
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("state.sqlite3");
+    let client = Arc::new(CodexClient::connect(server.endpoint()).await.unwrap());
+    let channel = Arc::new(RecordingChannel::default());
+    let engine = Engine::new(
+        client.clone(),
+        SqliteState::open(&path).await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine.restore_bindings_deferred().await.unwrap();
+    engine.handle_inbound(inbound("/help")).await.unwrap();
+    drop(engine);
+    drop(client);
+    let client = Arc::new(CodexClient::connect(server.endpoint()).await.unwrap());
+    let mut events = client.subscribe();
+    let restarted = Engine::new(
+        client,
+        SqliteState::open(&path).await.unwrap(),
+        vec![channel.clone()],
+    );
+    assert_eq!(restarted.restore_bindings().await.unwrap(), 0);
+    let before = channel.views().len();
+    server.wait_for_turn_reads("thr_restart", 1).await;
+    server
+        .complete_turn("thr_restart", "turn_restart", "Finished after restart")
+        .await;
+    restarted
+        .handle_agent_event(recv_background_event(&mut events).await)
+        .await
+        .unwrap();
+    let views = channel.views();
+    assert_eq!(views.len(), before + 1);
+    assert!(
+        views
+            .last()
+            .unwrap()
+            .body
+            .contains("Finished after restart")
+    );
+    assert!(
+        !server
+            .request_methods()
+            .await
+            .contains(&"thread/resume".into())
+    );
+}
