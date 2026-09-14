@@ -943,6 +943,7 @@ async fn telegram_rate_limited_head_preserves_same_chat_order() {
     server.rate_limit_next("sendmessage", 1).await;
     let bot = Bot::new("test-token").set_api_url(server.api_url().parse().unwrap());
     let adapter = TelegramAdapter::with_bot(bot, TelegramPolicy::new([42]));
+    assert!(adapter.supports_command_menu_sync());
     let sender = adapter.clone();
     let head = tokio::spawn(async move {
         sender
@@ -955,7 +956,7 @@ async fn telegram_rate_limited_head_preserves_same_chat_order() {
     wait_for_api_method(&server, "sendmessage").await;
     tokio::time::timeout(std::time::Duration::from_secs(6), async {
         adapter
-            .set_command_menu(
+            .sync_command_menu(
                 &ConversationRef::new(ChannelKind::Telegram, "42"),
                 &CommandMenu::default(),
             )

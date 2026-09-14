@@ -17,6 +17,13 @@ commands and actions. A running Codex, Pi, or OMP turn can expose Stop; Claude d
 not advertise remote stop. Reasoning visibility follows the configured display
 policy and the content actually supplied by the backend.
 
+Native command metadata is synchronized only when the channel declares
+`supports_command_menu_sync`. Telegram opts in; Feishu and Slack skip both the
+no-op sync and the backend capability queries needed to construct its menu.
+Explicitly requested menu cards still use the normal capability-filtered menu.
+Custom adapters implementing `sync_command_menu` must opt in to receive these
+updates.
+
 For IM input sent to an idle session, an acknowledgement taking more than 100 ms
 triggers a `Sending…` card containing the input. Once the backend supplies a turn
 ID, the same card becomes the live turn card with the supported actions. A failed

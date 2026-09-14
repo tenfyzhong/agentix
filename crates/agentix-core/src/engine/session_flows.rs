@@ -980,6 +980,9 @@ impl Engine {
     ) {
         let result = async {
             let channel = self.channel(conversation.channel)?;
+            if !channel.supports_command_menu_sync() {
+                return Ok(());
+            }
             let menu = self.conversation_command_menu(conversation, attached).await;
             channel.sync_command_menu(conversation, &menu).await?;
             Ok::<(), EngineError>(())

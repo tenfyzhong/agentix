@@ -287,6 +287,12 @@ pub trait ChannelAdapter: Send + Sync {
         Ok(())
     }
 
+    /// Whether native command metadata needs synchronization. Adapters overriding
+    /// `sync_command_menu` must opt in so callers can skip unused menu discovery.
+    fn supports_command_menu_sync(&self) -> bool {
+        false
+    }
+
     /// Synchronizes native command metadata without sending chat messages.
     /// Channels that present menus as messages may leave this as a no-op.
     async fn sync_command_menu(

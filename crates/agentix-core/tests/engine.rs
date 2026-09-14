@@ -675,6 +675,19 @@ impl AgentAdapter for FakeAgent {
         Ok(())
     }
 
+    async fn supports_command(&self, session: &SessionId, command: &str) -> bool {
+        self.calls
+            .lock()
+            .unwrap()
+            .push(format!("supports_command:{session}:{command}"));
+        if self.stalled_operation == Some("supports_command") {
+            std::future::pending::<()>().await;
+        }
+        let capabilities = self.session_capabilities(session).await;
+        agentix_core::SessionCapability::from_name(command)
+            .is_some_and(|capability| capabilities.supports(capability))
+    }
+
     async fn unsubscribe(&self, session_id: &SessionId) -> Result<(), AgentError> {
         self.calls
             .lock()
@@ -923,6 +936,7 @@ struct FakeChannel {
     session_commands: Arc<Mutex<Vec<(ConversationRef, bool)>>>,
     menus: Arc<Mutex<Vec<CommandMenu>>>,
     synced_menus: Arc<Mutex<Vec<CommandMenu>>>,
+    skip_native_menu_sync: bool,
     fail_menu_updates: Arc<Mutex<bool>>,
     task_send_failures: Arc<Mutex<usize>>,
     inbox_send_failures: Arc<Mutex<usize>>,
@@ -1109,6 +1123,10 @@ impl ChannelAdapter for FakeChannel {
     async fn disable_actions(&self, message: &MessageRef) -> Result<(), ChannelError> {
         self.disabled_actions.lock().unwrap().push(message.clone());
         Ok(())
+    }
+
+    fn supports_command_menu_sync(&self) -> bool {
+        !self.skip_native_menu_sync
     }
 
     async fn sync_command_menu(
@@ -10447,5 +10465,41 @@ async fn runtime_pending_queued_feedback_displacement_precedes_unsubscribe() {
     assert!(
         cancelled,
         "displaced receipt cancellation must precede remote unsubscribe cleanup"
+    );
+}
+
+#[tokio::test]
+async fn attach_without_native_menu_skips_stalled_command_capabilities() {
+    let mut adapter = FakeAgent::new();
+    adapter.stalled_operation = Some("supports_command");
+    let agent = Arc::new(adapter);
+    let channel = Arc::new(FakeChannel {
+        skip_native_menu_sync: true,
+        ..Default::default()
+    });
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    tokio::time::timeout(
+        std::time::Duration::from_millis(250),
+        engine.handle_inbound(inbound("chat-a", "/attach thr_a")),
+    )
+    .await
+    .expect("unused menu metadata must not delay attachment feedback")
+    .unwrap();
+    assert!(
+        !agent
+            .calls()
+            .iter()
+            .any(|call| call.starts_with("supports_command:"))
+    );
+    assert!(channel.synced_menus.lock().unwrap().is_empty());
+    assert!(
+        channel
+            .sent()
+            .iter()
+            .any(|(_, view)| view.body.contains("previous answer"))
     );
 }
