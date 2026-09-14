@@ -95,6 +95,7 @@ async fn feishu_message_traverses_channel_engine_and_codex_then_updates_feishu()
             "/work/feishu",
         ))
         .await;
+    let (start_entered, release_start) = codex.hold_next_request("turn/start").await;
     let client = Arc::new(CodexClient::connect(codex.endpoint()).await.unwrap());
     let feishu = MockFeishuApi::start().await;
     let timestamp = std::time::SystemTime::now()
@@ -125,6 +126,23 @@ async fn feishu_message_traverses_channel_engine_and_codex_then_updates_feishu()
     let shutdown = CancellationToken::new();
     let tasks = run_stack(client.clone(), channel, shutdown.clone()).await;
 
+    tokio::time::timeout(ROUND_TRIP_TIMEOUT, start_entered)
+        .await
+        .unwrap()
+        .unwrap();
+    tokio::time::timeout(Duration::from_millis(500), async {
+        loop {
+            if feishu.requests().await.iter().any(|request| {
+                request.body.contains("Sending") && request.body.contains("run the integration")
+            }) {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("pending input must reach Feishu before Codex acknowledges it");
+    release_start.send(()).unwrap();
     let turn_id = wait_for_value(|| codex.latest_turn_id("thr_feishu_e2e")).await;
     codex
         .complete_turn("thr_feishu_e2e", &turn_id, "feishu integration answer")

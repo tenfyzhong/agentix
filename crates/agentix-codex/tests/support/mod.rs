@@ -711,7 +711,7 @@ async fn serve_connection<S>(
 {
     let mut outbound = server.outbound.subscribe();
     let mut subscriptions = HashSet::<String>::new();
-    let (held_tx, mut held_rx) = tokio::sync::mpsc::unbounded_channel::<Value>();
+    let (held_tx, mut held_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<Value>>();
     let mut held_tasks = tokio::task::JoinSet::new();
     loop {
         tokio::select! {
@@ -763,12 +763,13 @@ async fn serve_connection<S>(
                     };
                     let held = server.state.lock().await.held_requests.remove(method);
                     if let Some((entered, release)) = held {
-                        assert!(notifications.is_empty(), "held request must not emit notifications");
                         let sender = held_tx.clone();
                         held_tasks.spawn(async move {
                             let _ = entered.send(());
                             let _ = release.await;
-                            let _ = sender.send(response);
+                            let mut frames = vec![response];
+                            frames.extend(notifications);
+                            let _ = sender.send(frames);
                         });
                         continue;
                     }
@@ -799,9 +800,16 @@ async fn serve_connection<S>(
                     let _ = sender.send(result.clone());
                 }
             }
-            Some(response) = held_rx.recv() => {
-                if websocket.send(Message::Text(response.to_string().into())).await.is_err() {
-                    break;
+            Some(frames) = held_rx.recv() => {
+                for frame in frames {
+                    if let Some(thread_id) = frame["params"]["threadId"].as_str()
+                        && !subscriptions.contains(thread_id)
+                    {
+                        continue;
+                    }
+                    if websocket.send(Message::Text(frame.to_string().into())).await.is_err() {
+                        return;
+                    }
                 }
             }
             Some(_) = held_tasks.join_next(), if !held_tasks.is_empty() => {}
