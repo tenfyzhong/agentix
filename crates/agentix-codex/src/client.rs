@@ -8,8 +8,8 @@ mod daemon_tests;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::ExitStatus;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
 use agentix_domain::{
@@ -47,6 +47,17 @@ type Writer = SplitSink<Socket, Message>;
 type Reader = SplitStream<Socket>;
 type PendingMap = HashMap<i64, oneshot::Sender<Result<Value, RpcError>>>;
 
+struct PendingRequest<'a> {
+    pending: &'a StdMutex<PendingMap>,
+    id: i64,
+}
+
+impl Drop for PendingRequest<'_> {
+    fn drop(&mut self) {
+        self.pending.lock().unwrap().remove(&self.id);
+    }
+}
+
 struct ConnectionState {
     generation: AtomicU64,
     changed: Notify,
@@ -65,6 +76,8 @@ const IDEMPOTENT_REQUEST_RETRY_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Error)]
 pub enum ClientError {
+    #[error("Codex request outcome is uncertain: {0}")]
+    Uncertain(#[source] Box<ClientError>),
     #[error("failed to connect to Codex socket: {0}")]
     Connect(#[from] std::io::Error),
     #[error("failed to run Codex daemon start command {command}: {source}")]
@@ -111,7 +124,7 @@ pub enum ClientError {
 #[derive(Clone)]
 pub struct CodexClient {
     writer: Arc<Mutex<Writer>>,
-    pending: Arc<Mutex<PendingMap>>,
+    pending: Arc<StdMutex<PendingMap>>,
     next_id: Arc<AtomicI64>,
     events: broadcast::Sender<AgentEvent>,
     connection: Arc<ConnectionState>,
@@ -301,7 +314,7 @@ impl CodexClient {
         let websocket = connect_managed_socket(&endpoint, command).await?;
         let (writer, reader) = websocket.split();
         let writer = Arc::new(Mutex::new(writer));
-        let pending = Arc::new(Mutex::new(HashMap::new()));
+        let pending = Arc::new(StdMutex::new(HashMap::new()));
         let subscriptions = Arc::new(Mutex::new(HashSet::new()));
         let completed_turns = Arc::new(Mutex::new(HashMap::new()));
         let process_sessions = Arc::new(Mutex::new(HashSet::new()));
@@ -681,27 +694,44 @@ impl CodexClient {
         {
             return Err(ClientError::ReadOnlySession);
         }
+        self.request_rpc(method, params).await
+    }
+
+    async fn request_rpc(&self, method: &str, params: Value) -> Result<Value, ClientError> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (sender, receiver) = oneshot::channel();
-        self.pending.lock().await.insert(id, sender);
-        let write_result = self
-            .writer
-            .lock()
-            .await
-            .send(Message::Text(
-                json!({"id": id, "method": method, "params": params})
-                    .to_string()
-                    .into(),
-            ))
-            .await;
-        if let Err(error) = write_result {
-            self.pending.lock().await.remove(&id);
-            return Err(ClientError::WebSocket(error));
-        }
-        let response = tokio::time::timeout(Duration::from_secs(30), receiver)
-            .await
-            .map_err(|_| request_timeout(method))?
-            .map_err(|_| ClientError::ResponseClosed)?;
+        self.pending.lock().unwrap().insert(id, sender);
+        let _pending = PendingRequest {
+            pending: &self.pending,
+            id,
+        };
+        let mut writing = false;
+        let response = tokio::time::timeout(Duration::from_secs(30), async {
+            let mut writer = self.writer.lock().await;
+            // A cancelled WebSocket send may already have buffered or transmitted
+            // the frame. Once sending begins, a mutation cannot safely be replayed.
+            writing = true;
+            writer
+                .send(Message::Text(
+                    json!({"id": id, "method": method, "params": params})
+                        .to_string()
+                        .into(),
+                ))
+                .await
+                .map_err(ClientError::WebSocket)?;
+            drop(writer);
+            receiver.await.map_err(|_| ClientError::ResponseClosed)
+        })
+        .await
+        .map_err(|_| request_timeout(method))
+        .and_then(std::convert::identity)
+        .map_err(|error| {
+            if writing {
+                request_transport_error(method, error)
+            } else {
+                error
+            }
+        })?;
         response.map_err(|error| ClientError::Rpc {
             code: error.code,
             message: error.message,
@@ -757,13 +787,44 @@ impl CodexClient {
                 message: "This question has already been resolved.".into(),
             });
         }
-        self.writer
-            .lock()
-            .await
-            .send(Message::Text(
-                json!({"id": id, "result": result}).to_string().into(),
-            ))
+        if let Some(question) = id.get("agentixAsyncQuestion") {
+            let invalid = || ClientError::Rpc {
+                code: -32602,
+                message: "Invalid asynchronous question answer.".into(),
+            };
+            let thread = question["threadId"].as_str().ok_or_else(invalid)?;
+            let questions = question["questions"].as_array().ok_or_else(invalid)?;
+            let mut answers = Vec::new();
+            for (index, question) in questions.iter().enumerate() {
+                let title = question["title"].as_str().ok_or_else(invalid)?;
+                let values = result["answers"][index.to_string()]["answers"]
+                    .as_array()
+                    .ok_or_else(invalid)?;
+                let answer = values
+                    .iter()
+                    .map(|value| value.as_str().ok_or_else(invalid))
+                    .collect::<Result<Vec<_>, _>>()?;
+                if answer.is_empty() {
+                    return Err(invalid());
+                }
+                answers.push(format!("{title}\n{}", answer.join("\n")));
+            }
+            // Like the CLI question editor, send a normal follow-up input.
+            // turn/start also accepts input while a turn is running.
+            self.request_rpc(
+                "turn/start",
+                json!({"threadId":thread,"input":[{"type":"text","text":answers.join("\n\n")}]}),
+            )
             .await?;
+        } else {
+            self.writer
+                .lock()
+                .await
+                .send(Message::Text(
+                    json!({"id": id, "result": result}).to_string().into(),
+                ))
+                .await?;
+        }
         if let Some(registry) = &self.registry {
             registry.complete_question(&id);
         }
@@ -2123,9 +2184,12 @@ impl AgentAdapter for CodexClient {
         )
         .map_err(agent_error)?;
         let turn_id = result.turn.id;
-        self.resume_pending_session(session_id)
-            .await
-            .map_err(agent_error)?;
+        if let Err(error) = self.resume_pending_session(session_id).await {
+            // The turn was accepted. Keep the pending subscription for the
+            // background recovery loop without making the caller replay it.
+            tracing::warn!(%error, %session_id, %turn_id,
+                "failed to restore subscription after starting a turn");
+        }
         Ok(turn_id)
     }
 
@@ -2417,7 +2481,7 @@ async fn wait_for_initialize(
 async fn read_loop(
     mut reader: Reader,
     writer: Arc<Mutex<Writer>>,
-    pending: Arc<Mutex<PendingMap>>,
+    pending: Arc<StdMutex<PendingMap>>,
     subscriptions: Arc<Mutex<HashSet<SessionId>>>,
     completed_turns: Arc<Mutex<HashMap<SessionId, String>>>,
     token_usage: Arc<Mutex<HashMap<SessionId, Value>>>,
@@ -2446,10 +2510,13 @@ async fn read_loop(
                             .await
                             .insert(SessionId::new(thread_id), usage.clone());
                     }
+                    if let Some(question) = crate::protocol::async_question(&value) {
+                        let _ = events.send(AgentEvent::InteractionRequested(question));
+                    }
                     match decode_server_frame(&value) {
                         Ok(ServerMessage::Response { id, result }) => {
                             if let Some(id) = id.as_i64()
-                                && let Some(sender) = pending.lock().await.remove(&id)
+                                && let Some(sender) = pending.lock().unwrap().remove(&id)
                             {
                                 let _ = sender.send(result);
                             }
@@ -2490,7 +2557,7 @@ async fn read_loop(
                 }
             }
         }
-        pending.lock().await.clear();
+        pending.lock().unwrap().clear();
         let _ = events.send(AgentEvent::Disconnected {
             generation: disconnected_generation,
             reason: disconnect_reason,
@@ -2757,8 +2824,33 @@ fn request_timeout(method: &str) -> ClientError {
     ClientError::Timeout
 }
 
+// Only reads and explicitly idempotent lifecycle requests may be retried when
+// their response is lost. Unknown methods conservatively require reconciliation.
+fn request_transport_error(method: &str, error: ClientError) -> ClientError {
+    if matches!(
+        method,
+        "thread/read"
+            | "thread/turns/list"
+            | "thread/items/list"
+            | "thread/loaded/list"
+            | "thread/queue/list"
+            | "thread/goal/get"
+            | "model/list"
+            | "skills/list"
+            | "mcpServerStatus/list"
+            | "account/rateLimits/read"
+            | "thread/resume"
+            | "thread/unsubscribe"
+    ) {
+        error
+    } else {
+        ClientError::Uncertain(Box::new(error))
+    }
+}
+
 fn agent_error(error: ClientError) -> AgentError {
     match error {
+        ClientError::Uncertain(error) => AgentError::Uncertain(error.to_string()),
         ClientError::Connect(error) => AgentError::Unavailable(error.to_string()),
         ClientError::ClientDisconnected(_) => AgentError::Unavailable(error.to_string()),
         ClientError::Rpc { code, message } => AgentError::Rejected(format!("{code}: {message}")),
@@ -2799,6 +2891,160 @@ mod tests {
 
     use super::CodexClient;
     use crate::CodexEndpoint;
+
+    struct UnansweredRequest {
+        client: std::sync::Arc<CodexClient>,
+        request: tokio::task::JoinHandle<Result<Value, super::ClientError>>,
+        server: tokio::task::JoinHandle<()>,
+    }
+
+    async fn unanswered_request(method: &'static str) -> UnansweredRequest {
+        let directory = tempdir().unwrap();
+        let socket = directory.path().join("codex.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let (received, ready) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let _directory = directory;
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut websocket = tokio_tungstenite::accept_async(stream).await.unwrap();
+            initialize(&mut websocket).await;
+            let request = next_json(&mut websocket).await;
+            assert_eq!(request["method"], method);
+            received.send(()).unwrap();
+            std::future::pending::<()>().await;
+        });
+        let client = std::sync::Arc::new(
+            CodexClient::connect(CodexEndpoint::from_socket_path(&socket).unwrap())
+                .await
+                .unwrap(),
+        );
+        let request = tokio::spawn({
+            let client = client.clone();
+            async move { client.request(method, json!({"threadId":"test"})).await }
+        });
+        ready.await.unwrap();
+        UnansweredRequest {
+            client,
+            request,
+            server,
+        }
+    }
+
+    #[tokio::test]
+    async fn cancelled_requests_release_pending_response_slots() {
+        let UnansweredRequest {
+            client,
+            request,
+            server,
+        } = unanswered_request("turn/start").await;
+        assert_eq!(client.pending.lock().unwrap().len(), 1);
+        request.abort();
+        assert!(request.await.unwrap_err().is_cancelled());
+        server.abort();
+        assert!(
+            client.pending.lock().unwrap().is_empty(),
+            "cancelled RPC retained its pending response"
+        );
+    }
+
+    #[tokio::test]
+    async fn timed_out_requests_release_pending_response_slots() {
+        let UnansweredRequest {
+            client,
+            request,
+            server,
+        } = unanswered_request("thread/read").await;
+        let pending_ids: Vec<_> = client.pending.lock().unwrap().keys().copied().collect();
+        tokio::time::pause();
+        tokio::time::advance(Duration::from_secs(31)).await;
+        assert!(request.await.unwrap().is_err());
+        server.abort();
+        assert!(
+            pending_ids
+                .iter()
+                .all(|id| !client.pending.lock().unwrap().contains_key(id)),
+            "timed out RPC retained its pending response"
+        );
+    }
+
+    #[tokio::test]
+    async fn request_deadline_includes_waiting_for_the_writer() {
+        let UnansweredRequest {
+            client,
+            request,
+            server,
+        } = unanswered_request("thread/read").await;
+        request.abort();
+        let _ = request.await;
+        let _writer = client.writer.lock().await;
+        tokio::time::pause();
+        let request = tokio::spawn({
+            let client = client.clone();
+            async move { client.request("turn/start", json!({})).await }
+        });
+        tokio::task::yield_now().await;
+        let pending_ids: Vec<_> = client.pending.lock().unwrap().keys().copied().collect();
+        tokio::time::advance(Duration::from_secs(31)).await;
+        tokio::task::yield_now().await;
+        server.abort();
+        assert!(
+            request.is_finished(),
+            "writer contention bypassed the request deadline"
+        );
+        assert!(matches!(
+            request.await.unwrap(),
+            Err(super::ClientError::Timeout)
+        ));
+        assert!(
+            pending_ids
+                .iter()
+                .all(|id| !client.pending.lock().unwrap().contains_key(id))
+        );
+    }
+
+    #[tokio::test]
+    async fn lost_mutation_responses_have_uncertain_outcomes() {
+        for method in ["turn/start", "thread/queue/add", "unknown/change"] {
+            for timeout in [false, true] {
+                let UnansweredRequest {
+                    client: _,
+                    request,
+                    server,
+                } = unanswered_request(method).await;
+                if timeout {
+                    tokio::time::pause();
+                    tokio::time::advance(Duration::from_secs(31)).await;
+                } else {
+                    server.abort();
+                }
+                let error = super::agent_error(request.await.unwrap().unwrap_err());
+                server.abort();
+                if timeout {
+                    tokio::time::resume();
+                }
+                assert!(
+                    matches!(error, agentix_domain::AgentError::Uncertain(_)),
+                    "{method}: {error}"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn lost_read_and_resume_responses_remain_retryable() {
+        for method in ["thread/read", "thread/resume"] {
+            let UnansweredRequest {
+                client: _,
+                request,
+                server,
+            } = unanswered_request(method).await;
+            server.abort();
+            assert!(matches!(
+                request.await.unwrap(),
+                Err(super::ClientError::ResponseClosed)
+            ));
+        }
+    }
 
     #[test]
     fn session_poll_interval_is_ten_seconds() {
@@ -2900,6 +3146,61 @@ mod tests {
             client.start_turn(&session, "hello").await.unwrap(),
             "turn_first"
         );
+        assert!(!client.pending_resumes.lock().await.contains(&session));
+        tokio::time::timeout(Duration::from_secs(1), server)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn accepted_turn_survives_subscription_recovery_failure() {
+        let directory = tempdir().unwrap();
+        let socket = directory.path().join("codex.sock");
+        let listener = UnixListener::bind(&socket).unwrap();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut websocket = tokio_tungstenite::accept_async(stream).await.unwrap();
+            initialize(&mut websocket).await;
+
+            let start = next_json(&mut websocket).await;
+            assert_eq!(start["method"], "turn/start");
+            send_result(
+                &mut websocket,
+                &start["id"],
+                json!({"turn": {"id": "turn_first"}}),
+            )
+            .await;
+
+            let first_resume = next_json(&mut websocket).await;
+            assert_eq!(first_resume["method"], "thread/resume");
+            assert_eq!(first_resume["params"]["excludeTurns"], true);
+            send_error(
+                &mut websocket,
+                &first_resume["id"],
+                -32600,
+                "temporary subscription failure",
+            )
+            .await;
+
+            let second_resume = next_json(&mut websocket).await;
+            assert_eq!(second_resume["method"], "thread/resume");
+            assert_eq!(second_resume["params"]["excludeTurns"], true);
+            send_result(&mut websocket, &second_resume["id"], json!({})).await;
+        });
+
+        let client = CodexClient::connect(CodexEndpoint::from_socket_path(&socket).unwrap())
+            .await
+            .unwrap();
+        let session = SessionId::new("thr_empty");
+        client.pending_resumes.lock().await.insert(session.clone());
+
+        assert_eq!(
+            client.start_turn(&session, "hello").await.unwrap(),
+            "turn_first"
+        );
+        assert!(client.pending_resumes.lock().await.contains(&session));
+        assert!(client.try_resume_pending_session(&session).await.unwrap());
         assert!(!client.pending_resumes.lock().await.contains(&session));
         tokio::time::timeout(Duration::from_secs(1), server)
             .await

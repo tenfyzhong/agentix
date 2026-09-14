@@ -25,6 +25,16 @@ pub struct SqliteState {
 }
 
 impl SqliteState {
+    #[cfg(any(test, feature = "test-support"))]
+    pub async fn reject_binding_writes(&self, reject: bool) {
+        let query = if reject {
+            "CREATE TRIGGER reject_binding_insert BEFORE INSERT ON bindings BEGIN SELECT RAISE(ABORT,'injected binding failure'); END"
+        } else {
+            "DROP TRIGGER reject_binding_insert"
+        };
+        sqlx::query(query).execute(&self.pool).await.unwrap();
+    }
+
     pub async fn rejected_event_count(&self) -> Result<i64, sqlx::Error> {
         sqlx::query_scalar("SELECT COUNT(*) FROM processed_events WHERE status = 'rejected'")
             .fetch_one(&self.pool)

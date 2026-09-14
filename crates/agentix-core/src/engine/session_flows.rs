@@ -699,7 +699,14 @@ impl Engine {
                         actions: Vec::new(),
                     },
                 )
-                .await?;
+                .await
+                .map_err(|delivery_error| {
+                    if matches!(error, AgentError::Uncertain(_)) {
+                        EngineError::Agent(error)
+                    } else {
+                        delivery_error
+                    }
+                })?;
                 return Ok(());
             }
         };
@@ -712,7 +719,10 @@ impl Engine {
                 .await
                 .insert(replacement_id.clone(), replacement);
             self.bind_subscribed_session(conversation, &replacement_id, old_active)
-                .await?;
+                .await
+                .map_err(|error| AgentError::Uncertain(format!(
+                    "Session command created {replacement_id}, but the local binding failed: {error}. Use /attach {replacement_id} after recovery."
+                )))?;
             replacement_id
         } else {
             session
@@ -733,22 +743,27 @@ impl Engine {
         let actions = self
             .session_command_actions(conversation, owner_id, &target_session, result.choices)
             .await;
-        self.send_view(
-            conversation,
-            &OutboundView {
-                sections: Vec::new(),
-                title: result.title,
-                subtitle: Some(target_label),
-                body: result.body,
-                status: if result.active_turn.is_some() {
-                    ViewStatus::Running
-                } else {
-                    ViewStatus::Info
+        if let Err(error) = self
+            .send_view(
+                conversation,
+                &OutboundView {
+                    sections: Vec::new(),
+                    title: result.title,
+                    subtitle: Some(target_label),
+                    body: result.body,
+                    status: if result.active_turn.is_some() {
+                        ViewStatus::Running
+                    } else {
+                        ViewStatus::Info
+                    },
+                    actions,
                 },
-                actions,
-            },
-        )
-        .await?;
+            )
+            .await
+        {
+            tracing::warn!(%error, session = %target_session,
+                "failed to show the completed session command");
+        }
         if let Some(prompt) = inline_plan_prompt {
             self.send_prompt(conversation, &prompt).await?;
         }
@@ -1066,18 +1081,25 @@ impl Engine {
             .ok()
             .and_then(|prompts| prompts.iter().position(|item| item.id == queued.id))
             .map(|index| index + 1);
-        self.send_view(
-            conversation,
-            &OutboundView {
-                sections: Vec::new(),
-                title: format!("{} · Queued", self.agent.display_name()),
-                subtitle: position.map(|position| format!("Position #{position}")),
-                body: format!("**👤 You**\n\n{}", markdown_quote(prompt)),
-                status: ViewStatus::Info,
-                actions: Vec::new(),
-            },
-        )
-        .await?;
+        if let Err(error) = self
+            .send_view(
+                conversation,
+                &OutboundView {
+                    sections: Vec::new(),
+                    title: format!("{} · Queued", self.agent.display_name()),
+                    subtitle: position.map(|position| format!("Position #{position}")),
+                    body: format!("**👤 You**\n\n{}", markdown_quote(prompt)),
+                    status: ViewStatus::Info,
+                    actions: Vec::new(),
+                },
+            )
+            .await
+        {
+            // The backend already accepted this prompt. A notification failure
+            // must not release the inbound claim and enqueue it again on replay.
+            tracing::warn!(%error, session = %session, queued_prompt = %queued.id,
+                "failed to show the accepted queue entry");
+        }
         Ok(())
     }
 

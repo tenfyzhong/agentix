@@ -339,3 +339,29 @@ fn resolved_notifications_preserve_numeric_string_question_ids() {
     );
     assert_eq!(registry.lifecycle_since(0).len(), 2);
 }
+
+#[test]
+fn async_cli_questions_are_observed_once_without_consuming_message_output() {
+    let registry = ClientRegistry::default();
+    let cli = registry.connect(None);
+    let frame = json!({"method":"item/completed","params":{"threadId":"t","turnId":"turn","item":{"type":"agentMessage","id":"message","text":"Context","questions":[{"title":"Which approach?","options":["Fast","Careful"]}]}}});
+    registry.server_frame(cli, &frame.to_string());
+    registry.server_frame(cli, &frame.to_string());
+    let events = registry.lifecycle_since(0);
+    assert_eq!(events.len(), 1);
+    let agentix_domain::AgentEvent::InteractionRequested(request) = &events[0].1 else {
+        panic!("missing question")
+    };
+    assert_eq!(
+        request.payload["questions"][0]["question"],
+        "Which approach?"
+    );
+    assert_eq!(
+        request.payload["questions"][0]["options"][0]["label"],
+        "Fast"
+    );
+    assert!(matches!(
+        agentix_codex::decode_server_frame(&frame).unwrap(),
+        agentix_codex::ServerMessage::Event(agentix_domain::AgentEvent::ItemCompleted { .. })
+    ));
+}

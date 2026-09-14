@@ -113,9 +113,14 @@ impl EngineDispatchSnapshot {
         match work {
             EngineWork::SessionSwitch(conversation) => {
                 exclusive.push(EngineResource::Conversation(conversation.clone()));
-                if let Some(session) = self.bindings.current_session(conversation) {
+                let current = self.bindings.current_session(conversation);
+                if let Some(session) = current {
                     self.reserve_session(session, &mut shared, &mut exclusive);
                 }
+                // Recovery can attach a persisted replacement that is absent
+                // from this local routing snapshot. Fence its backend just as
+                // fork/clear do until the replacement binding is committed.
+                self.reserve_backend(current, &mut exclusive);
             }
             EngineWork::Recover => return DispatchScope::Global,
             EngineWork::TaskBoard => exclusive.push(EngineResource::TaskBoard),

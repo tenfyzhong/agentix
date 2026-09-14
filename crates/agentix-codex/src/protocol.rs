@@ -150,6 +150,46 @@ pub fn decode_server_frame(value: &Value) -> Result<ServerMessage, ProtocolError
     Err(ProtocolError::UnknownShape)
 }
 
+// Async questions are message metadata, not JSON-RPC server requests. Keep
+// ordinary item events intact and emit a separate interaction for the IM editor.
+pub(crate) fn async_question(value: &Value) -> Option<InteractionRequest> {
+    if value["method"] != "item/completed" {
+        return None;
+    }
+    let params = &value["params"];
+    let item = &params["item"];
+    if item["type"] != "agentMessage" {
+        return None;
+    }
+    let titles = item["questions"].as_array()?;
+    if titles.is_empty() {
+        return None;
+    }
+    let session = params["threadId"].as_str()?;
+    let turn = params["turnId"].as_str()?;
+    let item_id = item["id"].as_str()?;
+    let questions = titles.iter().enumerate().map(|(index, question)| {
+        let title = question["title"].as_str()?;
+        let options = question["options"].as_array().into_iter().flatten()
+            .filter_map(Value::as_str).map(|label| serde_json::json!({"label":label,"description":""})).collect::<Vec<_>>();
+        Some(serde_json::json!({"id":index.to_string(),"header":format!("Question {}",index+1),"question":title,"options":options}))
+    }).collect::<Option<Vec<_>>>()?;
+    Some(InteractionRequest {
+        // Object IDs cannot collide with real JSON-RPC string/number IDs.
+        rpc_id: serde_json::json!({"agentixAsyncQuestion": {"threadId":session,"itemId":item_id,"questions":titles}}),
+        method: "agentix/asyncUserInput".into(),
+        session_id: session.into(),
+        turn_id: turn.into(),
+        item_id: Some(item_id.into()),
+        kind: InteractionKind::UserInput,
+        title: "Codex needs input".into(),
+        detail: item["text"].as_str().unwrap_or_default().into(),
+        available_decisions: Vec::new(),
+        auto_resolution_ms: None,
+        payload: serde_json::json!({"questions":questions}),
+    })
+}
+
 fn decode_interaction(
     id: Value,
     method: &str,

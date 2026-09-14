@@ -163,7 +163,10 @@ impl Connection {
             id: id.clone(),
             writing: false,
         };
-        tokio::time::timeout(Duration::from_secs(10), async {
+        let mut dispatched = false;
+        let mutating = !(matches!(method, "info" | "history" | "queue_state")
+            || method == "terminal_input" && params["clear"].is_null());
+        let result = tokio::time::timeout(Duration::from_secs(10), async {
             let mut bytes = serde_json::to_vec(&wire::Request {
                 id,
                 method: method.into(),
@@ -184,6 +187,7 @@ impl Connection {
             guard.writing = true;
             writer.write_all(&bytes).await.map_err(unavailable)?;
             guard.writing = false;
+            dispatched = true;
             drop(writer);
             rx.await.map_err(unavailable)?
         })
@@ -192,7 +196,14 @@ impl Connection {
             tracing::warn!(target: "agentix::telemetry", backend = %self.agent, method,
                 timeout_ms = 10000, "backend request timed out");
             unavailable("bridge request timed out; check session state before retrying")
-        })?
+        })
+        .and_then(std::convert::identity);
+        match result {
+            Err(AgentError::Unavailable(reason)) if dispatched && mutating => {
+                Err(AgentError::Uncertain(reason))
+            }
+            result => result,
+        }
     }
 }
 
@@ -691,6 +702,9 @@ mod connection_tests {
     use std::pin::Pin;
     use std::task::{Context, Poll};
 
+    // Scoped tracing subscribers share callsite registration across test threads.
+    static REQUEST_TEST_LOCK: Mutex<()> = Mutex::const_new(());
+
     struct StalledWriter;
     impl AsyncWrite for StalledWriter {
         fn poll_write(
@@ -734,6 +748,62 @@ mod connection_tests {
         );
         (connection, remote)
     }
+    #[tokio::test(start_paused = true)]
+    async fn missing_response_after_dispatch_has_an_uncertain_outcome() {
+        let _test = REQUEST_TEST_LOCK.lock().await;
+        for disconnect in [false, true] {
+            let (mut connection, remote) = stalled_connection();
+            Arc::get_mut(&mut connection).unwrap().writer =
+                Arc::new(tokio::sync::Mutex::new(Box::new(tokio::io::sink())));
+            let request = tokio::spawn({
+                let connection = connection.clone();
+                async move { connection.request("prompt", json!({"text":"hello"})).await }
+            });
+            tokio::task::yield_now().await;
+            if disconnect {
+                drop(remote);
+            }
+            let error = request.await.unwrap().unwrap_err();
+            assert!(
+                error.to_string().contains("outcome is uncertain"),
+                "{error}"
+            );
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn missing_read_responses_remain_retryable() {
+        let _test = REQUEST_TEST_LOCK.lock().await;
+        for (method, params) in [
+            ("info", json!({})),
+            ("history", json!({})),
+            ("queue_state", json!({})),
+            ("terminal_input", json!({"clear":null})),
+        ] {
+            let (mut connection, _remote) = stalled_connection();
+            Arc::get_mut(&mut connection).unwrap().writer =
+                Arc::new(tokio::sync::Mutex::new(Box::new(tokio::io::sink())));
+            let error = connection.request(method, params).await.unwrap_err();
+            assert!(
+                matches!(error, AgentError::Unavailable(_)),
+                "{method}: {error}"
+            );
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn requests_waiting_for_the_writer_remain_retryable() {
+        let _test = REQUEST_TEST_LOCK.lock().await;
+        let (connection, _remote) = stalled_connection();
+        let _writer = connection.writer.lock().await;
+        let error = connection
+            .request("prompt", json!({"text":"hello"}))
+            .await
+            .unwrap_err();
+        assert!(matches!(error, AgentError::Unavailable(_)));
+        assert!(connection.online.load(Ordering::Acquire));
+    }
+
     #[tokio::test]
     async fn invalid_or_misrouted_events_invalidate_the_connection() {
         for event in [
@@ -769,7 +839,7 @@ mod connection_tests {
     }
     #[tokio::test(start_paused = true)]
     async fn request_deadline_includes_blocked_writes() {
-        use tracing::instrument::WithSubscriber;
+        let _test = REQUEST_TEST_LOCK.lock().await;
         let output = tempfile::NamedTempFile::new().unwrap();
         let writer = output.reopen().unwrap();
         let subscriber = tracing_subscriber::fmt()
@@ -777,12 +847,12 @@ mod connection_tests {
             .with_ansi(false)
             .with_writer(move || writer.try_clone().unwrap())
             .finish();
+        let _subscriber = tracing::subscriber::set_default(subscriber);
         let (connection, _remote) = stalled_connection();
         let result = tokio::time::timeout(
             Duration::from_secs(11),
             connection.request("prompt", json!({"text":"hello"})),
         )
-        .with_subscriber(subscriber)
         .await;
         assert!(
             result.is_ok(),
