@@ -629,6 +629,9 @@ impl Engine {
         let active = self.turns.is_active(&current).await;
         self.clear_session_stop_actions(&current).await?;
         let session = self.sessions.commit_detach(conversation, active).await?;
+        self.turns
+            .pending_prompts
+            .cancel_queued_conversation(conversation);
         let session_label = self.session_label(&session).await;
         if !active && let Err(error) = self.agent.unsubscribe(&session).await {
             tracing::warn!(%error, %session, "failed to unsubscribe a detached session");
@@ -911,6 +914,9 @@ impl Engine {
         old_active: bool,
         outcome: AttachOutcome,
     ) {
+        self.turns
+            .pending_prompts
+            .cancel_queued_conversation(conversation);
         if let Some(previous) = outcome.previous_session
             && !old_active
             && let Err(error) = self.agent.unsubscribe(&previous).await
@@ -918,6 +924,9 @@ impl Engine {
             tracing::warn!(%error, session = %previous, "failed to unsubscribe the previous session");
         }
         if let Some(displaced) = outcome.displaced_conversation {
+            self.turns
+                .pending_prompts
+                .cancel_queued_conversation(&displaced);
             let session_label = self.session_label(session_id).await;
             self.update_command_menu_best_effort(&displaced, false)
                 .await;

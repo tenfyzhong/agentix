@@ -9150,13 +9150,7 @@ async fn runtime_pending_queue_is_not_retargeted_after_switching() {
         1
     );
     assert!(engine.working_turns().await.is_empty());
-    assert!(
-        channel
-            .sent()
-            .iter()
-            .any(|(_, view)| view.title.contains("Input not sent")
-                && view.body.contains("queued for old session"))
-    );
+    wait_for_pending_feedback(&channel, "Input not sent", "queued for old session", 1).await;
 }
 
 #[tokio::test]
@@ -9501,13 +9495,7 @@ async fn runtime_pending_stop_uses_delta_turn_id_and_button_cancels_followups() 
             stopped_before_ack,
             "stop immediately when the turn ID is already known"
         );
-        assert!(
-            channel
-                .sent()
-                .iter()
-                .any(|(_, view)| view.title.contains("Input not sent")
-                    && view.body.contains("cancel this followup"))
-        );
+        wait_for_pending_feedback(&channel, "Input not sent", "cancel this followup", 1).await;
         assert_eq!(
             agent
                 .calls()
@@ -9618,15 +9606,7 @@ async fn runtime_pending_stop_render_failure_does_not_strand_cancelled_inputs() 
     gate.notify_one();
     let work = engine.next_pending_prompt().await;
     let _ = engine.execute_work(work).await;
-    assert_eq!(
-        channel
-            .sent()
-            .iter()
-            .filter(|(_, view)| view.title.contains("Input not sent"))
-            .count(),
-        2,
-        "an IM update failure must not skip cancellation of accepted follow-ups"
-    );
+    wait_for_pending_feedback(&channel, "Input not sent", "cancelled", 2).await;
 }
 
 #[tokio::test]
@@ -10073,4 +10053,333 @@ async fn runtime_pending_card_from_exit_does_not_hold_resumed_output() {
         displayed_before_old_card,
         "an exited generation of the attachment cannot hold resumed output"
     );
+}
+
+#[tokio::test]
+async fn runtime_pending_queued_feedback_releases_dispatch_before_delivery() {
+    use std::time::Duration;
+    use tokio_util::sync::CancellationToken;
+    let (engine, _, channel, gate, _) = pending_runtime_input().await;
+    let engine = Arc::new(engine);
+    let entered = CancellationToken::new();
+    let release = CancellationToken::new();
+    *channel.next_send_gate.lock().unwrap() = Some((entered.clone(), release.clone()));
+    let mut queued = tokio::spawn({
+        let engine = engine.clone();
+        async move {
+            engine
+                .execute_work(agentix_core::EngineWork::Inbound(inbound(
+                    "chat-a",
+                    "queued behind slow feedback",
+                )))
+                .await
+        }
+    });
+    tokio::time::timeout(Duration::from_secs(1), entered.cancelled())
+        .await
+        .unwrap();
+    let released = tokio::time::timeout(Duration::from_millis(250), &mut queued).await;
+    let dispatched = match released {
+        Ok(result) => {
+            result.unwrap().unwrap();
+            true
+        }
+        Err(_) => false,
+    };
+    // Release the fixture even when the old blocking implementation fails.
+    release.cancel();
+    gate.notify_one();
+    if !dispatched {
+        queued.await.unwrap().unwrap();
+    }
+    engine.cancel_pending_prompts().await.unwrap();
+    assert!(
+        dispatched,
+        "queued feedback must not occupy the session dispatch lane"
+    );
+}
+
+async fn wait_for_pending_feedback(channel: &FakeChannel, title: &str, text: &str, count: usize) {
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        loop {
+            let actual = channel
+                .messages
+                .lock()
+                .unwrap()
+                .values()
+                .filter(|view| view.title.contains(title) && view.body.contains(text))
+                .count();
+            if actual == count {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("queued input feedback must reach the current state");
+}
+
+#[tokio::test]
+async fn runtime_pending_queued_feedback_stop_updates_before_ack() {
+    use std::time::Duration;
+    use tokio_util::sync::CancellationToken;
+    let (engine, _, channel, _, _) = pending_runtime_input().await;
+    let entered = CancellationToken::new();
+    let release = CancellationToken::new();
+    *channel.next_send_gate.lock().unwrap() = Some((entered.clone(), release.clone()));
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "cancel slow queued receipt",
+        )))
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(1), entered.cancelled())
+        .await
+        .unwrap();
+    tokio::time::timeout(
+        Duration::from_millis(100),
+        engine.execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a", "/stop",
+        ))),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    release.cancel();
+    wait_for_pending_feedback(&channel, "Input not sent", "cancel slow queued receipt", 1).await;
+    engine.cancel_pending_prompts().await.unwrap();
+}
+
+#[tokio::test]
+async fn runtime_pending_queued_feedback_recovers_failed_initial_send() {
+    let (engine, _, channel, _, _) = pending_runtime_input().await;
+    *channel.next_send_failures.lock().unwrap() = 1;
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "failed queued receipt",
+        )))
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while *channel.next_send_failures.lock().unwrap() != 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a", "/stop",
+        )))
+        .await
+        .unwrap();
+    wait_for_pending_feedback(&channel, "Input not sent", "failed queued receipt", 1).await;
+    engine.cancel_pending_prompts().await.unwrap();
+}
+
+#[tokio::test]
+async fn runtime_pending_queued_feedback_recovers_failed_final_update() {
+    let (engine, _, channel, gate, _) = pending_runtime_input().await;
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "failed final receipt update",
+        )))
+        .await
+        .unwrap();
+    wait_for_pending_feedback(&channel, "Queued", "failed final receipt update", 1).await;
+    *channel.next_update_failures.lock().unwrap() = 1;
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a", "/stop",
+        )))
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while *channel.next_update_failures.lock().unwrap() != 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    gate.notify_one();
+    apply_next_pending_input(&engine).await;
+    wait_for_pending_feedback(&channel, "Input not sent", "failed final receipt update", 1).await;
+    assert_eq!(
+        channel
+            .messages
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|v| v.body.contains("failed final receipt update"))
+            .count(),
+        1
+    );
+    engine.cancel_pending_prompts().await.unwrap();
+}
+
+#[tokio::test]
+async fn runtime_pending_queued_feedback_detach_updates_before_ack() {
+    use std::time::Duration;
+    use tokio_util::sync::CancellationToken;
+    let (engine, _, channel, _, _) = pending_runtime_input().await;
+    let entered = CancellationToken::new();
+    let release = CancellationToken::new();
+    *channel.next_send_gate.lock().unwrap() = Some((entered.clone(), release.clone()));
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "cancel slow queued receipt",
+        )))
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(1), entered.cancelled())
+        .await
+        .unwrap();
+    tokio::time::timeout(
+        Duration::from_millis(100),
+        engine.execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a", "/detach",
+        ))),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    release.cancel();
+    wait_for_pending_feedback(&channel, "Input not sent", "cancel slow queued receipt", 1).await;
+    engine.cancel_pending_prompts().await.unwrap();
+}
+
+#[tokio::test]
+async fn runtime_pending_queued_feedback_switch_updates_before_ack() {
+    use std::time::Duration;
+    use tokio_util::sync::CancellationToken;
+    let (engine, _, channel, _, _) = pending_runtime_input().await;
+    let entered = CancellationToken::new();
+    let release = CancellationToken::new();
+    *channel.next_send_gate.lock().unwrap() = Some((entered.clone(), release.clone()));
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "cancel slow queued receipt",
+        )))
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(1), entered.cancelled())
+        .await
+        .unwrap();
+    tokio::time::timeout(
+        Duration::from_millis(100),
+        engine.execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "/attach thr_b",
+        ))),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    release.cancel();
+    wait_for_pending_feedback(&channel, "Input not sent", "cancel slow queued receipt", 1).await;
+    engine.cancel_pending_prompts().await.unwrap();
+}
+
+#[tokio::test]
+async fn runtime_pending_queued_feedback_exit_updates_before_ack() {
+    use std::time::Duration;
+    use tokio_util::sync::CancellationToken;
+    let (engine, _, channel, _, _) = pending_runtime_input().await;
+    let entered = CancellationToken::new();
+    let release = CancellationToken::new();
+    *channel.next_send_gate.lock().unwrap() = Some((entered.clone(), release.clone()));
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "cancel slow queued receipt",
+        )))
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(1), entered.cancelled())
+        .await
+        .unwrap();
+    tokio::time::timeout(
+        Duration::from_millis(100),
+        engine.execute_work(agentix_core::EngineWork::Event(AgentEvent::SessionExited {
+            session_id: "thr_a".into(),
+        })),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    release.cancel();
+    wait_for_pending_feedback(&channel, "Input not sent", "cancel slow queued receipt", 1).await;
+    engine.cancel_pending_prompts().await.unwrap();
+}
+
+#[tokio::test]
+async fn runtime_pending_queued_feedback_shutdown_aborts_stalled_delivery() {
+    use tokio_util::sync::CancellationToken;
+    let (engine, _, channel, _, _) = pending_runtime_input().await;
+    let entered = CancellationToken::new();
+    let release = CancellationToken::new();
+    *channel.next_send_gate.lock().unwrap() = Some((entered.clone(), release.clone()));
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "shutdown queued receipt",
+        )))
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(1), entered.cancelled())
+        .await
+        .unwrap();
+    engine.cancel_pending_prompts().await.unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while Arc::strong_count(&channel) > 2 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("shutdown must release the receipt worker channel owner");
+    release.cancel();
+    assert!(
+        !channel
+            .sent()
+            .iter()
+            .any(|(_, v)| v.body.contains("shutdown queued receipt"))
+    );
+}
+
+#[tokio::test]
+async fn runtime_pending_queued_feedback_displaced_updates_before_ack() {
+    use std::time::Duration;
+    use tokio_util::sync::CancellationToken;
+    let (engine, _, channel, _, _) = pending_runtime_input().await;
+    let entered = CancellationToken::new();
+    let release = CancellationToken::new();
+    *channel.next_send_gate.lock().unwrap() = Some((entered.clone(), release.clone()));
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "cancel slow queued receipt",
+        )))
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(1), entered.cancelled())
+        .await
+        .unwrap();
+    tokio::time::timeout(
+        Duration::from_millis(100),
+        engine.execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-b",
+            "/attach thr_a",
+        ))),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    release.cancel();
+    wait_for_pending_feedback(&channel, "Input not sent", "cancel slow queued receipt", 1).await;
+    engine.cancel_pending_prompts().await.unwrap();
 }

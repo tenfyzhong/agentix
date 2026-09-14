@@ -14,7 +14,7 @@ use std::{
     task::Poll,
 };
 use tokio::{
-    sync::Notify,
+    sync::{Notify, watch},
     task::{Id, JoinSet},
 };
 
@@ -107,6 +107,8 @@ struct State {
     task_keys: HashMap<Id, (SessionId, ConversationRef, u64)>,
     ready: VecDeque<QueuedInput>,
     owned: HashMap<(super::ChannelKind, String), QueuedInput>,
+    receipts: HashMap<(super::ChannelKind, String), watch::Sender<OutboundView>>,
+    receipt_tasks: JoinSet<()>,
 }
 
 #[derive(Default)]
@@ -116,12 +118,54 @@ pub(super) struct PendingPrompts {
 }
 
 impl PendingPrompts {
-    fn forget(&self, input: &QueuedInput) {
-        self.state
-            .lock()
-            .unwrap()
+    pub(super) fn cancel_queued_conversation(&self, conversation: &ConversationRef) {
+        self.cancel_queued_matching(|input| &input.conversation == conversation);
+    }
+
+    fn cancel_queued_matching(&self, matches: impl Fn(&QueuedInput) -> bool) {
+        let mut state = self.state.lock().unwrap();
+        let inputs = state
             .owned
-            .remove(&(input.conversation.channel, input.event_id.clone()));
+            .values_mut()
+            .filter(|input| input.queued && matches(input))
+            .map(|input| {
+                input.cancelled = true;
+                input.clone()
+            })
+            .collect::<Vec<_>>();
+        for input in inputs {
+            if let Some(sender) = state
+                .receipts
+                .get(&(input.conversation.channel, input.event_id))
+            {
+                sender.send_replace(OutboundView::text(
+                    "Agentix · Input not sent",
+                    markdown_quote(&input.prompt),
+                ));
+            }
+        }
+    }
+
+    fn feedback(&self, input: &QueuedInput, title: &str) {
+        let state = self.state.lock().unwrap();
+        if let Some(sender) = state
+            .receipts
+            .get(&(input.conversation.channel, input.event_id.clone()))
+        {
+            sender.send_replace(OutboundView::text(title, markdown_quote(&input.prompt)));
+        }
+    }
+
+    fn forget(&self, input: &QueuedInput, title: &str) -> bool {
+        let mut state = self.state.lock().unwrap();
+        let key = (input.conversation.channel, input.event_id.clone());
+        state.owned.remove(&key);
+        if let Some(sender) = state.receipts.remove(&key) {
+            sender.send_replace(OutboundView::text(title, markdown_quote(&input.prompt)));
+            true
+        } else {
+            false
+        }
     }
 
     pub(super) fn contains(&self, session: &SessionId) -> bool {
@@ -173,6 +217,7 @@ impl PendingPrompts {
     }
 
     pub(super) fn invalidate(&self, session: &SessionId) {
+        self.cancel_queued_matching(|input| &input.session == session);
         let mut state = self.state.lock().unwrap();
         if let Some(pending) = state.pending.get_mut(session) {
             pending.valid = false;
@@ -197,14 +242,8 @@ impl PendingPrompts {
     }
 
     pub(super) fn request_stop(&self, session: &SessionId) -> bool {
+        self.cancel_queued_matching(|input| &input.session == session);
         let mut state = self.state.lock().unwrap();
-        for input in state
-            .owned
-            .values_mut()
-            .filter(|input| input.queued && &input.session == session)
-        {
-            input.cancelled = true;
-        }
         let Some(pending) = state.pending.get_mut(session) else {
             return false;
         };
@@ -229,6 +268,8 @@ impl PendingPrompts {
         state.closed = true;
         state.tasks.abort_all();
         state.card_tasks.abort_all();
+        state.receipt_tasks.abort_all();
+        state.receipts.clear();
     }
 
     async fn next(&self) -> EngineWork {
@@ -415,6 +456,7 @@ impl Engine {
             return Ok(false);
         };
         let epoch = self.sessions.epoch(conversation).await;
+        let channel = self.channel(conversation.channel)?.clone();
         {
             let mut state = self.turns.pending_prompts.state.lock().unwrap();
             let queued_count = state
@@ -425,7 +467,13 @@ impl Engine {
             if !state.pending.contains_key(session) && (delivery.from_queue || queued_count == 0) {
                 return Ok(false);
             }
+            while state.receipt_tasks.try_join_next().is_some() {}
             let key = (conversation.channel, delivery.event_id.clone());
+            if !state.receipts.contains_key(&key)
+                && state.receipt_tasks.len() >= MAX_PENDING * MAX_QUEUED
+            {
+                return Err(EngineError::InvalidInput("Too many input notifications are pending. Try again after channel delivery recovers.".into()));
+            }
             if queued_count >= MAX_QUEUED && !state.owned.contains_key(&key) {
                 return Err(EngineError::InvalidInput("Too many inputs are waiting for delivery. Try again after the current input is acknowledged.".into()));
             }
@@ -447,6 +495,17 @@ impl Engine {
                 cancelled: false,
                 sequence,
             };
+            if !state.receipts.contains_key(&key) {
+                let initial = OutboundView::text("Agentix · Queued", markdown_quote(prompt));
+                let (sender, receiver) = watch::channel(initial);
+                state.receipts.insert(key.clone(), sender);
+                state.receipt_tasks.spawn(run_queued_receipt(
+                    channel,
+                    conversation.clone(),
+                    receiver,
+                ));
+            }
+
             state.owned.insert(key, input.clone());
             if let Some(pending) = state.pending.get_mut(session) {
                 let position = pending
@@ -458,15 +517,6 @@ impl Engine {
                 self.turns.pending_prompts.changed.notify_one();
             }
             delivery.deferred.store(true, Ordering::Release);
-        }
-        if let Err(error) = self
-            .send_view(
-                conversation,
-                &OutboundView::text("Agentix · Queued", markdown_quote(prompt)),
-            )
-            .await
-        {
-            tracing::warn!(%error, %session, "failed to show locally queued input");
         }
         Ok(true)
     }
@@ -563,7 +613,7 @@ impl Engine {
                 self.state
                     .complete_event(input.conversation.channel, &input.event_id)
                     .await?;
-                self.turns.pending_prompts.forget(&input);
+                self.turns.pending_prompts.forget(&input, "Agentix · Sent");
                 self.show_acknowledged_prompt(&pending, &turn, current)
                     .await
             }
@@ -578,7 +628,14 @@ impl Engine {
                         .release_event(input.conversation.channel, &input.event_id)
                         .await?;
                 }
-                self.turns.pending_prompts.forget(&input);
+                self.turns.pending_prompts.forget(
+                    &input,
+                    if uncertain {
+                        "Agentix · Delivery unconfirmed"
+                    } else {
+                        "Agentix · Send failed"
+                    },
+                );
                 if let Some(message) = pending.message {
                     let mut view = OutboundView::text(
                         if uncertain {
@@ -736,7 +793,13 @@ impl Engine {
         self.state
             .complete_event(input.conversation.channel, &input.event_id)
             .await?;
-        self.turns.pending_prompts.forget(input);
+        if self
+            .turns
+            .pending_prompts
+            .forget(input, "Agentix · Input not sent")
+        {
+            return Ok(());
+        }
         self.send_view(
             &input.conversation,
             &OutboundView::text(
@@ -767,6 +830,9 @@ impl Engine {
         {
             return self.cancel_queued_input(&input).await;
         }
+        self.turns
+            .pending_prompts
+            .feedback(&input, "Agentix · Sending…");
         let delivery = Delivery::new(input.event_id.clone(), true);
         let result = DELIVERY
             .scope(
@@ -780,7 +846,7 @@ impl Engine {
                 self.state
                     .complete_event(input.conversation.channel, &input.event_id)
                     .await?;
-                self.turns.pending_prompts.forget(&input);
+                self.turns.pending_prompts.forget(&input, "Agentix · Sent");
                 Ok(())
             }
             Err(error) => {
@@ -793,7 +859,14 @@ impl Engine {
                         .release_event(input.conversation.channel, &input.event_id)
                         .await?;
                 }
-                self.turns.pending_prompts.forget(&input);
+                self.turns.pending_prompts.forget(
+                    &input,
+                    if matches!(error, EngineError::Agent(AgentError::Uncertain(_))) {
+                        "Agentix · Delivery unconfirmed"
+                    } else {
+                        "Agentix · Send failed"
+                    },
+                );
                 Err(error)
             }
         }
@@ -991,5 +1064,41 @@ impl Engine {
                 .await?;
         }
         Ok(())
+    }
+}
+
+// Own each channel operation until completion. Only edits to a known message are
+// retried; an ambiguous initial send is never repeated automatically.
+async fn run_queued_receipt(
+    channel: Arc<dyn super::ChannelAdapter>,
+    target: ConversationRef,
+    mut receiver: watch::Receiver<OutboundView>,
+) {
+    let mut message = None;
+    loop {
+        for attempt in 0..3 {
+            let view = receiver.borrow_and_update().clone();
+            if let Some(message) = &message {
+                match channel.update(&target, message, &view).await {
+                    Ok(()) => break,
+                    Err(error) => {
+                        tracing::warn!(%error, attempt, "queued feedback update failed");
+                        if attempt < 2 {
+                            tokio::time::sleep(std::time::Duration::from_millis(100 << attempt))
+                                .await;
+                        }
+                    }
+                }
+            } else {
+                match channel.send(&target, &view).await {
+                    Ok(sent) => message = Some(sent),
+                    Err(error) => tracing::warn!(%error, "queued feedback delivery failed"),
+                }
+                break;
+            }
+        }
+        if receiver.changed().await.is_err() {
+            break;
+        }
     }
 }

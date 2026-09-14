@@ -50,6 +50,19 @@ Shutdown fences unresolved deliveries, including follow-ups already admitted to
 the dispatcher. The synchronous `handle_inbound` API retains its await-until-result
 contract; runtime callers use `execute_work` and drain pending prompt work.
 
+Local follow-up receipts have owned channel workers, so posting or updating a
+`Queued` receipt does not hold the session dispatcher. A watch channel coalesces
+receipt changes to `Sending`, `Sent`, failed, unconfirmed, or cancelled states.
+Stop, a committed binding change, displacement, and session exit publish the
+cancellation state before backend acknowledgement; a receipt
+whose initial send finishes later then applies that latest state to the same
+message. Shutdown aborts receipt workers. At most 512 receipt workers can be
+retained; admission rejects additional follow-ups before taking ownership when
+that limit is reached. Failed edits to a known receipt receive two retries with
+100 ms and 200 ms delays, using the newest state on each attempt. An initial send
+failure leaves the worker waiting for a subsequent state change; it does not
+automatically repeat an ambiguous post. These receipts do not grant turn actions.
+
 Switching or detaching revokes the old Stop action before editing its card. That
 visual cleanup has a 250 ms budget per card so a stalled edit cannot indefinitely
 hold session navigation. If the edit fails or times out, the old button may remain
