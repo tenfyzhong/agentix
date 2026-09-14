@@ -1508,16 +1508,19 @@ fn process_view() -> OutboundView {
             title: "👤 You".into(),
             body: "Question".into(),
             collapsible: false,
+            expanded: None,
         },
         agentix_domain::ViewSection {
             title: "🧠 Reasoning".into(),
             body: "Checking".into(),
             collapsible: true,
+            expanded: None,
         },
         agentix_domain::ViewSection {
             title: "🔨 Tool Call".into(),
             body: "cargo test".into(),
             collapsible: true,
+            expanded: None,
         },
     ];
     view.actions.push(ActionButton {
@@ -1544,6 +1547,7 @@ async fn structured_cards_survive_send_update_and_action_disabling() {
         title: "🤖 Codex".into(),
         body: "Answer".into(),
         collapsible: false,
+        expanded: None,
     });
     adapter
         .update(&conversation, &message, &view)
@@ -1562,10 +1566,11 @@ async fn structured_cards_survive_send_update_and_action_disabling() {
     assert_eq!(cards.len(), 3);
     for card in &cards[1..] {
         for index in 0..3 {
-            assert_eq!(
-                card["body"]["elements"][index],
-                cards[0]["body"]["elements"][index]
-            );
+            let mut expected = cards[0]["body"]["elements"][index].clone();
+            if expected["tag"] == "collapsible_panel" {
+                expected["expanded"] = serde_json::json!(false);
+            }
+            assert_eq!(card["body"]["elements"][index], expected);
         }
         assert_eq!(
             card["body"]["elements"][3]["content"],
@@ -1601,12 +1606,14 @@ fn long_unicode_sections_and_many_panels_retain_the_final_answer() {
                 title: format!("🧠 Reasoning {index}"),
                 body: "中文🧠\n".repeat(10_000),
                 collapsible: true,
+                expanded: None,
             });
         }
         view.sections.push(agentix_domain::ViewSection {
             title: "🤖 Codex".into(),
             body: "Final answer".into(),
             collapsible: false,
+            expanded: None,
         });
         let card = serde_json::to_value(render_card(&view).unwrap().card()).unwrap();
         let elements = card["body"]["elements"].as_array().unwrap();
@@ -1669,4 +1676,59 @@ async fn reload_preflight_validates_rotated_secret_before_switching() {
             .count(),
         2
     );
+}
+
+#[test]
+fn current_process_panel_expands_until_the_next_block_arrives() {
+    for status in [
+        ViewStatus::Running,
+        ViewStatus::Background,
+        ViewStatus::Success,
+    ] {
+        let mut view = OutboundView::text("Codex", "Fallback");
+        view.status = status;
+        for (title, collapsible) in [
+            ("👤 You", false),
+            ("🧠 Reasoning", true),
+            ("🔨 Tool Call", true),
+            ("🧠 Reasoning", true),
+            ("🤖 Codex", false),
+            ("🔨 Tool Call", true),
+        ] {
+            view.sections.push(agentix_domain::ViewSection {
+                title: title.into(),
+                body: "Content".into(),
+                collapsible,
+                expanded: None,
+            });
+            let card = serde_json::to_value(render_card(&view).unwrap().card()).unwrap();
+            let elements = if view.status == ViewStatus::Background {
+                &card["body"]["elements"][0]["columns"][0]["elements"]
+            } else {
+                &card["body"]["elements"]
+            };
+            for (index, element) in elements.as_array().unwrap().iter().enumerate() {
+                if view.sections[index].collapsible {
+                    assert_eq!(element["expanded"], index + 1 == view.sections.len());
+                    assert_eq!(element["element_id"], format!("turn_section_{index}"));
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn explicit_process_expansion_overrides_section_position() {
+    for expanded in [false, true] {
+        let view: OutboundView = serde_json::from_value(serde_json::json!({
+            "title":"Pi", "subtitle":null, "body":"Fallback", "status":"running", "actions":[],
+            "sections":[
+                {"title":"Agent", "body":"Answer", "collapsible":false},
+                {"title":"Tool", "body":"Result", "collapsible":true, "expanded":expanded}
+            ]
+        }))
+        .unwrap();
+        let card = serde_json::to_value(render_card(&view).unwrap().card()).unwrap();
+        assert_eq!(card["body"]["elements"][1]["expanded"], expanded);
+    }
 }

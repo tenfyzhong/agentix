@@ -31,7 +31,7 @@ use presentation::{
     history_views, input_progress_body, input_questions, input_response, is_shell_command,
     live_turn_view, markdown_quote, multiplexer_root_body, multiplexer_session_body,
     multiplexer_window_body, plural, session_display_label, session_status_label, session_title,
-    short_identifier, turn_conversation_body, turn_status_label,
+    short_identifier, turn_status_label,
 };
 use session_service::{RestoredBindingStatus, SessionService};
 
@@ -81,6 +81,10 @@ pub enum EngineError {
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 struct TurnOutputItem {
+    #[serde(default)]
+    active: bool,
+    #[serde(default)]
+    summary_fallback: bool,
     id: Option<String>,
     text: String,
     process: bool,
@@ -983,6 +987,7 @@ mod architecture_tests {
                 newer_cursor: None,
             },
             HistoryPresentation::History,
+            crate::OutputConfig::default(),
         );
         assert_eq!(views.len(), 1);
         assert!(views[0].body.contains("No conversation history yet."));

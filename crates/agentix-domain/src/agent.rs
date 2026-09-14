@@ -684,6 +684,15 @@ pub trait AgentAdapter: Send + Sync {
         limit: u32,
     ) -> Result<HistoryPage, AgentError>;
 
+    /// Recover a user-facing input omitted from live events, without acquiring a writer.
+    async fn read_turn_input(
+        &self,
+        _session_id: &SessionId,
+        _turn_id: &str,
+    ) -> Result<Option<String>, AgentError> {
+        Ok(None)
+    }
+
     async fn attach(&self, session_id: &SessionId) -> Result<(), AgentError>;
     async fn is_read_only(&self, _session_id: &SessionId) -> bool {
         false

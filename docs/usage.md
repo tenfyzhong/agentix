@@ -67,7 +67,7 @@ The following commands are available only while a Codex session is attached:
 - `/reasoning [effort]` — show or select a reasoning effort for later turns
 - `/skills` — list enabled skills in the attached workspace
 - `/plan [prompt]`, `/plan off` — enter plan mode, optionally with a prompt, or return to default mode; unavailable during an active turn
-- `/goal [objective|pause|resume|clear]` — inspect or manage the thread goal
+- `/goal [objective|pause|resume|clear]` — inspect or manage the thread goal; goal-driven turns show `/goal <objective>` under You in live, Background, attach, and history output when the local Codex rollout is available.
 - `/review` — start an inline review of staged, unstaged, and untracked changes
 - `/status` — show session, model, execution-policy, token-usage, goal details, and remaining account quota (window percentages, local reset times, and credits when reported)
 - `/mcp` — list MCP server connection, authentication, and tool status
@@ -194,7 +194,7 @@ show_tool_calls = true
 
 Both default to `false`. Run `agentix reload` after changing them. Enabled host-exposed reasoning summaries and tool details appear alongside the final answer and are written into the associated Obsidian Job’s Agent output when the turn ends, including sessions without an IM attachment. This does not change the model’s reasoning level.
 
-In IM messages, consecutive reasoning items share one Reasoning block, and consecutive tool calls share one Tool Call block. Each item keeps its content and order; updates replace that item's content within the group. A change between reasoning and tool calls starts a new block. This applies to both collapsible cards and Markdown output.
+In IM messages, consecutive reasoning items share one Reasoning block, and consecutive tool calls share one Tool Call block. Each item keeps its content and order; updates replace that item's content within the group. A change between reasoning, tool calls, and agent output starts a new block. Live turns, Background completion notifications, `/history`, and attach history use the same visibility switches and formatting. This applies to both collapsible cards and Markdown output. In Feishu, the newest process block is expanded while it is being output; once the next visible block appears, the previous process block collapses. Continuing an earlier answer also collapses the active process panel, even when the host reuses its original message ID. Late updates to an older tool only refresh its content. Agent output stays expanded. Older panels remain available to open manually. Pi/OMP native history process output requires an updated `agentix-bridge` plugin as well as Agentix; history responses retain the latest 20 process items per turn. Already received items are retained when a draining turn merges that bounded history.
 
 Codex supplies completed reasoning summaries and tool items; Pi/OMP report completed thinking blocks and tool execution results. Claude imports visible thinking blocks and tool inputs/results from the matching transcript turn at completion. Content unavailable from the host is not reconstructed. Tool text may be shortened by the host bridge’s existing size limits. Standalone Taskix hooks retain their ordinary visible-message capture.
 

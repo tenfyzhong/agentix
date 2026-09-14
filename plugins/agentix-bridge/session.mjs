@@ -59,9 +59,26 @@ export class SessionState {
                 for (const message of group.messages.slice(1)) {
                     if (message?.role === 'assistant') {
                         value.agent_text = bounded(value.agent_text + textOf(message.content));
+                        for (const block of Array.isArray(message.content) ? message.content : []) {
+                            if (block.type === 'thinking' && typeof block.thinking === 'string') {
+                                value.items.push({ id: `${value.id}:reasoning:${value.items.length}`, kind: 'reasoning', text: block.thinking.slice(0, 65536), status: 'completed' });
+                            } else if (block.type === 'toolCall' && typeof block.id === 'string') {
+                                value.tools.push({ id: block.id, kind: block.name ?? 'tool', label: block.name ?? 'tool', status: 'inProgress' });
+                                value.items.push({ id: block.id, kind: block.name ?? 'tool', text: JSON.stringify(block.arguments ?? {}).slice(0, 65536), status: 'inProgress' });
+                            }
+                        }
                         if (message.stopReason === 'aborted') value.status = 'interrupted';
                         if (message.stopReason === 'error') value.status = 'failed';
-                    } else if (message?.role === 'toolResult') value.tools.push({ kind: message.toolName ?? 'tool', label: message.toolName ?? 'tool', status: message.isError ? 'failed' : 'completed' });
+                    } else if (message?.role === 'toolResult') {
+                        const status = message.isError ? 'failed' : 'completed';
+                        const tool = value.tools.find(tool => tool.id === message.toolCallId);
+                        if (tool) tool.status = status;
+                        else value.tools.push({ id: message.toolCallId, kind: message.toolName ?? 'tool', label: message.toolName ?? 'tool', status });
+                        const previous = value.items.find(item => item.id === message.toolCallId);
+                        const item = { id: message.toolCallId, kind: message.toolName ?? 'tool', text: [previous?.text, textOf(message.content)].filter(Boolean).join('\n\n').slice(0, 65536), status };
+                        if (previous) Object.assign(previous, item);
+                        else if (typeof item.id === 'string') value.items.push(item);
+                    }
                 }
             }
             if (this.restored && this.turn?.id === group.id) {
