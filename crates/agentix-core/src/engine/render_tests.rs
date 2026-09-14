@@ -1100,3 +1100,276 @@ async fn reconfigured_engine_preserves_live_state_and_changes_output_policy() {
     assert!(!next.background_turn_notifications);
     assert!(!previous.output.show_reasoning);
 }
+
+#[test]
+fn structured_output_preserves_process_blocks_after_agent_output() {
+    let mut buffer = super::TurnBuffer::default();
+    for (id, text, process) in [
+        ("r1", "**Reasoning**\n\nFirst", true),
+        ("a1", "Progress", false),
+        ("r2", "**Reasoning**\n\nNext", true),
+        ("t1", "**Tool call**: commandExecution", true),
+        ("a2", "Done", false),
+    ] {
+        buffer.record_output(Some(id), text, process, false);
+    }
+    let sections = buffer.view_sections("Test");
+    assert_eq!(
+        sections
+            .iter()
+            .map(|s| s.title.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "🧠 Reasoning",
+            "🤖 Test",
+            "🧠 Reasoning",
+            "🔨 Tool Call",
+            "🤖 Test"
+        ]
+    );
+    assert_eq!(sections[1].body, "Progress");
+    assert_eq!(sections[4].body, "Done");
+}
+
+#[test]
+fn summary_only_history_adopts_the_first_completed_output_id_without_duplication() {
+    let mut buffer = super::TurnBuffer::from_summary(
+        &crate::TurnSummary {
+            id: "legacy".into(),
+            status: crate::TurnStatus::InProgress,
+            user_text: Some("Question".into()),
+            agent_text: Some("Partial answer".into()),
+            tools: vec![],
+            items: vec![],
+        },
+        crate::OutputConfig::default(),
+    );
+    buffer.record_output(Some("answer"), "Complete answer", false, false);
+    assert_eq!(buffer.agent_text, "Complete answer");
+    assert_eq!(buffer.view_sections("Test")[1].body, "Complete answer");
+}
+
+#[tokio::test]
+async fn history_process_summary_adopts_real_answer_id_after_cold_restore() {
+    for append in [false, true] {
+        let engine = Engine::new(
+            Arc::new(UnusedAgent),
+            SqliteState::in_memory().await.unwrap(),
+            vec![],
+        );
+        let session = SessionId::new("pi-summary");
+        let turn = crate::TurnSummary {
+            id: "turn".into(),
+            status: crate::TurnStatus::InProgress,
+            user_text: Some("Question".into()),
+            agent_text: Some("Partial".into()),
+            tools: vec![],
+            items: vec![crate::ItemSummary {
+                id: "tool".into(),
+                kind: "commandExecution".into(),
+                text: Some("Checking".into()),
+                status: None,
+            }],
+        };
+        engine.turns.buffers.lock().await.insert(
+            (session.clone(), turn.id.clone()),
+            super::TurnBuffer::from_summary(
+                &turn,
+                crate::OutputConfig {
+                    show_reasoning: true,
+                    show_tool_calls: true,
+                },
+            ),
+        );
+        engine.archive_turn(&session, "turn").await.unwrap();
+        engine.restore_cold_turn(&session, "turn").await.unwrap();
+        let mut buffers = engine.turns.buffers.lock().await;
+        let buffer = buffers.get_mut(&(session.clone(), "turn".into())).unwrap();
+        if append {
+            buffer.record_output(Some("answer"), " answer", false, true);
+        }
+        for _ in 0..2 {
+            buffer.record_output(Some("answer"), "Complete answer", false, false);
+        }
+        assert_eq!(buffer.agent_text, "Complete answer");
+        assert_eq!(buffer.output_items.len(), 2);
+        assert!(buffer.view_sections("Pi")[0].body.contains("Question"));
+        buffer.record_output(Some("next"), "Another answer", false, false);
+        assert_eq!(buffer.agent_text, "Complete answer\n\nAnother answer");
+    }
+}
+
+#[test]
+fn history_preserves_aggregate_user_input_and_aggregates_items_when_missing() {
+    for summary in [Some("First\n\nSecond"), None] {
+        let turn = crate::TurnSummary {
+            id: "turn".into(),
+            status: crate::TurnStatus::Completed,
+            user_text: summary.map(str::to_owned),
+            agent_text: Some("Answer".into()),
+            tools: vec![],
+            items: [("u1", "First"), ("u2", "Second")]
+                .into_iter()
+                .map(|(id, text)| crate::ItemSummary {
+                    id: id.into(),
+                    kind: "userMessage".into(),
+                    text: Some(text.into()),
+                    status: None,
+                })
+                .collect(),
+        };
+        let buffer = super::TurnBuffer::from_summary(&turn, crate::OutputConfig::default());
+        assert_eq!(buffer.user_text, "First\n\nSecond");
+    }
+}
+
+#[test]
+fn history_merge_is_idempotent_and_retains_existing_item_order() {
+    let mut buffer = super::TurnBuffer::default();
+    buffer.record_output(Some("early"), "**Reasoning**\n\nEarly", true, false);
+    buffer.record_output(Some("overlap"), "**Tool call**: Pending", true, false);
+    let turn = crate::TurnSummary {
+        id: "turn".into(),
+        status: crate::TurnStatus::Completed,
+        user_text: None,
+        agent_text: Some("Done".into()),
+        tools: vec![],
+        items: vec![crate::ItemSummary {
+            id: "overlap".into(),
+            kind: "commandExecution".into(),
+            text: Some("Updated".into()),
+            status: None,
+        }],
+    };
+    for _ in 0..2 {
+        buffer.merge_summary(
+            &turn,
+            crate::OutputConfig {
+                show_reasoning: true,
+                show_tool_calls: true,
+            },
+        );
+    }
+    assert_eq!(buffer.output_items.len(), 3);
+    assert_eq!(buffer.output_items[0].id.as_deref(), Some("early"));
+    assert_eq!(buffer.output_items[1].id.as_deref(), Some("overlap"));
+    assert!(buffer.output_items[1].text.contains("Updated"));
+    assert_eq!(buffer.agent_text, "Done");
+}
+
+#[tokio::test]
+async fn cumulative_answer_closes_process_panel_without_reordering_and_survives_cold_restore() {
+    let engine = Engine::new(
+        Arc::new(UnusedAgent),
+        SqliteState::in_memory().await.unwrap(),
+        vec![],
+    );
+    let session = SessionId::new("cumulative");
+    let mut buffer = super::TurnBuffer::default();
+    buffer.record_output(Some("assistant"), "Checking", false, false);
+    buffer.record_output(Some("tool"), "**Tool call**: Running", true, false);
+    let sections = serde_json::to_value(buffer.view_sections("Pi")).unwrap();
+    assert_eq!(sections[1]["expanded"], true);
+    buffer.record_output(Some("assistant"), "Checking. Done", false, false);
+    engine
+        .turns
+        .buffers
+        .lock()
+        .await
+        .insert((session.clone(), "t".into()), buffer);
+    engine.archive_turn(&session, "t").await.unwrap();
+    engine.restore_cold_turn(&session, "t").await.unwrap();
+    let mut buffers = engine.turns.buffers.lock().await;
+    let buffer = buffers.get_mut(&(session, "t".into())).unwrap();
+    buffer.record_output(Some("tool"), "**Tool call**: Completed", true, false);
+    let sections = serde_json::to_value(buffer.view_sections("Pi")).unwrap();
+    assert_eq!(sections[0]["body"], "Checking. Done");
+    assert_eq!(sections[1]["expanded"], false);
+    buffer.record_output(
+        Some("reasoning"),
+        "**Reasoning**\n\nNext thought",
+        true,
+        false,
+    );
+    let sections = serde_json::to_value(buffer.view_sections("Pi")).unwrap();
+    assert_eq!(sections[1]["expanded"], false);
+    assert_eq!(sections[2]["expanded"], true);
+}
+
+#[test]
+fn repeated_answer_completion_does_not_close_current_tool() {
+    let mut buffer = super::TurnBuffer::default();
+    buffer.record_output(Some("a"), "Progress", false, false);
+    buffer.record_output(Some("t"), "**Tool call**: Running", true, false);
+    buffer.record_output(Some("a"), "Progress", false, false);
+    assert_eq!(buffer.view_sections("Pi")[1].expanded, Some(true));
+}
+
+#[test]
+fn resumed_commentary_stream_reopens_its_panel() {
+    let mut buffer = super::TurnBuffer::default();
+    buffer.record_output(Some("r"), "**Reasoning**\n\nFirst", true, false);
+    buffer.record_output(Some("t"), "**Tool call**: Running", true, false);
+    buffer.append_commentary("r", " then more");
+    let sections = buffer.view_sections("Codex");
+    assert_eq!(sections[0].expanded, Some(true));
+    assert_eq!(sections[1].expanded, Some(false));
+}
+
+#[test]
+fn merging_unchanged_history_preserves_active_tool() {
+    let output = crate::OutputConfig {
+        show_reasoning: true,
+        show_tool_calls: true,
+    };
+    let turn = crate::TurnSummary {
+        id: "t".into(),
+        status: crate::TurnStatus::InProgress,
+        user_text: None,
+        agent_text: Some("Progress".into()),
+        tools: vec![],
+        items: vec![
+            crate::ItemSummary {
+                id: "a".into(),
+                kind: "agentMessage".into(),
+                text: Some("Progress".into()),
+                status: None,
+            },
+            crate::ItemSummary {
+                id: "tool".into(),
+                kind: "commandExecution".into(),
+                text: Some("Running".into()),
+                status: None,
+            },
+        ],
+    };
+    let mut buffer = super::TurnBuffer::from_summary(&turn, output);
+    let before = buffer.view_sections("Codex");
+    buffer.merge_summary(&turn, output);
+    assert_eq!(buffer.view_sections("Codex"), before);
+}
+
+#[test]
+fn unchanged_summary_fallback_merge_keeps_the_active_tool() {
+    let mut buffer = super::TurnBuffer::default();
+    buffer.record_output(Some("a"), "Progress", false, false);
+    buffer.record_output(Some("tool"), "**Tool call**: Running", true, false);
+    let turn = crate::TurnSummary {
+        id: "t".into(),
+        status: crate::TurnStatus::InProgress,
+        user_text: None,
+        agent_text: Some("Progress".into()),
+        tools: vec![],
+        items: vec![],
+    };
+    buffer.merge_summary(&turn, crate::OutputConfig::default());
+    assert_eq!(buffer.view_sections("Pi")[1].expanded, Some(true));
+}
+
+#[test]
+fn hidden_commentary_placeholder_does_not_change_plain_output_format() {
+    let mut buffer = super::TurnBuffer::default();
+    buffer.record_output(Some("hidden"), "", true, false);
+    buffer.record_output(Some("answer"), "Done", false, false);
+    assert_eq!(buffer.render_output(), "Done");
+}

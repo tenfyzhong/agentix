@@ -6887,3 +6887,414 @@ async fn new_session_stalled_attachment_expires_without_committing() {
         Some(SessionId::new("thr_a"))
     );
 }
+
+#[tokio::test]
+async fn background_and_history_share_live_process_format_and_visibility() {
+    for reasoning in [false, true] {
+        for tools in [false, true] {
+            let items: Vec<_> = [
+                ("u", "userMessage", "Question"),
+                ("r", "reasoning", "Consider options"),
+                ("t", "commandExecution", "cargo test"),
+                ("c", "commentary", "Checking results"),
+                ("a", "agentMessage", "Final answer"),
+            ]
+            .into_iter()
+            .map(|(id, kind, text)| ItemSummary {
+                id: id.into(),
+                kind: kind.into(),
+                text: Some(text.into()),
+                status: Some("completed".into()),
+            })
+            .collect();
+            let agent = Arc::new(FakeAgent::with_history(vec![TurnSummary {
+                id: "process_turn".into(),
+                status: TurnStatus::Completed,
+                user_text: Some("Question".into()),
+                agent_text: Some("Final answer".into()),
+                tools: vec![],
+                items: items.clone(),
+            }]));
+            let channel = Arc::new(FakeChannel::default());
+            let engine = Engine::new(
+                agent,
+                SqliteState::in_memory().await.unwrap(),
+                vec![channel.clone()],
+            )
+            .with_output(agentix_core::OutputConfig {
+                show_reasoning: reasoning,
+                show_tool_calls: tools,
+            });
+            engine
+                .handle_inbound(inbound("chat-a", "/help"))
+                .await
+                .unwrap();
+            engine
+                .handle_agent_event(AgentEvent::TurnCompleted {
+                    session_id: "thr_a".into(),
+                    turn_id: "process_turn".into(),
+                    status: TurnStatus::Completed,
+                    error: None,
+                })
+                .await
+                .unwrap();
+            let background = channel.sent().last().unwrap().1.clone();
+            engine
+                .handle_inbound(inbound("chat-a", "/attach thr_a"))
+                .await
+                .unwrap();
+            let attached = channel.sent().last().unwrap().1.clone();
+            engine
+                .handle_inbound(inbound("chat-a", "/history"))
+                .await
+                .unwrap();
+            let history = channel.sent().last().unwrap().1.clone();
+            for item in items {
+                engine
+                    .handle_agent_event(AgentEvent::ItemCompleted {
+                        session_id: "thr_a".into(),
+                        turn_id: "live_process".into(),
+                        item,
+                    })
+                    .await
+                    .unwrap();
+            }
+            engine
+                .handle_agent_event(AgentEvent::TurnCompleted {
+                    session_id: "thr_a".into(),
+                    turn_id: "live_process".into(),
+                    status: TurnStatus::Completed,
+                    error: None,
+                })
+                .await
+                .unwrap();
+            let live = channel.updated().last().unwrap().1.clone();
+            for view in [&background, &attached, &history] {
+                assert_eq!(view.sections, live.sections);
+                assert_eq!(view.body.contains("Consider options"), reasoning);
+                assert_eq!(view.body.contains("Checking results"), reasoning);
+                assert_eq!(view.body.contains("cargo test"), tools);
+                assert_eq!(view.body.matches("Final answer").count(), 1);
+                assert!(view.body.contains(&live.body));
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn attaching_running_history_retains_process_items_when_streaming_continues() {
+    let agent = Arc::new(FakeAgent::with_history(vec![TurnSummary {
+        id: "running_history".into(),
+        status: TurnStatus::InProgress,
+        user_text: Some("Question".into()),
+        agent_text: Some("Progress".into()),
+        tools: vec![],
+        items: [
+            ("r", "reasoning", "Initial thought"),
+            ("a", "agentMessage", "Progress"),
+            ("t", "commandExecution", "cargo test"),
+        ]
+        .into_iter()
+        .map(|(id, kind, text)| ItemSummary {
+            id: id.into(),
+            kind: kind.into(),
+            text: Some(text.into()),
+            status: None,
+        })
+        .collect(),
+    }]));
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent,
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    )
+    .with_output(agentix_core::OutputConfig {
+        show_reasoning: true,
+        show_tool_calls: true,
+    });
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    let attached = channel.sent().last().unwrap().1.clone();
+    assert_eq!(
+        attached
+            .sections
+            .iter()
+            .map(|s| s.title.as_str())
+            .collect::<Vec<_>>(),
+        ["👤 You", "🧠 Reasoning", "🤖 Codex", "🔨 Tool Call"]
+    );
+    engine
+        .handle_agent_event(AgentEvent::AgentMessageDelta {
+            session_id: "thr_a".into(),
+            turn_id: "running_history".into(),
+            item_id: "answer".into(),
+            delta: "Done".into(),
+        })
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::TurnCompleted {
+            session_id: "thr_a".into(),
+            turn_id: "running_history".into(),
+            status: TurnStatus::Completed,
+            error: None,
+        })
+        .await
+        .unwrap();
+    let updated = channel.updated().last().unwrap().1.clone();
+    assert_eq!(attached.sections[3].expanded, Some(true));
+    let mut expected = attached.sections;
+    expected[3].expanded = Some(false);
+    assert_eq!(&updated.sections[..4], &expected);
+    assert_eq!(updated.sections[4].body, "Done");
+}
+
+#[tokio::test]
+async fn draining_completion_includes_process_items_produced_after_switching() {
+    let agent = Arc::new(FakeAgent::with_history(vec![TurnSummary {
+        id: "draining_process".into(),
+        status: TurnStatus::Completed,
+        user_text: Some("Question".into()),
+        agent_text: Some("Final answer".into()),
+        tools: vec![],
+        items: [
+            ("r", "reasoning", "Background thought"),
+            ("t", "commandExecution", "Background command"),
+            ("a", "agentMessage", "Final answer"),
+        ]
+        .into_iter()
+        .map(|(id, kind, text)| ItemSummary {
+            id: id.into(),
+            kind: kind.into(),
+            text: Some(text.into()),
+            status: None,
+        })
+        .collect(),
+    }]));
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent,
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    )
+    .with_output(agentix_core::OutputConfig {
+        show_reasoning: true,
+        show_tool_calls: true,
+    });
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::TurnStarted {
+            session_id: "thr_a".into(),
+            turn_id: "draining_process".into(),
+        })
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_b"))
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::TurnCompleted {
+            session_id: "thr_a".into(),
+            turn_id: "draining_process".into(),
+            status: TurnStatus::Completed,
+            error: None,
+        })
+        .await
+        .unwrap();
+    let view = channel.sent().last().unwrap().1.clone();
+    assert_eq!(view.status, agentix_core::ViewStatus::Background);
+    assert!(view.body.contains("Background thought"));
+    assert!(view.body.contains("Background command"));
+    assert!(view.body.contains("Final answer"));
+    assert_eq!(view.sections.len(), 4);
+}
+
+#[tokio::test]
+async fn draining_truncated_history_preserves_received_items_and_updates_matching_ids() {
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    )
+    .with_output(agentix_core::OutputConfig {
+        show_reasoning: true,
+        show_tool_calls: true,
+    });
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::TurnStarted {
+            session_id: "thr_a".into(),
+            turn_id: "long".into(),
+        })
+        .await
+        .unwrap();
+    let item = |n: usize, text: String| ItemSummary {
+        id: format!("tool-{n}"),
+        kind: "commandExecution".into(),
+        text: Some(text),
+        status: Some("completed".into()),
+    };
+    for n in 0..10 {
+        engine
+            .handle_agent_event(AgentEvent::ItemCompleted {
+                session_id: "thr_a".into(),
+                turn_id: "long".into(),
+                item: item(n, format!("Original {n}")),
+            })
+            .await
+            .unwrap();
+    }
+    engine
+        .handle_agent_event(AgentEvent::AgentMessageDelta {
+            session_id: "thr_a".into(),
+            turn_id: "long".into(),
+            item_id: "long:assistant".into(),
+            delta: "Partial answer".into(),
+        })
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_b"))
+        .await
+        .unwrap();
+    *agent.history_turns.lock().unwrap() = vec![TurnSummary {
+        id: "long".into(),
+        status: TurnStatus::Completed,
+        user_text: Some("Question".into()),
+        agent_text: Some("Done".into()),
+        tools: vec![],
+        items: (5..25).map(|n| item(n, format!("Updated {n}"))).collect(),
+    }];
+    engine
+        .handle_agent_event(AgentEvent::TurnCompleted {
+            session_id: "thr_a".into(),
+            turn_id: "long".into(),
+            status: TurnStatus::Completed,
+            error: None,
+        })
+        .await
+        .unwrap();
+    let view = channel.updated().last().unwrap().1.clone();
+    for n in 0..5 {
+        assert!(view.body.contains(&format!("Original {n}")));
+    }
+    for n in 5..25 {
+        assert!(view.body.contains(&format!("Updated {n}")));
+    }
+    assert!(!view.body.contains("Original 5"));
+    assert_eq!(view.body.matches("Updated 5").count(), 1);
+    assert!(view.body.contains("Done"));
+}
+
+#[tokio::test]
+async fn history_routes_preserve_all_user_inputs() {
+    for command in ["background", "/attach thr_a", "/history"] {
+        let agent = Arc::new(FakeAgent::with_history(vec![TurnSummary {
+            id: "multi-user".into(),
+            status: TurnStatus::Completed,
+            user_text: Some("First request\n\nFollow-up request".into()),
+            agent_text: Some("Answer".into()),
+            tools: vec![],
+            items: [("u1", "First request"), ("u2", "Follow-up request")]
+                .into_iter()
+                .map(|(id, text)| ItemSummary {
+                    id: id.into(),
+                    kind: "userMessage".into(),
+                    text: Some(text.into()),
+                    status: None,
+                })
+                .collect(),
+        }]));
+        let channel = Arc::new(FakeChannel::default());
+        let engine = Engine::new(
+            agent,
+            SqliteState::in_memory().await.unwrap(),
+            vec![channel.clone()],
+        );
+        if command == "background" {
+            engine
+                .handle_inbound(inbound("chat-a", "/help"))
+                .await
+                .unwrap();
+            engine
+                .handle_agent_event(AgentEvent::TurnCompleted {
+                    session_id: "thr_a".into(),
+                    turn_id: "multi-user".into(),
+                    status: TurnStatus::Completed,
+                    error: None,
+                })
+                .await
+                .unwrap();
+        } else {
+            engine
+                .handle_inbound(inbound("chat-a", "/attach thr_a"))
+                .await
+                .unwrap();
+            if command == "/history" {
+                engine
+                    .handle_inbound(inbound("chat-a", command))
+                    .await
+                    .unwrap();
+            }
+        }
+        let view = channel.sent().last().unwrap().1.clone();
+        assert_eq!(view.sections[0].body, "First request\n\nFollow-up request");
+        assert!(view.body.contains("First request"));
+        assert!(view.body.contains("Follow-up request"));
+    }
+}
+
+#[tokio::test]
+async fn background_error_closes_the_previous_process_panel() {
+    let agent = Arc::new(FakeAgent::with_history(vec![TurnSummary {
+        id: "failed_process".into(),
+        status: TurnStatus::Failed,
+        user_text: Some("Question".into()),
+        agent_text: None,
+        tools: vec![],
+        items: vec![ItemSummary {
+            id: "tool".into(),
+            kind: "commandExecution".into(),
+            text: Some("Running".into()),
+            status: None,
+        }],
+    }]));
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent,
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    )
+    .with_output(agentix_core::OutputConfig {
+        show_reasoning: true,
+        show_tool_calls: true,
+    });
+    engine
+        .handle_inbound(inbound("chat-a", "/help"))
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::TurnCompleted {
+            session_id: "thr_a".into(),
+            turn_id: "failed_process".into(),
+            status: TurnStatus::Failed,
+            error: Some("Failed to run".into()),
+        })
+        .await
+        .unwrap();
+    let view = channel.sent().last().unwrap().1.clone();
+    assert_eq!(view.sections.last().unwrap().title, "Error");
+    assert_eq!(view.sections[1].expanded, Some(false));
+}

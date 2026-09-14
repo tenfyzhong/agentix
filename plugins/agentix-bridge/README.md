@@ -30,7 +30,7 @@ session_dir = "~/.pi/agent/sessions"
 session_dir = "~/.omp/agent/sessions"
 ```
 
-Only live, registered connections whose session file is under `session_dir` appear in Agentix. Start `agentix serve` to open the shared listener; extensions may start before or after the service. History queries return at most 20 turns per page; Pi/OMP visibly shorten exceptionally large message text in history responses. Session IDs are qualified as `codex:<id>`, `pi:<id>`, `omp:<id>`, and `claude:<id>`. `/sessions pi`, `/sessions omp`, and `/sessions claude` filter the picker. A bare ID works only when exactly one backend owns it. Taskix continues to store the native host ID.
+Only live, registered connections whose session file is under `session_dir` appear in Agentix. Start `agentix serve` to open the shared listener; extensions may start before or after the service. History queries return at most 20 turns per page; Pi/OMP visibly shorten exceptionally large message text in history responses and return the latest 20 process items per turn. Native Pi/OMP history reconstructs reasoning and tool inputs/results, including after an extension reload. Upgrade the bridge plugin as well as Agentix to enable process output from older Pi/OMP history. Session IDs are qualified as `codex:<id>`, `pi:<id>`, `omp:<id>`, and `claude:<id>`. `/sessions pi`, `/sessions omp`, and `/sessions claude` filter the picker. A bare ID works only when exactly one backend owns it. Taskix continues to store the native host ID.
 
 Existing unqualified bindings must first be migrated by starting Agentix once with the original single-backend configuration. Multiple backends never guess the owner of legacy bindings.
 

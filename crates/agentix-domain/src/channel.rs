@@ -175,6 +175,8 @@ pub struct ViewSection {
     pub title: String,
     pub body: String,
     pub collapsible: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expanded: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

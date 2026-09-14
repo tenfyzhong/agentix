@@ -487,6 +487,7 @@ impl Engine {
             &session_label,
             history,
             presentation,
+            self.output,
         )
         .into_iter();
         if let Some(mut overview) = views.next() {
