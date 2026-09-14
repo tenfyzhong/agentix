@@ -142,6 +142,10 @@ impl Engine {
                     "Show the session attached to this conversation.",
                 ),
                 (
+                    "/last",
+                    "Show the latest turn again, including its live controls.",
+                ),
+                (
                     "/history [recent|older|newer]",
                     "Browse the attached session history.",
                 ),
@@ -455,6 +459,67 @@ impl Engine {
             },
         )
         .await?;
+        Ok(())
+    }
+
+    pub(super) async fn show_last(
+        &self,
+        conversation: &ConversationRef,
+    ) -> Result<(), EngineError> {
+        let session = self.current_session(conversation).await?;
+        let writable = self.agent.session_access(&session).await.can_write();
+        // Live buffers include output that the host has not persisted yet.
+        let active = if writable {
+            self.turns.active_turn(&session).await
+        } else {
+            None
+        };
+        let turn_id = if let Some(turn_id) = active {
+            self.restore_cold_turn(&session, &turn_id).await?;
+            turn_id
+        } else {
+            let history = self.operations.history(&session, None, 1).await?;
+            let Some(turn) = history.turns.last() else {
+                self.send_view(
+                    conversation,
+                    &OutboundView::text("Last message", "No conversation history yet."),
+                )
+                .await?;
+                return Ok(());
+            };
+            self.restore_cold_turn(&session, &turn.id).await?;
+            let key = (session.clone(), turn.id.clone());
+            {
+                let mut buffers = self.turns.buffers.lock().await;
+                let buffer = buffers
+                    .entry(key)
+                    .or_insert_with(|| TurnBuffer::from_summary(turn, self.output));
+                buffer.merge_summary(turn, self.output);
+                buffer.status = turn.status.clone();
+            }
+            if matches!(turn.status, TurnStatus::InProgress | TurnStatus::Unknown) {
+                self.record_turn_started(session.clone(), turn.id.clone())
+                    .await?;
+            } else {
+                self.clear_session_stop_actions(&session).await?;
+                self.turns.remove_active(&session).await;
+            }
+            turn.id.clone()
+        };
+        let key = (session.clone(), turn_id.clone());
+        self.clear_turn_stop_action(&key).await?;
+        let previous = self.turns.views.lock().await.remove(&key);
+        // Sending a new card makes it visible at the bottom of the conversation;
+        // subsequent deltas and completion continue updating this new message.
+        if let Err(error) = self
+            .render_turn(conversation, &session, &turn_id, DeliveryClass::Live, true)
+            .await
+        {
+            if let Some(previous) = previous {
+                self.turns.views.lock().await.entry(key).or_insert(previous);
+            }
+            return Err(error);
+        }
         Ok(())
     }
 
@@ -913,6 +978,10 @@ impl Engine {
             attached && self.agent.capabilities().session_control,
             self.multiplexer_enabled.then_some(self.multiplexer_kind),
         );
+        if attached && !self.agent.capabilities().session_control {
+            menu.commands
+                .push(ChannelCommand::new("last", "Show the latest turn again").contextual());
+        }
         if attached && let Some(session) = self.sessions.current(conversation).await {
             let mut commands = Vec::new();
             for command in menu.commands.drain(..) {
@@ -940,6 +1009,7 @@ impl Engine {
                         | "tmux"
                         | "current"
                         | "history"
+                        | "last"
                         | "detach"
                         | "cancel"
                         | "help"

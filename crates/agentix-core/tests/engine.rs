@@ -8005,3 +8005,395 @@ async fn background_error_closes_the_previous_process_panel() {
     assert_eq!(view.sections.last().unwrap().title, "Error");
     assert_eq!(view.sections[1].expanded, Some(false));
 }
+
+fn last_turn_fixture(status: TurnStatus) -> TurnSummary {
+    TurnSummary {
+        id: "turn_last".into(),
+        status,
+        user_text: Some("Investigate the failing build".into()),
+        agent_text: Some("Checking the compiler output".into()),
+        tools: Vec::new(),
+        items: vec![
+            ItemSummary {
+                id: "reason".into(),
+                kind: "reasoning".into(),
+                text: Some("Trace the first failure".into()),
+                status: None,
+            },
+            ItemSummary {
+                id: "tool".into(),
+                kind: "commandExecution".into(),
+                text: Some("cargo check".into()),
+                status: Some("completed".into()),
+            },
+        ],
+    }
+}
+
+fn last_turn_delta(delta: &str) -> AgentEvent {
+    AgentEvent::AgentMessageDelta {
+        session_id: "thr_a".into(),
+        turn_id: "turn_last".into(),
+        item_id: "fresh".into(),
+        delta: delta.into(),
+    }
+}
+
+#[tokio::test]
+async fn last_reposts_live_card_with_process_content_and_moves_stop_and_updates() {
+    for kind in [
+        ChannelKind::Telegram,
+        ChannelKind::Feishu,
+        ChannelKind::Slack,
+    ] {
+        let agent = Arc::new(FakeAgent::with_history(vec![last_turn_fixture(
+            TurnStatus::InProgress,
+        )]));
+        let channel = Arc::new(FakeChannel {
+            channel_kind: Some(kind),
+            streaming_interval: Some(std::time::Duration::ZERO),
+            ..FakeChannel::default()
+        });
+        let engine = Engine::new(
+            agent.clone(),
+            SqliteState::in_memory().await.unwrap(),
+            vec![channel.clone()],
+        )
+        .with_output(agentix_core::OutputConfig {
+            show_reasoning: true,
+            show_tool_calls: true,
+        });
+        let chat = ConversationRef::new(kind, "chat-last");
+        engine
+            .handle_inbound(InboundEnvelope::text(
+                "attach-last",
+                chat.clone(),
+                "owner",
+                "/attach thr_a",
+            ))
+            .await
+            .unwrap();
+        engine
+            .handle_agent_event(last_turn_delta("Unsaved live output"))
+            .await
+            .unwrap();
+        let original = channel.sent().last().unwrap().1.clone();
+        let old_message = visible_stop_messages(&channel)[0].clone();
+        let old_token = original.actions[0].token.clone();
+        let count = channel.messages.lock().unwrap().len();
+        engine
+            .handle_inbound(InboundEnvelope::text(
+                "last-live",
+                chat.clone(),
+                "owner",
+                "/last",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(channel.messages.lock().unwrap().len(), count + 1);
+        let repost = channel.sent().last().unwrap().1.clone();
+        assert!(original.body.contains("Trace the first failure"));
+        assert!(original.body.contains("cargo check"));
+        assert_eq!(repost.body, original.body);
+        assert_eq!(repost.sections, original.sections);
+        assert_eq!(repost.status, original.status);
+        assert_eq!(repost.actions.len(), 1);
+        assert_eq!(repost.actions[0].label, "Stop");
+        assert_ne!(repost.actions[0].token, old_token);
+        let new_message = visible_stop_messages(&channel);
+        assert_eq!(new_message.len(), 1);
+        assert_ne!(new_message[0], old_message);
+        assert!(
+            engine
+                .handle_inbound(InboundEnvelope::action(
+                    "stale-last-stop",
+                    chat.clone(),
+                    "owner",
+                    old_token
+                ))
+                .await
+                .is_err()
+        );
+        engine
+            .handle_agent_event(last_turn_delta(" continues"))
+            .await
+            .unwrap();
+        assert_eq!(channel.updated().last().unwrap().0, new_message[0]);
+        let token = channel.updated().last().unwrap().1.actions[0].token.clone();
+        engine
+            .handle_inbound(InboundEnvelope::action("last-stop", chat, "owner", token))
+            .await
+            .unwrap();
+        assert!(agent.calls().contains(&"stop:thr_a:turn_last".to_string()));
+        engine
+            .handle_agent_event(AgentEvent::TurnCompleted {
+                session_id: "thr_a".into(),
+                turn_id: "turn_last".into(),
+                status: TurnStatus::Completed,
+                error: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(channel.updated().last().unwrap().0, new_message[0]);
+        assert!(visible_stop_messages(&channel).is_empty());
+    }
+}
+
+#[tokio::test]
+async fn last_restores_completed_card_from_cold_output_without_losing_reasoning() {
+    let agent = Arc::new(FakeAgent::with_history(vec![last_turn_fixture(
+        TurnStatus::InProgress,
+    )]));
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    )
+    .with_output(agentix_core::OutputConfig {
+        show_reasoning: true,
+        show_tool_calls: true,
+    });
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::TurnCompleted {
+            session_id: "thr_a".into(),
+            turn_id: "turn_last".into(),
+            status: TurnStatus::Completed,
+            error: None,
+        })
+        .await
+        .unwrap();
+    let completed = channel.sent().last().unwrap().1.clone();
+    {
+        let mut turns = agent.history_turns.lock().unwrap();
+        turns[0].status = TurnStatus::Completed;
+        turns[0].items.clear();
+    }
+    engine
+        .handle_inbound(inbound("chat-a", "/last"))
+        .await
+        .unwrap();
+    let repost = channel.sent().last().unwrap().1.clone();
+    assert_eq!(repost.body, completed.body);
+    assert_eq!(repost.sections, completed.sections);
+    assert!(repost.actions.is_empty());
+}
+
+#[tokio::test]
+async fn last_reads_only_latest_history_preserves_cursor_and_supports_read_only() {
+    for read_only in [false, true] {
+        let mut agent = FakeAgent::with_history(vec![last_turn_fixture(TurnStatus::Completed)]);
+        agent.read_only = read_only;
+        let agent = Arc::new(agent);
+        let channel = Arc::new(FakeChannel::default());
+        let engine = Engine::new(
+            agent.clone(),
+            SqliteState::in_memory().await.unwrap(),
+            vec![channel.clone()],
+        )
+        .with_output(agentix_core::OutputConfig {
+            show_reasoning: true,
+            show_tool_calls: true,
+        });
+        engine
+            .handle_inbound(inbound("chat-a", "/attach thr_a"))
+            .await
+            .unwrap();
+        assert!(
+            channel
+                .synced_menus
+                .lock()
+                .unwrap()
+                .last()
+                .unwrap()
+                .commands
+                .iter()
+                .any(|c| c.name == "last" && c.contextual)
+        );
+        engine
+            .handle_inbound(inbound("chat-a", "/help"))
+            .await
+            .unwrap();
+        assert!(channel.sent().last().unwrap().1.body.contains("**/last**"));
+        *agent.history_result_cursors.lock().unwrap() = (Some("must-not-replace".into()), None);
+        let count = channel.messages.lock().unwrap().len();
+        engine
+            .handle_inbound(inbound("chat-a", "/last"))
+            .await
+            .unwrap();
+        assert_eq!(channel.messages.lock().unwrap().len(), count + 1);
+        let view = channel.sent().last().unwrap().1.clone();
+        assert!(view.body.contains("Trace the first failure"));
+        assert!(view.body.contains("Checking the compiler output"));
+        assert!(view.actions.is_empty());
+        assert_eq!(agent.calls().last().unwrap(), "history:thr_a:1");
+        engine
+            .handle_inbound(inbound("chat-a", "/history older"))
+            .await
+            .unwrap();
+        assert_eq!(
+            agent.history_cursors().last().unwrap(),
+            &Some("older".into())
+        );
+    }
+}
+
+#[tokio::test]
+async fn last_requires_attachment_and_handles_empty_history() {
+    let agent = Arc::new(FakeAgent::with_history(Vec::new()));
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent,
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    )
+    .with_output(agentix_core::OutputConfig {
+        show_reasoning: true,
+        show_tool_calls: true,
+    });
+    assert!(matches!(
+        engine.handle_inbound(inbound("chat-a", "/last")).await,
+        Err(EngineError::NoCurrentSession)
+    ));
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound("chat-a", "/last"))
+        .await
+        .unwrap();
+    assert_eq!(
+        channel.sent().last().unwrap().1.body,
+        "No conversation history yet."
+    );
+}
+
+#[tokio::test]
+async fn last_refreshes_read_only_running_history_and_follows_its_completion() {
+    let mut agent = FakeAgent::with_history(vec![last_turn_fixture(TurnStatus::InProgress)]);
+    agent.read_only = true;
+    let agent = Arc::new(agent);
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    )
+    .with_output(agentix_core::OutputConfig {
+        show_reasoning: true,
+        show_tool_calls: true,
+    });
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    for (request, status) in [TurnStatus::InProgress, TurnStatus::Completed]
+        .into_iter()
+        .enumerate()
+    {
+        {
+            let mut turns = agent.history_turns.lock().unwrap();
+            turns[0].agent_text = Some("Newly saved output".into());
+            turns[0].status = status.clone();
+        }
+        engine
+            .handle_inbound(InboundEnvelope::text(
+                format!("last-{request}"),
+                ConversationRef::new(ChannelKind::Telegram, "chat-a"),
+                "owner",
+                "/last",
+            ))
+            .await
+            .unwrap();
+        let view = channel.sent().last().unwrap().1.clone();
+        assert!(view.body.contains("Newly saved output"));
+        assert!(view.body.contains("Trace the first failure"));
+        assert!(view.actions.is_empty());
+        assert_eq!(
+            view.status,
+            if status == TurnStatus::Completed {
+                agentix_core::ViewStatus::Success
+            } else {
+                agentix_core::ViewStatus::Running
+            }
+        );
+    }
+}
+
+#[tokio::test]
+async fn last_hydrates_new_running_history_and_reposts_repeatedly() {
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    *agent.history_turns.lock().unwrap() = vec![last_turn_fixture(TurnStatus::InProgress)];
+    let mut previous = None;
+    for request in 0..3 {
+        let count = channel.messages.lock().unwrap().len();
+        engine
+            .handle_inbound(InboundEnvelope::text(
+                format!("last-{request}"),
+                ConversationRef::new(ChannelKind::Telegram, "chat-a"),
+                "owner",
+                "/last",
+            ))
+            .await
+            .unwrap();
+        assert_eq!(channel.messages.lock().unwrap().len(), count + 1);
+        let messages = visible_stop_messages(&channel);
+        assert_eq!(messages.len(), 1);
+        assert_ne!(previous.as_ref(), Some(&messages[0]));
+        previous = Some(messages[0].clone());
+    }
+    engine
+        .handle_inbound(inbound("chat-a", "/detach"))
+        .await
+        .unwrap();
+    assert!(visible_stop_messages(&channel).is_empty());
+}
+
+#[tokio::test]
+async fn last_uses_attached_session_despite_background_output() {
+    let agent = Arc::new(FakeAgent::with_history(vec![last_turn_fixture(
+        TurnStatus::InProgress,
+    )]));
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent,
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::AgentMessageDelta {
+            session_id: "thr_b".into(),
+            turn_id: "turn_background".into(),
+            item_id: "background".into(),
+            delta: "Unrelated output".into(),
+        })
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound("chat-a", "/last"))
+        .await
+        .unwrap();
+    let view = channel.sent().last().unwrap().1.clone();
+    assert!(view.body.contains("Checking the compiler output"));
+    assert!(!view.body.contains("Unrelated output"));
+    assert_eq!(view.actions[0].label, "Stop");
+}

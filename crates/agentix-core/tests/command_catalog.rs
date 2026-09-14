@@ -35,3 +35,20 @@ fn native_new_is_exposed_only_when_attached() {
             .any(|command| command.name == "new")
     );
 }
+
+#[test]
+fn last_is_a_contextual_command_only_when_attached() {
+    let menu = agentix_core::command_menu(true);
+    assert!(
+        menu.commands
+            .iter()
+            .any(|command| command.name == "last" && command.contextual)
+    );
+    assert!(
+        !agentix_core::command_menu(false)
+            .commands
+            .iter()
+            .any(|command| command.name == "last")
+    );
+    assert!(agentix_core::parse_input("/last@agentix").is_ok());
+}

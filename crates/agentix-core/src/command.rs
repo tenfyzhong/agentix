@@ -20,6 +20,7 @@ pub enum AgentCommand {
     },
     Attach(String),
     Current,
+    Last,
     Detach,
     Stop,
     Queue,
@@ -106,6 +107,7 @@ pub fn parse_input(input: &str) -> Result<ParsedInput, InputParseError> {
                 .to_owned(),
         ),
         "/current" => AgentCommand::Current,
+        "/last" => AgentCommand::Last,
         "/detach" => AgentCommand::Detach,
         "/stop" => AgentCommand::Stop,
         "/steer" => AgentCommand::Steer(
