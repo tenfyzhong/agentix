@@ -3016,7 +3016,7 @@ async fn assert_empty_attach_recovers_first_turn(active_writer: bool, running: b
     let mut events = client.subscribe();
     let state = SqliteState::in_memory().await.unwrap();
     let channel = Arc::new(RecordingChannel {
-        streaming_interval: Some(Duration::ZERO),
+        streaming_interval: Some(Duration::from_secs(1)),
         ..RecordingChannel::default()
     });
     let engine = Engine::new(client.clone(), state.clone(), vec![channel.clone()]);
@@ -3051,6 +3051,7 @@ async fn assert_empty_attach_recovers_first_turn(active_writer: bool, running: b
             .to_string(),
     );
     receive_recovered_turn(&engine, &mut events, running, 3).await;
+    refresh_recovered_first_turn(&engine, &channel, running).await;
     let view = channel.views().last().unwrap().clone();
     assert!(view.body.contains("First native input"), "{view:?}");
     assert!(view.body.contains("First native answer"), "{view:?}");
@@ -3077,6 +3078,23 @@ async fn assert_empty_attach_recovers_first_turn(active_writer: bool, running: b
         assert!(view.body.contains("First native input"), "{view:?}");
         assert!(view.body.contains("Final native answer"), "{view:?}");
         assert_eq!(view.body.matches("First native input").count(), 1);
+    }
+}
+
+async fn refresh_recovered_first_turn(engine: &Engine, channel: &RecordingChannel, running: bool) {
+    assert!(
+        channel
+            .views()
+            .last()
+            .unwrap()
+            .body
+            .contains("First native input"),
+        "native input must be visible before waiting for a stream refresh"
+    );
+    if running {
+        // Use the production Feishu pacing and drive the runtime's working refresh.
+        tokio::time::sleep(Duration::from_millis(1_100)).await;
+        engine.refresh_working_turns().await;
     }
 }
 

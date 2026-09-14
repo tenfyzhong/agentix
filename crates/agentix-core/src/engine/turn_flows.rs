@@ -953,13 +953,25 @@ impl Engine {
             self.replace_stop_action(key, &message.conversation, None, false)
                 .await;
             self.state.delete_turn_view(&key.0, &key.1).await?;
-            if let Err(error) = self
-                .channel(message.conversation.channel)?
-                .update(&message.conversation, &message, &view)
-                .await
+            match tokio::time::timeout(
+                Duration::from_millis(250),
+                self.channel(message.conversation.channel)?.update(
+                    &message.conversation,
+                    &message,
+                    &view,
+                ),
+            )
+            .await
             {
-                tracing::warn!(%error, session = %key.0, turn = %key.1,
-                    "failed to remove the revoked stop button from its message");
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    tracing::warn!(%error, session = %key.0, turn = %key.1,
+                        "failed to remove the revoked stop button from its message");
+                }
+                Err(_) => {
+                    tracing::warn!(session = %key.0, turn = %key.1,
+                        "revoked stop button edit exceeded its navigation budget");
+                }
             }
         }
         Ok(())

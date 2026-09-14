@@ -418,6 +418,7 @@ async fn registry_rejects_duplicate_backends() {
 #[derive(Clone)]
 struct FakeAgent {
     stalled_operation: Option<&'static str>,
+    start_gate: Option<Arc<tokio::sync::Notify>>,
     terminal_draft: Arc<Mutex<Option<String>>>,
     terminal_error: Arc<Mutex<Option<String>>>,
     snapshot: Arc<Mutex<MultiplexerSnapshot>>,
@@ -446,6 +447,7 @@ impl FakeAgent {
         Self {
             terminal_draft: Arc::default(),
             stalled_operation: None,
+            start_gate: None,
             terminal_error: Arc::default(),
             snapshot: Arc::new(Mutex::new(multiplexer_snapshot())),
             refresh_count: Arc::default(),
@@ -676,6 +678,9 @@ impl AgentAdapter for FakeAgent {
             .lock()
             .unwrap()
             .push(format!("start:{session_id}:{text}"));
+        if let Some(gate) = &self.start_gate {
+            gate.notified().await;
+        }
         if let Some(reason) = &self.uncertain_start {
             return Err(AgentError::Uncertain(reason.clone()));
         }
@@ -8586,5 +8591,205 @@ async fn attach_does_not_wait_for_optional_session_title() {
             .await
             .unwrap(),
         Some(SessionId::new("thr_a"))
+    );
+}
+
+#[tokio::test]
+async fn attach_delivers_history_while_optional_title_lookup_is_pending() {
+    let mut adapter = FakeAgent::new();
+    adapter.stalled_operation = Some("list");
+    let agent = Arc::new(adapter);
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    tokio::time::timeout(
+        std::time::Duration::from_millis(100),
+        engine.handle_inbound(inbound("chat-a", "/attach thr_a")),
+    )
+    .await
+    .expect("optional title lookup must not delay attachment feedback")
+    .unwrap();
+    assert!(
+        agent
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|call| call == "history:thr_a:1"),
+        "optional title lookup must not delay starting history recovery"
+    );
+    assert!(
+        channel
+            .sent()
+            .iter()
+            .any(|(_, view)| view.body.contains("previous answer"))
+    );
+}
+
+#[tokio::test]
+async fn session_switch_continues_when_old_stop_card_edit_stalls() {
+    assert_operation_continues_with_stalled_stop_card(false).await;
+}
+
+#[tokio::test]
+async fn detach_continues_when_old_stop_card_edit_stalls() {
+    assert_operation_continues_with_stalled_stop_card(true).await;
+}
+
+async fn assert_operation_continues_with_stalled_stop_card(detach: bool) {
+    let agent = Arc::new(FakeAgent::with_history(vec![last_turn_fixture(
+        TurnStatus::InProgress,
+    )]));
+    let channel = Arc::new(FakeChannel::default());
+    let state = SqliteState::in_memory().await.unwrap();
+    let engine = Engine::new(agent.clone(), state.clone(), vec![channel.clone()]);
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    let old_token = channel.sent().last().unwrap().1.actions[0].token.clone();
+    *agent.history_turns.lock().unwrap() = Vec::new();
+    *channel.stall_updates.lock().unwrap() = true;
+    tokio::time::timeout(
+        std::time::Duration::from_millis(500),
+        engine.handle_inbound(inbound(
+            "chat-a",
+            if detach { "/detach" } else { "/attach thr_b" },
+        )),
+    )
+    .await
+    .expect("editing a revoked Stop button must not stall session navigation")
+    .unwrap();
+    let current = state
+        .current_session(&ConversationRef::new(ChannelKind::Telegram, "chat-a"))
+        .await
+        .unwrap();
+    assert_eq!(
+        current,
+        if detach {
+            None
+        } else {
+            Some(SessionId::new("thr_b"))
+        }
+    );
+    assert!(matches!(
+        engine
+            .handle_inbound(InboundEnvelope::action(
+                "stale-navigation-stop",
+                ConversationRef::new(ChannelKind::Telegram, "chat-a"),
+                "owner",
+                old_token,
+            ))
+            .await,
+        Err(EngineError::InvalidAction)
+    ));
+    assert!(!agent.calls().iter().any(|call| call.starts_with("stop:")));
+    if !detach {
+        engine
+            .handle_inbound(inbound("chat-a", "Continue immediately"))
+            .await
+            .unwrap();
+        assert!(
+            channel
+                .sent()
+                .iter()
+                .any(|(_, view)| view.body.contains("Continue immediately"))
+        );
+    }
+}
+
+#[tokio::test]
+async fn slow_prompt_confirmation_reuses_the_pending_input_card() {
+    Box::pin(assert_slow_prompt_feedback(None)).await;
+}
+
+#[tokio::test]
+async fn slow_prompt_failure_finalizes_the_pending_input_card() {
+    Box::pin(assert_slow_prompt_feedback(Some(false))).await;
+}
+
+#[tokio::test]
+async fn slow_prompt_uncertainty_finalizes_without_resending() {
+    Box::pin(assert_slow_prompt_feedback(Some(true))).await;
+}
+
+async fn assert_slow_prompt_feedback(failure: Option<bool>) {
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let mut adapter = FakeAgent::new();
+    adapter.start_gate = Some(gate.clone());
+    if failure == Some(true) {
+        adapter.uncertain_start = Some("Acknowledgement lost".into());
+    } else if failure == Some(false) {
+        *adapter.start_failures.lock().unwrap() = 1;
+    }
+    let agent = Arc::new(adapter);
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    let before = channel.messages.lock().unwrap().len();
+    let pending = engine.handle_inbound(inbound("chat-a", "Explain the slow request"));
+    tokio::pin!(pending);
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(250), &mut pending)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        channel.messages.lock().unwrap().len(),
+        before + 1,
+        "show input while waiting for acknowledgement"
+    );
+    let (_, view) = channel.sent().last().unwrap().clone();
+    let message = channel
+        .messages
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|(_, view)| view.body.contains("Explain the slow request"))
+        .unwrap()
+        .0
+        .clone();
+    assert!(view.body.contains("Explain the slow request"));
+    assert_eq!(view.status, agentix_core::ViewStatus::Waiting);
+    assert!(view.actions.is_empty(), "turn ID is not known yet");
+    gate.notify_one();
+    let result = tokio::time::timeout(std::time::Duration::from_secs(1), pending)
+        .await
+        .unwrap();
+    assert_eq!(result.is_err(), failure.is_some());
+    assert_eq!(
+        channel.messages.lock().unwrap().len(),
+        before + 1,
+        "continue in the same card"
+    );
+    let (updated, view) = channel.updated().last().unwrap().clone();
+    assert_eq!(updated, message);
+    assert!(view.body.contains("Explain the slow request"));
+    assert_eq!(
+        view.status,
+        match failure {
+            None => agentix_core::ViewStatus::Running,
+            Some(false) => agentix_core::ViewStatus::Error,
+            Some(true) => agentix_core::ViewStatus::Warning,
+        }
+    );
+    assert_eq!(view.actions.len(), usize::from(failure.is_none()));
+    assert_eq!(
+        agent
+            .calls()
+            .iter()
+            .filter(|call| call.starts_with("start:"))
+            .count(),
+        1
     );
 }

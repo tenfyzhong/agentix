@@ -323,10 +323,20 @@ impl Engine {
                 .show_attach_failure(conversation, owner_id, &session_id, &error)
                 .await;
         }
-        self.sessions
-            .cache_session_summary(self.agent.as_ref(), &session_id)
-            .await;
-        let history = match self.operations.history(&session_id, None, 1).await {
+        let history = {
+            let title = self
+                .sessions
+                .cache_session_summary(self.agent.as_ref(), &session_id);
+            let history = self.operations.history(&session_id, None, 1);
+            tokio::pin!(title, history);
+            // Use a ready title, but never hold attachment feedback for metadata.
+            tokio::select! {
+                biased;
+                () = &mut title => history.await,
+                result = &mut history => result,
+            }
+        };
+        let history = match history {
             Ok(history) => history,
             Err(error) => {
                 if self
@@ -1105,7 +1115,9 @@ impl Engine {
             self.turns.set_active(session, turn_id).await;
             return Ok(());
         }
-        let turn_id = self.operations.send(&session, prompt, None).await?;
+        let turn_id = self
+            .start_prompt_with_feedback(conversation, &session, prompt)
+            .await?;
         self.turns
             .set_active(session.clone(), turn_id.clone())
             .await;

@@ -9,6 +9,7 @@ use uuid::Uuid;
 
 mod cold_turns;
 mod input_recovery;
+mod prompt_feedback;
 pub use input_recovery::RecoveredInput;
 mod coordinator;
 mod dispatch;

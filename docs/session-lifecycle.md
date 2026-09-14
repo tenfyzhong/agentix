@@ -17,6 +17,18 @@ commands and actions. A running Codex, Pi, or OMP turn can expose Stop; Claude d
 not advertise remote stop. Reasoning visibility follows the configured display
 policy and the content actually supplied by the backend.
 
+For IM input sent to an idle session, an acknowledgement taking more than 100 ms
+triggers a `Sending…` card containing the input. Once the backend supplies a turn
+ID, the same card becomes the live turn card with the supported actions. A failed
+or uncertain acknowledgement finalizes the pending card accordingly; the display
+deadline never cancels or resends the input. Channel delivery still contributes
+its own latency.
+
+Switching or detaching revokes the old Stop action before editing its card. That
+visual cleanup has a 250 ms budget per card so a stalled edit cannot indefinitely
+hold session navigation. If the edit fails or times out, the old button may remain
+visible, but its token is invalid and cannot stop either session.
+
 ```mermaid
 flowchart TD
     IM["IM input or action"] --> CORE["Validate owner, binding, capability and action scope"]
@@ -88,8 +100,10 @@ flowchart TD
 
 An empty session can be registered before its rollout/history is materialized.
 Provisional attachment preserves interest in it; recovery captures input and output
-that arrived before a usable subscription. Optional title lookup has a separate
-one-second budget and falls back to the session ID.
+that arrived before a usable subscription. Optional title lookup runs alongside
+history recovery with a one-second budget. Attachment proceeds as soon as history
+is available; a pending title lookup is cancelled and the label falls back to the
+session ID.
 
 EOF, transport errors, completed connection closure, and Proxy shutdown release
 ownership. Exit does not wait for the peer PID to disappear. A silent network
