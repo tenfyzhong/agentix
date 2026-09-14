@@ -11124,3 +11124,128 @@ async fn runtime_reattach_cancellation_does_not_send_queued_input() {
 async fn runtime_reattach_switch_does_not_send_queued_input_to_another_session() {
     check_reattachment_input(Some("/attach thr_b")).await;
 }
+
+#[tokio::test]
+async fn runtime_reattach_preserves_input_order_across_reload() {
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel::default());
+    let state = SqliteState::in_memory().await.unwrap();
+    let engine = Engine::new(agent.clone(), state.clone(), vec![channel.clone()]);
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    let release = Arc::new(tokio::sync::Notify::new());
+    *agent.unsubscribe_gate.lock().unwrap() = Some(release.clone());
+    engine
+        .handle_inbound(inbound("chat-a", "/detach"))
+        .await
+        .unwrap();
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "/attach thr_a ",
+        )))
+        .await
+        .unwrap();
+    for prompt in ["reconnect-first", "reconnect-second"] {
+        engine
+            .execute_work(agentix_core::EngineWork::Inbound(inbound("chat-a", prompt)))
+            .await
+            .unwrap();
+    }
+    let mut next = Engine::new(agent.clone(), state, vec![channel]);
+    next.inherit_runtime(&engine);
+    drop(engine);
+    release.notify_one();
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while !agent
+            .calls()
+            .iter()
+            .any(|call| call.ends_with("reconnect-second"))
+        {
+            next.execute_work(next.next_pending_prompt().await)
+                .await
+                .unwrap();
+        }
+    })
+    .await
+    .expect("queued inputs did not survive reload");
+    let inputs = agent
+        .calls()
+        .into_iter()
+        .filter(|call| call.contains("reconnect-"))
+        .collect::<Vec<_>>();
+    assert_eq!(inputs.len(), 2);
+    assert!(inputs[0].ends_with("reconnect-first"));
+    assert!(inputs[1].ends_with("reconnect-second"));
+}
+
+#[tokio::test]
+async fn runtime_reattach_failure_marks_waiting_input_unsent() {
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    let release = Arc::new(tokio::sync::Notify::new());
+    *agent.unsubscribe_gate.lock().unwrap() = Some(release.clone());
+    engine
+        .handle_inbound(inbound("chat-a", "/detach"))
+        .await
+        .unwrap();
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "/attach thr_a ",
+        )))
+        .await
+        .unwrap();
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "input before failed reconnect",
+        )))
+        .await
+        .unwrap();
+    agent
+        .rejected_attachments
+        .lock()
+        .unwrap()
+        .push(SessionId::new("thr_a"));
+    release.notify_one();
+    for _ in 0..2 {
+        let work = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            engine.next_pending_prompt(),
+        )
+        .await
+        .unwrap();
+        engine.execute_work(work).await.unwrap();
+    }
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        loop {
+            if channel.sent().iter().any(|(_, view)| {
+                view.title == "Agentix · Input not sent"
+                    && view.body.contains("input before failed reconnect")
+            }) {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("failure did not update the queued receipt");
+    assert!(
+        !agent
+            .calls()
+            .iter()
+            .any(|call| call.contains("input before failed reconnect"))
+    );
+}
