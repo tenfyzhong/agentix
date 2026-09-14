@@ -24,7 +24,19 @@ Explicitly requested menu cards still use the normal capability-filtered menu.
 Custom adapters implementing `sync_command_menu` must opt in to receive these
 updates. Native resume publishes its reattachment notice before constructing and
 posting the explicit command menu, so slow capability discovery does not hide
-the successful local binding transition. Menu work still runs afterward.
+the successful local binding transition.
+
+Menu construction and publication use owned workers, serialized per conversation.
+The operation waits at most 50 ms for a fast menu; slower work continues without
+holding the session operation queue. Each conversation retains only its latest
+pending menu, and newer requests cancel obsolete read-only capability discovery.
+An already-started IM publication is allowed to finish before the latest menu is
+published, preventing an older request from overwriting a newer menu. Even channels
+without native menu sync correct an outstanding explicit menu after a binding change.
+There are at most 128 active conversation workers; excess new-conversation menu
+requests are skipped with a warning. Workers are shared across configuration reloads
+and aborted on runtime shutdown or when their final owner is dropped. These bounds
+cover menu work, not the total network latency of other IM messages.
 
 For IM input sent to an idle session, an acknowledgement taking more than 100 ms
 triggers a `Sending…` card containing the input. Once the backend supplies a turn

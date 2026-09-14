@@ -21,6 +21,7 @@ mod interaction_flows;
 mod presentation;
 mod question_flows;
 pub use presentation::{command_menu, command_menu_for};
+mod command_menus;
 mod session_flows;
 mod session_service;
 mod session_switch;
@@ -47,13 +48,12 @@ use coordinator::{InteractionCoordinator, MultiplexerController, TurnCoordinator
 
 use crate::{
     ActionButton, ActionScope, ActionStyle, AgentAdapter, AgentCommand, AgentError, AgentEvent,
-    AttachOutcome, ChannelAdapter, ChannelCommand, ChannelError, ChannelKind, ConversationRef,
-    DeliveryClass, EventImportance, HistoryPage, InboundEnvelope, InboundPayload,
-    InteractionDecision, InteractionKind, InteractionRequest, ItemSummary, MessageRef,
-    MultiplexerMutation, MultiplexerSession, MultiplexerSnapshot, MultiplexerTarget,
-    MultiplexerWindow, OutboundView, PaneSplitDirection, ParsedInput, SessionCommand,
-    SessionCommandChoice, SessionId, SessionStatus, SqliteState, TurnStatus, TurnSummary,
-    ViewStatus, parse_input,
+    AttachOutcome, ChannelAdapter, ChannelError, ChannelKind, ConversationRef, DeliveryClass,
+    EventImportance, HistoryPage, InboundEnvelope, InboundPayload, InteractionDecision,
+    InteractionKind, InteractionRequest, ItemSummary, MessageRef, MultiplexerMutation,
+    MultiplexerSession, MultiplexerSnapshot, MultiplexerTarget, MultiplexerWindow, OutboundView,
+    PaneSplitDirection, ParsedInput, SessionCommand, SessionCommandChoice, SessionId,
+    SessionStatus, SqliteState, TurnStatus, TurnSummary, ViewStatus, parse_input,
 };
 use agentix_storage::StoredTurnView;
 
@@ -298,6 +298,7 @@ pub struct Engine {
     state: SqliteState,
     channels: HashMap<ChannelKind, Arc<dyn ChannelAdapter>>,
     sessions: Arc<SessionService>,
+    menus: Arc<command_menus::CommandMenus>,
     turns: Arc<TurnCoordinator>,
     interactions: Arc<InteractionCoordinator>,
     multiplexer: Arc<MultiplexerController>,
@@ -350,6 +351,7 @@ impl Engine {
                 .map(|channel| (channel.kind(), channel))
                 .collect(),
             sessions: Arc::new(SessionService::new(state)),
+            menus: Arc::new(command_menus::CommandMenus::default()),
             turns: Arc::new(TurnCoordinator::default()),
             interactions: Arc::new(InteractionCoordinator::default()),
             multiplexer: Arc::new(multiplexer),
@@ -369,6 +371,7 @@ impl Engine {
     /// must retain the same storage, channels and agent transports.
     pub fn inherit_runtime(&mut self, previous: &Self) {
         self.sessions = previous.sessions.clone();
+        self.menus = previous.menus.clone();
         self.turns = previous.turns.clone();
         self.interactions = previous.interactions.clone();
         self.multiplexer = previous.multiplexer.clone();

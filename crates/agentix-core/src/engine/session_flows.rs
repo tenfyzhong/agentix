@@ -1,10 +1,10 @@
 //! IM session commands: coordinate session services and presentation.
 use super::{
-    ActionButton, ActionStyle, AgentCommand, AgentError, AttachOutcome, ChannelCommand,
-    ConversationRef, DeliveryClass, Engine, EngineError, HistoryPage, HistoryPresentation, Instant,
-    OutboundView, ParsedInput, PendingSessionInput, SessionCommand, SessionCommandChoice,
-    SessionId, TurnBuffer, TurnStatus, UiAction, Uuid, ViewStatus, display_workspace,
-    history_views, markdown_quote, session_display_label, session_status_label, session_title,
+    ActionButton, ActionStyle, AgentCommand, AgentError, AttachOutcome, ConversationRef,
+    DeliveryClass, Engine, EngineError, HistoryPage, HistoryPresentation, Instant, OutboundView,
+    ParsedInput, PendingSessionInput, SessionCommand, SessionCommandChoice, SessionId, TurnBuffer,
+    TurnStatus, UiAction, Uuid, ViewStatus, display_workspace, history_views, markdown_quote,
+    session_display_label, session_status_label, session_title,
 };
 
 const SESSION_COMMAND_HELP: &[(&str, &str)] = &[
@@ -957,20 +957,7 @@ impl Engine {
         conversation: &ConversationRef,
         attached: bool,
     ) {
-        if let Err(error) = self.update_command_menu(conversation, attached).await {
-            tracing::warn!(%error, ?conversation, attached, "failed to update the IM command menu");
-        }
-    }
-
-    pub(super) async fn update_command_menu(
-        &self,
-        conversation: &ConversationRef,
-        attached: bool,
-    ) -> Result<(), EngineError> {
-        let channel = self.channel(conversation.channel)?;
-        let menu = self.conversation_command_menu(conversation, attached).await;
-        channel.set_command_menu(conversation, &menu).await?;
-        Ok(())
+        self.queue_command_menu(conversation, attached, false).await;
     }
 
     pub(super) async fn sync_command_menu_best_effort(
@@ -978,106 +965,7 @@ impl Engine {
         conversation: &ConversationRef,
         attached: bool,
     ) {
-        let result = async {
-            let channel = self.channel(conversation.channel)?;
-            if !channel.supports_command_menu_sync() {
-                return Ok(());
-            }
-            let menu = self.conversation_command_menu(conversation, attached).await;
-            channel.sync_command_menu(conversation, &menu).await?;
-            Ok::<(), EngineError>(())
-        }
-        .await;
-        if let Err(error) = result {
-            tracing::warn!(%error, ?conversation, attached, "failed to synchronize the IM command menu");
-        }
-    }
-
-    async fn conversation_command_menu(
-        &self,
-        conversation: &ConversationRef,
-        attached: bool,
-    ) -> crate::CommandMenu {
-        let mut menu = super::command_menu_for(
-            attached && self.agent.capabilities().session_control,
-            self.multiplexer_enabled.then_some(self.multiplexer_kind),
-        );
-        if attached && !self.agent.capabilities().session_control {
-            menu.commands
-                .push(ChannelCommand::new("last", "Show the latest turn again").contextual());
-        }
-        if attached && let Some(session) = self.sessions.current(conversation).await {
-            let mut commands = Vec::new();
-            for command in menu.commands.drain(..) {
-                let session_command = crate::parse_input(&format!("/{}", command.name)).ok();
-                if !matches!(
-                    session_command,
-                    Some(crate::ParsedInput::Command(crate::AgentCommand::Session(_)))
-                ) || command.name == "exit"
-                    || self.agent.supports_command(&session, &command.name).await
-                {
-                    commands.push(command);
-                }
-            }
-            menu.commands = commands;
-        }
-        if attached
-            && let Some(session) = self.sessions.current(conversation).await
-            && !self.agent.session_access(&session).await.can_write()
-        {
-            menu.commands.retain(|command| {
-                matches!(
-                    command.name.as_str(),
-                    "sessions"
-                        | "rmux"
-                        | "tmux"
-                        | "current"
-                        | "history"
-                        | "last"
-                        | "detach"
-                        | "cancel"
-                        | "help"
-                )
-            });
-        }
-        if self.tasks.backend.is_some() {
-            menu.commands.push(ChannelCommand::new(
-                "dashboard",
-                "Browse projects and task boards",
-            ));
-            if attached {
-                menu.commands.extend([
-                    ChannelCommand::new("board", "Show this session's task board").contextual(),
-                    ChannelCommand::new("jobs", "Browse this session's jobs").contextual(),
-                    ChannelCommand::new("inboxes", "Browse this project's inbox").contextual(),
-                    ChannelCommand::new("inbox", "Append a requirement to this project's inbox")
-                        .contextual(),
-                ]);
-            }
-        }
-        let primary = [
-            "sessions",
-            "dashboard",
-            "cancel",
-            self.multiplexer_kind.as_str(),
-            "help",
-        ];
-        menu.commands.sort_by(|left, right| {
-            let rank = |command: &ChannelCommand| {
-                if command.contextual {
-                    primary.len()
-                } else {
-                    primary
-                        .iter()
-                        .position(|name| *name == command.name)
-                        .unwrap_or(primary.len())
-                }
-            };
-            rank(left)
-                .cmp(&rank(right))
-                .then_with(|| left.name.cmp(&right.name))
-        });
-        menu
+        self.queue_command_menu(conversation, attached, true).await;
     }
 
     pub(super) async fn stop_current(

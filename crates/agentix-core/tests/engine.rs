@@ -10584,3 +10584,225 @@ async fn startup_and_resume_feedback_do_not_wait_for_menu_discovery() {
         );
     }
 }
+
+#[tokio::test]
+async fn slow_menu_releases_session_work_and_keeps_latest_binding_menu() {
+    use tokio_util::sync::CancellationToken;
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Arc::new(Engine::new(
+        Arc::new(FakeAgent::new()),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    ));
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::SessionExited {
+            session_id: "thr_a".into(),
+        })
+        .await
+        .unwrap();
+    let entered = CancellationToken::new();
+    let release = CancellationToken::new();
+    *channel.next_menu_gate.lock().unwrap() = Some((entered.clone(), release.clone()));
+    let mut resume = tokio::spawn({
+        let engine = engine.clone();
+        async move {
+            engine
+                .execute_work(agentix_core::EngineWork::Event(
+                    AgentEvent::SessionResumed {
+                        session_id: "thr_a".into(),
+                    },
+                ))
+                .await
+        }
+    });
+    entered.cancelled().await;
+    let finished = tokio::time::timeout(std::time::Duration::from_millis(250), &mut resume).await;
+    if finished.is_err() {
+        release.cancel();
+        resume.await.unwrap().unwrap();
+        panic!("slow menu must release the session operation queue");
+    }
+    finished.unwrap().unwrap().unwrap();
+    engine
+        .handle_inbound(inbound("chat-a", "/detach"))
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_b"))
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound("chat-a", "/detach "))
+        .await
+        .unwrap();
+    let before = channel.menus.lock().unwrap().len();
+    release.cancel();
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        loop {
+            if channel.menus.lock().unwrap().len() >= before + 2 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let menus = channel.menus.lock().unwrap();
+    assert_eq!(
+        menus.len(),
+        before + 2,
+        "intermediate menus must be coalesced"
+    );
+    assert!(
+        !menus
+            .last()
+            .unwrap()
+            .commands
+            .iter()
+            .any(|command| command.name == "current")
+    );
+}
+
+#[tokio::test]
+async fn slow_explicit_menu_is_corrected_by_attach_without_native_sync() {
+    let channel = Arc::new(FakeChannel {
+        skip_native_menu_sync: true,
+        ..Default::default()
+    });
+    let engine = Arc::new(Engine::new(
+        Arc::new(FakeAgent::new()),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    ));
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    let entered = tokio_util::sync::CancellationToken::new();
+    let release = tokio_util::sync::CancellationToken::new();
+    *channel.next_menu_gate.lock().unwrap() = Some((entered.clone(), release.clone()));
+    engine
+        .handle_inbound(inbound("chat-a", "/detach"))
+        .await
+        .unwrap();
+    assert!(entered.is_cancelled());
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_b"))
+        .await
+        .unwrap();
+    release.cancel();
+    tokio::time::timeout(std::time::Duration::from_millis(250), async {
+        loop {
+            if channel
+                .session_commands()
+                .last()
+                .is_some_and(|(_, attached)| *attached)
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("late detached menu must be corrected even without native menu sync");
+}
+
+#[tokio::test]
+async fn slow_menu_worker_is_cancelled_on_shutdown_and_drop() {
+    for shutdown in [true, false] {
+        let channel = Arc::new(FakeChannel::default());
+        let engine = Engine::new(
+            Arc::new(FakeAgent::new()),
+            SqliteState::in_memory().await.unwrap(),
+            vec![channel.clone()],
+        );
+        let entered = tokio_util::sync::CancellationToken::new();
+        let release = tokio_util::sync::CancellationToken::new();
+        *channel.next_menu_gate.lock().unwrap() = Some((entered.clone(), release.clone()));
+        engine
+            .handle_inbound(inbound("chat-a", "/attach thr_a"))
+            .await
+            .unwrap();
+        assert!(entered.is_cancelled());
+        if shutdown {
+            engine.cancel_pending_prompts().await.unwrap();
+        }
+        drop(engine);
+        release.cancel();
+        for _ in 0..10 {
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            channel.menus.lock().unwrap().is_empty(),
+            "cancelled worker published a menu"
+        );
+    }
+}
+
+#[tokio::test]
+async fn stale_menu_discovery_is_cancelled_after_detach() {
+    let mut adapter = FakeAgent::new();
+    adapter.stalled_operation = Some("supports_command");
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        Arc::new(adapter),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    tokio::time::timeout(
+        std::time::Duration::from_millis(250),
+        engine.handle_inbound(inbound("chat-a", "/attach thr_a")),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(channel.menus.lock().unwrap().is_empty());
+    tokio::time::timeout(
+        std::time::Duration::from_millis(250),
+        engine.handle_inbound(inbound("chat-a", "/detach")),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(channel.session_commands().len(), 1);
+    assert!(!channel.session_commands().last().unwrap().1);
+}
+
+#[tokio::test]
+async fn reload_preserves_slow_menu_serialization() {
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel::default());
+    let state = SqliteState::in_memory().await.unwrap();
+    let engine = Engine::new(agent.clone(), state.clone(), vec![channel.clone()]);
+    let entered = tokio_util::sync::CancellationToken::new();
+    let release = tokio_util::sync::CancellationToken::new();
+    *channel.next_menu_gate.lock().unwrap() = Some((entered.clone(), release.clone()));
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    assert!(entered.is_cancelled());
+    let mut next = Engine::new(agent, state, vec![channel.clone()]);
+    next.inherit_runtime(&engine);
+    drop(engine);
+    next.handle_inbound(inbound("chat-a", "/detach"))
+        .await
+        .unwrap();
+    assert!(channel.menus.lock().unwrap().is_empty());
+    release.cancel();
+    tokio::time::timeout(std::time::Duration::from_millis(250), async {
+        loop {
+            if channel.session_commands().len() == 2 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(!channel.session_commands().last().unwrap().1);
+}
