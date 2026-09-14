@@ -6887,3 +6887,154 @@ async fn new_session_stalled_attachment_expires_without_committing() {
         Some(SessionId::new("thr_a"))
     );
 }
+
+#[tokio::test]
+async fn background_question_requires_attach_before_answering() {
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound_as("chat-a", "owner-42", "/help"))
+        .await
+        .unwrap();
+    let request = user_input_request(
+        "queued-question",
+        &serde_json::json!([{"id":"approach","header":"Approach","question":"Which approach?","options":[{"label":"Fast","description":"Small change"}]}]),
+    );
+    let before = channel.sent().len();
+    engine
+        .handle_agent_event(AgentEvent::InteractionRequested(request.clone()))
+        .await
+        .unwrap();
+    let notice = channel.sent().last().unwrap().1.clone();
+    assert_eq!(channel.sent().len(), before + 1);
+    assert_eq!(
+        notice
+            .actions
+            .iter()
+            .map(|a| a.label.as_str())
+            .collect::<Vec<_>>(),
+        ["Attach"]
+    );
+    assert!(notice.body.contains("waiting for your answer"));
+    engine
+        .handle_agent_event(AgentEvent::InteractionRequested(request.clone()))
+        .await
+        .unwrap();
+    assert_eq!(channel.sent().len(), before + 1);
+    click_action(&engine, "attach-question", notice.actions[0].token.clone()).await;
+    let question = channel.sent().last().unwrap().1.clone();
+    assert!(question.body.contains("Which approach?"));
+    assert_eq!(question.actions[0].label, "Fast");
+    let before_duplicate = channel.sent().len();
+    engine
+        .handle_agent_event(AgentEvent::InteractionRequested(request))
+        .await
+        .unwrap();
+    assert_eq!(channel.sent().len(), before_duplicate);
+    click_action(
+        &engine,
+        "answer-question",
+        question.actions[0].token.clone(),
+    )
+    .await;
+    assert!(channel.updated().last().unwrap().1.body.contains("Fast"));
+    assert_eq!(
+        agent.interaction_decisions()[0].rpc_id,
+        serde_json::json!("queued-question")
+    );
+}
+
+#[tokio::test]
+async fn externally_resolved_background_question_is_not_shown_after_attach() {
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        Arc::new(FakeAgent::new()),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound_as("chat-a", "owner-42", "/help"))
+        .await
+        .unwrap();
+    let request = user_input_request(
+        "resolved-question",
+        &serde_json::json!([{"id":"q","header":"Question","question":"Choose now?","options":[{"label":"Yes","description":"Continue"}]}]),
+    );
+    engine
+        .handle_agent_event(AgentEvent::InteractionRequested(request))
+        .await
+        .unwrap();
+    assert!(
+        channel
+            .sent()
+            .last()
+            .unwrap()
+            .1
+            .body
+            .contains("waiting for your answer")
+    );
+    engine
+        .handle_agent_event(AgentEvent::InteractionResolved {
+            session_id: "thr_a".into(),
+            request_id: "resolved-question".into(),
+        })
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound_as("chat-a", "owner-42", "/attach thr_a"))
+        .await
+        .unwrap();
+    assert!(
+        !channel
+            .sent()
+            .last()
+            .unwrap()
+            .1
+            .body
+            .contains("Choose now?")
+    );
+}
+
+#[tokio::test]
+async fn a_custom_question_answer_requires_the_session_to_remain_attached() {
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound_as("chat-a", "owner-42", "/attach thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::InteractionRequested(user_input_request(
+            "custom-question",
+            &serde_json::json!([{"id":"q","header":"Question","question":"Choose?","options":[]}]),
+        )))
+        .await
+        .unwrap();
+    click_action(
+        &engine,
+        "begin-custom",
+        channel.sent().last().unwrap().1.actions[0].token.clone(),
+    )
+    .await;
+    engine
+        .handle_inbound(inbound_as("chat-a", "owner-42", "/detach"))
+        .await
+        .unwrap();
+    assert!(
+        engine
+            .handle_inbound(inbound_as("chat-a", "owner-42", "answer after detach"))
+            .await
+            .is_err()
+    );
+    assert!(agent.interaction_decisions().is_empty());
+}

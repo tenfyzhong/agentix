@@ -2307,3 +2307,100 @@ async fn status_reports_remaining_quota_windows_and_survives_quota_errors() {
     assert!(status.body.contains("not reported"));
     assert!(!status.body.contains("100% remaining"));
 }
+
+#[tokio::test]
+async fn cli_proxy_questions_can_be_answered_from_attached_or_background_im() {
+    use agentix_codex::{CodexEndpoint, CodexProxy};
+    use std::path::Path;
+    for attached in [false, true] {
+        let server = MockCodexAppServer::start();
+        server
+            .add_thread(MockThread::new("thr_question", "CLI question", "/work"))
+            .await;
+        let directory = tempfile::tempdir().unwrap();
+        let proxy = CodexProxy::bind(
+            &format!("unix://{}", directory.path().join("proxy.sock").display()),
+            &format!("unix://{}", server.endpoint().socket_path().display()),
+        )
+        .await
+        .unwrap();
+        let cli = CodexClient::connect(CodexEndpoint::parse(proxy.endpoint()).unwrap())
+            .await
+            .unwrap();
+        cli.set_background_turn_notifications(false);
+        cli.attach(&SessionId::new("thr_question")).await.unwrap();
+        server.set_active_writer("thr_question").await;
+        let client = Arc::new(
+            CodexClient::connect_with_registry(
+                server.endpoint(),
+                Path::new("codex"),
+                Path::new("/tmp"),
+                true,
+                proxy.registry(),
+            )
+            .await
+            .unwrap(),
+        );
+        let mut events = client.subscribe();
+        let channel = Arc::new(RecordingChannel::default());
+        let engine = Engine::new(
+            client.clone(),
+            SqliteState::in_memory().await.unwrap(),
+            vec![channel.clone()],
+        );
+        engine
+            .handle_inbound(inbound(if attached {
+                "/attach thr_question"
+            } else {
+                "/help"
+            }))
+            .await
+            .unwrap();
+        let response = server.request_user_input("thr_question", "turn-question", "item-question", json!([{"id":"choice","header":"Choice","question":"Which approach?","options":[{"label":"Fast","description":"Small change"}]}])).await;
+        let event = tokio::time::timeout(Duration::from_secs(30), async {
+            loop {
+                let event = events.recv().await.unwrap();
+                if matches!(event, AgentEvent::InteractionRequested(_)) {
+                    break event;
+                }
+            }
+        })
+        .await
+        .unwrap();
+        engine.handle_agent_event(event).await.unwrap();
+        if !attached {
+            let notice = channel.views().last().unwrap().clone();
+            assert_eq!(notice.actions.len(), 1);
+            assert_eq!(notice.actions[0].label, "Attach");
+            engine
+                .handle_inbound(InboundEnvelope::action(
+                    "attach-question",
+                    ConversationRef::new(ChannelKind::Telegram, "chat-e2e"),
+                    "owner-e2e",
+                    notice.actions[0].token.clone(),
+                ))
+                .await
+                .unwrap();
+        }
+        assert!(client.is_read_only(&SessionId::new("thr_question")).await);
+        let question = channel.views().last().unwrap().clone();
+        assert!(question.body.contains("Which approach?"));
+        assert_eq!(question.actions[0].label, "Fast");
+        engine
+            .handle_inbound(InboundEnvelope::action(
+                "answer-question",
+                ConversationRef::new(ChannelKind::Telegram, "chat-e2e"),
+                "owner-e2e",
+                question.actions[0].token.clone(),
+            ))
+            .await
+            .unwrap();
+        assert_eq!(
+            tokio::time::timeout(Duration::from_secs(3), response)
+                .await
+                .unwrap()
+                .unwrap(),
+            json!({"answers":{"choice":{"answers":["Fast"]}}})
+        );
+    }
+}

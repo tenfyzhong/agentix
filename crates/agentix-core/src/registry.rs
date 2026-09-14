@@ -491,6 +491,20 @@ fn route_interaction(kind: AgentKind, event: &mut AgentEvent, routes: &Routes) {
     }
 
     if let AgentEvent::InteractionRequested(request) = event {
+        let existing = routes
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(_, route)| {
+                route.session.agent == kind
+                    && route.session.native_id.as_str() == request.session_id
+                    && route.native == request.rpc_id
+            })
+            .map(|(token, _)| token.clone());
+        if let Some(token) = existing {
+            request.rpc_id = json!(token);
+            return;
+        }
         let token = uuid::Uuid::new_v4().to_string();
         routes.lock().unwrap().insert(
             token.clone(),
@@ -592,6 +606,35 @@ fn spawn_backend(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn repeated_native_question_reuses_its_reply_route() {
+        let routes: Routes = Arc::default();
+        let request = agentix_domain::InteractionRequest {
+            rpc_id: json!(91),
+            method: "item/tool/requestUserInput".into(),
+            session_id: "thread-a".into(),
+            turn_id: "turn-a".into(),
+            item_id: Some("item-a".into()),
+            kind: agentix_domain::InteractionKind::UserInput,
+            title: "Question".into(),
+            detail: String::new(),
+            available_decisions: Vec::new(),
+            payload: json!({"questions":[]}),
+            auto_resolution_ms: None,
+        };
+        let mut first = AgentEvent::InteractionRequested(request.clone());
+        let mut duplicate = AgentEvent::InteractionRequested(request);
+        route_interaction(AgentKind::Codex, &mut first, &routes);
+        route_interaction(AgentKind::Codex, &mut duplicate, &routes);
+        let (AgentEvent::InteractionRequested(first), AgentEvent::InteractionRequested(duplicate)) =
+            (first, duplicate)
+        else {
+            panic!("questions");
+        };
+        assert_eq!(first.rpc_id, duplicate.rpc_id);
+        assert_eq!(routes.lock().unwrap().len(), 1);
+    }
 
     #[test]
     fn unnamed_sessions_use_the_last_native_id_segment() {

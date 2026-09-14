@@ -310,6 +310,8 @@ impl Engine {
                 ),
             )
             .await?;
+            self.show_queued_questions(conversation, &session_id)
+                .await?;
             return Ok(());
         }
         if let Err(error) = self.agent.attach(&session_id).await {
@@ -361,6 +363,8 @@ impl Engine {
             HistoryPresentation::Attached,
         )
         .await?;
+        self.show_queued_questions(conversation, &session_id)
+            .await?;
         Ok(())
     }
 

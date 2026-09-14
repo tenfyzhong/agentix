@@ -746,6 +746,16 @@ impl CodexClient {
     }
 
     pub async fn respond(&self, id: Value, result: Value) -> Result<(), ClientError> {
+        if self
+            .registry
+            .as_ref()
+            .is_some_and(|registry| registry.question_was_resolved(&id))
+        {
+            return Err(ClientError::Rpc {
+                code: -32600,
+                message: "This question has already been resolved.".into(),
+            });
+        }
         self.writer
             .lock()
             .await
@@ -753,6 +763,9 @@ impl CodexClient {
                 json!({"id": id, "result": result}).to_string().into(),
             ))
             .await?;
+        if let Some(registry) = &self.registry {
+            registry.complete_question(&id);
+        }
         Ok(())
     }
 
@@ -1616,6 +1629,7 @@ impl CodexClient {
 
 async fn monitor_running_sessions(client: CodexClient) {
     let mut lifecycle_sequence = 0;
+    let mut question_generation = client.connection.generation.load(Ordering::Acquire);
     let mut missing_counts = HashMap::new();
     let mut background = background::BackgroundTurns::new();
     let mut registry_changes = client
@@ -1632,8 +1646,18 @@ async fn monitor_running_sessions(client: CodexClient) {
             tokio::time::sleep(RUNNING_SESSION_POLL_INTERVAL).await;
         }
         if let Some(registry) = &client.registry {
+            let generation = client.connection.generation.load(Ordering::Acquire);
+            if generation != question_generation {
+                registry.reset_questions();
+                question_generation = generation;
+            }
             for (sequence, event) in registry.lifecycle_since(lifecycle_sequence) {
                 lifecycle_sequence = sequence;
+                if let AgentEvent::InteractionRequested(request) = &event
+                    && !registry.question_is_pending(&request.rpc_id)
+                {
+                    continue;
+                }
                 let _ = client.events.send(event);
             }
         }
