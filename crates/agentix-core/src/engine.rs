@@ -9,8 +9,10 @@ use uuid::Uuid;
 
 mod cold_turns;
 mod input_recovery;
+mod pending_prompts;
 mod prompt_feedback;
 pub use input_recovery::RecoveredInput;
+pub use pending_prompts::{PromptAcknowledged, QueuedInput};
 mod coordinator;
 mod dispatch;
 mod output_buffer;
@@ -443,6 +445,7 @@ impl Engine {
         }
         .await;
         match result {
+            Ok(()) if pending_prompts::Delivery::is_deferred() => Ok(()),
             Ok(()) => {
                 self.state
                     .complete_event(envelope.conversation.channel, &envelope.event_id)

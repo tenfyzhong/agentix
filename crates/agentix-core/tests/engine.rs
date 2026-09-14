@@ -417,6 +417,7 @@ async fn registry_rejects_duplicate_backends() {
 
 #[derive(Clone)]
 struct FakeAgent {
+    generation: Arc<std::sync::atomic::AtomicU64>,
     stalled_operation: Option<&'static str>,
     start_gate: Option<Arc<tokio::sync::Notify>>,
     title_gate: Option<Arc<tokio::sync::Notify>>,
@@ -448,6 +449,7 @@ impl FakeAgent {
         Self {
             terminal_draft: Arc::default(),
             stalled_operation: None,
+            generation: Arc::new(std::sync::atomic::AtomicU64::new(1)),
             start_gate: None,
             title_gate: None,
             terminal_error: Arc::default(),
@@ -729,7 +731,7 @@ impl AgentAdapter for FakeAgent {
     }
 
     fn generation(&self) -> u64 {
-        1
+        self.generation.load(std::sync::atomic::Ordering::Acquire)
     }
 }
 
@@ -8946,4 +8948,728 @@ async fn dropping_engine_cancels_pending_title_read() {
     })
     .await
     .expect("metadata reader must not outlive its engine owner");
+}
+
+async fn pending_runtime_input() -> (
+    Engine,
+    Arc<FakeAgent>,
+    Arc<FakeChannel>,
+    Arc<tokio::sync::Notify>,
+    SqliteState,
+) {
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let mut adapter = FakeAgent::new();
+    adapter.start_gate = Some(gate.clone());
+    let agent = Arc::new(adapter);
+    let channel = Arc::new(FakeChannel::default());
+    let state = SqliteState::in_memory().await.unwrap();
+    let engine = Engine::new(agent.clone(), state.clone(), vec![channel.clone()]);
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    tokio::time::timeout(
+        std::time::Duration::from_millis(250),
+        engine.execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "pending runtime input",
+        ))),
+    )
+    .await
+    .expect("release the runtime lane before input acknowledgement")
+    .unwrap();
+    (engine, agent, channel, gate, state)
+}
+
+async fn apply_next_pending_input(engine: &Engine) {
+    let work = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        engine.next_pending_prompt(),
+    )
+    .await
+    .unwrap();
+    engine.execute_work(work).await.unwrap();
+}
+
+#[tokio::test]
+async fn runtime_pending_input_stops_when_early_turn_id_arrives() {
+    let (engine, agent, _, gate, _) = pending_runtime_input().await;
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a", "/stop",
+        )))
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::TurnStarted {
+            session_id: "thr_a".into(),
+            turn_id: "turn_new".into(),
+        })
+        .await
+        .unwrap();
+    let stopped_before_ack = agent
+        .calls()
+        .iter()
+        .any(|call| call == "stop:thr_a:turn_new");
+    gate.notify_one();
+    apply_next_pending_input(&engine).await;
+    assert!(
+        stopped_before_ack,
+        "use the early turn ID without waiting for turn/start acknowledgement"
+    );
+    assert_eq!(
+        agent
+            .calls()
+            .iter()
+            .filter(|call| call.as_str() == "stop:thr_a:turn_new")
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn runtime_pending_ack_preserves_completed_output_and_card() {
+    let (engine, _, channel, gate, _) = pending_runtime_input().await;
+    let count = channel.messages.lock().unwrap().len();
+    engine
+        .handle_agent_event(AgentEvent::TurnStarted {
+            session_id: "thr_a".into(),
+            turn_id: "turn_new".into(),
+        })
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::AgentMessageDelta {
+            session_id: "thr_a".into(),
+            turn_id: "turn_new".into(),
+            item_id: "answer".into(),
+            delta: "early streamed answer".into(),
+        })
+        .await
+        .unwrap();
+    assert!(
+        channel
+            .updated()
+            .iter()
+            .any(|(_, view)| view.body.contains("early streamed answer"))
+    );
+    engine
+        .handle_agent_event(AgentEvent::TurnCompleted {
+            session_id: "thr_a".into(),
+            turn_id: "turn_new".into(),
+            status: TurnStatus::Completed,
+            error: None,
+        })
+        .await
+        .unwrap();
+    gate.notify_one();
+    apply_next_pending_input(&engine).await;
+    assert!(
+        engine.working_turns().await.is_empty(),
+        "a late acknowledgement must not restart a completed turn"
+    );
+    assert_eq!(
+        channel.messages.lock().unwrap().len(),
+        count,
+        "retain the pending input card"
+    );
+    let views = channel.updated();
+    let view = &views.last().unwrap().1;
+    assert!(view.body.contains("early streamed answer"));
+    assert!(view.actions.is_empty());
+}
+
+#[tokio::test]
+async fn runtime_pending_queue_preserves_order_and_deduplicates_input() {
+    let (engine, agent, _, gate, _) = pending_runtime_input().await;
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "pending runtime input",
+        )))
+        .await
+        .unwrap();
+    for text in ["second input", "third input"] {
+        engine
+            .execute_work(agentix_core::EngineWork::Inbound(inbound("chat-a", text)))
+            .await
+            .unwrap();
+    }
+    gate.notify_one();
+    for _ in 0..3 {
+        apply_next_pending_input(&engine).await;
+    }
+    let inputs = agent
+        .calls()
+        .into_iter()
+        .filter(|call| call.starts_with("start:") || call.starts_with("steer:"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        inputs,
+        [
+            "start:thr_a:pending runtime input",
+            "steer:thr_a:turn_new:second input",
+            "steer:thr_a:turn_new:third input"
+        ]
+    );
+}
+
+#[tokio::test]
+async fn runtime_pending_queue_is_not_retargeted_after_switching() {
+    let (engine, agent, channel, gate, _) = pending_runtime_input().await;
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "queued for old session",
+        )))
+        .await
+        .unwrap();
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "/attach thr_b",
+        )))
+        .await
+        .unwrap();
+    gate.notify_one();
+    apply_next_pending_input(&engine).await;
+    assert_eq!(
+        agent
+            .calls()
+            .iter()
+            .filter(|call| call.starts_with("start:") || call.starts_with("steer:"))
+            .count(),
+        1
+    );
+    assert!(engine.working_turns().await.is_empty());
+    assert!(
+        channel
+            .sent()
+            .iter()
+            .any(|(_, view)| view.title.contains("Input not sent")
+                && view.body.contains("queued for old session"))
+    );
+}
+
+#[tokio::test]
+async fn runtime_pending_shutdown_fences_unacknowledged_input() {
+    let (engine, agent, _, _, state) = pending_runtime_input().await;
+    engine.cancel_pending_prompts().await.unwrap();
+    assert_eq!(state.uncertain_event_count().await.unwrap(), 1);
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "pending runtime input",
+        )))
+        .await
+        .unwrap();
+    assert_eq!(
+        agent
+            .calls()
+            .iter()
+            .filter(|call| call.starts_with("start:"))
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn runtime_pending_stop_survives_detach_before_ack() {
+    let (engine, agent, _, gate, _) = pending_runtime_input().await;
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a", "/stop",
+        )))
+        .await
+        .unwrap();
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a", "/detach",
+        )))
+        .await
+        .unwrap();
+    gate.notify_one();
+    apply_next_pending_input(&engine).await;
+    assert!(
+        agent
+            .calls()
+            .iter()
+            .any(|call| call == "stop:thr_a:turn_new")
+    );
+    assert!(engine.working_turns().await.is_empty());
+}
+
+#[tokio::test]
+async fn runtime_pending_render_failure_retains_queued_input() {
+    let (engine, agent, channel, gate, _) = pending_runtime_input().await;
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "queued despite IM failure",
+        )))
+        .await
+        .unwrap();
+    *channel.next_update_failures.lock().unwrap() = 1;
+    gate.notify_one();
+    let work = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        engine.next_pending_prompt(),
+    )
+    .await
+    .unwrap();
+    let _ = engine.execute_work(work).await;
+    apply_next_pending_input(&engine).await;
+    assert!(
+        agent
+            .calls()
+            .iter()
+            .any(|call| call == "steer:thr_a:turn_new:queued despite IM failure")
+    );
+}
+
+#[tokio::test]
+async fn runtime_pending_new_input_cannot_overtake_admitted_followup() {
+    let (engine, agent, _, gate, _) = pending_runtime_input().await;
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "older followup",
+        )))
+        .await
+        .unwrap();
+    gate.notify_one();
+    apply_next_pending_input(&engine).await;
+    let older = engine.next_pending_prompt().await;
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "newer followup",
+        )))
+        .await
+        .unwrap();
+    engine.execute_work(older).await.unwrap();
+    apply_next_pending_input(&engine).await;
+    let inputs = agent
+        .calls()
+        .into_iter()
+        .filter(|call| call.starts_with("steer:"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        inputs,
+        [
+            "steer:thr_a:turn_new:older followup",
+            "steer:thr_a:turn_new:newer followup"
+        ]
+    );
+}
+
+#[tokio::test]
+async fn runtime_pending_shutdown_retains_admitted_followup_ownership() {
+    let (engine, _, _, gate, state) = pending_runtime_input().await;
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "admitted followup",
+        )))
+        .await
+        .unwrap();
+    gate.notify_one();
+    apply_next_pending_input(&engine).await;
+    let _admitted = engine.next_pending_prompt().await;
+    engine.cancel_pending_prompts().await.unwrap();
+    assert_eq!(
+        state.uncertain_event_count().await.unwrap(),
+        1,
+        "queued completion work remains owned after admission"
+    );
+}
+
+#[tokio::test]
+async fn runtime_pending_stop_cancels_admitted_followup() {
+    let (engine, agent, _, gate, _) = pending_runtime_input().await;
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "followup before stop",
+        )))
+        .await
+        .unwrap();
+    gate.notify_one();
+    apply_next_pending_input(&engine).await;
+    let admitted = engine.next_pending_prompt().await;
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a", "/stop",
+        )))
+        .await
+        .unwrap();
+    engine.execute_work(admitted).await.unwrap();
+    assert!(
+        !agent.calls().iter().any(|call| call.starts_with("steer:")),
+        "Stop cancels follow-ups even after runtime admission"
+    );
+}
+
+#[tokio::test]
+async fn runtime_pending_detached_early_turn_does_not_strand_sending_card() {
+    let (engine, _, channel, gate, _) = pending_runtime_input().await;
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a", "/detach",
+        )))
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::TurnStarted {
+            session_id: "thr_a".into(),
+            turn_id: "turn_new".into(),
+        })
+        .await
+        .unwrap();
+    gate.notify_one();
+    apply_next_pending_input(&engine).await;
+    assert!(
+        channel
+            .updated()
+            .iter()
+            .any(|(_, view)| view.body.contains("pending runtime input")
+                && view.title.contains("Sent")
+                && view.actions.is_empty()),
+        "finalize the original input card after detaching"
+    );
+}
+
+#[tokio::test]
+async fn runtime_pending_delta_without_start_reuses_input_card() {
+    let (engine, _, channel, gate, _) = pending_runtime_input().await;
+    let count = channel.messages.lock().unwrap().len();
+    engine
+        .handle_agent_event(AgentEvent::AgentMessageDelta {
+            session_id: "thr_a".into(),
+            turn_id: "turn_new".into(),
+            item_id: "answer".into(),
+            delta: "answer before start event".into(),
+        })
+        .await
+        .unwrap();
+    gate.notify_one();
+    apply_next_pending_input(&engine).await;
+    assert_eq!(
+        channel.messages.lock().unwrap().len(),
+        count,
+        "an early delta must update the pending card without a separate TurnStarted event"
+    );
+    assert!(
+        channel
+            .updated()
+            .last()
+            .unwrap()
+            .1
+            .body
+            .contains("answer before start event")
+    );
+}
+
+#[tokio::test]
+async fn runtime_pending_new_and_exit_keep_distinct_transitions() {
+    for replacement in [false, true] {
+        let (engine, _, channel, gate, state) = pending_runtime_input().await;
+        let chat = ConversationRef::new(ChannelKind::Telegram, "chat-a");
+        if replacement {
+            tokio::time::timeout(
+                std::time::Duration::from_millis(250),
+                engine.execute_work(agentix_core::EngineWork::Inbound(inbound("chat-a", "/new"))),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            assert!(state.session_switch(&chat).await.unwrap().is_some());
+        }
+        tokio::time::timeout(
+            std::time::Duration::from_millis(250),
+            engine.execute_work(agentix_core::EngineWork::Event(AgentEvent::SessionExited {
+                session_id: "thr_a".into(),
+            })),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            channel
+                .sent()
+                .iter()
+                .any(|(_, view)| view.body.contains("Waiting for the new session")),
+            replacement
+        );
+        if replacement {
+            engine
+                .execute_work(agentix_core::EngineWork::Event(
+                    AgentEvent::SessionReplaced {
+                        session_id: "thr_a".into(),
+                        replacement_session_id: "thr_b".into(),
+                        client_id: "host".into(),
+                    },
+                ))
+                .await
+                .unwrap();
+            assert_eq!(
+                state.current_session(&chat).await.unwrap(),
+                Some(SessionId::new("thr_b"))
+            );
+        } else {
+            assert!(
+                channel
+                    .sent()
+                    .iter()
+                    .any(|(_, view)| view.body.contains("detached automatically"))
+            );
+        }
+        gate.notify_one();
+        apply_next_pending_input(&engine).await;
+        assert!(
+            engine.working_turns().await.is_empty(),
+            "late confirmation must not revive the exited session"
+        );
+    }
+}
+
+#[tokio::test]
+async fn runtime_pending_stop_uses_delta_turn_id_and_button_cancels_followups() {
+    for button in [false, true] {
+        let (engine, agent, channel, gate, _) = pending_runtime_input().await;
+        if button {
+            engine
+                .handle_agent_event(AgentEvent::TurnStarted {
+                    session_id: "thr_a".into(),
+                    turn_id: "turn_new".into(),
+                })
+                .await
+                .unwrap();
+        }
+        engine
+            .handle_agent_event(AgentEvent::AgentMessageDelta {
+                session_id: "thr_a".into(),
+                turn_id: "turn_new".into(),
+                item_id: "answer".into(),
+                delta: "early output before stop".into(),
+            })
+            .await
+            .unwrap();
+        engine
+            .execute_work(agentix_core::EngineWork::Inbound(inbound(
+                "chat-a",
+                "cancel this followup",
+            )))
+            .await
+            .unwrap();
+        let stop = if button {
+            let token = channel
+                .updated()
+                .into_iter()
+                .flat_map(|(_, view)| view.actions)
+                .find(|action| action.label == "Stop")
+                .unwrap()
+                .token;
+            InboundEnvelope::action(
+                "stop-early-card",
+                ConversationRef::new(ChannelKind::Telegram, "chat-a"),
+                "owner",
+                token,
+            )
+        } else {
+            inbound("chat-a", "/stop")
+        };
+        engine
+            .execute_work(agentix_core::EngineWork::Inbound(stop))
+            .await
+            .unwrap();
+        let stopped_before_ack = agent
+            .calls()
+            .iter()
+            .any(|call| call == "stop:thr_a:turn_new");
+        gate.notify_one();
+        apply_next_pending_input(&engine).await;
+        assert!(
+            stopped_before_ack,
+            "stop immediately when the turn ID is already known"
+        );
+        assert!(
+            channel
+                .sent()
+                .iter()
+                .any(|(_, view)| view.title.contains("Input not sent")
+                    && view.body.contains("cancel this followup"))
+        );
+        assert_eq!(
+            agent
+                .calls()
+                .iter()
+                .filter(|call| call.as_str() == "stop:thr_a:turn_new")
+                .count(),
+            1
+        );
+    }
+}
+
+#[tokio::test]
+async fn runtime_pending_stop_does_not_interrupt_an_early_completed_turn() {
+    let (engine, agent, _, gate, _) = pending_runtime_input().await;
+    engine
+        .handle_agent_event(AgentEvent::TurnStarted {
+            session_id: "thr_a".into(),
+            turn_id: "turn_new".into(),
+        })
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::TurnCompleted {
+            session_id: "thr_a".into(),
+            turn_id: "turn_new".into(),
+            status: TurnStatus::Completed,
+            error: None,
+        })
+        .await
+        .unwrap();
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a", "/stop",
+        )))
+        .await
+        .unwrap();
+    gate.notify_one();
+    apply_next_pending_input(&engine).await;
+    assert!(
+        !agent.calls().iter().any(|call| call.starts_with("stop:")),
+        "the completed turn must stay completed while its acknowledgement is pending"
+    );
+}
+
+#[tokio::test]
+async fn runtime_pending_generation_is_captured_before_feedback_deadline() {
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let mut adapter = FakeAgent::new();
+    adapter.start_gate = Some(gate.clone());
+    let agent = Arc::new(adapter);
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    let request = engine.execute_work(agentix_core::EngineWork::Inbound(inbound(
+        "chat-a",
+        "input before reconnect",
+    )));
+    tokio::pin!(request);
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(50), &mut request)
+            .await
+            .is_err()
+    );
+    assert!(
+        agent
+            .calls()
+            .iter()
+            .any(|call| call == "start:thr_a:input before reconnect")
+    );
+    agent
+        .generation
+        .store(2, std::sync::atomic::Ordering::Release);
+    tokio::time::timeout(std::time::Duration::from_millis(250), request)
+        .await
+        .unwrap()
+        .unwrap();
+    gate.notify_one();
+    apply_next_pending_input(&engine).await;
+    assert!(
+        engine.working_turns().await.is_empty(),
+        "an acknowledgement from before reconnect must not update the new generation"
+    );
+}
+
+#[tokio::test]
+async fn runtime_pending_stop_render_failure_does_not_strand_cancelled_inputs() {
+    let (engine, _, channel, gate, _) = pending_runtime_input().await;
+    for text in ["cancelled first", "cancelled second"] {
+        engine
+            .execute_work(agentix_core::EngineWork::Inbound(inbound("chat-a", text)))
+            .await
+            .unwrap();
+    }
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a", "/stop",
+        )))
+        .await
+        .unwrap();
+    *channel.next_update_failures.lock().unwrap() = 1;
+    gate.notify_one();
+    let work = engine.next_pending_prompt().await;
+    let _ = engine.execute_work(work).await;
+    assert_eq!(
+        channel
+            .sent()
+            .iter()
+            .filter(|(_, view)| view.title.contains("Input not sent"))
+            .count(),
+        2,
+        "an IM update failure must not skip cancellation of accepted follow-ups"
+    );
+}
+
+#[tokio::test]
+async fn runtime_pending_followups_keep_order_when_next_start_is_also_slow() {
+    let (engine, agent, _, gate, _) = pending_runtime_input().await;
+    for text in ["older next start", "older queued followup"] {
+        engine
+            .execute_work(agentix_core::EngineWork::Inbound(inbound("chat-a", text)))
+            .await
+            .unwrap();
+    }
+    engine
+        .handle_agent_event(AgentEvent::TurnStarted {
+            session_id: "thr_a".into(),
+            turn_id: "turn_new".into(),
+        })
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::TurnCompleted {
+            session_id: "thr_a".into(),
+            turn_id: "turn_new".into(),
+            status: TurnStatus::Completed,
+            error: None,
+        })
+        .await
+        .unwrap();
+    gate.notify_one();
+    apply_next_pending_input(&engine).await;
+    let next_start = engine.next_pending_prompt().await;
+    let older_followup = engine.next_pending_prompt().await;
+    engine.execute_work(next_start).await.unwrap();
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "newer queued followup",
+        )))
+        .await
+        .unwrap();
+    engine.execute_work(older_followup).await.unwrap();
+    gate.notify_one();
+    apply_next_pending_input(&engine).await;
+    apply_next_pending_input(&engine).await;
+    engine.cancel_pending_prompts().await.unwrap();
+    let inputs = agent
+        .calls()
+        .into_iter()
+        .filter(|call| call.starts_with("start:") || call.starts_with("steer:"))
+        .collect::<Vec<_>>();
+    assert!(
+        inputs.last().unwrap().ends_with(":older queued followup"),
+        "earlier accepted input must remain first across a second deferred start: {inputs:?}"
+    );
 }

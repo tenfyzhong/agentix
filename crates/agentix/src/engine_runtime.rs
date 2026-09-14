@@ -40,6 +40,7 @@ struct InputRecoveryOwner(watch::Receiver<Arc<Engine>>);
 impl Drop for InputRecoveryOwner {
     fn drop(&mut self) {
         self.0.borrow().cancel_input_recovery();
+        self.0.borrow().abort_pending_prompts();
     }
 }
 
@@ -158,6 +159,9 @@ pub async fn run_engine_loop_with_config(
                     None => sources_open = false,
                 }
             }
+            work = engine.next_pending_prompt(), if !pool.queue.is_full() => {
+                pool.queue.try_push(work).expect("pending prompt capacity");
+            }
             work = engine.next_input_recovery(), if !pool.queue.is_full() => {
                 pool.queue.try_push(work).expect("input recovery capacity");
             }
@@ -173,6 +177,9 @@ pub async fn run_engine_loop_with_config(
     }
     let engine = snapshots.borrow().clone();
     engine.cancel_input_recovery();
+    if let Err(error) = engine.cancel_pending_prompts().await {
+        tracing::error!(%error, "failed to fence pending inputs at shutdown");
+    }
     source_poll.abort();
     let _ = source_poll.await;
     notification_shutdown.cancel();
@@ -331,6 +338,8 @@ impl EngineWorkers {
                     EngineWork::Inbound(_) => "inbound IM request failed",
                     EngineWork::Event(_) => "agent event failed",
                     EngineWork::InputRecovered(_) => "input recovery failed",
+                    EngineWork::PromptAcknowledged(_) => "input confirmation failed",
+                    EngineWork::QueuedInput(_) => "queued input failed",
                     EngineWork::Working { .. } => "working state refresh failed",
                     EngineWork::Recover => "failed to recover after agent event loss",
                     EngineWork::TaskBoard => "task board refresh failed",

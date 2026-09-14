@@ -15,6 +15,7 @@ pub(super) struct BackgroundNotification {
 }
 
 pub(super) struct TurnCoordinator {
+    pub(super) pending_prompts: super::pending_prompts::PendingPrompts,
     pub(super) input_recovery: super::input_recovery::InputRecovery,
     pub(super) cold: super::cold_turns::ColdTurns,
     pub(super) active: Mutex<HashMap<SessionId, String>>,
@@ -29,6 +30,7 @@ impl Default for TurnCoordinator {
     fn default() -> Self {
         Self {
             cold: super::cold_turns::ColdTurns::default(),
+            pending_prompts: super::pending_prompts::PendingPrompts::default(),
             input_recovery: super::input_recovery::InputRecovery::default(),
             active: Mutex::new(HashMap::new()),
             buffers: Mutex::new(HashMap::new()),
@@ -78,7 +80,7 @@ impl TurnCoordinator {
     }
 
     pub(super) async fn is_active(&self, session: &SessionId) -> bool {
-        self.active.lock().await.contains_key(session)
+        self.active.lock().await.contains_key(session) || self.pending_prompts.contains(session)
     }
 
     pub(super) async fn active_turn(&self, session: &SessionId) -> Option<String> {

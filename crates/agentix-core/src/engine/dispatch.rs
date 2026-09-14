@@ -16,6 +16,8 @@ pub enum EngineWork {
     Inbound(InboundEnvelope),
     Event(AgentEvent),
     InputRecovered(super::RecoveredInput),
+    PromptAcknowledged(super::PromptAcknowledged),
+    QueuedInput(super::QueuedInput),
     Working { session: SessionId, turn: String },
     Recover,
     TaskBoard,
@@ -141,6 +143,14 @@ impl EngineDispatchSnapshot {
                         &mut exclusive,
                     );
                 }
+            }
+            EngineWork::PromptAcknowledged(input) => {
+                self.reserve_session(&input.session, &mut shared, &mut exclusive);
+                exclusive.push(EngineResource::Conversation(input.conversation.clone()));
+            }
+            EngineWork::QueuedInput(input) => {
+                self.reserve_session(&input.session, &mut shared, &mut exclusive);
+                exclusive.push(EngineResource::Conversation(input.conversation.clone()));
             }
             EngineWork::InputRecovered(input) => {
                 self.reserve_session(&input.session, &mut shared, &mut exclusive);
@@ -297,7 +307,9 @@ impl Engine {
 
     pub async fn execute_work(&self, work: EngineWork) -> Result<(), EngineError> {
         match work {
-            EngineWork::Inbound(envelope) => self.handle_inbound(envelope).await,
+            EngineWork::Inbound(envelope) => self.handle_runtime_inbound(envelope).await,
+            EngineWork::PromptAcknowledged(input) => self.apply_prompt_acknowledged(input).await,
+            EngineWork::QueuedInput(input) => self.apply_queued_input(input).await,
             EngineWork::Event(event) => self.handle_agent_event(event).await,
             EngineWork::InputRecovered(input) => self.apply_recovered_input(input).await,
             EngineWork::Working { session, turn } => {

@@ -161,6 +161,80 @@ async fn feishu_message_traverses_channel_engine_and_codex_then_updates_feishu()
     join_stack(tasks).await;
 }
 
+#[tokio::test]
+async fn feishu_detach_does_not_wait_for_pending_turn_start() {
+    let codex = MockCodexAppServer::start();
+    codex
+        .add_thread(MockThread::new(
+            "thr_pending_detach",
+            "Pending detach",
+            "/work/detach",
+        ))
+        .await;
+    let (start_entered, release_start) = codex.hold_next_request("turn/start").await;
+    let client = Arc::new(CodexClient::connect(codex.endpoint()).await.unwrap());
+    let feishu = MockFeishuApi::start().await;
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis()
+        .to_string();
+    for (id, text) in [
+        ("om_attach", "/attach thr_pending_detach"),
+        ("om_prompt", "start work before detaching"),
+    ] {
+        feishu
+            .push_event(feishu_message(id, &timestamp, text))
+            .await;
+    }
+    let lark = LarkClient::builder("mock-app", "mock-secret")
+        .base_url(feishu.base_url())
+        .max_retries(1)
+        .build()
+        .unwrap();
+    let channel = Arc::new(FeishuAdapter::with_client(lark, ["ou_owner"]));
+    let shutdown = CancellationToken::new();
+    let tasks = run_stack(client, channel, shutdown.clone()).await;
+    tokio::time::timeout(ROUND_TRIP_TIMEOUT, start_entered)
+        .await
+        .unwrap()
+        .unwrap();
+    feishu
+        .push_event(feishu_message("om_detach", &timestamp, "/detach"))
+        .await;
+    let detached_before_ack = tokio::time::timeout(Duration::from_millis(500), async {
+        loop {
+            if feishu
+                .requests()
+                .await
+                .iter()
+                .any(|request| request.body.contains("Detached from"))
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .is_ok();
+    // Always release the mutation and shut down the stack, including a red run.
+    release_start.send(()).unwrap();
+    wait_until(|| async {
+        feishu
+            .requests()
+            .await
+            .iter()
+            .any(|request| request.body.contains("Detached from"))
+    })
+    .await;
+    shutdown.cancel();
+    join_stack(tasks).await;
+    assert!(
+        detached_before_ack,
+        "detach must finish before turn/start is acknowledged"
+    );
+}
+
 async fn native_bridge(
     kind: agentix_core::AgentKind,
 ) -> (

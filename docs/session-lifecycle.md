@@ -24,6 +24,21 @@ or uncertain acknowledgement finalizes the pending card accordingly; the display
 deadline never cancels or resends the input. Channel delivery still contributes
 its own latency.
 
+The production dispatcher releases the session lane after posting this pending
+input card. An owned task continues the original request; its acknowledgement
+returns as dispatch work that reacquires the conversation and session reservations.
+Early turn events reuse the input card, and a late acknowledgement preserves
+already completed output. Up to 32 unacknowledged starts are owned concurrently;
+additional starts retain the synchronous path instead of dropping or resending a
+request already in flight. Each session accepts up to 16 local follow-up inputs
+while awaiting delivery. Follow-ups retain the original binding epoch and backend
+generation, remain ordered across runtime admission, and are cancelled if the
+conversation switches or the user stops the turn. A Stop received before the turn
+ID is available is applied when a start event or acknowledgement supplies it.
+Shutdown fences unresolved deliveries, including follow-ups already admitted to
+the dispatcher. The synchronous `handle_inbound` API retains its await-until-result
+contract; runtime callers use `execute_work` and drain pending prompt work.
+
 Switching or detaching revokes the old Stop action before editing its card. That
 visual cleanup has a 250 ms budget per card so a stalled edit cannot indefinitely
 hold session navigation. If the edit fails or times out, the old button may remain

@@ -11,11 +11,15 @@ impl Engine {
         conversation: &ConversationRef,
         session: &SessionId,
         prompt: &str,
-    ) -> Result<String, EngineError> {
-        let request = self.operations.send(session, prompt, None);
-        tokio::pin!(request);
+    ) -> Result<Option<String>, EngineError> {
+        let generation = self.agent.generation();
+        let operations = self.operations.clone();
+        let target = session.clone();
+        let text = prompt.to_owned();
+        let mut request: super::pending_prompts::SendFuture =
+            Box::pin(async move { operations.send(&target, &text, None).await });
         if let Ok(result) = tokio::time::timeout(Duration::from_millis(100), &mut request).await {
-            return result.map_err(EngineError::from);
+            return result.map(Some).map_err(EngineError::from);
         }
 
         let label = self.session_label(session).await;
@@ -25,6 +29,12 @@ impl Engine {
         );
         view.subtitle = Some("Sending…".into());
         view.status = ViewStatus::Waiting;
+        let Some(request) = self
+            .defer_prompt(conversation, session, prompt, request, &view, generation)
+            .await?
+        else {
+            return Ok(None);
+        };
         // Keep polling the original request while the channel posts feedback.
         // This is a display deadline, never a reason to cancel or resend input.
         let (result, message) = tokio::join!(request, self.send_view(conversation, &view));
@@ -44,7 +54,7 @@ impl Engine {
                         .await
                         .insert((session.clone(), turn.clone()), message);
                 }
-                Ok(turn)
+                Ok(Some(turn))
             }
             Err(error) => {
                 if let Some(message) = message {

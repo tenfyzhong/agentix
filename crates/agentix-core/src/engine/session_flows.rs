@@ -1074,11 +1074,49 @@ impl Engine {
         if !self.agent.session_access(&session).await.can_write() {
             return self.show_read_only_notice(conversation).await;
         }
+        let pending_stop = self.turns.pending_prompts.request_stop(&session);
         let turn = self
             .turns
             .active_turn(&session)
             .await
-            .ok_or_else(|| EngineError::InvalidInput("the current session is idle".into()))?;
+            .or_else(|| self.turns.pending_prompts.observed_turn(&session));
+        if pending_stop && let Some(turn) = &turn {
+            self.restore_cold_turn(&session, turn).await?;
+            let completed = self
+                .turns
+                .buffers
+                .lock()
+                .await
+                .get(&(session.clone(), turn.clone()))
+                .is_some_and(|buffer| {
+                    !matches!(buffer.status, TurnStatus::InProgress | TurnStatus::Unknown)
+                });
+            if completed {
+                self.send_view(
+                    conversation,
+                    &OutboundView::text(
+                        "Agentix · Completed",
+                        "The turn has already completed. Pending follow-up inputs were cancelled.",
+                    ),
+                )
+                .await?;
+                return Ok(());
+            }
+        }
+        if turn.is_none() && pending_stop {
+            self.send_view(
+                conversation,
+                &OutboundView::text(
+                    "Agentix · Stopping…",
+                    "The stop request will be applied as soon as the agent identifies the turn.",
+                ),
+            )
+            .await?;
+            return Ok(());
+        }
+        let turn =
+            turn.ok_or_else(|| EngineError::InvalidInput("the current session is idle".into()))?;
+        self.turns.pending_prompts.take_stop(&session);
         self.operations.stop(&session, &turn).await?;
         Ok(())
     }
@@ -1094,6 +1132,12 @@ impl Engine {
         }
         if self
             .check_terminal_input(conversation, &session, Some(prompt.to_owned()))
+            .await?
+        {
+            return Ok(());
+        }
+        if self
+            .queue_pending_prompt(conversation, &session, prompt)
             .await?
         {
             return Ok(());
@@ -1115,9 +1159,12 @@ impl Engine {
             self.turns.set_active(session, turn_id).await;
             return Ok(());
         }
-        let turn_id = self
+        let Some(turn_id) = self
             .start_prompt_with_feedback(conversation, &session, prompt)
-            .await?;
+            .await?
+        else {
+            return Ok(());
+        };
         self.turns
             .set_active(session.clone(), turn_id.clone())
             .await;
