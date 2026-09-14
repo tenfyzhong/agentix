@@ -153,6 +153,13 @@ impl AgentAdapter for DeferredAgent {
     ) -> Result<HistoryPage, AgentError> {
         self.agent()?.read_history(session, cursor, limit).await
     }
+    async fn read_turn_input(
+        &self,
+        session: &SessionId,
+        turn_id: &str,
+    ) -> Result<Option<String>, AgentError> {
+        self.agent()?.read_turn_input(session, turn_id).await
+    }
     async fn attach(&self, session: &SessionId) -> Result<(), AgentError> {
         self.agent()?.attach(session).await
     }

@@ -25,7 +25,8 @@ pub(super) fn view_body(view: &OutboundView) -> Body {
                     ))
                     .element(Element::Markdown(Markdown::new(content)));
                     panel.element_id = Some(format!("turn_section_{index}"));
-                    panel.expanded = Some(false);
+                    panel.expanded =
+                        Some(section.expanded.unwrap_or(index + 1 == view.sections.len()));
                     panel.margin = Some("8px 0px 8px 0px".into());
                     Element::CollapsiblePanel(panel)
                 } else {

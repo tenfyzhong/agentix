@@ -101,6 +101,7 @@ pub struct MockThread {
     pub turns: Vec<MockTurn>,
     pub source: Value,
     goal: Option<Value>,
+    pub rollout_path: Option<String>,
 }
 
 impl MockThread {
@@ -115,6 +116,7 @@ impl MockThread {
             turns: Vec::new(),
             source: json!("cli"),
             goal: None,
+            rollout_path: None,
         }
     }
 
@@ -158,7 +160,7 @@ impl MockThread {
             "modelProvider": "openai",
             "reasoningEffort": self.reasoning_effort,
             "ephemeral": false,
-            "path": format!("/mock/rollout-{}.jsonl", self.id),
+            "path": self.rollout_path.clone().unwrap_or_else(|| format!("/mock/rollout-{}.jsonl", self.id)),
             "projectId": null,
             "source": self.source,
             "turns": turns

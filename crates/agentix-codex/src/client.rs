@@ -1,4 +1,5 @@
 mod background;
+mod goal_input;
 mod observed;
 
 #[cfg(test)]
@@ -787,7 +788,9 @@ impl CodexClient {
                 }),
             )
             .await?;
-        history_from_result(&result)
+        let mut page = history_from_result(&result)?;
+        self.restore_goal_inputs(session_id, &mut page, None).await;
+        Ok(page)
     }
 
     async fn stable_history(
@@ -811,11 +814,14 @@ impl CodexClient {
             .iter()
             .map(parse_turn_summary)
             .collect::<Result<Vec<_>, _>>()?;
-        Ok(HistoryPage {
+        let mut page = HistoryPage {
             turns: parsed,
             older_cursor: (start > 0).then(|| format!("fallback:{start}")),
             newer_cursor: None,
-        })
+        };
+        self.restore_goal_inputs(session_id, &mut page, result["thread"]["path"].as_str())
+            .await;
+        Ok(page)
     }
 
     async fn available_models(&self) -> Result<Vec<ModelDescriptor>, ClientError> {
@@ -1954,6 +1960,17 @@ impl AgentAdapter for CodexClient {
         limit: u32,
     ) -> Result<SessionPage, AgentError> {
         self.list_sessions(cursor, limit).await.map_err(agent_error)
+    }
+
+    async fn read_turn_input(
+        &self,
+        session: &SessionId,
+        turn_id: &str,
+    ) -> Result<Option<String>, AgentError> {
+        Ok(self
+            .goal_inputs(session, HashSet::from([turn_id.to_owned()]), None)
+            .await
+            .remove(turn_id))
     }
 
     async fn read_history(

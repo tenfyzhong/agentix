@@ -38,6 +38,16 @@ impl Engine {
     /// Resolve bot identities, then restore bindings without sending IM messages.
     pub async fn restore_bindings_deferred(&self) -> Result<RestoredBindings, EngineError> {
         self.reconcile_channel_identities().await?;
+        for (conversation, owner) in self.state.list_conversation_owners().await? {
+            if self.channels.contains_key(&conversation.channel) {
+                self.interactions
+                    .owners
+                    .lock()
+                    .await
+                    .entry(conversation)
+                    .or_insert(owner);
+            }
+        }
         let persisted = self.state.list_bindings().await?;
         let mut updates = RestoredBindings {
             bindings: Vec::new(),
@@ -84,7 +94,8 @@ impl Engine {
                     .owners
                     .lock()
                     .await
-                    .insert(stored.message.conversation.clone(), owner_id);
+                    .entry(stored.message.conversation.clone())
+                    .or_insert(owner_id);
             }
             if matches!(stored.status, TurnStatus::InProgress | TurnStatus::Unknown) {
                 self.turns

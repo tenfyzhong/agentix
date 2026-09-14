@@ -34,7 +34,12 @@ impl SqliteState {
             .bind(&channel)
             .execute(&mut *tx)
             .await?;
-        for table in ["turn_views", "pending_interactions", "processed_events"] {
+        for table in [
+            "turn_views",
+            "pending_interactions",
+            "processed_events",
+            "conversation_owners",
+        ] {
             sqlx::query(&format!("DELETE FROM {table} WHERE channel = ?"))
                 .bind(&channel)
                 .execute(&mut *tx)
