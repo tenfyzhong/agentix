@@ -998,6 +998,23 @@ impl Engine {
         &self,
         conversation: &ConversationRef,
     ) -> Result<(), EngineError> {
+        if let Some(request) = self.sessions.cleanup.attachment(conversation) {
+            self.turns
+                .pending_prompts
+                .finish_reattachment(request.id, None);
+            if self.sessions.current(conversation).await.is_none() {
+                return self
+                    .send_view(
+                        conversation,
+                        &OutboundView::text(
+                            "Agentix · Stopped",
+                            "Waiting input was cancelled. Session reattachment will continue.",
+                        ),
+                    )
+                    .await
+                    .map(|_| ());
+            }
+        }
         let session = self.current_session(conversation).await?;
         if !self.agent.session_access(&session).await.can_write() {
             return self.show_read_only_notice(conversation).await;

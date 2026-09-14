@@ -11092,7 +11092,11 @@ async fn check_reattachment_input(action: Option<&str>) {
             .unwrap();
     }
     release.notify_one();
-    for _ in 0..if action.is_some() { 1 } else { 2 } {
+    for _ in 0..if action.is_some() && action != Some("/stop") {
+        1
+    } else {
+        2
+    } {
         let work = tokio::time::timeout(
             std::time::Duration::from_secs(1),
             engine.next_pending_prompt(),
@@ -11108,6 +11112,21 @@ async fn check_reattachment_input(action: Option<&str>) {
             .iter()
             .any(|call| call.contains("continue after reconnect"))
     );
+    if action == Some("/stop") {
+        engine
+            .execute_work(agentix_core::EngineWork::Inbound(inbound(
+                "chat-a",
+                "new input after stopped reconnect",
+            )))
+            .await
+            .unwrap();
+        assert!(
+            agent
+                .calls()
+                .iter()
+                .any(|call| call.contains("new input after stopped reconnect"))
+        );
+    }
 }
 
 #[tokio::test]
@@ -11248,4 +11267,9 @@ async fn runtime_reattach_failure_marks_waiting_input_unsent() {
             .iter()
             .any(|call| call.contains("input before failed reconnect"))
     );
+}
+
+#[tokio::test]
+async fn runtime_stop_cancels_input_waiting_for_reattachment() {
+    check_reattachment_input(Some("/stop")).await;
 }

@@ -52,7 +52,9 @@ it does not poll. Cancellation, a newer attachment, a changed binding epoch, and
 invalidate stale completions. Up to 128 conversations can await reattachment. Input sent
 during this transition uses the existing bounded input queue and its delivery receipts:
 it is sent after the requested binding succeeds, or marked unsent if that request is
-cancelled or fails. This queue is owned across configuration reloads, not persisted as a
+cancelled or fails. `/stop` cancels input waiting for reattachment while allowing the
+connection to recover, so later input can still be sent. This queue is owned across
+configuration reloads, not persisted as a
 reattachment across process restarts. Direct callers of `handle_inbound` and saved-binding
 restoration retain synchronous subscription ordering.
 
