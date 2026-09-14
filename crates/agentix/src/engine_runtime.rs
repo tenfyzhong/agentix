@@ -341,6 +341,7 @@ impl EngineWorkers {
                     EngineWork::CardDelivered(_) => "pending card delivery failed",
                     EngineWork::PromptAcknowledged(_) => "input confirmation failed",
                     EngineWork::QueuedInput(_) => "queued input failed",
+                    EngineWork::Reattachment(_) => "session reattachment failed",
                     EngineWork::Working { .. } => "working state refresh failed",
                     EngineWork::Recover => "failed to recover after agent event loss",
                     EngineWork::TaskBoard => "task board refresh failed",

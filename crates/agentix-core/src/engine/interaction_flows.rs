@@ -13,6 +13,7 @@ impl Engine {
         conversation: &ConversationRef,
         owner_id: &str,
     ) -> Result<(), EngineError> {
+        self.cancel_reattachment(conversation);
         if let Some(session) = self
             .interactions
             .terminal_inputs

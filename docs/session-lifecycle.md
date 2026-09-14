@@ -46,7 +46,15 @@ a new subscription; this prevents old cleanup from cancelling the new subscripti
 Saved-binding restoration observes the same ordering. Cleanup workers are shared
 across reloads and aborted during shutdown. At most 128 sessions can have cleanup
 in flight; excess best-effort requests retain the remote subscription and log a warning.
-The same-session recovery wait still occupies its operation lane until cleanup finishes.
+The IM runtime releases the conversation lane while this cleanup is pending. Cleanup
+completion schedules a reattachment through the normal conversation/session reservations;
+it does not poll. Cancellation, a newer attachment, a changed binding epoch, and shutdown
+invalidate stale completions. Up to 128 conversations can await reattachment. Input sent
+during this transition uses the existing bounded input queue and its delivery receipts:
+it is sent after the requested binding succeeds, or marked unsent if that request is
+cancelled or fails. This queue is owned across configuration reloads, not persisted as a
+reattachment across process restarts. Direct callers of `handle_inbound` and saved-binding
+restoration retain synchronous subscription ordering.
 
 
 For IM input sent to an idle session, an acknowledgement taking more than 100 ms

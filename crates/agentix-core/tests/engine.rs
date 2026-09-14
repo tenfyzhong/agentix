@@ -10949,3 +10949,178 @@ async fn subscription_cleanup_drops_its_backend_owner_on_shutdown() {
     .await
     .expect("shutdown leaked the unsubscribe worker's backend owner");
 }
+
+async fn check_runtime_reattachment(action: &str, expected: Option<&str>) {
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel::default());
+    let state = SqliteState::in_memory().await.unwrap();
+    let engine = Arc::new(Engine::new(
+        agent.clone(),
+        state.clone(),
+        vec![channel.clone()],
+    ));
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    let release = Arc::new(tokio::sync::Notify::new());
+    *agent.unsubscribe_gate.lock().unwrap() = Some(release.clone());
+    engine
+        .handle_inbound(inbound("chat-a", "/detach"))
+        .await
+        .unwrap();
+    let mut attach = tokio::spawn({
+        let engine = engine.clone();
+        async move {
+            engine
+                .execute_work(agentix_core::EngineWork::Inbound(inbound(
+                    "chat-a",
+                    "/attach thr_a ",
+                )))
+                .await
+        }
+    });
+    let dispatched = tokio::time::timeout(std::time::Duration::from_millis(250), &mut attach).await;
+    if dispatched.is_err() {
+        release.notify_one();
+        attach.await.unwrap().unwrap();
+        panic!("pending reattachment must release the operation queue");
+    }
+    dispatched.unwrap().unwrap().unwrap();
+    // Claim the completion before cancellation to cover work already admitted
+    // to the runtime but not yet holding its conversation reservation.
+    release.notify_one();
+    let completion = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        engine.next_pending_prompt(),
+    )
+    .await
+    .unwrap();
+    if action == "shutdown" {
+        engine.cancel_pending_prompts().await.unwrap();
+    } else if !action.is_empty() {
+        engine
+            .execute_work(agentix_core::EngineWork::Inbound(inbound("chat-a", action)))
+            .await
+            .unwrap();
+    }
+    engine.execute_work(completion).await.unwrap();
+    assert_eq!(
+        state
+            .current_session(&ConversationRef::new(ChannelKind::Telegram, "chat-a"))
+            .await
+            .unwrap(),
+        expected.map(SessionId::new)
+    );
+    assert_eq!(
+        agent
+            .calls()
+            .iter()
+            .filter(|call| call.as_str() == "attach:thr_a")
+            .count(),
+        if expected == Some("thr_a") { 2 } else { 1 }
+    );
+}
+
+#[tokio::test]
+async fn runtime_reattach_releases_cleanup_wait_and_cancellation_fences_completion() {
+    check_runtime_reattachment("/cancel", None).await;
+}
+
+#[tokio::test]
+async fn runtime_reattach_completes_after_cleanup() {
+    check_runtime_reattachment("", Some("thr_a")).await;
+}
+
+#[tokio::test]
+async fn runtime_reattach_does_not_override_a_later_attachment() {
+    check_runtime_reattachment("/attach thr_b", Some("thr_b")).await;
+}
+
+#[tokio::test]
+async fn runtime_reattach_detach_cancels_claimed_completion() {
+    check_runtime_reattachment("/detach ", None).await;
+}
+
+#[tokio::test]
+async fn runtime_reattach_shutdown_cancels_claimed_completion() {
+    check_runtime_reattachment("shutdown", None).await;
+}
+
+async fn check_reattachment_input(action: Option<&str>) {
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    let release = Arc::new(tokio::sync::Notify::new());
+    *agent.unsubscribe_gate.lock().unwrap() = Some(release.clone());
+    engine
+        .handle_inbound(inbound("chat-a", "/detach"))
+        .await
+        .unwrap();
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "/attach thr_a ",
+        )))
+        .await
+        .unwrap();
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "continue after reconnect",
+        )))
+        .await
+        .unwrap();
+    assert!(
+        !agent
+            .calls()
+            .iter()
+            .any(|call| call.contains("continue after reconnect"))
+    );
+    if let Some(action) = action {
+        engine
+            .execute_work(agentix_core::EngineWork::Inbound(inbound("chat-a", action)))
+            .await
+            .unwrap();
+    }
+    release.notify_one();
+    for _ in 0..if action.is_some() { 1 } else { 2 } {
+        let work = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            engine.next_pending_prompt(),
+        )
+        .await
+        .unwrap();
+        engine.execute_work(work).await.unwrap();
+    }
+    assert_eq!(
+        action.is_none(),
+        agent
+            .calls()
+            .iter()
+            .any(|call| call.contains("continue after reconnect"))
+    );
+}
+
+#[tokio::test]
+async fn runtime_reattach_queues_input_until_the_target_is_attached() {
+    check_reattachment_input(None).await;
+}
+
+#[tokio::test]
+async fn runtime_reattach_cancellation_does_not_send_queued_input() {
+    check_reattachment_input(Some("/cancel")).await;
+}
+
+#[tokio::test]
+async fn runtime_reattach_switch_does_not_send_queued_input_to_another_session() {
+    check_reattachment_input(Some("/attach thr_b")).await;
+}

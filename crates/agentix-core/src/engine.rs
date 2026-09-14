@@ -27,6 +27,7 @@ mod session_service;
 mod session_switch;
 mod startup;
 mod subscription_cleanup;
+pub use subscription_cleanup::Reattachment;
 mod task_board;
 mod terminal_input;
 mod turn_flows;

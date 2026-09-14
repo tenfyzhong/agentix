@@ -19,6 +19,7 @@ pub enum EngineWork {
     PromptAcknowledged(super::PromptAcknowledged),
     CardDelivered(super::CardDelivered),
     QueuedInput(super::QueuedInput),
+    Reattachment(super::Reattachment),
     Working { session: SessionId, turn: String },
     Recover,
     TaskBoard,
@@ -110,6 +111,16 @@ pub struct EngineDispatchSnapshot {
 }
 
 impl EngineDispatchSnapshot {
+    fn reattachment_scope(&self, request: &super::Reattachment) -> DispatchScope<EngineResource> {
+        let mut shared = Vec::new();
+        let mut exclusive = vec![EngineResource::Conversation(request.conversation.clone())];
+        self.reserve_session(&request.session, &mut shared, &mut exclusive);
+        if let Some(current) = self.bindings.current_session(&request.conversation) {
+            self.reserve_session(current, &mut shared, &mut exclusive);
+        }
+        DispatchScope::Access { shared, exclusive }
+    }
+
     #[must_use]
     pub fn scope(&self, work: &EngineWork) -> DispatchScope<EngineResource> {
         let mut shared = Vec::new();
@@ -145,6 +156,7 @@ impl EngineDispatchSnapshot {
                     );
                 }
             }
+            EngineWork::Reattachment(request) => return self.reattachment_scope(request),
             EngineWork::CardDelivered(input) => {
                 self.reserve_session(&input.session, &mut shared, &mut exclusive);
                 exclusive.push(EngineResource::Conversation(input.conversation.clone()));
@@ -316,6 +328,7 @@ impl Engine {
             EngineWork::CardDelivered(input) => self.apply_card_delivered(input).await,
             EngineWork::PromptAcknowledged(input) => self.apply_prompt_acknowledged(input).await,
             EngineWork::QueuedInput(input) => self.apply_queued_input(input).await,
+            EngineWork::Reattachment(request) => self.apply_reattachment(request).await,
             EngineWork::Event(event) => self.handle_agent_event(event).await,
             EngineWork::InputRecovered(input) => self.apply_recovered_input(input).await,
             EngineWork::Working { session, turn } => {

@@ -59,6 +59,7 @@ pub struct QueuedInput {
     queued: bool,
     cancelled: bool,
     sequence: u64,
+    reattachment: Option<uuid::Uuid>,
 }
 
 #[derive(Debug)]
@@ -127,7 +128,7 @@ impl PendingPrompts {
         let inputs = state
             .owned
             .values_mut()
-            .filter(|input| input.queued && matches(input))
+            .filter(|input| input.queued && input.reattachment.is_none() && matches(input))
             .map(|input| {
                 input.cancelled = true;
                 input.clone()
@@ -144,6 +145,27 @@ impl PendingPrompts {
                 ));
             }
         }
+    }
+
+    pub(super) fn finish_reattachment(&self, id: uuid::Uuid, epoch: Option<u64>) {
+        let mut state = self.state.lock().unwrap();
+        let mut inputs = state
+            .owned
+            .values_mut()
+            .filter(|input| input.reattachment == Some(id))
+            .map(|input| {
+                input.reattachment = None;
+                if let Some(epoch) = epoch {
+                    input.epoch = epoch;
+                } else {
+                    input.cancelled = true;
+                }
+                input.clone()
+            })
+            .collect::<Vec<_>>();
+        inputs.sort_by_key(|input| input.sequence);
+        state.ready.extend(inputs);
+        self.changed.notify_one();
     }
 
     fn feedback(&self, input: &QueuedInput, title: &str) {
@@ -332,7 +354,10 @@ impl Engine {
     }
 
     pub async fn next_pending_prompt(&self) -> EngineWork {
-        self.turns.pending_prompts.next().await
+        tokio::select! {
+            work = self.turns.pending_prompts.next() => work,
+            request = self.sessions.cleanup.next_attachment() => EngineWork::Reattachment(request),
+        }
     }
 
     pub fn abort_pending_prompts(&self) {
@@ -383,6 +408,7 @@ impl Engine {
             queued: false,
             cancelled: false,
             sequence: 0,
+            reattachment: None,
         };
         if let Err(future) = self.turns.pending_prompts.start(input, future) {
             return Ok(Some(future));
@@ -454,6 +480,27 @@ impl Engine {
         session: &SessionId,
         prompt: &str,
     ) -> Result<bool, EngineError> {
+        self.queue_waiting_prompt(conversation, session, prompt, None)
+            .await
+    }
+
+    pub(super) async fn queue_reattachment_prompt(
+        &self,
+        conversation: &ConversationRef,
+        request: &super::Reattachment,
+        prompt: &str,
+    ) -> Result<bool, EngineError> {
+        self.queue_waiting_prompt(conversation, &request.session, prompt, Some(request.id))
+            .await
+    }
+
+    async fn queue_waiting_prompt(
+        &self,
+        conversation: &ConversationRef,
+        session: &SessionId,
+        prompt: &str,
+        reattachment: Option<uuid::Uuid>,
+    ) -> Result<bool, EngineError> {
         let Some(delivery) = Delivery::current() else {
             return Ok(false);
         };
@@ -466,7 +513,10 @@ impl Engine {
                 .values()
                 .filter(|input| input.queued && &input.session == session)
                 .count();
-            if !state.pending.contains_key(session) && (delivery.from_queue || queued_count == 0) {
+            if reattachment.is_none()
+                && !state.pending.contains_key(session)
+                && (delivery.from_queue || queued_count == 0)
+            {
                 return Ok(false);
             }
             while state.receipt_tasks.try_join_next().is_some() {}
@@ -496,6 +546,7 @@ impl Engine {
                 queued: true,
                 cancelled: false,
                 sequence,
+                reattachment,
             };
             if !state.receipts.contains_key(&key) {
                 let initial = OutboundView::text("Agentix · Queued", markdown_quote(prompt));
@@ -509,7 +560,9 @@ impl Engine {
             }
 
             state.owned.insert(key, input.clone());
-            if let Some(pending) = state.pending.get_mut(session) {
+            if reattachment.is_some() {
+                // Keep input owned until its requested binding is committed.
+            } else if let Some(pending) = state.pending.get_mut(session) {
                 let position = pending
                     .queued
                     .partition_point(|queued| queued.sequence < input.sequence);

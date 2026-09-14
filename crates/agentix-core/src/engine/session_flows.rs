@@ -290,6 +290,7 @@ impl Engine {
         owner_id: &str,
         session_id: SessionId,
     ) -> Result<(), EngineError> {
+        self.cancel_reattachment(conversation);
         let session_id = self.agent.canonical_session(&session_id).await?;
         self.interactions
             .terminal_inputs
@@ -318,8 +319,12 @@ impl Engine {
                 .await?;
             return Ok(());
         }
-        self.wait_subscription_cleanup(conversation, &session_id)
-            .await?;
+        if self
+            .defer_subscription_cleanup(conversation, &session_id, owner_id)
+            .await?
+        {
+            return Ok(());
+        }
         if let Err(error) = self.agent.attach(&session_id).await {
             return self
                 .show_attach_failure(conversation, owner_id, &session_id, &error)
@@ -614,6 +619,16 @@ impl Engine {
     }
 
     pub(super) async fn detach(&self, conversation: &ConversationRef) -> Result<(), EngineError> {
+        let cancelled = self.cancel_reattachment(conversation);
+        if cancelled && self.sessions.current(conversation).await.is_none() {
+            return self
+                .send_view(
+                    conversation,
+                    &OutboundView::text("Agentix", "Reattachment cancelled."),
+                )
+                .await
+                .map(|_| ());
+        }
         self.interactions
             .terminal_inputs
             .lock()
@@ -1039,6 +1054,13 @@ impl Engine {
         conversation: &ConversationRef,
         prompt: &str,
     ) -> Result<(), EngineError> {
+        if let Some(request) = self.sessions.cleanup.attachment(conversation)
+            && self
+                .queue_reattachment_prompt(conversation, &request, prompt)
+                .await?
+        {
+            return Ok(());
+        }
         let session = self.current_session(conversation).await?;
         if !self.agent.session_access(&session).await.can_write() {
             return self.show_read_only_notice(conversation).await;
