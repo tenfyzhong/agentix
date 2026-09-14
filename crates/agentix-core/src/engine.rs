@@ -603,6 +603,7 @@ impl Engine {
                     .await?;
             }
             AgentCommand::Current => self.show_current(conversation).await?,
+            AgentCommand::Last => self.show_last(conversation).await?,
             AgentCommand::Detach => self.detach(conversation).await?,
             AgentCommand::Stop => self.stop_current(conversation).await?,
             AgentCommand::Queue => self.show_queue(conversation).await?,

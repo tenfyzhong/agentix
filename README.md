@@ -129,7 +129,7 @@ Keep the terminal running and idle, and select the session with `/sessions claud
 1. Start a coding-agent session locally.
 2. Send `/sessions` to the bot and select the session's **Attach** action.
 3. Send an ordinary message to prompt the agent and receive its replies in chat.
-4. Use `/history` to browse turns, `/stop` to interrupt a writable active turn, and `/detach` to disconnect.
+4. Use `/last` to bring the latest turn back to the bottom of the chat, `/history` to browse turns, `/stop` to interrupt a writable active turn, and `/detach` to disconnect.
 5. Send `/help` to see the commands available in the current session, with one command and a one-sentence description per line.
 
 Mention the bot in group chats. If another Codex process owns the session's writer, Agentix attaches read-only; send prompts through that original process.

@@ -180,6 +180,7 @@ pub fn command_menu_for(
             2..2,
             [
                 ("current", "Show the attached session"),
+                ("last", "Show the latest turn again"),
                 ("history", "Show recent conversation history"),
                 ("queue", "Show queued follow-up messages"),
                 ("stop", "Stop the active turn"),

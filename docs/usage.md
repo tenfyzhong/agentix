@@ -21,6 +21,7 @@ These commands are available according to the conversation's current attachment 
 - `/rmux` or `/tmux` (selected by configuration) — browse terminal sessions, windows, and panes, or create a workspace and launch the selected agent
 - `/attach <session-id>` — attach the conversation to a running session
 - `/current` — show the attached session and running turn
+- `/last` — resend the attached session’s latest turn as a new card, preserving reasoning, tool calls, and live controls
 - `/history`, `/history older`, `/history newer` — browse turns with separate user and agent sections
 - `/queue` — inspect a supported follow-up queue, or unresolved delivery receipts for Claude
 - `/stop` — interrupt the current turn when supported (Codex, Pi, OMP)
@@ -196,6 +197,8 @@ show_tool_calls = true
 ```
 
 Both default to `false`. Run `agentix reload` after changing them. Enabled host-exposed reasoning summaries and tool details appear alongside the final answer and are written into the associated Obsidian Job’s Agent output when the turn ends, including sessions without an IM attachment. This does not change the model’s reasoning level.
+
+`/last` is available in the attached-session submenu, including read-only sessions. It sends one new copy of the latest turn using the same output visibility settings and layout. A writable running turn keeps its latest unsaved output; its Stop button and subsequent updates move to the new card. Completed and read-only turns have no Stop button. Without a writable live turn, Agentix reads the latest saved history and retains available cached process content. This does not change `/history` pagination.
 
 In IM messages, consecutive reasoning items share one Reasoning block, and consecutive tool calls share one Tool Call block. Each item keeps its content and order; updates replace that item's content within the group. A change between reasoning, tool calls, and agent output starts a new block. Live turns, Background completion notifications, `/history`, and attach history use the same visibility switches and formatting. This applies to both collapsible cards and Markdown output. In Feishu, the newest process block is expanded while it is being output; once the next visible block appears, the previous process block collapses. Continuing an earlier answer also collapses the active process panel, even when the host reuses its original message ID. Late updates to an older tool only refresh its content. Agent output stays expanded. Older panels remain available to open manually. Pi/OMP native history process output requires an updated `agentix-bridge` plugin as well as Agentix; history responses retain the latest 20 process items per turn. Already received items are retained when a draining turn merges that bounded history.
 

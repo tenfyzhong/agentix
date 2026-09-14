@@ -136,6 +136,7 @@ Pi/OMP FIFO submission.
 | --- | --- |
 | `/sessions [backend]`, `/attach`, `/current`, `/detach`, `/help` | Engine picker/filter/transfer/current/help tests; both mocked IM transports attach to each production native plugin and receive its reply |
 | Prompt, `/steer`, `/stop`, stop buttons | Core turn/owner/action tests plus native control and runtime tests; Codex approval and input dialogs use its stateful mock app-server |
+| `/last` | Engine tests cover contextual menu/help, latest history, live content and Stop transfer across Telegram/Feishu/Slack abstractions, continued updates, cold process output, repeated requests, background isolation, read-only refresh, empty history, and unchanged pagination; real-client layout remains manual |
 | `/history`, older/newer buttons | Engine cursor/render tests plus native control pagination and native session projection tests |
 | `/queue`, `/queue resume`, `/queue clear` | Core queue/control and scoped-button tests, native queue-stack tests, runtime persistence tests; both IM transports query every native backend's empty queue |
 | Session commands and `/cancel` | Core command gating, model/reasoning choice, rename input, plan/custom input and cancellation tests; native control command matrix; both IM transports query `/status` and reject `/fork` for Pi/OMP/Claude |
