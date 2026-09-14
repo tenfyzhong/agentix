@@ -292,6 +292,7 @@ impl Engine {
     ) -> Result<(), EngineError> {
         self.cancel_reattachment(conversation);
         let session_id = self.agent.canonical_session(&session_id).await?;
+        self.cancel_session_attachments(&session_id);
         self.interactions
             .terminal_inputs
             .lock()
@@ -324,6 +325,11 @@ impl Engine {
             .await?
         {
             return Ok(());
+        }
+        if super::pending_prompts::Delivery::current().is_some() {
+            return self
+                .begin_attachment(conversation, owner_id, session_id)
+                .await;
         }
         if let Err(error) = self.agent.attach(&session_id).await {
             return self
@@ -362,8 +368,18 @@ impl Engine {
                     .await;
             }
         };
+        self.finish_attachment(conversation, &session_id, &history)
+            .await
+    }
+
+    pub(super) async fn finish_attachment(
+        &self,
+        conversation: &ConversationRef,
+        session_id: &SessionId,
+        history: &HistoryPage,
+    ) -> Result<(), EngineError> {
         self.sessions
-            .remember_history_cursors(conversation, &history)
+            .remember_history_cursors(conversation, history)
             .await;
         let old = self
             .sessions
@@ -377,17 +393,16 @@ impl Engine {
         } else {
             false
         };
-        self.bind_subscribed_session(conversation, &session_id, old_active)
+        self.bind_subscribed_session(conversation, session_id, old_active)
             .await?;
         self.send_history_views(
             conversation,
-            &session_id,
-            &history,
+            session_id,
+            history,
             HistoryPresentation::Attached,
         )
         .await?;
-        self.show_queued_questions(conversation, &session_id)
-            .await?;
+        self.show_queued_questions(conversation, session_id).await?;
         Ok(())
     }
 

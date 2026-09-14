@@ -420,6 +420,8 @@ struct FakeAgent {
     generation: Arc<std::sync::atomic::AtomicU64>,
     stalled_operation: Option<&'static str>,
     start_gate: Option<Arc<tokio::sync::Notify>>,
+    attach_gate: Option<Arc<tokio::sync::Notify>>,
+    history_gate: Option<Arc<tokio::sync::Notify>>,
     unsubscribe_gate: Arc<Mutex<Option<Arc<tokio::sync::Notify>>>>,
     title_gate: Option<Arc<tokio::sync::Notify>>,
     terminal_draft: Arc<Mutex<Option<String>>>,
@@ -452,6 +454,8 @@ impl FakeAgent {
             stalled_operation: None,
             generation: Arc::new(std::sync::atomic::AtomicU64::new(1)),
             start_gate: None,
+            attach_gate: None,
+            history_gate: None,
             unsubscribe_gate: Arc::default(),
             title_gate: None,
             terminal_error: Arc::default(),
@@ -634,6 +638,11 @@ impl AgentAdapter for FakeAgent {
             .lock()
             .unwrap()
             .push(format!("history:{session_id}:{limit}"));
+        if session_id.as_str() == "thr_b"
+            && let Some(gate) = &self.history_gate
+        {
+            gate.notified().await;
+        }
         self.history_cursors.lock().unwrap().push(cursor);
         let turns = self.history_turns.lock().unwrap();
         let start = turns.len().saturating_sub(limit as usize);
@@ -646,6 +655,11 @@ impl AgentAdapter for FakeAgent {
     }
 
     async fn attach(&self, session_id: &SessionId) -> Result<(), AgentError> {
+        if session_id.as_str() == "thr_b"
+            && let Some(gate) = &self.attach_gate
+        {
+            gate.notified().await;
+        }
         if self.stalled_operation == Some("attach") && session_id.as_str() == "thr_b" {
             std::future::pending::<()>().await;
         }
@@ -11272,4 +11286,351 @@ async fn runtime_reattach_failure_marks_waiting_input_unsent() {
 #[tokio::test]
 async fn runtime_stop_cancels_input_waiting_for_reattachment() {
     check_reattachment_input(Some("/stop")).await;
+}
+
+async fn check_runtime_initial_attachment(history: bool, action: &str, expected: Option<&str>) {
+    let release = Arc::new(tokio::sync::Notify::new());
+    let mut adapter = FakeAgent::new();
+    if history {
+        adapter.history_gate = Some(release.clone());
+    } else {
+        adapter.attach_gate = Some(release.clone());
+    }
+    let agent = Arc::new(adapter);
+    let channel = Arc::new(FakeChannel::default());
+    let state = SqliteState::in_memory().await.unwrap();
+    let engine = Arc::new(Engine::new(
+        agent.clone(),
+        state.clone(),
+        vec![channel.clone()],
+    ));
+    let mut attach = tokio::spawn({
+        let engine = engine.clone();
+        async move {
+            engine
+                .execute_work(agentix_core::EngineWork::Inbound(inbound(
+                    "chat-a",
+                    "/attach thr_b",
+                )))
+                .await
+        }
+    });
+    let dispatched = tokio::time::timeout(std::time::Duration::from_millis(250), &mut attach).await;
+    if dispatched.is_err() {
+        release.notify_one();
+        attach.await.unwrap().unwrap();
+        panic!("initial attachment preparation must release the operation queue");
+    }
+    dispatched.unwrap().unwrap().unwrap();
+    if action == "exit" {
+        engine
+            .execute_work(agentix_core::EngineWork::Event(AgentEvent::SessionExited {
+                session_id: "thr_b".into(),
+            }))
+            .await
+            .unwrap();
+    } else if action == "wrong-client-new" {
+        engine
+            .execute_work(agentix_core::EngineWork::Event(
+                AgentEvent::SessionSwitchStarted {
+                    session_id: "thr_b".into(),
+                    client_id: "unrelated-client".into(),
+                },
+            ))
+            .await
+            .unwrap();
+    } else if !action.is_empty() {
+        engine
+            .execute_work(agentix_core::EngineWork::Inbound(inbound("chat-a", action)))
+            .await
+            .unwrap();
+    }
+    release.notify_one();
+    let completion = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        engine.next_pending_prompt(),
+    )
+    .await
+    .unwrap();
+    engine.execute_work(completion).await.unwrap();
+    assert_eq!(
+        state
+            .current_session(&ConversationRef::new(ChannelKind::Telegram, "chat-a"))
+            .await
+            .unwrap(),
+        expected.map(SessionId::new)
+    );
+}
+
+#[tokio::test]
+async fn runtime_initial_attachment_releases_slow_subscription() {
+    check_runtime_initial_attachment(false, "", Some("thr_b")).await;
+}
+
+#[tokio::test]
+async fn runtime_initial_attachment_releases_slow_history() {
+    check_runtime_initial_attachment(true, "", Some("thr_b")).await;
+}
+
+#[tokio::test]
+async fn runtime_initial_attachment_cancel_fences_slow_subscription() {
+    check_runtime_initial_attachment(false, "/cancel", None).await;
+}
+
+#[tokio::test]
+async fn runtime_initial_attachment_switch_fences_slow_history() {
+    check_runtime_initial_attachment(true, "/attach thr_a", Some("thr_a")).await;
+}
+
+#[tokio::test]
+async fn runtime_initial_attachment_exit_fences_slow_history() {
+    check_runtime_initial_attachment(true, "exit", None).await;
+}
+
+#[tokio::test]
+async fn runtime_initial_attachment_later_conversation_wins() {
+    let release = Arc::new(tokio::sync::Notify::new());
+    let mut adapter = FakeAgent::new();
+    adapter.attach_gate = Some(release.clone());
+    let agent = Arc::new(adapter);
+    let state = SqliteState::in_memory().await.unwrap();
+    let engine = Engine::new(
+        agent.clone(),
+        state.clone(),
+        vec![Arc::new(FakeChannel::default())],
+    );
+    for chat in ["chat-a", "chat-b"] {
+        engine
+            .execute_work(agentix_core::EngineWork::Inbound(inbound(
+                chat,
+                "/attach thr_b",
+            )))
+            .await
+            .unwrap();
+    }
+    release.notify_one();
+    let first = engine.next_pending_prompt().await;
+    release.notify_one();
+    let second = engine.next_pending_prompt().await;
+    engine.execute_work(second).await.unwrap();
+    engine.execute_work(first).await.unwrap();
+    assert_eq!(
+        state
+            .current_session(&ConversationRef::new(ChannelKind::Telegram, "chat-a"))
+            .await
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        state
+            .current_session(&ConversationRef::new(ChannelKind::Telegram, "chat-b"))
+            .await
+            .unwrap(),
+        Some(SessionId::new("thr_b"))
+    );
+    assert!(!agent.calls().iter().any(|call| call == "unsubscribe:thr_b"));
+}
+
+#[tokio::test]
+async fn runtime_initial_attachment_new_keeps_replacement_intent() {
+    let release = Arc::new(tokio::sync::Notify::new());
+    let mut adapter = FakeAgent::new();
+    adapter.history_gate = Some(release.clone());
+    let state = SqliteState::in_memory().await.unwrap();
+    let engine = Engine::new(
+        Arc::new(adapter),
+        state.clone(),
+        vec![Arc::new(FakeChannel::default())],
+    );
+    for command in ["/attach thr_a", "/attach thr_b", "/new"] {
+        engine
+            .execute_work(agentix_core::EngineWork::Inbound(inbound(
+                "chat-a", command,
+            )))
+            .await
+            .unwrap();
+    }
+    release.notify_one();
+    engine
+        .execute_work(engine.next_pending_prompt().await)
+        .await
+        .unwrap();
+    assert_eq!(
+        state
+            .current_session(&ConversationRef::new(ChannelKind::Telegram, "chat-a"))
+            .await
+            .unwrap(),
+        Some(SessionId::new("thr_a"))
+    );
+}
+
+#[tokio::test]
+async fn runtime_initial_attachment_queues_ordered_input_across_reload() {
+    let release = Arc::new(tokio::sync::Notify::new());
+    let mut adapter = FakeAgent::new();
+    adapter.attach_gate = Some(release.clone());
+    let agent = Arc::new(adapter);
+    let state = SqliteState::in_memory().await.unwrap();
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(agent.clone(), state.clone(), vec![channel.clone()]);
+    for text in ["/attach thr_b", "initial-first", "initial-second"] {
+        engine
+            .execute_work(agentix_core::EngineWork::Inbound(inbound("chat-a", text)))
+            .await
+            .unwrap();
+    }
+    assert!(!agent.calls().iter().any(|call| call.starts_with("start:")));
+    let mut next = Engine::new(agent.clone(), state, vec![channel]);
+    next.inherit_runtime(&engine);
+    drop(engine);
+    release.notify_one();
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while !agent
+            .calls()
+            .iter()
+            .any(|call| call.ends_with("initial-second"))
+        {
+            next.execute_work(next.next_pending_prompt().await)
+                .await
+                .unwrap();
+        }
+    })
+    .await
+    .unwrap();
+    let inputs = agent
+        .calls()
+        .into_iter()
+        .filter(|call| call.ends_with("initial-first") || call.ends_with("initial-second"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        inputs,
+        [
+            "start:thr_b:initial-first",
+            "steer:thr_b:turn_new:initial-second"
+        ]
+    );
+}
+
+#[tokio::test]
+async fn runtime_initial_attachment_preserves_content_received_during_history() {
+    let release = Arc::new(tokio::sync::Notify::new());
+    let mut adapter = FakeAgent::new();
+    adapter.history_gate = Some(release.clone());
+    let agent = Arc::new(adapter);
+    agent.history_turns.lock().unwrap().clear();
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent,
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "/attach thr_b",
+        )))
+        .await
+        .unwrap();
+    for event in [
+        AgentEvent::TurnStarted {
+            session_id: "thr_b".into(),
+            turn_id: "first-live".into(),
+        },
+        AgentEvent::ItemCompleted {
+            session_id: "thr_b".into(),
+            turn_id: "first-live".into(),
+            item: ItemSummary {
+                id: "input-1".into(),
+                kind: "userMessage".into(),
+                text: Some("live question".into()),
+                status: None,
+            },
+        },
+        AgentEvent::AgentMessageDelta {
+            session_id: "thr_b".into(),
+            turn_id: "first-live".into(),
+            item_id: "answer-1".into(),
+            delta: "live answer".into(),
+        },
+    ] {
+        engine
+            .execute_work(agentix_core::EngineWork::Event(event))
+            .await
+            .unwrap();
+    }
+    release.notify_one();
+    engine
+        .execute_work(engine.next_pending_prompt().await)
+        .await
+        .unwrap();
+    let sent = channel.sent();
+    let live = sent
+        .iter()
+        .find(|(_, view)| {
+            view.sections
+                .iter()
+                .any(|section| section.body.contains("live answer"))
+        })
+        .expect("content arriving during history must survive attachment");
+    assert!(
+        live.1
+            .sections
+            .iter()
+            .any(|section| section.body.contains("live question"))
+    );
+    assert!(live.1.actions.iter().any(|action| action.label == "Stop"));
+}
+
+#[tokio::test]
+async fn runtime_initial_attachment_ignores_another_clients_new() {
+    check_runtime_initial_attachment(true, "wrong-client-new", Some("thr_b")).await;
+}
+
+#[tokio::test]
+async fn runtime_initial_attachment_keeps_subscription_when_previous_owner_detaches() {
+    let release = Arc::new(tokio::sync::Notify::new());
+    let mut adapter = FakeAgent::new();
+    adapter.history_gate = Some(release.clone());
+    let agent = Arc::new(adapter);
+    let state = SqliteState::in_memory().await.unwrap();
+    let engine = Engine::new(
+        agent.clone(),
+        state.clone(),
+        vec![Arc::new(FakeChannel::default())],
+    );
+    release.notify_one();
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_b"))
+        .await
+        .unwrap();
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-b",
+            "/attach thr_b",
+        )))
+        .await
+        .unwrap();
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a", "/detach",
+        )))
+        .await
+        .unwrap();
+    release.notify_one();
+    engine
+        .execute_work(engine.next_pending_prompt().await)
+        .await
+        .unwrap();
+    tokio::task::yield_now().await;
+    assert_eq!(
+        state
+            .current_session(&ConversationRef::new(ChannelKind::Telegram, "chat-b"))
+            .await
+            .unwrap(),
+        Some(SessionId::new("thr_b"))
+    );
+    assert!(
+        !agent.calls().iter().any(|call| call == "unsubscribe:thr_b"),
+        "old-owner cleanup must not close the new subscription"
+    );
 }

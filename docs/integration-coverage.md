@@ -336,6 +336,7 @@ path. The [lifecycle guide](session-lifecycle.md) describes the implementation;
 | Input gets feedback while its backend acknowledgement is pending | `feishu_message_traverses_channel_engine_and_codex_then_updates_feishu` | Production runtime and Feishu adapter reach a local HTTP endpoint within the fixture's 500 ms deadline; this is not screen visibility |
 | Detach remains available during a pending initial turn | `feishu_detach_does_not_wait_for_pending_turn_start` | Production transport/runtime with held Codex request |
 | Menus and detached-session unsubscribe do not occupy the conversation indefinitely | `slow_menu_*`, `detach_feedback_and_next_attachment_do_not_wait_for_old_unsubscribe` in core engine tests | Holds optional requests; checks the 50 ms fast-path behavior with scheduling tolerance |
+| Initial attachment stays operable during subscription or history stalls | `runtime_initial_attachment_*`, `attachment_history_*` | Holds initial requests; covers cancellation, exit, `/new`, cross-conversation ownership, ordered input across reload, and content arriving before the binding |
 | Reattachment preserves cancellation, input order and reload continuity | `runtime_reattach_*`, `runtime_stop_cancels_input_waiting_for_reattachment` | Holds cleanup; verifies stale completion rejection, unsent failure receipts and new input after Stop |
 | Other conversations keep progressing under load | `engine_runtime_fixed_load_preserves_isolation_and_admission_bounds` and flood/outbox regressions | Bounded local fixtures; does not guarantee throughput above the configured capacity |
 | Pi/OMP retain native event order and Stop during pending commands | Bridge runtime/host tests and native-new IPC coverage above | Optional installed-host tests are separate from default CI |
@@ -348,11 +349,6 @@ establish the listed dependencies and ordering, not a universal response deadlin
 
 ### Remaining acceptance work
 
-- An initial remote `agent.attach` and the first history read still run inside the attachment operation.
-  Releasing the prior unsubscribe wait does not bound this separate request, or
-  prove that navigation remains available while the new subscription itself is
-  stalled. This needs its own held-attach regression and completion/cancellation
-  design before claiming uninterrupted attachment under backend stalls.
 - Real IM visibility remains unmeasured. Use an explicitly designated test
   conversation and isolated agent sessions; record the exact binary/host/channel
   versions and repeat empty attach, active/completed exit, resume, `/new`, queued

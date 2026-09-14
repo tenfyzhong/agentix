@@ -414,6 +414,7 @@ impl Engine {
         &self,
         session_id: &SessionId,
     ) -> Result<(), EngineError> {
+        self.cancel_session_attachments(session_id);
         self.turns.input_recovery.cancel_session(session_id);
         self.freeze_exited_cards(session_id).await;
         self.turns.pending_prompts.invalidate(session_id);

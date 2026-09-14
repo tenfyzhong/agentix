@@ -21,6 +21,7 @@ mod interaction_flows;
 mod presentation;
 mod question_flows;
 pub use presentation::{command_menu, command_menu_for};
+mod attachment_history;
 mod command_menus;
 mod session_flows;
 mod session_service;
@@ -677,6 +678,7 @@ impl Engine {
     pub async fn handle_agent_event(&self, event: AgentEvent) -> Result<(), EngineError> {
         let event = self.output.project_event(event);
         self.tasks.record_job_message(&event).await;
+        self.sessions.cleanup.observe(&event);
         if let AgentEvent::InteractionRequested(request) = &event
             && request.kind == InteractionKind::UserInput
         {
@@ -704,18 +706,8 @@ impl Engine {
                 session_id,
                 client_id,
             } => {
-                let session = SessionId::new(session_id);
-                if let Some(conversation) = self.sessions.bound_conversation(&session).await
-                    && self
-                        .agent
-                        .session_client_id(&session)
-                        .await
-                        .as_deref()
-                        .is_none_or(|id| id == client_id)
-                {
-                    self.begin_session_switch(&conversation, &session, client_id)
-                        .await?;
-                }
+                self.handle_native_session_switch_started(session_id, client_id)
+                    .await?;
                 return Ok(());
             }
             AgentEvent::SessionReplaced {

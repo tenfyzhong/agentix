@@ -58,6 +58,22 @@ configuration reloads, not persisted as a
 reattachment across process restarts. Direct callers of `handle_inbound` and saved-binding
 restoration retain synchronous subscription ordering.
 
+Initial IM subscriptions and their first history read use the same owned completion
+path, with a 50 ms fast path. A slower request announces that connection is in
+progress and releases the conversation lane. Input waits for the requested binding;
+`/cancel`, detach, another attachment, exit, and `/new` revoke obsolete intent.
+A later attachment from another conversation takes precedence over an earlier
+pending request. Completions check the request ID, binding epoch, and backend
+generation before committing. Cancelled requests finish remote preparation before
+unused subscriptions are cleaned up, preserving the order with later subscriptions.
+At most 128 preparations can be retained. Up to 32 recent turns received during
+preparation are coalesced by turn and item ID and merged into the initial history,
+including input, reasoning and completion status. This avoids dropping content
+between subscription and binding without replaying overlapping deltas twice.
+Preparation and its input queue survive reload; shutdown aborts their workers.
+The budget bounds backend preparation waiting in the dispatcher, not IM display
+latency or provider response time.
+
 
 For IM input sent to an idle session, an acknowledgement taking more than 100 ms
 triggers a `Sending…` card containing the input. Once the backend supplies a turn
