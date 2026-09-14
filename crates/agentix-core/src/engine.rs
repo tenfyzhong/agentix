@@ -26,6 +26,7 @@ mod session_flows;
 mod session_service;
 mod session_switch;
 mod startup;
+mod subscription_cleanup;
 mod task_board;
 mod terminal_input;
 mod turn_flows;

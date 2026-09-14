@@ -38,6 +38,17 @@ requests are skipped with a warning. Workers are shared across configuration rel
 and aborted on runtime shutdown or when their final owner is dropped. These bounds
 cover menu work, not the total network latency of other IM messages.
 
+Detached-session unsubscribe requests also have a 50 ms fast path. Slow remote
+cleanup remains owned in the background, so detach feedback and attachment to a
+different session do not wait for its acknowledgement. Reattaching the same session
+announces the transition and waits for its outstanding unsubscribe before requesting
+a new subscription; this prevents old cleanup from cancelling the new subscription.
+Saved-binding restoration observes the same ordering. Cleanup workers are shared
+across reloads and aborted during shutdown. At most 128 sessions can have cleanup
+in flight; excess best-effort requests retain the remote subscription and log a warning.
+The same-session recovery wait still occupies its operation lane until cleanup finishes.
+
+
 For IM input sent to an idle session, an acknowledgement taking more than 100 ms
 triggers a `Sending…` card containing the input. Once the backend supplies a turn
 ID, the same card becomes the live turn card with the supported actions. A failed

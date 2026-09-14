@@ -27,6 +27,7 @@ pub(super) enum RestoredBindingStatus {
 
 pub(super) struct SessionService {
     state: SqliteState,
+    pub(super) cleanup: super::subscription_cleanup::SubscriptionCleanup,
     transitions: Mutex<()>,
     pub(super) bindings: Mutex<BindingTable>,
     pub(super) cache: Arc<Mutex<HashMap<SessionId, SessionSummary>>>,
@@ -46,6 +47,7 @@ impl SessionService {
     pub(super) fn new(state: SqliteState) -> Self {
         Self {
             state,
+            cleanup: super::subscription_cleanup::SubscriptionCleanup::default(),
             transitions: Mutex::new(()),
             bindings: Mutex::new(BindingTable::default()),
             cache: Arc::new(Mutex::new(HashMap::new())),
@@ -170,6 +172,9 @@ impl SessionService {
             self.attach_at_epoch(conversation.clone(), session.clone(), false, switch.epoch)
                 .await;
             return Ok(RestoredBindingStatus::Offline);
+        }
+        if let Some(pending) = self.cleanup.pending(session) {
+            super::subscription_cleanup::wait(pending).await;
         }
         let status = match agent.attach(session).await {
             Ok(()) => RestoredBindingStatus::Attached,

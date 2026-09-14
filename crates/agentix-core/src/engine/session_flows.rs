@@ -318,6 +318,8 @@ impl Engine {
                 .await?;
             return Ok(());
         }
+        self.wait_subscription_cleanup(conversation, &session_id)
+            .await?;
         if let Err(error) = self.agent.attach(&session_id).await {
             return self
                 .show_attach_failure(conversation, owner_id, &session_id, &error)
@@ -344,9 +346,11 @@ impl Engine {
                     .bound_conversation(&session_id)
                     .await
                     .is_none()
-                    && let Err(cleanup) = self.agent.unsubscribe(&session_id).await
                 {
-                    tracing::warn!(%cleanup, session = %session_id, "failed to release incomplete attachment");
+                    self.sessions
+                        .cleanup
+                        .enqueue(self.agent.clone(), &session_id)
+                        .await;
                 }
                 return self
                     .show_attach_failure(conversation, owner_id, &session_id, &error)
@@ -633,8 +637,11 @@ impl Engine {
             .pending_prompts
             .cancel_queued_conversation(conversation);
         let session_label = self.session_label(&session).await;
-        if !active && let Err(error) = self.agent.unsubscribe(&session).await {
-            tracing::warn!(%error, %session, "failed to unsubscribe a detached session");
+        if !active {
+            self.sessions
+                .cleanup
+                .enqueue(self.agent.clone(), &session)
+                .await;
         }
         self.update_command_menu_best_effort(conversation, false)
             .await;
@@ -900,9 +907,11 @@ impl Engine {
             .await;
         if let Some(previous) = persisted_previous
             && live_previous.as_ref() != Some(&previous)
-            && let Err(error) = self.agent.unsubscribe(&previous).await
         {
-            tracing::warn!(%error, session = %previous, "failed to stop watching the replaced session");
+            self.sessions
+                .cleanup
+                .enqueue(self.agent.clone(), &previous)
+                .await;
         }
         Ok(())
     }
@@ -924,9 +933,11 @@ impl Engine {
         }
         if let Some(previous) = outcome.previous_session
             && !old_active
-            && let Err(error) = self.agent.unsubscribe(&previous).await
         {
-            tracing::warn!(%error, session = %previous, "failed to unsubscribe the previous session");
+            self.sessions
+                .cleanup
+                .enqueue(self.agent.clone(), &previous)
+                .await;
         }
         if let Some(displaced) = outcome.displaced_conversation {
             let session_label = self.session_label(session_id).await;

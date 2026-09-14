@@ -10806,3 +10806,146 @@ async fn reload_preserves_slow_menu_serialization() {
     .unwrap();
     assert!(!channel.session_commands().last().unwrap().1);
 }
+
+#[tokio::test]
+async fn detach_feedback_and_next_attachment_do_not_wait_for_old_unsubscribe() {
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Arc::new(Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    ));
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    let release = Arc::new(tokio::sync::Notify::new());
+    *agent.unsubscribe_gate.lock().unwrap() = Some(release.clone());
+    let mut detach = tokio::spawn({
+        let engine = engine.clone();
+        async move { engine.handle_inbound(inbound("chat-a", "/detach")).await }
+    });
+    let detached = tokio::time::timeout(std::time::Duration::from_millis(250), &mut detach).await;
+    if detached.is_err() {
+        release.notify_one();
+        detach.await.unwrap().unwrap();
+        panic!("detach must release session operations before remote unsubscribe completes");
+    }
+    detached.unwrap().unwrap().unwrap();
+    assert!(
+        channel
+            .sent()
+            .iter()
+            .any(|(_, view)| view.body.starts_with("Detached from"))
+    );
+    tokio::time::timeout(
+        std::time::Duration::from_millis(250),
+        engine.handle_inbound(inbound("chat-a", "/attach thr_b")),
+    )
+    .await
+    .expect("the new session must not wait for old cleanup")
+    .unwrap();
+    release.notify_one();
+}
+
+#[tokio::test]
+async fn reattach_waits_for_owned_cleanup_and_announces_progress_across_reload() {
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel::default());
+    let state = SqliteState::in_memory().await.unwrap();
+    let engine = Engine::new(agent.clone(), state.clone(), vec![channel.clone()]);
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    let release = Arc::new(tokio::sync::Notify::new());
+    *agent.unsubscribe_gate.lock().unwrap() = Some(release.clone());
+    engine
+        .handle_inbound(inbound("chat-a", "/detach"))
+        .await
+        .unwrap();
+    let mut next = Engine::new(agent.clone(), state, vec![channel.clone()]);
+    next.inherit_runtime(&engine);
+    drop(engine);
+    let next = Arc::new(next);
+    let attach = tokio::spawn({
+        let next = next.clone();
+        async move {
+            next.handle_inbound(inbound("chat-a", "/attach thr_a "))
+                .await
+        }
+    });
+    tokio::time::timeout(std::time::Duration::from_millis(250), async {
+        loop {
+            if channel
+                .sent()
+                .iter()
+                .any(|(_, view)| view.title == "Reattaching session")
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        agent
+            .calls()
+            .iter()
+            .filter(|call| call.as_str() == "attach:thr_a")
+            .count(),
+        1,
+        "new subscription overtook unfinished unsubscribe"
+    );
+    assert!(!attach.is_finished());
+    release.notify_one();
+    tokio::time::timeout(std::time::Duration::from_millis(250), attach)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        agent
+            .calls()
+            .iter()
+            .filter(|call| call.as_str() == "attach:thr_a")
+            .count(),
+        2
+    );
+}
+
+#[tokio::test]
+async fn subscription_cleanup_drops_its_backend_owner_on_shutdown() {
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    *agent.unsubscribe_gate.lock().unwrap() = Some(Arc::new(tokio::sync::Notify::new()));
+    engine
+        .handle_inbound(inbound("chat-a", "/detach"))
+        .await
+        .unwrap();
+    engine.cancel_pending_prompts().await.unwrap();
+    let weak = Arc::downgrade(&agent);
+    drop(agent);
+    drop(engine);
+    tokio::time::timeout(std::time::Duration::from_millis(250), async {
+        loop {
+            if weak.upgrade().is_none() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("shutdown leaked the unsubscribe worker's backend owner");
+}

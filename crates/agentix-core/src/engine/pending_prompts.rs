@@ -337,6 +337,7 @@ impl Engine {
 
     pub fn abort_pending_prompts(&self) {
         self.menus.abort();
+        self.sessions.cleanup.abort();
         self.turns.pending_prompts.abort();
     }
 

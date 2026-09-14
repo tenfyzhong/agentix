@@ -184,7 +184,10 @@ impl Engine {
                 .record_background_notification(conversation, session_id, &turn_id)
                 .await;
             self.sessions.finish_draining(session_id).await;
-            self.agent.unsubscribe(session_id).await?;
+            self.sessions
+                .cleanup
+                .enqueue(self.agent.clone(), session_id)
+                .await;
         }
         Ok(())
     }
