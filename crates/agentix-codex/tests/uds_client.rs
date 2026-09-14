@@ -370,7 +370,7 @@ mod unix {
             )
             .await;
 
-            let start = await_empty_thread_start(&mut websocket).await;
+            let start = await_empty_thread_request(&mut websocket, "turn/start").await;
             send_result(
                 &mut websocket,
                 &start["id"],
@@ -378,7 +378,7 @@ mod unix {
             )
             .await;
 
-            let resumed = next_json(&mut websocket).await;
+            let resumed = await_empty_thread_request(&mut websocket, "thread/resume").await;
             assert_eq!(resumed["method"], "thread/resume");
             assert_eq!(resumed["params"]["excludeTurns"], true);
             send_result(&mut websocket, &resumed["id"], json!({})).await;
@@ -778,9 +778,10 @@ mod unix {
         assert_eq!(initialized["method"], "initialized");
     }
 
-    // Allow recovery queries to interleave before the first turn materializes.
-    async fn await_empty_thread_start<S>(
+    // Recovery queries can interleave both before and after turn/start acknowledgement.
+    async fn await_empty_thread_request<S>(
         websocket: &mut tokio_tungstenite::WebSocketStream<S>,
+        expected: &str,
     ) -> Value
     where
         S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
@@ -788,7 +789,7 @@ mod unix {
         loop {
             let request = next_json(websocket).await;
             match request["method"].as_str().unwrap() {
-                "turn/start" => return request,
+                method if method == expected => return request,
                 "thread/loaded/list" => {
                     send_result(
                         websocket,
@@ -816,7 +817,7 @@ mod unix {
                     )
                     .await;
                 }
-                method => panic!("unexpected request before first turn: {method}"),
+                method => panic!("unexpected request while awaiting {expected}: {method}"),
             }
         }
     }
