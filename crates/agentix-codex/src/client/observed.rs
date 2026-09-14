@@ -23,81 +23,93 @@ impl CodexClient {
             .cloned()
             .collect::<Vec<_>>();
         for session in sessions {
-            let turn = match self.latest_stored_turn(&session).await {
-                Ok(Some(turn)) => turn,
-                Ok(None) => continue,
-                Err(error) => {
-                    tracing::warn!(%error, %session, "failed to read observed Codex session");
-                    continue;
-                }
-            };
-            let mut observed = self.observed.lock().await;
-            let Some(previous) = observed.get_mut(&session) else {
-                continue; // Detach may have completed while the request was in flight.
-            };
-            if previous.as_ref() == Some(&turn) {
-                continue;
+            self.poll_observed_session(&session).await;
+        }
+    }
+
+    pub(super) async fn poll_observed_session(&self, session: &SessionId) {
+        let turn = match self.latest_stored_turn(session).await {
+            Ok(Some(turn)) => turn,
+            Ok(None) => return,
+            Err(error) => {
+                tracing::warn!(%error, %session, "failed to read observed Codex session");
+                return;
             }
-            if turn.status == TurnStatus::InProgress
-                && previous.as_ref().is_none_or(|old| old.id != turn.id)
-            {
-                let _ = self.events.send(AgentEvent::TurnStarted {
-                    session_id: session.to_string(),
-                    turn_id: turn.id.clone(),
-                });
-            }
-            let old = previous.as_ref().filter(|old| old.id == turn.id);
-            // Keep the aggregate prompt, but preserve native output identities so
-            // updates replace items restored by read-only attach.
-            let mut items = Vec::new();
-            if old.is_none_or(|old| old.user_text != turn.user_text) {
-                items.push(ItemSummary {
-                    id: format!("observed-{}-userMessage", turn.id),
-                    kind: "userMessage".into(),
-                    text: turn.user_text.clone(),
-                    status: None,
-                });
-            }
-            items.extend(
-                turn.items
-                    .iter()
-                    .filter(|item| item.kind != "userMessage")
-                    .filter(|item| old.is_none_or(|old| !old.items.contains(item)))
-                    .cloned(),
-            );
-            if !turn.items.iter().any(|item| item.kind == "agentMessage")
-                && old.is_none_or(|old| old.agent_text != turn.agent_text)
-            {
-                items.push(ItemSummary {
-                    id: format!("observed-{}-agentMessage", turn.id),
-                    kind: "agentMessage".into(),
-                    text: turn.agent_text.clone(),
-                    status: None,
-                });
-            }
-            for item in items {
-                let _ = self.events.send(AgentEvent::ItemCompleted {
-                    session_id: session.to_string(),
-                    turn_id: turn.id.clone(),
-                    item,
-                });
-            }
-            if matches!(
-                turn.status,
-                TurnStatus::Completed | TurnStatus::Failed | TurnStatus::Interrupted
-            ) {
-                self.completed_turns
-                    .lock()
-                    .await
-                    .insert(session.clone(), turn.id.clone());
-                let _ = self.events.send(AgentEvent::TurnCompleted {
-                    session_id: session.to_string(),
-                    turn_id: turn.id.clone(),
-                    status: turn.status.clone(),
-                    error: None,
-                });
-            }
-            *previous = Some(turn);
+        };
+        let mut observed = self.observed.lock().await;
+        let Some(previous) = observed.get_mut(session) else {
+            return; // Detach may have completed while the request was in flight.
+        };
+        if previous.as_ref() == Some(&turn) {
+            return;
+        }
+        self.publish_turn_snapshot(session, previous.as_ref(), &turn)
+            .await;
+        *previous = Some(turn);
+    }
+
+    pub(super) async fn publish_turn_snapshot(
+        &self,
+        session: &SessionId,
+        previous: Option<&TurnSummary>,
+        turn: &TurnSummary,
+    ) {
+        if turn.status == TurnStatus::InProgress && previous.is_none_or(|old| old.id != turn.id) {
+            let _ = self.events.send(AgentEvent::TurnStarted {
+                session_id: session.to_string(),
+                turn_id: turn.id.clone(),
+            });
+        }
+        let old = previous.filter(|old| old.id == turn.id);
+        // Keep the aggregate prompt, but preserve native output identities so
+        // updates replace items restored by read-only attach.
+        let mut items = Vec::new();
+        if old.is_none_or(|old| old.user_text != turn.user_text) {
+            items.push(ItemSummary {
+                id: format!("observed-{}-userMessage", turn.id),
+                kind: "userMessage".into(),
+                text: turn.user_text.clone(),
+                status: None,
+            });
+        }
+        items.extend(
+            turn.items
+                .iter()
+                .filter(|item| item.kind != "userMessage")
+                .filter(|item| old.is_none_or(|old| !old.items.contains(item)))
+                .cloned(),
+        );
+        if !turn.items.iter().any(|item| item.kind == "agentMessage")
+            && old.is_none_or(|old| old.agent_text != turn.agent_text)
+        {
+            items.push(ItemSummary {
+                id: format!("observed-{}-agentMessage", turn.id),
+                kind: "agentMessage".into(),
+                text: turn.agent_text.clone(),
+                status: None,
+            });
+        }
+        for item in items {
+            let _ = self.events.send(AgentEvent::ItemCompleted {
+                session_id: session.to_string(),
+                turn_id: turn.id.clone(),
+                item,
+            });
+        }
+        if matches!(
+            turn.status,
+            TurnStatus::Completed | TurnStatus::Failed | TurnStatus::Interrupted
+        ) {
+            self.completed_turns
+                .lock()
+                .await
+                .insert(session.clone(), turn.id.clone());
+            let _ = self.events.send(AgentEvent::TurnCompleted {
+                session_id: session.to_string(),
+                turn_id: turn.id.clone(),
+                status: turn.status.clone(),
+                error: None,
+            });
         }
     }
 }

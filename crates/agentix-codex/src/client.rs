@@ -628,8 +628,50 @@ impl CodexClient {
                 Ok(true)
             }
             Err(error) if is_rollout_initializing(&error) => Ok(false),
+            Err(ClientError::Rpc {
+                code: -32600,
+                message,
+            }) if message.contains("already has an active writer") => {
+                // The first turn can acquire its writer after provisional attach.
+                // Start from an empty cursor so that turn is delivered, not skipped.
+                self.observed
+                    .lock()
+                    .await
+                    .entry(session_id.clone())
+                    .or_insert(None);
+                self.subscriptions.lock().await.remove(session_id);
+                self.pending_resumes.lock().await.remove(session_id);
+                Ok(true)
+            }
             Err(error) => Err(error),
         }
+    }
+
+    async fn recover_pending_session(&self, session: &SessionId) -> Result<(), ClientError> {
+        if !self.try_resume_pending_session(session).await? {
+            return Ok(());
+        }
+        if self.observed.lock().await.contains_key(session) {
+            self.poll_observed_session(session).await;
+            return Ok(());
+        }
+        let turn = match self.latest_stored_turn(session).await {
+            Ok(turn) => turn,
+            Err(error) => {
+                if self.subscriptions.lock().await.contains(session) {
+                    self.pending_resumes.lock().await.insert(session.clone());
+                }
+                return Err(error);
+            }
+        };
+        // Events before successful resume were not subscribed. Recover their
+        // input and output from history without replaying a prompt to the agent.
+        if self.subscriptions.lock().await.contains(session)
+            && let Some(turn) = turn
+        {
+            self.publish_turn_snapshot(session, None, &turn).await;
+        }
+        Ok(())
     }
 
     async fn resume_exited_session(&self, session_id: &SessionId) -> Result<bool, AgentError> {
@@ -1753,7 +1795,7 @@ async fn monitor_running_sessions(client: CodexClient) {
         };
         let pending_resumes = client.pending_resumes.lock().await.clone();
         for session in pending_resumes.intersection(&running) {
-            if let Err(error) = client.try_resume_pending_session(session).await {
+            if let Err(error) = client.recover_pending_session(session).await {
                 tracing::warn!(%error, session = %session, "failed to subscribe to started Codex session");
             }
         }
