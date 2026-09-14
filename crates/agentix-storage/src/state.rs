@@ -105,6 +105,8 @@ impl SqliteState {
         sqlx::query("PRAGMA journal_mode = WAL")
             .execute(&self.pool)
             .await?;
+        sqlx::query("CREATE TABLE IF NOT EXISTS conversation_owners (channel TEXT NOT NULL, conversation_id TEXT NOT NULL, owner_id TEXT NOT NULL, PRIMARY KEY (channel, conversation_id))")
+            .execute(&self.pool).await?;
         self.migrate_notification_outbox().await?;
         self.migrate_session_switches().await?;
         sqlx::query("CREATE TABLE IF NOT EXISTS channel_identities (channel TEXT PRIMARY KEY, identity TEXT NOT NULL)")

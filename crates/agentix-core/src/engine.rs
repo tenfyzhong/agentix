@@ -391,6 +391,9 @@ impl Engine {
         {
             return Ok(());
         }
+        self.state
+            .save_conversation_owner(&envelope.conversation, &envelope.owner_id)
+            .await?;
         self.interactions
             .owners
             .lock()

@@ -6889,6 +6889,110 @@ async fn new_session_stalled_attachment_expires_without_committing() {
 }
 
 #[tokio::test]
+async fn restart_preserves_background_recipients_without_bound_turn_views() {
+    for detach in [false, true] {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("state.sqlite3");
+        let agent = Arc::new(FakeAgent::new());
+        let channel = Arc::new(FakeChannel::default());
+        let state = SqliteState::open(&path).await.unwrap();
+        let engine = Engine::new(agent.clone(), state, vec![channel.clone()]);
+        engine.restore_bindings_deferred().await.unwrap();
+        engine
+            .handle_inbound(inbound_as("chat-a", "owner-42", "/help"))
+            .await
+            .unwrap();
+        if detach {
+            engine
+                .handle_inbound(inbound_as("chat-a", "owner-42", "/attach thr_a"))
+                .await
+                .unwrap();
+            engine
+                .handle_inbound(inbound_as("chat-a", "owner-42", "/detach"))
+                .await
+                .unwrap();
+        }
+        drop(engine);
+        let restarted = Engine::new(
+            agent.clone(),
+            SqliteState::open(&path).await.unwrap(),
+            vec![channel.clone()],
+        );
+        assert_eq!(restarted.restore_bindings().await.unwrap(), 0);
+        let before = channel.sent().len();
+        restarted
+            .handle_agent_event(AgentEvent::TurnCompleted {
+                session_id: "thr_b".into(),
+                turn_id: "turn_after_restart".into(),
+                status: TurnStatus::Completed,
+                error: None,
+            })
+            .await
+            .unwrap();
+        let sent = channel.sent();
+        assert_eq!(sent.len(), before + 1, "detach={detach}");
+        assert_eq!(sent.last().unwrap().0.conversation_id, "chat-a");
+        click_action(
+            &restarted,
+            "attach-after-restart",
+            sent.last().unwrap().1.actions[0].token.clone(),
+        )
+        .await;
+        assert!(agent.calls().contains(&"attach:thr_b".to_owned()));
+    }
+}
+
+#[tokio::test]
+async fn restored_background_recipients_respect_bot_identity_channels_and_disable_setting() {
+    for (identity, enabled, present, expected) in [
+        ("bot-a", true, true, 1),
+        ("bot-b", true, true, 0),
+        ("bot-a", false, true, 0),
+        ("bot-a", true, false, 0),
+    ] {
+        let state = SqliteState::in_memory().await.unwrap();
+        let agent = Arc::new(FakeAgent::new());
+        let original = Arc::new(FakeChannel {
+            bot_identity: Some("bot-a".into()),
+            ..FakeChannel::default()
+        });
+        let engine = Engine::new(agent.clone(), state.clone(), vec![original]);
+        engine.restore_bindings_deferred().await.unwrap();
+        engine
+            .handle_inbound(inbound_as("chat-a", "owner-42", "/help"))
+            .await
+            .unwrap();
+        drop(engine);
+        let channel = Arc::new(FakeChannel {
+            bot_identity: Some(identity.into()),
+            ..FakeChannel::default()
+        });
+        let channels: Vec<Arc<dyn ChannelAdapter>> = if present {
+            vec![channel.clone()]
+        } else {
+            vec![]
+        };
+        let restarted =
+            Engine::new(agent, state, channels).with_background_turn_notifications(enabled);
+        restarted.restore_bindings_deferred().await.unwrap();
+        restarted
+            .handle_agent_event(AgentEvent::TurnCompleted {
+                session_id: "thr_b".into(),
+                turn_id: "background".into(),
+                status: TurnStatus::Completed,
+                error: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            channel.sent().len(),
+            expected,
+            "{identity}, enabled={enabled}, present={present}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn background_and_history_share_live_process_format_and_visibility() {
     for reasoning in [false, true] {
         for tools in [false, true] {
