@@ -1694,6 +1694,22 @@ impl CodexClient {
     }
 }
 
+fn forward_registry_events(
+    client: &CodexClient,
+    registry: &crate::ClientRegistry,
+    lifecycle_sequence: &mut u64,
+) {
+    for (sequence, event) in registry.lifecycle_since(*lifecycle_sequence) {
+        *lifecycle_sequence = sequence;
+        if let AgentEvent::InteractionRequested(request) = &event
+            && !registry.question_is_pending(&request.rpc_id)
+        {
+            continue;
+        }
+        let _ = client.events.send(event);
+    }
+}
+
 async fn monitor_running_sessions(client: CodexClient) {
     let mut lifecycle_sequence = 0;
     let mut question_generation = client.connection.generation.load(Ordering::Acquire);
@@ -1718,15 +1734,7 @@ async fn monitor_running_sessions(client: CodexClient) {
                 registry.reset_questions();
                 question_generation = generation;
             }
-            for (sequence, event) in registry.lifecycle_since(lifecycle_sequence) {
-                lifecycle_sequence = sequence;
-                if let AgentEvent::InteractionRequested(request) = &event
-                    && !registry.question_is_pending(&request.rpc_id)
-                {
-                    continue;
-                }
-                let _ = client.events.send(event);
-            }
+            forward_registry_events(&client, registry, &mut lifecycle_sequence);
         }
         client.poll_observed_sessions().await;
         let watched = client.process_sessions.lock().await.clone();
@@ -1756,11 +1764,20 @@ async fn monitor_running_sessions(client: CodexClient) {
             }
         }
         let online = watched.difference(&exited).cloned().collect::<HashSet<_>>();
-        let departed = if client.registry.is_some() {
-            online.difference(&running).cloned().collect()
+        let departed = if let Some(registry) = &client.registry {
+            online
+                .difference(&running)
+                .filter(|session| !registry.awaiting_replacement(session.as_str()))
+                .cloned()
+                .collect()
         } else {
             confirm_exited_sessions(&online, &running, &mut missing_counts)
         };
+        // A replacement may arrive during discovery. Forward its lifecycle
+        // before the old session's departure can clear the attachment.
+        if let Some(registry) = &client.registry {
+            forward_registry_events(&client, registry, &mut lifecycle_sequence);
+        }
         for session in departed {
             client.subscriptions.lock().await.remove(&session);
             client.pending_resumes.lock().await.remove(&session);

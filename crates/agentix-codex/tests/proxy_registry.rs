@@ -230,7 +230,7 @@ fn native_new_handoff_survives_coalesced_changes_and_does_not_follow_forks() {
 }
 
 #[test]
-fn native_new_follows_reconnect_of_same_process_and_start_before_unsubscribe() {
+fn native_new_follows_start_before_unsubscribe_but_not_closed_connections() {
     for reconnect in [true, false] {
         let r = ClientRegistry::default();
         let mut c = r.connect(Some(std::process::id()));
@@ -251,12 +251,19 @@ fn native_new_follows_reconnect_of_same_process_and_start_before_unsubscribe() {
         r.server_message(c, &json!({"id":3,"result":{"status":"unsubscribed"}}));
         if reconnect {
             r.disconnect(c);
+            assert!(!r.awaiting_replacement("old"));
+            assert!(r.lifecycle_since(0).is_empty());
             c = r.connect(Some(std::process::id()));
             r.client_message(c, &json!({"id":2,"method":"thread/start","params":{}}));
             r.server_message(c, &json!({"id":2,"result":{"thread":{"id":"new"}}}));
         }
+        assert!(!r.awaiting_replacement("old"));
         let events = r.lifecycle_since(0);
-        assert!(events.iter().any(|(_, event)| matches!(event, agentix_domain::AgentEvent::SessionReplaced { session_id, replacement_session_id, client_id } if session_id == "old" && replacement_session_id == "new" && client_id == &identity)));
+        if reconnect {
+            assert!(events.is_empty());
+        } else {
+            assert!(events.iter().any(|(_, event)| matches!(event, agentix_domain::AgentEvent::SessionReplaced { session_id, replacement_session_id, client_id } if session_id == "old" && replacement_session_id == "new" && client_id == &identity)));
+        }
     }
 }
 
@@ -364,4 +371,52 @@ fn async_cli_questions_are_observed_once_without_consuming_message_output() {
         agentix_codex::decode_server_frame(&frame).unwrap(),
         agentix_codex::ServerMessage::Event(agentix_domain::AgentEvent::ItemCompleted { .. })
     ));
+}
+
+#[test]
+fn ordinary_unsubscribe_and_exit_do_not_start_a_session_switch() {
+    for method in ["thread/start", "thread/resume"] {
+        for status in ["unsubscribed", "notSubscribed", "notLoaded"] {
+            let r = ClientRegistry::default();
+            let c = r.connect(None);
+            r.client_message(c, &json!({"id":1,"method":method,"params":{}}));
+            r.server_message(c, &json!({"id":1,"result":{"thread":{"id":"old"}}}));
+            r.client_message(
+                c,
+                &json!({"id":2,"method":"thread/unsubscribe","params":{"threadId":"old"}}),
+            );
+            r.server_message(c, &json!({"id":2,"result":{"status":status}}));
+            assert!(r.lifecycle_since(0).is_empty(), "{method}: {status}");
+            assert!(r.snapshot()[0].sessions.is_empty());
+            assert!(r.awaiting_replacement("old"));
+            r.disconnect(c);
+            assert!(!r.awaiting_replacement("old"));
+            assert!(r.lifecycle_since(0).is_empty());
+        }
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn disconnect_drops_replacement_candidate_even_while_process_is_alive() {
+    let mut process = std::process::Command::new("sleep")
+        .arg("30")
+        .spawn()
+        .unwrap();
+    let r = ClientRegistry::default();
+    let c = r.connect(Some(process.id()));
+    r.client_message(c, &json!({"id":1,"method":"thread/resume","params":{}}));
+    r.server_message(c, &json!({"id":1,"result":{"thread":{"id":"old"}}}));
+    r.client_message(
+        c,
+        &json!({"id":2,"method":"thread/unsubscribe","params":{"threadId":"old"}}),
+    );
+    r.server_message(c, &json!({"id":2,"result":{"status":"unsubscribed"}}));
+    r.disconnect(c);
+    let retained_while_alive = r.awaiting_replacement("old");
+    process.kill().unwrap();
+    process.wait().unwrap();
+    assert!(!retained_while_alive);
+    assert!(!r.awaiting_replacement("old"));
+    assert!(r.lifecycle_since(0).is_empty());
 }

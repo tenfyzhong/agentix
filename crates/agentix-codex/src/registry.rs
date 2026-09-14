@@ -34,7 +34,6 @@ struct State {
     resolved_questions: std::collections::VecDeque<String>,
     next_id: u64,
     sequence: u64,
-    reconnecting: HashMap<String, (String, Instant)>,
     lifecycle: std::collections::VecDeque<(u64, AgentEvent)>,
     connections: BTreeMap<u64, Connection>,
 }
@@ -153,15 +152,10 @@ impl ClientRegistry {
         let id = state.next_id;
         let client_id = process_identity(pid)
             .unwrap_or_else(|| format!("connection:{}:{id}", std::process::id()));
-        state
-            .reconnecting
-            .retain(|_, (_, when)| when.elapsed() < Duration::from_mins(2));
-        let previous = state.reconnecting.remove(&client_id);
         state.connections.insert(
             id,
             Connection {
                 client_id,
-                previous,
                 pid,
                 ..Connection::default()
             },
@@ -171,11 +165,7 @@ impl ClientRegistry {
 
     pub fn disconnect(&self, id: u64) {
         let mut state = self.state.lock().unwrap();
-        if let Some(connection) = state.connections.remove(&id)
-            && let Some(previous) = connection.previous
-        {
-            state.reconnecting.insert(connection.client_id, previous);
-        }
+        state.connections.remove(&id);
         drop(state);
         self.changed
             .send_modify(|version| *version = version.wrapping_add(1));
@@ -196,6 +186,17 @@ impl ClientRegistry {
                 sessions: c.sessions.iter().cloned().collect(),
             })
             .collect()
+    }
+
+    /// Keep the old attachment during a native switch only while its transport
+    /// remains connected. Closing the transport always ends this candidate.
+    #[must_use]
+    pub fn awaiting_replacement(&self, session: &str) -> bool {
+        self.state.lock().unwrap().connections.values().any(|c| {
+            c.previous
+                .as_ref()
+                .is_some_and(|(id, when)| id == session && when.elapsed() < Duration::from_mins(2))
+        })
     }
 
     #[must_use]
@@ -273,15 +274,15 @@ impl ClientRegistry {
                 && c.sessions.remove(&thread)
             {
                 c.previous = Some((thread.clone(), Instant::now()));
-                events.push(AgentEvent::SessionSwitchStarted {
-                    session_id: thread.clone(),
-                    client_id: c.client_id.clone(),
-                });
                 if let Some((fresh, when)) = c.fresh.take()
                     && fresh != thread
                     && when.elapsed() < Duration::from_mins(2)
                 {
                     c.previous = None;
+                    events.push(AgentEvent::SessionSwitchStarted {
+                        session_id: thread.clone(),
+                        client_id: c.client_id.clone(),
+                    });
                     events.push(AgentEvent::SessionReplaced {
                         session_id: thread,
                         replacement_session_id: fresh,
@@ -299,6 +300,10 @@ impl ClientRegistry {
                     && when.elapsed() < Duration::from_mins(2)
                     && previous != thread
                 {
+                    events.push(AgentEvent::SessionSwitchStarted {
+                        session_id: previous.clone(),
+                        client_id: c.client_id.clone(),
+                    });
                     events.push(AgentEvent::SessionReplaced {
                         session_id: previous,
                         replacement_session_id: thread.into(),
