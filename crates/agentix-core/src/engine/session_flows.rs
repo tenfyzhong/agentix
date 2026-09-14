@@ -917,6 +917,11 @@ impl Engine {
         self.turns
             .pending_prompts
             .cancel_queued_conversation(conversation);
+        if let Some(displaced) = &outcome.displaced_conversation {
+            self.turns
+                .pending_prompts
+                .cancel_queued_conversation(displaced);
+        }
         if let Some(previous) = outcome.previous_session
             && !old_active
             && let Err(error) = self.agent.unsubscribe(&previous).await
@@ -924,9 +929,6 @@ impl Engine {
             tracing::warn!(%error, session = %previous, "failed to unsubscribe the previous session");
         }
         if let Some(displaced) = outcome.displaced_conversation {
-            self.turns
-                .pending_prompts
-                .cancel_queued_conversation(&displaced);
             let session_label = self.session_label(session_id).await;
             self.update_command_menu_best_effort(&displaced, false)
                 .await;

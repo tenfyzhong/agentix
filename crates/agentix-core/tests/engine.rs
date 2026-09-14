@@ -420,6 +420,7 @@ struct FakeAgent {
     generation: Arc<std::sync::atomic::AtomicU64>,
     stalled_operation: Option<&'static str>,
     start_gate: Option<Arc<tokio::sync::Notify>>,
+    unsubscribe_gate: Arc<Mutex<Option<Arc<tokio::sync::Notify>>>>,
     title_gate: Option<Arc<tokio::sync::Notify>>,
     terminal_draft: Arc<Mutex<Option<String>>>,
     terminal_error: Arc<Mutex<Option<String>>>,
@@ -451,6 +452,7 @@ impl FakeAgent {
             stalled_operation: None,
             generation: Arc::new(std::sync::atomic::AtomicU64::new(1)),
             start_gate: None,
+            unsubscribe_gate: Arc::default(),
             title_gate: None,
             terminal_error: Arc::default(),
             snapshot: Arc::new(Mutex::new(multiplexer_snapshot())),
@@ -678,6 +680,10 @@ impl AgentAdapter for FakeAgent {
             .lock()
             .unwrap()
             .push(format!("unsubscribe:{session_id}"));
+        let gate = self.unsubscribe_gate.lock().unwrap().clone();
+        if let Some(gate) = gate {
+            gate.notified().await;
+        }
         Ok(())
     }
 
@@ -10382,4 +10388,64 @@ async fn runtime_pending_queued_feedback_displaced_updates_before_ack() {
     release.cancel();
     wait_for_pending_feedback(&channel, "Input not sent", "cancel slow queued receipt", 1).await;
     engine.cancel_pending_prompts().await.unwrap();
+}
+
+#[tokio::test]
+async fn runtime_pending_queued_feedback_displacement_precedes_unsubscribe() {
+    let (engine, agent, channel, _, _) = pending_runtime_input().await;
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-b",
+            "/attach thr_b",
+        )))
+        .await
+        .unwrap();
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "displaced while cleanup stalls",
+        )))
+        .await
+        .unwrap();
+    wait_for_pending_feedback(&channel, "Queued", "displaced while cleanup stalls", 1).await;
+    *agent.unsubscribe_gate.lock().unwrap() = Some(Arc::new(tokio::sync::Notify::new()));
+    let engine = Arc::new(engine);
+    let switching = {
+        let engine = engine.clone();
+        tokio::spawn(async move {
+            engine
+                .execute_work(agentix_core::EngineWork::Inbound(inbound(
+                    "chat-b",
+                    "/attach thr_a",
+                )))
+                .await
+        })
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while !agent.calls().contains(&"unsubscribe:thr_b".to_owned()) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let cancelled = tokio::time::timeout(std::time::Duration::from_millis(250), async {
+        loop {
+            if channel.messages.lock().unwrap().values().any(|view| {
+                view.title.contains("Input not sent")
+                    && view.body.contains("displaced while cleanup stalls")
+            }) {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .is_ok();
+    switching.abort();
+    let _ = switching.await;
+    engine.cancel_pending_prompts().await.unwrap();
+    assert!(
+        cancelled,
+        "displaced receipt cancellation must precede remote unsubscribe cleanup"
+    );
 }
