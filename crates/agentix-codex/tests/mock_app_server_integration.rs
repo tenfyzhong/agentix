@@ -2944,3 +2944,135 @@ async fn registry_disconnect_reports_exit_while_process_is_still_alive() {
     process.wait().await.unwrap();
     assert!(matches!(event, AgentEvent::SessionExited { session_id } if session_id == "old"));
 }
+
+#[tokio::test]
+async fn empty_attach_recovers_first_turn_after_subscription_becomes_available() {
+    assert_empty_attach_recovers_first_turn(false, false).await;
+}
+
+#[tokio::test]
+async fn empty_attach_recovers_first_turn_when_original_client_becomes_writer() {
+    assert_empty_attach_recovers_first_turn(true, false).await;
+}
+
+#[tokio::test]
+async fn empty_attach_recovers_running_turn_and_continues_live_updates() {
+    assert_empty_attach_recovers_first_turn(false, true).await;
+}
+
+#[tokio::test]
+async fn empty_attach_recovers_running_turn_and_continues_observed_updates() {
+    assert_empty_attach_recovers_first_turn(true, true).await;
+}
+
+async fn assert_empty_attach_recovers_first_turn(active_writer: bool, running: bool) {
+    use agentix_codex::ClientRegistry;
+    use std::path::Path;
+    let server = MockCodexAppServer::start();
+    server
+        .add_thread(MockThread::new("empty", "Empty", "/work"))
+        .await;
+    let registry = ClientRegistry::default();
+    let connection = registry.connect(None);
+    registry.client_message(
+        connection,
+        &json!({"id":1,"method":"thread/start","params":{}}),
+    );
+    registry.server_message(
+        connection,
+        &json!({"id":1,"result":{"thread":{"id":"empty"}}}),
+    );
+    let client = Arc::new(
+        CodexClient::connect_with_registry(
+            server.endpoint(),
+            Path::new("codex"),
+            Path::new("/tmp"),
+            true,
+            registry.clone(),
+        )
+        .await
+        .unwrap(),
+    );
+    client.set_background_turn_notifications(false);
+    let mut events = client.subscribe();
+    let state = SqliteState::in_memory().await.unwrap();
+    let channel = Arc::new(RecordingChannel::default());
+    let engine = Engine::new(client.clone(), state.clone(), vec![channel.clone()]);
+    server
+        .fail_next(
+            "thread/resume",
+            -32600,
+            "no rollout found for thread id empty",
+        )
+        .await;
+    engine
+        .handle_inbound(inbound("/attach empty"))
+        .await
+        .unwrap();
+    assert_eq!(state.list_bindings().await.unwrap().len(), 1);
+    // Native events happen before Agentix can establish its subscription.
+    let turn = if running {
+        MockTurn::in_progress_with_output("first", "First native input", "First native answer")
+    } else {
+        MockTurn::completed("first", "First native input", "First native answer")
+    };
+    server
+        .add_thread(MockThread::new("empty", "Empty", "/work").with_turn(turn))
+        .await;
+    if active_writer {
+        server.set_active_writer("empty").await;
+    }
+    // Wake discovery through a real registry lifecycle response.
+    registry.client_message(
+        connection,
+        &json!({"id":2,"method":"thread/resume","params":{"threadId":"empty"}}),
+    );
+    registry.server_message(
+        connection,
+        &json!({"id":2,"result":{"thread":{"id":"empty"}}}),
+    );
+    receive_recovered_turn(&engine, &mut events, running, 3).await;
+    let view = channel.views().last().unwrap().clone();
+    assert!(view.body.contains("First native input"), "{view:?}");
+    if !running {
+        assert!(view.body.contains("First native answer"), "{view:?}");
+    }
+    assert_eq!(
+        client.is_read_only(&SessionId::new("empty")).await,
+        active_writer
+    );
+    if running {
+        server
+            .complete_turn("empty", "first", "Final native answer")
+            .await;
+        receive_recovered_turn(&engine, &mut events, false, 15).await;
+        let view = channel.views().last().unwrap().clone();
+        assert!(view.body.contains("First native input"), "{view:?}");
+        assert!(view.body.contains("Final native answer"), "{view:?}");
+        assert_eq!(view.body.matches("First native input").count(), 1);
+    }
+}
+
+async fn receive_recovered_turn(
+    engine: &Engine,
+    events: &mut tokio::sync::broadcast::Receiver<AgentEvent>,
+    running: bool,
+    timeout_seconds: u64,
+) {
+    tokio::time::timeout(Duration::from_secs(timeout_seconds), async {
+        loop {
+            let event = events.recv().await.unwrap();
+            let ready = if running {
+                matches!(&event, AgentEvent::ItemCompleted { item, .. } if item.kind == "agentMessage")
+            } else {
+                matches!(&event, AgentEvent::TurnCompleted { turn_id, .. } if turn_id == "first")
+            };
+            engine.handle_agent_event(event).await.unwrap();
+            if ready {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("the recovered turn must deliver content and continue updating");
+}
