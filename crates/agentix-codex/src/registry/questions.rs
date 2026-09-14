@@ -46,7 +46,10 @@ impl ClientRegistry {
     pub(super) fn observe_question_frame(&self, connection: u64, method: &str, text: &str) {
         if !matches!(
             method,
-            "item/tool/requestUserInput" | "tool/requestUserInput" | "serverRequest/resolved"
+            "item/tool/requestUserInput"
+                | "tool/requestUserInput"
+                | "serverRequest/resolved"
+                | "item/completed"
         ) {
             return;
         }
@@ -57,7 +60,10 @@ impl ClientRegistry {
         if !state.connections.contains_key(&connection) {
             return;
         }
-        let event = match decode_server_frame(&value) {
+        let decoded = crate::protocol::async_question(&value)
+            .map(ServerMessage::Interaction)
+            .map_or_else(|| decode_server_frame(&value), Ok);
+        let event = match decoded {
             Ok(ServerMessage::Interaction(request)) => {
                 let key = request.rpc_id.to_string();
                 if state.resolved_questions.contains(&key) {

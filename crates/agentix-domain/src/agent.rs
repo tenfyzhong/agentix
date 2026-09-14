@@ -481,6 +481,9 @@ impl AgentEvent {
 
 #[derive(Debug, Error)]
 pub enum AgentError {
+    /// The remote operation may have executed; automatic replay is unsafe.
+    #[error("agent request outcome is uncertain: {0}")]
+    Uncertain(String),
     #[error("agent transport is unavailable: {0}")]
     Unavailable(String),
     #[error("agent rejected the request: {0}")]

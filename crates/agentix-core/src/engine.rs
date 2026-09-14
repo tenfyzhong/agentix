@@ -392,56 +392,65 @@ impl Engine {
         {
             return Ok(());
         }
-        self.state
-            .save_conversation_owner(&envelope.conversation, &envelope.owner_id)
-            .await?;
-        self.interactions
-            .owners
-            .lock()
-            .await
-            .insert(envelope.conversation.clone(), envelope.owner_id.clone());
-        let result = match envelope.payload {
-            InboundPayload::Text(text) => {
-                self.handle_text(
-                    &envelope.conversation,
-                    &envelope.owner_id,
-                    &text,
-                    &envelope.event_id,
-                )
+        let result = async {
+            self.state
+                .save_conversation_owner(&envelope.conversation, &envelope.owner_id)
+                .await?;
+            self.interactions
+                .owners
+                .lock()
                 .await
-            }
-            InboundPayload::TextEdited {
-                original_event_id,
-                version,
-                text,
-            } => {
-                self.tasks
-                    .view(self)
-                    .edit_inbox_message(
+                .insert(envelope.conversation.clone(), envelope.owner_id.clone());
+            match envelope.payload {
+                InboundPayload::Text(text) => {
+                    self.handle_text(
                         &envelope.conversation,
                         &envelope.owner_id,
-                        &original_event_id,
-                        version,
                         &text,
+                        &envelope.event_id,
                     )
                     .await
+                }
+                InboundPayload::TextEdited {
+                    original_event_id,
+                    version,
+                    text,
+                } => {
+                    self.tasks
+                        .view(self)
+                        .edit_inbox_message(
+                            &envelope.conversation,
+                            &envelope.owner_id,
+                            &original_event_id,
+                            version,
+                            &text,
+                        )
+                        .await
+                }
+                InboundPayload::Action { token, message } => {
+                    self.handle_action(
+                        &envelope.conversation,
+                        &envelope.owner_id,
+                        &token,
+                        message.as_ref(),
+                    )
+                    .await
+                }
             }
-            InboundPayload::Action { token, message } => {
-                self.handle_action(
-                    &envelope.conversation,
-                    &envelope.owner_id,
-                    &token,
-                    message.as_ref(),
-                )
-                .await
-            }
-        };
+        }
+        .await;
         match result {
             Ok(()) => {
                 self.state
                     .complete_event(envelope.conversation.channel, &envelope.event_id)
                     .await?;
                 Ok(())
+            }
+            Err(error @ EngineError::Agent(AgentError::Uncertain(_))) => {
+                self.state
+                    .fence_event(envelope.conversation.channel, &envelope.event_id)
+                    .await?;
+                Err(error)
             }
             Err(error) => {
                 if let Err(release_error) = self

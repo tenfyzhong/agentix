@@ -171,11 +171,14 @@ impl Engine {
             buffer.record_output(None, &format!("Error: {error}"), false, false);
         }
         drop(buffers);
-        self.render_turn(conversation, session_id, &turn_id, delivery, true)
-            .await?;
+        // Remote completion is authoritative even if the final IM edit fails.
+        // Retain the completed buffer for recovery, but never steer new input
+        // into a turn that the backend has already finished.
         if self.turns.active_turn(session_id).await.as_deref() == Some(&turn_id) {
             self.turns.remove_active(session_id).await;
         }
+        self.render_turn(conversation, session_id, &turn_id, delivery, true)
+            .await?;
         if delivery == DeliveryClass::Draining {
             self.turns
                 .record_background_notification(conversation, session_id, &turn_id)
@@ -928,12 +931,19 @@ impl Engine {
                 &buffer,
                 DeliveryClass::Live,
             );
-            self.channel(message.conversation.channel)?
-                .update(&message.conversation, &message, &view)
-                .await?;
+            // Revoke the action independently of its visual projection. A failed
+            // edit must not preserve a usable stale button or block a new binding.
             self.replace_stop_action(key, &message.conversation, None, false)
                 .await;
             self.state.delete_turn_view(&key.0, &key.1).await?;
+            if let Err(error) = self
+                .channel(message.conversation.channel)?
+                .update(&message.conversation, &message, &view)
+                .await
+            {
+                tracing::warn!(%error, session = %key.0, turn = %key.1,
+                    "failed to remove the revoked stop button from its message");
+            }
         }
         Ok(())
     }

@@ -5,6 +5,16 @@ use sqlx::Row;
 use crate::SqliteState;
 
 impl SqliteState {
+    #[cfg(any(test, feature = "test-support"))]
+    pub async fn reject_owner_writes(&self, reject: bool) {
+        let query = if reject {
+            "CREATE TRIGGER reject_owner_insert BEFORE INSERT ON conversation_owners BEGIN SELECT RAISE(ABORT,'injected owner failure'); END"
+        } else {
+            "DROP TRIGGER reject_owner_insert"
+        };
+        sqlx::query(query).execute(&self.pool).await.unwrap();
+    }
+
     pub async fn save_conversation_owner(
         &self,
         conversation: &ConversationRef,

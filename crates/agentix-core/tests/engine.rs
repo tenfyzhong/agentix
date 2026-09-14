@@ -434,6 +434,8 @@ struct FakeAgent {
     sessions: Arc<Mutex<Vec<SessionSummary>>>,
     rejected_attachments: Arc<Mutex<Vec<SessionId>>>,
     unavailable_attachments: Arc<Mutex<Vec<SessionId>>>,
+    uncertain_command: Option<String>,
+    uncertain_start: Option<String>,
     start_failures: Arc<Mutex<usize>>,
     events: broadcast::Sender<AgentEvent>,
 }
@@ -486,6 +488,8 @@ impl FakeAgent {
             )),
             rejected_attachments: Arc::new(Mutex::new(Vec::new())),
             unavailable_attachments: Arc::default(),
+            uncertain_command: None,
+            uncertain_start: None,
             start_failures: Arc::new(Mutex::new(0)),
             events,
         }
@@ -669,6 +673,9 @@ impl AgentAdapter for FakeAgent {
             .lock()
             .unwrap()
             .push(format!("start:{session_id}:{text}"));
+        if let Some(reason) = &self.uncertain_start {
+            return Err(AgentError::Uncertain(reason.clone()));
+        }
         let mut failures = self.start_failures.lock().unwrap();
         if *failures > 0 {
             *failures -= 1;
@@ -834,6 +841,9 @@ impl SessionControlPort for FakeAgent {
             .lock()
             .unwrap()
             .push(format!("command:{session_id}:{command:?}"));
+        if let Some(reason) = &self.uncertain_command {
+            return Err(AgentError::Uncertain(reason.clone()));
+        }
         let replacement_session = match command {
             SessionCommand::Fork => Some(SessionSummary {
                 id: SessionId::new("thr_fork"),
@@ -894,6 +904,9 @@ struct FakeChannel {
     fail_menu_updates: Arc<Mutex<bool>>,
     task_send_failures: Arc<Mutex<usize>>,
     inbox_send_failures: Arc<Mutex<usize>>,
+    command_send_failures: Arc<Mutex<usize>>,
+    queue_send_failures: Arc<Mutex<usize>>,
+    next_update_failures: Arc<Mutex<usize>>,
     inbox_source: Arc<Mutex<Option<InboundEnvelope>>>,
     reject_unchanged_updates: bool,
     next_send_gate: Arc<
@@ -970,6 +983,24 @@ impl ChannelAdapter for FakeChannel {
             entered.cancel();
             release.cancelled().await;
         }
+        if view.title == "Codex command" || view.title.ends_with(" · Command failed") {
+            let mut failures = self.command_send_failures.lock().unwrap();
+            if *failures > 0 {
+                *failures -= 1;
+                return Err(ChannelError::Transport(
+                    "injected command notice failure".into(),
+                ));
+            }
+        }
+        if view.title.ends_with(" · Queued") {
+            let mut failures = self.queue_send_failures.lock().unwrap();
+            if *failures > 0 {
+                *failures -= 1;
+                return Err(ChannelError::Transport(
+                    "injected queue notice failure".into(),
+                ));
+            }
+        }
         if view.title == "Inbox submission" {
             let mut failures = self.inbox_send_failures.lock().unwrap();
             if *failures > 0 {
@@ -1006,6 +1037,13 @@ impl ChannelAdapter for FakeChannel {
         message: &MessageRef,
         view: &OutboundView,
     ) -> Result<(), ChannelError> {
+        {
+            let mut failures = self.next_update_failures.lock().unwrap();
+            if *failures > 0 {
+                *failures -= 1;
+                return Err(ChannelError::Transport("injected update failure".into()));
+            }
+        }
         if self.reject_unchanged_updates && self.messages.lock().unwrap().get(message) == Some(view)
         {
             return Err(ChannelError::Transport("message is not modified".into()));
@@ -2753,6 +2791,352 @@ async fn model_and_reasoning_choices_can_be_selected_for_the_attached_session() 
             .calls()
             .contains(&"command:thr_a:Reasoning(Some(\"high\"))".to_string())
     );
+}
+
+#[tokio::test]
+async fn fork_binding_storage_failure_does_not_repeat_remote_creation() {
+    let agent = Arc::new(FakeAgent::new());
+    let state = SqliteState::in_memory().await.unwrap();
+    let engine = Engine::new(
+        agent.clone(),
+        state.clone(),
+        vec![Arc::new(FakeChannel::default())],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    state.reject_binding_writes(true).await;
+    let conversation = ConversationRef::new(ChannelKind::Telegram, "chat-a");
+    let input = || InboundEnvelope::text("fork-storage", conversation.clone(), "owner", "/fork");
+    let error = engine.handle_inbound(input()).await.unwrap_err();
+    state.reject_binding_writes(false).await;
+    engine.handle_inbound(input()).await.unwrap();
+    assert_eq!(
+        agent
+            .calls()
+            .iter()
+            .filter(|call| call.ends_with(":Fork"))
+            .count(),
+        1
+    );
+    assert_eq!(state.uncertain_event_count().await.unwrap(), 1);
+    assert!(error.to_string().contains("thr_fork"), "{error}");
+    assert_eq!(
+        state.current_session(&conversation).await.unwrap(),
+        Some(SessionId::new("thr_a"))
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_fork"))
+        .await
+        .unwrap();
+    assert_eq!(
+        state.current_session(&conversation).await.unwrap(),
+        Some(SessionId::new("thr_fork"))
+    );
+}
+
+#[tokio::test]
+async fn fork_binding_survives_old_stop_button_update_failure() {
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel::default());
+    let state = SqliteState::in_memory().await.unwrap();
+    let engine = Engine::new(agent.clone(), state.clone(), vec![channel.clone()]);
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound("chat-a", "working"))
+        .await
+        .unwrap();
+    let stop = channel
+        .sent()
+        .iter()
+        .flat_map(|(_, view)| &view.actions)
+        .find(|action| action.label == "Stop")
+        .unwrap()
+        .token
+        .clone();
+    *channel.next_update_failures.lock().unwrap() = 1;
+    let conversation = ConversationRef::new(ChannelKind::Telegram, "chat-a");
+    let input = || InboundEnvelope::text("fork-once", conversation.clone(), "owner", "/fork");
+    let first = engine.handle_inbound(input()).await;
+    engine.handle_inbound(input()).await.unwrap();
+    assert_eq!(*channel.next_update_failures.lock().unwrap(), 0);
+    assert_eq!(
+        agent
+            .calls()
+            .iter()
+            .filter(|call| call.ends_with(":Fork"))
+            .count(),
+        1
+    );
+    assert!(first.is_ok());
+    assert_eq!(
+        state.current_session(&conversation).await.unwrap(),
+        Some(SessionId::new("thr_fork"))
+    );
+    let _ = engine
+        .handle_inbound(InboundEnvelope::action(
+            "old-stop",
+            conversation,
+            "owner",
+            stop,
+        ))
+        .await;
+    assert!(!agent.calls().iter().any(|call| call.starts_with("stop:")));
+}
+
+#[tokio::test]
+async fn command_notice_failure_does_not_replay_the_command_or_drop_inline_prompt() {
+    for text in ["/review", "/plan investigate"] {
+        let agent = Arc::new(FakeAgent::new());
+        let channel = Arc::new(FakeChannel::default());
+        let engine = Engine::new(
+            agent.clone(),
+            SqliteState::in_memory().await.unwrap(),
+            vec![channel.clone()],
+        );
+        engine
+            .handle_inbound(inbound("chat-a", "/attach thr_a"))
+            .await
+            .unwrap();
+        *channel.command_send_failures.lock().unwrap() = 1;
+        let input = || {
+            InboundEnvelope::text(
+                "command-notice",
+                ConversationRef::new(ChannelKind::Telegram, "chat-a"),
+                "owner",
+                text,
+            )
+        };
+        let _ = engine.handle_inbound(input()).await;
+        engine.handle_inbound(input()).await.unwrap();
+        assert_eq!(*channel.command_send_failures.lock().unwrap(), 0);
+        assert_eq!(
+            agent
+                .calls()
+                .iter()
+                .filter(|call| call.starts_with("command:"))
+                .count(),
+            1,
+            "{text}"
+        );
+        if text.starts_with("/plan") {
+            assert_eq!(
+                agent
+                    .calls()
+                    .iter()
+                    .filter(|call| call.as_str() == "start:thr_a:investigate")
+                    .count(),
+                1
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn command_error_notice_failure_preserves_uncertain_outcome() {
+    let mut agent = FakeAgent::new();
+    agent.uncertain_command = Some("response lost".into());
+    let agent = Arc::new(agent);
+    let channel = Arc::new(FakeChannel::default());
+    let state = SqliteState::in_memory().await.unwrap();
+    let engine = Engine::new(agent.clone(), state.clone(), vec![channel.clone()]);
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    *channel.command_send_failures.lock().unwrap() = 1;
+    let input = || {
+        InboundEnvelope::text(
+            "uncertain-command",
+            ConversationRef::new(ChannelKind::Telegram, "chat-a"),
+            "owner",
+            "/review",
+        )
+    };
+    assert!(engine.handle_inbound(input()).await.is_err());
+    engine.handle_inbound(input()).await.unwrap();
+    assert_eq!(
+        agent
+            .calls()
+            .iter()
+            .filter(|call| call.starts_with("command:"))
+            .count(),
+        1
+    );
+    assert_eq!(state.uncertain_event_count().await.unwrap(), 1);
+}
+
+#[tokio::test]
+async fn uncertain_backend_outcome_does_not_replay_the_input() {
+    let state = SqliteState::in_memory().await.unwrap();
+    let mut agent = FakeAgent::new();
+    agent.uncertain_start = Some("response lost".into());
+    let agent = Arc::new(agent);
+    let engine = Engine::new(
+        agent.clone(),
+        state.clone(),
+        vec![Arc::new(FakeChannel::default())],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    let input = || {
+        InboundEnvelope::text(
+            "uncertain-input",
+            ConversationRef::new(ChannelKind::Telegram, "chat-a"),
+            "owner",
+            "execute once",
+        )
+    };
+    assert!(engine.handle_inbound(input()).await.is_err());
+    let _ = engine.handle_inbound(input()).await;
+    assert_eq!(
+        agent
+            .calls()
+            .iter()
+            .filter(|call| call.as_str() == "start:thr_a:execute once")
+            .count(),
+        1
+    );
+    assert_eq!(state.uncertain_event_count().await.unwrap(), 1);
+}
+
+#[tokio::test]
+async fn owner_persistence_failure_releases_unexecuted_input_for_retry() {
+    let state = SqliteState::in_memory().await.unwrap();
+    let agent = Arc::new(FakeAgent::new());
+    let engine = Engine::new(
+        agent.clone(),
+        state.clone(),
+        vec![Arc::new(FakeChannel::default())],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    state.reject_owner_writes(true).await;
+    let input = || {
+        InboundEnvelope::text(
+            "owner-failure",
+            ConversationRef::new(ChannelKind::Telegram, "chat-a"),
+            "owner",
+            "retry after storage failure",
+        )
+    };
+    let error = engine.handle_inbound(input()).await.unwrap_err();
+    assert!(error.to_string().contains("injected owner failure"));
+    assert!(!agent.calls().iter().any(|call| call.starts_with("start:")));
+    state.reject_owner_writes(false).await;
+    engine.handle_inbound(input()).await.unwrap();
+    engine.handle_inbound(input()).await.unwrap();
+    assert_eq!(
+        agent
+            .calls()
+            .iter()
+            .filter(|call| call.as_str() == "start:thr_a:retry after storage failure")
+            .count(),
+        1,
+        "an input rejected before execution must remain retryable"
+    );
+}
+
+#[tokio::test]
+async fn completion_notice_failure_does_not_keep_the_finished_turn_active() {
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound("chat-a", "first prompt"))
+        .await
+        .unwrap();
+    let active = engine.working_turns().await;
+    assert_eq!(active.len(), 1);
+    *channel.next_update_failures.lock().unwrap() = 1;
+    assert!(
+        engine
+            .handle_agent_event(AgentEvent::TurnCompleted {
+                session_id: "thr_a".into(),
+                turn_id: active[0].1.clone(),
+                status: TurnStatus::Completed,
+                error: None,
+            })
+            .await
+            .is_err()
+    );
+    assert_eq!(*channel.next_update_failures.lock().unwrap(), 0);
+    engine
+        .handle_inbound(inbound("chat-a", "next prompt"))
+        .await
+        .unwrap();
+    assert!(
+        agent
+            .calls()
+            .contains(&"start:thr_a:next prompt".to_owned()),
+        "the next prompt must start a new turn after remote completion"
+    );
+    assert!(!agent.calls().iter().any(|call| call.starts_with("steer:")));
+}
+
+#[tokio::test]
+async fn queue_notice_failure_does_not_replay_accepted_prompt_after_restart() {
+    let directory = tempdir().unwrap();
+    let path = directory.path().join("state.db");
+    let state = SqliteState::open(&path).await.unwrap();
+    let agent = Arc::new(FakeAgent::with_queue_support());
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(agent.clone(), state, vec![channel.clone()]);
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::TurnStarted {
+            session_id: "thr_a".into(),
+            turn_id: "turn_live".into(),
+        })
+        .await
+        .unwrap();
+    *channel.queue_send_failures.lock().unwrap() = 1;
+    let event = || {
+        InboundEnvelope::text(
+            "queued-event",
+            ConversationRef::new(ChannelKind::Telegram, "chat-a"),
+            "owner",
+            "follow-up",
+        )
+    };
+    let result = engine.handle_inbound(event()).await;
+    assert_eq!(*channel.queue_send_failures.lock().unwrap(), 0);
+    engine.handle_inbound(event()).await.unwrap();
+    assert_eq!(
+        agent.queued_prompts.lock().unwrap().len(),
+        1,
+        "notification failure must not make the accepted input retryable"
+    );
+    assert!(result.is_ok(), "an accepted prompt remains successful");
+    drop(engine);
+    let restarted = Engine::new(
+        agent.clone(),
+        SqliteState::open(&path).await.unwrap(),
+        vec![channel],
+    );
+    restarted.restore_bindings().await.unwrap();
+    restarted.handle_inbound(event()).await.unwrap();
+    assert_eq!(agent.queued_prompts.lock().unwrap().len(), 1);
+    assert!(!agent.calls().iter().any(|call| call.starts_with("start:")));
 }
 
 #[tokio::test]
@@ -5371,6 +5755,74 @@ async fn dispatch_fork_fences_early_new_session_events_only_on_its_backend() {
     assert!(queue.next_ready(|work| snapshot.scope(work)).is_none());
     queue.finish(fork.id);
     assert!(queue.next_ready(|work| snapshot.scope(work)).is_some());
+}
+
+#[tokio::test]
+async fn dispatch_session_switch_recovery_fences_replacement_events_in_both_orders() {
+    use agentix_core::{AgentKind, AgentRegistry, DispatchQueue, EngineWork};
+    for attached in [true, false] {
+        for recovery_first in [true, false] {
+            let registry = AgentRegistry::new(vec![
+                (
+                    AgentKind::Pi,
+                    Arc::new(FakeAgent::new()) as Arc<dyn AgentAdapter>,
+                ),
+                (
+                    AgentKind::Omp,
+                    Arc::new(FakeAgent::new()) as Arc<dyn AgentAdapter>,
+                ),
+            ])
+            .unwrap();
+            let engine = Engine::new(
+                Arc::new(registry),
+                SqliteState::in_memory().await.unwrap(),
+                vec![Arc::new(FakeChannel::default())],
+            );
+            if attached {
+                engine
+                    .handle_inbound(inbound("chat-a", "/attach pi:thr_a"))
+                    .await
+                    .unwrap();
+            }
+            let recovery =
+                EngineWork::SessionSwitch(ConversationRef::new(ChannelKind::Telegram, "chat-a"));
+            let event = EngineWork::Event(AgentEvent::QueueChanged {
+                session_id: "pi:replacement".into(),
+            });
+            let mut queue = DispatchQueue::new(4, 4);
+            let work = if recovery_first {
+                [recovery, event]
+            } else {
+                [event, recovery]
+            };
+            for item in work {
+                queue.try_push(item).unwrap();
+            }
+            queue
+                .try_push(EngineWork::Event(AgentEvent::QueueChanged {
+                    session_id: "omp:independent".into(),
+                }))
+                .unwrap();
+            let snapshot = engine.dispatch_snapshot().await;
+            let first = queue.next_ready(|work| snapshot.scope(work)).unwrap();
+            if attached {
+                let independent = queue.next_ready(|work| snapshot.scope(work)).unwrap();
+                assert!(
+                    matches!(independent.work,
+                    EngineWork::Event(AgentEvent::QueueChanged { ref session_id })
+                    if session_id == "omp:independent"),
+                    "replacement work must wait while other backends remain independent"
+                );
+                queue.finish(independent.id);
+            }
+            assert!(
+                queue.next_ready(|work| snapshot.scope(work)).is_none(),
+                "recovery and replacement events must never overlap"
+            );
+            queue.finish(first.id);
+            assert!(queue.next_ready(|work| snapshot.scope(work)).is_some());
+        }
+    }
 }
 
 #[tokio::test]
