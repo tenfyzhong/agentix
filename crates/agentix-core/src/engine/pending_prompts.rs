@@ -924,7 +924,9 @@ impl Engine {
                 tracing::warn!(%error, "pending card delivery failed");
                 // A failed progress notice must not swallow output that already
                 // completed while its message ID was unavailable.
-                if current && let Some(turn) = card.turn {
+                if let Some(view) = card.final_view {
+                    self.send_view(&input.conversation, &view).await?;
+                } else if current && let Some(turn) = card.turn {
                     self.restore_cold_turn(&input.session, &turn).await?;
                     self.render_turn(
                         &input.conversation,

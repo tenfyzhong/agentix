@@ -9928,6 +9928,53 @@ async fn runtime_pending_card_exit_preserves_output_without_duplicate_turn_cards
 }
 
 #[tokio::test]
+async fn runtime_pending_card_failure_after_exit_preserves_output() {
+    let (engine, _, channel, gate, release) = slow_pending_card().await;
+    engine
+        .handle_agent_event(AgentEvent::AgentMessageDelta {
+            session_id: "thr_a".into(),
+            turn_id: "turn_new".into(),
+            item_id: "answer".into(),
+            delta: "output before exit".into(),
+        })
+        .await
+        .unwrap();
+    engine
+        .execute_work(agentix_core::EngineWork::Event(AgentEvent::SessionExited {
+            session_id: "thr_a".into(),
+        }))
+        .await
+        .unwrap();
+    gate.notify_one();
+    apply_next_pending_input(&engine).await;
+    *channel.next_send_failures.lock().unwrap() = 1;
+    release.cancel();
+    apply_next_pending_input(&engine).await;
+    let messages = channel.messages.lock().unwrap();
+    assert_eq!(
+        messages
+            .values()
+            .filter(|view| view.body.contains("output before exit"))
+            .count(),
+        1
+    );
+    assert!(
+        messages
+            .values()
+            .filter(|view| view.body.contains("output before exit"))
+            .all(|view| view.actions.is_empty())
+    );
+    assert_eq!(
+        messages
+            .values()
+            .filter(|view| view.body.contains("slow card input"))
+            .count(),
+        1,
+        "exit must finalize the original card rather than create another input card"
+    );
+}
+
+#[tokio::test]
 async fn runtime_pending_card_admitted_before_shutdown_cannot_restore_stop() {
     let (engine, _, channel, gate, release) = slow_pending_card().await;
     gate.notify_one();
