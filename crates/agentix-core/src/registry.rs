@@ -286,6 +286,16 @@ impl AgentAdapter for AgentRegistry {
             .read_history(key.native_id.adapter_id(), cursor, limit)
             .await
     }
+    async fn read_turn_input(
+        &self,
+        session: &SessionId,
+        turn_id: &str,
+    ) -> Result<Option<String>, AgentError> {
+        let (key, agent) = self.target(session)?;
+        agent
+            .read_turn_input(key.native_id.adapter_id(), turn_id)
+            .await
+    }
     async fn attach(&self, session: &SessionId) -> Result<(), AgentError> {
         let session = self.canonical_session(session).await?;
         let (key, agent) = self.target(&session)?;

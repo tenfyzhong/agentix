@@ -46,19 +46,40 @@ impl CodexClient {
                     turn_id: turn.id.clone(),
                 });
             }
-            for (kind, text) in [
-                ("userMessage", &turn.user_text),
-                ("agentMessage", &turn.agent_text),
-            ] {
+            let old = previous.as_ref().filter(|old| old.id == turn.id);
+            // Keep the aggregate prompt, but preserve native output identities so
+            // updates replace items restored by read-only attach.
+            let mut items = Vec::new();
+            if old.is_none_or(|old| old.user_text != turn.user_text) {
+                items.push(ItemSummary {
+                    id: format!("observed-{}-userMessage", turn.id),
+                    kind: "userMessage".into(),
+                    text: turn.user_text.clone(),
+                    status: None,
+                });
+            }
+            items.extend(
+                turn.items
+                    .iter()
+                    .filter(|item| item.kind != "userMessage")
+                    .filter(|item| old.is_none_or(|old| !old.items.contains(item)))
+                    .cloned(),
+            );
+            if !turn.items.iter().any(|item| item.kind == "agentMessage")
+                && old.is_none_or(|old| old.agent_text != turn.agent_text)
+            {
+                items.push(ItemSummary {
+                    id: format!("observed-{}-agentMessage", turn.id),
+                    kind: "agentMessage".into(),
+                    text: turn.agent_text.clone(),
+                    status: None,
+                });
+            }
+            for item in items {
                 let _ = self.events.send(AgentEvent::ItemCompleted {
                     session_id: session.to_string(),
                     turn_id: turn.id.clone(),
-                    item: ItemSummary {
-                        id: format!("observed-{}-{kind}", turn.id),
-                        kind: kind.into(),
-                        text: text.clone(),
-                        status: None,
-                    },
+                    item,
                 });
             }
             if matches!(

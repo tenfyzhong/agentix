@@ -213,6 +213,7 @@ pub(super) fn history_views(
     session_label: &str,
     history: &HistoryPage,
     presentation: HistoryPresentation,
+    output: crate::OutputConfig,
 ) -> Vec<OutboundView> {
     let turn_count = history.turns.len();
     let mut body = if turn_count == 0 {
@@ -246,20 +247,21 @@ pub(super) fn history_views(
         history
             .turns
             .iter()
-            .map(|turn| history_turn_view(agent_name, turn)),
+            .map(|turn| history_turn_view(agent_name, turn, output)),
     );
     views
 }
 
-pub(super) fn history_turn_view(agent_name: &str, turn: &TurnSummary) -> OutboundView {
-    let body = turn_conversation_body(
-        agent_name,
-        turn.user_text.as_deref(),
-        turn.agent_text.as_deref(),
-    );
+pub(super) fn history_turn_view(
+    agent_name: &str,
+    turn: &TurnSummary,
+    output: crate::OutputConfig,
+) -> OutboundView {
+    let buffer = TurnBuffer::from_summary(turn, output);
+    let body = live_turn_body(agent_name, &buffer, DeliveryClass::Live);
 
     OutboundView {
-        sections: Vec::new(),
+        sections: buffer.view_sections(agent_name),
         title: format!("{agent_name} · Turn {}", short_identifier(&turn.id)),
         subtitle: Some(turn_status_label(&turn.status).into()),
         body,

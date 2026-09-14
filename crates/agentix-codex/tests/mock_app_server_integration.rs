@@ -261,6 +261,17 @@ async fn external_writer_polling_delivers_content_without_live_notifications() {
         .attach(&SessionId::new("thr_observed"))
         .await
         .unwrap();
+    let history = client
+        .read_history(&SessionId::new("thr_observed"), None, 1)
+        .await
+        .unwrap();
+    let answer_id = history.turns[0]
+        .items
+        .iter()
+        .find(|item| item.kind == "agentMessage")
+        .unwrap()
+        .id
+        .clone();
     // Updating storage without a notification reproduces a different writer process.
     server
         .add_thread(
@@ -276,6 +287,9 @@ async fn external_writer_polling_delivers_content_without_live_notifications() {
         loop {
             match events.recv().await.unwrap() {
                 AgentEvent::ItemCompleted { item, .. } => {
+                    if item.kind == "agentMessage" {
+                        assert_eq!(item.id, answer_id);
+                    }
                     saw_content |= item.text.as_deref() == Some("Finished externally");
                 }
                 AgentEvent::TurnCompleted { turn_id, .. } if turn_id == "turn_observed" => break,
@@ -2306,4 +2320,217 @@ async fn status_reports_remaining_quota_windows_and_survives_quota_errors() {
         .unwrap();
     assert!(status.body.contains("not reported"));
     assert!(!status.body.contains("100% remaining"));
+}
+
+#[tokio::test]
+#[allow(clippy::too_many_lines)] // One scenario checks the same turn across all delivery paths.
+async fn goal_input_is_restored_per_turn_for_history_and_read_only_attach() {
+    let server = MockCodexAppServer::start();
+    let file = goal_input_rollout();
+    let path = file.path();
+    let mut thread = MockThread::new("thr_goal_input", "Goal", "/work")
+        .with_turn(MockTurn::completed("old_goal", "", "First result"))
+        .with_turn(MockTurn::completed(
+            "ordinary",
+            "Normal question",
+            "Normal answer",
+        ))
+        .with_turn(MockTurn::in_progress_with_output(
+            "current_goal",
+            "",
+            "Reviewing",
+        ));
+    thread.rollout_path = Some(path.to_string_lossy().into_owned());
+    server.add_thread(thread).await;
+    server.set_active_writer("thr_goal_input").await;
+    let client = Arc::new(CodexClient::connect(server.endpoint()).await.unwrap());
+    let history = client
+        .read_history(&SessionId::new("thr_goal_input"), None, 10)
+        .await
+        .unwrap();
+    assert_eq!(
+        history.turns[0].user_text.as_deref(),
+        Some("/goal First objective")
+    );
+    assert_eq!(
+        history.turns[1].user_text.as_deref(),
+        Some("Normal question")
+    );
+    assert_eq!(
+        history.turns[2].user_text.as_deref(),
+        Some("/goal Continue reviewing")
+    );
+    server
+        .fail_next("thread/turns/list", -32601, "unsupported")
+        .await;
+    let fallback = client
+        .read_history(&SessionId::new("thr_goal_input"), None, 10)
+        .await
+        .unwrap();
+    assert_eq!(fallback.turns, history.turns);
+    assert!(
+        !server
+            .request_methods()
+            .await
+            .contains(&"thread/resume".into())
+    );
+    let channel = Arc::new(RecordingChannel::default());
+    let engine = Engine::new(
+        client.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound("/attach thr_goal_input"))
+        .await
+        .unwrap();
+    let views = channel.views();
+    assert!(views.iter().any(|view| {
+        view.sections
+            .iter()
+            .any(|section| section.body.contains("/goal Continue reviewing"))
+    }));
+    assert!(
+        views
+            .iter()
+            .all(|view| !format!("{view:?}").contains("Internal instructions"))
+    );
+    assert!(client.is_read_only(&SessionId::new("thr_goal_input")).await);
+    engine.handle_inbound(inbound("/detach")).await.unwrap();
+    server
+        .complete_turn("thr_goal_input", "current_goal", "Review complete")
+        .await;
+    engine
+        .handle_agent_event(AgentEvent::TurnCompleted {
+            session_id: "thr_goal_input".into(),
+            turn_id: "current_goal".into(),
+            status: TurnStatus::Completed,
+            error: None,
+        })
+        .await
+        .unwrap();
+    assert!(
+        channel
+            .views()
+            .last()
+            .unwrap()
+            .sections
+            .iter()
+            .any(|section| section.body.contains("/goal Continue reviewing"))
+    );
+    std::fs::remove_file(path).unwrap();
+    let unavailable = client
+        .read_history(&SessionId::new("thr_goal_input"), None, 10)
+        .await
+        .unwrap();
+    assert_eq!(
+        unavailable.turns[2].agent_text.as_deref(),
+        Some("Review complete")
+    );
+}
+
+#[tokio::test]
+async fn goal_input_is_visible_on_first_live_output_without_user_message_event() {
+    let server = MockCodexAppServer::start();
+    let file = tempfile::NamedTempFile::new().unwrap();
+    let entries = [
+        json!({"type":"session_meta","payload":{"id":"thr_live_goal"}}),
+        json!({"type":"event_msg","payload":{"type":"task_started","turn_id":"live_goal"}}),
+        json!({"type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"<codex_internal_context source=\"goal\">\nInternal\n<objective>\nFix all issues\n</objective>\nInternal\n</codex_internal_context>"}]}}),
+    ];
+    std::fs::write(
+        file.path(),
+        entries
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n"),
+    )
+    .unwrap();
+    let mut thread = MockThread::new("thr_live_goal", "Live goal", "/work");
+    thread.rollout_path = Some(file.path().to_string_lossy().into_owned());
+    server.add_thread(thread).await;
+    let client = Arc::new(CodexClient::connect(server.endpoint()).await.unwrap());
+    let deferred = Arc::new(agentix_core::DeferredAgent::new(
+        "Codex",
+        "/work".into(),
+        move || {
+            let client = client.clone();
+            async move { Ok(client as Arc<dyn AgentAdapter>) }
+        },
+    ));
+    let mut ready = deferred.subscribe();
+    tokio::time::timeout(Duration::from_secs(2), ready.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    let client = Arc::new(
+        agentix_core::AgentRegistry::new(vec![(agentix_core::AgentKind::Codex, deferred)]).unwrap(),
+    );
+    let channel = Arc::new(RecordingChannel::default());
+    let engine = Engine::new(
+        client,
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound("/attach codex:thr_live_goal"))
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::TurnStarted {
+            session_id: "codex:thr_live_goal".into(),
+            turn_id: "live_goal".into(),
+        })
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::AgentMessageDelta {
+            session_id: "codex:thr_live_goal".into(),
+            turn_id: "live_goal".into(),
+            item_id: "answer".into(),
+            delta: "Working".into(),
+        })
+        .await
+        .unwrap();
+    let views = channel.views();
+    assert!(
+        views
+            .last()
+            .unwrap()
+            .sections
+            .iter()
+            .any(|section| section.body.contains("/goal Fix all issues"))
+    );
+}
+
+fn goal_input_rollout() -> tempfile::NamedTempFile {
+    let file = tempfile::NamedTempFile::new().unwrap();
+    let path = file.path();
+    let mut entries = vec![json!({"type":"session_meta","payload":{"id":"thr_goal_input"}})];
+    for (id, objective) in [
+        ("old_goal", "First objective"),
+        ("current_goal", "Continue reviewing"),
+    ] {
+        entries.push(json!({"type":"event_msg","payload":{"type":"task_started","turn_id":id}}));
+        entries.push(json!({"type":"response_item","payload":{
+            "type":"message","role":"user","content":[{"type":"input_text","text":format!(
+                "<codex_internal_context source=\"goal\">\nInternal instructions\n<objective>\n{objective}\n</objective>\nMore internal instructions\n</codex_internal_context>"
+            )}]
+        }}));
+        entries.push(json!({"type":"event_msg","payload":{"type":"task_complete","turn_id":id}}));
+    }
+    entries
+        .push(json!({"type":"event_msg","payload":{"type":"task_started","turn_id":"ordinary"}}));
+    std::fs::write(
+        path,
+        entries
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("\n")
+            + "\n",
+    )
+    .unwrap();
+    file
 }

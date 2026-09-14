@@ -3,8 +3,7 @@ use super::{
     ActionButton, ActionStyle, AgentEvent, ConversationRef, DeliveryClass, Duration, Engine,
     EngineError, EventImportance, HashSet, Instant, ItemSummary, OutboundView, SessionId,
     StoredTurnView, TurnBuffer, TurnStatus, TurnSummary, UiAction, Uuid, ViewStatus,
-    background_completion_body, cold_turns, live_turn_view, short_identifier,
-    turn_conversation_body, turn_status_label,
+    background_completion_body, cold_turns, live_turn_view, short_identifier, turn_status_label,
 };
 
 impl Engine {
@@ -106,12 +105,8 @@ impl Engine {
         self.turns.buffers.lock().await.insert(
             key.clone(),
             TurnBuffer {
-                user_text: turn.user_text.clone().unwrap_or_default(),
-                agent_text: turn.agent_text.clone().unwrap_or_default(),
-                output_items: Vec::new(),
-                status: turn.status.clone(),
                 started_at: Some(Instant::now()),
-                rendered_elapsed_seconds: None,
+                ..TurnBuffer::from_summary(turn, self.output)
             },
         );
         self.turns.views.lock().await.remove(&key);
@@ -159,9 +154,17 @@ impl Engine {
         delivery: DeliveryClass,
     ) -> Result<(), EngineError> {
         self.restore_cold_turn(session_id, &turn_id).await?;
+        let history = if delivery == DeliveryClass::Draining {
+            self.background_turn_summary(session_id, &turn_id).await
+        } else {
+            None
+        };
         let key = (session_id.clone(), turn_id.clone());
         let mut buffers = self.turns.buffers.lock().await;
         let buffer = buffers.entry(key).or_default();
+        if let Some(turn) = history {
+            buffer.merge_summary(&turn, self.output);
+        }
         buffer.ensure_started();
         buffer.status = status;
         if let Some(error) = error {
@@ -223,8 +226,36 @@ impl Engine {
         if self.agent.is_subagent(session_id).await? {
             return Ok(());
         }
-        let content = self.background_turn_content(session_id, turn_id).await;
-        let body = format!("{}\n\n{content}", background_completion_body(status, error));
+        let content = self
+            .background_turn_summary(session_id, turn_id)
+            .await
+            .map_or_else(
+                || OutboundView::text(self.agent.display_name(), "Turn content is unavailable."),
+                |turn| {
+                    super::presentation::history_turn_view(
+                        self.agent.display_name(),
+                        &turn,
+                        self.output,
+                    )
+                },
+            );
+        let body = format!(
+            "{}\n\n{}",
+            background_completion_body(status, error),
+            content.body
+        );
+        let mut sections = content.sections;
+        if let Some(error) = error.filter(|error| !error.trim().is_empty()) {
+            for section in sections.iter_mut().filter(|section| section.collapsible) {
+                section.expanded = Some(false);
+            }
+            sections.push(agentix_domain::ViewSection {
+                title: "Error".into(),
+                body: error.into(),
+                collapsible: false,
+                expanded: None,
+            });
+        }
         self.sessions
             .cache_session_summary(self.agent.as_ref(), session_id)
             .await;
@@ -243,7 +274,7 @@ impl Engine {
             self.send_view(
                 &conversation,
                 &OutboundView {
-                    sections: Vec::new(),
+                    sections: sections.clone(),
                     title: format!("{} · {session_label}", self.agent.display_name()),
                     subtitle: Some(format!(
                         "Background turn {} · {}",
@@ -263,11 +294,11 @@ impl Engine {
         Ok(())
     }
 
-    pub(super) async fn background_turn_content(
+    pub(super) async fn background_turn_summary(
         &self,
         session: &SessionId,
         turn_id: &str,
-    ) -> String {
+    ) -> Option<TurnSummary> {
         let mut cursor = None;
         let mut visited = HashSet::new();
         loop {
@@ -279,18 +310,14 @@ impl Engine {
                 }
             };
             if let Some(turn) = page.turns.iter().find(|turn| turn.id == turn_id) {
-                return turn_conversation_body(
-                    self.agent.display_name(),
-                    turn.user_text.as_deref(),
-                    turn.agent_text.as_deref(),
-                );
+                return Some(turn.clone());
             }
             match page.older_cursor {
                 Some(next) if visited.insert(next.clone()) => cursor = Some(next),
                 _ => break,
             }
         }
-        "Turn content is unavailable.".into()
+        None
     }
 
     pub(super) async fn handle_message_delta(
@@ -661,40 +688,29 @@ impl Engine {
         turn_id: &str,
         item: &ItemSummary,
     ) -> bool {
-        let process = self.output.process_text(item);
-        if !matches!(
-            item.kind.as_str(),
-            "agentMessage" | "userMessage" | "commentary"
-        ) && process.is_none()
-        {
-            return false;
-        }
         let mut buffers = self.turns.buffers.lock().await;
-        let buffer = buffers
+        buffers
             .entry((session_id.clone(), turn_id.to_owned()))
-            .or_default();
-        buffer.ensure_started();
-        match item.kind.as_str() {
-            "agentMessage" => buffer.record_output(
-                Some(&item.id),
-                item.text.as_deref().unwrap_or_default(),
-                false,
-                false,
-            ),
-            "commentary" => buffer.record_output(
-                Some(&item.id),
-                process.as_deref().unwrap_or_default(),
-                true,
-                false,
-            ),
-            "userMessage" => buffer.user_text = item.text.clone().unwrap_or_default(),
-            _ => {
-                if let Some(text) = process {
-                    buffer.record_output(Some(&item.id), &text, true, false);
-                }
-            }
+            .or_default()
+            .apply_item(item, self.output)
+    }
+
+    async fn restore_turn_input(&self, session: &SessionId, turn_id: &str) {
+        let key = (session.clone(), turn_id.to_owned());
+        let missing = self
+            .turns
+            .buffers
+            .lock()
+            .await
+            .get(&key)
+            .is_some_and(|buffer| buffer.user_text.trim().is_empty());
+        if missing
+            && let Ok(Some(text)) = self.agent.read_turn_input(session, turn_id).await
+            && let Some(buffer) = self.turns.buffers.lock().await.get_mut(&key)
+            && buffer.user_text.trim().is_empty()
+        {
+            buffer.user_text = text;
         }
-        true
     }
 
     pub(super) async fn render_turn(
@@ -712,6 +728,7 @@ impl Engine {
         if !self.turns.should_render(&key, force, interval).await {
             return Ok(());
         }
+        self.restore_turn_input(session_id, turn_id).await;
         let session_label = self.session_label(session_id).await;
         let (mut view, is_running, snapshot) = {
             let buffers = self.turns.buffers.lock().await;
