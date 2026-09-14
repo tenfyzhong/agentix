@@ -2082,18 +2082,22 @@ async fn engine_and_codex_client_complete_an_im_turn_end_to_end() {
     assert!(final_turn.actions.is_empty());
 
     let methods = server.request_methods().await;
+    assert_eq!(methods.len(), 7);
     assert_eq!(
-        methods,
+        &methods[..4],
         [
             "initialize",
             "thread/read",
             "thread/resume",
-            "thread/loaded/list",
-            "thread/read",
-            "thread/turns/list",
-            "turn/start",
+            "thread/loaded/list"
         ]
     );
+    // Optional title metadata and required history are read concurrently.
+    // Preserve the request budget without imposing an order between them.
+    let mut attachment_reads = methods[4..6].to_vec();
+    attachment_reads.sort();
+    assert_eq!(attachment_reads, ["thread/read", "thread/turns/list"]);
+    assert_eq!(methods[6], "turn/start");
 }
 
 async fn recv_event(receiver: &mut tokio::sync::broadcast::Receiver<AgentEvent>) -> AgentEvent {
