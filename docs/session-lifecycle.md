@@ -22,7 +22,9 @@ Native command metadata is synchronized only when the channel declares
 no-op sync and the backend capability queries needed to construct its menu.
 Explicitly requested menu cards still use the normal capability-filtered menu.
 Custom adapters implementing `sync_command_menu` must opt in to receive these
-updates.
+updates. Native resume publishes its reattachment notice before constructing and
+posting the explicit command menu, so slow capability discovery does not hide
+the successful local binding transition. Menu work still runs afterward.
 
 For IM input sent to an idle session, an acknowledgement taking more than 100 ms
 triggers a `Sending…` card containing the input. Once the backend supplies a turn

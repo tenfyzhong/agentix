@@ -589,8 +589,6 @@ impl Engine {
         self.sessions
             .attach_at_epoch(conversation.clone(), session_id.clone(), false, epoch)
             .await;
-        self.update_command_menu_best_effort(&conversation, true)
-            .await;
         let session_label = self.session_label(session_id).await;
         if let Err(error) = self
             .send_view(
@@ -611,6 +609,8 @@ impl Engine {
         {
             tracing::warn!(%error, ?conversation, "failed to notify a resumed session");
         }
+        self.update_command_menu_best_effort(&conversation, true)
+            .await;
         Ok(())
     }
 

@@ -10503,3 +10503,84 @@ async fn attach_without_native_menu_skips_stalled_command_capabilities() {
             .any(|(_, view)| view.body.contains("previous answer"))
     );
 }
+
+#[tokio::test]
+async fn startup_and_resume_feedback_do_not_wait_for_menu_discovery() {
+    for kind in [ChannelKind::Feishu, ChannelKind::Slack] {
+        let mut adapter = FakeAgent::new();
+        adapter.stalled_operation = Some("supports_command");
+        let agent = Arc::new(adapter);
+        let channel = Arc::new(FakeChannel {
+            channel_kind: Some(kind),
+            skip_native_menu_sync: true,
+            ..Default::default()
+        });
+        let state = SqliteState::in_memory().await.unwrap();
+        let conversation = ConversationRef::new(kind, "chat-a");
+        state
+            .attach(&conversation, &SessionId::new("thr_a"))
+            .await
+            .unwrap();
+        let engine = Engine::new(agent.clone(), state.clone(), vec![channel.clone()]);
+        assert_eq!(
+            tokio::time::timeout(
+                std::time::Duration::from_millis(250),
+                engine.restore_bindings()
+            )
+            .await
+            .expect("startup must skip unused menu discovery")
+            .unwrap(),
+            1
+        );
+        engine
+            .handle_agent_event(AgentEvent::SessionExited {
+                session_id: "thr_a".into(),
+            })
+            .await
+            .unwrap();
+        assert!(
+            !agent
+                .calls()
+                .iter()
+                .any(|call| call.starts_with("supports_command:"))
+        );
+        let engine = Arc::new(engine);
+        let resume = tokio::spawn({
+            let engine = engine.clone();
+            async move {
+                engine
+                    .handle_agent_event(AgentEvent::SessionResumed {
+                        session_id: "thr_a".into(),
+                    })
+                    .await
+            }
+        });
+        let notified = tokio::time::timeout(std::time::Duration::from_millis(250), async {
+            loop {
+                if channel
+                    .sent()
+                    .iter()
+                    .any(|(_, view)| view.title == "Codex session resumed")
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .is_ok();
+        resume.abort();
+        let _ = resume.await;
+        assert!(notified, "resume feedback must precede menu discovery");
+        assert_eq!(
+            state.current_session(&conversation).await.unwrap(),
+            Some(SessionId::new("thr_a"))
+        );
+        assert!(
+            channel
+                .sent()
+                .iter()
+                .any(|(_, view)| view.title == "Codex session resumed")
+        );
+    }
+}
