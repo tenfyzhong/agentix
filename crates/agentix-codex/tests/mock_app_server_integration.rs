@@ -2789,3 +2789,158 @@ fn goal_input_rollout() -> tempfile::NamedTempFile {
     .unwrap();
     file
 }
+
+#[tokio::test]
+async fn registry_exit_is_distinct_from_delayed_native_new() {
+    use agentix_codex::ClientRegistry;
+    use std::path::Path;
+
+    for replacement in [false, true] {
+        let server = MockCodexAppServer::start();
+        server
+            .add_thread(MockThread::new("old", "Old", "/work"))
+            .await;
+        server
+            .add_thread(MockThread::new("new", "New", "/work"))
+            .await;
+        let registry = ClientRegistry::default();
+        let connection = registry.connect(None);
+        registry.client_message(
+            connection,
+            &json!({"id":1,"method":"thread/resume","params":{}}),
+        );
+        registry.server_message(
+            connection,
+            &json!({"id":1,"result":{"thread":{"id":"old"}}}),
+        );
+        let client = Arc::new(
+            CodexClient::connect_with_registry(
+                server.endpoint(),
+                Path::new("codex"),
+                Path::new("/tmp"),
+                true,
+                registry.clone(),
+            )
+            .await
+            .unwrap(),
+        );
+        client.set_background_turn_notifications(false);
+        let mut events = client.subscribe();
+        let state = SqliteState::in_memory().await.unwrap();
+        let channel = Arc::new(RecordingChannel::default());
+        let engine = Engine::new(client, state.clone(), vec![channel.clone()]);
+        engine.handle_inbound(inbound("/attach old")).await.unwrap();
+        registry.client_message(
+            connection,
+            &json!({"id":2,"method":"thread/unsubscribe","params":{"threadId":"old"}}),
+        );
+        registry.server_message(
+            connection,
+            &json!({"id":2,"result":{"status":"unsubscribed"}}),
+        );
+        // Give the monitor a separate wakeup before a replacement exists.
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), events.recv())
+                .await
+                .is_err()
+        );
+        if replacement {
+            registry.client_message(
+                connection,
+                &json!({"id":3,"method":"thread/start","params":{}}),
+            );
+            registry.server_message(
+                connection,
+                &json!({"id":3,"result":{"thread":{"id":"new"}}}),
+            );
+        } else {
+            registry.disconnect(connection);
+        }
+        let mut saw_replacement = false;
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let event = events.recv().await.unwrap();
+                if matches!(event, AgentEvent::SessionSwitchStarted { .. }) {
+                    assert!(replacement);
+                }
+                if matches!(event, AgentEvent::SessionReplaced { .. }) {
+                    saw_replacement = true;
+                }
+                let exited = matches!(&event, AgentEvent::SessionExited { session_id } if session_id == "old");
+                engine.handle_agent_event(event).await.unwrap();
+                if exited {
+                    assert_eq!(saw_replacement, replacement);
+                    break;
+                }
+            }
+        }).await.unwrap();
+        let bindings = state.list_bindings().await.unwrap();
+        if replacement {
+            assert_eq!(bindings[0].1, SessionId::new("new"));
+        } else {
+            assert!(state.list_session_switches().await.unwrap().is_empty());
+            assert!(
+                !channel
+                    .views()
+                    .iter()
+                    .any(|view| view.body.contains("Waiting for the new session")
+                        || view.body.contains("timed out"))
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn registry_disconnect_reports_exit_while_process_is_still_alive() {
+    use agentix_codex::ClientRegistry;
+    use std::path::Path;
+
+    let server = MockCodexAppServer::start();
+    server
+        .add_thread(MockThread::new("old", "Old", "/work"))
+        .await;
+    let mut process = tokio::process::Command::new("sleep")
+        .arg("30")
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let registry = ClientRegistry::default();
+    let connection = registry.connect(process.id());
+    registry.client_message(
+        connection,
+        &json!({"id":1,"method":"thread/resume","params":{}}),
+    );
+    registry.server_message(
+        connection,
+        &json!({"id":1,"result":{"thread":{"id":"old"}}}),
+    );
+    let client = CodexClient::connect_with_registry(
+        server.endpoint(),
+        Path::new("codex"),
+        Path::new("/tmp"),
+        true,
+        registry.clone(),
+    )
+    .await
+    .unwrap();
+    client.set_background_turn_notifications(false);
+    let mut events = client.subscribe();
+    client.attach(&SessionId::new("old")).await.unwrap();
+    registry.client_message(
+        connection,
+        &json!({"id":2,"method":"thread/unsubscribe","params":{"threadId":"old"}}),
+    );
+    registry.server_message(
+        connection,
+        &json!({"id":2,"result":{"status":"unsubscribed"}}),
+    );
+    registry.disconnect(connection);
+    let event = tokio::time::timeout(Duration::from_secs(2), events.recv())
+        .await
+        .expect("connection closure must not wait for process exit")
+        .unwrap();
+    assert!(process.try_wait().unwrap().is_none());
+    process.kill().await.unwrap();
+    process.wait().await.unwrap();
+    assert!(matches!(event, AgentEvent::SessionExited { session_id } if session_id == "old"));
+}
