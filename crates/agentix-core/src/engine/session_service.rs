@@ -4,7 +4,12 @@ use crate::{
     AgentAdapter, AgentError, AttachOutcome, BindingTable, ConversationRef, DeliveryClass,
     EventImportance, HistoryPage, SessionId, SessionSummary, SqliteState,
 };
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    future::Future,
+    sync::Arc,
+    task::Poll,
+};
 use tokio::sync::Mutex;
 
 #[derive(Debug, Clone, Default)]
@@ -24,8 +29,17 @@ pub(super) struct SessionService {
     state: SqliteState,
     transitions: Mutex<()>,
     pub(super) bindings: Mutex<BindingTable>,
-    pub(super) cache: Mutex<HashMap<SessionId, SessionSummary>>,
+    pub(super) cache: Arc<Mutex<HashMap<SessionId, SessionSummary>>>,
+    title_read: Mutex<Option<TitleRead>>,
     pub(super) history_cursors: Mutex<HashMap<ConversationRef, HistoryCursors>>,
+}
+
+struct TitleRead(tokio::task::JoinHandle<()>);
+
+impl Drop for TitleRead {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
 }
 
 impl SessionService {
@@ -34,7 +48,8 @@ impl SessionService {
             state,
             transitions: Mutex::new(()),
             bindings: Mutex::new(BindingTable::default()),
-            cache: Mutex::new(HashMap::new()),
+            cache: Arc::new(Mutex::new(HashMap::new())),
+            title_read: Mutex::new(None),
             history_cursors: Mutex::new(HashMap::new()),
         }
     }
@@ -219,34 +234,48 @@ impl SessionService {
         );
     }
 
+    /// Poll cached metadata once, then let one owned reader finish off the
+    /// foreground path. All callers share the same list request and cache.
     pub(super) async fn cache_session_summary(
         &self,
-        agent: &dyn AgentAdapter,
+        agent: Arc<dyn AgentAdapter>,
         session_id: &SessionId,
     ) {
         if self.cache.lock().await.contains_key(session_id) {
             return;
         }
-        match tokio::time::timeout(
-            std::time::Duration::from_secs(1),
-            agent.list_sessions(None, 100),
-        )
-        .await
+        let mut reader = self.title_read.lock().await;
+        if reader
+            .as_ref()
+            .is_some_and(|reader| !reader.0.is_finished())
+            || self.cache.lock().await.contains_key(session_id)
         {
-            Ok(Ok(page)) => {
-                let mut sessions = self.cache.lock().await;
-                sessions.extend(
-                    page.sessions
-                        .into_iter()
-                        .map(|session| (session.id.clone(), session)),
-                );
+            return;
+        }
+        let cache = self.cache.clone();
+        let session = session_id.clone();
+        let mut fetch = Box::pin(async move {
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(1),
+                agent.list_sessions(None, 100),
+            )
+            .await
+            {
+                Ok(Ok(page)) => {
+                    let mut sessions = cache.lock().await;
+                    for summary in page.sessions {
+                        // A delayed list must not overwrite newer cached metadata.
+                        sessions.entry(summary.id.clone()).or_insert(summary);
+                    }
+                }
+                Ok(Err(error)) => tracing::debug!(%error, %session, "failed to load session title"),
+                Err(_) => tracing::debug!(%session, "session title lookup exceeded its deadline"),
             }
-            Ok(Err(error)) => {
-                tracing::debug!(%error, session = %session_id, "failed to load session title");
-            }
-            Err(_) => {
-                tracing::debug!(session = %session_id, "session title lookup exceeded its deadline");
-            }
+        });
+        let ready =
+            std::future::poll_fn(|cx| Poll::Ready(fetch.as_mut().poll(cx).is_ready())).await;
+        if !ready {
+            *reader = Some(TitleRead(tokio::spawn(fetch)));
         }
     }
 }

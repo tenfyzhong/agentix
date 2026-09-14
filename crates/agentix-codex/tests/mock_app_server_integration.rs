@@ -1497,7 +1497,11 @@ async fn background_codex_turn_completion_notifies_im_with_attach_action() {
     let views = channel.views();
     assert_eq!(views.len(), before + 1);
     let notification = views.last().unwrap();
-    assert_eq!(notification.title, "Codex · Background work · thr_back");
+    // Completion delivery does not wait for optional title metadata.
+    assert!(matches!(
+        notification.title.as_str(),
+        "Codex · Background work · thr_back" | "Codex · Untitled · thr_back"
+    ));
     assert!(
         notification
             .body

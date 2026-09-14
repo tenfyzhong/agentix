@@ -419,6 +419,7 @@ async fn registry_rejects_duplicate_backends() {
 struct FakeAgent {
     stalled_operation: Option<&'static str>,
     start_gate: Option<Arc<tokio::sync::Notify>>,
+    title_gate: Option<Arc<tokio::sync::Notify>>,
     terminal_draft: Arc<Mutex<Option<String>>>,
     terminal_error: Arc<Mutex<Option<String>>>,
     snapshot: Arc<Mutex<MultiplexerSnapshot>>,
@@ -448,6 +449,7 @@ impl FakeAgent {
             terminal_draft: Arc::default(),
             stalled_operation: None,
             start_gate: None,
+            title_gate: None,
             terminal_error: Arc::default(),
             snapshot: Arc::new(Mutex::new(multiplexer_snapshot())),
             refresh_count: Arc::default(),
@@ -598,6 +600,10 @@ impl AgentAdapter for FakeAgent {
         _cursor: Option<String>,
         _limit: u32,
     ) -> Result<SessionPage, AgentError> {
+        if let Some(gate) = &self.title_gate {
+            self.calls.lock().unwrap().push("title_read".into());
+            gate.notified().await;
+        }
         if self.stalled_operation == Some("list") {
             std::future::pending::<()>().await;
         }
@@ -5157,6 +5163,43 @@ async fn resumed_codex_session_reattaches_the_previous_im_conversation() {
 }
 
 #[tokio::test]
+async fn resume_feedback_does_not_wait_for_optional_title() {
+    let mut agent = FakeAgent::new();
+    agent.stalled_operation = Some("list");
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        Arc::new(agent),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::SessionExited {
+            session_id: "thr_a".into(),
+        })
+        .await
+        .unwrap();
+    tokio::time::timeout(
+        std::time::Duration::from_millis(100),
+        engine.handle_agent_event(AgentEvent::SessionResumed {
+            session_id: "thr_a".into(),
+        }),
+    )
+    .await
+    .expect("resume feedback must not wait for title metadata")
+    .unwrap();
+    assert!(
+        channel
+            .sent()
+            .iter()
+            .any(|(_, view)| view.title == "Codex session resumed")
+    );
+}
+
+#[tokio::test]
 async fn attaching_another_session_cancels_the_suspended_session_resume() {
     let agent = Arc::new(FakeAgent::new());
     let channel = Arc::new(FakeChannel::default());
@@ -8792,4 +8835,115 @@ async fn assert_slow_prompt_feedback(failure: Option<bool>) {
             .count(),
         1
     );
+}
+
+#[tokio::test]
+async fn background_feedback_does_not_wait_for_optional_title() {
+    let mut agent = FakeAgent::new();
+    agent.stalled_operation = Some("list");
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        Arc::new(agent),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/help"))
+        .await
+        .unwrap();
+    tokio::time::timeout(
+        std::time::Duration::from_millis(100),
+        engine.handle_agent_event(AgentEvent::TurnCompleted {
+            session_id: "thr_a".into(),
+            turn_id: "turn-previous".into(),
+            status: TurnStatus::Completed,
+            error: None,
+        }),
+    )
+    .await
+    .expect("background completion must not wait for title metadata")
+    .unwrap();
+    assert_eq!(
+        channel.sent().last().unwrap().1.status,
+        agentix_core::ViewStatus::Background
+    );
+}
+
+#[tokio::test]
+async fn delayed_title_read_is_shared_and_cached_after_attach() {
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let mut adapter = FakeAgent::new();
+    adapter.title_gate = Some(gate.clone());
+    let agent = Arc::new(adapter);
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound("chat-b", "/attach thr_b"))
+        .await
+        .unwrap();
+    assert_eq!(
+        agent
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|call| *call == "title_read")
+            .count(),
+        1
+    );
+    gate.notify_one();
+    tokio::time::timeout(std::time::Duration::from_millis(200), async {
+        loop {
+            tokio::task::yield_now().await;
+            engine
+                .handle_inbound(inbound("chat-a", "/current"))
+                .await
+                .unwrap();
+            if channel
+                .sent()
+                .last()
+                .unwrap()
+                .1
+                .title
+                .contains("Parser cleanup")
+            {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("completed metadata must populate the shared cache");
+}
+
+#[tokio::test]
+async fn dropping_engine_cancels_pending_title_read() {
+    let mut adapter = FakeAgent::new();
+    adapter.title_gate = Some(Arc::new(tokio::sync::Notify::new()));
+    let agent = Arc::new(adapter);
+    let weak = Arc::downgrade(&agent);
+    let engine = Engine::new(
+        agent,
+        SqliteState::in_memory().await.unwrap(),
+        vec![Arc::new(FakeChannel::default())],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    drop(engine);
+    tokio::time::timeout(std::time::Duration::from_millis(100), async {
+        while weak.upgrade().is_some() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("metadata reader must not outlive its engine owner");
 }

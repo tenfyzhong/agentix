@@ -326,7 +326,7 @@ impl Engine {
         let history = {
             let title = self
                 .sessions
-                .cache_session_summary(self.agent.as_ref(), &session_id);
+                .cache_session_summary(self.agent.clone(), &session_id);
             let history = self.operations.history(&session_id, None, 1);
             tokio::pin!(title, history);
             // Use a ready title, but never hold attachment feedback for metadata.

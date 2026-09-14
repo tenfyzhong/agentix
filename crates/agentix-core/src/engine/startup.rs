@@ -151,7 +151,7 @@ impl Engine {
             }
             if status == RestoredBindingStatus::Attached {
                 self.sessions
-                    .cache_session_summary(self.agent.as_ref(), &session)
+                    .cache_session_summary(self.agent.clone(), &session)
                     .await;
             }
             let session_label = self.session_label(&session).await;

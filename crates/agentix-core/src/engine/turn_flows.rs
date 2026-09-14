@@ -229,6 +229,9 @@ impl Engine {
         if self.agent.is_subagent(session_id).await? {
             return Ok(());
         }
+        self.sessions
+            .cache_session_summary(self.agent.clone(), session_id)
+            .await;
         let content = self
             .background_turn_summary(session_id, turn_id)
             .await
@@ -259,9 +262,6 @@ impl Engine {
                 expanded: None,
             });
         }
-        self.sessions
-            .cache_session_summary(self.agent.as_ref(), session_id)
-            .await;
         let session_label = self.session_label(session_id).await;
         for (conversation, owner_id) in recipients {
             if self
@@ -577,7 +577,7 @@ impl Engine {
         }
 
         self.sessions
-            .cache_session_summary(self.agent.as_ref(), session_id)
+            .cache_session_summary(self.agent.clone(), session_id)
             .await;
         let epoch = self.state.binding_epoch(&conversation).await?;
         self.sessions

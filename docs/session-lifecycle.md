@@ -100,10 +100,12 @@ flowchart TD
 
 An empty session can be registered before its rollout/history is materialized.
 Provisional attachment preserves interest in it; recovery captures input and output
-that arrived before a usable subscription. Optional title lookup runs alongside
-history recovery with a one-second budget. Attachment proceeds as soon as history
-is available; a pending title lookup is cancelled and the label falls back to the
-session ID.
+that arrived before a usable subscription. Optional title lookup runs in an owned
+background task with a one-second budget. Attach, resume, startup restoration and
+background completion feedback use available metadata without waiting for this
+read. Concurrent callers share one list request; completed metadata populates the
+cache for subsequent views. Until then, labels fall back to the session ID. Dropping
+the session service cancels a pending read.
 
 EOF, transport errors, completed connection closure, and Proxy shutdown release
 ownership. Exit does not wait for the peer PID to disappear. A silent network
