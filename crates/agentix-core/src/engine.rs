@@ -14,6 +14,7 @@ mod output_buffer;
 pub use dispatch::{EngineDispatchSnapshot, EngineResource, EngineWork};
 mod interaction_flows;
 mod presentation;
+mod question_flows;
 pub use presentation::{command_menu, command_menu_for};
 mod session_flows;
 mod session_service;
@@ -654,9 +655,29 @@ impl Engine {
 
     pub async fn handle_agent_event(&self, event: AgentEvent) -> Result<(), EngineError> {
         let event = self.output.project_event(event);
-        let tasks = self.tasks.view(self);
         self.tasks.record_job_message(&event).await;
+        if let AgentEvent::InteractionRequested(request) = &event
+            && request.kind == InteractionKind::UserInput
+        {
+            return self.receive_question(request).await;
+        }
+        if let AgentEvent::InteractionResolved {
+            session_id,
+            request_id,
+        } = &event
+        {
+            self.finish_queued_question(&InteractionKey {
+                session_id: SessionId::new(session_id),
+                request_id: request_id.clone(),
+            })
+            .await?;
+        }
 
+        self.handle_session_event(event).await
+    }
+
+    async fn handle_session_event(&self, event: AgentEvent) -> Result<(), EngineError> {
+        let tasks = self.tasks.view(self);
         match &event {
             AgentEvent::SessionSwitchStarted {
                 session_id,
@@ -703,6 +724,7 @@ impl Engine {
                     .await
                     .invalidate_generation(*generation);
                 self.interactions.pending.lock().await.clear();
+                self.interactions.questions.lock().await.clear();
                 self.interactions.reply_modes.lock().await.clear();
                 self.turns.stop_actions.lock().await.clear();
                 return Ok(());

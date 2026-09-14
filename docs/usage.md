@@ -98,6 +98,9 @@ Agentix renders Codex approval and plan-input requests as separate actionable me
 
 For multi-question input, Agentix presents one question at a time with option buttons and an `Other…` free-text path. It submits all answers together and replaces the controls with an answer summary. If the request is resolved in Codex CLI, Agentix marks the IM request as resolved outside the chat because the app-server notification does not include the selected decision or answers.
 
+Codex CLI questions observed through the Agentix proxy also appear in IM, including when the session is attached read-only. Attached sessions show the question and answer controls directly. For unattached sessions, enabled background notifications send an Attach reminder to known authenticated chats; selecting Attach shows the still-pending questions. Answers are sent to the shared app-server without acquiring the CLI writer. A CLI answer or server-side resolution retires the corresponding IM question. Pending questions are kept in memory, so questions issued before proxy observation began or across an app-server reconnect need an upstream reissue; turn history alone cannot recover them.
+
+
 Slack uses native `/agentix-sessions` commands synchronized at startup, as well as `/agentix /sessions` and other `/agentix <command>` invocations, or bot mentions inside threads; see [Slack usage and setup](slack.md).
 
 Every action token is single-use. Telegram and Slack remove consumed controls; Feishu leaves the buttons visible but disabled.

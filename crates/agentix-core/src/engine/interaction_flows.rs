@@ -43,6 +43,11 @@ impl Engine {
     ) -> Result<(), EngineError> {
         let id = SessionId::new(session_id);
         self.interactions
+            .questions
+            .lock()
+            .await
+            .retain(|question| question.request.session_id != session_id);
+        self.interactions
             .terminal_inputs
             .lock()
             .await
@@ -483,6 +488,9 @@ impl Engine {
         interaction: &InteractionKey,
         answer: &str,
     ) -> Result<(), EngineError> {
+        if self.sessions.current(conversation).await.as_ref() != Some(&interaction.session_id) {
+            return Err(EngineError::InvalidAction);
+        }
         let Some(mut pending) = self.interactions.pending.lock().await.remove(interaction) else {
             return Err(EngineError::InvalidAction);
         };
@@ -519,6 +527,7 @@ impl Engine {
                 response,
             })
             .await?;
+        self.finish_queued_question(interaction).await?;
         pending.view.body = completed_input_body(progress);
         pending.view.status = ViewStatus::Success;
         pending.view.actions.clear();

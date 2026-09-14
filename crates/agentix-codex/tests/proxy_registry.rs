@@ -304,3 +304,38 @@ fn native_new_ignores_ephemeral_starts_in_either_handoff_order() {
         }
     }
 }
+
+#[test]
+fn cli_questions_are_observed_once_and_cli_answers_resolve_them() {
+    use agentix_domain::AgentEvent;
+    let registry = ClientRegistry::default();
+    let cli = registry.connect(None);
+    let request = json!({"id":91,"method":"item/tool/requestUserInput","params":{"threadId":"thread-a","turnId":"turn-a","itemId":"item-a","questions":[{"id":"q","header":"Choice","question":"Choose?","options":[]}]}}).to_string();
+    registry.server_frame(cli, &request);
+    registry.server_frame(cli, &request);
+    let events = registry.lifecycle_since(0);
+    assert_eq!(events.len(), 1);
+    assert!(matches!(&events[0].1, AgentEvent::InteractionRequested(r) if r.rpc_id == json!(91)));
+    registry.client_frame(
+        cli,
+        &json!({"id":91,"result":{"answers":{"q":{"answers":["Yes"]}}}}).to_string(),
+    );
+    let events = registry.lifecycle_since(0);
+    assert_eq!(events.len(), 2);
+    assert!(
+        matches!(&events[1].1, AgentEvent::InteractionResolved{session_id,request_id} if session_id == "thread-a" && request_id == "91")
+    );
+}
+
+#[test]
+fn resolved_notifications_preserve_numeric_string_question_ids() {
+    let registry = ClientRegistry::default();
+    let cli = registry.connect(None);
+    registry.server_frame(cli, &json!({"id":"91","method":"item/tool/requestUserInput","params":{"threadId":"t","turnId":"turn","itemId":"item","questions":[]}}).to_string());
+    registry.server_frame(
+        cli,
+        &json!({"method":"serverRequest/resolved","params":{"threadId":"t","requestId":"91"}})
+            .to_string(),
+    );
+    assert_eq!(registry.lifecycle_since(0).len(), 2);
+}

@@ -1,4 +1,5 @@
-use agentix_domain::AgentEvent;
+use agentix_domain::{AgentEvent, InteractionRequest};
+mod questions;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -29,6 +30,8 @@ struct Connection {
 
 #[derive(Default)]
 struct State {
+    questions: HashMap<String, (InteractionRequest, BTreeSet<u64>)>,
+    resolved_questions: std::collections::VecDeque<String>,
     next_id: u64,
     sequence: u64,
     reconnecting: HashMap<String, (String, Instant)>,
@@ -83,6 +86,9 @@ impl ClientRegistry {
         let Ok(header) = serde_json::from_str::<FrameHeader<'_>>(text) else {
             return;
         };
+        if header.method.is_none() {
+            self.observe_question_answer(connection, text);
+        }
         if matches!(
             header.method.as_deref(),
             Some(
@@ -100,13 +106,15 @@ impl ClientRegistry {
 
     /// Streamed notifications and unrelated responses need no full JSON value or mutation.
     pub fn server_frame(&self, connection: u64, text: &str) {
-        if leading_method(text).is_some() {
+        if let Some(method) = leading_method(text) {
+            self.observe_question_frame(connection, &method, text);
             return;
         }
         let Ok(header) = serde_json::from_str::<FrameHeader<'_>>(text) else {
             return;
         };
-        if header.method.is_some() {
+        if let Some(method) = header.method {
+            self.observe_question_frame(connection, &method, text);
             return;
         }
         let Some(id) = header.id else { return };
