@@ -1649,7 +1649,10 @@ mod tests {
         use agentix_core::{Engine, InboundEnvelope, SqliteState};
         use std::time::Duration;
         let agent = Arc::new(LifecycleAgent::new());
-        let channel = Arc::new(LifecycleChannel::new());
+        let channel = Arc::new(LifecycleChannel {
+            blocked_working_conversation: Some("flood".into()),
+            ..LifecycleChannel::new()
+        });
         let state = SqliteState::in_memory().await.unwrap();
         let engine = Arc::new(Engine::new(
             agent.clone(),
@@ -1682,11 +1685,13 @@ mod tests {
                     "blocked",
                     slow.clone(),
                     "owner",
-                    "blocked-prompt",
+                    "prompt",
                 ))
                 .await
                 .unwrap();
-            agent.turn_blocked.cancelled().await;
+            // Hold the initial card delivery explicitly. A pending backend
+            // acknowledgement releases dispatch after its feedback deadline.
+            channel.blocked.cancelled().await;
             for i in 0..300 {
                 sender
                     .send(InboundEnvelope::text(
@@ -1736,7 +1741,7 @@ mod tests {
                     .await
                     .unwrap()
             );
-            agent.turn_release.cancel();
+            channel.unblock.cancel();
             loop {
                 if channel
                     .views
@@ -1772,7 +1777,7 @@ mod tests {
             }
         })
         .await;
-        agent.turn_release.cancel();
+        channel.unblock.cancel();
         shutdown.cancel();
         tokio::time::timeout(Duration::from_secs(3), runtime)
             .await
