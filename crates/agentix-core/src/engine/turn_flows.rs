@@ -407,6 +407,7 @@ impl Engine {
         &self,
         session_id: &SessionId,
     ) -> Result<(), EngineError> {
+        self.turns.input_recovery.cancel_session(session_id);
         let Some(conversation) = self.sessions.bound_conversation(session_id).await else {
             self.turns.cold.remove_session(session_id).await?;
             self.turns.active.lock().await.remove(session_id);
@@ -457,6 +458,12 @@ impl Engine {
             .lock()
             .await
             .retain(|key, _| &key.session_id != session_id);
+        if let Err(error) = self
+            .notify_session_exit(&conversation, &session_label)
+            .await
+        {
+            tracing::warn!(%error, ?conversation, "failed to notify an exited session");
+        }
         let active_turn = self.turns.active.lock().await.remove(session_id);
         let mut turn_ids = self
             .turns
@@ -483,8 +490,9 @@ impl Engine {
         turn_ids.sort();
         turn_ids.dedup();
 
+        let cleanup_deadline = tokio::time::Instant::now() + Duration::from_secs(1);
         for turn_id in turn_ids {
-            self.cleanup_exited_turn(&conversation, session_id, &turn_id)
+            self.cleanup_exited_turn_until(&conversation, session_id, &turn_id, cleanup_deadline)
                 .await;
         }
 
@@ -506,12 +514,6 @@ impl Engine {
             .remove(&conversation);
         self.update_command_menu_best_effort(&conversation, false)
             .await;
-        if let Err(error) = self
-            .notify_session_exit(&conversation, &session_label)
-            .await
-        {
-            tracing::warn!(%error, ?conversation, "failed to notify an exited session");
-        }
         Ok(())
     }
 
@@ -612,6 +614,22 @@ impl Engine {
         session_id: &SessionId,
         turn_id: &str,
     ) {
+        self.cleanup_exited_turn_until(
+            conversation,
+            session_id,
+            turn_id,
+            tokio::time::Instant::now() + Duration::from_secs(1),
+        )
+        .await;
+    }
+
+    async fn cleanup_exited_turn_until(
+        &self,
+        conversation: &ConversationRef,
+        session_id: &SessionId,
+        turn_id: &str,
+        deadline: tokio::time::Instant,
+    ) {
         if let Err(error) = self.restore_cold_turn(session_id, turn_id).await {
             tracing::warn!(%error, %session_id, %turn_id, "failed to restore exited turn");
             return;
@@ -625,16 +643,19 @@ impl Engine {
                     buffer.status = TurnStatus::Interrupted;
                 }
             }
-            if let Err(error) = self
-                .render_turn(conversation, session_id, turn_id, DeliveryClass::Live, true)
-                .await
+            match tokio::time::timeout_at(
+                deadline,
+                self.render_turn_view(conversation, session_id, turn_id, DeliveryClass::Live),
+            )
+            .await
             {
-                tracing::warn!(
-                    %error,
-                    session = %session_id,
-                    turn = %turn_id,
-                    "failed to finalize an exited agent turn"
-                );
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    tracing::warn!(%error, %session_id, %turn_id, "failed to finalize an exited agent turn");
+                }
+                Err(_) => {
+                    tracing::warn!(%session_id, %turn_id, "exited turn card cleanup exceeded its deadline");
+                }
             }
         } else if let Some(group_id) = self
             .interactions
@@ -698,24 +719,6 @@ impl Engine {
             .apply_item(item, self.output)
     }
 
-    async fn restore_turn_input(&self, session: &SessionId, turn_id: &str) {
-        let key = (session.clone(), turn_id.to_owned());
-        let missing = self
-            .turns
-            .buffers
-            .lock()
-            .await
-            .get(&key)
-            .is_some_and(|buffer| buffer.user_text.trim().is_empty());
-        if missing
-            && let Ok(Some(text)) = self.agent.read_turn_input(session, turn_id).await
-            && let Some(buffer) = self.turns.buffers.lock().await.get_mut(&key)
-            && buffer.user_text.trim().is_empty()
-        {
-            buffer.user_text = text;
-        }
-    }
-
     pub(super) async fn render_turn(
         &self,
         conversation: &ConversationRef,
@@ -731,7 +734,21 @@ impl Engine {
         if !self.turns.should_render(&key, force, interval).await {
             return Ok(());
         }
-        self.restore_turn_input(session_id, turn_id).await;
+        self.restore_turn_input(conversation, session_id, turn_id, delivery)
+            .await;
+        self.render_turn_view(conversation, session_id, turn_id, delivery)
+            .await
+    }
+
+    // Exit finalization renders only known content and must not restart recovery.
+    async fn render_turn_view(
+        &self,
+        conversation: &ConversationRef,
+        session_id: &SessionId,
+        turn_id: &str,
+        delivery: DeliveryClass,
+    ) -> Result<(), EngineError> {
+        let key = (session_id.clone(), turn_id.to_owned());
         let session_label = self.session_label(session_id).await;
         let (mut view, is_running, snapshot) = {
             let buffers = self.turns.buffers.lock().await;

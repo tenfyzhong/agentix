@@ -235,6 +235,7 @@ pub(crate) fn confirm_exited_sessions(
     exited
 }
 
+#[cfg(test)]
 pub(crate) fn reappeared_sessions(
     exited: &HashSet<SessionId>,
     running: &HashSet<SessionId>,

@@ -227,8 +227,13 @@ impl SessionService {
         if self.cache.lock().await.contains_key(session_id) {
             return;
         }
-        match agent.list_sessions(None, 100).await {
-            Ok(page) => {
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            agent.list_sessions(None, 100),
+        )
+        .await
+        {
+            Ok(Ok(page)) => {
                 let mut sessions = self.cache.lock().await;
                 sessions.extend(
                     page.sessions
@@ -236,8 +241,11 @@ impl SessionService {
                         .map(|session| (session.id.clone(), session)),
                 );
             }
-            Err(error) => {
+            Ok(Err(error)) => {
                 tracing::debug!(%error, session = %session_id, "failed to load session title");
+            }
+            Err(_) => {
+                tracing::debug!(session = %session_id, "session title lookup exceeded its deadline");
             }
         }
     }

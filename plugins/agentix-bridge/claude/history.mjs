@@ -1,18 +1,45 @@
 import { openSync, fstatSync, readSync, closeSync } from 'node:fs';
 const textOf = content => typeof content === 'string' ? content : (content ?? []).filter(p => p.type === 'text').map(p => p.text).join('\n');
+const TAIL_BYTES = 16 * 1024 * 1024;
+function readTail(path) {
+    let fd;
+    try { fd = openSync(path, 'r'); } catch (error) { if (error.code === 'ENOENT') return { start: 0, buffer: Buffer.alloc(0) }; throw error; }
+    try {
+        const size = fstatSync(fd).size, start = Math.max(0, size - TAIL_BYTES), buffer = Buffer.alloc(size - start);
+        const count = readSync(fd, buffer, 0, buffer.length, start);
+        return { start, buffer: buffer.subarray(0, count) };
+    } finally { closeSync(fd); }
+}
+function completeRange({ start, buffer }) {
+    const begin = start ? buffer.indexOf(10) + 1 : 0;
+    return { begin, end: Math.max(begin, buffer.lastIndexOf(10) + 1) };
+}
 /** Read a bounded tail; a partial final JSONL record is left for the next read. */
 export function readTranscript(path, sessionId) {
-    let fd;
-    try { fd = openSync(path, 'r'); } catch (error) { if (error.code === 'ENOENT') return []; throw error; }
-    let text;
-    try {
-        const size = fstatSync(fd).size, start = Math.max(0, size - 16 * 1024 * 1024), buffer = Buffer.alloc(size - start);
-        const count = readSync(fd, buffer, 0, buffer.length, start);
-        text = buffer.subarray(0, count).toString('utf8');
-        if (start) text = text.slice(text.indexOf('\n') + 1);
-    } finally { closeSync(fd); }
-    const turns = [], seen = new Set();
-    for (const line of text.slice(0, text.lastIndexOf('\n') + 1).split('\n')) {
+    const tail = readTail(path), { begin, end } = completeRange(tail);
+    return appendRecords(tail.buffer.subarray(begin, end).toString('utf8'), sessionId, [], new Set(), false);
+}
+/** A session-owned latest-turn projection. Byte comparison also detects in-place rewrites. */
+export function createTranscriptReader() {
+    let cached;
+    return (path, sessionId) => {
+        const tail = readTail(path), { begin, end } = completeRange(tail);
+        const appended = cached?.path === path && cached.sessionId === sessionId && cached.start === tail.start
+            && cached.buffer.length <= tail.buffer.length
+            && tail.buffer.subarray(0, cached.buffer.length).equals(cached.buffer);
+        const state = appended ? cached : { path, sessionId, turns: [], seen: new Set(), end: begin };
+        const offset = Math.max(begin, state.end);
+        // Projection can fail on an invalid message shape after applying earlier rows.
+        // Never retain a partially advanced projection for the next read.
+        cached = undefined;
+        appendRecords(tail.buffer.subarray(offset, end).toString('utf8'), sessionId, state.turns, state.seen, true);
+        cached = { ...state, ...tail, end };
+        return structuredClone(state.turns.at(-1));
+    };
+}
+function appendRecords(text, sessionId, turns, seen, latestOnly) {
+    for (const line of text.split('\n')) {
+        if (!line) continue;
         let entry; try { entry = JSON.parse(line); } catch { continue; }
         if (entry.sessionId !== sessionId || entry.isSidechain || entry.isMeta || !entry.uuid || seen.has(entry.uuid)) continue;
         seen.add(entry.uuid);
@@ -20,6 +47,7 @@ export function readTranscript(path, sessionId) {
         if (!message) continue;
         const content = textOf(message.content);
         if (entry.type === 'user' && content && !content.includes('<channel ')) {
+            if (latestOnly) turns.length = 0;
             turns.push({ id: entry.uuid, status: 'unknown', user_text: content.slice(-100000), agent_text: '', tools: [], items: [] });
         } else if (turns.length) {
             const turn = turns.at(-1);

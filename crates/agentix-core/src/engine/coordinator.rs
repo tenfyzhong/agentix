@@ -15,6 +15,7 @@ pub(super) struct BackgroundNotification {
 }
 
 pub(super) struct TurnCoordinator {
+    pub(super) input_recovery: super::input_recovery::InputRecovery,
     pub(super) cold: super::cold_turns::ColdTurns,
     pub(super) active: Mutex<HashMap<SessionId, String>>,
     pub(super) buffers: Mutex<HashMap<(SessionId, String), TurnBuffer>>,
@@ -28,6 +29,7 @@ impl Default for TurnCoordinator {
     fn default() -> Self {
         Self {
             cold: super::cold_turns::ColdTurns::default(),
+            input_recovery: super::input_recovery::InputRecovery::default(),
             active: Mutex::new(HashMap::new()),
             buffers: Mutex::new(HashMap::new()),
             views: Mutex::new(HashMap::new()),

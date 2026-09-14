@@ -15,6 +15,7 @@ use crate::{
 pub enum EngineWork {
     Inbound(InboundEnvelope),
     Event(AgentEvent),
+    InputRecovered(super::RecoveredInput),
     Working { session: SessionId, turn: String },
     Recover,
     TaskBoard,
@@ -140,6 +141,10 @@ impl EngineDispatchSnapshot {
                         &mut exclusive,
                     );
                 }
+            }
+            EngineWork::InputRecovered(input) => {
+                self.reserve_session(&input.session, &mut shared, &mut exclusive);
+                exclusive.push(EngineResource::Conversation(input.conversation.clone()));
             }
             EngineWork::Working { session, .. } => {
                 self.reserve_session(session, &mut shared, &mut exclusive);
@@ -294,6 +299,7 @@ impl Engine {
         match work {
             EngineWork::Inbound(envelope) => self.handle_inbound(envelope).await,
             EngineWork::Event(event) => self.handle_agent_event(event).await,
+            EngineWork::InputRecovered(input) => self.apply_recovered_input(input).await,
             EngineWork::Working { session, turn } => {
                 self.refresh_working_turn(&session, &turn).await;
                 Ok(())

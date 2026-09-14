@@ -33,6 +33,16 @@ struct Worker {
     inbound: Option<(ConversationRef, String)>,
 }
 
+// The Engine can outlive this runtime (for example during shutdown or tests).
+// Optional readers must stop even when this future is aborted before cleanup.
+struct InputRecoveryOwner(watch::Receiver<Arc<Engine>>);
+
+impl Drop for InputRecoveryOwner {
+    fn drop(&mut self) {
+        self.0.borrow().cancel_input_recovery();
+    }
+}
+
 pub async fn run_engine_loop(
     engine: Arc<Engine>,
     agent: Arc<dyn AgentAdapter>,
@@ -51,6 +61,7 @@ pub async fn run_engine_loop_with_config(
     mut inbound: mpsc::Receiver<InboundEnvelope>,
     shutdown: CancellationToken,
 ) {
+    let _input_recovery_owner = InputRecoveryOwner(snapshots.clone());
     let notification_shutdown = shutdown.child_token();
     let notifications = AbortOnDropHandle::new(tokio::spawn(super::notification_runtime::run(
         snapshots.clone(),
@@ -147,6 +158,9 @@ pub async fn run_engine_loop_with_config(
                     None => sources_open = false,
                 }
             }
+            work = engine.next_input_recovery(), if !pool.queue.is_full() => {
+                pool.queue.try_push(work).expect("input recovery capacity");
+            }
             event = events.recv(), if events_open && !pool.queue.is_full() => match event {
                 Ok(event) => pool.queue.try_push(EngineWork::Event(event)).expect("event capacity"),
                 Err(broadcast::error::RecvError::Lagged(count)) => {
@@ -158,6 +172,7 @@ pub async fn run_engine_loop_with_config(
         }
     }
     let engine = snapshots.borrow().clone();
+    engine.cancel_input_recovery();
     source_poll.abort();
     let _ = source_poll.await;
     notification_shutdown.cancel();
@@ -315,6 +330,7 @@ impl EngineWorkers {
                 let description = match &job.work {
                     EngineWork::Inbound(_) => "inbound IM request failed",
                     EngineWork::Event(_) => "agent event failed",
+                    EngineWork::InputRecovered(_) => "input recovery failed",
                     EngineWork::Working { .. } => "working state refresh failed",
                     EngineWork::Recover => "failed to recover after agent event loss",
                     EngineWork::TaskBoard => "task board refresh failed",

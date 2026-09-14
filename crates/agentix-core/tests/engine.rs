@@ -596,6 +596,9 @@ impl AgentAdapter for FakeAgent {
         _cursor: Option<String>,
         _limit: u32,
     ) -> Result<SessionPage, AgentError> {
+        if self.stalled_operation == Some("list") {
+            std::future::pending::<()>().await;
+        }
         Ok(SessionPage {
             sessions: self.sessions.lock().unwrap().clone(),
             next_cursor: None,
@@ -907,6 +910,8 @@ struct FakeChannel {
     command_send_failures: Arc<Mutex<usize>>,
     queue_send_failures: Arc<Mutex<usize>>,
     next_update_failures: Arc<Mutex<usize>>,
+    require_exit_notice_before_update: Arc<Mutex<bool>>,
+    stall_updates: Arc<Mutex<bool>>,
     inbox_source: Arc<Mutex<Option<InboundEnvelope>>>,
     reject_unchanged_updates: bool,
     next_send_gate: Arc<
@@ -1037,6 +1042,17 @@ impl ChannelAdapter for FakeChannel {
         message: &MessageRef,
         view: &OutboundView,
     ) -> Result<(), ChannelError> {
+        if *self.stall_updates.lock().unwrap() {
+            std::future::pending::<()>().await;
+        }
+        if *self.require_exit_notice_before_update.lock().unwrap() {
+            assert!(
+                self.sent()
+                    .iter()
+                    .any(|(_, view)| view.title == "Codex session exited"),
+                "exit notification must precede card updates"
+            );
+        }
         {
             let mut failures = self.next_update_failures.lock().unwrap();
             if *failures > 0 {
@@ -4941,7 +4957,12 @@ async fn exited_current_session_notifies_the_im_and_detaches() {
             .contains("Interrupted")
     );
     assert!(interrupted.actions.is_empty());
-    let notice = channel.sent().last().unwrap().1.clone();
+    let notice = channel
+        .sent()
+        .into_iter()
+        .find(|(_, view)| view.title == "Codex session exited")
+        .unwrap()
+        .1;
     assert_eq!(notice.title, "Codex session exited");
     assert_eq!(notice.subtitle.as_deref(), Some("Automatically detached"));
     assert!(notice.body.contains("Parser cleanup · thr_a"));
@@ -5029,9 +5050,11 @@ async fn exited_session_preserves_finished_turn_status_and_content() {
         assert_eq!(latest.body, finished.body);
         assert_eq!(latest.sections, finished.sections);
         assert!(latest.actions.is_empty());
-        assert_eq!(
-            channel.sent().last().unwrap().1.title,
-            "Codex session exited"
+        assert!(
+            channel
+                .sent()
+                .iter()
+                .any(|(_, view)| view.title == "Codex session exited")
         );
     }
 }
@@ -8491,4 +8514,77 @@ async fn last_uses_attached_session_despite_background_output() {
     assert!(view.body.contains("Checking the compiler output"));
     assert!(!view.body.contains("Unrelated output"));
     assert_eq!(view.actions[0].label, "Stop");
+}
+
+#[tokio::test]
+async fn exit_notice_precedes_slow_turn_card_cleanup() {
+    let agent = Arc::new(FakeAgent::with_history(vec![last_turn_fixture(
+        TurnStatus::InProgress,
+    )]));
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent,
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound_as("chat-a", "owner-42", "/attach thr_a"))
+        .await
+        .unwrap();
+    *channel.require_exit_notice_before_update.lock().unwrap() = true;
+    engine
+        .handle_agent_event(AgentEvent::SessionExited {
+            session_id: "thr_a".into(),
+        })
+        .await
+        .unwrap();
+}
+#[tokio::test]
+async fn exit_cleanup_does_not_wait_indefinitely_for_card_updates() {
+    let agent = Arc::new(FakeAgent::with_history(vec![last_turn_fixture(
+        TurnStatus::InProgress,
+    )]));
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent,
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound_as("chat-a", "owner-42", "/attach thr_a"))
+        .await
+        .unwrap();
+    *channel.stall_updates.lock().unwrap() = true;
+    tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        engine.handle_agent_event(AgentEvent::SessionExited {
+            session_id: "thr_a".into(),
+        }),
+    )
+    .await
+    .expect("card cleanup must not block subsequent lifecycle events")
+    .unwrap();
+}
+
+#[tokio::test]
+async fn attach_does_not_wait_for_optional_session_title() {
+    let mut agent = FakeAgent::new();
+    agent.stalled_operation = Some("list");
+    let channel = Arc::new(FakeChannel::default());
+    let state = SqliteState::in_memory().await.unwrap();
+    let engine = Engine::new(Arc::new(agent), state.clone(), vec![channel]);
+    tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        engine.handle_inbound(inbound("chat-a", "/attach thr_a")),
+    )
+    .await
+    .expect("optional title lookup must not delay attachment")
+    .unwrap();
+    assert_eq!(
+        state
+            .current_session(&ConversationRef::new(ChannelKind::Telegram, "chat-a"))
+            .await
+            .unwrap(),
+        Some(SessionId::new("thr_a"))
+    );
 }

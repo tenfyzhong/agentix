@@ -1373,3 +1373,332 @@ fn hidden_commentary_placeholder_does_not_change_plain_output_format() {
     buffer.record_output(Some("answer"), "Done", false, false);
     assert_eq!(buffer.render_output(), "Done");
 }
+
+#[derive(Default)]
+struct SlowInputAgent {
+    reads: std::sync::atomic::AtomicUsize,
+    release: tokio::sync::Notify,
+}
+
+#[async_trait]
+impl AgentAdapter for SlowInputAgent {
+    fn display_name(&self) -> &'static str {
+        "Test"
+    }
+    async fn list_sessions(&self, _: Option<String>, _: u32) -> Result<SessionPage, AgentError> {
+        unreachable!()
+    }
+    async fn read_history(
+        &self,
+        _: &SessionId,
+        _: Option<String>,
+        _: u32,
+    ) -> Result<HistoryPage, AgentError> {
+        unreachable!()
+    }
+    async fn attach(&self, _: &SessionId) -> Result<(), AgentError> {
+        unreachable!()
+    }
+    async fn unsubscribe(&self, _: &SessionId) -> Result<(), AgentError> {
+        unreachable!()
+    }
+    async fn start_turn(&self, _: &SessionId, _: &str) -> Result<String, AgentError> {
+        unreachable!()
+    }
+    async fn steer(&self, _: &SessionId, _: &str, _: &str) -> Result<String, AgentError> {
+        unreachable!()
+    }
+    async fn interrupt(&self, _: &SessionId, _: &str) -> Result<(), AgentError> {
+        unreachable!()
+    }
+    async fn resolve_interaction(&self, _: InteractionDecision) -> Result<(), AgentError> {
+        unreachable!()
+    }
+    fn subscribe(&self) -> broadcast::Receiver<AgentEvent> {
+        unreachable!()
+    }
+    async fn read_turn_input(&self, _: &SessionId, _: &str) -> Result<Option<String>, AgentError> {
+        self.reads
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.release.notified().await;
+        Ok(Some("Recovered input".into()))
+    }
+    fn generation(&self) -> u64 {
+        0
+    }
+}
+
+async fn render_with_slow_input(existing_input: &str) {
+    let agent = Arc::new(SlowInputAgent::default());
+    let channel = Arc::new(CompletedTurnChannel::default());
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    let session = SessionId::new("slow-input-session");
+    let conversation = ConversationRef::new(ChannelKind::Telegram, "chat");
+    engine
+        .record_turn_started(session.clone(), "turn".into())
+        .await
+        .unwrap();
+    {
+        let mut buffers = engine.turns.buffers.lock().await;
+        let buffer = buffers.get_mut(&(session.clone(), "turn".into())).unwrap();
+        buffer.user_text = existing_input.into();
+        buffer.agent_text = "Already received answer".into();
+        buffer.status = crate::TurnStatus::Completed;
+    }
+    // Keep the history read pending: neither displaying the answer nor releasing
+    // the session dispatch lane should depend on the remote read finishing.
+    let result = tokio::time::timeout(
+        Duration::from_millis(100),
+        engine.render_turn(&conversation, &session, "turn", DeliveryClass::Live, true),
+    )
+    .await;
+    assert!(
+        result.is_ok(),
+        "slow input recovery blocked render completion"
+    );
+    result.unwrap().unwrap();
+    assert_eq!(channel.sends.load(std::sync::atomic::Ordering::Relaxed), 1);
+    if !existing_input.is_empty() {
+        assert_eq!(agent.reads.load(std::sync::atomic::Ordering::Relaxed), 0);
+    }
+}
+
+#[tokio::test]
+async fn slow_input_recovery_does_not_block_received_output() {
+    render_with_slow_input("").await;
+}
+
+#[tokio::test]
+async fn existing_input_skips_slow_input_recovery() {
+    render_with_slow_input("Native user input").await;
+}
+
+async fn slow_input_fixture() -> (
+    Engine,
+    Arc<SlowInputAgent>,
+    Arc<CompletedTurnChannel>,
+    SessionId,
+    ConversationRef,
+) {
+    let agent = Arc::new(SlowInputAgent::default());
+    let channel = Arc::new(CompletedTurnChannel::default());
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    let session = SessionId::new("recover-input");
+    let conversation = ConversationRef::new(ChannelKind::Telegram, "chat");
+    engine
+        .record_turn_started(session.clone(), "turn".into())
+        .await
+        .unwrap();
+    {
+        let mut buffers = engine.turns.buffers.lock().await;
+        let buffer = buffers.get_mut(&(session.clone(), "turn".into())).unwrap();
+        buffer.status = crate::TurnStatus::Completed;
+        buffer.agent_text = "Already received answer".into();
+    }
+    engine
+        .render_turn(&conversation, &session, "turn", DeliveryClass::Live, true)
+        .await
+        .unwrap();
+    (engine, agent, channel, session, conversation)
+}
+
+async fn complete_input_read(engine: &Engine, agent: &SlowInputAgent) -> super::EngineWork {
+    agent.release.notify_one();
+    tokio::time::timeout(Duration::from_secs(1), engine.next_input_recovery())
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn slow_input_recovery_updates_the_original_completed_card() {
+    let (engine, agent, channel, session, _) = slow_input_fixture().await;
+    let work = complete_input_read(&engine, &agent).await;
+    engine.execute_work(work).await.unwrap();
+    assert_eq!(channel.sends.load(std::sync::atomic::Ordering::Relaxed), 1);
+    let updates = channel.updates.lock().await;
+    assert_eq!(updates.len(), 1);
+    assert_eq!(updates[0].0.message_id, "0");
+    let view = &updates[0].1;
+    assert!(format!("{view:?}").contains("Recovered input"));
+    assert!(format!("{view:?}").contains("Already received answer"));
+    assert!(view.actions.is_empty(), "completion must not regain Stop");
+    let cold = engine
+        .turns
+        .cold
+        .load(&session, "turn")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(cold.buffer.user_text, "Recovered input");
+    assert_eq!(cold.buffer.status, crate::TurnStatus::Completed);
+    assert!(engine.turns.buffers.lock().await.is_empty());
+}
+
+#[tokio::test]
+async fn slow_input_recovery_preserves_later_native_input() {
+    let (engine, agent, channel, session, _) = slow_input_fixture().await;
+    engine.restore_cold_turn(&session, "turn").await.unwrap();
+    engine
+        .turns
+        .buffers
+        .lock()
+        .await
+        .get_mut(&(session.clone(), "turn".into()))
+        .unwrap()
+        .user_text = "Native input arrived".into();
+    engine.archive_turn(&session, "turn").await.unwrap();
+    let work = complete_input_read(&engine, &agent).await;
+    engine.execute_work(work).await.unwrap();
+    assert!(channel.updates.lock().await.is_empty());
+    let cold = engine
+        .turns
+        .cold
+        .load(&session, "turn")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(cold.buffer.user_text, "Native input arrived");
+    assert!(engine.turns.buffers.lock().await.is_empty());
+}
+
+#[tokio::test]
+async fn slow_input_recovery_queued_before_exit_cannot_restore_a_card() {
+    let (engine, agent, channel, session, _) = slow_input_fixture().await;
+    let work = complete_input_read(&engine, &agent).await;
+    engine.handle_session_exit(&session).await.unwrap();
+    engine.execute_work(work).await.unwrap();
+    assert!(channel.updates.lock().await.is_empty());
+    assert!(engine.turns.buffers.lock().await.is_empty());
+    assert!(
+        engine
+            .turns
+            .cold
+            .load(&session, "turn")
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn slow_input_recovery_deduplicates_repeated_renders() {
+    let (engine, agent, channel, session, conversation) = slow_input_fixture().await;
+    for _ in 0..20 {
+        engine.restore_cold_turn(&session, "turn").await.unwrap();
+        engine
+            .render_turn(&conversation, &session, "turn", DeliveryClass::Live, true)
+            .await
+            .unwrap();
+    }
+    assert_eq!(agent.reads.load(std::sync::atomic::Ordering::Relaxed), 1);
+    let work = complete_input_read(&engine, &agent).await;
+    engine.execute_work(work).await.unwrap();
+    assert_eq!(agent.reads.load(std::sync::atomic::Ordering::Relaxed), 1);
+    assert_eq!(channel.sends.load(std::sync::atomic::Ordering::Relaxed), 1);
+}
+
+#[tokio::test]
+async fn slow_input_recovery_shutdown_rejects_late_render_requests() {
+    let (engine, agent, _, session, conversation) = slow_input_fixture().await;
+    engine.cancel_input_recovery();
+    engine.restore_cold_turn(&session, "turn").await.unwrap();
+    engine
+        .render_turn(&conversation, &session, "turn", DeliveryClass::Live, true)
+        .await
+        .unwrap();
+    assert_eq!(
+        agent.reads.load(std::sync::atomic::Ordering::Relaxed),
+        1,
+        "draining render work must not start reads after shutdown"
+    );
+}
+
+#[tokio::test]
+async fn slow_input_recovery_limits_reads_and_drains_waiting_turns() {
+    let (engine, agent, channel, session, conversation) = slow_input_fixture().await;
+    for index in 1..20 {
+        let turn = format!("turn-{index}");
+        engine
+            .record_turn_started(session.clone(), turn.clone())
+            .await
+            .unwrap();
+        {
+            let mut buffers = engine.turns.buffers.lock().await;
+            let buffer = buffers.get_mut(&(session.clone(), turn.clone())).unwrap();
+            buffer.agent_text = "Answer".into();
+            buffer.status = crate::TurnStatus::Completed;
+        }
+        engine
+            .render_turn(&conversation, &session, &turn, DeliveryClass::Live, true)
+            .await
+            .unwrap();
+    }
+    assert_eq!(agent.reads.load(std::sync::atomic::Ordering::Relaxed), 8);
+    for _ in 0..20 {
+        let work = complete_input_read(&engine, &agent).await;
+        engine.execute_work(work).await.unwrap();
+    }
+    assert_eq!(agent.reads.load(std::sync::atomic::Ordering::Relaxed), 20);
+    assert_eq!(channel.sends.load(std::sync::atomic::Ordering::Relaxed), 20);
+    assert_eq!(channel.updates.lock().await.len(), 20);
+}
+
+#[tokio::test]
+async fn slow_input_recovery_discards_results_after_binding_switch() {
+    let (engine, agent, channel, session, conversation) = slow_input_fixture().await;
+    let work = complete_input_read(&engine, &agent).await;
+    engine.sessions.bindings.lock().await.attach(
+        conversation,
+        SessionId::new("replacement"),
+        false,
+    );
+    engine.execute_work(work).await.unwrap();
+    assert!(channel.updates.lock().await.is_empty());
+    assert!(
+        engine
+            .turns
+            .cold
+            .load(&session, "turn")
+            .await
+            .unwrap()
+            .unwrap()
+            .buffer
+            .user_text
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn slow_input_recovery_is_cancelled_when_engine_is_dropped() {
+    let (engine, agent, _, _, _) = slow_input_fixture().await;
+    drop(engine);
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while Arc::strong_count(&agent) != 1 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("input reader retained the adapter after Engine drop");
+}
+
+#[tokio::test]
+async fn slow_input_recovery_exit_cleanup_does_not_restart_cancelled_reads() {
+    let (engine, agent, _, session, conversation) = slow_input_fixture().await;
+    engine.turns.input_recovery.cancel_session(&session);
+    engine
+        .cleanup_exited_turn(&conversation, &session, "turn")
+        .await;
+    assert_eq!(
+        agent.reads.load(std::sync::atomic::Ordering::Relaxed),
+        1,
+        "exit finalization must not start input history reads"
+    );
+}

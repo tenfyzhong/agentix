@@ -370,8 +370,7 @@ mod unix {
             )
             .await;
 
-            let start = next_json(&mut websocket).await;
-            assert_eq!(start["method"], "turn/start");
+            let start = await_empty_thread_start(&mut websocket).await;
             send_result(
                 &mut websocket,
                 &start["id"],
@@ -777,6 +776,49 @@ mod unix {
             .unwrap();
         let initialized = next_json(websocket).await;
         assert_eq!(initialized["method"], "initialized");
+    }
+
+    // Allow recovery queries to interleave before the first turn materializes.
+    async fn await_empty_thread_start<S>(
+        websocket: &mut tokio_tungstenite::WebSocketStream<S>,
+    ) -> Value
+    where
+        S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+    {
+        loop {
+            let request = next_json(websocket).await;
+            match request["method"].as_str().unwrap() {
+                "turn/start" => return request,
+                "thread/loaded/list" => {
+                    send_result(
+                        websocket,
+                        &request["id"],
+                        json!({"data": ["thr_empty"], "nextCursor": null}),
+                    )
+                    .await;
+                }
+                "thread/read" => {
+                    send_result(
+                        websocket,
+                        &request["id"],
+                        json!({"thread": {"id": "thr_empty", "ephemeral": false,
+                        "path": "/tmp/rollout-thr_empty.jsonl",
+                        "status": {"type": "idle"}, "turns": []}}),
+                    )
+                    .await;
+                }
+                "thread/resume" => {
+                    send_error(
+                        websocket,
+                        &request["id"],
+                        -32600,
+                        "no rollout found for thread id thr_empty",
+                    )
+                    .await;
+                }
+                method => panic!("unexpected request before first turn: {method}"),
+            }
+        }
     }
 
     async fn next_json<S>(websocket: &mut tokio_tungstenite::WebSocketStream<S>) -> Value

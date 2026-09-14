@@ -13,6 +13,7 @@ anyhow.workspace = true
 clap.workspace = true
 sha2.workspace = true
 subtle = "2.6"
+memchr = "2.8"
 jsonwebtoken = { version = "10", default-features = false, features = ["rust_crypto"] }
 async-trait.workspace = true
 dirs.workspace = true
