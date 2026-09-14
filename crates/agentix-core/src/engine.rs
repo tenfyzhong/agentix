@@ -12,7 +12,7 @@ mod input_recovery;
 mod pending_prompts;
 mod prompt_feedback;
 pub use input_recovery::RecoveredInput;
-pub use pending_prompts::{PromptAcknowledged, QueuedInput};
+pub use pending_prompts::{CardDelivered, PromptAcknowledged, QueuedInput};
 mod coordinator;
 mod dispatch;
 mod output_buffer;

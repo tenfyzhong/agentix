@@ -412,6 +412,7 @@ impl Engine {
         session_id: &SessionId,
     ) -> Result<(), EngineError> {
         self.turns.input_recovery.cancel_session(session_id);
+        self.freeze_exited_cards(session_id).await;
         self.turns.pending_prompts.invalidate(session_id);
         let Some(conversation) = self.sessions.bound_conversation(session_id).await else {
             self.turns.cold.remove_session(session_id).await?;
@@ -733,6 +734,14 @@ impl Engine {
         force: bool,
     ) -> Result<(), EngineError> {
         self.adopt_pending_prompt(session_id, turn_id).await;
+        // Waiting for a card ID is not a render and must not consume the
+        // channel update interval before the first visible output.
+        if self
+            .hold_pending_card(conversation, session_id, turn_id)
+            .await
+        {
+            return Ok(());
+        }
         let key = (session_id.clone(), turn_id.to_owned());
         let interval = self
             .channel(conversation.channel)?
@@ -754,6 +763,12 @@ impl Engine {
         turn_id: &str,
         delivery: DeliveryClass,
     ) -> Result<(), EngineError> {
+        if self
+            .hold_pending_card(conversation, session_id, turn_id)
+            .await
+        {
+            return Ok(());
+        }
         let key = (session_id.clone(), turn_id.to_owned());
         let session_label = self.session_label(session_id).await;
         let (mut view, is_running, snapshot) = {

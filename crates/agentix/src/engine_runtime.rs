@@ -338,6 +338,7 @@ impl EngineWorkers {
                     EngineWork::Inbound(_) => "inbound IM request failed",
                     EngineWork::Event(_) => "agent event failed",
                     EngineWork::InputRecovered(_) => "input recovery failed",
+                    EngineWork::CardDelivered(_) => "pending card delivery failed",
                     EngineWork::PromptAcknowledged(_) => "input confirmation failed",
                     EngineWork::QueuedInput(_) => "queued input failed",
                     EngineWork::Working { .. } => "working state refresh failed",

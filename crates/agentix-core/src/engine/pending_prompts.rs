@@ -69,6 +69,21 @@ pub struct PromptAcknowledged {
     result: Result<String, AgentError>,
 }
 
+#[derive(Debug)]
+pub struct CardDelivered {
+    pub(super) session: SessionId,
+    pub(super) conversation: ConversationRef,
+    id: u64,
+    result: Result<MessageRef, EngineError>,
+}
+
+struct PendingCard {
+    input: QueuedInput,
+    turn: Option<String>,
+    final_view: Option<OutboundView>,
+    valid: bool,
+}
+
 struct Pending {
     id: u64,
     input: QueuedInput,
@@ -86,6 +101,9 @@ struct State {
     closed: bool,
     pending: HashMap<SessionId, Pending>,
     tasks: JoinSet<PromptAcknowledged>,
+    cards: HashMap<u64, PendingCard>,
+    card_tasks: JoinSet<CardDelivered>,
+    card_keys: HashMap<Id, u64>,
     task_keys: HashMap<Id, (SessionId, ConversationRef, u64)>,
     ready: VecDeque<QueuedInput>,
     owned: HashMap<(super::ChannelKind, String), QueuedInput>,
@@ -114,6 +132,7 @@ impl PendingPrompts {
         let mut state = self.state.lock().unwrap();
         if state.closed
             || state.pending.len() >= MAX_PENDING
+            || state.cards.len() >= MAX_PENDING
             || state.pending.contains_key(&input.session)
         {
             return Err(future);
@@ -154,8 +173,16 @@ impl PendingPrompts {
     }
 
     pub(super) fn invalidate(&self, session: &SessionId) {
-        if let Some(pending) = self.state.lock().unwrap().pending.get_mut(session) {
+        let mut state = self.state.lock().unwrap();
+        if let Some(pending) = state.pending.get_mut(session) {
             pending.valid = false;
+        }
+        for card in state
+            .cards
+            .values_mut()
+            .filter(|card| &card.input.session == session)
+        {
+            card.valid = false;
         }
     }
 
@@ -201,6 +228,7 @@ impl PendingPrompts {
         let mut state = self.state.lock().unwrap();
         state.closed = true;
         state.tasks.abort_all();
+        state.card_tasks.abort_all();
     }
 
     async fn next(&self) -> EngineWork {
@@ -210,6 +238,22 @@ impl PendingPrompts {
                     let mut state = self.state.lock().unwrap();
                     if let Some(input) = state.ready.pop_front() {
                         return Poll::Ready(EngineWork::QueuedInput(input));
+                    }
+                    match state.card_tasks.poll_join_next_with_id(cx) {
+                        Poll::Ready(Some(Ok((task, delivered)))) => {
+                            state.card_keys.remove(&task);
+                            return Poll::Ready(EngineWork::CardDelivered(delivered));
+                        }
+                        Poll::Ready(Some(Err(error))) => {
+                            let id = state.card_keys.remove(&error.id()).expect("card task metadata");
+                            let card = &state.cards[&id];
+                            return Poll::Ready(EngineWork::CardDelivered(CardDelivered {
+                                session: card.input.session.clone(),
+                                conversation: card.input.conversation.clone(), id,
+                                result: Err(EngineError::Agent(AgentError::Uncertain(format!("card task stopped: {error}")))),
+                            }));
+                        }
+                        Poll::Ready(None) | Poll::Pending => {}
                     }
                     match state.tasks.poll_join_next_with_id(cx) {
                         Poll::Ready(Some(Ok((task, acknowledged)))) => {
@@ -301,23 +345,62 @@ impl Engine {
             return Ok(Some(future));
         }
         delivery.deferred.store(true, Ordering::Release);
-        // The original request keeps running while its feedback is posted. Its
-        // completion must reacquire dispatch reservations before committing state.
-        match self.send_view(conversation, view).await {
-            Ok(message) => {
-                if let Some(pending) = self
-                    .turns
-                    .pending_prompts
-                    .state
-                    .lock()
-                    .unwrap()
-                    .pending
-                    .get_mut(session)
-                {
-                    pending.message = Some(message);
+        // Poll the original card request briefly, then retain it without holding
+        // the session lane. Never cancel and resend an uncertain channel mutation.
+        let channel = self.channel(conversation.channel)?.clone();
+        let target = conversation.clone();
+        let view = view.clone();
+        let mut send = Box::pin(async move {
+            channel
+                .send(&target, &view)
+                .await
+                .map_err(EngineError::from)
+        });
+        if let Ok(result) =
+            tokio::time::timeout(std::time::Duration::from_millis(50), &mut send).await
+        {
+            match result {
+                Ok(message) => {
+                    if let Some(pending) = self
+                        .turns
+                        .pending_prompts
+                        .state
+                        .lock()
+                        .unwrap()
+                        .pending
+                        .get_mut(session)
+                    {
+                        pending.message = Some(message);
+                    }
                 }
+                Err(error) => tracing::warn!(%error, %session, "failed to show pending input"),
             }
-            Err(error) => tracing::warn!(%error, %session, "failed to show pending input"),
+        } else {
+            let mut state = self.turns.pending_prompts.state.lock().unwrap();
+            let pending = &state.pending[session];
+            let id = pending.id;
+            let input = pending.input.clone();
+            state.cards.insert(
+                id,
+                PendingCard {
+                    input,
+                    turn: None,
+                    final_view: None,
+                    valid: true,
+                },
+            );
+            let session = session.clone();
+            let conversation = conversation.clone();
+            let handle = state.card_tasks.spawn(async move {
+                CardDelivered {
+                    session,
+                    conversation,
+                    id,
+                    result: send.await,
+                }
+            });
+            state.card_keys.insert(handle.id(), id);
+            self.turns.pending_prompts.changed.notify_one();
         }
         Ok(None)
     }
@@ -473,6 +556,7 @@ impl Engine {
             self.turns.pending_prompts.changed.notify_one();
         }
 
+        self.record_pending_card_outcome(&acknowledged, &input);
         let mut result = match acknowledged.result {
             Ok(turn) => {
                 // Acceptance remains durable even if the user already switched.
@@ -529,6 +613,40 @@ impl Engine {
             }
         }
         result
+    }
+
+    fn record_pending_card_outcome(&self, acknowledged: &PromptAcknowledged, input: &QueuedInput) {
+        if let Some(card) = self
+            .turns
+            .pending_prompts
+            .state
+            .lock()
+            .unwrap()
+            .cards
+            .get_mut(&acknowledged.id)
+        {
+            if !card.valid {
+                return;
+            }
+            match &acknowledged.result {
+                Ok(turn) => card.turn = Some(turn.clone()),
+                Err(error) => {
+                    let mut view = OutboundView::text(
+                        "Agentix · Send failed",
+                        format!("{}\n\n{error}", markdown_quote(&input.prompt)),
+                    );
+                    view.status = if matches!(error, AgentError::Uncertain(_)) {
+                        ViewStatus::Warning
+                    } else {
+                        ViewStatus::Error
+                    };
+                    if matches!(error, AgentError::Uncertain(_)) {
+                        view.title = "Agentix · Delivery unconfirmed".into();
+                    }
+                    card.final_view = Some(view);
+                }
+            }
+        }
     }
 
     async fn show_acknowledged_prompt(
@@ -679,5 +797,197 @@ impl Engine {
                 Err(error)
             }
         }
+    }
+}
+
+impl Engine {
+    pub(super) async fn freeze_exited_cards(&self, session: &SessionId) {
+        let cards = self
+            .turns
+            .pending_prompts
+            .state
+            .lock()
+            .unwrap()
+            .cards
+            .iter()
+            .filter(|(_, card)| &card.input.session == session)
+            .filter_map(|(id, card)| card.turn.clone().map(|turn| (*id, turn)))
+            .collect::<Vec<_>>();
+        if cards.is_empty() {
+            return;
+        }
+        let label = self.session_label(session).await;
+        for (id, turn) in cards {
+            let mut buffer = self
+                .turns
+                .buffers
+                .lock()
+                .await
+                .get(&(session.clone(), turn.clone()))
+                .cloned();
+            if buffer.is_none() {
+                if let Err(error) = self.restore_cold_turn(session, &turn).await {
+                    tracing::warn!(%error, "failed to restore pending exit card");
+                }
+                buffer = self
+                    .turns
+                    .buffers
+                    .lock()
+                    .await
+                    .get(&(session.clone(), turn.clone()))
+                    .cloned();
+            }
+            if let Some(mut buffer) = buffer {
+                if matches!(buffer.status, TurnStatus::InProgress | TurnStatus::Unknown) {
+                    buffer.status = TurnStatus::Interrupted;
+                }
+                let view = super::live_turn_view(
+                    self.agent.display_name(),
+                    &label,
+                    &turn,
+                    &buffer,
+                    DeliveryClass::Live,
+                );
+                if let Some(card) = self
+                    .turns
+                    .pending_prompts
+                    .state
+                    .lock()
+                    .unwrap()
+                    .cards
+                    .get_mut(&id)
+                {
+                    card.final_view = Some(view);
+                }
+            }
+        }
+    }
+
+    pub(super) async fn hold_pending_card(
+        &self,
+        conversation: &ConversationRef,
+        session: &SessionId,
+        turn: &str,
+    ) -> bool {
+        if !self
+            .turns
+            .pending_prompts
+            .state
+            .lock()
+            .unwrap()
+            .cards
+            .values()
+            .any(|card| card.input.session == *session)
+        {
+            return false;
+        }
+        let detached = self.sessions.current(conversation).await.is_none();
+        let epoch = self.sessions.epoch(conversation).await;
+        let generation = self.agent.generation();
+        let mut state = self.turns.pending_prompts.state.lock().unwrap();
+        let Some(card) = state.cards.values_mut().find(|card| {
+            card.input.session == *session
+                && card.input.conversation == *conversation
+                && ((!card.valid && detached) || card.input.epoch == epoch)
+                && card.input.generation == generation
+                && card.turn.as_deref().is_none_or(|known| known == turn)
+        }) else {
+            return false;
+        };
+        card.turn = Some(turn.to_owned());
+        true
+    }
+
+    pub(super) async fn apply_card_delivered(
+        &self,
+        delivered: CardDelivered,
+    ) -> Result<(), EngineError> {
+        let card = {
+            let mut state = self.turns.pending_prompts.state.lock().unwrap();
+            let card = state.cards.remove(&delivered.id);
+            if state.closed {
+                return Ok(());
+            }
+            card
+        };
+        let Some(card) = card else {
+            return Ok(());
+        };
+        let input = card.input;
+        let current = card.valid
+            && input.generation == self.agent.generation()
+            && input.epoch == self.sessions.epoch(&input.conversation).await
+            && self.sessions.current(&input.conversation).await.as_ref() == Some(&input.session);
+        let message = match delivered.result {
+            Ok(message) => message,
+            Err(error) => {
+                tracing::warn!(%error, "pending card delivery failed");
+                // A failed progress notice must not swallow output that already
+                // completed while its message ID was unavailable.
+                if current && let Some(turn) = card.turn {
+                    self.restore_cold_turn(&input.session, &turn).await?;
+                    self.render_turn(
+                        &input.conversation,
+                        &input.session,
+                        &turn,
+                        DeliveryClass::Live,
+                        true,
+                    )
+                    .await?;
+                }
+                return Ok(());
+            }
+        };
+        if let Some(view) = card.final_view {
+            self.channel(input.conversation.channel)?
+                .update(&input.conversation, &message, &view)
+                .await?;
+            return Ok(());
+        }
+        if current {
+            if let Some(turn) = card.turn {
+                self.restore_cold_turn(&input.session, &turn).await?;
+                self.turns
+                    .views
+                    .lock()
+                    .await
+                    .insert((input.session.clone(), turn.clone()), message);
+                self.render_turn(
+                    &input.conversation,
+                    &input.session,
+                    &turn,
+                    DeliveryClass::Live,
+                    true,
+                )
+                .await?;
+            } else if let Some(pending) = self
+                .turns
+                .pending_prompts
+                .state
+                .lock()
+                .unwrap()
+                .pending
+                .get_mut(&input.session)
+                .filter(|pending| pending.id == delivered.id)
+            {
+                pending.message = Some(message);
+            }
+        } else {
+            let view = OutboundView::text(
+                if card.valid {
+                    "Agentix · Previous session"
+                } else {
+                    "Agentix · Session exited"
+                },
+                format!(
+                    "{}\n\nThis input belongs to the previous session.",
+                    markdown_quote(&input.prompt)
+                ),
+            );
+            self.channel(input.conversation.channel)?
+                .update(&input.conversation, &message, &view)
+                .await?;
+        }
+        Ok(())
     }
 }

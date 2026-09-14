@@ -923,6 +923,7 @@ struct FakeChannel {
     command_send_failures: Arc<Mutex<usize>>,
     queue_send_failures: Arc<Mutex<usize>>,
     next_update_failures: Arc<Mutex<usize>>,
+    next_send_failures: Arc<Mutex<usize>>,
     require_exit_notice_before_update: Arc<Mutex<bool>>,
     stall_updates: Arc<Mutex<bool>>,
     inbox_source: Arc<Mutex<Option<InboundEnvelope>>>,
@@ -1000,6 +1001,13 @@ impl ChannelAdapter for FakeChannel {
         if let Some((entered, release)) = gate {
             entered.cancel();
             release.cancelled().await;
+        }
+        {
+            let mut failures = self.next_send_failures.lock().unwrap();
+            if *failures > 0 {
+                *failures -= 1;
+                return Err(ChannelError::Rejected("injected send failure".into()));
+            }
         }
         if view.title == "Codex command" || view.title.ends_with(" · Command failed") {
             let mut failures = self.command_send_failures.lock().unwrap();
@@ -9671,5 +9679,351 @@ async fn runtime_pending_followups_keep_order_when_next_start_is_also_slow() {
     assert!(
         inputs.last().unwrap().ends_with(":older queued followup"),
         "earlier accepted input must remain first across a second deferred start: {inputs:?}"
+    );
+}
+
+#[tokio::test]
+async fn runtime_pending_card_delivery_releases_session_dispatch() {
+    use std::time::Duration;
+    use tokio_util::sync::CancellationToken;
+
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let mut adapter = FakeAgent::new();
+    adapter.start_gate = Some(gate.clone());
+    let agent = Arc::new(adapter);
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Arc::new(Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    ));
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    let entered = CancellationToken::new();
+    let release = CancellationToken::new();
+    *channel.next_send_gate.lock().unwrap() = Some((entered.clone(), release.clone()));
+    let mut input = tokio::spawn({
+        let engine = engine.clone();
+        async move {
+            engine
+                .execute_work(agentix_core::EngineWork::Inbound(inbound(
+                    "chat-a",
+                    "pending card input",
+                )))
+                .await
+        }
+    });
+    tokio::time::timeout(Duration::from_secs(1), entered.cancelled())
+        .await
+        .unwrap();
+    let released = tokio::time::timeout(Duration::from_millis(250), &mut input).await;
+    // Always release both gates, including on the failing implementation.
+    release.cancel();
+    gate.notify_one();
+    let dispatched = if let Ok(result) = released {
+        result.unwrap().unwrap();
+        true
+    } else {
+        input.await.unwrap().unwrap();
+        false
+    };
+    engine.cancel_pending_prompts().await.unwrap();
+    assert!(
+        dispatched,
+        "a slow Sending card must not retain session dispatch"
+    );
+}
+
+async fn slow_pending_card() -> (
+    Engine,
+    Arc<FakeAgent>,
+    Arc<FakeChannel>,
+    Arc<tokio::sync::Notify>,
+    tokio_util::sync::CancellationToken,
+) {
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let mut adapter = FakeAgent::new();
+    adapter.start_gate = Some(gate.clone());
+    let agent = Arc::new(adapter);
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    let release = tokio_util::sync::CancellationToken::new();
+    *channel.next_send_gate.lock().unwrap() =
+        Some((tokio_util::sync::CancellationToken::new(), release.clone()));
+    tokio::time::timeout(
+        std::time::Duration::from_millis(300),
+        engine.execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "slow card input",
+        ))),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    (engine, agent, channel, gate, release)
+}
+
+#[tokio::test]
+async fn runtime_pending_card_reconciles_completed_output_after_ack() {
+    let (engine, _, channel, gate, release) = slow_pending_card().await;
+    let count = channel.messages.lock().unwrap().len();
+    engine
+        .handle_agent_event(AgentEvent::AgentMessageDelta {
+            session_id: "thr_a".into(),
+            turn_id: "turn_new".into(),
+            item_id: "answer".into(),
+            delta: "completed before card".into(),
+        })
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::TurnCompleted {
+            session_id: "thr_a".into(),
+            turn_id: "turn_new".into(),
+            status: TurnStatus::Completed,
+            error: None,
+        })
+        .await
+        .unwrap();
+    gate.notify_one();
+    apply_next_pending_input(&engine).await;
+    assert!(engine.working_turns().await.is_empty());
+    assert_eq!(
+        channel.messages.lock().unwrap().len(),
+        count,
+        "do not send a second card while the first is pending"
+    );
+    release.cancel();
+    apply_next_pending_input(&engine).await;
+    assert_eq!(channel.messages.lock().unwrap().len(), count + 1);
+    let updated = channel.updated();
+    let view = &updated.last().unwrap().1;
+    assert!(view.body.contains("completed before card"));
+    assert!(view.actions.is_empty());
+}
+
+#[tokio::test]
+async fn runtime_pending_card_allows_stop_and_detach_before_delivery() {
+    let (engine, agent, channel, gate, release) = slow_pending_card().await;
+    for command in ["/stop", "/detach"] {
+        tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            engine.execute_work(agentix_core::EngineWork::Inbound(inbound(
+                "chat-a", command,
+            ))),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    }
+    gate.notify_one();
+    apply_next_pending_input(&engine).await;
+    assert_eq!(
+        agent
+            .calls()
+            .iter()
+            .filter(|call| call.as_str() == "stop:thr_a:turn_new")
+            .count(),
+        1
+    );
+    release.cancel();
+    apply_next_pending_input(&engine).await;
+    let updated = channel.updated();
+    let view = &updated.last().unwrap().1;
+    assert!(view.actions.is_empty());
+    assert!(view.body.contains("previous session"));
+}
+
+#[tokio::test]
+async fn runtime_pending_card_failure_does_not_lose_completed_output() {
+    let (engine, _, channel, gate, release) = slow_pending_card().await;
+    engine
+        .handle_agent_event(AgentEvent::AgentMessageDelta {
+            session_id: "thr_a".into(),
+            turn_id: "turn_new".into(),
+            item_id: "answer".into(),
+            delta: "answer survives failed card".into(),
+        })
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::TurnCompleted {
+            session_id: "thr_a".into(),
+            turn_id: "turn_new".into(),
+            status: TurnStatus::Completed,
+            error: None,
+        })
+        .await
+        .unwrap();
+    gate.notify_one();
+    apply_next_pending_input(&engine).await;
+    *channel.next_send_failures.lock().unwrap() = 1;
+    release.cancel();
+    apply_next_pending_input(&engine).await;
+    assert!(
+        channel
+            .messages
+            .lock()
+            .unwrap()
+            .values()
+            .any(|view| view.body.contains("answer survives failed card")),
+        "a failed progress card must not swallow the final answer"
+    );
+}
+
+#[tokio::test]
+async fn runtime_pending_card_exit_preserves_output_without_duplicate_turn_cards() {
+    let (engine, _, channel, gate, release) = slow_pending_card().await;
+    engine
+        .handle_agent_event(AgentEvent::AgentMessageDelta {
+            session_id: "thr_a".into(),
+            turn_id: "turn_new".into(),
+            item_id: "answer".into(),
+            delta: "output before exit".into(),
+        })
+        .await
+        .unwrap();
+    engine
+        .execute_work(agentix_core::EngineWork::Event(AgentEvent::SessionExited {
+            session_id: "thr_a".into(),
+        }))
+        .await
+        .unwrap();
+    gate.notify_one();
+    apply_next_pending_input(&engine).await;
+    release.cancel();
+    apply_next_pending_input(&engine).await;
+    let messages = channel.messages.lock().unwrap();
+    assert_eq!(
+        messages
+            .values()
+            .filter(|view| view.body.contains("output before exit"))
+            .count(),
+        1
+    );
+    assert!(
+        messages
+            .values()
+            .filter(|view| view.body.contains("output before exit"))
+            .all(|view| view.actions.is_empty())
+    );
+    assert_eq!(
+        messages
+            .values()
+            .filter(|view| view.body.contains("slow card input"))
+            .count(),
+        1,
+        "exit must finalize the original card rather than create another input card"
+    );
+}
+
+#[tokio::test]
+async fn runtime_pending_card_admitted_before_shutdown_cannot_restore_stop() {
+    let (engine, _, channel, gate, release) = slow_pending_card().await;
+    gate.notify_one();
+    apply_next_pending_input(&engine).await;
+    release.cancel();
+    let delivered = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        engine.next_pending_prompt(),
+    )
+    .await
+    .unwrap();
+    engine.cancel_pending_prompts().await.unwrap();
+    engine.execute_work(delivered).await.unwrap();
+    assert!(
+        channel
+            .updated()
+            .iter()
+            .all(|(_, view)| view.actions.is_empty()),
+        "a card completion admitted before shutdown cannot enable Stop afterwards"
+    );
+}
+
+#[tokio::test]
+async fn runtime_pending_card_delivered_before_ack_reuses_early_turn() {
+    let (engine, _, channel, gate, release) = slow_pending_card().await;
+    engine
+        .handle_agent_event(AgentEvent::AgentMessageDelta {
+            session_id: "thr_a".into(),
+            turn_id: "turn_new".into(),
+            item_id: "answer".into(),
+            delta: "early before ack".into(),
+        })
+        .await
+        .unwrap();
+    release.cancel();
+    apply_next_pending_input(&engine).await;
+    let count = channel.messages.lock().unwrap().len();
+    assert!(
+        channel
+            .updated()
+            .last()
+            .unwrap()
+            .1
+            .body
+            .contains("early before ack")
+    );
+    gate.notify_one();
+    apply_next_pending_input(&engine).await;
+    assert_eq!(channel.messages.lock().unwrap().len(), count);
+}
+
+#[tokio::test]
+async fn runtime_pending_card_from_exit_does_not_hold_resumed_output() {
+    let (engine, _, channel, gate, release) = slow_pending_card().await;
+    engine
+        .handle_agent_event(AgentEvent::AgentMessageDelta {
+            session_id: "thr_a".into(),
+            turn_id: "turn_new".into(),
+            item_id: "answer".into(),
+            delta: "before exit".into(),
+        })
+        .await
+        .unwrap();
+    engine
+        .execute_work(agentix_core::EngineWork::Event(AgentEvent::SessionExited {
+            session_id: "thr_a".into(),
+        }))
+        .await
+        .unwrap();
+    let mut attach = inbound("chat-a", "/attach thr_a");
+    attach.event_id = "reattach-after-exit".into();
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(attach))
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::AgentMessageDelta {
+            session_id: "thr_a".into(),
+            turn_id: "turn_new".into(),
+            item_id: "resumed".into(),
+            delta: "resumed output".into(),
+        })
+        .await
+        .unwrap();
+    let displayed_before_old_card = channel
+        .messages
+        .lock()
+        .unwrap()
+        .values()
+        .any(|view| view.body.contains("resumed output"));
+    gate.notify_one();
+    apply_next_pending_input(&engine).await;
+    release.cancel();
+    apply_next_pending_input(&engine).await;
+    assert!(
+        displayed_before_old_card,
+        "an exited generation of the attachment cannot hold resumed output"
     );
 }

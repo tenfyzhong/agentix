@@ -24,12 +24,23 @@ or uncertain acknowledgement finalizes the pending card accordingly; the display
 deadline never cancels or resends the input. Channel delivery still contributes
 its own latency.
 
-The production dispatcher releases the session lane after posting this pending
-input card. An owned task continues the original request; its acknowledgement
+The production dispatcher gives the pending input card a 50 ms posting budget.
+If posting takes longer, an owned task continues the same channel request while
+the session lane is released. Card completion returns through the conversation
+and session reservations. Received output is accumulated until the card ID is
+available, then the same card is updated to the latest turn state. A late card
+cannot restore actions in a detached or exited session. Exit preserves the last
+available output for the pending card, and shutdown fences already admitted card
+completions. Waiting for a card ID does not consume the channel update interval,
+so the first visible output after reattachment is not delayed by an invisible
+render. If the progress card fails, accumulated output is still eligible for
+normal turn delivery.
+
+A separate owned task continues the original backend request; its acknowledgement
 returns as dispatch work that reacquires the conversation and session reservations.
 Early turn events reuse the input card, and a late acknowledgement preserves
-already completed output. Up to 32 unacknowledged starts are owned concurrently;
-additional starts retain the synchronous path instead of dropping or resending a
+already completed output. Up to 32 unacknowledged starts and 32 pending card
+postings are owned concurrently; additional starts retain the synchronous path instead of dropping or resending a
 request already in flight. Each session accepts up to 16 local follow-up inputs
 while awaiting delivery. Follow-ups retain the original binding epoch and backend
 generation, remain ordered across runtime admission, and are cancelled if the
