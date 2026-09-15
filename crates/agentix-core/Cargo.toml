@@ -23,7 +23,7 @@ tokio-util.workspace = true
 sqlx.workspace = true
 agentix-storage = { path = "../agentix-storage", features = ["test-support"] }
 tempfile.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
 
 [lints]
 workspace = true

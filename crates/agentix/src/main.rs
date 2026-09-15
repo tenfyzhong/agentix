@@ -1197,6 +1197,10 @@ mod tests {
         turn_blocked: CancellationToken,
         blocked_calls: std::sync::atomic::AtomicUsize,
         turn_release: CancellationToken,
+        input_started: CancellationToken,
+        input_release: CancellationToken,
+        input_dropped: CancellationToken,
+        interrupted: CancellationToken,
     }
 
     impl LifecycleAgent {
@@ -1209,6 +1213,10 @@ mod tests {
                 turn_blocked: CancellationToken::new(),
                 blocked_calls: std::sync::atomic::AtomicUsize::new(0),
                 turn_release: CancellationToken::new(),
+                input_started: CancellationToken::new(),
+                input_release: CancellationToken::new(),
+                input_dropped: CancellationToken::new(),
+                interrupted: CancellationToken::new(),
             }
         }
     }
@@ -1295,6 +1303,7 @@ mod tests {
             _session_id: &SessionId,
             _turn_id: &str,
         ) -> Result<(), AgentError> {
+            self.interrupted.cancel();
             Ok(())
         }
 
@@ -1303,6 +1312,20 @@ mod tests {
             _decision: InteractionDecision,
         ) -> Result<(), AgentError> {
             Ok(())
+        }
+
+        async fn read_turn_input(
+            &self,
+            _: &SessionId,
+            turn: &str,
+        ) -> Result<Option<String>, AgentError> {
+            if turn != "slow_input" {
+                return Ok(None);
+            }
+            let _read_lifetime = self.input_dropped.clone().drop_guard();
+            self.input_started.cancel();
+            self.input_release.cancelled().await;
+            Ok(Some("Recovered native objective".into()))
         }
 
         fn subscribe(&self) -> broadcast::Receiver<AgentEvent> {
@@ -1447,6 +1470,10 @@ mod tests {
             Ok(())
         }
 
+        fn supports_command_menu_sync(&self) -> bool {
+            true
+        }
+
         async fn sync_command_menu(
             &self,
             _conversation: &ConversationRef,
@@ -1460,12 +1487,176 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn engine_runtime_abort_cancels_input_reads_with_retained_engine() {
+        use agentix_core::{Engine, InboundEnvelope};
+        use std::time::Duration;
+        let agent = Arc::new(LifecycleAgent::new());
+        let engine = Arc::new(Engine::new(
+            agent.clone(),
+            SqliteState::in_memory().await.unwrap(),
+            vec![Arc::new(LifecycleChannel::new())],
+        ));
+        let conversation = ConversationRef::new(ChannelKind::Telegram, "input-abort");
+        engine
+            .handle_inbound(InboundEnvelope::text(
+                "attach",
+                conversation,
+                "owner",
+                "/attach thr_saved",
+            ))
+            .await
+            .unwrap();
+        let (_sender, inbound) = tokio::sync::mpsc::channel(8);
+        let runtime = tokio::spawn(super::run_engine_loop(
+            engine.clone(),
+            agent.clone(),
+            inbound,
+            CancellationToken::new(),
+        ));
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while agent.events.receiver_count() == 0 {
+                tokio::task::yield_now().await;
+            }
+            agent
+                .events
+                .send(AgentEvent::AgentMessageDelta {
+                    session_id: "thr_saved".into(),
+                    turn_id: "slow_input".into(),
+                    item_id: "answer".into(),
+                    delta: "Answer".into(),
+                })
+                .unwrap();
+            agent.input_started.cancelled().await;
+        })
+        .await
+        .unwrap();
+        runtime.abort();
+        assert!(runtime.await.unwrap_err().is_cancelled());
+        let stopped =
+            tokio::time::timeout(Duration::from_millis(100), agent.input_dropped.cancelled()).await;
+        engine.cancel_input_recovery();
+        assert!(
+            stopped.is_ok(),
+            "aborted runtime left an optional input read alive"
+        );
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)] // Output, Stop and input recovery through the production dispatcher.
+    async fn engine_runtime_slow_input_keeps_output_and_stop_live() {
+        use agentix_core::{Engine, InboundEnvelope};
+        use std::time::Duration;
+        let agent = Arc::new(LifecycleAgent::new());
+        let channel = Arc::new(LifecycleChannel::new());
+        let engine = Arc::new(Engine::new(
+            agent.clone(),
+            SqliteState::in_memory().await.unwrap(),
+            vec![channel.clone()],
+        ));
+        let conversation = ConversationRef::new(ChannelKind::Telegram, "input-recovery");
+        engine
+            .handle_inbound(InboundEnvelope::text(
+                "attach",
+                conversation.clone(),
+                "owner",
+                "/attach thr_saved",
+            ))
+            .await
+            .unwrap();
+        channel.views.lock().unwrap().clear();
+        let (sender, inbound) = tokio::sync::mpsc::channel(8);
+        let shutdown = CancellationToken::new();
+        let runtime = tokio::spawn(super::run_engine_loop(
+            engine.clone(),
+            agent.clone(),
+            inbound,
+            shutdown.clone(),
+        ));
+        let result = tokio::time::timeout(Duration::from_secs(3), async {
+            while agent.events.receiver_count() == 0 {
+                tokio::task::yield_now().await;
+            }
+            agent
+                .events
+                .send(AgentEvent::TurnStarted {
+                    session_id: "thr_saved".into(),
+                    turn_id: "slow_input".into(),
+                })
+                .unwrap();
+            agent
+                .events
+                .send(AgentEvent::AgentMessageDelta {
+                    session_id: "thr_saved".into(),
+                    turn_id: "slow_input".into(),
+                    item_id: "answer".into(),
+                    delta: "First answer".into(),
+                })
+                .unwrap();
+            agent.input_started.cancelled().await;
+            let stop = loop {
+                let action = channel
+                    .views
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .rev()
+                    .filter(|view| format!("{view:?}").contains("First answer"))
+                    .flat_map(|view| &view.actions)
+                    .find(|action| action.label == "Stop")
+                    .cloned();
+                if let Some(action) = action {
+                    break action;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            };
+            sender
+                .send(InboundEnvelope::action(
+                    "stop",
+                    conversation.clone(),
+                    "owner",
+                    stop.token,
+                ))
+                .await
+                .unwrap();
+            agent.interrupted.cancelled().await;
+            assert!(
+                !agent.input_release.is_cancelled(),
+                "Stop should not wait for input recovery"
+            );
+            agent.input_release.cancel();
+            loop {
+                if channel.views.lock().unwrap().iter().any(|view| {
+                    let text = format!("{view:?}");
+                    text.contains("Recovered native objective") && text.contains("First answer")
+                }) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await;
+        shutdown.cancel();
+        agent.input_release.cancel();
+        tokio::time::timeout(Duration::from_secs(3), runtime)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            result.is_ok(),
+            "slow input blocked output, Stop or eventual recovery"
+        );
+    }
+
+    #[tokio::test]
     #[allow(clippy::too_many_lines)] // One production-runtime admission and recovery scenario.
     async fn engine_runtime_conversation_flood_preserves_capacity_for_other_conversations() {
         use agentix_core::{Engine, InboundEnvelope, SqliteState};
         use std::time::Duration;
         let agent = Arc::new(LifecycleAgent::new());
-        let channel = Arc::new(LifecycleChannel::new());
+        let channel = Arc::new(LifecycleChannel {
+            blocked_working_conversation: Some("flood".into()),
+            ..LifecycleChannel::new()
+        });
         let state = SqliteState::in_memory().await.unwrap();
         let engine = Arc::new(Engine::new(
             agent.clone(),
@@ -1498,11 +1689,13 @@ mod tests {
                     "blocked",
                     slow.clone(),
                     "owner",
-                    "blocked-prompt",
+                    "prompt",
                 ))
                 .await
                 .unwrap();
-            agent.turn_blocked.cancelled().await;
+            // Hold the initial card delivery explicitly. A pending backend
+            // acknowledgement releases dispatch after its feedback deadline.
+            channel.blocked.cancelled().await;
             for i in 0..300 {
                 sender
                     .send(InboundEnvelope::text(
@@ -1552,7 +1745,7 @@ mod tests {
                     .await
                     .unwrap()
             );
-            agent.turn_release.cancel();
+            channel.unblock.cancel();
             loop {
                 if channel
                     .views
@@ -1588,7 +1781,7 @@ mod tests {
             }
         })
         .await;
-        agent.turn_release.cancel();
+        channel.unblock.cancel();
         shutdown.cancel();
         tokio::time::timeout(Duration::from_secs(3), runtime)
             .await

@@ -15,6 +15,11 @@ use crate::{
 pub enum EngineWork {
     Inbound(InboundEnvelope),
     Event(AgentEvent),
+    InputRecovered(super::RecoveredInput),
+    PromptAcknowledged(super::PromptAcknowledged),
+    CardDelivered(super::CardDelivered),
+    QueuedInput(super::QueuedInput),
+    Reattachment(super::Reattachment),
     Working { session: SessionId, turn: String },
     Recover,
     TaskBoard,
@@ -106,6 +111,16 @@ pub struct EngineDispatchSnapshot {
 }
 
 impl EngineDispatchSnapshot {
+    fn reattachment_scope(&self, request: &super::Reattachment) -> DispatchScope<EngineResource> {
+        let mut shared = Vec::new();
+        let mut exclusive = vec![EngineResource::Conversation(request.conversation.clone())];
+        self.reserve_session(&request.session, &mut shared, &mut exclusive);
+        if let Some(current) = self.bindings.current_session(&request.conversation) {
+            self.reserve_session(current, &mut shared, &mut exclusive);
+        }
+        DispatchScope::Access { shared, exclusive }
+    }
+
     #[must_use]
     pub fn scope(&self, work: &EngineWork) -> DispatchScope<EngineResource> {
         let mut shared = Vec::new();
@@ -140,6 +155,23 @@ impl EngineDispatchSnapshot {
                         &mut exclusive,
                     );
                 }
+            }
+            EngineWork::Reattachment(request) => return self.reattachment_scope(request),
+            EngineWork::CardDelivered(input) => {
+                self.reserve_session(&input.session, &mut shared, &mut exclusive);
+                exclusive.push(EngineResource::Conversation(input.conversation.clone()));
+            }
+            EngineWork::PromptAcknowledged(input) => {
+                self.reserve_session(&input.session, &mut shared, &mut exclusive);
+                exclusive.push(EngineResource::Conversation(input.conversation.clone()));
+            }
+            EngineWork::QueuedInput(input) => {
+                self.reserve_session(&input.session, &mut shared, &mut exclusive);
+                exclusive.push(EngineResource::Conversation(input.conversation.clone()));
+            }
+            EngineWork::InputRecovered(input) => {
+                self.reserve_session(&input.session, &mut shared, &mut exclusive);
+                exclusive.push(EngineResource::Conversation(input.conversation.clone()));
             }
             EngineWork::Working { session, .. } => {
                 self.reserve_session(session, &mut shared, &mut exclusive);
@@ -292,8 +324,13 @@ impl Engine {
 
     pub async fn execute_work(&self, work: EngineWork) -> Result<(), EngineError> {
         match work {
-            EngineWork::Inbound(envelope) => self.handle_inbound(envelope).await,
+            EngineWork::Inbound(envelope) => self.handle_runtime_inbound(envelope).await,
+            EngineWork::CardDelivered(input) => self.apply_card_delivered(input).await,
+            EngineWork::PromptAcknowledged(input) => self.apply_prompt_acknowledged(input).await,
+            EngineWork::QueuedInput(input) => self.apply_queued_input(input).await,
+            EngineWork::Reattachment(request) => self.apply_reattachment(request).await,
             EngineWork::Event(event) => self.handle_agent_event(event).await,
+            EngineWork::InputRecovered(input) => self.apply_recovered_input(input).await,
             EngineWork::Working { session, turn } => {
                 self.refresh_working_turn(&session, &turn).await;
                 Ok(())

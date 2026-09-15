@@ -1,4 +1,5 @@
 use agentix_domain::{AgentEvent, InteractionRequest};
+mod content;
 mod questions;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -32,6 +33,8 @@ struct Connection {
 struct State {
     questions: HashMap<String, (InteractionRequest, BTreeSet<u64>)>,
     resolved_questions: std::collections::VecDeque<String>,
+    content_sequence: u64,
+    content_versions: HashMap<String, (u64, u64)>,
     next_id: u64,
     sequence: u64,
     lifecycle: std::collections::VecDeque<(u64, AgentEvent)>,
@@ -43,6 +46,8 @@ struct State {
 pub struct ClientRegistry {
     state: Arc<Mutex<State>>,
     changed: watch::Sender<u64>,
+    content_changed: watch::Sender<u64>,
+    completion_changed: watch::Sender<u64>,
 }
 
 impl Default for ClientRegistry {
@@ -50,6 +55,8 @@ impl Default for ClientRegistry {
         Self {
             state: Arc::default(),
             changed: watch::channel(0).0,
+            content_changed: watch::channel(0).0,
+            completion_changed: watch::channel(0).0,
         }
     }
 }
@@ -103,10 +110,11 @@ impl ClientRegistry {
         }
     }
 
-    /// Streamed notifications and unrelated responses need no full JSON value or mutation.
+    /// Observe owned content notifications without allocating their payloads.
     pub fn server_frame(&self, connection: u64, text: &str) {
         if let Some(method) = leading_method(text) {
             self.observe_question_frame(connection, &method, text);
+            self.observe_content_frame(connection, &method, text);
             return;
         }
         let Ok(header) = serde_json::from_str::<FrameHeader<'_>>(text) else {
@@ -114,6 +122,7 @@ impl ClientRegistry {
         };
         if let Some(method) = header.method {
             self.observe_question_frame(connection, &method, text);
+            self.observe_content_frame(connection, &method, text);
             return;
         }
         let Some(id) = header.id else { return };
@@ -127,6 +136,76 @@ impl ClientRegistry {
         if tracked && let Ok(message) = serde_json::from_str(text) {
             self.server_message(connection, &message);
         }
+    }
+
+    fn observe_content_frame(&self, connection: u64, method: &str, text: &str) {
+        if !(method.starts_with("item/")
+            || method.starts_with("turn/")
+            || method.starts_with("thread/status/"))
+        {
+            return;
+        }
+        if self
+            .state
+            .lock()
+            .unwrap()
+            .connections
+            .get(&connection)
+            .is_none_or(|c| c.sessions.is_empty())
+        {
+            return;
+        }
+        let Some(session) = content::session_hint(text) else {
+            return;
+        };
+        let mut state = self.state.lock().unwrap();
+        if !state
+            .connections
+            .get(&connection)
+            .is_some_and(|c| c.sessions.contains(&session))
+        {
+            return;
+        }
+        state.content_sequence = state.content_sequence.wrapping_add(1);
+        let sequence = state.content_sequence;
+        let versions = state.content_versions.entry(session).or_default();
+        versions.0 = sequence;
+        if method == "turn/completed" {
+            versions.1 = sequence;
+        }
+        drop(state);
+        self.content_changed.send_replace(sequence);
+        if method == "turn/completed" {
+            self.completion_changed.send_replace(sequence);
+        }
+    }
+
+    pub(crate) fn subscribe_content(&self) -> watch::Receiver<u64> {
+        self.content_changed.subscribe()
+    }
+
+    pub(crate) fn subscribe_completions(&self) -> watch::Receiver<u64> {
+        self.completion_changed.subscribe()
+    }
+
+    pub(crate) fn content_versions(&self) -> HashMap<String, (u64, u64)> {
+        self.state.lock().unwrap().content_versions.clone()
+    }
+
+    pub(crate) fn wake(&self) {
+        self.changed
+            .send_modify(|version| *version = version.wrapping_add(1));
+    }
+
+    pub(crate) fn replacement_timeout(&self) -> Option<Duration> {
+        self.state
+            .lock()
+            .unwrap()
+            .connections
+            .values()
+            .filter_map(|c| c.previous.as_ref())
+            .filter_map(|(_, when)| Duration::from_mins(2).checked_sub(when.elapsed()))
+            .min()
     }
 
     #[must_use]
@@ -166,6 +245,7 @@ impl ClientRegistry {
     pub fn disconnect(&self, id: u64) {
         let mut state = self.state.lock().unwrap();
         state.connections.remove(&id);
+        prune_content_versions(&mut state);
         drop(state);
         self.changed
             .send_modify(|version| *version = version.wrapping_add(1));
@@ -317,6 +397,7 @@ impl ClientRegistry {
                 c.fresh = None;
             }
         }
+        prune_content_versions(&mut state);
         for event in events {
             state.sequence += 1;
             let sequence = state.sequence;
@@ -329,6 +410,17 @@ impl ClientRegistry {
         self.changed
             .send_modify(|version| *version = version.wrapping_add(1));
     }
+}
+
+fn prune_content_versions(state: &mut State) {
+    let owned = state
+        .connections
+        .values()
+        .flat_map(|c| c.sessions.iter())
+        .collect::<BTreeSet<_>>();
+    state
+        .content_versions
+        .retain(|session, _| owned.contains(session));
 }
 
 fn process_identity(pid: Option<u32>) -> Option<String> {

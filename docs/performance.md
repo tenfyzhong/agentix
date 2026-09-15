@@ -173,3 +173,144 @@ Measured September 11, 2026, macOS arm64, Codex CLI 0.154.0, release proxy, ten 
 Immediate complete-output samples ranged from 10.781–24.386 ms direct and 10.321–14.400 ms proxied. Paced complete-output samples ranged from 387.508–425.030 ms direct and 394.197–419.565 ms proxied. The overlap and negative differences do not establish a proxy speedup or zero cost. This run found no consistent user-visible slowdown for these two local workloads; scheduling, mock timing, PTY handling and TUI rendering dominate the microsecond transport cost. Ten samples are insufficient for reliable p99 estimates or a sub-percent regression guarantee.
 
 [Raw native CLI samples](benchmarks/codex-proxy-native-cli.json) preserve every measurement. Use the protocol benchmarks above to isolate transport costs and exercise WS/stdio, concurrency and larger payloads. This native CLI comparison covers Unix→Unix only; native `--remote` does not accept `stdio://`. It does not establish performance with a real model, tool execution, a remote network, terminal emulator painting, or another CLI version.
+
+## Session notification routing follow-up
+
+The lifecycle workload in `crates/agentix-codex/tests/lifecycle_performance.rs`
+measures owned-session notifications and history RPC counts separately from raw
+transport. Run timing cases serially to avoid competing microbenchmarks:
+
+```sh
+cargo test --release -p agentix-codex --test lifecycle_performance -- --include-ignored --nocapture --test-threads=1
+```
+
+In the September 15 follow-up on macOS arm64, 220 notifications over approximately
+11.6 seconds caused 114 history requests with one attached session and 113 with
+ten attached sessions when only one emitted content. Both idle 11-second windows
+issued zero history requests. These counts verify targeted reads; they do not
+measure IM delivery latency or imply request parity with a ten-second poller.
+
+The initial release run exposed a routing scan regression when a 16KiB payload
+preceded `threadId`: 10,000 observations took 8.99ms, versus 2.38ms with a 64-byte
+payload. The scanner now uses the existing `memchr` dependency's vectorized byte
+search in release builds. A serial follow-up measured 5.17ms and 2.91ms respectively
+(about 0.52 microseconds per large notification versus 0.90 before). These are the
+minimum of three local samples, not percentile latency estimates; the small-case
+variation does not establish a general speedup for all notification sizes.
+
+Debug builds retain the preoptimized standard-library character search, because
+inlining the unoptimized byte scanner made the large case slower. The shared
+escape handling and routing semantics are unchanged. Both build modes pass the
+existing before/after-payload timing regressions without changing their thresholds.
+Routing tests cover escaped Unicode payloads at 65 padding offsets and four ending
+patterns, along with nested IDs, escaped keys, and malformed routing input.
+
+The broader interaction review remains in progress. Pi/OMP component reruns gave
+0.00573ms per stable history page, 8.37ms for 500 queue deliveries, and 5.94ms for
+Stop during a pending 100ms command. Claude's journal callback processed 500 turns
+in 6.51ms. These preserve the existing benchmark exclusions described above.
+A new opt-in transcript benchmark measures a different cost:
+
+```sh
+AGENTIX_HISTORY_BENCH=1 node --test plugins/agentix-bridge/tests/claude-history.test.mjs
+```
+
+Reading the latest result by parsing the bounded transcript took a median 0.291ms
+for 100 turns and 26.17ms for 10,000 turns (7.2MB), across seven reads per size.
+This demonstrates history-dependent completion processing cost; it is a baseline
+for further optimization. The completion-reader optimization below addresses repeat parsing.
+
+### Optional input recovery and IM responsiveness
+
+A controlled pending `read_turn_input` exposed another critical-path wait:
+`render_turn` previously awaited the read before sending an already received
+answer. The regression kept that read pending and observed that rendering still
+had not returned after 100ms; the same scenario with existing input passed.
+
+Input recovery now retains a pending read outside session dispatch. Up to eight
+reads run concurrently; repeated renders reuse the same session/turn request.
+Read completion wakes the runtime, which applies the result under its normal
+conversation/session reservation. The input is merged into the original card,
+including a completed card in cold storage. Newer native input takes precedence.
+Exit cancels recovery and finalizes cards using known content only. Shutdown and
+runtime cancellation also cancel owned readers, including when another caller
+retains the Engine.
+
+Validation uses deterministic local adapters rather than a live IM client:
+
+- `cargo test -p agentix-core --all-features`: 288 tests passed, including input
+  recovery, turn completion, session switching, exit, and existing rendering tests.
+- `cargo test -p agentix --all-features --bin agentix engine_runtime`: nine tests
+  passed, including output and Stop while input recovery remains blocked,
+  subsequent input restoration, runtime cancellation, load isolation, reload,
+  admission bounds, and shutdown.
+
+The 100ms regression deadline detects a dependency on a blocked read. It is not
+an end-to-end delivery latency measurement or a guarantee about channel APIs.
+
+
+### Claude completion transcript cache
+
+Claude completion hooks now use a session-owned latest-turn reader. It retains
+one turn, UUID deduplication state, and a raw tail bounded at 16MiB. Each read
+compares the old bytes before accepting an append, then parses only newly complete
+JSONL records. This preserves in-place rewrite detection without trusting file
+size or modification timestamps alone. A rewrite, truncation, identity change,
+moving tail window, or projection failure invalidates the projection. Returned
+snapshots cannot mutate the cache.
+
+The reusable regression first observed 101 JSON parse attempts when rereading
+100 unchanged records. It now observes zero; appending one record requires one
+parse. Additional tests cover partial UTF-8, duplicate UUIDs, foreign/sidechain/meta
+entries, file replacement and deletion, window movement, exception recovery, and
+completion-hook reasoning and output. The Claude suite passed 69 tests with four
+opt-in tests skipped; the enabled history benchmark passed all ten tests.
+
+The September 15 macOS arm64 / Node 26.8.1 benchmark measures seven append/read
+iterations on the same file for both readers:
+
+| Initial history | Bytes | Full parse median | Cached append median |
+| --- | ---: | ---: | ---: |
+| 100 turns | 71,570 | 0.294ms | 0.055ms |
+| 10,000 turns | 7,216,670 | 20.028ms | 2.046ms |
+
+The large-history repeated read is approximately 9.8 times faster in this fixture.
+The first cached read still builds the projection (21.831ms for 10,000 turns).
+Reads still fetch and compare the bounded raw tail; this change reduces repeated
+JSON parsing and projection, not bytes read. A window shift beyond 16MiB still
+rebuilds the bounded projection. These are local transcript timings, excluding
+model execution, hook scheduling and IM delivery.
+
+### Codex observed snapshot comparison
+
+Observed turns previously checked every current item with a linear search through
+the old snapshot. Long turns therefore incurred quadratic comparison work even
+when only the last output item changed. Snapshots with more than 16 old items now
+use a borrowed hash index over every equality field. Smaller snapshots retain the
+allocation-free scan. Output order and repeated new items are preserved; matching
+by ID alone would incorrectly suppress changed content or duplicate-ID variants.
+
+The September 15 macOS arm64 benchmark compares one changed item in snapshots of
+128-byte output items. Each result is the median of three batches of ten calls to
+`publish_turn_snapshot`, excluding history RPC and IM delivery:
+
+| Items | Release before | Release after | Debug before | Debug after |
+| --- | ---: | ---: | ---: | ---: |
+| 128 | 58us | 41us | 155us | 270us |
+| 4,096 | 28,022us | 797us | 67,808us | 7,485us |
+
+The large Release fixture is approximately 35 times faster. The 32-fold item
+increase no longer causes quadratic growth. Hashing has overhead, visible in the
+smaller Debug fixture; its work also depends on total content bytes. The index
+borrows content but allocates an entry per distinct old item. These measurements
+do not establish end-to-end IM latency.
+
+Reproduce the opt-in scaling check with:
+
+```sh
+cargo test -p agentix-codex --all-features --release --lib observed_snapshot_diff -- --include-ignored --nocapture
+```
+
+The ordinary regression covers full-field equality, absent versus empty values,
+duplicate IDs, repeated new items, filtering native input, and output order on both
+the small-snapshot and indexed paths.

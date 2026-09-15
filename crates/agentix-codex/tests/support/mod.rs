@@ -201,6 +201,7 @@ struct ServerState {
     page_size: Option<usize>,
     failures: HashMap<String, VecDeque<(i64, String)>>,
     disconnect_responses: HashMap<String, usize>,
+    held_requests: HashMap<String, (oneshot::Sender<()>, oneshot::Receiver<()>)>,
 }
 
 #[derive(Clone)]
@@ -273,6 +274,21 @@ impl MockCodexAppServer {
     pub async fn set_page_size(&self, page_size: usize) {
         assert!(page_size > 0);
         self.shared.state.lock().await.page_size = Some(page_size);
+    }
+
+    pub async fn hold_next_request(
+        &self,
+        method: &str,
+    ) -> (oneshot::Receiver<()>, oneshot::Sender<()>) {
+        let (entered, wait_entered) = oneshot::channel();
+        let (release, wait_release) = oneshot::channel();
+        self.shared
+            .state
+            .lock()
+            .await
+            .held_requests
+            .insert(method.into(), (entered, wait_release));
+        (wait_entered, release)
     }
 
     pub async fn fail_next(&self, method: &str, code: i64, message: &str) {
@@ -695,6 +711,8 @@ async fn serve_connection<S>(
 {
     let mut outbound = server.outbound.subscribe();
     let mut subscriptions = HashSet::<String>::new();
+    let (held_tx, mut held_rx) = tokio::sync::mpsc::unbounded_channel::<Vec<Value>>();
+    let mut held_tasks = tokio::task::JoinSet::new();
     loop {
         tokio::select! {
             frame = websocket.next() => {
@@ -743,6 +761,18 @@ async fn serve_connection<S>(
                             json!({"id": id, "error": {"code": code, "message": message}})
                         }
                     };
+                    let held = server.state.lock().await.held_requests.remove(method);
+                    if let Some((entered, release)) = held {
+                        let sender = held_tx.clone();
+                        held_tasks.spawn(async move {
+                            let _ = entered.send(());
+                            let _ = release.await;
+                            let mut frames = vec![response];
+                            frames.extend(notifications);
+                            let _ = sender.send(frames);
+                        });
+                        continue;
+                    }
                     if websocket.send(Message::Text(response.to_string().into())).await.is_err() {
                         break;
                     }
@@ -770,6 +800,19 @@ async fn serve_connection<S>(
                     let _ = sender.send(result.clone());
                 }
             }
+            Some(frames) = held_rx.recv() => {
+                for frame in frames {
+                    if let Some(thread_id) = frame["params"]["threadId"].as_str()
+                        && !subscriptions.contains(thread_id)
+                    {
+                        continue;
+                    }
+                    if websocket.send(Message::Text(frame.to_string().into())).await.is_err() {
+                        return;
+                    }
+                }
+            }
+            Some(_) = held_tasks.join_next(), if !held_tasks.is_empty() => {}
             notification = outbound.recv() => {
                 match notification {
                     Ok(notification) => {

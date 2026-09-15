@@ -27,12 +27,35 @@ impl Engine {
         Ok(false)
     }
 
+    pub(super) async fn handle_native_session_switch_started(
+        &self,
+        session_id: &str,
+        client_id: &str,
+    ) -> Result<(), EngineError> {
+        let session = SessionId::new(session_id);
+        if self
+            .agent
+            .session_client_id(&session)
+            .await
+            .as_deref()
+            .is_none_or(|id| id == client_id)
+        {
+            self.cancel_session_attachments(&session);
+            if let Some(conversation) = self.sessions.bound_conversation(&session).await {
+                self.begin_session_switch(&conversation, &session, client_id)
+                    .await?;
+            }
+        }
+        Ok(())
+    }
+
     pub(super) async fn begin_session_switch(
         &self,
         conversation: &ConversationRef,
         session: &SessionId,
         client: &str,
     ) -> Result<bool, EngineError> {
+        self.cancel_reattachment(conversation);
         if self.state.session_switch(conversation).await?.is_some() {
             return Ok(false);
         }

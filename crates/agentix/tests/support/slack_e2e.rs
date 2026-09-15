@@ -108,7 +108,8 @@ async fn slack_socket_engine_codex_streaming_and_approval() {
     let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
     deliver(&mut socket, message("1", "/attach thr_slack_e2e")).await;
     next_request(&mut server, |request| {
-        request.body.to_string().contains("Slack integration")
+        // Attachment may precede optional title metadata. Wait for its confirmation.
+        request.body.to_string().contains("Attached")
     })
     .await;
     deliver(&mut socket, message("2", "run the integration")).await;

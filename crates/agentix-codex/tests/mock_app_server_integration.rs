@@ -1506,7 +1506,11 @@ async fn background_codex_turn_completion_notifies_im_with_attach_action() {
     let views = channel.views();
     assert_eq!(views.len(), before + 1);
     let notification = views.last().unwrap();
-    assert_eq!(notification.title, "Codex · Background work · thr_back");
+    // Completion delivery does not wait for optional title metadata.
+    assert!(matches!(
+        notification.title.as_str(),
+        "Codex · Background work · thr_back" | "Codex · Untitled · thr_back"
+    ));
     assert!(
         notification
             .body
@@ -1833,7 +1837,6 @@ async fn background_polling_does_not_replay_a_streamed_completion_after_detach()
     let session = SessionId::new("thr_streamed");
     let mut events = client.subscribe();
     client.attach(&session).await.unwrap();
-    server.wait_for_turn_reads("thr_streamed", 1).await;
     server
         .complete_turn("thr_streamed", "turn_streamed", "done")
         .await;
@@ -1858,7 +1861,7 @@ async fn background_polling_does_not_replay_a_streamed_completion_after_detach()
         recv_event(&mut events).await;
     }
     client.unsubscribe(&session).await.unwrap();
-    server.wait_for_turn_reads("thr_streamed", 3).await;
+    server.wait_for_turn_reads("thr_streamed", 1).await;
     assert!(
         events.try_recv().is_err(),
         "streamed completions must not become background notices"
@@ -2092,18 +2095,22 @@ async fn engine_and_codex_client_complete_an_im_turn_end_to_end() {
     assert!(final_turn.actions.is_empty());
 
     let methods = server.request_methods().await;
+    assert_eq!(methods.len(), 7);
     assert_eq!(
-        methods,
+        &methods[..4],
         [
             "initialize",
             "thread/read",
             "thread/resume",
-            "thread/loaded/list",
-            "thread/read",
-            "thread/turns/list",
-            "turn/start",
+            "thread/loaded/list"
         ]
     );
+    // Optional title metadata and required history are read concurrently.
+    // Preserve the request budget without imposing an order between them.
+    let mut attachment_reads = methods[4..6].to_vec();
+    attachment_reads.sort();
+    assert_eq!(attachment_reads, ["thread/read", "thread/turns/list"]);
+    assert_eq!(methods[6], "turn/start");
 }
 
 async fn recv_event(receiver: &mut tokio::sync::broadcast::Receiver<AgentEvent>) -> AgentEvent {
@@ -2138,6 +2145,7 @@ fn inbound(text: &str) -> InboundEnvelope {
 
 #[derive(Clone, Default)]
 struct RecordingChannel {
+    streaming_interval: Option<Duration>,
     views: Arc<Mutex<Vec<OutboundView>>>,
     menus: Arc<Mutex<Vec<CommandMenu>>>,
 }
@@ -2150,6 +2158,10 @@ impl RecordingChannel {
 
 #[async_trait]
 impl ChannelAdapter for RecordingChannel {
+    fn streaming_update_interval(&self) -> Duration {
+        self.streaming_interval.unwrap_or(Duration::from_secs(1))
+    }
+
     fn kind(&self) -> ChannelKind {
         ChannelKind::Telegram
     }
@@ -2175,6 +2187,10 @@ impl ChannelAdapter for RecordingChannel {
     ) -> Result<(), ChannelError> {
         self.views.lock().unwrap().push(view.clone());
         Ok(())
+    }
+
+    fn supports_command_menu_sync(&self) -> bool {
+        true
     }
 
     async fn sync_command_menu(
@@ -2694,7 +2710,7 @@ async fn goal_input_is_restored_per_turn_for_history_and_read_only_attach() {
 }
 
 #[tokio::test]
-async fn goal_input_is_visible_on_first_live_output_without_user_message_event() {
+async fn goal_input_is_recovered_after_first_live_output_without_user_message_event() {
     let server = MockCodexAppServer::start();
     let file = tempfile::NamedTempFile::new().unwrap();
     let entries = [
@@ -2757,6 +2773,21 @@ async fn goal_input_is_visible_on_first_live_output_without_user_message_event()
         })
         .await
         .unwrap();
+    assert!(
+        channel
+            .views()
+            .last()
+            .unwrap()
+            .sections
+            .iter()
+            .any(|section| { section.body.contains("Working") })
+    );
+    // Drive the same completion work that the runtime dispatches. History I/O
+    // must not delay the output above, but its result must update that turn.
+    let recovered = tokio::time::timeout(Duration::from_secs(2), engine.next_input_recovery())
+        .await
+        .unwrap();
+    engine.execute_work(recovered).await.unwrap();
     let views = channel.views();
     assert!(
         views
@@ -3005,7 +3036,10 @@ async fn assert_empty_attach_recovers_first_turn(active_writer: bool, running: b
     client.set_background_turn_notifications(false);
     let mut events = client.subscribe();
     let state = SqliteState::in_memory().await.unwrap();
-    let channel = Arc::new(RecordingChannel::default());
+    let channel = Arc::new(RecordingChannel {
+        streaming_interval: Some(Duration::from_secs(1)),
+        ..RecordingChannel::default()
+    });
     let engine = Engine::new(client.clone(), state.clone(), vec![channel.clone()]);
     server
         .fail_next(
@@ -3031,20 +3065,25 @@ async fn assert_empty_attach_recovers_first_turn(active_writer: bool, running: b
     if active_writer {
         server.set_active_writer("empty").await;
     }
-    // Wake discovery through a real registry lifecycle response.
-    registry.client_message(
+    // The proxy sees turn notifications even before Agentix can subscribe.
+    registry.server_frame(
         connection,
-        &json!({"id":2,"method":"thread/resume","params":{"threadId":"empty"}}),
-    );
-    registry.server_message(
-        connection,
-        &json!({"id":2,"result":{"thread":{"id":"empty"}}}),
+        &json!({"method":"turn/started","params":{"threadId":"empty","turn":{"id":"first"}}})
+            .to_string(),
     );
     receive_recovered_turn(&engine, &mut events, running, 3).await;
+    refresh_recovered_first_turn(&engine, &channel, running).await;
     let view = channel.views().last().unwrap().clone();
     assert!(view.body.contains("First native input"), "{view:?}");
-    if !running {
-        assert!(view.body.contains("First native answer"), "{view:?}");
+    assert!(view.body.contains("First native answer"), "{view:?}");
+    if running {
+        assert!(
+            !view
+                .subtitle
+                .as_deref()
+                .unwrap_or_default()
+                .contains("Completed")
+        );
     }
     assert_eq!(
         client.is_read_only(&SessionId::new("empty")).await,
@@ -3054,11 +3093,29 @@ async fn assert_empty_attach_recovers_first_turn(active_writer: bool, running: b
         server
             .complete_turn("empty", "first", "Final native answer")
             .await;
-        receive_recovered_turn(&engine, &mut events, false, 15).await;
+        registry.server_frame(connection, &json!({"method":"turn/completed","params":{"threadId":"empty","turn":{"id":"first","status":"completed"}}}).to_string());
+        receive_recovered_turn(&engine, &mut events, false, 3).await;
         let view = channel.views().last().unwrap().clone();
         assert!(view.body.contains("First native input"), "{view:?}");
         assert!(view.body.contains("Final native answer"), "{view:?}");
         assert_eq!(view.body.matches("First native input").count(), 1);
+    }
+}
+
+async fn refresh_recovered_first_turn(engine: &Engine, channel: &RecordingChannel, running: bool) {
+    assert!(
+        channel
+            .views()
+            .last()
+            .unwrap()
+            .body
+            .contains("First native input"),
+        "native input must be visible before waiting for a stream refresh"
+    );
+    if running {
+        // Use the production Feishu pacing and drive the runtime's working refresh.
+        tokio::time::sleep(Duration::from_millis(1_100)).await;
+        engine.refresh_working_turns().await;
     }
 }
 
@@ -3084,4 +3141,300 @@ async fn receive_recovered_turn(
     })
     .await
     .expect("the recovered turn must deliver content and continue updating");
+}
+
+#[tokio::test]
+async fn registry_exit_does_not_wait_for_background_history() {
+    assert_lifecycle_does_not_wait_for_background_history(false).await;
+}
+
+#[tokio::test]
+async fn registry_new_does_not_wait_for_background_history() {
+    assert_lifecycle_does_not_wait_for_background_history(true).await;
+}
+
+async fn assert_lifecycle_does_not_wait_for_background_history(replacement: bool) {
+    use agentix_codex::ClientRegistry;
+    use std::path::Path;
+    let server = MockCodexAppServer::start();
+    server
+        .add_thread(MockThread::new("old", "Old", "/work"))
+        .await;
+    let registry = ClientRegistry::default();
+    let connection = registry.connect(None);
+    registry.client_message(
+        connection,
+        &json!({"id":1,"method":"thread/resume","params":{}}),
+    );
+    registry.server_message(
+        connection,
+        &json!({"id":1,"result":{"thread":{"id":"old"}}}),
+    );
+    let client = CodexClient::connect_with_registry(
+        server.endpoint(),
+        Path::new("codex"),
+        Path::new("/tmp"),
+        true,
+        registry.clone(),
+    )
+    .await
+    .unwrap();
+    client.attach(&SessionId::new("old")).await.unwrap();
+    let mut events = client.subscribe();
+    let (entered, release) = server.hold_next_request("thread/turns/list").await;
+    // Hold a genuinely unattached background session; attached sessions now
+    // share their foreground read and must not be queried by this monitor.
+    server
+        .add_thread(MockThread::new("background", "Background", "/work"))
+        .await;
+    let background_connection = registry.connect(None);
+    registry.client_message(
+        background_connection,
+        &json!({"id":10,"method":"thread/resume"}),
+    );
+    registry.server_message(
+        background_connection,
+        &json!({"id":10,"result":{"thread":{"id":"background"}}}),
+    );
+    tokio::time::timeout(Duration::from_secs(3), entered)
+        .await
+        .unwrap()
+        .unwrap();
+    if replacement {
+        registry.client_message(
+            connection,
+            &json!({"id":2,"method":"thread/unsubscribe","params":{"threadId":"old"}}),
+        );
+        registry.server_message(
+            connection,
+            &json!({"id":2,"result":{"status":"unsubscribed"}}),
+        );
+        registry.client_message(
+            connection,
+            &json!({"id":3,"method":"thread/start","params":{}}),
+        );
+        registry.server_message(
+            connection,
+            &json!({"id":3,"result":{"thread":{"id":"new"}}}),
+        );
+    } else {
+        registry.disconnect(connection);
+    }
+    let delivered = tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            let event = events.recv().await.unwrap();
+            if if replacement {
+                matches!(event, AgentEvent::SessionReplaced { .. })
+            } else {
+                matches!(event, AgentEvent::SessionExited { .. })
+            } {
+                break;
+            }
+        }
+    })
+    .await;
+    let _ = release.send(());
+    assert!(
+        delivered.is_ok(),
+        "lifecycle event waited for unrelated background history"
+    );
+}
+
+#[tokio::test]
+async fn registered_attach_defers_a_stalled_metadata_read() {
+    use agentix_codex::ClientRegistry;
+    use std::path::Path;
+    let server = MockCodexAppServer::start();
+    server
+        .add_thread(MockThread::new("new", "New", "/work"))
+        .await;
+    let registry = ClientRegistry::default();
+    let connection = registry.connect(None);
+    registry.client_message(
+        connection,
+        &json!({"id":1,"method":"thread/start","params":{}}),
+    );
+    registry.server_message(
+        connection,
+        &json!({"id":1,"result":{"thread":{"id":"new"}}}),
+    );
+    let client = CodexClient::connect_with_registry(
+        server.endpoint(),
+        Path::new("codex"),
+        Path::new("/tmp"),
+        false,
+        registry,
+    )
+    .await
+    .unwrap();
+    let (_entered, release) = server.hold_next_request("thread/read").await;
+    let attached = tokio::time::timeout(
+        Duration::from_secs(2),
+        client.attach(&SessionId::new("new")),
+    )
+    .await;
+    let _ = release.send(());
+    assert!(
+        attached.is_ok(),
+        "registered attach must defer slow metadata instead of blocking the IM"
+    );
+    attached.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn observed_sessions_continue_while_another_history_read_is_stalled() {
+    use agentix_codex::ClientRegistry;
+    use std::path::Path;
+    let server = MockCodexAppServer::start();
+    let registry = ClientRegistry::default();
+    let connection = registry.connect(None);
+    for (id, session) in [(1, "one"), (2, "two")] {
+        server
+            .add_thread(MockThread::new(session, session, "/work"))
+            .await;
+        server.set_active_writer(session).await;
+        registry.client_message(
+            connection,
+            &json!({"id":id,"method":"thread/start","params":{}}),
+        );
+        registry.server_message(
+            connection,
+            &json!({"id":id,"result":{"thread":{"id":session}}}),
+        );
+    }
+    let client = CodexClient::connect_with_registry(
+        server.endpoint(),
+        Path::new("codex"),
+        Path::new("/tmp"),
+        false,
+        registry.clone(),
+    )
+    .await
+    .unwrap();
+    client.attach(&SessionId::new("one")).await.unwrap();
+    client.attach(&SessionId::new("two")).await.unwrap();
+    let mut events = client.subscribe();
+    let (entered, release) = server.hold_next_request("thread/turns/list").await;
+    tokio::time::timeout(Duration::from_secs(2), entered)
+        .await
+        .unwrap()
+        .unwrap();
+    for session in ["one", "two"] {
+        server
+            .add_thread(MockThread::new(session, session, "/work").with_turn(
+                MockTurn::in_progress_with_output("first", "input", "working"),
+            ))
+            .await;
+    }
+    for session in ["one", "two"] {
+        registry.server_frame(connection, &json!({"method":"item/agentMessage/delta","params":{"threadId":session,"turnId":"first","itemId":"answer","delta":"working"}}).to_string());
+    }
+    let delivered = tokio::time::timeout(Duration::from_secs(1), events.recv()).await;
+    let _ = release.send(());
+    assert!(
+        delivered.is_ok(),
+        "one stalled session must not block another session"
+    );
+}
+#[tokio::test]
+async fn detached_pending_session_ignores_a_late_writer_response() {
+    use agentix_codex::ClientRegistry;
+    use std::path::Path;
+    let server = MockCodexAppServer::start();
+    server
+        .add_thread(MockThread::new("new", "New", "/work"))
+        .await;
+    let registry = ClientRegistry::default();
+    let connection = registry.connect(None);
+    registry.client_message(
+        connection,
+        &json!({"id":1,"method":"thread/start","params":{}}),
+    );
+    registry.server_message(
+        connection,
+        &json!({"id":1,"result":{"thread":{"id":"new"}}}),
+    );
+    let client = CodexClient::connect_with_registry(
+        server.endpoint(),
+        Path::new("codex"),
+        Path::new("/tmp"),
+        false,
+        registry,
+    )
+    .await
+    .unwrap();
+    server.set_active_writer("new").await;
+    let (resume_entered, resume_release) = server.hold_next_request("thread/resume").await;
+    let (_entered, release) = server.hold_next_request("thread/read").await;
+    let attached = tokio::time::timeout(
+        Duration::from_secs(2),
+        client.attach(&SessionId::new("new")),
+    )
+    .await;
+    let _ = release.send(());
+    assert!(
+        attached.is_ok(),
+        "registered attach must defer slow metadata instead of blocking the IM"
+    );
+    attached.unwrap().unwrap();
+    tokio::time::timeout(Duration::from_secs(2), resume_entered)
+        .await
+        .unwrap()
+        .unwrap();
+    client.unsubscribe(&SessionId::new("new")).await.unwrap();
+    let _ = resume_release.send(());
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert!(
+        !client.is_read_only(&SessionId::new("new")).await,
+        "late recovery must not restore a detached observation"
+    );
+}
+#[tokio::test]
+async fn registered_observation_is_idle_until_a_notification() {
+    use agentix_codex::ClientRegistry;
+    use std::path::Path;
+    let server = MockCodexAppServer::start();
+    server
+        .add_thread(MockThread::new("new", "New", "/work"))
+        .await;
+    server.set_active_writer("new").await;
+    let registry = ClientRegistry::default();
+    let connection = registry.connect(None);
+    registry.client_message(
+        connection,
+        &json!({"id":1,"method":"thread/start","params":{}}),
+    );
+    registry.server_message(
+        connection,
+        &json!({"id":1,"result":{"thread":{"id":"new"}}}),
+    );
+    let client = CodexClient::connect_with_registry(
+        server.endpoint(),
+        Path::new("codex"),
+        Path::new("/tmp"),
+        true,
+        registry.clone(),
+    )
+    .await
+    .unwrap();
+    client.attach(&SessionId::new("new")).await.unwrap();
+    let mut events = client.subscribe();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let before = server.request_methods().await.len();
+    tokio::time::sleep(Duration::from_secs(11)).await;
+    assert_eq!(
+        server.request_methods().await.len(),
+        before,
+        "idle registered sessions must not poll upstream"
+    );
+    server
+        .add_thread(MockThread::new("new", "New", "/work").with_turn(
+            MockTurn::in_progress_with_output("first", "input", "answer"),
+        ))
+        .await;
+    registry.server_frame(connection, &json!({"method":"item/agentMessage/delta","params":{"threadId":"new","turnId":"first","itemId":"answer","delta":"answer"}}).to_string());
+    tokio::time::timeout(Duration::from_secs(1), events.recv())
+        .await
+        .expect("notification must wake observation")
+        .unwrap();
 }

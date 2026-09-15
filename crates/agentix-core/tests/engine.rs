@@ -417,7 +417,13 @@ async fn registry_rejects_duplicate_backends() {
 
 #[derive(Clone)]
 struct FakeAgent {
+    generation: Arc<std::sync::atomic::AtomicU64>,
     stalled_operation: Option<&'static str>,
+    start_gate: Option<Arc<tokio::sync::Notify>>,
+    attach_gate: Option<Arc<tokio::sync::Notify>>,
+    history_gate: Option<Arc<tokio::sync::Notify>>,
+    unsubscribe_gate: Arc<Mutex<Option<Arc<tokio::sync::Notify>>>>,
+    title_gate: Option<Arc<tokio::sync::Notify>>,
     terminal_draft: Arc<Mutex<Option<String>>>,
     terminal_error: Arc<Mutex<Option<String>>>,
     snapshot: Arc<Mutex<MultiplexerSnapshot>>,
@@ -446,6 +452,12 @@ impl FakeAgent {
         Self {
             terminal_draft: Arc::default(),
             stalled_operation: None,
+            generation: Arc::new(std::sync::atomic::AtomicU64::new(1)),
+            start_gate: None,
+            attach_gate: None,
+            history_gate: None,
+            unsubscribe_gate: Arc::default(),
+            title_gate: None,
             terminal_error: Arc::default(),
             snapshot: Arc::new(Mutex::new(multiplexer_snapshot())),
             refresh_count: Arc::default(),
@@ -596,6 +608,13 @@ impl AgentAdapter for FakeAgent {
         _cursor: Option<String>,
         _limit: u32,
     ) -> Result<SessionPage, AgentError> {
+        if let Some(gate) = &self.title_gate {
+            self.calls.lock().unwrap().push("title_read".into());
+            gate.notified().await;
+        }
+        if self.stalled_operation == Some("list") {
+            std::future::pending::<()>().await;
+        }
         Ok(SessionPage {
             sessions: self.sessions.lock().unwrap().clone(),
             next_cursor: None,
@@ -619,6 +638,11 @@ impl AgentAdapter for FakeAgent {
             .lock()
             .unwrap()
             .push(format!("history:{session_id}:{limit}"));
+        if session_id.as_str() == "thr_b"
+            && let Some(gate) = &self.history_gate
+        {
+            gate.notified().await;
+        }
         self.history_cursors.lock().unwrap().push(cursor);
         let turns = self.history_turns.lock().unwrap();
         let start = turns.len().saturating_sub(limit as usize);
@@ -631,6 +655,11 @@ impl AgentAdapter for FakeAgent {
     }
 
     async fn attach(&self, session_id: &SessionId) -> Result<(), AgentError> {
+        if session_id.as_str() == "thr_b"
+            && let Some(gate) = &self.attach_gate
+        {
+            gate.notified().await;
+        }
         if self.stalled_operation == Some("attach") && session_id.as_str() == "thr_b" {
             std::future::pending::<()>().await;
         }
@@ -660,11 +689,28 @@ impl AgentAdapter for FakeAgent {
         Ok(())
     }
 
+    async fn supports_command(&self, session: &SessionId, command: &str) -> bool {
+        self.calls
+            .lock()
+            .unwrap()
+            .push(format!("supports_command:{session}:{command}"));
+        if self.stalled_operation == Some("supports_command") {
+            std::future::pending::<()>().await;
+        }
+        let capabilities = self.session_capabilities(session).await;
+        agentix_core::SessionCapability::from_name(command)
+            .is_some_and(|capability| capabilities.supports(capability))
+    }
+
     async fn unsubscribe(&self, session_id: &SessionId) -> Result<(), AgentError> {
         self.calls
             .lock()
             .unwrap()
             .push(format!("unsubscribe:{session_id}"));
+        let gate = self.unsubscribe_gate.lock().unwrap().clone();
+        if let Some(gate) = gate {
+            gate.notified().await;
+        }
         Ok(())
     }
 
@@ -673,6 +719,9 @@ impl AgentAdapter for FakeAgent {
             .lock()
             .unwrap()
             .push(format!("start:{session_id}:{text}"));
+        if let Some(gate) = &self.start_gate {
+            gate.notified().await;
+        }
         if let Some(reason) = &self.uncertain_start {
             return Err(AgentError::Uncertain(reason.clone()));
         }
@@ -715,7 +764,7 @@ impl AgentAdapter for FakeAgent {
     }
 
     fn generation(&self) -> u64 {
-        1
+        self.generation.load(std::sync::atomic::Ordering::Acquire)
     }
 }
 
@@ -901,12 +950,16 @@ struct FakeChannel {
     session_commands: Arc<Mutex<Vec<(ConversationRef, bool)>>>,
     menus: Arc<Mutex<Vec<CommandMenu>>>,
     synced_menus: Arc<Mutex<Vec<CommandMenu>>>,
+    skip_native_menu_sync: bool,
     fail_menu_updates: Arc<Mutex<bool>>,
     task_send_failures: Arc<Mutex<usize>>,
     inbox_send_failures: Arc<Mutex<usize>>,
     command_send_failures: Arc<Mutex<usize>>,
     queue_send_failures: Arc<Mutex<usize>>,
     next_update_failures: Arc<Mutex<usize>>,
+    next_send_failures: Arc<Mutex<usize>>,
+    require_exit_notice_before_update: Arc<Mutex<bool>>,
+    stall_updates: Arc<Mutex<bool>>,
     inbox_source: Arc<Mutex<Option<InboundEnvelope>>>,
     reject_unchanged_updates: bool,
     next_send_gate: Arc<
@@ -983,6 +1036,13 @@ impl ChannelAdapter for FakeChannel {
             entered.cancel();
             release.cancelled().await;
         }
+        {
+            let mut failures = self.next_send_failures.lock().unwrap();
+            if *failures > 0 {
+                *failures -= 1;
+                return Err(ChannelError::Rejected("injected send failure".into()));
+            }
+        }
         if view.title == "Codex command" || view.title.ends_with(" · Command failed") {
             let mut failures = self.command_send_failures.lock().unwrap();
             if *failures > 0 {
@@ -1037,6 +1097,17 @@ impl ChannelAdapter for FakeChannel {
         message: &MessageRef,
         view: &OutboundView,
     ) -> Result<(), ChannelError> {
+        if *self.stall_updates.lock().unwrap() {
+            std::future::pending::<()>().await;
+        }
+        if *self.require_exit_notice_before_update.lock().unwrap() {
+            assert!(
+                self.sent()
+                    .iter()
+                    .any(|(_, view)| view.title == "Codex session exited"),
+                "exit notification must precede card updates"
+            );
+        }
         {
             let mut failures = self.next_update_failures.lock().unwrap();
             if *failures > 0 {
@@ -1066,6 +1137,10 @@ impl ChannelAdapter for FakeChannel {
     async fn disable_actions(&self, message: &MessageRef) -> Result<(), ChannelError> {
         self.disabled_actions.lock().unwrap().push(message.clone());
         Ok(())
+    }
+
+    fn supports_command_menu_sync(&self) -> bool {
+        !self.skip_native_menu_sync
     }
 
     async fn sync_command_menu(
@@ -4966,7 +5041,12 @@ async fn exited_current_session_notifies_the_im_and_detaches() {
             .contains("Interrupted")
     );
     assert!(interrupted.actions.is_empty());
-    let notice = channel.sent().last().unwrap().1.clone();
+    let notice = channel
+        .sent()
+        .into_iter()
+        .find(|(_, view)| view.title == "Codex session exited")
+        .unwrap()
+        .1;
     assert_eq!(notice.title, "Codex session exited");
     assert_eq!(notice.subtitle.as_deref(), Some("Automatically detached"));
     assert!(notice.body.contains("Parser cleanup · thr_a"));
@@ -5054,9 +5134,11 @@ async fn exited_session_preserves_finished_turn_status_and_content() {
         assert_eq!(latest.body, finished.body);
         assert_eq!(latest.sections, finished.sections);
         assert!(latest.actions.is_empty());
-        assert_eq!(
-            channel.sent().last().unwrap().1.title,
-            "Codex session exited"
+        assert!(
+            channel
+                .sent()
+                .iter()
+                .any(|(_, view)| view.title == "Codex session exited")
         );
     }
 }
@@ -5150,6 +5232,43 @@ async fn resumed_codex_session_reattaches_the_previous_im_conversation() {
             .1
             .title
             .contains("Parser cleanup")
+    );
+}
+
+#[tokio::test]
+async fn resume_feedback_does_not_wait_for_optional_title() {
+    let mut agent = FakeAgent::new();
+    agent.stalled_operation = Some("list");
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        Arc::new(agent),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::SessionExited {
+            session_id: "thr_a".into(),
+        })
+        .await
+        .unwrap();
+    tokio::time::timeout(
+        std::time::Duration::from_millis(100),
+        engine.handle_agent_event(AgentEvent::SessionResumed {
+            session_id: "thr_a".into(),
+        }),
+    )
+    .await
+    .expect("resume feedback must not wait for title metadata")
+    .unwrap();
+    assert!(
+        channel
+            .sent()
+            .iter()
+            .any(|(_, view)| view.title == "Codex session resumed")
     );
 }
 
@@ -8516,4 +8635,3027 @@ async fn last_uses_attached_session_despite_background_output() {
     assert!(view.body.contains("Checking the compiler output"));
     assert!(!view.body.contains("Unrelated output"));
     assert_eq!(view.actions[0].label, "Stop");
+}
+
+#[tokio::test]
+async fn exit_notice_precedes_slow_turn_card_cleanup() {
+    let agent = Arc::new(FakeAgent::with_history(vec![last_turn_fixture(
+        TurnStatus::InProgress,
+    )]));
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent,
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound_as("chat-a", "owner-42", "/attach thr_a"))
+        .await
+        .unwrap();
+    *channel.require_exit_notice_before_update.lock().unwrap() = true;
+    engine
+        .handle_agent_event(AgentEvent::SessionExited {
+            session_id: "thr_a".into(),
+        })
+        .await
+        .unwrap();
+}
+#[tokio::test]
+async fn exit_cleanup_does_not_wait_indefinitely_for_card_updates() {
+    let agent = Arc::new(FakeAgent::with_history(vec![last_turn_fixture(
+        TurnStatus::InProgress,
+    )]));
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent,
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound_as("chat-a", "owner-42", "/attach thr_a"))
+        .await
+        .unwrap();
+    *channel.stall_updates.lock().unwrap() = true;
+    tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        engine.handle_agent_event(AgentEvent::SessionExited {
+            session_id: "thr_a".into(),
+        }),
+    )
+    .await
+    .expect("card cleanup must not block subsequent lifecycle events")
+    .unwrap();
+}
+
+#[tokio::test]
+async fn attach_does_not_wait_for_optional_session_title() {
+    let mut agent = FakeAgent::new();
+    agent.stalled_operation = Some("list");
+    let channel = Arc::new(FakeChannel::default());
+    let state = SqliteState::in_memory().await.unwrap();
+    let engine = Engine::new(Arc::new(agent), state.clone(), vec![channel]);
+    tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        engine.handle_inbound(inbound("chat-a", "/attach thr_a")),
+    )
+    .await
+    .expect("optional title lookup must not delay attachment")
+    .unwrap();
+    assert_eq!(
+        state
+            .current_session(&ConversationRef::new(ChannelKind::Telegram, "chat-a"))
+            .await
+            .unwrap(),
+        Some(SessionId::new("thr_a"))
+    );
+}
+
+#[tokio::test]
+async fn attach_delivers_history_while_optional_title_lookup_is_pending() {
+    let mut adapter = FakeAgent::new();
+    adapter.stalled_operation = Some("list");
+    let agent = Arc::new(adapter);
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    tokio::time::timeout(
+        std::time::Duration::from_millis(100),
+        engine.handle_inbound(inbound("chat-a", "/attach thr_a")),
+    )
+    .await
+    .expect("optional title lookup must not delay attachment feedback")
+    .unwrap();
+    assert!(
+        agent
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|call| call == "history:thr_a:1"),
+        "optional title lookup must not delay starting history recovery"
+    );
+    assert!(
+        channel
+            .sent()
+            .iter()
+            .any(|(_, view)| view.body.contains("previous answer"))
+    );
+}
+
+#[tokio::test]
+async fn session_switch_continues_when_old_stop_card_edit_stalls() {
+    assert_operation_continues_with_stalled_stop_card(false).await;
+}
+
+#[tokio::test]
+async fn detach_continues_when_old_stop_card_edit_stalls() {
+    assert_operation_continues_with_stalled_stop_card(true).await;
+}
+
+async fn assert_operation_continues_with_stalled_stop_card(detach: bool) {
+    let agent = Arc::new(FakeAgent::with_history(vec![last_turn_fixture(
+        TurnStatus::InProgress,
+    )]));
+    let channel = Arc::new(FakeChannel::default());
+    let state = SqliteState::in_memory().await.unwrap();
+    let engine = Engine::new(agent.clone(), state.clone(), vec![channel.clone()]);
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    let old_token = channel.sent().last().unwrap().1.actions[0].token.clone();
+    *agent.history_turns.lock().unwrap() = Vec::new();
+    *channel.stall_updates.lock().unwrap() = true;
+    tokio::time::timeout(
+        std::time::Duration::from_millis(500),
+        engine.handle_inbound(inbound(
+            "chat-a",
+            if detach { "/detach" } else { "/attach thr_b" },
+        )),
+    )
+    .await
+    .expect("editing a revoked Stop button must not stall session navigation")
+    .unwrap();
+    let current = state
+        .current_session(&ConversationRef::new(ChannelKind::Telegram, "chat-a"))
+        .await
+        .unwrap();
+    assert_eq!(
+        current,
+        if detach {
+            None
+        } else {
+            Some(SessionId::new("thr_b"))
+        }
+    );
+    assert!(matches!(
+        engine
+            .handle_inbound(InboundEnvelope::action(
+                "stale-navigation-stop",
+                ConversationRef::new(ChannelKind::Telegram, "chat-a"),
+                "owner",
+                old_token,
+            ))
+            .await,
+        Err(EngineError::InvalidAction)
+    ));
+    assert!(!agent.calls().iter().any(|call| call.starts_with("stop:")));
+    if !detach {
+        engine
+            .handle_inbound(inbound("chat-a", "Continue immediately"))
+            .await
+            .unwrap();
+        assert!(
+            channel
+                .sent()
+                .iter()
+                .any(|(_, view)| view.body.contains("Continue immediately"))
+        );
+    }
+}
+
+#[tokio::test]
+async fn slow_prompt_confirmation_reuses_the_pending_input_card() {
+    Box::pin(assert_slow_prompt_feedback(None)).await;
+}
+
+#[tokio::test]
+async fn slow_prompt_failure_finalizes_the_pending_input_card() {
+    Box::pin(assert_slow_prompt_feedback(Some(false))).await;
+}
+
+#[tokio::test]
+async fn slow_prompt_uncertainty_finalizes_without_resending() {
+    Box::pin(assert_slow_prompt_feedback(Some(true))).await;
+}
+
+async fn assert_slow_prompt_feedback(failure: Option<bool>) {
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let mut adapter = FakeAgent::new();
+    adapter.start_gate = Some(gate.clone());
+    if failure == Some(true) {
+        adapter.uncertain_start = Some("Acknowledgement lost".into());
+    } else if failure == Some(false) {
+        *adapter.start_failures.lock().unwrap() = 1;
+    }
+    let agent = Arc::new(adapter);
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    let before = channel.messages.lock().unwrap().len();
+    let pending = engine.handle_inbound(inbound("chat-a", "Explain the slow request"));
+    tokio::pin!(pending);
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(250), &mut pending)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        channel.messages.lock().unwrap().len(),
+        before + 1,
+        "show input while waiting for acknowledgement"
+    );
+    let (_, view) = channel.sent().last().unwrap().clone();
+    let message = channel
+        .messages
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|(_, view)| view.body.contains("Explain the slow request"))
+        .unwrap()
+        .0
+        .clone();
+    assert!(view.body.contains("Explain the slow request"));
+    assert_eq!(view.status, agentix_core::ViewStatus::Waiting);
+    assert!(view.actions.is_empty(), "turn ID is not known yet");
+    gate.notify_one();
+    let result = tokio::time::timeout(std::time::Duration::from_secs(1), pending)
+        .await
+        .unwrap();
+    assert_eq!(result.is_err(), failure.is_some());
+    assert_eq!(
+        channel.messages.lock().unwrap().len(),
+        before + 1,
+        "continue in the same card"
+    );
+    let (updated, view) = channel.updated().last().unwrap().clone();
+    assert_eq!(updated, message);
+    assert!(view.body.contains("Explain the slow request"));
+    assert_eq!(
+        view.status,
+        match failure {
+            None => agentix_core::ViewStatus::Running,
+            Some(false) => agentix_core::ViewStatus::Error,
+            Some(true) => agentix_core::ViewStatus::Warning,
+        }
+    );
+    assert_eq!(view.actions.len(), usize::from(failure.is_none()));
+    assert_eq!(
+        agent
+            .calls()
+            .iter()
+            .filter(|call| call.starts_with("start:"))
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn background_feedback_does_not_wait_for_optional_title() {
+    let mut agent = FakeAgent::new();
+    agent.stalled_operation = Some("list");
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        Arc::new(agent),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/help"))
+        .await
+        .unwrap();
+    tokio::time::timeout(
+        std::time::Duration::from_millis(100),
+        engine.handle_agent_event(AgentEvent::TurnCompleted {
+            session_id: "thr_a".into(),
+            turn_id: "turn-previous".into(),
+            status: TurnStatus::Completed,
+            error: None,
+        }),
+    )
+    .await
+    .expect("background completion must not wait for title metadata")
+    .unwrap();
+    assert_eq!(
+        channel.sent().last().unwrap().1.status,
+        agentix_core::ViewStatus::Background
+    );
+}
+
+#[tokio::test]
+async fn delayed_title_read_is_shared_and_cached_after_attach() {
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let mut adapter = FakeAgent::new();
+    adapter.title_gate = Some(gate.clone());
+    let agent = Arc::new(adapter);
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound("chat-b", "/attach thr_b"))
+        .await
+        .unwrap();
+    assert_eq!(
+        agent
+            .calls
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|call| *call == "title_read")
+            .count(),
+        1
+    );
+    gate.notify_one();
+    tokio::time::timeout(std::time::Duration::from_millis(200), async {
+        loop {
+            tokio::task::yield_now().await;
+            engine
+                .handle_inbound(inbound("chat-a", "/current"))
+                .await
+                .unwrap();
+            if channel
+                .sent()
+                .last()
+                .unwrap()
+                .1
+                .title
+                .contains("Parser cleanup")
+            {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("completed metadata must populate the shared cache");
+}
+
+#[tokio::test]
+async fn dropping_engine_cancels_pending_title_read() {
+    let mut adapter = FakeAgent::new();
+    adapter.title_gate = Some(Arc::new(tokio::sync::Notify::new()));
+    let agent = Arc::new(adapter);
+    let weak = Arc::downgrade(&agent);
+    let engine = Engine::new(
+        agent,
+        SqliteState::in_memory().await.unwrap(),
+        vec![Arc::new(FakeChannel::default())],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    drop(engine);
+    tokio::time::timeout(std::time::Duration::from_millis(100), async {
+        while weak.upgrade().is_some() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("metadata reader must not outlive its engine owner");
+}
+
+async fn pending_runtime_input() -> (
+    Engine,
+    Arc<FakeAgent>,
+    Arc<FakeChannel>,
+    Arc<tokio::sync::Notify>,
+    SqliteState,
+) {
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let mut adapter = FakeAgent::new();
+    adapter.start_gate = Some(gate.clone());
+    let agent = Arc::new(adapter);
+    let channel = Arc::new(FakeChannel::default());
+    let state = SqliteState::in_memory().await.unwrap();
+    let engine = Engine::new(agent.clone(), state.clone(), vec![channel.clone()]);
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    tokio::time::timeout(
+        std::time::Duration::from_millis(250),
+        engine.execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "pending runtime input",
+        ))),
+    )
+    .await
+    .expect("release the runtime lane before input acknowledgement")
+    .unwrap();
+    (engine, agent, channel, gate, state)
+}
+
+async fn apply_next_pending_input(engine: &Engine) {
+    let work = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        engine.next_pending_prompt(),
+    )
+    .await
+    .unwrap();
+    engine.execute_work(work).await.unwrap();
+}
+
+#[tokio::test]
+async fn runtime_pending_input_stops_when_early_turn_id_arrives() {
+    let (engine, agent, _, gate, _) = pending_runtime_input().await;
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a", "/stop",
+        )))
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::TurnStarted {
+            session_id: "thr_a".into(),
+            turn_id: "turn_new".into(),
+        })
+        .await
+        .unwrap();
+    let stopped_before_ack = agent
+        .calls()
+        .iter()
+        .any(|call| call == "stop:thr_a:turn_new");
+    gate.notify_one();
+    apply_next_pending_input(&engine).await;
+    assert!(
+        stopped_before_ack,
+        "use the early turn ID without waiting for turn/start acknowledgement"
+    );
+    assert_eq!(
+        agent
+            .calls()
+            .iter()
+            .filter(|call| call.as_str() == "stop:thr_a:turn_new")
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn runtime_pending_ack_preserves_completed_output_and_card() {
+    let (engine, _, channel, gate, _) = pending_runtime_input().await;
+    let count = channel.messages.lock().unwrap().len();
+    engine
+        .handle_agent_event(AgentEvent::TurnStarted {
+            session_id: "thr_a".into(),
+            turn_id: "turn_new".into(),
+        })
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::AgentMessageDelta {
+            session_id: "thr_a".into(),
+            turn_id: "turn_new".into(),
+            item_id: "answer".into(),
+            delta: "early streamed answer".into(),
+        })
+        .await
+        .unwrap();
+    assert!(
+        channel
+            .updated()
+            .iter()
+            .any(|(_, view)| view.body.contains("early streamed answer"))
+    );
+    engine
+        .handle_agent_event(AgentEvent::TurnCompleted {
+            session_id: "thr_a".into(),
+            turn_id: "turn_new".into(),
+            status: TurnStatus::Completed,
+            error: None,
+        })
+        .await
+        .unwrap();
+    gate.notify_one();
+    apply_next_pending_input(&engine).await;
+    assert!(
+        engine.working_turns().await.is_empty(),
+        "a late acknowledgement must not restart a completed turn"
+    );
+    assert_eq!(
+        channel.messages.lock().unwrap().len(),
+        count,
+        "retain the pending input card"
+    );
+    let views = channel.updated();
+    let view = &views.last().unwrap().1;
+    assert!(view.body.contains("early streamed answer"));
+    assert!(view.actions.is_empty());
+}
+
+#[tokio::test]
+async fn runtime_pending_queue_preserves_order_and_deduplicates_input() {
+    let (engine, agent, _, gate, _) = pending_runtime_input().await;
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "pending runtime input",
+        )))
+        .await
+        .unwrap();
+    for text in ["second input", "third input"] {
+        engine
+            .execute_work(agentix_core::EngineWork::Inbound(inbound("chat-a", text)))
+            .await
+            .unwrap();
+    }
+    gate.notify_one();
+    for _ in 0..3 {
+        apply_next_pending_input(&engine).await;
+    }
+    let inputs = agent
+        .calls()
+        .into_iter()
+        .filter(|call| call.starts_with("start:") || call.starts_with("steer:"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        inputs,
+        [
+            "start:thr_a:pending runtime input",
+            "steer:thr_a:turn_new:second input",
+            "steer:thr_a:turn_new:third input"
+        ]
+    );
+}
+
+#[tokio::test]
+async fn runtime_pending_queue_is_not_retargeted_after_switching() {
+    let (engine, agent, channel, gate, _) = pending_runtime_input().await;
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "queued for old session",
+        )))
+        .await
+        .unwrap();
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "/attach thr_b",
+        )))
+        .await
+        .unwrap();
+    gate.notify_one();
+    apply_next_pending_input(&engine).await;
+    assert_eq!(
+        agent
+            .calls()
+            .iter()
+            .filter(|call| call.starts_with("start:") || call.starts_with("steer:"))
+            .count(),
+        1
+    );
+    assert!(engine.working_turns().await.is_empty());
+    wait_for_pending_feedback(&channel, "Input not sent", "queued for old session", 1).await;
+}
+
+#[tokio::test]
+async fn runtime_pending_shutdown_fences_unacknowledged_input() {
+    let (engine, agent, _, _, state) = pending_runtime_input().await;
+    engine.cancel_pending_prompts().await.unwrap();
+    assert_eq!(state.uncertain_event_count().await.unwrap(), 1);
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "pending runtime input",
+        )))
+        .await
+        .unwrap();
+    assert_eq!(
+        agent
+            .calls()
+            .iter()
+            .filter(|call| call.starts_with("start:"))
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn runtime_pending_stop_survives_detach_before_ack() {
+    let (engine, agent, _, gate, _) = pending_runtime_input().await;
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a", "/stop",
+        )))
+        .await
+        .unwrap();
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a", "/detach",
+        )))
+        .await
+        .unwrap();
+    gate.notify_one();
+    apply_next_pending_input(&engine).await;
+    assert!(
+        agent
+            .calls()
+            .iter()
+            .any(|call| call == "stop:thr_a:turn_new")
+    );
+    assert!(engine.working_turns().await.is_empty());
+}
+
+#[tokio::test]
+async fn runtime_pending_render_failure_retains_queued_input() {
+    let (engine, agent, channel, gate, _) = pending_runtime_input().await;
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "queued despite IM failure",
+        )))
+        .await
+        .unwrap();
+    *channel.next_update_failures.lock().unwrap() = 1;
+    gate.notify_one();
+    let work = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        engine.next_pending_prompt(),
+    )
+    .await
+    .unwrap();
+    let _ = engine.execute_work(work).await;
+    apply_next_pending_input(&engine).await;
+    assert!(
+        agent
+            .calls()
+            .iter()
+            .any(|call| call == "steer:thr_a:turn_new:queued despite IM failure")
+    );
+}
+
+#[tokio::test]
+async fn runtime_pending_new_input_cannot_overtake_admitted_followup() {
+    let (engine, agent, _, gate, _) = pending_runtime_input().await;
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "older followup",
+        )))
+        .await
+        .unwrap();
+    gate.notify_one();
+    apply_next_pending_input(&engine).await;
+    let older = engine.next_pending_prompt().await;
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "newer followup",
+        )))
+        .await
+        .unwrap();
+    engine.execute_work(older).await.unwrap();
+    apply_next_pending_input(&engine).await;
+    let inputs = agent
+        .calls()
+        .into_iter()
+        .filter(|call| call.starts_with("steer:"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        inputs,
+        [
+            "steer:thr_a:turn_new:older followup",
+            "steer:thr_a:turn_new:newer followup"
+        ]
+    );
+}
+
+#[tokio::test]
+async fn runtime_pending_shutdown_retains_admitted_followup_ownership() {
+    let (engine, _, _, gate, state) = pending_runtime_input().await;
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "admitted followup",
+        )))
+        .await
+        .unwrap();
+    gate.notify_one();
+    apply_next_pending_input(&engine).await;
+    let _admitted = engine.next_pending_prompt().await;
+    engine.cancel_pending_prompts().await.unwrap();
+    assert_eq!(
+        state.uncertain_event_count().await.unwrap(),
+        1,
+        "queued completion work remains owned after admission"
+    );
+}
+
+#[tokio::test]
+async fn runtime_pending_stop_cancels_admitted_followup() {
+    let (engine, agent, _, gate, _) = pending_runtime_input().await;
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "followup before stop",
+        )))
+        .await
+        .unwrap();
+    gate.notify_one();
+    apply_next_pending_input(&engine).await;
+    let admitted = engine.next_pending_prompt().await;
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a", "/stop",
+        )))
+        .await
+        .unwrap();
+    engine.execute_work(admitted).await.unwrap();
+    assert!(
+        !agent.calls().iter().any(|call| call.starts_with("steer:")),
+        "Stop cancels follow-ups even after runtime admission"
+    );
+}
+
+#[tokio::test]
+async fn runtime_pending_detached_early_turn_does_not_strand_sending_card() {
+    let (engine, _, channel, gate, _) = pending_runtime_input().await;
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a", "/detach",
+        )))
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::TurnStarted {
+            session_id: "thr_a".into(),
+            turn_id: "turn_new".into(),
+        })
+        .await
+        .unwrap();
+    gate.notify_one();
+    apply_next_pending_input(&engine).await;
+    assert!(
+        channel
+            .updated()
+            .iter()
+            .any(|(_, view)| view.body.contains("pending runtime input")
+                && view.title.contains("Sent")
+                && view.actions.is_empty()),
+        "finalize the original input card after detaching"
+    );
+}
+
+#[tokio::test]
+async fn runtime_pending_delta_without_start_reuses_input_card() {
+    let (engine, _, channel, gate, _) = pending_runtime_input().await;
+    let count = channel.messages.lock().unwrap().len();
+    engine
+        .handle_agent_event(AgentEvent::AgentMessageDelta {
+            session_id: "thr_a".into(),
+            turn_id: "turn_new".into(),
+            item_id: "answer".into(),
+            delta: "answer before start event".into(),
+        })
+        .await
+        .unwrap();
+    gate.notify_one();
+    apply_next_pending_input(&engine).await;
+    assert_eq!(
+        channel.messages.lock().unwrap().len(),
+        count,
+        "an early delta must update the pending card without a separate TurnStarted event"
+    );
+    assert!(
+        channel
+            .updated()
+            .last()
+            .unwrap()
+            .1
+            .body
+            .contains("answer before start event")
+    );
+}
+
+#[tokio::test]
+async fn runtime_pending_new_and_exit_keep_distinct_transitions() {
+    for replacement in [false, true] {
+        let (engine, _, channel, gate, state) = pending_runtime_input().await;
+        let chat = ConversationRef::new(ChannelKind::Telegram, "chat-a");
+        if replacement {
+            tokio::time::timeout(
+                std::time::Duration::from_millis(250),
+                engine.execute_work(agentix_core::EngineWork::Inbound(inbound("chat-a", "/new"))),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            assert!(state.session_switch(&chat).await.unwrap().is_some());
+        }
+        tokio::time::timeout(
+            std::time::Duration::from_millis(250),
+            engine.execute_work(agentix_core::EngineWork::Event(AgentEvent::SessionExited {
+                session_id: "thr_a".into(),
+            })),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(
+            channel
+                .sent()
+                .iter()
+                .any(|(_, view)| view.body.contains("Waiting for the new session")),
+            replacement
+        );
+        if replacement {
+            engine
+                .execute_work(agentix_core::EngineWork::Event(
+                    AgentEvent::SessionReplaced {
+                        session_id: "thr_a".into(),
+                        replacement_session_id: "thr_b".into(),
+                        client_id: "host".into(),
+                    },
+                ))
+                .await
+                .unwrap();
+            assert_eq!(
+                state.current_session(&chat).await.unwrap(),
+                Some(SessionId::new("thr_b"))
+            );
+        } else {
+            assert!(
+                channel
+                    .sent()
+                    .iter()
+                    .any(|(_, view)| view.body.contains("detached automatically"))
+            );
+        }
+        gate.notify_one();
+        apply_next_pending_input(&engine).await;
+        assert!(
+            engine.working_turns().await.is_empty(),
+            "late confirmation must not revive the exited session"
+        );
+    }
+}
+
+#[tokio::test]
+async fn runtime_pending_stop_uses_delta_turn_id_and_button_cancels_followups() {
+    for button in [false, true] {
+        let (engine, agent, channel, gate, _) = pending_runtime_input().await;
+        if button {
+            engine
+                .handle_agent_event(AgentEvent::TurnStarted {
+                    session_id: "thr_a".into(),
+                    turn_id: "turn_new".into(),
+                })
+                .await
+                .unwrap();
+        }
+        engine
+            .handle_agent_event(AgentEvent::AgentMessageDelta {
+                session_id: "thr_a".into(),
+                turn_id: "turn_new".into(),
+                item_id: "answer".into(),
+                delta: "early output before stop".into(),
+            })
+            .await
+            .unwrap();
+        engine
+            .execute_work(agentix_core::EngineWork::Inbound(inbound(
+                "chat-a",
+                "cancel this followup",
+            )))
+            .await
+            .unwrap();
+        let stop = if button {
+            let token = channel
+                .updated()
+                .into_iter()
+                .flat_map(|(_, view)| view.actions)
+                .find(|action| action.label == "Stop")
+                .unwrap()
+                .token;
+            InboundEnvelope::action(
+                "stop-early-card",
+                ConversationRef::new(ChannelKind::Telegram, "chat-a"),
+                "owner",
+                token,
+            )
+        } else {
+            inbound("chat-a", "/stop")
+        };
+        engine
+            .execute_work(agentix_core::EngineWork::Inbound(stop))
+            .await
+            .unwrap();
+        let stopped_before_ack = agent
+            .calls()
+            .iter()
+            .any(|call| call == "stop:thr_a:turn_new");
+        gate.notify_one();
+        apply_next_pending_input(&engine).await;
+        assert!(
+            stopped_before_ack,
+            "stop immediately when the turn ID is already known"
+        );
+        wait_for_pending_feedback(&channel, "Input not sent", "cancel this followup", 1).await;
+        assert_eq!(
+            agent
+                .calls()
+                .iter()
+                .filter(|call| call.as_str() == "stop:thr_a:turn_new")
+                .count(),
+            1
+        );
+    }
+}
+
+#[tokio::test]
+async fn runtime_pending_stop_does_not_interrupt_an_early_completed_turn() {
+    let (engine, agent, _, gate, _) = pending_runtime_input().await;
+    engine
+        .handle_agent_event(AgentEvent::TurnStarted {
+            session_id: "thr_a".into(),
+            turn_id: "turn_new".into(),
+        })
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::TurnCompleted {
+            session_id: "thr_a".into(),
+            turn_id: "turn_new".into(),
+            status: TurnStatus::Completed,
+            error: None,
+        })
+        .await
+        .unwrap();
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a", "/stop",
+        )))
+        .await
+        .unwrap();
+    gate.notify_one();
+    apply_next_pending_input(&engine).await;
+    assert!(
+        !agent.calls().iter().any(|call| call.starts_with("stop:")),
+        "the completed turn must stay completed while its acknowledgement is pending"
+    );
+}
+
+#[tokio::test]
+async fn runtime_pending_generation_is_captured_before_feedback_deadline() {
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let mut adapter = FakeAgent::new();
+    adapter.start_gate = Some(gate.clone());
+    let agent = Arc::new(adapter);
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    let request = engine.execute_work(agentix_core::EngineWork::Inbound(inbound(
+        "chat-a",
+        "input before reconnect",
+    )));
+    tokio::pin!(request);
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(50), &mut request)
+            .await
+            .is_err()
+    );
+    assert!(
+        agent
+            .calls()
+            .iter()
+            .any(|call| call == "start:thr_a:input before reconnect")
+    );
+    agent
+        .generation
+        .store(2, std::sync::atomic::Ordering::Release);
+    tokio::time::timeout(std::time::Duration::from_millis(250), request)
+        .await
+        .unwrap()
+        .unwrap();
+    gate.notify_one();
+    apply_next_pending_input(&engine).await;
+    assert!(
+        engine.working_turns().await.is_empty(),
+        "an acknowledgement from before reconnect must not update the new generation"
+    );
+}
+
+#[tokio::test]
+async fn runtime_pending_stop_render_failure_does_not_strand_cancelled_inputs() {
+    let (engine, _, channel, gate, _) = pending_runtime_input().await;
+    for text in ["cancelled first", "cancelled second"] {
+        engine
+            .execute_work(agentix_core::EngineWork::Inbound(inbound("chat-a", text)))
+            .await
+            .unwrap();
+    }
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a", "/stop",
+        )))
+        .await
+        .unwrap();
+    *channel.next_update_failures.lock().unwrap() = 1;
+    gate.notify_one();
+    let work = engine.next_pending_prompt().await;
+    let _ = engine.execute_work(work).await;
+    wait_for_pending_feedback(&channel, "Input not sent", "cancelled", 2).await;
+}
+
+#[tokio::test]
+async fn runtime_pending_followups_keep_order_when_next_start_is_also_slow() {
+    let (engine, agent, _, gate, _) = pending_runtime_input().await;
+    for text in ["older next start", "older queued followup"] {
+        engine
+            .execute_work(agentix_core::EngineWork::Inbound(inbound("chat-a", text)))
+            .await
+            .unwrap();
+    }
+    engine
+        .handle_agent_event(AgentEvent::TurnStarted {
+            session_id: "thr_a".into(),
+            turn_id: "turn_new".into(),
+        })
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::TurnCompleted {
+            session_id: "thr_a".into(),
+            turn_id: "turn_new".into(),
+            status: TurnStatus::Completed,
+            error: None,
+        })
+        .await
+        .unwrap();
+    gate.notify_one();
+    apply_next_pending_input(&engine).await;
+    let next_start = engine.next_pending_prompt().await;
+    let older_followup = engine.next_pending_prompt().await;
+    engine.execute_work(next_start).await.unwrap();
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "newer queued followup",
+        )))
+        .await
+        .unwrap();
+    engine.execute_work(older_followup).await.unwrap();
+    gate.notify_one();
+    apply_next_pending_input(&engine).await;
+    apply_next_pending_input(&engine).await;
+    engine.cancel_pending_prompts().await.unwrap();
+    let inputs = agent
+        .calls()
+        .into_iter()
+        .filter(|call| call.starts_with("start:") || call.starts_with("steer:"))
+        .collect::<Vec<_>>();
+    assert!(
+        inputs.last().unwrap().ends_with(":older queued followup"),
+        "earlier accepted input must remain first across a second deferred start: {inputs:?}"
+    );
+}
+
+#[tokio::test]
+async fn runtime_pending_card_delivery_releases_session_dispatch() {
+    use std::time::Duration;
+    use tokio_util::sync::CancellationToken;
+
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let mut adapter = FakeAgent::new();
+    adapter.start_gate = Some(gate.clone());
+    let agent = Arc::new(adapter);
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Arc::new(Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    ));
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    let entered = CancellationToken::new();
+    let release = CancellationToken::new();
+    *channel.next_send_gate.lock().unwrap() = Some((entered.clone(), release.clone()));
+    let mut input = tokio::spawn({
+        let engine = engine.clone();
+        async move {
+            engine
+                .execute_work(agentix_core::EngineWork::Inbound(inbound(
+                    "chat-a",
+                    "pending card input",
+                )))
+                .await
+        }
+    });
+    tokio::time::timeout(Duration::from_secs(1), entered.cancelled())
+        .await
+        .unwrap();
+    let released = tokio::time::timeout(Duration::from_millis(250), &mut input).await;
+    // Always release both gates, including on the failing implementation.
+    release.cancel();
+    gate.notify_one();
+    let dispatched = if let Ok(result) = released {
+        result.unwrap().unwrap();
+        true
+    } else {
+        input.await.unwrap().unwrap();
+        false
+    };
+    engine.cancel_pending_prompts().await.unwrap();
+    assert!(
+        dispatched,
+        "a slow Sending card must not retain session dispatch"
+    );
+}
+
+async fn slow_pending_card() -> (
+    Engine,
+    Arc<FakeAgent>,
+    Arc<FakeChannel>,
+    Arc<tokio::sync::Notify>,
+    tokio_util::sync::CancellationToken,
+) {
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let mut adapter = FakeAgent::new();
+    adapter.start_gate = Some(gate.clone());
+    let agent = Arc::new(adapter);
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    let release = tokio_util::sync::CancellationToken::new();
+    *channel.next_send_gate.lock().unwrap() =
+        Some((tokio_util::sync::CancellationToken::new(), release.clone()));
+    tokio::time::timeout(
+        std::time::Duration::from_millis(300),
+        engine.execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "slow card input",
+        ))),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    (engine, agent, channel, gate, release)
+}
+
+#[tokio::test]
+async fn runtime_pending_card_reconciles_completed_output_after_ack() {
+    let (engine, _, channel, gate, release) = slow_pending_card().await;
+    let count = channel.messages.lock().unwrap().len();
+    engine
+        .handle_agent_event(AgentEvent::AgentMessageDelta {
+            session_id: "thr_a".into(),
+            turn_id: "turn_new".into(),
+            item_id: "answer".into(),
+            delta: "completed before card".into(),
+        })
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::TurnCompleted {
+            session_id: "thr_a".into(),
+            turn_id: "turn_new".into(),
+            status: TurnStatus::Completed,
+            error: None,
+        })
+        .await
+        .unwrap();
+    gate.notify_one();
+    apply_next_pending_input(&engine).await;
+    assert!(engine.working_turns().await.is_empty());
+    assert_eq!(
+        channel.messages.lock().unwrap().len(),
+        count,
+        "do not send a second card while the first is pending"
+    );
+    release.cancel();
+    apply_next_pending_input(&engine).await;
+    assert_eq!(channel.messages.lock().unwrap().len(), count + 1);
+    let updated = channel.updated();
+    let view = &updated.last().unwrap().1;
+    assert!(view.body.contains("completed before card"));
+    assert!(view.actions.is_empty());
+}
+
+#[tokio::test]
+async fn runtime_pending_card_allows_stop_and_detach_before_delivery() {
+    let (engine, agent, channel, gate, release) = slow_pending_card().await;
+    for command in ["/stop", "/detach"] {
+        tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            engine.execute_work(agentix_core::EngineWork::Inbound(inbound(
+                "chat-a", command,
+            ))),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    }
+    gate.notify_one();
+    apply_next_pending_input(&engine).await;
+    assert_eq!(
+        agent
+            .calls()
+            .iter()
+            .filter(|call| call.as_str() == "stop:thr_a:turn_new")
+            .count(),
+        1
+    );
+    release.cancel();
+    apply_next_pending_input(&engine).await;
+    let updated = channel.updated();
+    let view = &updated.last().unwrap().1;
+    assert!(view.actions.is_empty());
+    assert!(view.body.contains("previous session"));
+}
+
+#[tokio::test]
+async fn runtime_pending_card_failure_does_not_lose_completed_output() {
+    let (engine, _, channel, gate, release) = slow_pending_card().await;
+    engine
+        .handle_agent_event(AgentEvent::AgentMessageDelta {
+            session_id: "thr_a".into(),
+            turn_id: "turn_new".into(),
+            item_id: "answer".into(),
+            delta: "answer survives failed card".into(),
+        })
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::TurnCompleted {
+            session_id: "thr_a".into(),
+            turn_id: "turn_new".into(),
+            status: TurnStatus::Completed,
+            error: None,
+        })
+        .await
+        .unwrap();
+    gate.notify_one();
+    apply_next_pending_input(&engine).await;
+    *channel.next_send_failures.lock().unwrap() = 1;
+    release.cancel();
+    apply_next_pending_input(&engine).await;
+    assert!(
+        channel
+            .messages
+            .lock()
+            .unwrap()
+            .values()
+            .any(|view| view.body.contains("answer survives failed card")),
+        "a failed progress card must not swallow the final answer"
+    );
+}
+
+#[tokio::test]
+async fn runtime_pending_card_exit_preserves_output_without_duplicate_turn_cards() {
+    let (engine, _, channel, gate, release) = slow_pending_card().await;
+    engine
+        .handle_agent_event(AgentEvent::AgentMessageDelta {
+            session_id: "thr_a".into(),
+            turn_id: "turn_new".into(),
+            item_id: "answer".into(),
+            delta: "output before exit".into(),
+        })
+        .await
+        .unwrap();
+    engine
+        .execute_work(agentix_core::EngineWork::Event(AgentEvent::SessionExited {
+            session_id: "thr_a".into(),
+        }))
+        .await
+        .unwrap();
+    gate.notify_one();
+    apply_next_pending_input(&engine).await;
+    release.cancel();
+    apply_next_pending_input(&engine).await;
+    let messages = channel.messages.lock().unwrap();
+    assert_eq!(
+        messages
+            .values()
+            .filter(|view| view.body.contains("output before exit"))
+            .count(),
+        1
+    );
+    assert!(
+        messages
+            .values()
+            .filter(|view| view.body.contains("output before exit"))
+            .all(|view| view.actions.is_empty())
+    );
+    assert_eq!(
+        messages
+            .values()
+            .filter(|view| view.body.contains("slow card input"))
+            .count(),
+        1,
+        "exit must finalize the original card rather than create another input card"
+    );
+}
+
+#[tokio::test]
+async fn runtime_pending_card_failure_after_exit_preserves_output() {
+    let (engine, _, channel, gate, release) = slow_pending_card().await;
+    engine
+        .handle_agent_event(AgentEvent::AgentMessageDelta {
+            session_id: "thr_a".into(),
+            turn_id: "turn_new".into(),
+            item_id: "answer".into(),
+            delta: "output before exit".into(),
+        })
+        .await
+        .unwrap();
+    engine
+        .execute_work(agentix_core::EngineWork::Event(AgentEvent::SessionExited {
+            session_id: "thr_a".into(),
+        }))
+        .await
+        .unwrap();
+    gate.notify_one();
+    apply_next_pending_input(&engine).await;
+    *channel.next_send_failures.lock().unwrap() = 1;
+    release.cancel();
+    apply_next_pending_input(&engine).await;
+    let messages = channel.messages.lock().unwrap();
+    assert_eq!(
+        messages
+            .values()
+            .filter(|view| view.body.contains("output before exit"))
+            .count(),
+        1
+    );
+    assert!(
+        messages
+            .values()
+            .filter(|view| view.body.contains("output before exit"))
+            .all(|view| view.actions.is_empty())
+    );
+    assert_eq!(
+        messages
+            .values()
+            .filter(|view| view.body.contains("slow card input"))
+            .count(),
+        1,
+        "exit must finalize the original card rather than create another input card"
+    );
+}
+
+#[tokio::test]
+async fn runtime_pending_card_admitted_before_shutdown_cannot_restore_stop() {
+    let (engine, _, channel, gate, release) = slow_pending_card().await;
+    gate.notify_one();
+    apply_next_pending_input(&engine).await;
+    release.cancel();
+    let delivered = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        engine.next_pending_prompt(),
+    )
+    .await
+    .unwrap();
+    engine.cancel_pending_prompts().await.unwrap();
+    engine.execute_work(delivered).await.unwrap();
+    assert!(
+        channel
+            .updated()
+            .iter()
+            .all(|(_, view)| view.actions.is_empty()),
+        "a card completion admitted before shutdown cannot enable Stop afterwards"
+    );
+}
+
+#[tokio::test]
+async fn runtime_pending_card_delivered_before_ack_reuses_early_turn() {
+    let (engine, _, channel, gate, release) = slow_pending_card().await;
+    engine
+        .handle_agent_event(AgentEvent::AgentMessageDelta {
+            session_id: "thr_a".into(),
+            turn_id: "turn_new".into(),
+            item_id: "answer".into(),
+            delta: "early before ack".into(),
+        })
+        .await
+        .unwrap();
+    release.cancel();
+    apply_next_pending_input(&engine).await;
+    let count = channel.messages.lock().unwrap().len();
+    assert!(
+        channel
+            .updated()
+            .last()
+            .unwrap()
+            .1
+            .body
+            .contains("early before ack")
+    );
+    gate.notify_one();
+    apply_next_pending_input(&engine).await;
+    assert_eq!(channel.messages.lock().unwrap().len(), count);
+}
+
+#[tokio::test]
+async fn runtime_pending_card_from_exit_does_not_hold_resumed_output() {
+    let (engine, _, channel, gate, release) = slow_pending_card().await;
+    engine
+        .handle_agent_event(AgentEvent::AgentMessageDelta {
+            session_id: "thr_a".into(),
+            turn_id: "turn_new".into(),
+            item_id: "answer".into(),
+            delta: "before exit".into(),
+        })
+        .await
+        .unwrap();
+    engine
+        .execute_work(agentix_core::EngineWork::Event(AgentEvent::SessionExited {
+            session_id: "thr_a".into(),
+        }))
+        .await
+        .unwrap();
+    let mut attach = inbound("chat-a", "/attach thr_a");
+    attach.event_id = "reattach-after-exit".into();
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(attach))
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::AgentMessageDelta {
+            session_id: "thr_a".into(),
+            turn_id: "turn_new".into(),
+            item_id: "resumed".into(),
+            delta: "resumed output".into(),
+        })
+        .await
+        .unwrap();
+    let displayed_before_old_card = channel
+        .messages
+        .lock()
+        .unwrap()
+        .values()
+        .any(|view| view.body.contains("resumed output"));
+    gate.notify_one();
+    apply_next_pending_input(&engine).await;
+    release.cancel();
+    apply_next_pending_input(&engine).await;
+    assert!(
+        displayed_before_old_card,
+        "an exited generation of the attachment cannot hold resumed output"
+    );
+}
+
+#[tokio::test]
+async fn runtime_pending_queued_feedback_releases_dispatch_before_delivery() {
+    use std::time::Duration;
+    use tokio_util::sync::CancellationToken;
+    let (engine, _, channel, gate, _) = pending_runtime_input().await;
+    let engine = Arc::new(engine);
+    let entered = CancellationToken::new();
+    let release = CancellationToken::new();
+    *channel.next_send_gate.lock().unwrap() = Some((entered.clone(), release.clone()));
+    let mut queued = tokio::spawn({
+        let engine = engine.clone();
+        async move {
+            engine
+                .execute_work(agentix_core::EngineWork::Inbound(inbound(
+                    "chat-a",
+                    "queued behind slow feedback",
+                )))
+                .await
+        }
+    });
+    tokio::time::timeout(Duration::from_secs(1), entered.cancelled())
+        .await
+        .unwrap();
+    let released = tokio::time::timeout(Duration::from_millis(250), &mut queued).await;
+    let dispatched = match released {
+        Ok(result) => {
+            result.unwrap().unwrap();
+            true
+        }
+        Err(_) => false,
+    };
+    // Release the fixture even when the old blocking implementation fails.
+    release.cancel();
+    gate.notify_one();
+    if !dispatched {
+        queued.await.unwrap().unwrap();
+    }
+    engine.cancel_pending_prompts().await.unwrap();
+    assert!(
+        dispatched,
+        "queued feedback must not occupy the session dispatch lane"
+    );
+}
+
+async fn wait_for_pending_feedback(channel: &FakeChannel, title: &str, text: &str, count: usize) {
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        loop {
+            let actual = channel
+                .messages
+                .lock()
+                .unwrap()
+                .values()
+                .filter(|view| view.title.contains(title) && view.body.contains(text))
+                .count();
+            if actual == count {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("queued input feedback must reach the current state");
+}
+
+#[tokio::test]
+async fn runtime_pending_queued_feedback_stop_updates_before_ack() {
+    use std::time::Duration;
+    use tokio_util::sync::CancellationToken;
+    let (engine, _, channel, _, _) = pending_runtime_input().await;
+    let entered = CancellationToken::new();
+    let release = CancellationToken::new();
+    *channel.next_send_gate.lock().unwrap() = Some((entered.clone(), release.clone()));
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "cancel slow queued receipt",
+        )))
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(1), entered.cancelled())
+        .await
+        .unwrap();
+    tokio::time::timeout(
+        Duration::from_millis(100),
+        engine.execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a", "/stop",
+        ))),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    release.cancel();
+    wait_for_pending_feedback(&channel, "Input not sent", "cancel slow queued receipt", 1).await;
+    engine.cancel_pending_prompts().await.unwrap();
+}
+
+#[tokio::test]
+async fn runtime_pending_queued_feedback_recovers_failed_initial_send() {
+    let (engine, _, channel, _, _) = pending_runtime_input().await;
+    *channel.next_send_failures.lock().unwrap() = 1;
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "failed queued receipt",
+        )))
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while *channel.next_send_failures.lock().unwrap() != 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a", "/stop",
+        )))
+        .await
+        .unwrap();
+    wait_for_pending_feedback(&channel, "Input not sent", "failed queued receipt", 1).await;
+    engine.cancel_pending_prompts().await.unwrap();
+}
+
+#[tokio::test]
+async fn runtime_pending_queued_feedback_recovers_failed_final_update() {
+    let (engine, _, channel, gate, _) = pending_runtime_input().await;
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "failed final receipt update",
+        )))
+        .await
+        .unwrap();
+    wait_for_pending_feedback(&channel, "Queued", "failed final receipt update", 1).await;
+    *channel.next_update_failures.lock().unwrap() = 1;
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a", "/stop",
+        )))
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while *channel.next_update_failures.lock().unwrap() != 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    gate.notify_one();
+    apply_next_pending_input(&engine).await;
+    wait_for_pending_feedback(&channel, "Input not sent", "failed final receipt update", 1).await;
+    assert_eq!(
+        channel
+            .messages
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|v| v.body.contains("failed final receipt update"))
+            .count(),
+        1
+    );
+    engine.cancel_pending_prompts().await.unwrap();
+}
+
+#[tokio::test]
+async fn runtime_pending_queued_feedback_detach_updates_before_ack() {
+    use std::time::Duration;
+    use tokio_util::sync::CancellationToken;
+    let (engine, _, channel, _, _) = pending_runtime_input().await;
+    let entered = CancellationToken::new();
+    let release = CancellationToken::new();
+    *channel.next_send_gate.lock().unwrap() = Some((entered.clone(), release.clone()));
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "cancel slow queued receipt",
+        )))
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(1), entered.cancelled())
+        .await
+        .unwrap();
+    tokio::time::timeout(
+        Duration::from_millis(100),
+        engine.execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a", "/detach",
+        ))),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    release.cancel();
+    wait_for_pending_feedback(&channel, "Input not sent", "cancel slow queued receipt", 1).await;
+    engine.cancel_pending_prompts().await.unwrap();
+}
+
+#[tokio::test]
+async fn runtime_pending_queued_feedback_switch_updates_before_ack() {
+    use std::time::Duration;
+    use tokio_util::sync::CancellationToken;
+    let (engine, _, channel, _, _) = pending_runtime_input().await;
+    let entered = CancellationToken::new();
+    let release = CancellationToken::new();
+    *channel.next_send_gate.lock().unwrap() = Some((entered.clone(), release.clone()));
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "cancel slow queued receipt",
+        )))
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(1), entered.cancelled())
+        .await
+        .unwrap();
+    tokio::time::timeout(
+        Duration::from_millis(100),
+        engine.execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "/attach thr_b",
+        ))),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    release.cancel();
+    wait_for_pending_feedback(&channel, "Input not sent", "cancel slow queued receipt", 1).await;
+    engine.cancel_pending_prompts().await.unwrap();
+}
+
+#[tokio::test]
+async fn runtime_pending_queued_feedback_exit_updates_before_ack() {
+    use std::time::Duration;
+    use tokio_util::sync::CancellationToken;
+    let (engine, _, channel, _, _) = pending_runtime_input().await;
+    let entered = CancellationToken::new();
+    let release = CancellationToken::new();
+    *channel.next_send_gate.lock().unwrap() = Some((entered.clone(), release.clone()));
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "cancel slow queued receipt",
+        )))
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(1), entered.cancelled())
+        .await
+        .unwrap();
+    tokio::time::timeout(
+        Duration::from_millis(100),
+        engine.execute_work(agentix_core::EngineWork::Event(AgentEvent::SessionExited {
+            session_id: "thr_a".into(),
+        })),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    release.cancel();
+    wait_for_pending_feedback(&channel, "Input not sent", "cancel slow queued receipt", 1).await;
+    engine.cancel_pending_prompts().await.unwrap();
+}
+
+#[tokio::test]
+async fn runtime_pending_queued_feedback_shutdown_aborts_stalled_delivery() {
+    use tokio_util::sync::CancellationToken;
+    let (engine, _, channel, _, _) = pending_runtime_input().await;
+    let entered = CancellationToken::new();
+    let release = CancellationToken::new();
+    *channel.next_send_gate.lock().unwrap() = Some((entered.clone(), release.clone()));
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "shutdown queued receipt",
+        )))
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(1), entered.cancelled())
+        .await
+        .unwrap();
+    engine.cancel_pending_prompts().await.unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while Arc::strong_count(&channel) > 2 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("shutdown must release the receipt worker channel owner");
+    release.cancel();
+    assert!(
+        !channel
+            .sent()
+            .iter()
+            .any(|(_, v)| v.body.contains("shutdown queued receipt"))
+    );
+}
+
+#[tokio::test]
+async fn runtime_pending_queued_feedback_displaced_updates_before_ack() {
+    use std::time::Duration;
+    use tokio_util::sync::CancellationToken;
+    let (engine, _, channel, _, _) = pending_runtime_input().await;
+    let entered = CancellationToken::new();
+    let release = CancellationToken::new();
+    *channel.next_send_gate.lock().unwrap() = Some((entered.clone(), release.clone()));
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "cancel slow queued receipt",
+        )))
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(1), entered.cancelled())
+        .await
+        .unwrap();
+    tokio::time::timeout(
+        Duration::from_millis(100),
+        engine.execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-b",
+            "/attach thr_a",
+        ))),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    release.cancel();
+    wait_for_pending_feedback(&channel, "Input not sent", "cancel slow queued receipt", 1).await;
+    engine.cancel_pending_prompts().await.unwrap();
+}
+
+#[tokio::test]
+async fn runtime_pending_queued_feedback_displacement_precedes_unsubscribe() {
+    let (engine, agent, channel, _, _) = pending_runtime_input().await;
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-b",
+            "/attach thr_b",
+        )))
+        .await
+        .unwrap();
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "displaced while cleanup stalls",
+        )))
+        .await
+        .unwrap();
+    wait_for_pending_feedback(&channel, "Queued", "displaced while cleanup stalls", 1).await;
+    *agent.unsubscribe_gate.lock().unwrap() = Some(Arc::new(tokio::sync::Notify::new()));
+    let engine = Arc::new(engine);
+    let switching = {
+        let engine = engine.clone();
+        tokio::spawn(async move {
+            engine
+                .execute_work(agentix_core::EngineWork::Inbound(inbound(
+                    "chat-b",
+                    "/attach thr_a",
+                )))
+                .await
+        })
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while !agent.calls().contains(&"unsubscribe:thr_b".to_owned()) {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let cancelled = tokio::time::timeout(std::time::Duration::from_millis(250), async {
+        loop {
+            if channel.messages.lock().unwrap().values().any(|view| {
+                view.title.contains("Input not sent")
+                    && view.body.contains("displaced while cleanup stalls")
+            }) {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .is_ok();
+    switching.abort();
+    let _ = switching.await;
+    engine.cancel_pending_prompts().await.unwrap();
+    assert!(
+        cancelled,
+        "displaced receipt cancellation must precede remote unsubscribe cleanup"
+    );
+}
+
+#[tokio::test]
+async fn attach_without_native_menu_skips_stalled_command_capabilities() {
+    let mut adapter = FakeAgent::new();
+    adapter.stalled_operation = Some("supports_command");
+    let agent = Arc::new(adapter);
+    let channel = Arc::new(FakeChannel {
+        skip_native_menu_sync: true,
+        ..Default::default()
+    });
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    tokio::time::timeout(
+        std::time::Duration::from_millis(250),
+        engine.handle_inbound(inbound("chat-a", "/attach thr_a")),
+    )
+    .await
+    .expect("unused menu metadata must not delay attachment feedback")
+    .unwrap();
+    assert!(
+        !agent
+            .calls()
+            .iter()
+            .any(|call| call.starts_with("supports_command:"))
+    );
+    assert!(channel.synced_menus.lock().unwrap().is_empty());
+    assert!(
+        channel
+            .sent()
+            .iter()
+            .any(|(_, view)| view.body.contains("previous answer"))
+    );
+}
+
+#[tokio::test]
+async fn startup_and_resume_feedback_do_not_wait_for_menu_discovery() {
+    for kind in [ChannelKind::Feishu, ChannelKind::Slack] {
+        let mut adapter = FakeAgent::new();
+        adapter.stalled_operation = Some("supports_command");
+        let agent = Arc::new(adapter);
+        let channel = Arc::new(FakeChannel {
+            channel_kind: Some(kind),
+            skip_native_menu_sync: true,
+            ..Default::default()
+        });
+        let state = SqliteState::in_memory().await.unwrap();
+        let conversation = ConversationRef::new(kind, "chat-a");
+        state
+            .attach(&conversation, &SessionId::new("thr_a"))
+            .await
+            .unwrap();
+        let engine = Engine::new(agent.clone(), state.clone(), vec![channel.clone()]);
+        assert_eq!(
+            tokio::time::timeout(
+                std::time::Duration::from_millis(250),
+                engine.restore_bindings()
+            )
+            .await
+            .expect("startup must skip unused menu discovery")
+            .unwrap(),
+            1
+        );
+        engine
+            .handle_agent_event(AgentEvent::SessionExited {
+                session_id: "thr_a".into(),
+            })
+            .await
+            .unwrap();
+        assert!(
+            !agent
+                .calls()
+                .iter()
+                .any(|call| call.starts_with("supports_command:"))
+        );
+        let engine = Arc::new(engine);
+        let resume = tokio::spawn({
+            let engine = engine.clone();
+            async move {
+                engine
+                    .handle_agent_event(AgentEvent::SessionResumed {
+                        session_id: "thr_a".into(),
+                    })
+                    .await
+            }
+        });
+        let notified = tokio::time::timeout(std::time::Duration::from_millis(250), async {
+            loop {
+                if channel
+                    .sent()
+                    .iter()
+                    .any(|(_, view)| view.title == "Codex session resumed")
+                {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .is_ok();
+        resume.abort();
+        let _ = resume.await;
+        assert!(notified, "resume feedback must precede menu discovery");
+        assert_eq!(
+            state.current_session(&conversation).await.unwrap(),
+            Some(SessionId::new("thr_a"))
+        );
+        assert!(
+            channel
+                .sent()
+                .iter()
+                .any(|(_, view)| view.title == "Codex session resumed")
+        );
+    }
+}
+
+#[tokio::test]
+async fn slow_menu_releases_session_work_and_keeps_latest_binding_menu() {
+    use tokio_util::sync::CancellationToken;
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Arc::new(Engine::new(
+        Arc::new(FakeAgent::new()),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    ));
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::SessionExited {
+            session_id: "thr_a".into(),
+        })
+        .await
+        .unwrap();
+    let entered = CancellationToken::new();
+    let release = CancellationToken::new();
+    *channel.next_menu_gate.lock().unwrap() = Some((entered.clone(), release.clone()));
+    let mut resume = tokio::spawn({
+        let engine = engine.clone();
+        async move {
+            engine
+                .execute_work(agentix_core::EngineWork::Event(
+                    AgentEvent::SessionResumed {
+                        session_id: "thr_a".into(),
+                    },
+                ))
+                .await
+        }
+    });
+    entered.cancelled().await;
+    let finished = tokio::time::timeout(std::time::Duration::from_millis(250), &mut resume).await;
+    if finished.is_err() {
+        release.cancel();
+        resume.await.unwrap().unwrap();
+        panic!("slow menu must release the session operation queue");
+    }
+    finished.unwrap().unwrap().unwrap();
+    engine
+        .handle_inbound(inbound("chat-a", "/detach"))
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_b"))
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound("chat-a", "/detach "))
+        .await
+        .unwrap();
+    let before = channel.menus.lock().unwrap().len();
+    release.cancel();
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        loop {
+            if channel.menus.lock().unwrap().len() >= before + 2 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let menus = channel.menus.lock().unwrap();
+    assert_eq!(
+        menus.len(),
+        before + 2,
+        "intermediate menus must be coalesced"
+    );
+    assert!(
+        !menus
+            .last()
+            .unwrap()
+            .commands
+            .iter()
+            .any(|command| command.name == "current")
+    );
+}
+
+#[tokio::test]
+async fn slow_explicit_menu_is_corrected_by_attach_without_native_sync() {
+    let channel = Arc::new(FakeChannel {
+        skip_native_menu_sync: true,
+        ..Default::default()
+    });
+    let engine = Arc::new(Engine::new(
+        Arc::new(FakeAgent::new()),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    ));
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    let entered = tokio_util::sync::CancellationToken::new();
+    let release = tokio_util::sync::CancellationToken::new();
+    *channel.next_menu_gate.lock().unwrap() = Some((entered.clone(), release.clone()));
+    engine
+        .handle_inbound(inbound("chat-a", "/detach"))
+        .await
+        .unwrap();
+    assert!(entered.is_cancelled());
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_b"))
+        .await
+        .unwrap();
+    release.cancel();
+    tokio::time::timeout(std::time::Duration::from_millis(250), async {
+        loop {
+            if channel
+                .session_commands()
+                .last()
+                .is_some_and(|(_, attached)| *attached)
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("late detached menu must be corrected even without native menu sync");
+}
+
+#[tokio::test]
+async fn slow_menu_worker_is_cancelled_on_shutdown_and_drop() {
+    for shutdown in [true, false] {
+        let channel = Arc::new(FakeChannel::default());
+        let engine = Engine::new(
+            Arc::new(FakeAgent::new()),
+            SqliteState::in_memory().await.unwrap(),
+            vec![channel.clone()],
+        );
+        let entered = tokio_util::sync::CancellationToken::new();
+        let release = tokio_util::sync::CancellationToken::new();
+        *channel.next_menu_gate.lock().unwrap() = Some((entered.clone(), release.clone()));
+        engine
+            .handle_inbound(inbound("chat-a", "/attach thr_a"))
+            .await
+            .unwrap();
+        assert!(entered.is_cancelled());
+        if shutdown {
+            engine.cancel_pending_prompts().await.unwrap();
+        }
+        drop(engine);
+        release.cancel();
+        for _ in 0..10 {
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            channel.menus.lock().unwrap().is_empty(),
+            "cancelled worker published a menu"
+        );
+    }
+}
+
+#[tokio::test]
+async fn stale_menu_discovery_is_cancelled_after_detach() {
+    let mut adapter = FakeAgent::new();
+    adapter.stalled_operation = Some("supports_command");
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        Arc::new(adapter),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    tokio::time::timeout(
+        std::time::Duration::from_millis(250),
+        engine.handle_inbound(inbound("chat-a", "/attach thr_a")),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(channel.menus.lock().unwrap().is_empty());
+    tokio::time::timeout(
+        std::time::Duration::from_millis(250),
+        engine.handle_inbound(inbound("chat-a", "/detach")),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(channel.session_commands().len(), 1);
+    assert!(!channel.session_commands().last().unwrap().1);
+}
+
+#[tokio::test]
+async fn reload_preserves_slow_menu_serialization() {
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel::default());
+    let state = SqliteState::in_memory().await.unwrap();
+    let engine = Engine::new(agent.clone(), state.clone(), vec![channel.clone()]);
+    let entered = tokio_util::sync::CancellationToken::new();
+    let release = tokio_util::sync::CancellationToken::new();
+    *channel.next_menu_gate.lock().unwrap() = Some((entered.clone(), release.clone()));
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    assert!(entered.is_cancelled());
+    let mut next = Engine::new(agent, state, vec![channel.clone()]);
+    next.inherit_runtime(&engine);
+    drop(engine);
+    next.handle_inbound(inbound("chat-a", "/detach"))
+        .await
+        .unwrap();
+    assert!(channel.menus.lock().unwrap().is_empty());
+    release.cancel();
+    tokio::time::timeout(std::time::Duration::from_millis(250), async {
+        loop {
+            if channel.session_commands().len() == 2 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(!channel.session_commands().last().unwrap().1);
+}
+
+#[tokio::test]
+async fn detach_feedback_and_next_attachment_do_not_wait_for_old_unsubscribe() {
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Arc::new(Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    ));
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    let release = Arc::new(tokio::sync::Notify::new());
+    *agent.unsubscribe_gate.lock().unwrap() = Some(release.clone());
+    let mut detach = tokio::spawn({
+        let engine = engine.clone();
+        async move { engine.handle_inbound(inbound("chat-a", "/detach")).await }
+    });
+    let detached = tokio::time::timeout(std::time::Duration::from_millis(250), &mut detach).await;
+    if detached.is_err() {
+        release.notify_one();
+        detach.await.unwrap().unwrap();
+        panic!("detach must release session operations before remote unsubscribe completes");
+    }
+    detached.unwrap().unwrap().unwrap();
+    assert!(
+        channel
+            .sent()
+            .iter()
+            .any(|(_, view)| view.body.starts_with("Detached from"))
+    );
+    tokio::time::timeout(
+        std::time::Duration::from_millis(250),
+        engine.handle_inbound(inbound("chat-a", "/attach thr_b")),
+    )
+    .await
+    .expect("the new session must not wait for old cleanup")
+    .unwrap();
+    release.notify_one();
+}
+
+#[tokio::test]
+async fn reattach_waits_for_owned_cleanup_and_announces_progress_across_reload() {
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel::default());
+    let state = SqliteState::in_memory().await.unwrap();
+    let engine = Engine::new(agent.clone(), state.clone(), vec![channel.clone()]);
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    let release = Arc::new(tokio::sync::Notify::new());
+    *agent.unsubscribe_gate.lock().unwrap() = Some(release.clone());
+    engine
+        .handle_inbound(inbound("chat-a", "/detach"))
+        .await
+        .unwrap();
+    let mut next = Engine::new(agent.clone(), state, vec![channel.clone()]);
+    next.inherit_runtime(&engine);
+    drop(engine);
+    let next = Arc::new(next);
+    let attach = tokio::spawn({
+        let next = next.clone();
+        async move {
+            next.handle_inbound(inbound("chat-a", "/attach thr_a "))
+                .await
+        }
+    });
+    tokio::time::timeout(std::time::Duration::from_millis(250), async {
+        loop {
+            if channel
+                .sent()
+                .iter()
+                .any(|(_, view)| view.title == "Reattaching session")
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(
+        agent
+            .calls()
+            .iter()
+            .filter(|call| call.as_str() == "attach:thr_a")
+            .count(),
+        1,
+        "new subscription overtook unfinished unsubscribe"
+    );
+    assert!(!attach.is_finished());
+    release.notify_one();
+    tokio::time::timeout(std::time::Duration::from_millis(250), attach)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        agent
+            .calls()
+            .iter()
+            .filter(|call| call.as_str() == "attach:thr_a")
+            .count(),
+        2
+    );
+}
+
+#[tokio::test]
+async fn subscription_cleanup_drops_its_backend_owner_on_shutdown() {
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    *agent.unsubscribe_gate.lock().unwrap() = Some(Arc::new(tokio::sync::Notify::new()));
+    engine
+        .handle_inbound(inbound("chat-a", "/detach"))
+        .await
+        .unwrap();
+    engine.cancel_pending_prompts().await.unwrap();
+    let weak = Arc::downgrade(&agent);
+    drop(agent);
+    drop(engine);
+    tokio::time::timeout(std::time::Duration::from_millis(250), async {
+        loop {
+            if weak.upgrade().is_none() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("shutdown leaked the unsubscribe worker's backend owner");
+}
+
+async fn check_runtime_reattachment(action: &str, expected: Option<&str>) {
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel::default());
+    let state = SqliteState::in_memory().await.unwrap();
+    let engine = Arc::new(Engine::new(
+        agent.clone(),
+        state.clone(),
+        vec![channel.clone()],
+    ));
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    let release = Arc::new(tokio::sync::Notify::new());
+    *agent.unsubscribe_gate.lock().unwrap() = Some(release.clone());
+    engine
+        .handle_inbound(inbound("chat-a", "/detach"))
+        .await
+        .unwrap();
+    let mut attach = tokio::spawn({
+        let engine = engine.clone();
+        async move {
+            engine
+                .execute_work(agentix_core::EngineWork::Inbound(inbound(
+                    "chat-a",
+                    "/attach thr_a ",
+                )))
+                .await
+        }
+    });
+    let dispatched = tokio::time::timeout(std::time::Duration::from_millis(250), &mut attach).await;
+    if dispatched.is_err() {
+        release.notify_one();
+        attach.await.unwrap().unwrap();
+        panic!("pending reattachment must release the operation queue");
+    }
+    dispatched.unwrap().unwrap().unwrap();
+    // Claim the completion before cancellation to cover work already admitted
+    // to the runtime but not yet holding its conversation reservation.
+    release.notify_one();
+    let completion = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        engine.next_pending_prompt(),
+    )
+    .await
+    .unwrap();
+    if action == "shutdown" {
+        engine.cancel_pending_prompts().await.unwrap();
+    } else if !action.is_empty() {
+        engine
+            .execute_work(agentix_core::EngineWork::Inbound(inbound("chat-a", action)))
+            .await
+            .unwrap();
+    }
+    engine.execute_work(completion).await.unwrap();
+    assert_eq!(
+        state
+            .current_session(&ConversationRef::new(ChannelKind::Telegram, "chat-a"))
+            .await
+            .unwrap(),
+        expected.map(SessionId::new)
+    );
+    assert_eq!(
+        agent
+            .calls()
+            .iter()
+            .filter(|call| call.as_str() == "attach:thr_a")
+            .count(),
+        if expected == Some("thr_a") { 2 } else { 1 }
+    );
+}
+
+#[tokio::test]
+async fn runtime_reattach_releases_cleanup_wait_and_cancellation_fences_completion() {
+    check_runtime_reattachment("/cancel", None).await;
+}
+
+#[tokio::test]
+async fn runtime_reattach_completes_after_cleanup() {
+    check_runtime_reattachment("", Some("thr_a")).await;
+}
+
+#[tokio::test]
+async fn runtime_reattach_does_not_override_a_later_attachment() {
+    check_runtime_reattachment("/attach thr_b", Some("thr_b")).await;
+}
+
+#[tokio::test]
+async fn runtime_reattach_detach_cancels_claimed_completion() {
+    check_runtime_reattachment("/detach ", None).await;
+}
+
+#[tokio::test]
+async fn runtime_reattach_shutdown_cancels_claimed_completion() {
+    check_runtime_reattachment("shutdown", None).await;
+}
+
+async fn check_reattachment_input(action: Option<&str>) {
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    let release = Arc::new(tokio::sync::Notify::new());
+    *agent.unsubscribe_gate.lock().unwrap() = Some(release.clone());
+    engine
+        .handle_inbound(inbound("chat-a", "/detach"))
+        .await
+        .unwrap();
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "/attach thr_a ",
+        )))
+        .await
+        .unwrap();
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "continue after reconnect",
+        )))
+        .await
+        .unwrap();
+    assert!(
+        !agent
+            .calls()
+            .iter()
+            .any(|call| call.contains("continue after reconnect"))
+    );
+    if let Some(action) = action {
+        engine
+            .execute_work(agentix_core::EngineWork::Inbound(inbound("chat-a", action)))
+            .await
+            .unwrap();
+    }
+    release.notify_one();
+    for _ in 0..if action.is_some() && action != Some("/stop") {
+        1
+    } else {
+        2
+    } {
+        let work = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            engine.next_pending_prompt(),
+        )
+        .await
+        .unwrap();
+        engine.execute_work(work).await.unwrap();
+    }
+    assert_eq!(
+        action.is_none(),
+        agent
+            .calls()
+            .iter()
+            .any(|call| call.contains("continue after reconnect"))
+    );
+    if action == Some("/stop") {
+        engine
+            .execute_work(agentix_core::EngineWork::Inbound(inbound(
+                "chat-a",
+                "new input after stopped reconnect",
+            )))
+            .await
+            .unwrap();
+        assert!(
+            agent
+                .calls()
+                .iter()
+                .any(|call| call.contains("new input after stopped reconnect"))
+        );
+    }
+}
+
+#[tokio::test]
+async fn runtime_reattach_queues_input_until_the_target_is_attached() {
+    check_reattachment_input(None).await;
+}
+
+#[tokio::test]
+async fn runtime_reattach_cancellation_does_not_send_queued_input() {
+    check_reattachment_input(Some("/cancel")).await;
+}
+
+#[tokio::test]
+async fn runtime_reattach_switch_does_not_send_queued_input_to_another_session() {
+    check_reattachment_input(Some("/attach thr_b")).await;
+}
+
+#[tokio::test]
+async fn runtime_reattach_preserves_input_order_across_reload() {
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel::default());
+    let state = SqliteState::in_memory().await.unwrap();
+    let engine = Engine::new(agent.clone(), state.clone(), vec![channel.clone()]);
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    let release = Arc::new(tokio::sync::Notify::new());
+    *agent.unsubscribe_gate.lock().unwrap() = Some(release.clone());
+    engine
+        .handle_inbound(inbound("chat-a", "/detach"))
+        .await
+        .unwrap();
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "/attach thr_a ",
+        )))
+        .await
+        .unwrap();
+    for prompt in ["reconnect-first", "reconnect-second"] {
+        engine
+            .execute_work(agentix_core::EngineWork::Inbound(inbound("chat-a", prompt)))
+            .await
+            .unwrap();
+    }
+    let mut next = Engine::new(agent.clone(), state, vec![channel]);
+    next.inherit_runtime(&engine);
+    drop(engine);
+    release.notify_one();
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while !agent
+            .calls()
+            .iter()
+            .any(|call| call.ends_with("reconnect-second"))
+        {
+            next.execute_work(next.next_pending_prompt().await)
+                .await
+                .unwrap();
+        }
+    })
+    .await
+    .expect("queued inputs did not survive reload");
+    let inputs = agent
+        .calls()
+        .into_iter()
+        .filter(|call| call.contains("reconnect-"))
+        .collect::<Vec<_>>();
+    assert_eq!(inputs.len(), 2);
+    assert!(inputs[0].ends_with("reconnect-first"));
+    assert!(inputs[1].ends_with("reconnect-second"));
+}
+
+#[tokio::test]
+async fn runtime_reattach_failure_marks_waiting_input_unsent() {
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    let release = Arc::new(tokio::sync::Notify::new());
+    *agent.unsubscribe_gate.lock().unwrap() = Some(release.clone());
+    engine
+        .handle_inbound(inbound("chat-a", "/detach"))
+        .await
+        .unwrap();
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "/attach thr_a ",
+        )))
+        .await
+        .unwrap();
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "input before failed reconnect",
+        )))
+        .await
+        .unwrap();
+    agent
+        .rejected_attachments
+        .lock()
+        .unwrap()
+        .push(SessionId::new("thr_a"));
+    release.notify_one();
+    for _ in 0..2 {
+        let work = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            engine.next_pending_prompt(),
+        )
+        .await
+        .unwrap();
+        engine.execute_work(work).await.unwrap();
+    }
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        loop {
+            if channel.sent().iter().any(|(_, view)| {
+                view.title == "Agentix · Input not sent"
+                    && view.body.contains("input before failed reconnect")
+            }) {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("failure did not update the queued receipt");
+    assert!(
+        !agent
+            .calls()
+            .iter()
+            .any(|call| call.contains("input before failed reconnect"))
+    );
+}
+
+#[tokio::test]
+async fn runtime_stop_cancels_input_waiting_for_reattachment() {
+    check_reattachment_input(Some("/stop")).await;
+}
+
+async fn check_runtime_initial_attachment(history: bool, action: &str, expected: Option<&str>) {
+    let release = Arc::new(tokio::sync::Notify::new());
+    let mut adapter = FakeAgent::new();
+    if history {
+        adapter.history_gate = Some(release.clone());
+    } else {
+        adapter.attach_gate = Some(release.clone());
+    }
+    let agent = Arc::new(adapter);
+    let channel = Arc::new(FakeChannel::default());
+    let state = SqliteState::in_memory().await.unwrap();
+    let engine = Arc::new(Engine::new(
+        agent.clone(),
+        state.clone(),
+        vec![channel.clone()],
+    ));
+    let mut attach = tokio::spawn({
+        let engine = engine.clone();
+        async move {
+            engine
+                .execute_work(agentix_core::EngineWork::Inbound(inbound(
+                    "chat-a",
+                    "/attach thr_b",
+                )))
+                .await
+        }
+    });
+    let dispatched = tokio::time::timeout(std::time::Duration::from_millis(250), &mut attach).await;
+    if dispatched.is_err() {
+        release.notify_one();
+        attach.await.unwrap().unwrap();
+        panic!("initial attachment preparation must release the operation queue");
+    }
+    dispatched.unwrap().unwrap().unwrap();
+    if action == "exit" {
+        engine
+            .execute_work(agentix_core::EngineWork::Event(AgentEvent::SessionExited {
+                session_id: "thr_b".into(),
+            }))
+            .await
+            .unwrap();
+    } else if action == "wrong-client-new" {
+        engine
+            .execute_work(agentix_core::EngineWork::Event(
+                AgentEvent::SessionSwitchStarted {
+                    session_id: "thr_b".into(),
+                    client_id: "unrelated-client".into(),
+                },
+            ))
+            .await
+            .unwrap();
+    } else if !action.is_empty() {
+        engine
+            .execute_work(agentix_core::EngineWork::Inbound(inbound("chat-a", action)))
+            .await
+            .unwrap();
+    }
+    release.notify_one();
+    let completion = tokio::time::timeout(
+        std::time::Duration::from_secs(1),
+        engine.next_pending_prompt(),
+    )
+    .await
+    .unwrap();
+    engine.execute_work(completion).await.unwrap();
+    assert_eq!(
+        state
+            .current_session(&ConversationRef::new(ChannelKind::Telegram, "chat-a"))
+            .await
+            .unwrap(),
+        expected.map(SessionId::new)
+    );
+}
+
+#[tokio::test]
+async fn runtime_initial_attachment_releases_slow_subscription() {
+    check_runtime_initial_attachment(false, "", Some("thr_b")).await;
+}
+
+#[tokio::test]
+async fn runtime_initial_attachment_releases_slow_history() {
+    check_runtime_initial_attachment(true, "", Some("thr_b")).await;
+}
+
+#[tokio::test]
+async fn runtime_initial_attachment_cancel_fences_slow_subscription() {
+    check_runtime_initial_attachment(false, "/cancel", None).await;
+}
+
+#[tokio::test]
+async fn runtime_initial_attachment_switch_fences_slow_history() {
+    check_runtime_initial_attachment(true, "/attach thr_a", Some("thr_a")).await;
+}
+
+#[tokio::test]
+async fn runtime_initial_attachment_exit_fences_slow_history() {
+    check_runtime_initial_attachment(true, "exit", None).await;
+}
+
+#[tokio::test]
+async fn runtime_initial_attachment_later_conversation_wins() {
+    let release = Arc::new(tokio::sync::Notify::new());
+    let mut adapter = FakeAgent::new();
+    adapter.attach_gate = Some(release.clone());
+    let agent = Arc::new(adapter);
+    let state = SqliteState::in_memory().await.unwrap();
+    let engine = Engine::new(
+        agent.clone(),
+        state.clone(),
+        vec![Arc::new(FakeChannel::default())],
+    );
+    for chat in ["chat-a", "chat-b"] {
+        engine
+            .execute_work(agentix_core::EngineWork::Inbound(inbound(
+                chat,
+                "/attach thr_b",
+            )))
+            .await
+            .unwrap();
+    }
+    release.notify_one();
+    let first = engine.next_pending_prompt().await;
+    release.notify_one();
+    let second = engine.next_pending_prompt().await;
+    engine.execute_work(second).await.unwrap();
+    engine.execute_work(first).await.unwrap();
+    assert_eq!(
+        state
+            .current_session(&ConversationRef::new(ChannelKind::Telegram, "chat-a"))
+            .await
+            .unwrap(),
+        None
+    );
+    assert_eq!(
+        state
+            .current_session(&ConversationRef::new(ChannelKind::Telegram, "chat-b"))
+            .await
+            .unwrap(),
+        Some(SessionId::new("thr_b"))
+    );
+    assert!(!agent.calls().iter().any(|call| call == "unsubscribe:thr_b"));
+}
+
+#[tokio::test]
+async fn runtime_initial_attachment_new_keeps_replacement_intent() {
+    let release = Arc::new(tokio::sync::Notify::new());
+    let mut adapter = FakeAgent::new();
+    adapter.history_gate = Some(release.clone());
+    let state = SqliteState::in_memory().await.unwrap();
+    let engine = Engine::new(
+        Arc::new(adapter),
+        state.clone(),
+        vec![Arc::new(FakeChannel::default())],
+    );
+    for command in ["/attach thr_a", "/attach thr_b", "/new"] {
+        engine
+            .execute_work(agentix_core::EngineWork::Inbound(inbound(
+                "chat-a", command,
+            )))
+            .await
+            .unwrap();
+    }
+    release.notify_one();
+    engine
+        .execute_work(engine.next_pending_prompt().await)
+        .await
+        .unwrap();
+    assert_eq!(
+        state
+            .current_session(&ConversationRef::new(ChannelKind::Telegram, "chat-a"))
+            .await
+            .unwrap(),
+        Some(SessionId::new("thr_a"))
+    );
+}
+
+#[tokio::test]
+async fn runtime_initial_attachment_queues_ordered_input_across_reload() {
+    let release = Arc::new(tokio::sync::Notify::new());
+    let mut adapter = FakeAgent::new();
+    adapter.attach_gate = Some(release.clone());
+    let agent = Arc::new(adapter);
+    let state = SqliteState::in_memory().await.unwrap();
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(agent.clone(), state.clone(), vec![channel.clone()]);
+    for text in ["/attach thr_b", "initial-first", "initial-second"] {
+        engine
+            .execute_work(agentix_core::EngineWork::Inbound(inbound("chat-a", text)))
+            .await
+            .unwrap();
+    }
+    assert!(!agent.calls().iter().any(|call| call.starts_with("start:")));
+    let mut next = Engine::new(agent.clone(), state, vec![channel]);
+    next.inherit_runtime(&engine);
+    drop(engine);
+    release.notify_one();
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while !agent
+            .calls()
+            .iter()
+            .any(|call| call.ends_with("initial-second"))
+        {
+            next.execute_work(next.next_pending_prompt().await)
+                .await
+                .unwrap();
+        }
+    })
+    .await
+    .unwrap();
+    let inputs = agent
+        .calls()
+        .into_iter()
+        .filter(|call| call.ends_with("initial-first") || call.ends_with("initial-second"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        inputs,
+        [
+            "start:thr_b:initial-first",
+            "steer:thr_b:turn_new:initial-second"
+        ]
+    );
+}
+
+#[tokio::test]
+async fn runtime_initial_attachment_preserves_content_received_during_history() {
+    let release = Arc::new(tokio::sync::Notify::new());
+    let mut adapter = FakeAgent::new();
+    adapter.history_gate = Some(release.clone());
+    let agent = Arc::new(adapter);
+    agent.history_turns.lock().unwrap().clear();
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent,
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a",
+            "/attach thr_b",
+        )))
+        .await
+        .unwrap();
+    for event in [
+        AgentEvent::TurnStarted {
+            session_id: "thr_b".into(),
+            turn_id: "first-live".into(),
+        },
+        AgentEvent::ItemCompleted {
+            session_id: "thr_b".into(),
+            turn_id: "first-live".into(),
+            item: ItemSummary {
+                id: "input-1".into(),
+                kind: "userMessage".into(),
+                text: Some("live question".into()),
+                status: None,
+            },
+        },
+        AgentEvent::AgentMessageDelta {
+            session_id: "thr_b".into(),
+            turn_id: "first-live".into(),
+            item_id: "answer-1".into(),
+            delta: "live answer".into(),
+        },
+    ] {
+        engine
+            .execute_work(agentix_core::EngineWork::Event(event))
+            .await
+            .unwrap();
+    }
+    release.notify_one();
+    engine
+        .execute_work(engine.next_pending_prompt().await)
+        .await
+        .unwrap();
+    let sent = channel.sent();
+    let live = sent
+        .iter()
+        .find(|(_, view)| {
+            view.sections
+                .iter()
+                .any(|section| section.body.contains("live answer"))
+        })
+        .expect("content arriving during history must survive attachment");
+    assert!(
+        live.1
+            .sections
+            .iter()
+            .any(|section| section.body.contains("live question"))
+    );
+    assert!(live.1.actions.iter().any(|action| action.label == "Stop"));
+}
+
+#[tokio::test]
+async fn runtime_initial_attachment_ignores_another_clients_new() {
+    check_runtime_initial_attachment(true, "wrong-client-new", Some("thr_b")).await;
+}
+
+#[tokio::test]
+async fn runtime_initial_attachment_keeps_subscription_when_previous_owner_detaches() {
+    let release = Arc::new(tokio::sync::Notify::new());
+    let mut adapter = FakeAgent::new();
+    adapter.history_gate = Some(release.clone());
+    let agent = Arc::new(adapter);
+    let state = SqliteState::in_memory().await.unwrap();
+    let engine = Engine::new(
+        agent.clone(),
+        state.clone(),
+        vec![Arc::new(FakeChannel::default())],
+    );
+    release.notify_one();
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_b"))
+        .await
+        .unwrap();
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-b",
+            "/attach thr_b",
+        )))
+        .await
+        .unwrap();
+    engine
+        .execute_work(agentix_core::EngineWork::Inbound(inbound(
+            "chat-a", "/detach",
+        )))
+        .await
+        .unwrap();
+    release.notify_one();
+    engine
+        .execute_work(engine.next_pending_prompt().await)
+        .await
+        .unwrap();
+    tokio::task::yield_now().await;
+    assert_eq!(
+        state
+            .current_session(&ConversationRef::new(ChannelKind::Telegram, "chat-b"))
+            .await
+            .unwrap(),
+        Some(SessionId::new("thr_b"))
+    );
+    assert!(
+        !agent.calls().iter().any(|call| call == "unsubscribe:thr_b"),
+        "old-owner cleanup must not close the new subscription"
+    );
 }

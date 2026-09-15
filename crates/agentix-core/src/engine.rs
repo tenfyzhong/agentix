@@ -8,6 +8,11 @@ use tokio::time::Instant;
 use uuid::Uuid;
 
 mod cold_turns;
+mod input_recovery;
+mod pending_prompts;
+mod prompt_feedback;
+pub use input_recovery::RecoveredInput;
+pub use pending_prompts::{CardDelivered, PromptAcknowledged, QueuedInput};
 mod coordinator;
 mod dispatch;
 mod output_buffer;
@@ -16,10 +21,14 @@ mod interaction_flows;
 mod presentation;
 mod question_flows;
 pub use presentation::{command_menu, command_menu_for};
+mod attachment_history;
+mod command_menus;
 mod session_flows;
 mod session_service;
 mod session_switch;
 mod startup;
+mod subscription_cleanup;
+pub use subscription_cleanup::Reattachment;
 mod task_board;
 mod terminal_input;
 mod turn_flows;
@@ -42,13 +51,12 @@ use coordinator::{InteractionCoordinator, MultiplexerController, TurnCoordinator
 
 use crate::{
     ActionButton, ActionScope, ActionStyle, AgentAdapter, AgentCommand, AgentError, AgentEvent,
-    AttachOutcome, ChannelAdapter, ChannelCommand, ChannelError, ChannelKind, ConversationRef,
-    DeliveryClass, EventImportance, HistoryPage, InboundEnvelope, InboundPayload,
-    InteractionDecision, InteractionKind, InteractionRequest, ItemSummary, MessageRef,
-    MultiplexerMutation, MultiplexerSession, MultiplexerSnapshot, MultiplexerTarget,
-    MultiplexerWindow, OutboundView, PaneSplitDirection, ParsedInput, SessionCommand,
-    SessionCommandChoice, SessionId, SessionStatus, SqliteState, TurnStatus, TurnSummary,
-    ViewStatus, parse_input,
+    AttachOutcome, ChannelAdapter, ChannelError, ChannelKind, ConversationRef, DeliveryClass,
+    EventImportance, HistoryPage, InboundEnvelope, InboundPayload, InteractionDecision,
+    InteractionKind, InteractionRequest, ItemSummary, MessageRef, MultiplexerMutation,
+    MultiplexerSession, MultiplexerSnapshot, MultiplexerTarget, MultiplexerWindow, OutboundView,
+    PaneSplitDirection, ParsedInput, SessionCommand, SessionCommandChoice, SessionId,
+    SessionStatus, SqliteState, TurnStatus, TurnSummary, ViewStatus, parse_input,
 };
 use agentix_storage::StoredTurnView;
 
@@ -99,6 +107,7 @@ struct TurnBuffer {
     status: TurnStatus,
     started_at: Option<Instant>,
     rendered_elapsed_seconds: Option<u64>,
+    terminal_elapsed: Option<Duration>,
 }
 
 impl TurnBuffer {
@@ -106,7 +115,24 @@ impl TurnBuffer {
         self.started_at.get_or_insert_with(Instant::now);
     }
 
+    fn set_status(&mut self, status: TurnStatus) {
+        if matches!(
+            status,
+            TurnStatus::Completed | TurnStatus::Interrupted | TurnStatus::Failed
+        ) {
+            if self.terminal_elapsed.is_none() {
+                self.terminal_elapsed = self.elapsed();
+            }
+        } else {
+            self.terminal_elapsed = None;
+        }
+        self.status = status;
+    }
+
     fn elapsed(&self) -> Option<Duration> {
+        if let Some(elapsed) = self.terminal_elapsed {
+            return Some(elapsed);
+        }
         self.started_at
             .map(|started_at| Instant::now().saturating_duration_since(started_at))
     }
@@ -293,6 +319,7 @@ pub struct Engine {
     state: SqliteState,
     channels: HashMap<ChannelKind, Arc<dyn ChannelAdapter>>,
     sessions: Arc<SessionService>,
+    menus: Arc<command_menus::CommandMenus>,
     turns: Arc<TurnCoordinator>,
     interactions: Arc<InteractionCoordinator>,
     multiplexer: Arc<MultiplexerController>,
@@ -345,6 +372,7 @@ impl Engine {
                 .map(|channel| (channel.kind(), channel))
                 .collect(),
             sessions: Arc::new(SessionService::new(state)),
+            menus: Arc::new(command_menus::CommandMenus::default()),
             turns: Arc::new(TurnCoordinator::default()),
             interactions: Arc::new(InteractionCoordinator::default()),
             multiplexer: Arc::new(multiplexer),
@@ -364,6 +392,7 @@ impl Engine {
     /// must retain the same storage, channels and agent transports.
     pub fn inherit_runtime(&mut self, previous: &Self) {
         self.sessions = previous.sessions.clone();
+        self.menus = previous.menus.clone();
         self.turns = previous.turns.clone();
         self.interactions = previous.interactions.clone();
         self.multiplexer = previous.multiplexer.clone();
@@ -440,6 +469,7 @@ impl Engine {
         }
         .await;
         match result {
+            Ok(()) if pending_prompts::Delivery::is_deferred() => Ok(()),
             Ok(()) => {
                 self.state
                     .complete_event(envelope.conversation.channel, &envelope.event_id)
@@ -666,6 +696,7 @@ impl Engine {
     pub async fn handle_agent_event(&self, event: AgentEvent) -> Result<(), EngineError> {
         let event = self.output.project_event(event);
         self.tasks.record_job_message(&event).await;
+        self.sessions.cleanup.observe(&event);
         if let AgentEvent::InteractionRequested(request) = &event
             && request.kind == InteractionKind::UserInput
         {
@@ -693,18 +724,8 @@ impl Engine {
                 session_id,
                 client_id,
             } => {
-                let session = SessionId::new(session_id);
-                if let Some(conversation) = self.sessions.bound_conversation(&session).await
-                    && self
-                        .agent
-                        .session_client_id(&session)
-                        .await
-                        .as_deref()
-                        .is_none_or(|id| id == client_id)
-                {
-                    self.begin_session_switch(&conversation, &session, client_id)
-                        .await?;
-                }
+                self.handle_native_session_switch_started(session_id, client_id)
+                    .await?;
                 return Ok(());
             }
             AgentEvent::SessionReplaced {
