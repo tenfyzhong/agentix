@@ -178,6 +178,7 @@ impl Engine {
                 )
                 .await;
             actions.push(ActionButton {
+                disabled: false,
                 label: session.name.clone(),
                 token,
                 style: ActionStyle::Default,
@@ -205,6 +206,7 @@ impl Engine {
                 )
                 .await;
             actions.push(ActionButton {
+                disabled: false,
                 label: label.into(),
                 token,
                 style: ActionStyle::Primary,
@@ -286,6 +288,7 @@ impl Engine {
                 )
                 .await;
             actions.push(ActionButton {
+                disabled: false,
                 label: format!("{} · {}", window.index, window.name),
                 token,
                 style: ActionStyle::Default,
@@ -314,6 +317,7 @@ impl Engine {
                 )
                 .await;
             actions.push(ActionButton {
+                disabled: false,
                 label: label.into(),
                 token,
                 style: ActionStyle::Primary,
@@ -382,6 +386,7 @@ impl Engine {
             )
             .await;
         actions.push(ActionButton {
+            disabled: false,
             label: "← Back".into(),
             token: back_token,
             style: ActionStyle::Primary,
@@ -445,6 +450,7 @@ impl Engine {
                 .issue_action(conversation, owner_id, action_group, action)
                 .await;
             actions.push(ActionButton {
+                disabled: false,
                 label,
                 token,
                 style: ActionStyle::Default,
@@ -491,6 +497,7 @@ impl Engine {
                 .issue_action(conversation, owner_id, action_group, action)
                 .await;
             actions.push(ActionButton {
+                disabled: false,
                 label: label.into(),
                 token,
                 style: ActionStyle::Primary,
@@ -605,6 +612,7 @@ impl Engine {
                 )
                 .await;
             view.actions.push(ActionButton {
+                disabled: false,
                 label: backend
                     .map_or(self.agent.display_name(), crate::AgentKind::display_name)
                     .into(),

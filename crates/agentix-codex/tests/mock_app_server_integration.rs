@@ -98,7 +98,16 @@ async fn failed_session_selection_reports_error_and_offers_a_fresh_retry() {
         .await
         .unwrap();
     engine.handle_inbound(inbound("/sessions")).await.unwrap();
-    let token = channel.views().last().unwrap().actions[0].token.clone();
+    let token = channel
+        .views()
+        .last()
+        .unwrap()
+        .actions
+        .iter()
+        .find(|action| !action.disabled)
+        .unwrap()
+        .token
+        .clone();
     let conversation = ConversationRef::new(ChannelKind::Telegram, "chat-e2e");
     server
         .fail_next("thread/resume", -32600, "Permission denied")
@@ -791,7 +800,7 @@ async fn session_button_attach_returns_latest_history_across_repeated_reconnects
     let attach = sessions
         .actions
         .iter()
-        .find(|action| action.label.contains("Button attach"))
+        .find(|action| action.label == "Attach" && !action.disabled)
         .unwrap();
     server.disconnect_responses("thread/turns/list", 2).await;
 

@@ -5,6 +5,7 @@ use agentix_slack::render_view;
 fn blocks_preserve_code_and_escape_mentions_and_offer_buttons() {
     let mut view = OutboundView::text("Title <&>", "**Bold**\n```rust\nlet x = 1;\n```\n<@U1>");
     view.actions.push(ActionButton {
+        disabled: false,
         label: "Choose".into(),
         token: "token".into(),
         style: ActionStyle::Primary,
@@ -36,6 +37,7 @@ fn large_unicode_views_remain_within_slack_block_limits() {
 fn invalid_action_tokens_are_rejected_instead_of_silently_corrupted() {
     let mut view = OutboundView::text("Title", "Body");
     view.actions.push(ActionButton {
+        disabled: false,
         label: "Go".into(),
         token: "x".repeat(2001),
         style: ActionStyle::Default,
@@ -93,4 +95,20 @@ fn chunked_code_fences_remain_balanced_and_bold_is_converted_outside_code() {
             .all(|section| section.matches("```").count() % 2 == 0)
     );
     assert!(sections.join("").contains("**literal**"));
+}
+
+#[test]
+fn disabled_buttons_do_not_emit_clickable_actions() {
+    let mut view = agentix_domain::OutboundView::text("Sessions", "Current session");
+    view.actions = serde_json::from_value(serde_json::json!([
+        {"label":"Attached", "token":"display-only", "style":"default", "disabled":true}
+    ]))
+    .unwrap();
+    assert!(
+        render_view(&view).unwrap()["blocks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|block| block["type"] != "actions")
+    );
 }

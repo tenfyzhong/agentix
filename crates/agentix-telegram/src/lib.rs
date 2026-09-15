@@ -719,6 +719,7 @@ pub fn render_text(view: &OutboundView) -> String {
 
 #[must_use]
 pub fn render_keyboard(actions: &[ActionButton]) -> Option<InlineKeyboardMarkup> {
+    let actions: Vec<_> = actions.iter().filter(|action| !action.disabled).collect();
     if actions.is_empty() {
         return None;
     }

@@ -126,6 +126,7 @@ impl TaskBoardView<'_> {
                 .issue_action(conversation, owner, &group, UiAction::TaskBrowse(target))
                 .await;
             view.actions.push(ActionButton {
+                disabled: false,
                 label: short(&label),
                 token,
                 style: ActionStyle::Default,

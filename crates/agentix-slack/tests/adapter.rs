@@ -34,6 +34,7 @@ async fn send_update_and_disable_use_bot_token_and_preserve_thread() {
     let conversation = ConversationRef::new(ChannelKind::Slack, "T1:C1:1.000001");
     let mut view = OutboundView::text("Title", "Body");
     view.actions.push(ActionButton {
+        disabled: false,
         label: "Go".into(),
         token: "token".into(),
         style: ActionStyle::Primary,
