@@ -3,7 +3,7 @@ use super::{CARD_BODY_LIMIT, render_action, truncate_utf8};
 use agentix_domain::{OutboundView, ViewStatus};
 use larksuite_oapi_sdk_rs::card::v2::{
     BackgroundStyle, Body, CollapsiblePanel, CollapsiblePanelHeader, Color, Column, ColumnSet,
-    Element, Markdown, Text,
+    Element, HeaderIcon, IconPosition, Markdown, PanelIconExpandedAngle, Text,
 };
 use std::collections::HashSet;
 
@@ -22,10 +22,12 @@ pub(super) fn view_body(view: &OutboundView, actions_disabled: bool) -> Body {
             .flat_map(|(index, section)| {
                 let content = truncate_utf8(&section.body, limit);
                 let element = if section.collapsible {
-                    let mut panel = CollapsiblePanel::new(CollapsiblePanelHeader::new(
-                        Text::plain(&section.title),
-                    ))
-                    .element(Element::Markdown(Markdown::new(content)));
+                    let mut header = CollapsiblePanelHeader::new(Text::plain(&section.title));
+                    header.icon = Some(HeaderIcon::standard("right-small-ccm_outlined"));
+                    header.icon_position = Some(IconPosition::Left);
+                    header.icon_expanded_angle = Some(PanelIconExpandedAngle::Ninety);
+                    let mut panel = CollapsiblePanel::new(header)
+                        .element(Element::Markdown(Markdown::new(content)));
                     panel.element_id = Some(format!("turn_section_{index}"));
                     panel.expanded =
                         Some(section.expanded.unwrap_or(index + 1 == view.sections.len()));

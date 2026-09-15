@@ -1346,3 +1346,47 @@ async fn session_exit_keeps_another_hosts_same_id_inbox_lease() {
             .is_none()
     );
 }
+
+#[tokio::test]
+async fn inbox_duplicate_text_with_stale_receipts_gets_stable_unique_ids() {
+    for suffix in [
+        "",
+        " <!-- taskix:entry-state TODO revision=3 -->",
+        " <!-- taskix:entry-state TODO revision=3 --> <!-- taskix:entry:inbox_00000000000000000000000000000001 --> <!-- taskix:entry:inbox_00000000000000000000000000000002 -->",
+    ] {
+        let f = fixture().await;
+        let original = add(&f, "重复输入\nKeep details.").await;
+        let source = std::fs::read_to_string(path(&f)).unwrap();
+        std::fs::write(
+            path(&f),
+            source.replace(
+                END,
+                &format!("- [ ] 重复输入{suffix}\n  Keep details.\n{END}"),
+            ),
+        )
+        .unwrap();
+        f.service.sync().await.unwrap();
+        let rows = entries(&f).await;
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["id"], original["id"]);
+        assert_ne!(rows[0]["id"], rows[1]["id"]);
+        assert_eq!(rows[0]["content"], rows[1]["content"]);
+        assert_eq!(rows[1]["content"], "重复输入\nKeep details.");
+        let stable = std::fs::read_to_string(path(&f)).unwrap();
+        assert_eq!(stable.matches("<!-- taskix:entry:").count(), 2);
+        for _ in 0..3 {
+            f.service.sync().await.unwrap();
+            assert_eq!(std::fs::read_to_string(path(&f)).unwrap(), stable);
+            assert_eq!(entries(&f).await, rows);
+        }
+        std::fs::write(
+            path(&f),
+            stable.replace("Keep details.", "Continue typing."),
+        )
+        .unwrap();
+        f.service.sync().await.unwrap();
+        let edited = entries(&f).await;
+        assert_eq!(edited[1]["id"], rows[1]["id"]);
+        assert_eq!(edited[1]["content"], "重复输入\nContinue typing.");
+    }
+}

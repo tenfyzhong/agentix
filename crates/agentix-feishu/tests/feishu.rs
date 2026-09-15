@@ -1486,6 +1486,12 @@ fn turn_sections_render_as_independent_collapsible_process_panels() {
         if section["collapsible"] == true {
             assert_eq!(element["tag"], "collapsible_panel");
             assert_eq!(element["expanded"], false);
+            assert_eq!(
+                element["header"]["icon"]["token"],
+                "right-small-ccm_outlined"
+            );
+            assert_eq!(element["header"]["icon_position"], "left");
+            assert_eq!(element["header"]["icon_expanded_angle"], "90");
             assert_eq!(element["header"]["title"]["content"], section["title"]);
             assert_eq!(element["elements"][0]["content"], section["body"]);
         } else {
