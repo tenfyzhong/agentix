@@ -44,7 +44,7 @@ Agentix looks up the IM destination only by the exact session ID. Render state i
 The visible hierarchy is:
 
 ```text
-Codex · Parser cleanup · 7e52c1a9
+Codex · 7e52c1a9 · Parser cleanup
 Turn 019d… · Working 12s     short turn label, state, and elapsed time
 
 👤 You                       user heading

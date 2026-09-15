@@ -970,7 +970,7 @@ impl Engine {
                     buffer.set_status(TurnStatus::Interrupted);
                 }
                 let view = super::live_turn_view(
-                    self.agent.display_name(),
+                    self.agent.session_display_name(session),
                     &label,
                     &turn,
                     &buffer,

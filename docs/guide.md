@@ -14,7 +14,7 @@ For a short installation and first-session walkthrough, start with the [README](
 
 Agentix connects the coding agents already running on your computer to Telegram, Feishu, or Slack, so you can monitor and continue local sessions when you step away from the terminal or IDE. It is a local-first Rust bridge for Codex, Pi, Oh My Pi, and Claude Code. Claude Code uses the [plugin with rmux input](claude-code.md).
 
-Each IM conversation maps explicitly and durably to an agent session. Sessions without a name or prompt preview use the agent name and the last segment of the native session ID, for example `Codex · 06423a09a510`. Messages include a readable session title, short session ID, and turn identifier so concurrent sessions remain unambiguous.
+Each IM conversation maps explicitly and durably to an agent session. Session cards and `/sessions` entries use the agent name, the first eight characters of the native session ID, and an optional session name or prompt preview, for example `Codex · 01a0a546 · Respond to greeting`. Without a name or preview, the title is `Codex · 01a0a546`. Turn identifiers and status appear on the second line; live turns also show elapsed time when available.
 
 ## Installation and setup
 

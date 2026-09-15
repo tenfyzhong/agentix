@@ -248,13 +248,14 @@ pub(super) fn history_views(
         history
             .turns
             .iter()
-            .map(|turn| history_turn_view(agent_name, turn, output)),
+            .map(|turn| history_turn_view(agent_name, session_label, turn, output)),
     );
     views
 }
 
 pub(super) fn history_turn_view(
     agent_name: &str,
+    session_label: &str,
     turn: &TurnSummary,
     output: crate::OutputConfig,
 ) -> OutboundView {
@@ -263,8 +264,12 @@ pub(super) fn history_turn_view(
 
     OutboundView {
         sections: buffer.view_sections(agent_name),
-        title: format!("{agent_name} · Turn {}", short_identifier(&turn.id)),
-        subtitle: Some(turn_status_label(&turn.status).into()),
+        title: format!("{agent_name} · {session_label}"),
+        subtitle: Some(format!(
+            "Turn {} · {}",
+            short_identifier(&turn.id),
+            turn_status_label(&turn.status)
+        )),
         body,
         status: match turn.status {
             TurnStatus::Completed => ViewStatus::Success,
@@ -448,7 +453,7 @@ pub(super) fn session_status_label(status: &SessionStatus) -> (&'static str, &'s
     }
 }
 
-pub(super) fn session_title(session: &SessionSummary) -> &str {
+pub(super) fn session_title(session: &SessionSummary) -> Option<&str> {
     session
         .name
         .as_deref()
@@ -461,11 +466,12 @@ pub(super) fn session_title(session: &SessionSummary) -> &str {
                 .map(str::trim)
                 .filter(|title| !title.is_empty())
         })
-        .unwrap_or("Untitled")
 }
 
 pub(super) fn session_display_label(session: &SessionSummary) -> String {
-    format!("{} · {}", session_title(session), session.id.short())
+    let native = session.id.native_str();
+    let short = short_identifier(native);
+    session_title(session).map_or_else(|| short.to_owned(), |title| format!("{short} · {title}"))
 }
 
 pub(super) fn input_questions(request: &InteractionRequest) -> Vec<InputQuestion> {

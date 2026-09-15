@@ -1509,7 +1509,7 @@ async fn background_codex_turn_completion_notifies_im_with_attach_action() {
     // Completion delivery does not wait for optional title metadata.
     assert!(matches!(
         notification.title.as_str(),
-        "Codex · Background work · thr_back" | "Codex · Untitled · thr_back"
+        "Codex · thr_back · Background work" | "Codex · thr_back"
     ));
     assert!(
         notification

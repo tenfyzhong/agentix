@@ -24,7 +24,7 @@ impl Engine {
 
         let label = self.session_label(session).await;
         let mut view = OutboundView::text(
-            format!("{} · {label}", self.agent.display_name()),
+            format!("{} · {label}", self.agent.session_display_name(session)),
             markdown_quote(prompt),
         );
         view.subtitle = Some("Sending…".into());
