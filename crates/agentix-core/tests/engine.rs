@@ -4980,6 +4980,101 @@ async fn exited_current_session_notifies_the_im_and_detaches() {
 }
 
 #[tokio::test]
+async fn exited_session_preserves_finished_turn_status_and_content() {
+    for status in [
+        TurnStatus::Completed,
+        TurnStatus::Failed,
+        TurnStatus::Interrupted,
+    ] {
+        let agent = Arc::new(FakeAgent::with_history(vec![last_turn_fixture(
+            TurnStatus::InProgress,
+        )]));
+        let channel = Arc::new(FakeChannel::default());
+        let state = SqliteState::in_memory().await.unwrap();
+        let engine = Engine::new(agent, state.clone(), vec![channel.clone()]).with_output(
+            agentix_core::OutputConfig {
+                show_reasoning: true,
+                show_tool_calls: true,
+            },
+        );
+        engine
+            .handle_inbound(inbound("chat-a", "/attach thr_a"))
+            .await
+            .unwrap();
+        engine
+            .handle_agent_event(AgentEvent::TurnCompleted {
+                session_id: "thr_a".into(),
+                turn_id: "turn_last".into(),
+                status,
+                error: None,
+            })
+            .await
+            .unwrap();
+        let (message, finished) = channel.updated().last().unwrap().clone();
+        engine
+            .handle_agent_event(AgentEvent::SessionExited {
+                session_id: "thr_a".into(),
+            })
+            .await
+            .unwrap();
+        let latest = channel
+            .updated()
+            .into_iter()
+            .rev()
+            .find(|(target, _)| target == &message)
+            .unwrap()
+            .1;
+        assert_eq!(latest.subtitle, finished.subtitle);
+        assert_eq!(latest.status, finished.status);
+        assert_eq!(latest.body, finished.body);
+        assert_eq!(latest.sections, finished.sections);
+        assert!(latest.actions.is_empty());
+        assert_eq!(
+            channel.sent().last().unwrap().1.title,
+            "Codex session exited"
+        );
+    }
+}
+
+#[tokio::test]
+async fn exited_session_preserves_completion_after_final_edit_failure() {
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        Arc::new(FakeAgent::with_history(vec![last_turn_fixture(
+            TurnStatus::InProgress,
+        )])),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    *channel.next_update_failures.lock().unwrap() = 1;
+    assert!(
+        engine
+            .handle_agent_event(AgentEvent::TurnCompleted {
+                session_id: "thr_a".into(),
+                turn_id: "turn_last".into(),
+                status: TurnStatus::Completed,
+                error: None,
+            })
+            .await
+            .is_err()
+    );
+    engine
+        .handle_agent_event(AgentEvent::SessionExited {
+            session_id: "thr_a".into(),
+        })
+        .await
+        .unwrap();
+    let view = channel.updated().last().unwrap().1.clone();
+    assert!(view.subtitle.as_deref().unwrap().contains("Completed"));
+    assert_eq!(view.status, agentix_core::ViewStatus::Success);
+    assert!(view.actions.is_empty());
+}
+
+#[tokio::test]
 async fn resumed_codex_session_reattaches_the_previous_im_conversation() {
     let agent = Arc::new(FakeAgent::new());
     let channel = Arc::new(FakeChannel::default());

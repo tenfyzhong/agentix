@@ -618,13 +618,13 @@ impl Engine {
         }
         let key = (session_id.clone(), turn_id.to_owned());
         if self.turns.views.lock().await.contains_key(&key) {
-            self.turns
-                .buffers
-                .lock()
-                .await
-                .entry(key.clone())
-                .or_default()
-                .status = TurnStatus::Interrupted;
+            {
+                let mut buffers = self.turns.buffers.lock().await;
+                let buffer = buffers.entry(key.clone()).or_default();
+                if matches!(buffer.status, TurnStatus::InProgress | TurnStatus::Unknown) {
+                    buffer.status = TurnStatus::Interrupted;
+                }
+            }
             if let Err(error) = self
                 .render_turn(conversation, session_id, turn_id, DeliveryClass::Live, true)
                 .await
@@ -633,7 +633,7 @@ impl Engine {
                     %error,
                     session = %session_id,
                     turn = %turn_id,
-                    "failed to mark an exited agent turn as interrupted"
+                    "failed to finalize an exited agent turn"
                 );
             }
         } else if let Some(group_id) = self
