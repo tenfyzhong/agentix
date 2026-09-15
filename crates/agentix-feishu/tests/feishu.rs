@@ -1486,6 +1486,12 @@ fn turn_sections_render_as_independent_collapsible_process_panels() {
         if section["collapsible"] == true {
             assert_eq!(element["tag"], "collapsible_panel");
             assert_eq!(element["expanded"], false);
+            assert_eq!(
+                element["header"]["icon"]["token"],
+                "right-small-ccm_outlined"
+            );
+            assert_eq!(element["header"]["icon_position"], "left");
+            assert_eq!(element["header"]["icon_expanded_angle"], "90");
             assert_eq!(element["header"]["title"]["content"], section["title"]);
             assert_eq!(element["elements"][0]["content"], section["body"]);
         } else {
@@ -1570,6 +1576,13 @@ async fn structured_cards_survive_send_update_and_action_disabling() {
         })
         .collect();
     assert_eq!(cards.len(), 3);
+    for card in &cards {
+        for panel in card["body"]["elements"].as_array().unwrap() {
+            if panel["tag"] == "collapsible_panel" {
+                assert_eq!(panel["header"]["icon_expanded_angle"], 90);
+            }
+        }
+    }
     for card in &cards[1..] {
         for index in 0..3 {
             let mut expected = cards[0]["body"]["elements"][index].clone();
@@ -1843,4 +1856,38 @@ fn attached_button_is_disabled_without_an_action_token() {
     assert_eq!(button["text"]["content"], "Attached");
     assert_eq!(button["disabled"], true);
     assert_eq!(button["behaviors"][0]["value"], serde_json::json!({}));
+}
+
+#[tokio::test]
+async fn background_panel_rotation_is_numeric_on_all_outbound_paths() {
+    let server = MockFeishuApi::start().await;
+    let client = LarkClient::builder("mock-app", "mock-secret")
+        .base_url(server.base_url())
+        .max_retries(1)
+        .build()
+        .unwrap();
+    let adapter = FeishuAdapter::with_client(client, ["ou_owner"]);
+    let conversation = ConversationRef::new(ChannelKind::Feishu, "oc_mock_chat");
+    let mut view = process_view();
+    view.status = ViewStatus::Background;
+    let message = adapter.send(&conversation, &view).await.unwrap();
+    adapter
+        .update(&conversation, &message, &view)
+        .await
+        .unwrap();
+    adapter.disable_actions(&message).await.unwrap();
+    let requests = server.requests().await;
+    assert_eq!(requests.len(), 4);
+    for request in &requests[1..] {
+        let body: serde_json::Value = serde_json::from_str(&request.body).unwrap();
+        let card: serde_json::Value =
+            serde_json::from_str(body["content"].as_str().unwrap()).unwrap();
+        let panels = card["body"]["elements"][0]["columns"][0]["elements"]
+            .as_array()
+            .unwrap();
+        for panel in &panels[1..3] {
+            assert_eq!(panel["tag"], "collapsible_panel");
+            assert_eq!(panel["header"]["icon_expanded_angle"], 90);
+        }
+    }
 }

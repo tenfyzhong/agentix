@@ -130,7 +130,8 @@ fn parse(source: &str, project: &str) -> Result<Vec<ParsedEntry>> {
             cancelled: line.as_bytes()[3] == b'-'
                 && !line.contains(" <!-- taskix:entry-state CANCELLED "),
             span: offset..end_offset,
-            header_end: offset + line.trim_end_matches(['\r', '\n']).len(),
+            // Stamp before a stale state receipt so the next parse sees the ID.
+            header_end: offset + 6 + header.len(),
         });
         i = j;
     }

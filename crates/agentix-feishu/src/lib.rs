@@ -17,6 +17,7 @@ use larksuite_oapi_sdk_rs::card::v2::{
 use larksuite_oapi_sdk_rs::channel::{
     Channel, ChannelPolicy, DmMode, NormalizedMessage, SendInput,
 };
+use larksuite_oapi_sdk_rs::service::im::v1::PatchMessageReqBody;
 use larksuite_oapi_sdk_rs::{EventDispatcher, LarkClient, LarkError, RequestOption};
 use tokio::sync::{Mutex, mpsc};
 use tokio_util::sync::CancellationToken;
@@ -358,8 +359,7 @@ impl ChannelAdapter for FeishuAdapter {
     ) -> Result<MessageRef, ChannelError> {
         ensure_feishu(conversation)?;
         let card = render_card(view)?;
-        let card_json = serde_json::to_string(card.card())
-            .map_err(|error| ChannelError::InvalidPayload(error.to_string()))?;
+        let card_json = card_sections::wire_json(&card)?;
         let input = SendInput {
             chat_id: Some(conversation.conversation_id.clone()),
             card: Some(card_json),
@@ -388,11 +388,15 @@ impl ChannelAdapter for FeishuAdapter {
     ) -> Result<(), ChannelError> {
         ensure_feishu(conversation)?;
         let card = render_card(view)?;
+        let body = PatchMessageReqBody {
+            content: Some(card_sections::wire_json(&card)?),
+        };
         let option = RequestOption::default();
         with_tenant_token_refresh(self, Some(conversation), || async {
             self.client
-                .channel_messaging()
-                .edit_card(&message.message_id, &card, &option)
+                .im()
+                .message
+                .patch(&message.message_id, &body, &option)
                 .await
         })
         .await
@@ -412,11 +416,15 @@ impl ChannelAdapter for FeishuAdapter {
             return Ok(());
         };
         let card = render_card_with_disabled_actions(&view)?;
+        let body = PatchMessageReqBody {
+            content: Some(card_sections::wire_json(&card)?),
+        };
         let option = RequestOption::default();
         with_tenant_token_refresh(self, Some(&message.conversation), || async {
             self.client
-                .channel_messaging()
-                .edit_card(&message.message_id, &card, &option)
+                .im()
+                .message
+                .patch(&message.message_id, &body, &option)
                 .await
         })
         .await
@@ -451,8 +459,7 @@ impl ChannelAdapter for FeishuAdapter {
             .map_err(|error| ChannelError::Transport(error.to_string()))?;
             return Ok(());
         }
-        let card_json = serde_json::to_string(card.card())
-            .map_err(|error| ChannelError::InvalidPayload(error.to_string()))?;
+        let card_json = card_sections::wire_json(&card)?;
         let input = SendInput {
             chat_id: Some(conversation.conversation_id.clone()),
             card: Some(card_json),
