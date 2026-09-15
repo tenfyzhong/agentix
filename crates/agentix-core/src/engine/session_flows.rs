@@ -69,17 +69,6 @@ impl Engine {
         conversation: &ConversationRef,
     ) -> Result<(), EngineError> {
         let body = self.available_commands(conversation).await;
-        let body = if self.tasks.backend.is_some() {
-            let mut body = format!(
-                "{body}\n**/dashboard** — Browse projects; click a project to open its board."
-            );
-            if self.sessions.current(conversation).await.is_some() {
-                body.push_str("\n**/board** — Current session's task board\n**/jobs** — Current session's jobs\n**/tasks [job-id]** — List tasks for the current session or a job.\n**/task <id>** — Read a task and its Markdown details.\n**/inboxes** — Current project's human queue\n**/inbox <content>** — Append a human requirement");
-            }
-            body
-        } else {
-            body.clone()
-        };
         self.send_view(conversation, &OutboundView::text("Agentix commands", body))
             .await?;
         Ok(())
@@ -135,8 +124,15 @@ impl Engine {
                 ),
             );
         }
+        if self.tasks.backend.is_some() {
+            commands.push((
+                "/dashboard",
+                "Browse projects; click a project to open its board.",
+            ));
+        }
+        let mut secondary_commands = Vec::new();
         if session.is_some() {
-            commands.extend([
+            secondary_commands.extend([
                 (
                     "/current",
                     "Show the session attached to this conversation.",
@@ -152,7 +148,7 @@ impl Engine {
                 ("/detach", "Disconnect this conversation from its session."),
             ]);
             if !read_only {
-                commands.extend([
+                secondary_commands.extend([
                     (
                         "/queue [resume|clear]",
                         "Show, resume, or clear queued prompts.",
@@ -164,18 +160,59 @@ impl Engine {
                     ),
                 ]);
                 if self.agent.capabilities().session_control {
-                    commands.extend_from_slice(SESSION_COMMAND_HELP);
+                    secondary_commands.extend_from_slice(SESSION_COMMAND_HELP);
                 }
+            }
+            if self.tasks.backend.is_some() {
+                secondary_commands.extend([
+                    ("/board", "Current session's task board"),
+                    ("/jobs", "Current session's jobs"),
+                    (
+                        "/tasks [job-id]",
+                        "List tasks for the current session or a job.",
+                    ),
+                    ("/task <id>", "Read a task and its Markdown details."),
+                    ("/inboxes", "Current project's human queue"),
+                    ("/inbox <content>", "Append a human requirement"),
+                ]);
             }
         }
         let mut lines = Vec::new();
-        for (usage, description) in commands {
+        for (heading, group) in [
+            ("First-level commands", commands),
+            ("Second-level commands", secondary_commands),
+        ] {
+            self.append_command_help(&mut lines, heading, group, session.as_ref())
+                .await;
+        }
+        if read_only {
+            lines.push("\nThis session is connected read-only.".into());
+        }
+        lines.join("\n")
+    }
+
+    async fn append_command_help(
+        &self,
+        lines: &mut Vec<String>,
+        heading: &str,
+        mut group: Vec<(&str, &str)>,
+        session: Option<&SessionId>,
+    ) {
+        if group.is_empty() {
+            return;
+        }
+        group.sort_unstable_by_key(|(usage, _)| *usage);
+        if !lines.is_empty() {
+            lines.push(String::new());
+        }
+        lines.push(format!("**{heading}**"));
+        for (usage, description) in group {
             let name = usage
                 .split_whitespace()
                 .next()
                 .unwrap_or_default()
                 .trim_start_matches('/');
-            if let Some(session) = &session
+            if let Some(session) = session
                 && matches!(
                     crate::parse_input(&format!("/{name}")),
                     Ok(ParsedInput::Command(AgentCommand::Session(_)))
@@ -187,10 +224,6 @@ impl Engine {
             }
             lines.push(format!("**{usage}** — {description}"));
         }
-        if read_only {
-            lines.push("\nThis session is connected read-only.".into());
-        }
-        lines.join("\n")
     }
 
     pub(super) async fn show_sessions(

@@ -106,7 +106,7 @@ fn telegram_default_menu_only_lists_commands_available_before_attach() {
             .iter()
             .map(|command| command.command.as_str())
             .collect::<Vec<_>>(),
-        ["sessions", "cancel", "rmux", "help"]
+        ["cancel", "help", "rmux", "sessions"]
     );
     assert!(
         commands
@@ -128,7 +128,7 @@ fn telegram_attached_menu_lists_session_commands() {
         .map(|command| command.command.as_str())
         .collect::<Vec<_>>();
 
-    assert_eq!(&names[..4], &["sessions", "cancel", "rmux", "help"]);
+    assert_eq!(&names[..4], &["cancel", "help", "rmux", "sessions"]);
     assert!(names[4..].windows(2).all(|pair| pair[0] < pair[1]));
 
     for name in [
@@ -158,7 +158,7 @@ fn telegram_attached_menu_lists_session_commands() {
             .all(|command| parse_input(&format!("/{}", command.command)).is_ok())
     );
     for command in &commands {
-        if ["sessions", "cancel", "rmux", "help"].contains(&command.command.as_str()) {
+        if ["cancel", "help", "rmux", "sessions"].contains(&command.command.as_str()) {
             assert!(!command.description.starts_with("✌️ "));
         } else {
             assert!(
@@ -189,9 +189,10 @@ async fn telegram_registers_commands_and_the_private_chat_menu_button() {
         "unexpected target: {}",
         requests[0].0
     );
-    assert_eq!(commands["commands"][0]["command"], "sessions");
-    assert_eq!(commands["commands"][1]["command"], "cancel");
-    assert_eq!(commands["commands"][3]["command"], "help");
+    assert_eq!(commands["commands"][0]["command"], "cancel");
+    assert_eq!(commands["commands"][1]["command"], "help");
+    assert_eq!(commands["commands"][2]["command"], "rmux");
+    assert_eq!(commands["commands"][3]["command"], "sessions");
     assert!(requests[1].0.ends_with("/SetChatMenuButton"));
     assert_eq!(menu_button["menu_button"]["type"], "commands");
 }

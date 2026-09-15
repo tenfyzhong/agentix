@@ -3847,9 +3847,9 @@ owner_user_ids = ["U1"]
             let config = task_board_test_config(setting, Path::new("/missing/taskix.toml"));
             let commands = super::telegram_menu_commands(&config);
             let expected = if enabled {
-                vec!["sessions", "dashboard", "cancel", "help"]
+                vec!["cancel", "dashboard", "help", "sessions"]
             } else {
-                vec!["sessions", "cancel", "help"]
+                vec!["cancel", "help", "sessions"]
             };
             assert_eq!(
                 commands

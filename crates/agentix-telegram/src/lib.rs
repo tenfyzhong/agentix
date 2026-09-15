@@ -631,7 +631,7 @@ pub fn menu_commands_for(
     kind: impl Into<Option<agentix_domain::MultiplexerKind>>,
 ) -> Vec<BotCommand> {
     let kind = kind.into();
-    BASE_MENU_COMMANDS
+    let mut commands: Vec<_> = BASE_MENU_COMMANDS
         .into_iter()
         .filter_map(|(command, description)| {
             if command == "rmux" {
@@ -640,7 +640,9 @@ pub fn menu_commands_for(
                 Some(BotCommand::new(command, description))
             }
         })
-        .collect()
+        .collect();
+    commands.sort_by(|left, right| left.command.cmp(&right.command));
+    commands
 }
 
 #[must_use]
@@ -686,10 +688,9 @@ pub fn attached_menu_commands() -> Vec<BotCommand> {
     .collect();
     commands.sort_by(|left, right| {
         let rank = |command: &BotCommand| {
-            BASE_MENU_COMMANDS
+            !BASE_MENU_COMMANDS
                 .iter()
-                .position(|(name, _)| *name == command.command)
-                .unwrap_or(BASE_MENU_COMMANDS.len())
+                .any(|(name, _)| *name == command.command)
         };
         rank(left)
             .cmp(&rank(right))
