@@ -8911,6 +8911,57 @@ async fn assert_slow_prompt_feedback(failure: Option<bool>) {
 }
 
 #[tokio::test]
+async fn first_background_notification_loads_title_without_attach() {
+    use agentix_core::{AgentKind, AgentRegistry};
+
+    for registry in [false, true] {
+        let gate = Arc::new(tokio::sync::Notify::new());
+        let mut fake = FakeAgent::new();
+        fake.title_gate = Some(gate.clone());
+        let adapter = Arc::new(fake);
+        let agent: Arc<dyn AgentAdapter> = if registry {
+            Arc::new(AgentRegistry::new(vec![(AgentKind::Codex, adapter.clone())]).unwrap())
+        } else {
+            adapter.clone()
+        };
+        let channel = Arc::new(FakeChannel::default());
+        let engine = Engine::new(
+            agent,
+            SqliteState::in_memory().await.unwrap(),
+            vec![channel.clone()],
+        );
+        engine
+            .handle_inbound(inbound("chat-a", "/help"))
+            .await
+            .unwrap();
+        let completion = engine.handle_agent_event(AgentEvent::TurnCompleted {
+            session_id: if registry { "codex:thr_a" } else { "thr_a" }.into(),
+            turn_id: "turn-previous".into(),
+            status: TurnStatus::Completed,
+            error: None,
+        });
+        let release_title = async {
+            while !adapter.calls().iter().any(|call| call == "title_read") {
+                tokio::task::yield_now().await;
+            }
+            gate.notify_one();
+        };
+        let (result, ()) = tokio::join!(completion, release_title);
+        result.unwrap();
+        let view = channel.sent().last().unwrap().1.clone();
+        assert_eq!(view.status, agentix_core::ViewStatus::Background);
+        assert!(view.title.contains("Parser cleanup"), "{}", view.title);
+        assert!(view.title.contains("Codex"), "{}", view.title);
+        assert!(
+            !adapter
+                .calls()
+                .iter()
+                .any(|call| call.starts_with("attach:"))
+        );
+    }
+}
+
+#[tokio::test]
 async fn background_feedback_does_not_wait_for_optional_title() {
     let mut agent = FakeAgent::new();
     agent.stalled_operation = Some("list");
@@ -8939,6 +8990,54 @@ async fn background_feedback_does_not_wait_for_optional_title() {
     assert_eq!(
         channel.sent().last().unwrap().1.status,
         agentix_core::ViewStatus::Background
+    );
+    assert_eq!(channel.sent().last().unwrap().1.title, "Codex · thr_a");
+}
+
+#[tokio::test]
+async fn background_title_timeout_preserves_reader_and_native_identity() {
+    use agentix_core::{AgentKind, AgentRegistry};
+
+    let gate = Arc::new(tokio::sync::Notify::new());
+    let mut fake = FakeAgent::new();
+    fake.title_gate = Some(gate.clone());
+    let adapter = Arc::new(fake);
+    let registry = AgentRegistry::new(vec![(AgentKind::Codex, adapter.clone())]).unwrap();
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        Arc::new(registry),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/help"))
+        .await
+        .unwrap();
+    for turn in ["first", "second"] {
+        engine
+            .handle_agent_event(AgentEvent::TurnCompleted {
+                session_id: "codex:thr_a".into(),
+                turn_id: turn.into(),
+                status: TurnStatus::Completed,
+                error: None,
+            })
+            .await
+            .unwrap();
+        let title = channel.sent().last().unwrap().1.title.clone();
+        if turn == "first" {
+            assert_eq!(title, "Codex · thr_a");
+            gate.notify_one();
+        } else {
+            assert!(title.contains("Parser cleanup"), "{title}");
+        }
+    }
+    assert_eq!(
+        adapter
+            .calls()
+            .iter()
+            .filter(|call| *call == "title_read")
+            .count(),
+        1
     );
 }
 

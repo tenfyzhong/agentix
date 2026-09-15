@@ -264,7 +264,7 @@ impl Engine {
                 ..agentix_domain::ViewSection::default()
             });
         }
-        let session_label = self.session_label(session_id).await;
+        let title = self.background_notification_title(session_id).await;
         for (conversation, owner_id) in recipients {
             if self
                 .turns
@@ -280,7 +280,7 @@ impl Engine {
                 &conversation,
                 &OutboundView {
                     sections: sections.clone(),
-                    title: format!("{} · {session_label}", self.agent.display_name()),
+                    title: title.clone(),
                     subtitle: Some(format!(
                         "Background turn {} · {}",
                         short_identifier(turn_id),
@@ -297,6 +297,32 @@ impl Engine {
                 .await;
         }
         Ok(())
+    }
+
+    async fn background_notification_title(&self, session_id: &SessionId) -> String {
+        self.sessions.await_background_title(session_id).await;
+        self.sessions
+            .cache
+            .lock()
+            .await
+            .get(session_id)
+            .map_or_else(
+                || {
+                    let native = session_id.native_str();
+                    format!(
+                        "{} · {}",
+                        self.agent.session_display_name(session_id),
+                        &native[..native.floor_char_boundary(8)]
+                    )
+                },
+                |session| {
+                    format!(
+                        "{} · {}",
+                        self.agent.display_name(),
+                        super::session_display_label(session)
+                    )
+                },
+            )
     }
 
     pub(super) async fn background_turn_summary(

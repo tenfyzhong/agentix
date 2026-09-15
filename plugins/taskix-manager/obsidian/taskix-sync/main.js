@@ -127,6 +127,7 @@ class SyncEngine {
         this.pending = new Map();
         this.timers = new Map();
         this.generations = new Map();
+        this.inboxErrors = new Map();
         this.disposed = false;
         this.ready = false;
         this.running = null;
@@ -227,6 +228,7 @@ class SyncEngine {
         if (!notes.length && !source.includes("<!-- taskix:inbox:start project=")) return;
         try {
             const rows = parseInbox(source, notes[0]?.project_id);
+            this.clearInboxError(filePath);
             const present = new Set(rows.map((row) => row.id));
             for (const note of [...notes, ...this.pending.values()]) {
                 if (note.filePath === filePath && !present.has(note.id)) this.forget(note.path);
@@ -235,9 +237,29 @@ class SyncEngine {
         } catch (error) {
             // Discard pending intents from a malformed file; never guess which
             // duplicate ID to update or treat a broken region as withdrawal.
-            this.forget(filePath);
-            this.notify(`Inbox synchronization paused for ${filePath}: ${error.message}`);
+            this.forget(filePath, true);
+            this.deferInboxError(filePath, error.message);
         }
+    }
+
+    clearInboxError(filePath) {
+        clearTimeout(this.inboxErrors.get(filePath)?.timer);
+        this.inboxErrors.delete(filePath);
+    }
+
+    deferInboxError(filePath, message) {
+        const previous = this.inboxErrors.get(filePath);
+        if (previous?.message === message && previous.notified) return;
+        this.clearInboxError(filePath);
+        const error = { message, notified: false, timer: null };
+        this.inboxErrors.set(filePath, error);
+        // Partial editor buffers are unsafe to synchronize, but usually recover
+        // as typing continues. Report only after a quiet period, once per error.
+        error.timer = setTimeout(() => {
+            error.timer = null;
+            error.notified = true;
+            this.notify(`Inbox synchronization paused for ${filePath}: ${message}`);
+        }, 5000);
     }
 
     async flush() {
@@ -373,7 +395,8 @@ class SyncEngine {
         }
     }
 
-    forget(filePath) {
+    forget(filePath, preserveInboxError = false) {
+        if (!preserveInboxError) this.clearInboxError(filePath);
         for (const note of [...this.notes.values(), ...this.pending.values(), ...(this.inFlight ? [this.inFlight] : [])]) {
             if (note.filePath === filePath) this.forget(note.path);
         }
@@ -397,6 +420,7 @@ class SyncEngine {
         this.timers.clear();
         this.notes.clear();
         this.generations.clear();
+        for (const filePath of this.inboxErrors.keys()) this.clearInboxError(filePath);
     }
 }
 
