@@ -427,7 +427,8 @@ fn update_task(
     if command != "task.claim" {
         authorize(state, &task, options, now)?;
     }
-    if matches!(command, "plan.register" | "task.start" | "task.done") {
+    let finish_blocked = command == "task.done" && task.status == TaskStatus::Blocked;
+    if matches!(command, "plan.register" | "task.start" | "task.done") && !finish_blocked {
         ensure!(
             task.status == TaskStatus::InProgress
                 && state.leases.iter().any(|l| l.task_id == task.id),
@@ -569,7 +570,7 @@ fn update_task(
             state.jobs[j].completed_at = None;
         }
         "task.block" | "task.wait" | "task.done" | "task.fail" | "task.cancel" | "task.release" => {
-            if command == "task.done" {
+            if command == "task.done" && !finish_blocked {
                 ensure!(
                     task.phase == Some(TaskPhase::Executing),
                     "conflict: Task must be EXECUTING before done; call start first"
@@ -729,7 +730,8 @@ pub(crate) fn review_job(
     now: i64,
 ) -> Result<Value> {
     let command = required(request, "command")?;
-    let expected = if command == "job.submit" {
+    let accept_active = command == "job.approve" && state.jobs[index].status == JobStatus::Active;
+    let expected = if command == "job.submit" || accept_active {
         JobStatus::Active
     } else {
         JobStatus::PendingReview
@@ -741,10 +743,23 @@ pub(crate) fn review_job(
     let reason = if command == "job.reject" {
         Some(required(request, "reason")?.to_owned())
     } else {
-        ensure!(
-            job_ready(state, &state.jobs[index].id),
-            "conflict: all non-cancelled Tasks must be DONE and at least one must exist"
-        );
+        if accept_active {
+            let job_id = &state.jobs[index].id;
+            let mut tasks = state
+                .tasks
+                .iter()
+                .filter(|task| &task.job_id == job_id)
+                .peekable();
+            ensure!(
+                tasks.peek().is_some() && tasks.all(|task| task.status.terminal()),
+                "conflict: all Tasks must be DONE, FAILED or CANCELLED and at least one must exist"
+            );
+        } else {
+            ensure!(
+                job_ready(state, &state.jobs[index].id),
+                "conflict: all non-cancelled Tasks must be DONE and at least one must exist"
+            );
+        }
         None
     };
     let job = &mut state.jobs[index];

@@ -25,11 +25,13 @@ function commandFor(note, target) {
         if (target === "TODO") {
             command = note.status === "FAILED" ? "retry" : ["DONE", "CANCELLED"].includes(note.status) ? "reopen" : undefined;
         }
-        if (["IN_PROGRESS", "DONE"].includes(target)) {
+        if (note.status === "BLOCKED" && target === "DONE") command = "done";
+        if (target === "IN_PROGRESS" || (target === "DONE" && command !== "done")) {
             throw new Error("Use taskix claim, plan and start/done with the owning session; this plugin does not hold task leases.");
         }
     } else if (note.kind === "job") {
         if (target === "CANCELLED") command = "cancel";
+        if (note.status === "ACTIVE" && target === "COMPLETED") command = "approve";
         if (note.status === "ACTIVE" && target === "PENDING_REVIEW") command = "submit";
         if (note.status === "PENDING_REVIEW") {
             if (target === "ACTIVE") command = "reject";

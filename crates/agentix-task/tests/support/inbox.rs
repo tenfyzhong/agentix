@@ -401,7 +401,7 @@ async fn inbox_status_requires_review_and_reopens_the_same_job_preserving_tasks(
             .await
             .unwrap_err()
             .to_string()
-            .contains("PENDING_REVIEW")
+            .contains("at least one must exist")
     );
     assert!(set_status(&f, id, "TODO").await.is_err());
     let task = f.task("Implementation").await;

@@ -43,7 +43,7 @@ export async function fixture(overrides = {}) {
         execute: async (args) => {
             calls.push(copy(args));
             const command = args[1];
-            const status = { block: "BLOCKED", wait: "WAITING_USER", cancel: "CANCELLED", retry: "TODO", reopen: "TODO" }[command];
+            const status = { done: "DONE", approve: "COMPLETED", block: "BLOCKED", wait: "WAITING_USER", cancel: "CANCELLED", retry: "TODO", reopen: "TODO" }[command];
             if (!status) throw new Error("Unsupported fixture command");
             row.status = status;
             row.revision++;

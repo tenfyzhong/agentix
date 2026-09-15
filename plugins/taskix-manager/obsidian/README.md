@@ -52,14 +52,14 @@ The reusable [tasknotes-settings.json](tasknotes-settings.json) contains this se
       YYMMDD-seq-<task-name>.md
 ```
 
-- **Dashboard.base** is a compact native table of active projects: Name (click to open Board), Status, and Updated (recent project activity). It uses read-only formula columns and hides archived projects. Its **Pending review** Kanban view lists all unarchived PENDING_REVIEW Jobs, oldest `pending_review_at` first. Sync safely replaces the old generated Dashboard.md.
-- **Recent Jobs.base** opens a cross-project board with ACTIVE, PENDING_REVIEW, COMPLETED, and CANCELLED columns. Each column shows up to ten unarchived Jobs, newest `updated_at` first. Taskix Sync supplies the limited TaskNotes Kanban view; four native status tables also limit results to ten each. Cards show the project Board link, local update time, and pending-review time when present. Sync safely migrates the registered `Pending Review.base` to the new filename.
+- **Dashboard.base** is a compact native table of active projects: Name (click to open Board), Status, and Updated (recent project activity). It uses read-only formula columns and hides archived projects. Its **Pending review** Kanban view lists all unarchived PENDING_REVIEW Jobs, newest `completed_at` first, then newest `updated_at`. Sync safely replaces the old generated Dashboard.md.
+- **Recent Jobs.base** opens a cross-project board with ACTIVE, PENDING_REVIEW, COMPLETED, and CANCELLED columns. Each column shows up to ten unarchived Jobs, newest `completed_at` first, then newest `updated_at`. Taskix Sync supplies the limited TaskNotes Kanban view; four native status tables also limit results to ten each. Cards show the project Board link, local update time, and pending-review time when present. Sync safely migrates the registered `Pending Review.base` to the new filename.
 - Card single-click opens the original Job or Task note directly. `taskix obsidian setup` persists TaskNotes' `singleClickAction: openNote` preference.
 - **Board.md** records repository identity, paths, project state, and sync status, and embeds two Bases views of type `tasknotesKanban`, grouped by status: Job board above Task board. It is the project note, with the Project ID and both `agent/project` and `agent/board` tags. Dashboard and task project links point here; there is no separate Project link on Board. Sync removes the old generated `meta.md` after publishing Board.
 - **Job → Tasks** directly links the task notes, using their filenames as labels.
 - **Tasks/** contains one note for every Task, including tasks without a published plan.
 
-Open Board in Reading view or Live Preview. Each Base filters the exact project's `Jobs/` or `Tasks/` folder, project ID, corresponding `agent/job` or `agent/task` tag, and `archived != true`. Jobs expose `title`, `created_at`, `updated_at`, and `completed_at` through the configured TaskNotes mappings without carrying the `task` tag. Both views sort by `updated_at` ascending, with filename breaking ties, and use 300px columns. Completed tasks remain visible until their Job or Project is archived. No generated checkbox lists are used as the view's data source.
+Open Board in Reading view or Live Preview. Each Base filters the exact project's `Jobs/` or `Tasks/` folder, project ID, corresponding `agent/job` or `agent/task` tag, and `archived != true`. Jobs expose `title`, `created_at`, `updated_at`, and `completed_at` through the configured TaskNotes mappings without carrying the `task` tag. Both views sort by `completed_at` descending, then `updated_at` descending, with filename breaking ties, and use 300px columns. Completed tasks remain visible until their Job or Project is archived. No generated checkbox lists are used as the view's data source.
 
 ## Task properties and plan body
 
@@ -131,9 +131,11 @@ File events are monitored only inside the configured `documents.directory`, incl
 | Task | BLOCKED / WAITING_USER / FAILED / CANCELLED | block / wait / fail / cancel, subject to normal state and lease guards |
 | Task | TODO from FAILED | retry |
 | Task | TODO from DONE or CANCELLED | reopen |
-| Task | IN_PROGRESS or DONE | Rejected; use the owning agent's claim, Plan, start/done workflow |
+| Task | BLOCKED → DONE | done without an agent lease |
+| Task | IN_PROGRESS, or DONE from other states | Rejected; use the owning agent's claim, Plan, start/done workflow |
 | Job | ACTIVE → PENDING_REVIEW | submit for `review_policy: required`, when all non-cancelled Tasks are DONE and at least one exists |
 | Job | PENDING_REVIEW → COMPLETED | approve after verification |
+| Job | ACTIVE → COMPLETED | approve when at least one Task exists and every Task is DONE, FAILED, or CANCELLED; preserve Task outcomes |
 | Job | PENDING_REVIEW → ACTIVE | reject; Task states are preserved |
 | Job | CANCELLED | cancel from an eligible unfinished Job |
 
@@ -150,7 +152,7 @@ Taskix Sync also monitors registered top-level items in `Projects/<project>/Inbo
 | `- [ ]` | TODO | Queue the item. Reopens a terminal Job to ACTIVE or rejects a pending review while preserving Tasks. Active Inbox/Task leases must be released first. |
 | `- [/]` | ACTIVE | Mark the item in progress without creating a Job or claiming an agent lease. If linked, reopen terminal work or reject pending verification. |
 | `- [r]` | PENDING_REVIEW | Mark an unlinked item pending review. If linked, submit its ACTIVE Job when all non-cancelled Tasks are DONE and at least one exists. |
-| `- [x]` | COMPLETED | Approve a PENDING_REVIEW Job. An unlinked item can complete directly after reopening if cancelled. |
+| `- [x]` | COMPLETED | Approve a PENDING_REVIEW Job, or an ACTIVE Job with at least one Task and all Tasks DONE, FAILED, or CANCELLED. An unlinked item can complete directly after reopening if cancelled. |
 | `- [-]` | CANCELLED | Cancel unfinished work and revoke its leases. Reopen completed items before cancelling. |
 
 Task completion automatically moves the Inbox item to `[r]` with its Job. Verification rejection returns both to ACTIVE (`[/]`); approval produces COMPLETED (`[x]`). Manual checkbox changes never create Jobs. Unlinked items retain their own status; an explicit `inbox claim-next` creates a Job for an eligible unlinked entry. An unleased ACTIVE entry is eligible for an explicit `inbox claim-next`; lease release/expiry returns it to TODO for recovery of the same Job. Cancelled entries must be reopened before completion. Deleted entries cannot be revived, and archived Projects/Jobs must be unarchived first. Invalid edits restore the checkbox and report the CLI error. Deletion retains the existing withdrawal behavior.

@@ -54,7 +54,9 @@ test("Obsidian mappings preserve task leases and explicitly route Job review", (
     assert.equal(commandFor(job, "ACTIVE")[1], "reject");
     assert.equal(commandFor(job, "COMPLETED")[1], "approve");
     assert.equal(commandFor({ ...job, status: "ACTIVE" }, "PENDING_REVIEW")[1], "submit");
-    assert.throws(() => commandFor({ ...job, status: "ACTIVE" }, "COMPLETED"));
+    assert.equal(commandFor({ ...job, status: "ACTIVE" }, "COMPLETED")[1], "approve");
+    assert.equal(commandFor({ ...task, status: "BLOCKED" }, "DONE")[1], "done");
+    assert.equal(commandFor({ ...task, status: "BLOCKED" }, "CANCELLED")[1], "cancel");
 });
 
 async function jobFixture(t) {
@@ -514,4 +516,45 @@ test("Obsidian ignores an uncached copied note after verifying its authoritative
     assert.equal(queried, f.row.id);
     assert.equal(f.calls.length, 0);
     assert.equal(f.engine.notes.has("Tasks/copied.md"), false);
+});
+
+
+test("Obsidian submits manual terminal transitions through the guarded CLI", async (t) => {
+    for (const [kind, status, target, command] of [
+        ["task", "BLOCKED", "DONE", "done"],
+        ["task", "BLOCKED", "CANCELLED", "cancel"],
+        ["job", "ACTIVE", "COMPLETED", "approve"],
+        ["job", "ACTIVE", "CANCELLED", "cancel"],
+    ]) {
+        await t.test(`${kind} ${status} -> ${target}`, async (t) => {
+            const f = await fixture(); t.after(() => f.engine.dispose());
+            Object.assign(f.row, {kind, status, id: `${kind}_one`});
+            f.files.get(f.row.path).id = f.row.id;
+            f.row.properties.status = status;
+            f.files.get(f.row.path).status = status;
+            await f.engine.initialize();
+            f.edit(target);
+            await f.engine.flush();
+            assert.equal(f.calls.length, 1);
+            assert.deepEqual(f.calls[0].slice(0, 3), [kind, command, f.row.id]);
+            assert.ok(f.calls[0].includes("--expect-revision"));
+            assert.ok(!f.calls[0].includes("--lease-token"));
+            assert.equal(f.files.get(f.row.path).status, target);
+            assert.deepEqual(f.notices, []);
+        });
+    }
+});
+
+test("Obsidian restores ACTIVE when CLI rejects completion with unfinished Tasks", async (t) => {
+    const f = await fixture({execute: async () => {throw new Error("all Tasks must be DONE, FAILED or CANCELLED");}});
+    t.after(() => f.engine.dispose());
+    Object.assign(f.row, {kind: "job", status: "ACTIVE", id: "job_one"});
+    f.files.get(f.row.path).id = f.row.id;
+    f.row.properties.status = "ACTIVE";
+    f.files.get(f.row.path).status = "ACTIVE";
+    await f.engine.initialize();
+    f.edit("COMPLETED");
+    await f.engine.flush();
+    assert.equal(f.files.get(f.row.path).status, "ACTIVE");
+    assert.match(f.notices[0], /all Tasks must be/);
 });
