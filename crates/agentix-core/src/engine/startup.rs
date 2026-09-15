@@ -116,6 +116,7 @@ impl Engine {
                     )
                     .then(Instant::now),
                     rendered_elapsed_seconds: None,
+                    terminal_elapsed: None,
                     status: stored.status,
                 },
             );
@@ -151,7 +152,7 @@ impl Engine {
             }
             if status == RestoredBindingStatus::Attached {
                 self.sessions
-                    .cache_session_summary(self.agent.as_ref(), &session)
+                    .cache_session_summary(self.agent.clone(), &session)
                     .await;
             }
             let session_label = self.session_label(&session).await;
@@ -286,6 +287,7 @@ impl Engine {
                         status: stored.status,
                         started_at: None,
                         rendered_elapsed_seconds: None,
+                        terminal_elapsed: None,
                     };
                     let view = live_turn_view(
                         self.agent.display_name(),

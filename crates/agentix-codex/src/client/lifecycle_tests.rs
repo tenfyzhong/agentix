@@ -413,3 +413,106 @@ async fn managed_proxy_tracks_same_directory_clients_and_releases_its_runtime() 
             .unwrap();
     }
 }
+
+fn snapshot_with_items(count: usize) -> agentix_domain::TurnSummary {
+    agentix_domain::TurnSummary {
+        id: "turn".into(),
+        status: agentix_domain::TurnStatus::InProgress,
+        user_text: Some("prompt".into()),
+        agent_text: None,
+        tools: vec![],
+        items: (0..count)
+            .map(|index| agentix_domain::ItemSummary {
+                id: format!("item-{index:06}"),
+                kind: "commandExecution".into(),
+                text: Some("x".repeat(128)),
+                status: Some("completed".into()),
+            })
+            .collect(),
+    }
+}
+
+#[tokio::test]
+async fn observed_snapshot_diff_preserves_full_equality_and_new_item_order() {
+    let server = MockCodexAppServer::start();
+    let client = CodexClient::connect(server.endpoint()).await.unwrap();
+    let mut events = client.subscribe();
+    for count in [8, 128] {
+        let mut old = snapshot_with_items(count);
+        old.items[0].text = None;
+        old.items[1].status = None;
+        let mut duplicate = old.items[3].clone();
+        duplicate.text = Some("same ID with another old value".into());
+        old.items.push(duplicate.clone());
+        let mut changed_kind = old.items[2].clone();
+        changed_kind.kind = "reasoning".into();
+        let mut changed_text = old.items[0].clone();
+        changed_text.text = Some(String::new());
+        let mut changed_status = old.items[1].clone();
+        changed_status.status = Some(String::new());
+        let mut added = duplicate.clone();
+        added.text = Some("new value".into());
+        let expected = vec![
+            changed_kind,
+            changed_text,
+            changed_status,
+            added.clone(),
+            added,
+        ];
+        let mut next = old.clone();
+        next.items = vec![duplicate, old.items[3].clone()];
+        next.items.extend(expected.clone());
+        let mut user_item = old.items[4].clone();
+        user_item.kind = "userMessage".into();
+        next.items.push(user_item);
+        client
+            .publish_turn_snapshot(&SessionId::new("s"), Some(&old), &next)
+            .await;
+        let mut actual = vec![];
+        while let Ok(event) = events.try_recv() {
+            let AgentEvent::ItemCompleted { item, .. } = event else {
+                panic!("unexpected snapshot event: {event:?}");
+            };
+            actual.push(item);
+        }
+        assert_eq!(actual, expected);
+    }
+}
+
+#[tokio::test]
+#[ignore = "manual snapshot diff scaling benchmark"]
+async fn observed_snapshot_diff_scales_with_item_count() {
+    let server = MockCodexAppServer::start();
+    let client = CodexClient::connect(server.endpoint()).await.unwrap();
+    let session = SessionId::new("s");
+    let mut medians = vec![];
+    for count in [128, 4096] {
+        let old = snapshot_with_items(count);
+        let mut next = old.clone();
+        next.items.last_mut().unwrap().text = Some("changed output".into());
+        let mut samples = vec![];
+        for _ in 0..3 {
+            let started = std::time::Instant::now();
+            for _ in 0..10 {
+                client
+                    .publish_turn_snapshot(
+                        &session,
+                        Some(std::hint::black_box(&old)),
+                        std::hint::black_box(&next),
+                    )
+                    .await;
+            }
+            samples.push(started.elapsed());
+        }
+        samples.sort_unstable();
+        eprintln!(
+            "PERF snapshot_diff items={count} median_us={} samples={samples:?}",
+            samples[1].as_micros() / 10
+        );
+        medians.push(samples[1]);
+    }
+    assert!(
+        medians[1] < medians[0] * 96,
+        "32x more items must not produce quadratic diff growth: {medians:?}"
+    );
+}

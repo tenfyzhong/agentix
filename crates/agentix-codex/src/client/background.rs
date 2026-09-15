@@ -32,16 +32,31 @@ impl BackgroundTurns {
             .chain(self.latest_completed.keys())
             .cloned()
             .collect::<HashSet<_>>();
+        self.poll_selected(client, running, &candidates).await;
+    }
+
+    pub(super) async fn poll_selected(
+        &mut self,
+        client: &CodexClient,
+        running: &HashSet<SessionId>,
+        candidates: &HashSet<SessionId>,
+    ) {
         for session in candidates {
-            match self.read_completions(client, &session).await {
+            if client.subscriptions.lock().await.contains(session)
+                || client.observed.lock().await.contains_key(session)
+            {
+                self.latest_completed.remove(session);
+                continue;
+            }
+            match self.read_completions(client, session).await {
                 Ok((latest, events)) => {
-                    if running.contains(&session) {
+                    if running.contains(session) {
                         self.latest_completed.insert(session.clone(), latest);
                     } else {
-                        self.latest_completed.remove(&session);
+                        self.latest_completed.remove(session);
                     }
-                    let subscribed = client.subscriptions.lock().await.contains(&session);
-                    if subscribed || client.observed.lock().await.contains_key(&session) {
+                    let subscribed = client.subscriptions.lock().await.contains(session);
+                    if subscribed || client.observed.lock().await.contains_key(session) {
                         continue;
                     }
                     let mut completed = client.completed_turns.lock().await;
@@ -49,7 +64,7 @@ impl BackgroundTurns {
                     // since the last poll. Skip through its latest completed turn.
                     let already_delivered = events.iter().rposition(|event| {
                         matches!(event, AgentEvent::TurnCompleted { turn_id, .. }
-                            if completed.get(&session) == Some(turn_id))
+                            if completed.get(session) == Some(turn_id))
                     });
                     for event in events
                         .into_iter()

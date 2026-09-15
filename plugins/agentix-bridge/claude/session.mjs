@@ -1,4 +1,4 @@
-import { readTranscript } from './history.mjs';
+import { createTranscriptReader } from './history.mjs';
 import { randomUUID } from 'node:crypto';
 import { ChannelDelivery } from './delivery.mjs';
 import { failure } from '../protocol/errors.mjs';
@@ -7,6 +7,9 @@ import { failure } from '../protocol/errors.mjs';
 export class ClaudeSession {
     constructor(options = {}) {
         this.options = options;
+        this.readTranscript = options.readTranscript
+            ? (path, sessionId) => options.readTranscript(path, sessionId).at(-1)
+            : createTranscriptReader();
         this.delivery = options.delivery ?? new ChannelDelivery(options.notify);
         this.instance = randomUUID();
         this.turns = structuredClone(options.saved?.turns ?? []);
@@ -171,7 +174,7 @@ export class ClaudeSession {
         if (['Stop', 'StopFailure', 'SessionEnd'].includes(value.hook_event_name) && this.active) {
             const turn = this.active;
             const previous = { status: turn.status, agent_text: turn.agent_text };
-            const transcript = (this.options.readTranscript ?? readTranscript)(this.identity.transcript_path, this.identity.session_id).at(-1);
+            const transcript = this.readTranscript(this.identity.transcript_path, this.identity.session_id);
             if (transcript?.user_text === turn.user_text) {
                 turn.items = transcript.items;
                 turn.tools = transcript.tools ?? [];

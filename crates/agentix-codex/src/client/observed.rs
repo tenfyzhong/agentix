@@ -1,6 +1,18 @@
+use std::collections::HashSet;
+
 use agentix_domain::{AgentEvent, ItemSummary, SessionId, TurnStatus, TurnSummary};
 
 use super::{ClientError, CodexClient};
+
+fn item_key(item: &ItemSummary) -> (&str, &str, Option<&str>, Option<&str>) {
+    let ItemSummary {
+        id,
+        kind,
+        text,
+        status,
+    } = item;
+    (id, kind, text.as_deref(), status.as_deref())
+}
 
 impl CodexClient {
     pub(super) async fn latest_stored_turn(
@@ -12,19 +24,6 @@ impl CodexClient {
             result => result?,
         };
         Ok(history.turns.into_iter().last())
-    }
-
-    pub(super) async fn poll_observed_sessions(&self) {
-        let sessions = self
-            .observed
-            .lock()
-            .await
-            .keys()
-            .cloned()
-            .collect::<Vec<_>>();
-        for session in sessions {
-            self.poll_observed_session(&session).await;
-        }
     }
 
     pub(super) async fn poll_observed_session(&self, session: &SessionId) {
@@ -72,11 +71,19 @@ impl CodexClient {
                 status: None,
             });
         }
+        // Borrow all equality fields: duplicate IDs can hold different content.
+        // Tiny snapshots avoid allocating an index; long turns avoid quadratic scans.
+        let old_items = old
+            .filter(|old| old.items.len() > 16)
+            .map(|old| old.items.iter().map(item_key).collect::<HashSet<_>>());
         items.extend(
             turn.items
                 .iter()
                 .filter(|item| item.kind != "userMessage")
-                .filter(|item| old.is_none_or(|old| !old.items.contains(item)))
+                .filter(|item| match &old_items {
+                    Some(index) => !index.contains(&item_key(item)),
+                    None => old.is_none_or(|old| !old.items.contains(item)),
+                })
                 .cloned(),
         );
         if !turn.items.iter().any(|item| item.kind == "agentMessage")

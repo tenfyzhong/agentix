@@ -370,8 +370,7 @@ mod unix {
             )
             .await;
 
-            let start = next_json(&mut websocket).await;
-            assert_eq!(start["method"], "turn/start");
+            let start = await_empty_thread_request(&mut websocket, "turn/start").await;
             send_result(
                 &mut websocket,
                 &start["id"],
@@ -379,7 +378,7 @@ mod unix {
             )
             .await;
 
-            let resumed = next_json(&mut websocket).await;
+            let resumed = await_empty_thread_request(&mut websocket, "thread/resume").await;
             assert_eq!(resumed["method"], "thread/resume");
             assert_eq!(resumed["params"]["excludeTurns"], true);
             send_result(&mut websocket, &resumed["id"], json!({})).await;
@@ -777,6 +776,50 @@ mod unix {
             .unwrap();
         let initialized = next_json(websocket).await;
         assert_eq!(initialized["method"], "initialized");
+    }
+
+    // Recovery queries can interleave both before and after turn/start acknowledgement.
+    async fn await_empty_thread_request<S>(
+        websocket: &mut tokio_tungstenite::WebSocketStream<S>,
+        expected: &str,
+    ) -> Value
+    where
+        S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+    {
+        loop {
+            let request = next_json(websocket).await;
+            match request["method"].as_str().unwrap() {
+                method if method == expected => return request,
+                "thread/loaded/list" => {
+                    send_result(
+                        websocket,
+                        &request["id"],
+                        json!({"data": ["thr_empty"], "nextCursor": null}),
+                    )
+                    .await;
+                }
+                "thread/read" => {
+                    send_result(
+                        websocket,
+                        &request["id"],
+                        json!({"thread": {"id": "thr_empty", "ephemeral": false,
+                        "path": "/tmp/rollout-thr_empty.jsonl",
+                        "status": {"type": "idle"}, "turns": []}}),
+                    )
+                    .await;
+                }
+                "thread/resume" => {
+                    send_error(
+                        websocket,
+                        &request["id"],
+                        -32600,
+                        "no rollout found for thread id thr_empty",
+                    )
+                    .await;
+                }
+                method => panic!("unexpected request while awaiting {expected}: {method}"),
+            }
+        }
     }
 
     async fn next_json<S>(websocket: &mut tokio_tungstenite::WebSocketStream<S>) -> Value

@@ -504,6 +504,10 @@ impl ChannelAdapter for TelegramAdapter {
         Ok(())
     }
 
+    fn supports_command_menu_sync(&self) -> bool {
+        true
+    }
+
     async fn sync_command_menu(
         &self,
         conversation: &ConversationRef,
