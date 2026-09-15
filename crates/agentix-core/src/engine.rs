@@ -107,6 +107,7 @@ struct TurnBuffer {
     status: TurnStatus,
     started_at: Option<Instant>,
     rendered_elapsed_seconds: Option<u64>,
+    terminal_elapsed: Option<Duration>,
 }
 
 impl TurnBuffer {
@@ -114,7 +115,24 @@ impl TurnBuffer {
         self.started_at.get_or_insert_with(Instant::now);
     }
 
+    fn set_status(&mut self, status: TurnStatus) {
+        if matches!(
+            status,
+            TurnStatus::Completed | TurnStatus::Interrupted | TurnStatus::Failed
+        ) {
+            if self.terminal_elapsed.is_none() {
+                self.terminal_elapsed = self.elapsed();
+            }
+        } else {
+            self.terminal_elapsed = None;
+        }
+        self.status = status;
+    }
+
     fn elapsed(&self) -> Option<Duration> {
+        if let Some(elapsed) = self.terminal_elapsed {
+            return Some(elapsed);
+        }
         self.started_at
             .map(|started_at| Instant::now().saturating_duration_since(started_at))
     }

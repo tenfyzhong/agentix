@@ -967,7 +967,7 @@ impl Engine {
             }
             if let Some(mut buffer) = buffer {
                 if matches!(buffer.status, TurnStatus::InProgress | TurnStatus::Unknown) {
-                    buffer.status = TurnStatus::Interrupted;
+                    buffer.set_status(TurnStatus::Interrupted);
                 }
                 let view = super::live_turn_view(
                     self.agent.display_name(),

@@ -529,7 +529,7 @@ impl Engine {
                     .entry(key)
                     .or_insert_with(|| TurnBuffer::from_summary(turn, self.output));
                 buffer.merge_summary(turn, self.output);
-                buffer.status = turn.status.clone();
+                buffer.set_status(turn.status.clone());
             }
             if matches!(turn.status, TurnStatus::InProgress | TurnStatus::Unknown) {
                 self.record_turn_started(session.clone(), turn.id.clone())
@@ -1144,6 +1144,7 @@ impl Engine {
                 status: TurnStatus::InProgress,
                 started_at: Some(Instant::now()),
                 rendered_elapsed_seconds: None,
+                terminal_elapsed: None,
             },
         );
         if let Err(error) = self

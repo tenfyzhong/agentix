@@ -166,7 +166,7 @@ impl Engine {
             buffer.merge_summary(&turn, self.output);
         }
         buffer.ensure_started();
-        buffer.status = status;
+        buffer.set_status(status);
         if let Some(error) = error {
             buffer.record_output(None, &format!("Error: {error}"), false, false);
         }
@@ -650,7 +650,7 @@ impl Engine {
                 let mut buffers = self.turns.buffers.lock().await;
                 let buffer = buffers.entry(key.clone()).or_default();
                 if matches!(buffer.status, TurnStatus::InProgress | TurnStatus::Unknown) {
-                    buffer.status = TurnStatus::Interrupted;
+                    buffer.set_status(TurnStatus::Interrupted);
                 }
             }
             match tokio::time::timeout_at(

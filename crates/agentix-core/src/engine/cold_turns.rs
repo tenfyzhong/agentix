@@ -38,6 +38,8 @@ struct StoredTurn {
     status: TurnStatus,
     started_at: Option<Duration>,
     rendered_elapsed_seconds: Option<u64>,
+    #[serde(default)]
+    terminal_elapsed: Option<Duration>,
     message: Option<MessageRef>,
     last_render: Option<Duration>,
 }
@@ -64,6 +66,7 @@ impl ColdTurns {
                 .started_at
                 .map(|start| start.saturating_duration_since(self.origin)),
             rendered_elapsed_seconds: value.buffer.rendered_elapsed_seconds,
+            terminal_elapsed: value.buffer.terminal_elapsed,
             message: value.message,
             last_render: value
                 .last_render
@@ -89,6 +92,7 @@ impl ColdTurns {
                         status: stored.status,
                         started_at: stored.started_at.map(|offset| self.origin + offset),
                         rendered_elapsed_seconds: stored.rendered_elapsed_seconds,
+                        terminal_elapsed: stored.terminal_elapsed,
                     },
                     message: stored.message,
                     last_render: stored.last_render.map(|offset| self.render_origin + offset),
@@ -121,6 +125,7 @@ mod tests {
                 status: TurnStatus::Completed,
                 started_at: Some(started),
                 rendered_elapsed_seconds: Some(1),
+                terminal_elapsed: Some(Duration::from_secs(1)),
             },
             message: Some(MessageRef::new(
                 ConversationRef::new(ChannelKind::Telegram, "chat"),

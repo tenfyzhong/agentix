@@ -479,3 +479,11 @@ operations, not total user-visible latency.
   [setup and supported operations](claude-code.md).
 - Shared IM behavior: [session switching](../crates/agentix-core/src/engine/session_switch.rs),
   [turn and exit handling](../crates/agentix-core/src/engine/turn_flows.rs).
+
+### Terminal card timing
+
+Live turn elapsed time freezes when the turn first completes, fails, or is
+interrupted. Exit cleanup, repeated completion events, and `/last` reuse that
+duration, including after the turn leaves the hot buffer and is restored from
+the temporary cache. Historical turns with no observed start time do not invent
+a duration.

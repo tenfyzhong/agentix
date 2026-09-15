@@ -1702,3 +1702,101 @@ async fn slow_input_recovery_exit_cleanup_does_not_restart_cancelled_reads() {
         "exit finalization must not start input history reads"
     );
 }
+
+#[tokio::test(start_paused = true)]
+async fn terminal_elapsed_survives_cold_restore_and_repeated_completion() {
+    // SQLite uses a worker thread; prevent automatic clock jumps while it replies.
+    let clock_guard = tokio::spawn(async {
+        loop {
+            tokio::task::yield_now().await;
+        }
+    });
+    for status in [
+        crate::TurnStatus::Completed,
+        crate::TurnStatus::Interrupted,
+        crate::TurnStatus::Failed,
+    ] {
+        let channel = Arc::new(CompletedTurnChannel::default());
+        let engine = Engine::new(
+            Arc::new(UnusedAgent),
+            SqliteState::in_memory().await.unwrap(),
+            vec![channel.clone()],
+        );
+        let session = SessionId::new("elapsed-session");
+        let conversation = ConversationRef::new(ChannelKind::Telegram, "chat");
+        engine
+            .record_turn_started(session.clone(), "turn".into())
+            .await
+            .unwrap();
+        {
+            let mut buffers = engine.turns.buffers.lock().await;
+            let buffer = buffers.get_mut(&(session.clone(), "turn".into())).unwrap();
+            buffer.user_text = "Question".into();
+            buffer.agent_text = "Answer".into();
+        }
+        tokio::time::advance(Duration::from_secs(5)).await;
+        engine
+            .handle_turn_completed(
+                &conversation,
+                &session,
+                "turn".into(),
+                status.clone(),
+                None,
+                DeliveryClass::Live,
+            )
+            .await
+            .unwrap();
+        let first = engine
+            .turns
+            .cold
+            .load(&session, "turn")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(first.buffer.elapsed_seconds(), Some(5));
+        tokio::time::advance(Duration::from_secs(57)).await;
+        let restored = engine
+            .turns
+            .cold
+            .load(&session, "turn")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            restored.buffer.elapsed_seconds(),
+            Some(5),
+            "terminal duration grew while archived: {status:?}"
+        );
+        engine
+            .handle_turn_completed(
+                &conversation,
+                &session,
+                "turn".into(),
+                status.clone(),
+                None,
+                DeliveryClass::Live,
+            )
+            .await
+            .unwrap();
+        let repeated = engine
+            .turns
+            .cold
+            .load(&session, "turn")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(repeated.buffer.elapsed_seconds(), Some(5));
+        engine
+            .cleanup_exited_turn(&conversation, &session, "turn")
+            .await;
+        let updates = channel.updates.lock().await;
+        let subtitle = updates.last().unwrap().1.subtitle.as_deref().unwrap();
+        let expected = match status {
+            crate::TurnStatus::Completed => "Completed in 5s",
+            crate::TurnStatus::Interrupted => "Interrupted after 5s",
+            _ => "Failed after 5s",
+        };
+        assert!(subtitle.ends_with(expected), "{subtitle}");
+    }
+    clock_guard.abort();
+}
