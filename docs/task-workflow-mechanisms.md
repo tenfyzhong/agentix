@@ -98,7 +98,7 @@ sequenceDiagram
     C->>D: Revalidate and register the version in a transaction
     A->>C: start + session/token
     C->>C: Validate Plan file, dependencies, and lease
-    C->>D: Switch to EXECUTING; retain token
+    C->>D: Switch to EXECUTING and retain token
     A->>A: Implement, test, and verify acceptance
     A->>C: done + session/token
     C->>D: Mark DONE and release the lease
