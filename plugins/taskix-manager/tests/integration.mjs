@@ -143,7 +143,7 @@ test("Inbox bridge edits real Markdown, enforces Job review and reopens complete
     };
     await edit("/", "x");
     assert.equal((await f.run(["job", "show", claimed.job.id])).status, "ACTIVE");
-    assert.match(notices[0], /PENDING_REVIEW/);
+    assert.match(notices[0], /all Tasks must be DONE, FAILED or CANCELLED/);
     assert.match(await readFile(path, "utf8"), /- \[\/\] Deliver/);
     const owner = { session: "inbox-worker", executor: "agent:test" };
     const claim = await f.run(["task", "claim", task.id], owner); owner.token = claim.lease.token;

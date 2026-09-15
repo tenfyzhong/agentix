@@ -255,11 +255,11 @@ pub(crate) async fn request_scope(conn: &mut SqliteConnection, request: &Value) 
         }
         scope.parents(conn).await?;
     }
-    // Only operations that modify a whole Job need all of its Task records.
+    // Whole-Job mutations and human acceptance inspect all Task records.
     // Other lifecycle checks use SQL summaries of the unmaterialized siblings.
     if matches!(
         command,
-        "job.cancel" | "job.followup" | "job.delete" | "project.delete"
+        "job.cancel" | "job.approve" | "job.followup" | "job.delete" | "project.delete"
     ) || inbox_wide
     {
         scope.job_tasks(conn).await?;

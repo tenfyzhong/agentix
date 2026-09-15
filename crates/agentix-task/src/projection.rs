@@ -927,7 +927,7 @@ impl Service {
             "views": [{
                 "type": "tasknotesKanban", "name": format!("{kind} board"),
                 "groupBy": {"property": "status", "direction": "ASC"},
-                "order": ["status"], "sort": [{"column": "updated_at", "direction": "ASC"}, {"column": "file.name", "direction": "ASC"}],
+                "order": ["status"], "sort": completion_sort(),
                 "columnOrder": {"status": statuses}, "pinnedColumns": statuses,
                 "hideEmptyColumns": true, "columnWidth": 300
             }]
@@ -1355,12 +1355,17 @@ pub(crate) fn atomic_write(path: &Path, body: &str) -> Result<()> {
 
 const REVIEW_TIME_FORMULA: &str = "if(note.pending_review_at, date(note.pending_review_at).format(\"YYYY-MM-DD HH:mm:ss\"), \"\")";
 
-fn recent_jobs_views() -> Vec<Value> {
-    let statuses = ["ACTIVE", "PENDING_REVIEW", "COMPLETED", "CANCELLED"];
-    let sort = json!([
+fn completion_sort() -> Value {
+    json!([
+        {"column":"completed_at","direction":"DESC"},
         {"column":"updated_at","direction":"DESC"},
         {"column":"file.name","direction":"ASC"}
-    ]);
+    ])
+}
+
+fn recent_jobs_views() -> Vec<Value> {
+    let statuses = ["ACTIVE", "PENDING_REVIEW", "COMPLETED", "CANCELLED"];
+    let sort = completion_sort();
     let mut views = vec![json!({
         "type":"taskixRecentJobs", "name":"Recent jobs",
         "groupBy":{"property":"status","direction":"ASC"},
@@ -1386,7 +1391,7 @@ fn pending_review_view() -> Value {
         "filters":{"and":["file.hasTag(\"agent/job\")", "note.status == \"PENDING_REVIEW\"", "archived != true"]},
         "groupBy":{"property":"status","direction":"ASC"},
         "order":["status", "projects", "formula.review_time"],
-        "sort":[{"column":"pending_review_at","direction":"ASC"},{"column":"file.name","direction":"ASC"}],
+        "sort":completion_sort(),
         "columnOrder":{"status":["PENDING_REVIEW"]}, "pinnedColumns":["PENDING_REVIEW"],
         "hideEmptyColumns":true, "columnWidth":300
     })

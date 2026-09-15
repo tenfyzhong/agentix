@@ -42,7 +42,10 @@ impl TaskStatus {
                     InProgress,
                     Done | Blocked | WaitingUser | Failed | Cancelled
                 )
-                | (Blocked, InProgress | WaitingUser | Failed | Cancelled)
+                | (
+                    Blocked,
+                    InProgress | WaitingUser | Done | Failed | Cancelled
+                )
                 | (WaitingUser, InProgress | Blocked | Failed | Cancelled)
         )
     }

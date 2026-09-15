@@ -1529,7 +1529,7 @@ async fn every_task_state_accepts_only_its_documented_commands_without_partial_w
             "IN_PROGRESS",
             &["block", "wait", "done", "fail", "cancel", "heartbeat"],
         ),
-        ("BLOCKED", &["claim", "wait", "fail", "cancel"]),
+        ("BLOCKED", &["claim", "wait", "done", "fail", "cancel"]),
         ("WAITING_USER", &["claim", "block", "fail", "cancel"]),
         ("DONE", &["reopen"]),
         ("FAILED", &["retry"]),

@@ -102,7 +102,7 @@ async fn recent_jobs_base_is_independent_scoped_and_safe_to_regenerate() {
     for view in base["views"].as_array().unwrap() {
         assert_eq!(
             view["sort"][0],
-            json!({"column":"updated_at","direction":"DESC"})
+            json!({"column":"completed_at","direction":"DESC"})
         );
     }
     assert_eq!(
@@ -317,7 +317,7 @@ async fn dashboard_migration_protects_collisions_and_recovers_after_partial_publ
 }
 
 #[tokio::test]
-async fn dashboard_review_board_and_project_boards_use_chronological_sorting() {
+async fn dashboard_review_board_and_project_boards_use_completion_descending_sorting() {
     let f = Fixture::new().await;
     let root = f.service.config().output_dir();
     let base: Value =
@@ -328,18 +328,25 @@ async fn dashboard_review_board_and_project_boards_use_chronological_sorting() {
     assert_eq!(view["name"], "Pending review");
     assert_eq!(
         view["sort"][0],
-        json!({"column":"pending_review_at","direction":"ASC"})
+        json!({"column":"completed_at","direction":"DESC"})
     );
     let filters = view["filters"].to_string();
     for expected in ["agent/job", "PENDING_REVIEW", "archived"] {
         assert!(filters.contains(expected), "{filters}");
     }
     let board = std::fs::read_to_string(root.join("Projects/demo/Board.md")).unwrap();
-    for section in board.split("```base\n").skip(1) {
+    let job = std::fs::read_to_string(
+        root.join(&f.service.store().snapshot().await.unwrap().jobs[0].document_path),
+    )
+    .unwrap();
+    for section in [board, job]
+        .iter()
+        .flat_map(|doc| doc.split("```base\n").skip(1))
+    {
         let base: Value = serde_yaml::from_str(section.split("\n```").next().unwrap()).unwrap();
         assert_eq!(
             base["views"][0]["sort"][0],
-            json!({"column":"updated_at","direction":"ASC"})
+            json!({"column":"completed_at","direction":"DESC"})
         );
     }
 }

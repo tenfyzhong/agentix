@@ -539,3 +539,117 @@ async fn followup_new_session_records_before_tasks_without_stealing_later_captur
         "New result"
     );
 }
+
+#[tokio::test]
+async fn human_can_close_active_jobs_with_terminal_tasks_without_rewriting_outcomes() {
+    for command in ["job.approve", "job.cancel"] {
+        for statuses in [
+            vec!["DONE", "FAILED", "CANCELLED"],
+            vec!["CANCELLED"],
+            vec!["FAILED"],
+            vec!["DONE"],
+        ] {
+            let f = Fixture::new().await;
+            let mut ids = Vec::new();
+            for status in &statuses {
+                ids.push(f.task(status).await);
+            }
+            for (id, status) in ids.iter().zip(&statuses) {
+                match *status {
+                    "DONE" => finish(&f, id).await,
+                    "FAILED" => {
+                        let claim = f.start(id, "failure").await;
+                        f.service
+                            .execute(
+                                json!({"command":"task.fail","task":id,"reason":"Failed"}),
+                                owner(&claim),
+                            )
+                            .await
+                            .unwrap();
+                    }
+                    _ => {
+                        f.service
+                            .execute(
+                                json!({"command":"task.cancel","task":id}),
+                                WriteOptions::default(),
+                            )
+                            .await
+                            .unwrap();
+                    }
+                }
+            }
+            if job(&f).await["status"] == "PENDING_REVIEW" {
+                change(&f, "job.reject").await;
+            }
+            let before = f.service.store().snapshot().await.unwrap().tasks;
+            let result = change(&f, command).await;
+            assert_eq!(
+                result["status"],
+                if command == "job.approve" {
+                    "COMPLETED"
+                } else {
+                    "CANCELLED"
+                }
+            );
+            assert!(
+                result[if command == "job.approve" {
+                    "completed_at"
+                } else {
+                    "cancelled_at"
+                }]
+                .is_number()
+            );
+            assert_eq!(
+                serde_json::to_value(before).unwrap(),
+                serde_json::to_value(f.service.store().snapshot().await.unwrap().tasks).unwrap()
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn human_cannot_complete_active_jobs_with_unfinished_or_no_tasks() {
+    for status in ["EMPTY", "TODO", "BLOCKED", "WAITING_USER", "IN_PROGRESS"] {
+        let f = Fixture::new().await;
+        if status != "EMPTY" {
+            task_in_state(&f, status).await;
+        }
+        let result = f
+            .service
+            .execute(
+                json!({"command":"job.approve","job":f.job}),
+                WriteOptions::default(),
+            )
+            .await;
+        assert!(result.is_err(), "{status}");
+        assert_eq!(job(&f).await["status"], "ACTIVE");
+    }
+}
+
+#[tokio::test]
+async fn human_can_finish_blocked_tasks_and_release_dependent_tasks() {
+    let f = Fixture::new().await;
+    let id = task_in_state(&f, "BLOCKED").await;
+    let dependent = f.task("Dependent").await;
+    f.service
+        .execute(
+            json!({"command":"task.depend","task":dependent,"dependency":id}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    let result = f
+        .service
+        .execute(
+            json!({"command":"task.done","task":id}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap()
+        .result;
+    assert_eq!(result["status"], "DONE");
+    assert!(result["completed_at"].is_number());
+    assert!(result["phase"].is_null());
+    assert!(result["lease"].is_null());
+    f.start(&dependent, "dependent").await;
+}
