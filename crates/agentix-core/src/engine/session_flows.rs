@@ -220,23 +220,19 @@ impl Engine {
             .current_session(conversation)
             .cloned();
         let mut body = String::new();
+        let mut sections = Vec::new();
         let mut actions = Vec::new();
         let action_group = Uuid::new_v4().simple().to_string();
         let mut sessions = self.sessions.cache.lock().await;
         for (index, session) in page.into_iter().enumerate() {
             let title = session_title(&session);
             let is_current = current_session.as_ref() == Some(&session.id);
-            let attached_marker = if is_current {
-                " · 📎 **Attached**"
-            } else {
-                ""
-            };
             let (status_icon, status_label) = session_status_label(&session.status);
             if !body.is_empty() {
                 body.push_str("\n\n");
             }
             let mut item = format!(
-                "**{} · {title}**{attached_marker}\n{status_icon} **Status:** {status_label}\n📁 **Workspace:** `{}`",
+                "**{} · {title}**\n{status_icon} **Status:** {status_label}\n📁 **Workspace:** `{}`",
                 index + 1,
                 display_workspace(session.cwd.as_deref())
             );
@@ -250,29 +246,40 @@ impl Engine {
                     terminal.pane_index
                 ));
             }
-            body.push_str(&markdown_quote(&item));
-            if !is_current {
-                let token = self
-                    .issue_action(
-                        conversation,
-                        owner_id,
-                        &action_group,
-                        UiAction::Attach(session.id.clone()),
-                    )
-                    .await;
-                actions.push(ActionButton {
-                    label: format!("{} · {title}", index + 1),
-                    token,
-                    style: ActionStyle::Default,
-                });
-            }
+            let item = markdown_quote(&item);
+            body.push_str(&item);
+            let token = if is_current {
+                format!("disabled-{}", Uuid::new_v4().simple())
+            } else {
+                self.issue_action(
+                    conversation,
+                    owner_id,
+                    &action_group,
+                    UiAction::Attach(session.id.clone()),
+                )
+                .await
+            };
+            let action_tokens = vec![token.clone()];
+            actions.push(ActionButton {
+                label: if is_current { "Attached" } else { "Attach" }.into(),
+                token,
+                style: ActionStyle::Default,
+                disabled: is_current,
+            });
+            sections.push(agentix_domain::ViewSection {
+                title: String::new(),
+                body: item,
+                collapsible: false,
+                expanded: None,
+                action_tokens,
+            });
             sessions.insert(session.id.clone(), session);
         }
         drop(sessions);
         self.send_view(
             conversation,
             &OutboundView {
-                sections: Vec::new(),
+                sections,
                 title: format!("Existing {} sessions", self.agent.display_name()),
                 subtitle: None,
                 body,
@@ -857,6 +864,7 @@ impl Engine {
                 )
                 .await;
             actions.push(ActionButton {
+                disabled: false,
                 label: choice.label,
                 token,
                 style: ActionStyle::Default,
@@ -1241,6 +1249,7 @@ impl Engine {
                     )
                     .await;
                 actions.push(ActionButton {
+                    disabled: false,
                     label: label.into(),
                     token,
                     style: ActionStyle::Default,
@@ -1323,6 +1332,7 @@ impl Engine {
             )
             .await;
         ActionButton {
+            disabled: false,
             label: "Attach".into(),
             token,
             style: ActionStyle::Primary,

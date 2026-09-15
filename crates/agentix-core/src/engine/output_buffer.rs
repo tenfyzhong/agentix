@@ -142,6 +142,7 @@ impl TurnBuffer {
         let mut sections = Vec::new();
         if !self.user_text.trim().is_empty() {
             sections.push(ViewSection {
+                action_tokens: Vec::new(),
                 title: "👤 You".into(),
                 body: self.user_text.clone(),
                 collapsible: false,
@@ -176,6 +177,7 @@ impl TurnBuffer {
                 continue;
             }
             sections.push(ViewSection {
+                action_tokens: Vec::new(),
                 title: title.into(),
                 body,
                 collapsible: item.process,
@@ -184,6 +186,7 @@ impl TurnBuffer {
         }
         if self.output_items.is_empty() && !self.agent_text.trim().is_empty() {
             sections.push(ViewSection {
+                action_tokens: Vec::new(),
                 title: format!("🤖 {agent_name}"),
                 body: self.agent_text.clone(),
                 collapsible: false,

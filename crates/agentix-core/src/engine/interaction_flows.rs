@@ -117,6 +117,7 @@ impl Engine {
                     )
                     .await;
                 actions.push(ActionButton {
+                    disabled: false,
                     label: "Answer".into(),
                     token,
                     style: ActionStyle::Primary,
@@ -193,6 +194,7 @@ impl Engine {
                 )
                 .await;
             actions.push(ActionButton {
+                disabled: false,
                 label: decision_label(decision),
                 token,
                 style: if decision == "accept" || decision == "acceptForSession" {
@@ -397,6 +399,7 @@ impl Engine {
                 )
                 .await;
             actions.push(ActionButton {
+                disabled: false,
                 label: option.label.clone(),
                 token,
                 style: ActionStyle::Primary,
@@ -411,6 +414,7 @@ impl Engine {
             )
             .await;
         actions.push(ActionButton {
+            disabled: false,
             label: if question.options.is_empty() {
                 "Answer…".into()
             } else {

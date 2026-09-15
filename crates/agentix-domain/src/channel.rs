@@ -165,13 +165,19 @@ pub enum ActionStyle {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ActionButton {
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub disabled: bool,
     pub label: String,
     pub token: String,
     pub style: ActionStyle,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ViewSection {
+    /// Actions from `OutboundView::actions` placed after this section by rich renderers.
+    /// Flat renderers retain the complete action list as a fallback.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub action_tokens: Vec<String>,
     pub title: String,
     pub body: String,
     pub collapsible: bool,

@@ -255,8 +255,7 @@ impl Engine {
             sections.push(agentix_domain::ViewSection {
                 title: "Error".into(),
                 body: error.into(),
-                collapsible: false,
-                expanded: None,
+                ..agentix_domain::ViewSection::default()
             });
         }
         self.sessions
@@ -984,6 +983,7 @@ impl Engine {
             .await
             .insert(key.clone(), action_group);
         let action = ActionButton {
+            disabled: false,
             label: "Stop".into(),
             token,
             style: ActionStyle::Danger,

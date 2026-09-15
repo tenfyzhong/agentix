@@ -91,9 +91,13 @@ fn sections(mut input: &str, budget: usize) -> Vec<String> {
 /// Render within Slack's 50-block, 3000-character section and button limits.
 /// User/model content cannot introduce Slack mention or link control sequences.
 pub fn render_view(view: &OutboundView) -> Result<Value, ChannelError> {
-    if view.actions.len() > 25
-        || view
-            .actions
+    let actions: Vec<_> = view
+        .actions
+        .iter()
+        .filter(|action| !action.disabled)
+        .collect();
+    if actions.len() > 25
+        || actions
             .iter()
             .any(|button| button.token.chars().count() > 2000 || button.token.is_empty())
     {
@@ -112,12 +116,12 @@ pub fn render_view(view: &OutboundView) -> Result<Value, ChannelError> {
     if let Some(subtitle) = view.subtitle.as_deref().filter(|text| !text.is_empty()) {
         blocks.push(json!({"type":"context","elements":[{"type":"plain_text","text":truncate(subtitle,2000)}]}));
     }
-    let budget = 50 - blocks.len() - usize::from(!view.actions.is_empty());
+    let budget = 50 - blocks.len() - usize::from(!actions.is_empty());
     for text in sections(&view.body, budget) {
         blocks.push(json!({"type":"section","text":{"type":"mrkdwn","text":text,"verbatim":true}}));
     }
-    if !view.actions.is_empty() {
-        let elements: Vec<_> = view.actions.iter().enumerate().map(|(index,button)| {
+    if !actions.is_empty() {
+        let elements: Vec<_> = actions.iter().enumerate().map(|(index,button)| {
             let mut element = json!({"type":"button","action_id":format!("agentix_{index}"),"text":{"type":"plain_text","text":truncate(&button.label,75)},"value":button.token});
             match button.style {
                 ActionStyle::Primary => element["style"] = json!("primary"),

@@ -805,21 +805,7 @@ fn render_card_with_action_state(
     if let Some(subtitle) = &view.subtitle {
         header = header.subtitle(Text::plain(subtitle));
     }
-    let mut body = card_sections::view_body(view);
-    for action in &view.actions {
-        let button_type = match action.style {
-            ActionStyle::Primary => ButtonType::Primary,
-            ActionStyle::Default => ButtonType::Default,
-            ActionStyle::Danger => ButtonType::Danger,
-        };
-        let mut button = Button::new(Text::plain(&action.label))
-            .button_type(button_type)
-            .behavior(Behavior::callback(
-                serde_json::json!({"token": action.token}),
-            ));
-        button.disabled = actions_disabled.then_some(true);
-        body = body.element(Element::Button(button));
-    }
+    let body = card_sections::view_body(view, actions_disabled);
     CardDocument::new(
         Card::new()
             .config(Config::new().update_multi())
@@ -827,6 +813,25 @@ fn render_card_with_action_state(
             .body(body),
     )
     .map_err(|error| ChannelError::InvalidPayload(error.to_string()))
+}
+
+fn render_action(action: &agentix_domain::ActionButton, actions_disabled: bool) -> Element {
+    let button_type = match action.style {
+        ActionStyle::Primary => ButtonType::Primary,
+        ActionStyle::Default => ButtonType::Default,
+        ActionStyle::Danger => ButtonType::Danger,
+    };
+    let mut button = Button::new(Text::plain(&action.label)).button_type(button_type);
+    if action.disabled {
+        // The SDK requires a behavior even for disabled buttons; carry no action token.
+        button = button.behavior(Behavior::callback(serde_json::json!({})));
+    } else {
+        button = button.behavior(Behavior::callback(
+            serde_json::json!({"token": action.token}),
+        ));
+    }
+    button.disabled = (actions_disabled || action.disabled).then_some(true);
+    Element::Button(button)
 }
 
 #[must_use]

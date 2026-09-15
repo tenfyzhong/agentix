@@ -1971,6 +1971,17 @@ async fn session_picker_uses_titles_instead_of_ids() {
         view.body,
         "> **1 · Parser cleanup**\n> 🟡 **Status:** Idle\n> 📁 **Workspace:** `/work/parser`\n\n> **2 · Daemon startup**\n> 🟡 **Status:** Idle\n> 📁 **Workspace:** `/work/daemon`"
     );
+    assert_eq!(view.sections.len(), 2);
+    assert_eq!(
+        view.sections[0].action_tokens,
+        [view.actions[0].token.clone()]
+    );
+    assert_eq!(
+        view.sections[1].action_tokens,
+        [view.actions[1].token.clone()]
+    );
+    assert!(view.sections[0].body.contains("/work/parser"));
+    assert!(view.sections[1].body.contains("/work/daemon"));
     assert!(!view.body.contains("thr_a"));
     assert!(!view.body.contains("thr_b"));
     assert_eq!(
@@ -1978,7 +1989,7 @@ async fn session_picker_uses_titles_instead_of_ids() {
             .iter()
             .map(|action| action.label.as_str())
             .collect::<Vec<_>>(),
-        vec!["1 · Parser cleanup", "2 · Daemon startup"]
+        vec!["Attach", "Attach"]
     );
     assert!(
         view.actions
@@ -2007,7 +2018,7 @@ async fn session_picker_uses_titles_instead_of_ids() {
 }
 
 #[tokio::test]
-async fn session_picker_marks_and_omits_the_current_session_from_actions() {
+async fn session_picker_disables_the_current_session_button_without_a_title_marker() {
     let agent = Arc::new(FakeAgent::new());
     let channel = Arc::new(FakeChannel::default());
     let state = SqliteState::in_memory().await.unwrap();
@@ -2024,8 +2035,22 @@ async fn session_picker_marks_and_omits_the_current_session_from_actions() {
 
     let view = channel.sent().last().unwrap().1.clone();
     assert!(
-        view.body
+        !view
+            .body
             .contains("**1 · Parser cleanup** · 📎 **Attached**")
+    );
+    assert_eq!(view.sections.len(), 2);
+    assert!(!view.sections[0].body.contains("📎 **Attached**"));
+    assert_eq!(view.actions.len(), 2);
+    let actions = serde_json::to_value(&view.actions).unwrap();
+    assert_eq!(actions[0]["disabled"], true);
+    assert_eq!(
+        view.sections[0].action_tokens,
+        [view.actions[0].token.clone()]
+    );
+    assert_eq!(
+        view.sections[1].action_tokens,
+        [view.actions[1].token.clone()]
     );
     assert!(view.body.contains("**2 · Daemon startup**"));
     assert_eq!(
@@ -2033,7 +2058,7 @@ async fn session_picker_marks_and_omits_the_current_session_from_actions() {
             .iter()
             .map(|action| action.label.as_str())
             .collect::<Vec<_>>(),
-        vec!["2 · Daemon startup"]
+        vec!["Attached", "Attach"]
     );
 }
 

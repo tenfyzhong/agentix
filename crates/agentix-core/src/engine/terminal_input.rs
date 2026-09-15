@@ -118,6 +118,7 @@ impl Engine {
                 )
                 .await;
             view.actions.push(ActionButton {
+                disabled: false,
                 label: label.into(),
                 token,
                 style: ActionStyle::Default,

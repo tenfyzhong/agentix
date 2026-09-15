@@ -776,11 +776,13 @@ async fn telegram_mock_api_errors_are_channel_transport_errors() {
 fn callback_keyboards_only_expose_opaque_tokens() {
     let keyboard = render_keyboard(&[
         ActionButton {
+            disabled: false,
             label: "Allow once".into(),
             token: "0123456789abcdef".into(),
             style: ActionStyle::Primary,
         },
         ActionButton {
+            disabled: false,
             label: "Decline".into(),
             token: "fedcba9876543210".into(),
             style: ActionStyle::Danger,
@@ -1198,4 +1200,14 @@ async fn reload_receiver_handoff_preserves_pending_updates_and_order_on_local_ap
     }
     assert_eq!(event_ids, ["42:100", "42:101", "42:102", "42:103"]);
     assert!(receiver.try_recv().is_err());
+}
+
+#[test]
+fn disabled_buttons_do_not_emit_clickable_actions() {
+    let mut view = agentix_domain::OutboundView::text("Sessions", "Current session");
+    view.actions = serde_json::from_value(serde_json::json!([
+        {"label":"Attached", "token":"display-only", "style":"default", "disabled":true}
+    ]))
+    .unwrap();
+    assert!(render_keyboard(&view.actions).is_none());
 }

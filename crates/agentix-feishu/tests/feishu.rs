@@ -59,6 +59,7 @@ fn card_uses_v2_shared_schema_and_opaque_callback_tokens() {
         body: "Compiling the workspace".into(),
         status: ViewStatus::Running,
         actions: vec![ActionButton {
+            disabled: false,
             label: "Stop".into(),
             token: "opaque-token".into(),
             style: ActionStyle::Danger,
@@ -110,6 +111,7 @@ async fn feishu_send_and_update_use_the_mock_openapi() {
         body: "Allow **cargo test**?".into(),
         status: ViewStatus::Waiting,
         actions: vec![ActionButton {
+            disabled: false,
             label: "Allow once".into(),
             token: "opaque-token".into(),
             style: ActionStyle::Primary,
@@ -476,16 +478,14 @@ async fn feishu_invalid_tenant_token_refreshes_all_outbound_mutations() {
     let adapter = FeishuAdapter::with_client(client, ["ou_owner"]);
     let conversation = ConversationRef::new(ChannelKind::Feishu, "oc_mock_chat");
     let actionable = OutboundView {
-        sections: Vec::new(),
-        title: "Approval".into(),
-        subtitle: None,
-        body: "Allow?".into(),
         status: ViewStatus::Waiting,
         actions: vec![ActionButton {
+            disabled: false,
             label: "Allow".into(),
             token: "allow-token".into(),
             style: ActionStyle::Primary,
         }],
+        ..OutboundView::text("Approval", "Allow?")
     };
     let message = adapter.send(&conversation, &actionable).await.unwrap();
 
@@ -1196,6 +1196,7 @@ fn background_turn_cards_use_supported_background_style_and_keep_actions() {
         body: "**👤 You**\n\n> Run checks\n\n**🤖 Codex**\n\n> All checks passed".into(),
         status: serde_json::from_str("\"background\"").unwrap(),
         actions: vec![ActionButton {
+            disabled: false,
             label: "Attach".into(),
             token: "attach-token".into(),
             style: ActionStyle::Primary,
@@ -1505,18 +1506,21 @@ fn process_view() -> OutboundView {
     let mut view = OutboundView::text("Codex", "Fallback");
     view.sections = vec![
         agentix_domain::ViewSection {
+            action_tokens: Vec::new(),
             title: "👤 You".into(),
             body: "Question".into(),
             collapsible: false,
             expanded: None,
         },
         agentix_domain::ViewSection {
+            action_tokens: Vec::new(),
             title: "🧠 Reasoning".into(),
             body: "Checking".into(),
             collapsible: true,
             expanded: None,
         },
         agentix_domain::ViewSection {
+            action_tokens: Vec::new(),
             title: "🔨 Tool Call".into(),
             body: "cargo test".into(),
             collapsible: true,
@@ -1524,6 +1528,7 @@ fn process_view() -> OutboundView {
         },
     ];
     view.actions.push(ActionButton {
+        disabled: false,
         label: "Cancel".into(),
         token: "cancel-token".into(),
         style: ActionStyle::Primary,
@@ -1544,6 +1549,7 @@ async fn structured_cards_survive_send_update_and_action_disabling() {
     let mut view = process_view();
     let message = adapter.send(&conversation, &view).await.unwrap();
     view.sections.push(agentix_domain::ViewSection {
+        action_tokens: Vec::new(),
         title: "🤖 Codex".into(),
         body: "Answer".into(),
         collapsible: false,
@@ -1603,6 +1609,7 @@ fn long_unicode_sections_and_many_panels_retain_the_final_answer() {
         let mut view = OutboundView::text("Codex", "Fallback");
         for index in 0..count {
             view.sections.push(agentix_domain::ViewSection {
+                action_tokens: Vec::new(),
                 title: format!("🧠 Reasoning {index}"),
                 body: "中文🧠\n".repeat(10_000),
                 collapsible: true,
@@ -1610,6 +1617,7 @@ fn long_unicode_sections_and_many_panels_retain_the_final_answer() {
             });
         }
         view.sections.push(agentix_domain::ViewSection {
+            action_tokens: Vec::new(),
             title: "🤖 Codex".into(),
             body: "Final answer".into(),
             collapsible: false,
@@ -1696,6 +1704,7 @@ fn current_process_panel_expands_until_the_next_block_arrives() {
             ("🔨 Tool Call", true),
         ] {
             view.sections.push(agentix_domain::ViewSection {
+                action_tokens: Vec::new(),
                 title: title.into(),
                 body: "Content".into(),
                 collapsible,
@@ -1731,4 +1740,107 @@ fn explicit_process_expansion_overrides_section_position() {
         let card = serde_json::to_value(render_card(&view).unwrap().card()).unwrap();
         assert_eq!(card["body"]["elements"][1]["expanded"], expanded);
     }
+}
+
+#[test]
+fn session_section_buttons_follow_their_descriptions() {
+    let mut view = OutboundView::text("Sessions", "Fallback");
+    view.sections = serde_json::from_value(serde_json::json!([
+        {"title":"First", "body":"Workspace A", "collapsible":false, "action_tokens":["attach-a"]},
+        {"title":"Current", "body":"Workspace B", "collapsible":false},
+        {"title":"Third", "body":"Workspace C", "collapsible":false, "action_tokens":["attach-c"]}
+    ]))
+    .unwrap();
+    for token in ["attach-a", "attach-c", "refresh"] {
+        view.actions.push(ActionButton {
+            disabled: false,
+            label: token.into(),
+            token: token.into(),
+            style: ActionStyle::Default,
+        });
+    }
+    let card = serde_json::to_value(render_card(&view).unwrap().card()).unwrap();
+    let elements = card["body"]["elements"].as_array().unwrap();
+    assert_eq!(elements.len(), 6);
+    assert_eq!(elements[0]["content"], "**First**\nWorkspace A");
+    assert_eq!(elements[1]["tag"], "button");
+    assert_eq!(elements[1]["behaviors"][0]["value"]["token"], "attach-a");
+    assert_eq!(elements[2]["content"], "**Current**\nWorkspace B");
+    assert_eq!(elements[3]["content"], "**Third**\nWorkspace C");
+    assert_eq!(elements[4]["behaviors"][0]["value"]["token"], "attach-c");
+    assert_eq!(elements[5]["behaviors"][0]["value"]["token"], "refresh");
+}
+
+#[tokio::test]
+async fn session_section_buttons_remain_inline_when_disabled() {
+    let server = MockFeishuApi::start().await;
+    let client = LarkClient::builder("mock-app", "mock-secret")
+        .base_url(server.base_url())
+        .max_retries(1)
+        .build()
+        .unwrap();
+    let adapter = FeishuAdapter::with_client(client, ["ou_owner"]);
+    let conversation = ConversationRef::new(ChannelKind::Feishu, "oc_mock_chat");
+    let mut view = OutboundView::text("Sessions", "Fallback");
+    view.sections = serde_json::from_value(serde_json::json!([
+        {"title":"", "body":"> First session", "collapsible":false, "action_tokens":["attach-a"]},
+        {"title":"", "body":"> Current session", "collapsible":false, "action_tokens":["current"]}
+    ]))
+    .unwrap();
+    view.actions.push(ActionButton {
+        disabled: false,
+        label: "Attach".into(),
+        token: "attach-a".into(),
+        style: ActionStyle::Default,
+    });
+    view.actions.push(ActionButton {
+        disabled: true,
+        label: "Attached".into(),
+        token: "current".into(),
+        style: ActionStyle::Default,
+    });
+    let message = adapter.send(&conversation, &view).await.unwrap();
+    adapter
+        .update(&conversation, &message, &view)
+        .await
+        .unwrap();
+    adapter.disable_actions(&message).await.unwrap();
+    let requests = server.requests().await;
+    let cards: Vec<serde_json::Value> = requests
+        .iter()
+        .skip(1)
+        .map(|request| {
+            let body: serde_json::Value = serde_json::from_str(&request.body).unwrap();
+            serde_json::from_str(body["content"].as_str().unwrap()).unwrap()
+        })
+        .collect();
+    assert_eq!(cards.len(), 3);
+    for (index, card) in cards.iter().enumerate() {
+        let elements = card["body"]["elements"].as_array().unwrap();
+        assert_eq!(elements.len(), 4);
+        assert_eq!(elements[0]["content"], "> First session");
+        assert_eq!(elements[1]["tag"], "button");
+        assert_eq!(
+            elements[1]["disabled"].as_bool().unwrap_or(false),
+            index == 2
+        );
+        assert_eq!(elements[2]["content"], "> Current session");
+        assert_eq!(elements[3]["text"]["content"], "Attached");
+        assert_eq!(elements[3]["disabled"], true);
+        assert_eq!(elements[3]["behaviors"][0]["value"], serde_json::json!({}));
+    }
+}
+
+#[test]
+fn attached_button_is_disabled_without_an_action_token() {
+    let mut view = OutboundView::text("Sessions", "Current session");
+    view.actions = serde_json::from_value(serde_json::json!([
+        {"label":"Attached", "token":"display-only", "style":"default", "disabled":true}
+    ]))
+    .unwrap();
+    let card = serde_json::to_value(render_card(&view).unwrap().card()).unwrap();
+    let button = &card["body"]["elements"][1];
+    assert_eq!(button["text"]["content"], "Attached");
+    assert_eq!(button["disabled"], true);
+    assert_eq!(button["behaviors"][0]["value"], serde_json::json!({}));
 }
