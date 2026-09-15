@@ -2711,6 +2711,89 @@ async fn rename_without_an_argument_collects_the_next_im_message() {
 }
 
 #[tokio::test]
+async fn help_groups_commands_by_level_in_alphabetical_order() {
+    for task_board in [false, true] {
+        for read_only in [false, true] {
+            let (_dir, service, _) = task_fixture().await;
+            let mut agent = FakeAgent::new();
+            agent.read_only = read_only;
+            let channel = Arc::new(FakeChannel::default());
+            let mut engine = Engine::new(
+                Arc::new(agent),
+                SqliteState::in_memory().await.unwrap(),
+                vec![channel.clone()],
+            );
+            if task_board {
+                engine = engine.with_task_board(service);
+            }
+            for attached in [false, true] {
+                if attached {
+                    engine
+                        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+                        .await
+                        .unwrap();
+                }
+                engine
+                    .handle_inbound(InboundEnvelope::text(
+                        format!("help-{attached}"),
+                        ConversationRef::new(ChannelKind::Telegram, "chat-a"),
+                        "owner",
+                        "/help",
+                    ))
+                    .await
+                    .unwrap();
+                let body = channel.sent().last().unwrap().1.body.clone();
+                let body = body
+                    .strip_prefix("**First-level commands**\n")
+                    .unwrap_or_else(|| panic!("first-level heading: {body}"));
+                let (primary, secondary) = if attached {
+                    body.split_once("\n\n**Second-level commands**\n")
+                        .expect("blank line before second-level heading")
+                } else {
+                    assert!(!body.contains("Second-level commands"));
+                    (body, "")
+                };
+                let names = |section: &str| -> Vec<String> {
+                    section
+                        .lines()
+                        .filter_map(|line| {
+                            line.strip_prefix("**/")
+                                .map(|usage| usage.split([' ', '*']).next().unwrap().to_owned())
+                        })
+                        .collect()
+                };
+                let primary = names(primary);
+                let secondary = names(secondary);
+                let mut expected_primary = vec!["attach", "cancel", "help", "rmux", "sessions"];
+                if task_board {
+                    expected_primary.insert(2, "dashboard");
+                }
+                assert_eq!(primary, expected_primary);
+                for commands in [&primary, &secondary] {
+                    assert!(
+                        commands.windows(2).all(|pair| pair[0] < pair[1]),
+                        "commands must be sorted and unique: {commands:?}"
+                    );
+                }
+                if attached {
+                    for name in ["current", "detach", "history", "last"] {
+                        assert!(secondary.iter().any(|command| command == name));
+                    }
+                    assert_eq!(secondary.iter().any(|name| name == "model"), !read_only);
+                    for name in ["board", "inbox", "inboxes", "jobs", "task", "tasks"] {
+                        assert_eq!(secondary.iter().any(|command| command == name), task_board);
+                    }
+                    assert_eq!(
+                        body.contains("This session is connected read-only."),
+                        read_only
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
 async fn help_reflects_whether_a_session_is_attached() {
     let agent = Arc::new(FakeAgent::new());
     let channel = Arc::new(FakeChannel::default());

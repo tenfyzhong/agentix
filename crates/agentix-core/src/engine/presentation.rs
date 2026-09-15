@@ -206,6 +206,11 @@ pub fn command_menu_for(
             .map(|(name, description)| ChannelCommand::new(name, description).contextual()),
         );
     }
+    commands.sort_by(|left, right| {
+        left.contextual
+            .cmp(&right.contextual)
+            .then_with(|| left.name.cmp(&right.name))
+    });
     CommandMenu::new(commands)
 }
 

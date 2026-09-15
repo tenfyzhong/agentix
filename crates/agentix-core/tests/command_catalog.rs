@@ -52,3 +52,23 @@ fn last_is_a_contextual_command_only_when_attached() {
     );
     assert!(agentix_core::parse_input("/last@agentix").is_ok());
 }
+
+#[test]
+fn command_menus_sort_each_level_alphabetically() {
+    for attached in [false, true] {
+        for kind in [
+            None,
+            Some(agentix_core::MultiplexerKind::Rmux),
+            Some(agentix_core::MultiplexerKind::Tmux),
+        ] {
+            let menu = agentix_core::command_menu_for(attached, kind);
+            assert!(
+                menu.commands.windows(2).all(|pair| {
+                    (pair[0].contextual, &pair[0].name) < (pair[1].contextual, &pair[1].name)
+                }),
+                "commands must be grouped and sorted: {:?}",
+                menu.commands
+            );
+        }
+    }
+}

@@ -327,7 +327,7 @@ async fn configured_menus_have_dashboard_and_attached_secondary_commands() {
                 .take(5)
                 .map(|c| c.name.as_str())
                 .collect::<Vec<_>>(),
-            ["sessions", "dashboard", "cancel", "rmux", "help"]
+            ["cancel", "dashboard", "help", "rmux", "sessions"]
         );
         let secondary: Vec<_> = menu.commands.iter().skip(5).collect();
         assert!(secondary.iter().all(|c| c.contextual));

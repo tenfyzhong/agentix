@@ -215,26 +215,9 @@ impl MenuContext {
                 ]);
             }
         }
-        let primary = [
-            "sessions",
-            "dashboard",
-            "cancel",
-            self.multiplexer_kind.as_str(),
-            "help",
-        ];
         menu.commands.sort_by(|left, right| {
-            let rank = |command: &ChannelCommand| {
-                if command.contextual {
-                    primary.len()
-                } else {
-                    primary
-                        .iter()
-                        .position(|name| *name == command.name)
-                        .unwrap_or(primary.len())
-                }
-            };
-            rank(left)
-                .cmp(&rank(right))
+            left.contextual
+                .cmp(&right.contextual)
                 .then_with(|| left.name.cmp(&right.name))
         });
         menu
