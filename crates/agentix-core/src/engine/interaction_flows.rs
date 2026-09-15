@@ -13,6 +13,7 @@ impl Engine {
         conversation: &ConversationRef,
         owner_id: &str,
     ) -> Result<(), EngineError> {
+        self.cancel_reattachment(conversation);
         if let Some(session) = self
             .interactions
             .terminal_inputs
@@ -276,6 +277,8 @@ impl Engine {
                     .lock()
                     .await
                     .remove(&(session_id.clone(), turn_id.clone()));
+                self.turns.pending_prompts.request_stop(&session_id);
+                self.turns.pending_prompts.take_stop(&session_id);
                 self.operations.stop(&session_id, &turn_id).await?;
             }
             UiAction::Resolve {

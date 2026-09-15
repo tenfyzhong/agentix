@@ -319,3 +319,45 @@ Async CLI question coverage also exercises `agentMessage.questions` on `item/com
 ### Empty Codex attachment recovery
 
 `empty_attach_recovers_*` mock app-server tests attach before the first rollout exists, then materialize the first native turn before subscription recovery. They cover both successful resume and active-writer rejection, completed and in-progress turns, input/output rendering, and continued live or observed completion. The mock retains per-connection subscriptions. Real Codex and IM delivery remain manual verification boundaries.
+
+## Session responsiveness acceptance
+
+The September 15, 2026 audit covers the user-visible path from an IM operation to
+feedback and continued control. Component timing is not a substitute for this
+path. The [lifecycle guide](session-lifecycle.md) describes the implementation;
+[performance results](performance.md) retain workload sizes and exclusions.
+
+| User-visible requirement | Current automated evidence | Evidence boundary |
+| --- | --- | --- |
+| Attach an empty Codex session, then see its first input and output before completion | `empty_attach_recovers_*` in the mock app-server integration; nonzero update-interval regressions | Exercises subscription recovery and live/observed events, not a real model or IM display |
+| Preserve reasoning, process output and Stop when reposting the latest message | `last_reposts_live_card_with_process_content_and_moves_stop_and_updates`, `last_restores_completed_card_from_cold_output_without_losing_reasoning` | Checks rendered views and action ownership |
+| Socket closure reports exit without entering a native-new wait | `registry_disconnect_reports_exit_while_process_is_still_alive`, `registry_exit_is_distinct_from_delayed_native_new` | Checks production proxy/adapter events with isolated sockets |
+| Exit and native `/new` do not wait for background history | `registry_exit_does_not_wait_for_background_history`, `registry_new_does_not_wait_for_background_history` | Deliberately withholds history replies |
+| Input gets feedback while its backend acknowledgement is pending | `feishu_message_traverses_channel_engine_and_codex_then_updates_feishu` | Production runtime and Feishu adapter reach a local HTTP endpoint within the fixture's 500 ms deadline; this is not screen visibility |
+| Detach remains available during a pending initial turn | `feishu_detach_does_not_wait_for_pending_turn_start` | Production transport/runtime with held Codex request |
+| Menus and detached-session unsubscribe do not occupy the conversation indefinitely | `slow_menu_*`, `detach_feedback_and_next_attachment_do_not_wait_for_old_unsubscribe` in core engine tests | Holds optional requests; checks the 50 ms fast-path behavior with scheduling tolerance |
+| Initial attachment stays operable during subscription or history stalls | `runtime_initial_attachment_*`, `attachment_history_*` | Holds initial requests; covers cancellation, exit, `/new`, cross-conversation ownership, ordered input across reload, and content arriving before the binding |
+| Reattachment preserves cancellation, input order and reload continuity | `runtime_reattach_*`, `runtime_stop_cancels_input_waiting_for_reattachment` | Holds cleanup; verifies stale completion rejection, unsent failure receipts and new input after Stop |
+| Other conversations keep progressing under load | `engine_runtime_fixed_load_preserves_isolation_and_admission_bounds` and flood/outbox regressions | Bounded local fixtures; does not guarantee throughput above the configured capacity |
+| Pi/OMP retain native event order and Stop during pending commands | Bridge runtime/host tests and native-new IPC coverage above | Optional installed-host tests are separate from default CI |
+| Claude lifecycle and completion recover without repeated full transcript parsing | Claude hook/mailbox tests, transcript projection regressions and benchmark | Hook-based completion does not provide individual assistant-token streaming |
+
+The core engine test names refer to `crates/agentix-core/tests/engine.rs`; proxy
+integration names refer to `crates/agentix-codex/tests/mock_app_server_integration.rs`.
+The Feishu tests are in `crates/agentix/tests/channel_codex_e2e.rs`. These tests
+establish the listed dependencies and ordering, not a universal response deadline.
+
+### Remaining acceptance work
+
+- Real IM visibility remains unmeasured. Use an explicitly designated test
+  conversation and isolated agent sessions; record the exact binary/host/channel
+  versions and repeat empty attach, active/completed exit, resume, `/new`, queued
+  input and Stop. Capture input time, first visible acknowledgement, first visible
+  content, completed card and next accepted action, plus message/session IDs.
+  Record both median and tail samples, normal traffic and representative background
+  traffic. Service/API timestamps alone cannot establish when the client displayed
+  a card. Check duplicate/lost input, reasoning, Stop ownership and final state
+  alongside timing; provider computation time must be reported separately.
+
+A passing CI matrix covers the automated rows only. Neither a 50/100 ms internal
+fast path nor a green mock suite proves that a real user perceives no delay.

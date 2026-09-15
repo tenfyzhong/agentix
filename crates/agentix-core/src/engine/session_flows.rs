@@ -1,10 +1,10 @@
 //! IM session commands: coordinate session services and presentation.
 use super::{
-    ActionButton, ActionStyle, AgentCommand, AgentError, AttachOutcome, ChannelCommand,
-    ConversationRef, DeliveryClass, Engine, EngineError, HistoryPage, HistoryPresentation, Instant,
-    OutboundView, ParsedInput, PendingSessionInput, SessionCommand, SessionCommandChoice,
-    SessionId, TurnBuffer, TurnStatus, UiAction, Uuid, ViewStatus, display_workspace,
-    history_views, markdown_quote, session_display_label, session_status_label, session_title,
+    ActionButton, ActionStyle, AgentCommand, AgentError, AttachOutcome, ConversationRef,
+    DeliveryClass, Engine, EngineError, HistoryPage, HistoryPresentation, Instant, OutboundView,
+    ParsedInput, PendingSessionInput, SessionCommand, SessionCommandChoice, SessionId, TurnBuffer,
+    TurnStatus, UiAction, Uuid, ViewStatus, display_workspace, history_views, markdown_quote,
+    session_display_label, session_status_label, session_title,
 };
 
 const SESSION_COMMAND_HELP: &[(&str, &str)] = &[
@@ -297,7 +297,9 @@ impl Engine {
         owner_id: &str,
         session_id: SessionId,
     ) -> Result<(), EngineError> {
+        self.cancel_reattachment(conversation);
         let session_id = self.agent.canonical_session(&session_id).await?;
+        self.cancel_session_attachments(&session_id);
         self.interactions
             .terminal_inputs
             .lock()
@@ -325,15 +327,36 @@ impl Engine {
                 .await?;
             return Ok(());
         }
+        if self
+            .defer_subscription_cleanup(conversation, &session_id, owner_id)
+            .await?
+        {
+            return Ok(());
+        }
+        if super::pending_prompts::Delivery::current().is_some() {
+            return self
+                .begin_attachment(conversation, owner_id, session_id)
+                .await;
+        }
         if let Err(error) = self.agent.attach(&session_id).await {
             return self
                 .show_attach_failure(conversation, owner_id, &session_id, &error)
                 .await;
         }
-        self.sessions
-            .cache_session_summary(self.agent.as_ref(), &session_id)
-            .await;
-        let history = match self.operations.history(&session_id, None, 1).await {
+        let history = {
+            let title = self
+                .sessions
+                .cache_session_summary(self.agent.clone(), &session_id);
+            let history = self.operations.history(&session_id, None, 1);
+            tokio::pin!(title, history);
+            // Use a ready title, but never hold attachment feedback for metadata.
+            tokio::select! {
+                biased;
+                () = &mut title => history.await,
+                result = &mut history => result,
+            }
+        };
+        let history = match history {
             Ok(history) => history,
             Err(error) => {
                 if self
@@ -341,17 +364,29 @@ impl Engine {
                     .bound_conversation(&session_id)
                     .await
                     .is_none()
-                    && let Err(cleanup) = self.agent.unsubscribe(&session_id).await
                 {
-                    tracing::warn!(%cleanup, session = %session_id, "failed to release incomplete attachment");
+                    self.sessions
+                        .cleanup
+                        .enqueue(self.agent.clone(), &session_id)
+                        .await;
                 }
                 return self
                     .show_attach_failure(conversation, owner_id, &session_id, &error)
                     .await;
             }
         };
+        self.finish_attachment(conversation, &session_id, &history)
+            .await
+    }
+
+    pub(super) async fn finish_attachment(
+        &self,
+        conversation: &ConversationRef,
+        session_id: &SessionId,
+        history: &HistoryPage,
+    ) -> Result<(), EngineError> {
         self.sessions
-            .remember_history_cursors(conversation, &history)
+            .remember_history_cursors(conversation, history)
             .await;
         let old = self
             .sessions
@@ -365,17 +400,16 @@ impl Engine {
         } else {
             false
         };
-        self.bind_subscribed_session(conversation, &session_id, old_active)
+        self.bind_subscribed_session(conversation, session_id, old_active)
             .await?;
         self.send_history_views(
             conversation,
-            &session_id,
-            &history,
+            session_id,
+            history,
             HistoryPresentation::Attached,
         )
         .await?;
-        self.show_queued_questions(conversation, &session_id)
-            .await?;
+        self.show_queued_questions(conversation, session_id).await?;
         Ok(())
     }
 
@@ -502,7 +536,7 @@ impl Engine {
                     .entry(key)
                     .or_insert_with(|| TurnBuffer::from_summary(turn, self.output));
                 buffer.merge_summary(turn, self.output);
-                buffer.status = turn.status.clone();
+                buffer.set_status(turn.status.clone());
             }
             if matches!(turn.status, TurnStatus::InProgress | TurnStatus::Unknown) {
                 self.record_turn_started(session.clone(), turn.id.clone())
@@ -607,6 +641,16 @@ impl Engine {
     }
 
     pub(super) async fn detach(&self, conversation: &ConversationRef) -> Result<(), EngineError> {
+        let cancelled = self.cancel_reattachment(conversation);
+        if cancelled && self.sessions.current(conversation).await.is_none() {
+            return self
+                .send_view(
+                    conversation,
+                    &OutboundView::text("Agentix", "Reattachment cancelled."),
+                )
+                .await
+                .map(|_| ());
+        }
         self.interactions
             .terminal_inputs
             .lock()
@@ -626,9 +670,15 @@ impl Engine {
         let active = self.turns.is_active(&current).await;
         self.clear_session_stop_actions(&current).await?;
         let session = self.sessions.commit_detach(conversation, active).await?;
+        self.turns
+            .pending_prompts
+            .cancel_queued_conversation(conversation);
         let session_label = self.session_label(&session).await;
-        if !active && let Err(error) = self.agent.unsubscribe(&session).await {
-            tracing::warn!(%error, %session, "failed to unsubscribe a detached session");
+        if !active {
+            self.sessions
+                .cleanup
+                .enqueue(self.agent.clone(), &session)
+                .await;
         }
         self.update_command_menu_best_effort(conversation, false)
             .await;
@@ -895,9 +945,11 @@ impl Engine {
             .await;
         if let Some(previous) = persisted_previous
             && live_previous.as_ref() != Some(&previous)
-            && let Err(error) = self.agent.unsubscribe(&previous).await
         {
-            tracing::warn!(%error, session = %previous, "failed to stop watching the replaced session");
+            self.sessions
+                .cleanup
+                .enqueue(self.agent.clone(), &previous)
+                .await;
         }
         Ok(())
     }
@@ -909,11 +961,21 @@ impl Engine {
         old_active: bool,
         outcome: AttachOutcome,
     ) {
+        self.turns
+            .pending_prompts
+            .cancel_queued_conversation(conversation);
+        if let Some(displaced) = &outcome.displaced_conversation {
+            self.turns
+                .pending_prompts
+                .cancel_queued_conversation(displaced);
+        }
         if let Some(previous) = outcome.previous_session
             && !old_active
-            && let Err(error) = self.agent.unsubscribe(&previous).await
         {
-            tracing::warn!(%error, session = %previous, "failed to unsubscribe the previous session");
+            self.sessions
+                .cleanup
+                .enqueue(self.agent.clone(), &previous)
+                .await;
         }
         if let Some(displaced) = outcome.displaced_conversation {
             let session_label = self.session_label(session_id).await;
@@ -944,20 +1006,7 @@ impl Engine {
         conversation: &ConversationRef,
         attached: bool,
     ) {
-        if let Err(error) = self.update_command_menu(conversation, attached).await {
-            tracing::warn!(%error, ?conversation, attached, "failed to update the IM command menu");
-        }
-    }
-
-    pub(super) async fn update_command_menu(
-        &self,
-        conversation: &ConversationRef,
-        attached: bool,
-    ) -> Result<(), EngineError> {
-        let channel = self.channel(conversation.channel)?;
-        let menu = self.conversation_command_menu(conversation, attached).await;
-        channel.set_command_menu(conversation, &menu).await?;
-        Ok(())
+        self.queue_command_menu(conversation, attached, false).await;
     }
 
     pub(super) async fn sync_command_menu_best_effort(
@@ -965,118 +1014,77 @@ impl Engine {
         conversation: &ConversationRef,
         attached: bool,
     ) {
-        let result = async {
-            let channel = self.channel(conversation.channel)?;
-            let menu = self.conversation_command_menu(conversation, attached).await;
-            channel.sync_command_menu(conversation, &menu).await?;
-            Ok::<(), EngineError>(())
-        }
-        .await;
-        if let Err(error) = result {
-            tracing::warn!(%error, ?conversation, attached, "failed to synchronize the IM command menu");
-        }
-    }
-
-    async fn conversation_command_menu(
-        &self,
-        conversation: &ConversationRef,
-        attached: bool,
-    ) -> crate::CommandMenu {
-        let mut menu = super::command_menu_for(
-            attached && self.agent.capabilities().session_control,
-            self.multiplexer_enabled.then_some(self.multiplexer_kind),
-        );
-        if attached && !self.agent.capabilities().session_control {
-            menu.commands
-                .push(ChannelCommand::new("last", "Show the latest turn again").contextual());
-        }
-        if attached && let Some(session) = self.sessions.current(conversation).await {
-            let mut commands = Vec::new();
-            for command in menu.commands.drain(..) {
-                let session_command = crate::parse_input(&format!("/{}", command.name)).ok();
-                if !matches!(
-                    session_command,
-                    Some(crate::ParsedInput::Command(crate::AgentCommand::Session(_)))
-                ) || command.name == "exit"
-                    || self.agent.supports_command(&session, &command.name).await
-                {
-                    commands.push(command);
-                }
-            }
-            menu.commands = commands;
-        }
-        if attached
-            && let Some(session) = self.sessions.current(conversation).await
-            && !self.agent.session_access(&session).await.can_write()
-        {
-            menu.commands.retain(|command| {
-                matches!(
-                    command.name.as_str(),
-                    "sessions"
-                        | "rmux"
-                        | "tmux"
-                        | "current"
-                        | "history"
-                        | "last"
-                        | "detach"
-                        | "cancel"
-                        | "help"
-                )
-            });
-        }
-        if self.tasks.backend.is_some() {
-            menu.commands.push(ChannelCommand::new(
-                "dashboard",
-                "Browse projects and task boards",
-            ));
-            if attached {
-                menu.commands.extend([
-                    ChannelCommand::new("board", "Show this session's task board").contextual(),
-                    ChannelCommand::new("jobs", "Browse this session's jobs").contextual(),
-                    ChannelCommand::new("inboxes", "Browse this project's inbox").contextual(),
-                    ChannelCommand::new("inbox", "Append a requirement to this project's inbox")
-                        .contextual(),
-                ]);
-            }
-        }
-        let primary = [
-            "sessions",
-            "dashboard",
-            "cancel",
-            self.multiplexer_kind.as_str(),
-            "help",
-        ];
-        menu.commands.sort_by(|left, right| {
-            let rank = |command: &ChannelCommand| {
-                if command.contextual {
-                    primary.len()
-                } else {
-                    primary
-                        .iter()
-                        .position(|name| *name == command.name)
-                        .unwrap_or(primary.len())
-                }
-            };
-            rank(left)
-                .cmp(&rank(right))
-                .then_with(|| left.name.cmp(&right.name))
-        });
-        menu
+        self.queue_command_menu(conversation, attached, true).await;
     }
 
     pub(super) async fn stop_current(
         &self,
         conversation: &ConversationRef,
     ) -> Result<(), EngineError> {
+        if let Some(request) = self.sessions.cleanup.attachment(conversation) {
+            self.turns
+                .pending_prompts
+                .finish_reattachment(request.id, None);
+            if self.sessions.current(conversation).await.is_none() {
+                return self
+                    .send_view(
+                        conversation,
+                        &OutboundView::text(
+                            "Agentix · Stopped",
+                            "Waiting input was cancelled. Session reattachment will continue.",
+                        ),
+                    )
+                    .await
+                    .map(|_| ());
+            }
+        }
         let session = self.current_session(conversation).await?;
         if !self.agent.session_access(&session).await.can_write() {
             return self.show_read_only_notice(conversation).await;
         }
+        let pending_stop = self.turns.pending_prompts.request_stop(&session);
         let turn = self
             .turns
             .active_turn(&session)
             .await
-            .ok_or_else(|| EngineError::InvalidInput("the current session is idle".into()))?;
+            .or_else(|| self.turns.pending_prompts.observed_turn(&session));
+        if pending_stop && let Some(turn) = &turn {
+            self.restore_cold_turn(&session, turn).await?;
+            let completed = self
+                .turns
+                .buffers
+                .lock()
+                .await
+                .get(&(session.clone(), turn.clone()))
+                .is_some_and(|buffer| {
+                    !matches!(buffer.status, TurnStatus::InProgress | TurnStatus::Unknown)
+                });
+            if completed {
+                self.send_view(
+                    conversation,
+                    &OutboundView::text(
+                        "Agentix · Completed",
+                        "The turn has already completed. Pending follow-up inputs were cancelled.",
+                    ),
+                )
+                .await?;
+                return Ok(());
+            }
+        }
+        if turn.is_none() && pending_stop {
+            self.send_view(
+                conversation,
+                &OutboundView::text(
+                    "Agentix · Stopping…",
+                    "The stop request will be applied as soon as the agent identifies the turn.",
+                ),
+            )
+            .await?;
+            return Ok(());
+        }
+        let turn =
+            turn.ok_or_else(|| EngineError::InvalidInput("the current session is idle".into()))?;
+        self.turns.pending_prompts.take_stop(&session);
         self.operations.stop(&session, &turn).await?;
         Ok(())
     }
@@ -1086,12 +1094,25 @@ impl Engine {
         conversation: &ConversationRef,
         prompt: &str,
     ) -> Result<(), EngineError> {
+        if let Some(request) = self.sessions.cleanup.attachment(conversation)
+            && self
+                .queue_reattachment_prompt(conversation, &request, prompt)
+                .await?
+        {
+            return Ok(());
+        }
         let session = self.current_session(conversation).await?;
         if !self.agent.session_access(&session).await.can_write() {
             return self.show_read_only_notice(conversation).await;
         }
         if self
             .check_terminal_input(conversation, &session, Some(prompt.to_owned()))
+            .await?
+        {
+            return Ok(());
+        }
+        if self
+            .queue_pending_prompt(conversation, &session, prompt)
             .await?
         {
             return Ok(());
@@ -1113,7 +1134,12 @@ impl Engine {
             self.turns.set_active(session, turn_id).await;
             return Ok(());
         }
-        let turn_id = self.operations.send(&session, prompt, None).await?;
+        let Some(turn_id) = self
+            .start_prompt_with_feedback(conversation, &session, prompt)
+            .await?
+        else {
+            return Ok(());
+        };
         self.turns
             .set_active(session.clone(), turn_id.clone())
             .await;
@@ -1126,6 +1152,7 @@ impl Engine {
                 status: TurnStatus::InProgress,
                 started_at: Some(Instant::now()),
                 rendered_elapsed_seconds: None,
+                terminal_elapsed: None,
             },
         );
         if let Err(error) = self

@@ -33,9 +33,7 @@ use tokio_tungstenite::tungstenite::Message;
 
 use crate::endpoint::CodexEndpoint;
 use crate::multiplexer::{WorkspaceManager, started_session};
-use crate::process::{
-    CodexProcessDiscovery, RunningSessionResolver, confirm_exited_sessions, reappeared_sessions,
-};
+use crate::process::{CodexProcessDiscovery, RunningSessionResolver, confirm_exited_sessions};
 use crate::protocol::{
     ModelDescriptor, ModelListResult, ProtocolError, QueueAddResult, QueueListResult,
     QueuedSubmission, RpcError, ServerMessage, TurnStartResult, TurnSteerResult,
@@ -68,6 +66,7 @@ const DAEMON_START_TIMEOUT: Duration = Duration::from_secs(10);
 const DAEMON_READY_TIMEOUT: Duration = Duration::from_secs(5);
 const DAEMON_READY_POLL_INTERVAL: Duration = Duration::from_millis(100);
 const RUNNING_SESSION_POLL_INTERVAL: Duration = Duration::from_secs(10);
+const ATTACHED_CONTENT_POLL_INTERVAL: Duration = RUNNING_SESSION_POLL_INTERVAL;
 const MULTIPLEXER_SESSION_START_TIMEOUT: Duration = Duration::from_secs(10);
 const MULTIPLEXER_SESSION_POLL_INTERVAL: Duration = Duration::from_millis(200);
 const PENDING_RESUME_TIMEOUT: Duration = Duration::from_secs(3);
@@ -365,9 +364,13 @@ impl CodexClient {
         // The monitor borrows shared state through a clone without task/runtime
         // ownership. Otherwise its own lifetime would retain the final owner.
         let monitor_task = tokio::spawn(monitor_running_sessions(client.clone()));
+        let content_task = tokio::spawn(monitor_attached_content(client.clone()));
+        let background_task = tokio::spawn(monitor_background_turns(client.clone()));
         client.tasks = Some(Arc::new(crate::connection::ClientTasks(vec![
             reader_task,
             monitor_task,
+            content_task,
+            background_task,
         ])));
         Ok(client)
     }
@@ -376,6 +379,9 @@ impl CodexClient {
     pub fn set_background_turn_notifications(&self, enabled: bool) {
         self.background_turn_notifications
             .store(enabled, Ordering::Relaxed);
+        if let Some(registry) = &self.registry {
+            registry.wake();
+        }
     }
 
     pub fn client_bindings(&self) -> Vec<crate::ClientBinding> {
@@ -619,10 +625,16 @@ impl CodexClient {
         if !self.pending_resumes.lock().await.contains(session_id) {
             return Ok(true);
         }
-        match self
+        let result = self
             .request_after_reconnect("thread/resume", thread_resume_params(session_id))
-            .await
-        {
+            .await;
+        if !self.pending_resumes.lock().await.contains(session_id) {
+            return Ok(false);
+        }
+        if self.ensure_registered(session_id).is_err() {
+            return Ok(false);
+        }
+        match result {
             Ok(_) => {
                 self.pending_resumes.lock().await.remove(session_id);
                 Ok(true)
@@ -647,6 +659,85 @@ impl CodexClient {
         }
     }
 
+    async fn attach_inner(&self, session_id: &SessionId) -> Result<(), AgentError> {
+        if let Err(error) = self.ensure_registered(session_id) {
+            // Keep offline saved bindings eligible for recovery when the proxy
+            // observes the original client reconnecting.
+            self.exited_process_sessions
+                .lock()
+                .await
+                .insert(session_id.clone());
+            self.process_sessions
+                .lock()
+                .await
+                .insert(session_id.clone());
+            return Err(error);
+        }
+        if self.observed.lock().await.contains_key(session_id) {
+            return Ok(());
+        }
+        let thread = self
+            .read_thread(session_id, false)
+            .await
+            .map_err(agent_error)?;
+        if self.registry.is_none() && !thread_has_rollout(&thread) {
+            return Err(agent_error(ClientError::NoRollout(session_id.clone())));
+        }
+        let resumed = self
+            .request_after_reconnect("thread/resume", thread_resume_params(session_id))
+            .await;
+        self.ensure_registered(session_id)?;
+        match resumed {
+            Ok(_) => {
+                self.pending_resumes.lock().await.remove(session_id);
+                self.exited_process_sessions.lock().await.remove(session_id);
+            }
+            Err(error) if is_rollout_initializing(&error) => {
+                let running = self
+                    .list_sessions(None, u32::MAX)
+                    .await
+                    .map_err(agent_error)?
+                    .sessions
+                    .into_iter()
+                    .any(|session| session.id == *session_id);
+                if !running {
+                    return Err(agent_error(error));
+                }
+                self.pending_resumes.lock().await.insert(session_id.clone());
+            }
+            Err(ClientError::Rpc {
+                code: -32600,
+                message,
+            }) if message.contains("already has an active writer") => {
+                let latest = self
+                    .latest_stored_turn(session_id)
+                    .await
+                    .map_err(agent_error)?;
+                self.observed
+                    .lock()
+                    .await
+                    .insert(session_id.clone(), latest);
+                self.exited_process_sessions.lock().await.remove(session_id);
+                if self.process_discovery.is_some() || self.registry.is_some() {
+                    self.process_sessions
+                        .lock()
+                        .await
+                        .insert(session_id.clone());
+                }
+                return Ok(());
+            }
+            Err(error) => return Err(agent_error(error)),
+        }
+        self.subscriptions.lock().await.insert(session_id.clone());
+        if self.process_discovery.is_some() || self.registry.is_some() {
+            self.process_sessions
+                .lock()
+                .await
+                .insert(session_id.clone());
+        }
+        Ok(())
+    }
+
     async fn recover_pending_session(&self, session: &SessionId) -> Result<(), ClientError> {
         if !self.try_resume_pending_session(session).await? {
             return Ok(());
@@ -664,6 +755,14 @@ impl CodexClient {
                 return Err(error);
             }
         };
+        if self.registry.is_some()
+            && turn.is_none()
+            && self.subscriptions.lock().await.contains(session)
+        {
+            // An empty successful resume does not prove that the first native
+            // turn has been observed. Keep recovery interest for its notification.
+            self.pending_resumes.lock().await.insert(session.clone());
+        }
         // Events before successful resume were not subscribed. Recover their
         // input and output from history without replaying a prompt to the agent.
         if self.subscriptions.lock().await.contains(session)
@@ -1752,20 +1851,252 @@ fn forward_registry_events(
     }
 }
 
+// One in-flight operation per session. Dropping the supervisor cancels all
+// children, and departed registrations cancel their stale recovery requests.
+async fn monitor_attached_content(client: CodexClient) {
+    let mut interval = tokio::time::interval(ATTACHED_CONTENT_POLL_INTERVAL);
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    let mut tasks =
+        tokio::task::JoinSet::<(SessionId, Option<(u64, u64)>, tokio::time::Instant)>::new();
+    let mut processed = HashMap::new();
+    let mut next_read = HashMap::new();
+    let mut content_changes = client
+        .registry
+        .as_ref()
+        .map(crate::ClientRegistry::subscribe_content);
+    let mut active = HashMap::<SessionId, tokio::task::AbortHandle>::new();
+    let mut changes = client
+        .registry
+        .as_ref()
+        .map(crate::ClientRegistry::subscribe);
+    if let Some(changes) = &mut changes {
+        changes.mark_changed();
+    }
+    loop {
+        tokio::select! {
+            () = client.connection.changed.notified() => {
+                if let Some(registry) = &client.registry { registry.wake(); }
+            }
+            () = async { match &mut content_changes {
+                Some(changes) => { let _ = changes.changed().await; }
+                None => std::future::pending::<()>().await,
+            }} => {}
+            _ = interval.tick(), if client.registry.is_none() => {}
+            () = async { match &mut changes {
+                Some(changes) => { let _ = changes.changed().await; }
+                None => std::future::pending::<()>().await,
+            }} => {}
+            Some(result) = tasks.join_next(), if !tasks.is_empty() => {
+                if let Ok((session, version, deadline)) = result {
+                    if let Some(version) = version { processed.insert(session.clone(), version); }
+                    next_read.insert(session, deadline);
+                }
+                if client.registry.is_none() {
+                    continue;
+                }
+            }
+        }
+        let epoch = changes.as_ref().map(|changes| *changes.borrow());
+        let versions = client
+            .registry
+            .as_ref()
+            .map(crate::ClientRegistry::content_versions)
+            .unwrap_or_default();
+        active.retain(|_, task| !task.is_finished());
+        let (pending, exited, candidates) = attached_content_sessions(&client).await;
+        if candidates.is_empty() && active.is_empty() {
+            continue;
+        }
+        let running = match discover_running_sessions(&client).await {
+            Ok(running) => running,
+            Err(error) => {
+                tracing::warn!(%error, "failed to inspect attached Codex sessions");
+                continue;
+            }
+        };
+        let subscriptions = client.subscriptions.lock().await.clone();
+        active.retain(|session, task| {
+            if running.contains(session)
+                && (candidates.contains(session) || subscriptions.contains(session))
+            {
+                true
+            } else {
+                task.abort();
+                false
+            }
+        });
+        processed.retain(|session, _| candidates.contains(session));
+        next_read.retain(|session, _| candidates.contains(session));
+        for session in candidates.intersection(&running) {
+            let version =
+                epoch.map(|epoch| (epoch, versions.get(session.as_str()).map_or(0, |v| v.0)));
+            if version.is_some_and(|version| processed.get(session) == Some(&version)) {
+                continue;
+            }
+            if active.contains_key(session) {
+                continue;
+            }
+            if let Some(version) = version {
+                processed.insert(session.clone(), version);
+            }
+            let session = session.clone();
+            let worker = client.clone();
+            let resume = exited.contains(&session);
+            let recover = pending.contains(&session);
+            let key = session.clone();
+            let deadline = next_read.get(&session).copied();
+            let task = tasks.spawn(refresh_attached_content(
+                worker, session, resume, recover, deadline,
+            ));
+            active.insert(key, task);
+        }
+    }
+}
+
+async fn attached_content_sessions(
+    client: &CodexClient,
+) -> (HashSet<SessionId>, HashSet<SessionId>, HashSet<SessionId>) {
+    let observed = client
+        .observed
+        .lock()
+        .await
+        .keys()
+        .cloned()
+        .collect::<HashSet<_>>();
+    let pending = client.pending_resumes.lock().await.clone();
+    let exited = client.exited_process_sessions.lock().await.clone();
+    let candidates = observed
+        .union(&pending)
+        .cloned()
+        .chain(exited.iter().cloned())
+        .collect::<HashSet<_>>();
+    (pending, exited, candidates)
+}
+
+async fn refresh_attached_content(
+    worker: CodexClient,
+    session: SessionId,
+    resume: bool,
+    recover: bool,
+    deadline: Option<tokio::time::Instant>,
+) -> (SessionId, Option<(u64, u64)>, tokio::time::Instant) {
+    if worker.registry.is_some()
+        && !resume
+        && !recover
+        && let Some(deadline) = deadline
+    {
+        tokio::time::sleep_until(deadline).await;
+    }
+    let version = worker.registry.as_ref().map(|registry| {
+        (
+            *registry.subscribe().borrow(),
+            registry
+                .content_versions()
+                .get(session.as_str())
+                .map_or(0, |v| v.0),
+        )
+    });
+    let next = tokio::time::Instant::now() + Duration::from_millis(100);
+    if resume {
+        if let Err(error) = worker.resume_exited_session(&session).await {
+            tracing::warn!(%error, %session, "failed to recover returned Codex session");
+        }
+    } else if recover {
+        if let Err(error) = worker.recover_pending_session(&session).await {
+            tracing::warn!(%error, %session, "failed to recover attached Codex session");
+        }
+    } else {
+        worker.poll_observed_session(&session).await;
+    }
+    (session, version, next)
+}
+
+async fn monitor_background_turns(client: CodexClient) {
+    let mut background = background::BackgroundTurns::new();
+    let mut changes = client
+        .registry
+        .as_ref()
+        .map(crate::ClientRegistry::subscribe);
+    let mut completions = client
+        .registry
+        .as_ref()
+        .map(crate::ClientRegistry::subscribe_completions);
+    let mut known = HashSet::new();
+    let mut processed = HashMap::new();
+    let mut enabled = false;
+    if let Some(changes) = &mut changes {
+        changes.mark_changed();
+    }
+    loop {
+        tokio::select! {
+            () = tokio::time::sleep(RUNNING_SESSION_POLL_INTERVAL), if client.registry.is_none() => {}
+            () = async { match &mut changes {
+                Some(changes) => { let _ = changes.changed().await; }
+                None => std::future::pending::<()>().await,
+            }} => {}
+            () = async { match &mut completions {
+                Some(changes) => { let _ = changes.changed().await; }
+                None => std::future::pending::<()>().await,
+            }} => {}
+        }
+        if !client.background_turn_notifications.load(Ordering::Relaxed) {
+            enabled = false;
+            continue;
+        }
+        let running = match discover_running_sessions(&client).await {
+            Ok(running) => running,
+            Err(error) => {
+                tracing::warn!(%error, "failed to inspect background Codex sessions");
+                continue;
+            }
+        };
+        if let Some(registry) = &client.registry {
+            let versions = registry.content_versions();
+            let mut selected = running
+                .symmetric_difference(&known)
+                .cloned()
+                .collect::<HashSet<_>>();
+            if !enabled {
+                selected.extend(running.iter().cloned());
+            }
+            for session in &running {
+                let version = versions.get(session.as_str()).map_or(0, |v| v.1);
+                if version != *processed.get(session).unwrap_or(&0) {
+                    selected.insert(session.clone());
+                }
+                processed.insert(session.clone(), version);
+            }
+            processed.retain(|session, _| running.contains(session));
+            background.poll_selected(&client, &running, &selected).await;
+        } else {
+            background.poll(&client, &running).await;
+        }
+        known = running;
+        enabled = true;
+    }
+}
+
 async fn monitor_running_sessions(client: CodexClient) {
     let mut lifecycle_sequence = 0;
     let mut question_generation = client.connection.generation.load(Ordering::Acquire);
     let mut missing_counts = HashMap::new();
-    let mut background = background::BackgroundTurns::new();
+    let mut cleanup = tokio::task::JoinSet::new();
     let mut registry_changes = client
         .registry
         .as_ref()
         .map(crate::ClientRegistry::subscribe);
+    if let Some(changes) = &mut registry_changes {
+        changes.mark_changed();
+    }
     loop {
         if let Some(changes) = &mut registry_changes {
             tokio::select! {
                 _ = changes.changed() => {},
-                () = tokio::time::sleep(RUNNING_SESSION_POLL_INTERVAL) => {},
+                () = async {
+                    if let Some(delay) = client.registry.as_ref().and_then(crate::ClientRegistry::replacement_timeout) {
+                        tokio::time::sleep(delay).await;
+                    } else { std::future::pending::<()>().await; }
+                } => {},
             }
         } else {
             tokio::time::sleep(RUNNING_SESSION_POLL_INTERVAL).await;
@@ -1778,7 +2109,6 @@ async fn monitor_running_sessions(client: CodexClient) {
             }
             forward_registry_events(&client, registry, &mut lifecycle_sequence);
         }
-        client.poll_observed_sessions().await;
         let watched = client.process_sessions.lock().await.clone();
         if !client.background_turn_notifications.load(Ordering::Relaxed)
             && watched.is_empty()
@@ -1793,18 +2123,7 @@ async fn monitor_running_sessions(client: CodexClient) {
                 continue;
             }
         };
-        let pending_resumes = client.pending_resumes.lock().await.clone();
-        for session in pending_resumes.intersection(&running) {
-            if let Err(error) = client.recover_pending_session(session).await {
-                tracing::warn!(%error, session = %session, "failed to subscribe to started Codex session");
-            }
-        }
         let exited = client.exited_process_sessions.lock().await.clone();
-        for session in reappeared_sessions(&exited, &running) {
-            if let Err(error) = client.resume_exited_session(&session).await {
-                tracing::warn!(%error, session = %session, "failed to resume returned Codex session");
-            }
-        }
         let online = watched.difference(&exited).cloned().collect::<HashSet<_>>();
         let departed = if let Some(registry) = &client.registry {
             online
@@ -1832,17 +2151,27 @@ async fn monitor_running_sessions(client: CodexClient) {
             let _ = client.events.send(AgentEvent::SessionExited {
                 session_id: session.to_string(),
             });
-            if !client.observed.lock().await.contains_key(&session)
-                && let Err(error) = client
-                    .request("thread/unsubscribe", json!({"threadId": session.as_str()}))
-                    .await
-            {
-                tracing::warn!(%error, session = %session, "failed to release exited Codex session");
+            if !client.observed.lock().await.contains_key(&session) {
+                let worker = client.clone();
+                cleanup.spawn(async move {
+                    if worker.registry.as_ref().is_some_and(|registry| {
+                        registry
+                            .snapshot()
+                            .iter()
+                            .any(|binding| binding.sessions.contains(&session.to_string()))
+                    }) {
+                        return;
+                    }
+                    if let Err(error) = worker
+                        .request("thread/unsubscribe", json!({"threadId": session.as_str()}))
+                        .await
+                    {
+                        tracing::warn!(%error, %session, "failed to release exited Codex session");
+                    }
+                });
             }
         }
-        if client.background_turn_notifications.load(Ordering::Relaxed) {
-            background.poll(&client, &running).await;
-        }
+        while cleanup.try_join_next().is_some() {}
     }
 }
 
@@ -2099,6 +2428,13 @@ impl AgentAdapter for CodexClient {
         cursor: Option<String>,
         limit: u32,
     ) -> Result<HistoryPage, AgentError> {
+        if self.registry.is_some() && self.pending_resumes.lock().await.contains(session_id) {
+            return Ok(HistoryPage {
+                turns: Vec::new(),
+                older_cursor: None,
+                newer_cursor: None,
+            });
+        }
         match self.paged_history(session_id, cursor, limit).await {
             Ok(page) => Ok(page),
             Err(ClientError::Rpc { code: -32601, .. }) => self
@@ -2120,81 +2456,30 @@ impl AgentAdapter for CodexClient {
     }
 
     async fn attach(&self, session_id: &SessionId) -> Result<(), AgentError> {
-        if let Err(error) = self.ensure_registered(session_id) {
-            // Keep offline saved bindings eligible for recovery when the proxy
-            // observes the original client reconnecting.
-            self.exited_process_sessions
-                .lock()
-                .await
-                .insert(session_id.clone());
-            self.process_sessions
-                .lock()
-                .await
-                .insert(session_id.clone());
-            return Err(error);
+        if self.registry.is_none() {
+            return self.attach_inner(session_id).await;
         }
-        if self.observed.lock().await.contains_key(session_id) {
-            return Ok(());
-        }
-        let thread = self
-            .read_thread(session_id, false)
-            .await
-            .map_err(agent_error)?;
-        if self.registry.is_none() && !thread_has_rollout(&thread) {
-            return Err(agent_error(ClientError::NoRollout(session_id.clone())));
-        }
-        match self
-            .request_after_reconnect("thread/resume", thread_resume_params(session_id))
-            .await
+        if let Ok(result) =
+            tokio::time::timeout(Duration::from_secs(1), self.attach_inner(session_id)).await
         {
-            Ok(_) => {
-                self.pending_resumes.lock().await.remove(session_id);
-                self.exited_process_sessions.lock().await.remove(session_id);
+            if let Some(registry) = &self.registry {
+                registry.wake();
             }
-            Err(error) if is_rollout_initializing(&error) => {
-                let running = self
-                    .list_sessions(None, u32::MAX)
-                    .await
-                    .map_err(agent_error)?
-                    .sessions
-                    .into_iter()
-                    .any(|session| session.id == *session_id);
-                if !running {
-                    return Err(agent_error(error));
-                }
-                self.pending_resumes.lock().await.insert(session_id.clone());
-            }
-            Err(ClientError::Rpc {
-                code: -32600,
-                message,
-            }) if message.contains("already has an active writer") => {
-                let latest = self
-                    .latest_stored_turn(session_id)
-                    .await
-                    .map_err(agent_error)?;
-                self.observed
-                    .lock()
-                    .await
-                    .insert(session_id.clone(), latest);
-                self.exited_process_sessions.lock().await.remove(session_id);
-                if self.process_discovery.is_some() || self.registry.is_some() {
-                    self.process_sessions
-                        .lock()
-                        .await
-                        .insert(session_id.clone());
-                }
-                return Ok(());
-            }
-            Err(error) => return Err(agent_error(error)),
-        }
-        self.subscriptions.lock().await.insert(session_id.clone());
-        if self.process_discovery.is_some() || self.registry.is_some() {
+            result
+        } else {
+            self.ensure_registered(session_id)?;
+            self.pending_resumes.lock().await.insert(session_id.clone());
+            self.subscriptions.lock().await.insert(session_id.clone());
             self.process_sessions
                 .lock()
                 .await
                 .insert(session_id.clone());
+            self.exited_process_sessions.lock().await.remove(session_id);
+            if let Some(registry) = &self.registry {
+                registry.wake();
+            }
+            Ok(())
         }
-        Ok(())
     }
 
     async fn session_access(&self, session: &SessionId) -> agentix_domain::SessionAccess {
@@ -2214,6 +2499,9 @@ impl AgentAdapter for CodexClient {
     async fn unsubscribe(&self, session_id: &SessionId) -> Result<(), AgentError> {
         self.process_sessions.lock().await.remove(session_id);
         self.exited_process_sessions.lock().await.remove(session_id);
+        if let Some(registry) = &self.registry {
+            registry.wake();
+        }
         if self.observed.lock().await.remove(session_id).is_some() {
             return Ok(());
         }
@@ -3195,9 +3483,19 @@ mod tests {
             send_result(&mut websocket, &second_resume["id"], json!({})).await;
         });
 
-        let client = CodexClient::connect(CodexEndpoint::from_socket_path(&socket).unwrap())
-            .await
-            .unwrap();
+        // This unit test exercises foreground recovery only. An empty registry
+        // excludes background discovery without relying on the monitor timer.
+        let mut client = CodexClient::connect_with_registry(
+            CodexEndpoint::from_socket_path(&socket).unwrap(),
+            std::path::Path::new("codex"),
+            directory.path(),
+            false,
+            crate::ClientRegistry::default(),
+        )
+        .await
+        .unwrap();
+        // Exercise the direct foreground API; monitor clones keep the empty registry.
+        client.registry = None;
         let session = SessionId::new("thr_empty");
         client.pending_resumes.lock().await.insert(session.clone());
 
@@ -3248,9 +3546,17 @@ mod tests {
             send_result(&mut websocket, &second_resume["id"], json!({})).await;
         });
 
-        let client = CodexClient::connect(CodexEndpoint::from_socket_path(&socket).unwrap())
-            .await
-            .unwrap();
+        let mut client = CodexClient::connect_with_registry(
+            CodexEndpoint::from_socket_path(&socket).unwrap(),
+            std::path::Path::new("codex"),
+            directory.path(),
+            false,
+            crate::ClientRegistry::default(),
+        )
+        .await
+        .unwrap();
+        // Exercise the direct foreground API; monitor clones keep the empty registry.
+        client.registry = None;
         let session = SessionId::new("thr_empty");
         client.pending_resumes.lock().await.insert(session.clone());
 
@@ -3287,9 +3593,15 @@ mod tests {
             .await;
         });
 
-        let client = CodexClient::connect(CodexEndpoint::from_socket_path(&socket).unwrap())
-            .await
-            .unwrap();
+        let client = CodexClient::connect_with_registry(
+            CodexEndpoint::from_socket_path(&socket).unwrap(),
+            std::path::Path::new("codex"),
+            directory.path(),
+            false,
+            crate::ClientRegistry::default(),
+        )
+        .await
+        .unwrap();
         let session = SessionId::new("thr_exited");
         client.subscriptions.lock().await.insert(session.clone());
         client.process_sessions.lock().await.insert(session.clone());
