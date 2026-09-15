@@ -115,19 +115,9 @@ impl AgentRegistry {
                     .and_then(|preview| preview.lines().next())
                     .filter(|preview| !preview.trim().is_empty())
             })
-            .unwrap_or_else(|| {
-                session
-                    .id
-                    .native_str()
-                    .rsplit('-')
-                    .next()
-                    .unwrap_or_default()
-            })
-            .chars()
-            .take(80)
-            .collect::<String>();
+            .map(|title| title.trim().chars().take(80).collect::<String>());
         session.id = SessionRef::new(kind, session.id.clone()).encode();
-        session.name = Some(format!("{} · {title}", kind.display_name()));
+        session.name = title;
     }
 }
 
@@ -647,21 +637,16 @@ mod tests {
     }
 
     #[test]
-    fn unnamed_sessions_use_the_last_native_id_segment() {
+    fn qualified_sessions_keep_optional_titles_separate_from_identity() {
         for (id, name, preview, title) in [
-            (
-                "01a08e65-8f58-74b3-8b99-06423a09a510",
-                None,
-                None,
-                "06423a09a510",
-            ),
+            ("01a08e65-8f58-74b3-8b99-06423a09a510", None, None, ""),
             (
                 "01a08e65-8f58-74b3-8b99-06423a09a511",
                 None,
                 Some("   "),
-                "06423a09a511",
+                "",
             ),
-            ("native_session_id", None, Some(""), "native_session_id"),
+            ("native_session_id", None, Some(""), ""),
             ("a-b-c", Some("My session"), Some("Preview"), "My session"),
             (
                 "a-b-c",
@@ -686,10 +671,7 @@ mod tests {
                     terminal: None,
                 };
                 AgentRegistry::qualify(kind, &mut session);
-                assert_eq!(
-                    session.name,
-                    Some(format!("{} · {title}", kind.display_name()))
-                );
+                assert_eq!(session.name, (!title.is_empty()).then(|| title.to_owned()));
                 assert_eq!(session.id.native_str(), id);
             }
         }

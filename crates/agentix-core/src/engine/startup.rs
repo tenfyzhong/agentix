@@ -270,6 +270,7 @@ impl Engine {
                 continue;
             }
             let session_label = self.session_label(&session).await;
+            let agent_name = self.agent.session_display_name(&session);
             self.sessions
                 .bindings
                 .lock()
@@ -290,7 +291,7 @@ impl Engine {
                         terminal_elapsed: None,
                     };
                     let view = live_turn_view(
-                        self.agent.display_name(),
+                        agent_name,
                         &session_label,
                         &stored.turn_id,
                         &buffer,

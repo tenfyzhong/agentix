@@ -36,7 +36,7 @@ impl Engine {
         let label = self.session_label(&session).await;
         for (conversation, owner) in recipients {
             let mut view = OutboundView::text(
-                format!("{} · {label}", self.agent.display_name()),
+                format!("{} · {label}", self.agent.session_display_name(&session)),
                 "This session is waiting for your answer. Attach to view and answer the question.",
             );
             view.status = ViewStatus::Waiting;

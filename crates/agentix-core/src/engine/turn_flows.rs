@@ -235,19 +235,16 @@ impl Engine {
         self.sessions
             .cache_session_summary(self.agent.clone(), session_id)
             .await;
-        let content = self
-            .background_turn_summary(session_id, turn_id)
-            .await
-            .map_or_else(
-                || OutboundView::text(self.agent.display_name(), "Turn content is unavailable."),
-                |turn| {
-                    super::presentation::history_turn_view(
-                        self.agent.display_name(),
-                        &turn,
-                        self.output,
-                    )
-                },
-            );
+        let session_label = self.session_label(session_id).await;
+        let content = match self.background_turn_summary(session_id, turn_id).await {
+            Some(turn) => super::presentation::history_turn_view(
+                self.agent.session_display_name(session_id),
+                &session_label,
+                &turn,
+                self.output,
+            ),
+            None => OutboundView::text(self.agent.display_name(), "Turn content is unavailable."),
+        };
         let body = format!(
             "{}\n\n{}",
             background_completion_body(status, error),
@@ -301,28 +298,11 @@ impl Engine {
 
     async fn background_notification_title(&self, session_id: &SessionId) -> String {
         self.sessions.await_background_title(session_id).await;
-        self.sessions
-            .cache
-            .lock()
-            .await
-            .get(session_id)
-            .map_or_else(
-                || {
-                    let native = session_id.native_str();
-                    format!(
-                        "{} · {}",
-                        self.agent.session_display_name(session_id),
-                        &native[..native.floor_char_boundary(8)]
-                    )
-                },
-                |session| {
-                    format!(
-                        "{} · {}",
-                        self.agent.display_name(),
-                        super::session_display_label(session)
-                    )
-                },
-            )
+        format!(
+            "{} · {}",
+            self.agent.session_display_name(session_id),
+            self.session_label(session_id).await
+        )
     }
 
     pub(super) async fn background_turn_summary(
@@ -808,7 +788,7 @@ impl Engine {
             };
             (
                 live_turn_view(
-                    self.agent.display_name(),
+                    self.agent.session_display_name(session_id),
                     &session_label,
                     turn_id,
                     buffer,
@@ -992,7 +972,7 @@ impl Engine {
         {
             let session_label = self.session_label(&key.0).await;
             let view = live_turn_view(
-                self.agent.display_name(),
+                self.agent.session_display_name(&key.0),
                 &session_label,
                 &key.1,
                 &buffer,
@@ -1139,7 +1119,7 @@ impl Engine {
         }
         let session_label = self.session_label(session_id).await;
         let mut view = live_turn_view(
-            self.agent.display_name(),
+            self.agent.session_display_name(session_id),
             &session_label,
             turn_id,
             &buffer,

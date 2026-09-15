@@ -4,7 +4,7 @@ use super::{
     DeliveryClass, Engine, EngineError, HistoryPage, HistoryPresentation, Instant, OutboundView,
     ParsedInput, PendingSessionInput, SessionCommand, SessionCommandChoice, SessionId, TurnBuffer,
     TurnStatus, UiAction, Uuid, ViewStatus, display_workspace, history_views, markdown_quote,
-    session_display_label, session_status_label, session_title,
+    session_display_label, session_status_label,
 };
 
 const SESSION_COMMAND_HELP: &[(&str, &str)] = &[
@@ -225,7 +225,11 @@ impl Engine {
         let action_group = Uuid::new_v4().simple().to_string();
         let mut sessions = self.sessions.cache.lock().await;
         for (index, session) in page.into_iter().enumerate() {
-            let title = session_title(&session);
+            let title = format!(
+                "{} · {}",
+                self.agent.session_display_name(&session.id),
+                session_display_label(&session)
+            );
             let is_current = current_session.as_ref() == Some(&session.id);
             let (status_icon, status_label) = session_status_label(&session.status);
             if !body.is_empty() {
@@ -318,7 +322,10 @@ impl Engine {
             self.send_view(
                 conversation,
                 &OutboundView::text(
-                    format!("{} · {session_label}", self.agent.display_name()),
+                    format!(
+                        "{} · {session_label}",
+                        self.agent.session_display_name(&session_id)
+                    ),
                     "This session is already attached.",
                 ),
             )
@@ -489,7 +496,10 @@ impl Engine {
             conversation,
             &OutboundView {
                 sections: Vec::new(),
-                title: format!("{} · {session_label}", self.agent.display_name()),
+                title: format!(
+                    "{} · {session_label}",
+                    self.agent.session_display_name(&session)
+                ),
                 subtitle: active.as_ref().map(|turn| format!("Turn {turn} · running")),
                 body: active.map_or_else(
                     || "Session is idle.".into(),
@@ -593,7 +603,7 @@ impl Engine {
     ) -> Result<(), EngineError> {
         let session_label = self.session_label(session_id).await;
         let mut views = history_views(
-            self.agent.display_name(),
+            self.agent.session_display_name(session_id),
             &session_label,
             history,
             presentation,
@@ -1287,7 +1297,10 @@ impl Engine {
             conversation,
             &OutboundView {
                 sections: Vec::new(),
-                title: format!("{} · {session_label}", self.agent.display_name()),
+                title: format!(
+                    "{} · {session_label}",
+                    self.agent.session_display_name(&session)
+                ),
                 subtitle: Some(format!(
                     "Queue · {count} {}",
                     if count == 1 { "message" } else { "messages" }
@@ -1338,7 +1351,7 @@ impl Engine {
             .await
             .get(session_id)
             .map_or_else(
-                || format!("Untitled · {}", session_id.short()),
+                || super::presentation::short_identifier(session_id.native_str()).to_owned(),
                 session_display_label,
             )
     }

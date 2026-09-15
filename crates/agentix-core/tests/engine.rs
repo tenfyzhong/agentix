@@ -2030,7 +2030,7 @@ fn multiplexer_snapshot() -> MultiplexerSnapshot {
 }
 
 #[tokio::test]
-async fn session_picker_uses_titles_instead_of_ids() {
+async fn session_picker_shows_agent_short_id_and_title() {
     let agent = Arc::new(FakeAgent::new());
     let channel = Arc::new(FakeChannel::default());
     let state = SqliteState::in_memory().await.unwrap();
@@ -2044,7 +2044,7 @@ async fn session_picker_uses_titles_instead_of_ids() {
     let view = channel.sent().last().unwrap().1.clone();
     assert_eq!(
         view.body,
-        "> **1 · Parser cleanup**\n> 🟡 **Status:** Idle\n> 📁 **Workspace:** `/work/parser`\n\n> **2 · Daemon startup**\n> 🟡 **Status:** Idle\n> 📁 **Workspace:** `/work/daemon`"
+        "> **1 · Codex · thr_a · Parser cleanup**\n> 🟡 **Status:** Idle\n> 📁 **Workspace:** `/work/parser`\n\n> **2 · Codex · thr_b · Daemon startup**\n> 🟡 **Status:** Idle\n> 📁 **Workspace:** `/work/daemon`"
     );
     assert_eq!(view.sections.len(), 2);
     assert_eq!(
@@ -2057,8 +2057,8 @@ async fn session_picker_uses_titles_instead_of_ids() {
     );
     assert!(view.sections[0].body.contains("/work/parser"));
     assert!(view.sections[1].body.contains("/work/daemon"));
-    assert!(!view.body.contains("thr_a"));
-    assert!(!view.body.contains("thr_b"));
+    assert!(view.body.contains("thr_a"));
+    assert!(view.body.contains("thr_b"));
     assert_eq!(
         view.actions
             .iter()
@@ -2112,7 +2112,7 @@ async fn session_picker_disables_the_current_session_button_without_a_title_mark
     assert!(
         !view
             .body
-            .contains("**1 · Parser cleanup** · 📎 **Attached**")
+            .contains("**1 · Codex · thr_a · Parser cleanup** · 📎 **Attached**")
     );
     assert_eq!(view.sections.len(), 2);
     assert!(!view.sections[0].body.contains("📎 **Attached**"));
@@ -2127,7 +2127,7 @@ async fn session_picker_disables_the_current_session_button_without_a_title_mark
         view.sections[1].action_tokens,
         [view.actions[1].token.clone()]
     );
-    assert!(view.body.contains("**2 · Daemon startup**"));
+    assert!(view.body.contains("**2 · Codex · thr_b · Daemon startup**"));
     assert_eq!(
         view.actions
             .iter()
@@ -2282,10 +2282,7 @@ async fn multiplexer_creation_waits_for_agent_selection_before_attaching() {
         .await
         .unwrap();
     let result = channel.sent().last().unwrap().1.clone();
-    assert_eq!(
-        result.subtitle.as_deref(),
-        Some("Attached · Untitled · thr_mux_")
-    );
+    assert_eq!(result.subtitle.as_deref(), Some("Attached · thr_mux_"));
     assert!(result.body.contains("Codex started"));
     assert!(agent.calls().iter().any(|call| {
         call.contains("NewSession")
@@ -2840,7 +2837,7 @@ async fn model_and_reasoning_choices_can_be_selected_for_the_attached_session() 
         .unwrap();
 
     let model = channel.sent().last().unwrap().1.clone();
-    assert_eq!(model.subtitle.as_deref(), Some("Parser cleanup · thr_a"));
+    assert_eq!(model.subtitle.as_deref(), Some("thr_a · Parser cleanup"));
     assert_eq!(
         model
             .actions
@@ -3282,7 +3279,7 @@ async fn running_codex_turn_queues_follow_ups_and_exposes_them_in_im() {
         .unwrap();
 
     let queue = channel.sent().last().unwrap().1.clone();
-    assert_eq!(queue.title, "Codex · Parser cleanup · thr_a");
+    assert_eq!(queue.title, "Codex · thr_a · Parser cleanup");
     assert_eq!(queue.subtitle.as_deref(), Some("Queue · 2 messages"));
     assert!(queue.body.contains("> **1**\n> first follow-up"));
     assert!(queue.body.contains("> **2**\n> second follow-up"));
@@ -3605,7 +3602,7 @@ async fn attach_and_history_render_one_message_per_turn_with_distinct_speakers()
     assert!(agent.calls().contains(&"history:thr_a:1".to_string()));
     assert_eq!(attached.len(), 2);
     assert_eq!(attached[0].1.subtitle.as_deref(), Some("Attached"));
-    assert_eq!(attached[1].1.title, "Codex · Parser cleanup · thr_a");
+    assert_eq!(attached[1].1.title, "Codex · thr_a · Parser cleanup");
     assert_eq!(
         attached[1].1.subtitle.as_deref(),
         Some("Turn turn_sec · Working 0s")
@@ -3644,7 +3641,7 @@ async fn current_detach_and_lifecycle_messages_show_the_session_title_and_id() {
         .unwrap();
     assert_eq!(
         channel.sent().last().unwrap().1.title,
-        "Codex · Parser cleanup · thr_a"
+        "Codex · thr_a · Parser cleanup"
     );
 
     engine
@@ -3658,7 +3655,7 @@ async fn current_detach_and_lifecycle_messages_show_the_session_title_and_id() {
             .unwrap()
             .1
             .body
-            .contains("Parser cleanup · thr_a")
+            .contains("thr_a · Parser cleanup")
     );
 }
 
@@ -4314,7 +4311,7 @@ async fn restore_reopens_persisted_agent_subscriptions() {
     let online = channel.sent().last().unwrap().1.clone();
     assert_eq!(online.title, "Agentix serve");
     assert_eq!(online.subtitle.as_deref(), Some("Online · Reattached"));
-    assert!(online.body.contains("Codex session Parser cleanup · thr_a"));
+    assert!(online.body.contains("Codex session thr_a · Parser cleanup"));
     engine
         .handle_inbound(inbound("chat-a", "continue"))
         .await
@@ -4754,7 +4751,7 @@ async fn graceful_shutdown_persists_the_binding_and_detaches_the_im() {
     assert!(
         offline
             .body
-            .contains("Codex session Parser cleanup · thr_a")
+            .contains("Codex session thr_a · Parser cleanup")
     );
     assert!(offline.body.contains("Saved"));
     let detached_turn = channel.updated().last().unwrap().1.clone();
@@ -5049,7 +5046,7 @@ async fn exited_current_session_notifies_the_im_and_detaches() {
         .1;
     assert_eq!(notice.title, "Codex session exited");
     assert_eq!(notice.subtitle.as_deref(), Some("Automatically detached"));
-    assert!(notice.body.contains("Parser cleanup · thr_a"));
+    assert!(notice.body.contains("thr_a · Parser cleanup"));
     assert_eq!(notice.status, agentix_core::ViewStatus::Warning);
     assert!(!channel.session_commands().last().unwrap().1);
     assert_eq!(
@@ -5217,7 +5214,7 @@ async fn resumed_codex_session_reattaches_the_previous_im_conversation() {
     let notice = channel.sent().last().unwrap().1.clone();
     assert_eq!(notice.title, "Codex session resumed");
     assert_eq!(notice.subtitle.as_deref(), Some("Automatically reattached"));
-    assert!(notice.body.contains("Parser cleanup · thr_a"));
+    assert!(notice.body.contains("thr_a · Parser cleanup"));
     assert_eq!(notice.status, agentix_core::ViewStatus::Success);
 
     engine
@@ -5444,7 +5441,7 @@ async fn unattached_turn_completion_notifies_the_im_and_can_attach_the_session()
     let sent = channel.sent();
     assert_eq!(sent.len(), before + 1);
     let notification = &sent.last().unwrap().1;
-    assert_eq!(notification.title, "Codex · Daemon startup · thr_b");
+    assert_eq!(notification.title, "Codex · thr_b · Daemon startup");
     assert_eq!(
         notification.subtitle.as_deref(),
         Some("Background turn turn_bac · Completed")
@@ -5600,7 +5597,7 @@ async fn draining_turn_completion_adds_an_attach_button() {
     engine.handle_agent_event(completed.clone()).await.unwrap();
 
     let notification = channel.sent().last().unwrap().1.clone();
-    assert_eq!(notification.title, "Codex · Parser cleanup · thr_a");
+    assert_eq!(notification.title, "Codex · thr_a · Parser cleanup");
     assert!(notification.body.contains("background session"));
     assert_eq!(notification.status, agentix_core::ViewStatus::Background);
     assert_eq!(notification.actions.len(), 1);
@@ -8950,8 +8947,7 @@ async fn first_background_notification_loads_title_without_attach() {
         result.unwrap();
         let view = channel.sent().last().unwrap().1.clone();
         assert_eq!(view.status, agentix_core::ViewStatus::Background);
-        assert!(view.title.contains("Parser cleanup"), "{}", view.title);
-        assert!(view.title.contains("Codex"), "{}", view.title);
+        assert_eq!(view.title, "Codex · thr_a · Parser cleanup");
         assert!(
             !adapter
                 .calls()
@@ -11757,4 +11753,88 @@ async fn runtime_initial_attachment_keeps_subscription_when_previous_owner_detac
         !agent.calls().iter().any(|call| call == "unsubscribe:thr_b"),
         "old-owner cleanup must not close the new subscription"
     );
+}
+
+#[tokio::test]
+async fn session_card_titles_are_consistent_across_registry_history_and_live_output() {
+    use agentix_core::{AgentKind, AgentRegistry};
+
+    for registry in [false, true] {
+        for named in [false, true] {
+            let fake = Arc::new(FakeAgent::new());
+            fake.sessions.lock().unwrap()[0].id =
+                SessionId::new("01a0a546-d665-7340-b48b-a87a06f0e125");
+            if !named {
+                fake.sessions.lock().unwrap()[0].name = None;
+            }
+            let agent: Arc<dyn AgentAdapter> = if registry {
+                Arc::new(AgentRegistry::new(vec![(AgentKind::Codex, fake)]).unwrap())
+            } else {
+                fake
+            };
+            let channel = Arc::new(FakeChannel::default());
+            let engine = Engine::new(
+                agent,
+                SqliteState::in_memory().await.unwrap(),
+                vec![channel.clone()],
+            );
+            let session = if registry {
+                "codex:01a0a546-d665-7340-b48b-a87a06f0e125"
+            } else {
+                "01a0a546-d665-7340-b48b-a87a06f0e125"
+            };
+            let expected = if named {
+                "Codex · 01a0a546 · Parser cleanup"
+            } else {
+                "Codex · 01a0a546"
+            };
+            engine
+                .handle_inbound(inbound("chat-a", "/sessions"))
+                .await
+                .unwrap();
+            assert!(
+                channel
+                    .sent()
+                    .last()
+                    .unwrap()
+                    .1
+                    .body
+                    .contains(&format!("**1 · {expected}**"))
+            );
+            engine
+                .handle_inbound(inbound("chat-a", &format!("/attach {session}")))
+                .await
+                .unwrap();
+            let history = channel.sent().last().unwrap().1.clone();
+            assert_eq!(history.title, expected);
+            assert_eq!(
+                history.subtitle.as_deref(),
+                Some("Turn turn_his · Completed")
+            );
+            engine
+                .handle_agent_event(AgentEvent::AgentMessageDelta {
+                    session_id: session.into(),
+                    turn_id: "turn_live".into(),
+                    item_id: "answer".into(),
+                    delta: "Hello".into(),
+                })
+                .await
+                .unwrap();
+            engine
+                .handle_agent_event(AgentEvent::TurnCompleted {
+                    session_id: session.into(),
+                    turn_id: "turn_live".into(),
+                    status: TurnStatus::Completed,
+                    error: None,
+                })
+                .await
+                .unwrap();
+            let live = channel.sent().last().unwrap().1.clone();
+            assert_eq!(live.title, expected);
+            assert_eq!(
+                live.subtitle.as_deref(),
+                Some("Turn turn_liv · Completed in 0s")
+            );
+        }
+    }
 }
