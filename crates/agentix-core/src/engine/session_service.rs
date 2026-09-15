@@ -58,6 +58,22 @@ impl SessionService {
 }
 
 impl SessionService {
+    /// Give a first background card a bounded chance to use uncached metadata.
+    /// Timing out preserves the shared reader for subsequent notifications.
+    pub(super) async fn await_background_title(&self, session_id: &SessionId) {
+        let _ = tokio::time::timeout(std::time::Duration::from_millis(50), async {
+            if self.cache.lock().await.contains_key(session_id) {
+                return;
+            }
+            let mut reader = self.title_read.lock().await;
+            if let Some(read) = reader.as_mut() {
+                let _ = (&mut read.0).await;
+                reader.take();
+            }
+        })
+        .await;
+    }
+
     pub(super) async fn current(&self, conversation: &ConversationRef) -> Option<SessionId> {
         self.bindings
             .lock()

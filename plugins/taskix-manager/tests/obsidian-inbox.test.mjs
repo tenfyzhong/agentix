@@ -143,3 +143,65 @@ test("Deleting an Inbox file cancels every queued entry", async (t) => {
     f.edit(); f.engine.forget(filePath); await f.engine.flush();
     assert.equal(f.calls.length, 0);
 });
+
+test("Inbox editing tolerates transient incomplete receipts without notices or writes", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const f = await inboxFixture(t);
+    const valid = f.source();
+    f.edit();
+    const broken = valid.replace("entry-state COMPLETED revision=3 -->", "entry-state COM");
+    f.replaceSource(broken);
+    f.engine.observeInbox(filePath, broken);
+    await f.engine.flush();
+    assert.equal(f.calls.length, 0, "malformed documents cancel queued status writes immediately");
+    assert.deepEqual(f.notices, []);
+    t.mock.timers.tick(500);
+    f.replaceSource(valid);
+    f.engine.observeInbox(filePath, valid);
+    await f.engine.flush();
+    t.mock.timers.tick(2000);
+    assert.deepEqual(f.notices, []);
+    f.edit();
+    await f.engine.flush();
+    assert.equal(f.calls.length, 2, "valid edits resume normally");
+});
+
+test("Inbox reports stable malformed receipts once and resets after repair", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    const f = await inboxFixture(t);
+    const valid = f.source();
+    const broken = valid.replace("entry-state COMPLETED revision=3 -->", "entry-state COM");
+    const observe = () => { f.replaceSource(broken); f.engine.observeInbox(filePath, broken); };
+    observe();
+    t.mock.timers.tick(800);
+    observe();
+    t.mock.timers.tick(800);
+    assert.deepEqual(f.notices, [], "each edit restarts the quiet period");
+    t.mock.timers.tick(200);
+    assert.equal(f.notices.length, 1);
+    assert.match(f.notices[0], /Invalid Inbox status receipt/);
+    observe();
+    t.mock.timers.tick(2000);
+    assert.equal(f.notices.length, 1, "repeated observations do not repeat the same warning");
+    f.replaceSource(valid);
+    f.engine.observeInbox(filePath, valid);
+    await f.engine.flush();
+    observe();
+    t.mock.timers.tick(1000);
+    assert.equal(f.notices.length, 2, "a new malformed edit after repair can report again");
+    assert.equal(f.calls.length, 0);
+});
+
+test("Inbox deletion and disposal cancel deferred parse warnings", async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    for (const cleanup of ["forget", "dispose"]) {
+        const f = await inboxFixture(t);
+        const broken = f.source().replace("entry-state COMPLETED revision=3 -->", "entry-state COM");
+        f.replaceSource(broken);
+        f.engine.observeInbox(filePath, broken);
+        if (cleanup === "forget") f.engine.forget(filePath);
+        else f.engine.dispose();
+        t.mock.timers.tick(2000);
+        assert.deepEqual(f.notices, []);
+    }
+});
