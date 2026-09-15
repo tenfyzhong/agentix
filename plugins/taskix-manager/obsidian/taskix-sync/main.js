@@ -259,7 +259,7 @@ class SyncEngine {
             error.timer = null;
             error.notified = true;
             this.notify(`Inbox synchronization paused for ${filePath}: ${message}`);
-        }, 1000);
+        }, 5000);
     }
 
     async flush() {

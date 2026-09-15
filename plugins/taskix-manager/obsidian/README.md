@@ -145,7 +145,7 @@ Commands requiring a reason receive `Status changed in Obsidian: OLD -> NEW`. Al
 
 ### Inbox checkbox edits
 
-Incomplete Inbox syntax while typing pauses status writes immediately. Taskix Sync waits for one second without another malformed edit before showing a parse warning, and reports the same error only once until the document is repaired. A valid saved edit resumes synchronization automatically. Closing the plugin or deleting the file cancels deferred warnings.
+Incomplete Inbox syntax while typing pauses status writes immediately. Taskix Sync waits for five seconds without another malformed edit before showing a parse warning, and reports the same error only once until the document is repaired. A valid saved edit resumes synchronization automatically. Closing the plugin or deleting the file cancels deferred warnings.
 
 Taskix Sync also monitors registered top-level items in `Projects/<project>/Inbox.md`, querying each entry by the ID in its marker. Run `taskix inbox sync` to register newly authored submissions. Nested checklists, fenced examples and copied Inbox files are ignored. Keep the generated entry ID, state/revision receipt and region markers intact; `taskix sync` upgrades older receipts.
 
