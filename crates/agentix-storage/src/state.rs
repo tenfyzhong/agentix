@@ -353,12 +353,26 @@ impl SqliteState {
     }
 
     pub async fn checkpoint(&self) -> Result<(), sqlx::Error> {
-        // Committed WAL records are already durable. Do not wait for readers
-        // or cancelled background queries before sending shutdown notices.
-        sqlx::query("PRAGMA wal_checkpoint(PASSIVE)")
+        // Committed WAL records are already durable. Checkpoint is maintenance,
+        // not a prerequisite for shutdown notices. PASSIVE can still report
+        // SQLITE_LOCKED when this connection has a read transaction, or BUSY
+        // when another checkpoint owns the lock. Leave that work for later.
+        match sqlx::query("PRAGMA wal_checkpoint(PASSIVE)")
             .fetch_all(&self.pool)
-            .await?;
-        Ok(())
+            .await
+        {
+            Ok(_) => Ok(()),
+            Err(error)
+                if error
+                    .as_database_error()
+                    .and_then(sqlx::error::DatabaseError::code)
+                    .and_then(|code| code.parse::<u32>().ok())
+                    .is_some_and(|code| matches!(code & 0xff, 5 | 6)) =>
+            {
+                Ok(())
+            }
+            Err(error) => Err(error),
+        }
     }
 
     pub async fn detach(&self, conversation: &ConversationRef) -> Result<(), sqlx::Error> {
@@ -600,5 +614,65 @@ fn parse_turn_status(status: &str) -> Option<TurnStatus> {
         "failed" => Some(TurnStatus::Failed),
         "unknown" => Some(TurnStatus::Unknown),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn checkpoint_skips_locked_connection_and_preserves_committed_bindings() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("checkpoint.sqlite3");
+        let options = SqliteConnectOptions::new()
+            .filename(&path)
+            .create_if_missing(true);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .unwrap();
+        let state = SqliteState { pool };
+        state.migrate().await.unwrap();
+        let conversation = ConversationRef::new(ChannelKind::Telegram, "saved");
+        let session = SessionId::new("saved-session");
+        state.attach(&conversation, &session).await.unwrap();
+
+        // Pin a read transaction on the same connection used by checkpoint.
+        // A reader on a different connection only leaves a passive checkpoint
+        // incomplete; a local reader produces SQLITE_LOCKED instead.
+        sqlx::query("BEGIN").execute(&state.pool).await.unwrap();
+        state.list_bindings().await.unwrap();
+        let error = sqlx::query("PRAGMA wal_checkpoint(PASSIVE)")
+            .fetch_all(&state.pool)
+            .await
+            .map(|_| ())
+            .expect_err("fixture must lock checkpoint");
+        assert_eq!(
+            error.as_database_error().unwrap().code().as_deref(),
+            Some("6")
+        );
+        let checkpoint = state.checkpoint().await;
+        let bindings = state.list_bindings().await.unwrap();
+        sqlx::query("ROLLBACK").execute(&state.pool).await.unwrap();
+        checkpoint.expect("a busy checkpoint must not prevent shutdown preparation");
+        assert_eq!(bindings, [(conversation.clone(), session.clone())]);
+        state.pool.close().await;
+        let reopened = SqliteState::open(&path).await.unwrap();
+        assert_eq!(
+            reopened.current_session(&conversation).await.unwrap(),
+            Some(session)
+        );
+    }
+
+    #[tokio::test]
+    async fn checkpoint_propagates_non_contention_errors() {
+        let state = SqliteState::in_memory().await.unwrap();
+        state.pool.close().await;
+        assert!(matches!(
+            state.checkpoint().await,
+            Err(sqlx::Error::PoolClosed)
+        ));
     }
 }

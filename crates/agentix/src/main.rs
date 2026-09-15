@@ -2897,6 +2897,8 @@ mod tests {
 
     #[tokio::test]
     async fn service_lifecycle_restores_persisted_bindings_and_notifies_on_shutdown() {
+        let subscriber = tracing_subscriber::fmt().with_test_writer().finish();
+        let _tracing = tracing::subscriber::set_default(subscriber);
         let directory = tempfile::tempdir().unwrap();
         let state_path = directory.path().join("agentix.sqlite3");
         let config_path = directory.path().join("config.toml");
