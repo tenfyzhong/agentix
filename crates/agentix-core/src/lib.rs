@@ -13,6 +13,7 @@ pub use agentix_storage::{SqliteState, TaskNotification};
 pub use command::{AgentCommand, InputParseError, ParsedInput, parse_input};
 pub use deferred::DeferredAgent;
 pub use dispatch::{DispatchId, DispatchQueue, DispatchScope, DispatchStatistics, Dispatched};
+pub use engine::BackgroundCompletionStatistics;
 pub use engine::{
     Engine, EngineDispatchSnapshot, EngineError, EngineResource, EngineWork, RestoredBindings,
     ShutdownNotification,

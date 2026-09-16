@@ -769,7 +769,7 @@ async fn telegram_mock_api_errors_are_channel_transport_errors() {
         .unwrap_err();
 
     assert!(
-        matches!(error, agentix_domain::ChannelError::Transport(message) if message.contains("mock Telegram send failure"))
+        matches!(error, agentix_domain::ChannelError::Rejected(message) if message.contains("mock Telegram send failure"))
     );
 }
 

@@ -1,9 +1,9 @@
 //! Live turn projection and lifecycle orchestration.
 use super::{
     ActionButton, ActionStyle, AgentEvent, ConversationRef, DeliveryClass, Duration, Engine,
-    EngineError, EventImportance, HashSet, Instant, ItemSummary, OutboundView, SessionId,
-    StoredTurnView, TurnBuffer, TurnStatus, TurnSummary, UiAction, Uuid, ViewStatus,
-    background_completion_body, cold_turns, live_turn_view, short_identifier, turn_status_label,
+    EngineError, EventImportance, Instant, ItemSummary, MessageRef, OutboundView, SessionId,
+    StoredTurnView, TurnBuffer, TurnStatus, TurnSummary, UiAction, Uuid, ViewStatus, cold_turns,
+    live_turn_view,
 };
 
 impl Engine {
@@ -154,20 +154,12 @@ impl Engine {
         delivery: DeliveryClass,
     ) -> Result<(), EngineError> {
         self.restore_cold_turn(session_id, &turn_id).await?;
-        let history = if delivery == DeliveryClass::Draining {
-            self.background_turn_summary(session_id, &turn_id).await
-        } else {
-            None
-        };
         let key = (session_id.clone(), turn_id.clone());
         let mut buffers = self.turns.buffers.lock().await;
         let buffer = buffers.entry(key).or_default();
-        if let Some(turn) = history {
-            buffer.merge_summary(&turn, self.output);
-        }
         buffer.ensure_started();
-        buffer.set_status(status);
-        if let Some(error) = error {
+        buffer.set_status(status.clone());
+        if let Some(error) = &error {
             buffer.record_output(None, &format!("Error: {error}"), false, false);
         }
         drop(buffers);
@@ -177,17 +169,31 @@ impl Engine {
         if self.turns.active_turn(session_id).await.as_deref() == Some(&turn_id) {
             self.turns.remove_active(session_id).await;
         }
-        self.render_turn(conversation, session_id, &turn_id, delivery, true)
-            .await?;
         if delivery == DeliveryClass::Draining {
-            self.turns
-                .record_background_notification(conversation, session_id, &turn_id)
+            self.clear_turn_stop_action(&(session_id.clone(), turn_id.clone()))
+                .await?;
+            self.state.delete_turn_view(session_id, &turn_id).await?;
+            let notification = self
+                .prepare_background_completion(
+                    session_id,
+                    &turn_id,
+                    &status,
+                    None,
+                    Some(conversation),
+                )
                 .await;
+            self.archive_turn(session_id, &turn_id).await?;
             self.sessions.finish_draining(session_id).await;
             self.sessions
                 .cleanup
                 .enqueue(self.agent.clone(), session_id)
                 .await;
+            if let Some(ready) = notification {
+                let _ = ready.send(());
+            }
+        } else {
+            self.render_turn(conversation, session_id, &turn_id, delivery, true)
+                .await?;
         }
         Ok(())
     }
@@ -199,136 +205,29 @@ impl Engine {
         status: &TurnStatus,
         error: Option<&str>,
     ) -> Result<(), EngineError> {
-        self.turns.remove_active(session_id).await;
-        self.archive_turn(session_id, turn_id).await?;
-        if !self.background_turn_notifications {
-            return Ok(());
+        if self.turns.active_turn(session_id).await.as_deref() == Some(turn_id) {
+            self.turns.remove_active(session_id).await;
         }
-        let recipients = self
-            .interactions
-            .owners
+        self.restore_cold_turn(session_id, turn_id).await?;
+        if let Some(buffer) = self
+            .turns
+            .buffers
             .lock()
             .await
-            .iter()
-            .map(|(conversation, owner)| (conversation.clone(), owner.clone()))
-            .collect::<Vec<_>>();
-        if recipients.is_empty() {
-            return Ok(());
+            .get_mut(&(session_id.clone(), turn_id.to_owned()))
+        {
+            buffer.set_status(status.clone());
         }
-
-        let delivered = self.turns.background_notifications.lock().await;
-        let recipients = recipients
-            .into_iter()
-            .filter(|(conversation, _)| {
-                !delivered.get(session_id).is_some_and(|notice| {
-                    notice.turn_id == turn_id && notice.recipients.contains(conversation)
-                })
-            })
-            .collect::<Vec<_>>();
-        drop(delivered);
-        if recipients.is_empty() {
-            return Ok(());
-        }
-        if self.agent.is_subagent(session_id).await? {
-            return Ok(());
-        }
-        self.sessions
-            .cache_session_summary(self.agent.clone(), session_id)
-            .await;
-        let session_label = self.session_label(session_id).await;
-        let content = match self.background_turn_summary(session_id, turn_id).await {
-            Some(turn) => super::presentation::history_turn_view(
-                self.agent.session_display_name(session_id),
-                &session_label,
-                &turn,
-                self.output,
-            ),
-            None => OutboundView::text(self.agent.display_name(), "Turn content is unavailable."),
-        };
-        let body = format!(
-            "{}\n\n{}",
-            background_completion_body(status, error),
-            content.body
-        );
-        let mut sections = content.sections;
-        if let Some(error) = error.filter(|error| !error.trim().is_empty()) {
-            for section in sections.iter_mut().filter(|section| section.collapsible) {
-                section.expanded = Some(false);
-            }
-            sections.push(agentix_domain::ViewSection {
-                title: "Error".into(),
-                body: error.into(),
-                ..agentix_domain::ViewSection::default()
-            });
-        }
-        let title = self.background_notification_title(session_id).await;
-        for (conversation, owner_id) in recipients {
-            if self
-                .turns
-                .background_notification_delivered(&conversation, session_id, turn_id)
-                .await
-            {
-                continue;
-            }
-            let action = self
-                .attach_action(&conversation, &owner_id, session_id)
-                .await;
-            self.send_view(
-                &conversation,
-                &OutboundView {
-                    sections: sections.clone(),
-                    title: title.clone(),
-                    subtitle: Some(format!(
-                        "Background turn {} · {}",
-                        short_identifier(turn_id),
-                        turn_status_label(status)
-                    )),
-                    body: body.clone(),
-                    status: ViewStatus::Background,
-                    actions: vec![action],
-                },
-            )
+        self.clear_turn_stop_action(&(session_id.clone(), turn_id.to_owned()))
             .await?;
-            self.turns
-                .record_background_notification(&conversation, session_id, turn_id)
-                .await;
+        let notification = self
+            .prepare_background_completion(session_id, turn_id, status, error, None)
+            .await;
+        self.archive_turn(session_id, turn_id).await?;
+        if let Some(ready) = notification {
+            let _ = ready.send(());
         }
         Ok(())
-    }
-
-    async fn background_notification_title(&self, session_id: &SessionId) -> String {
-        self.sessions.await_background_title(session_id).await;
-        format!(
-            "{} · {}",
-            self.agent.session_display_name(session_id),
-            self.session_label(session_id).await
-        )
-    }
-
-    pub(super) async fn background_turn_summary(
-        &self,
-        session: &SessionId,
-        turn_id: &str,
-    ) -> Option<TurnSummary> {
-        let mut cursor = None;
-        let mut visited = HashSet::new();
-        loop {
-            let page = match self.operations.history(session, cursor, 20).await {
-                Ok(page) => page,
-                Err(error) => {
-                    tracing::warn!(%error, %session, %turn_id, "failed to read background turn content");
-                    break;
-                }
-            };
-            if let Some(turn) = page.turns.iter().find(|turn| turn.id == turn_id) {
-                return Some(turn.clone());
-            }
-            match page.older_cursor {
-                Some(next) if visited.insert(next.clone()) => cursor = Some(next),
-                _ => break,
-            }
-        }
-        None
     }
 
     pub(super) async fn handle_message_delta(
@@ -580,7 +479,8 @@ impl Engine {
                 .await?
                 .into_iter()
                 .find(|(conversation, saved_session)| {
-                    saved_session == session_id && self.channels.contains_key(&conversation.channel)
+                    saved_session == session_id
+                        && self.transports.contains_key(&conversation.channel)
                 })
         else {
             return Ok(());
@@ -779,6 +679,10 @@ impl Engine {
             return Ok(());
         }
         let key = (session_id.clone(), turn_id.to_owned());
+        let existing = self.turns.views.lock().await.get(&key).cloned();
+        let revision = existing
+            .as_ref()
+            .map(|message| self.card_writes.reserve(message));
         let session_label = self.session_label(session_id).await;
         let (mut view, is_running, snapshot) = {
             let buffers = self.turns.buffers.lock().await;
@@ -798,7 +702,6 @@ impl Engine {
                 buffer.clone(),
             )
         };
-        let existing = self.turns.views.lock().await.get(&key).cloned();
         let can_stop = is_running
             && self.agent.session_access(session_id).await.can_write()
             && delivery == DeliveryClass::Live
@@ -835,19 +738,11 @@ impl Engine {
             view.actions
                 .push(self.attach_action(conversation, owner_id, session_id).await);
         }
-        let message = if let Some(message) = existing {
-            self.channel(conversation.channel)?
-                .update(conversation, &message, &view)
-                .await?;
-            message
-        } else {
-            let message = self.send_view(conversation, &view).await?;
-            self.turns
-                .views
-                .lock()
-                .await
-                .insert(key.clone(), message.clone());
-            message
+        let Some(message) = self
+            .deliver_turn_view(conversation, &key, existing.zip(revision), &view)
+            .await?
+        else {
+            return Ok(());
         };
         self.turns
             .mark_elapsed_rendered(&key, snapshot.elapsed_seconds())
@@ -952,6 +847,28 @@ impl Engine {
         Ok(())
     }
 
+    async fn deliver_turn_view(
+        &self,
+        conversation: &ConversationRef,
+        key: &(SessionId, String),
+        existing: Option<(MessageRef, super::card_writes::Revision)>,
+        view: &OutboundView,
+    ) -> Result<Option<MessageRef>, EngineError> {
+        if let Some((message, revision)) = existing {
+            return Ok(self
+                .update_card_revision(conversation, &revision, view)
+                .await?
+                .then_some(message));
+        }
+        let message = self.send_view(conversation, view).await?;
+        self.turns
+            .views
+            .lock()
+            .await
+            .insert(key.clone(), message.clone());
+        Ok(Some(message))
+    }
+
     pub(super) async fn clear_turn_stop_action(
         &self,
         key: &(SessionId, String),
@@ -970,6 +887,7 @@ impl Engine {
         if let (Some(message), Some(buffer)) = (message, buffer)
             && matches!(buffer.status, TurnStatus::InProgress | TurnStatus::Unknown)
         {
+            let revision = self.card_writes.reserve(&message);
             let session_label = self.session_label(&key.0).await;
             let view = live_turn_view(
                 self.agent.session_display_name(&key.0),
@@ -985,15 +903,11 @@ impl Engine {
             self.state.delete_turn_view(&key.0, &key.1).await?;
             match tokio::time::timeout(
                 Duration::from_millis(250),
-                self.channel(message.conversation.channel)?.update(
-                    &message.conversation,
-                    &message,
-                    &view,
-                ),
+                self.update_card_revision(&message.conversation, &revision, &view),
             )
             .await
             {
-                Ok(Ok(())) => {}
+                Ok(Ok(_)) => {}
                 Ok(Err(error)) => {
                     tracing::warn!(%error, session = %key.0, turn = %key.1,
                         "failed to remove the revoked stop button from its message");
@@ -1004,6 +918,17 @@ impl Engine {
                 }
             }
         }
+        // Terminal buffers still own action tokens until their group is revoked.
+        if let Some(group) = self
+            .interactions
+            .turn_action_groups
+            .lock()
+            .await
+            .remove(key)
+        {
+            self.revoke_action_group(&group).await;
+        }
+        self.turns.stop_actions.lock().await.remove(key);
         Ok(())
     }
 
@@ -1117,6 +1042,7 @@ impl Engine {
         if !self.turns.should_render(&key, false, interval).await {
             return 0;
         }
+        let revision = self.card_writes.reserve(&message);
         let session_label = self.session_label(session_id).await;
         let mut view = live_turn_view(
             self.agent.session_display_name(session_id),
@@ -1130,25 +1056,17 @@ impl Engine {
         {
             view.actions.push(action);
         }
-        let result = match self.channel(conversation.channel) {
-            Ok(channel) => channel.update(&conversation, &message, &view).await,
-            Err(error) => {
-                tracing::warn!(
-                    %error,
-                    session = %session_id,
-                    turn = %turn_id,
-                    "failed to refresh the IM working duration"
-                );
-                return 0;
-            }
-        };
+        let result = self
+            .update_card_revision(&conversation, &revision, &view)
+            .await;
         match result {
-            Ok(()) => {
+            Ok(true) => {
                 self.turns
                     .mark_elapsed_rendered(&key, Some(elapsed_seconds))
                     .await;
                 return 1;
             }
+            Ok(false) => return 0,
             Err(error) => tracing::warn!(
                 %error,
                 session = %session_id,

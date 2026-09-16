@@ -10,7 +10,7 @@ impl Engine {
         // Resolve every identity before mutating persistence. Authentication failure
         // must not adopt stale destinations or partially migrate other channels.
         let mut identities = Vec::new();
-        for (kind, channel) in &self.channels {
+        for (kind, channel) in &self.transports {
             if let Some(identity) = channel.identity().await? {
                 identities.push((*kind, identity));
             }
@@ -39,7 +39,7 @@ impl Engine {
     pub async fn restore_bindings_deferred(&self) -> Result<RestoredBindings, EngineError> {
         self.reconcile_channel_identities().await?;
         for (conversation, owner) in self.state.list_conversation_owners().await? {
-            if self.channels.contains_key(&conversation.channel) {
+            if self.transports.contains_key(&conversation.channel) {
                 self.interactions
                     .owners
                     .lock()
@@ -54,7 +54,7 @@ impl Engine {
             turns: Vec::new(),
         };
         for (conversation, session) in &persisted {
-            if !self.channels.contains_key(&conversation.channel) {
+            if !self.transports.contains_key(&conversation.channel) {
                 continue;
             }
             let status = self
@@ -70,7 +70,7 @@ impl Engine {
         }
         for stored in self.state.list_turn_views().await? {
             if !self
-                .channels
+                .transports
                 .contains_key(&stored.message.conversation.channel)
             {
                 continue;
@@ -107,6 +107,7 @@ impl Engine {
             self.turns.buffers.lock().await.insert(
                 key.clone(),
                 TurnBuffer {
+                    answer_complete: false,
                     user_text: stored.user_text,
                     agent_text: stored.agent_text,
                     output_items: Vec::new(),
@@ -266,7 +267,7 @@ impl Engine {
 
         let mut notifications = Vec::new();
         for (conversation, session) in persisted {
-            if !self.channels.contains_key(&conversation.channel) {
+            if !self.transports.contains_key(&conversation.channel) {
                 continue;
             }
             let session_label = self.session_label(&session).await;
@@ -282,6 +283,7 @@ impl Engine {
                 .into_iter()
                 .map(|stored| {
                     let buffer = TurnBuffer {
+                        answer_complete: false,
                         user_text: stored.user_text,
                         agent_text: stored.agent_text,
                         output_items: Vec::new(),

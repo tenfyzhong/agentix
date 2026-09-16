@@ -38,11 +38,21 @@ impl TurnBuffer {
         {
             buffer.record_summary(text);
         }
+        buffer.answer_complete = !buffer.agent_text.trim().is_empty()
+            && matches!(
+                turn.status,
+                crate::TurnStatus::Completed
+                    | crate::TurnStatus::Failed
+                    | crate::TurnStatus::Interrupted
+            );
         buffer
     }
 
     pub(super) fn merge_summary(&mut self, turn: &crate::TurnSummary, output: crate::OutputConfig) {
         let restored = Self::from_summary(turn, output);
+        if !restored.agent_text.trim().is_empty() {
+            self.answer_complete = restored.answer_complete;
+        }
         if !restored.user_text.trim().is_empty()
             && (turn
                 .user_text
@@ -104,12 +114,15 @@ impl TurnBuffer {
         }
         self.ensure_started();
         match item.kind.as_str() {
-            "agentMessage" => self.record_output(
-                Some(&item.id),
-                item.text.as_deref().unwrap_or_default(),
-                false,
-                false,
-            ),
+            "agentMessage" => {
+                self.record_output(
+                    Some(&item.id),
+                    item.text.as_deref().unwrap_or_default(),
+                    false,
+                    false,
+                );
+                self.answer_complete = !self.agent_text.trim().is_empty();
+            }
             "commentary" => self.record_output(
                 Some(&item.id),
                 process.as_deref().unwrap_or_default(),
@@ -203,6 +216,9 @@ impl TurnBuffer {
         process: bool,
         append: bool,
     ) {
+        if !process && append {
+            self.answer_complete = false;
+        }
         // Hydrated history has text but no item IDs yet.
         if self.output_items.is_empty() && !self.agent_text.is_empty() {
             self.output_items.push(TurnOutputItem {

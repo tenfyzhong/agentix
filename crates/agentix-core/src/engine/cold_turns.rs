@@ -31,6 +31,8 @@ pub(super) struct ColdTurn {
 
 #[derive(Serialize, Deserialize)]
 struct StoredTurn {
+    #[serde(default)]
+    answer_complete: bool,
     user_text: String,
     agent_text: String,
     #[serde(default)]
@@ -57,6 +59,7 @@ impl ColdTurns {
         value: ColdTurn,
     ) -> Result<(), StorageError> {
         let stored = StoredTurn {
+            answer_complete: value.buffer.answer_complete,
             user_text: value.buffer.user_text,
             agent_text: value.buffer.agent_text,
             output_items: value.buffer.output_items,
@@ -86,6 +89,7 @@ impl ColdTurns {
             .map(|value| {
                 value.map(|stored| ColdTurn {
                     buffer: TurnBuffer {
+                        answer_complete: stored.answer_complete,
                         user_text: stored.user_text,
                         agent_text: stored.agent_text,
                         output_items: stored.output_items,
@@ -119,6 +123,7 @@ mod tests {
     fn value(text: &str, started: tokio::time::Instant) -> ColdTurn {
         ColdTurn {
             buffer: TurnBuffer {
+                answer_complete: false,
                 user_text: "Question".into(),
                 agent_text: text.into(),
                 output_items: Vec::new(),

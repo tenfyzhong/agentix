@@ -370,7 +370,7 @@ impl ChannelAdapter for FeishuAdapter {
             self.client.channel_messaging().send(&input, &option).await
         })
         .await
-        .map_err(|error| ChannelError::Transport(error.to_string()))?;
+        .map_err(|error| delivery_error(&error))?;
         if !view.actions.is_empty() {
             self.views
                 .lock()
@@ -400,7 +400,7 @@ impl ChannelAdapter for FeishuAdapter {
                 .await
         })
         .await
-        .map_err(|error| ChannelError::Transport(error.to_string()))?;
+        .map_err(|error| delivery_error(&error))?;
         let mut views = self.views.lock().await;
         if view.actions.is_empty() {
             views.remove(&message.message_id);
@@ -412,7 +412,7 @@ impl ChannelAdapter for FeishuAdapter {
 
     async fn disable_actions(&self, message: &MessageRef) -> Result<(), ChannelError> {
         ensure_feishu(&message.conversation)?;
-        let Some(view) = self.views.lock().await.remove(&message.message_id) else {
+        let Some(view) = self.views.lock().await.get(&message.message_id).cloned() else {
             return Ok(());
         };
         let card = render_card_with_disabled_actions(&view)?;
@@ -428,7 +428,8 @@ impl ChannelAdapter for FeishuAdapter {
                 .await
         })
         .await
-        .map_err(|error| ChannelError::Transport(error.to_string()))?;
+        .map_err(|error| delivery_error(&error))?;
+        self.views.lock().await.remove(&message.message_id);
         Ok(())
     }
 
@@ -703,6 +704,7 @@ where
             let mut retry_delay = Duration::from_secs(1);
             let mut token_refreshed = false;
             loop {
+                agentix_domain::DeliveryAttempt::waiting();
                 loop {
                     let deadline = *adapter.cooldown.lock().await;
                     if let Some(deadline) =
@@ -714,8 +716,10 @@ where
                     }
                 }
                 let attempted_generation = *adapter.token_generation.lock().await;
+                agentix_domain::DeliveryAttempt::dispatched();
                 match operation().await {
                     Err(LarkError::RateLimited(error)) => {
+                        agentix_domain::DeliveryAttempt::waiting();
                         // SDK 0.3.11 drops Retry-After, so use capped backoff.
                         // Keep the deadline shared even if this head is cancelled.
                         let mut cooldown = adapter.cooldown.lock().await;
@@ -730,6 +734,7 @@ where
                         retry_delay = (retry_delay * 2).min(Duration::from_mins(1));
                     }
                     Err(error) if !token_refreshed && is_invalid_tenant_access_token(&error) => {
+                        agentix_domain::DeliveryAttempt::waiting();
                         token_refreshed = true;
                         tracing::debug!(
                             app_id = adapter.client.config().app_id(),
@@ -885,6 +890,15 @@ fn truncate_utf8(text: &str, max_bytes: usize) -> String {
     format!("{}{}", &text[..end], suffix)
 }
 
+fn delivery_error(error: &LarkError) -> ChannelError {
+    match error {
+        LarkError::Api(_) => ChannelError::Rejected(error.to_string()),
+        LarkError::IllegalParam(_) => ChannelError::InvalidPayload(error.to_string()),
+        LarkError::RateLimited(_) => ChannelError::NotSent(error.to_string()),
+        _ => ChannelError::Transport(error.to_string()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::future::{Future, poll_fn, ready};
@@ -893,6 +907,43 @@ mod tests {
     use std::task::Poll;
 
     use super::*;
+
+    #[tokio::test]
+    async fn delivery_attempt_tracks_feishu_cooldown_as_unsent() {
+        let adapter = FeishuAdapter::new("unused-app", "unused-secret", ["owner"]).unwrap();
+        *adapter.cooldown.lock().await =
+            Some(tokio::time::Instant::now() + Duration::from_secs(30));
+        let attempt = agentix_domain::DeliveryAttempt::default();
+        let mut pending = Box::pin(attempt.run(async {
+            with_tenant_token_refresh(&adapter, None, || async {
+                panic!("cooldown must prevent dispatch");
+                #[allow(unreachable_code)]
+                Ok::<(), LarkError>(())
+            })
+            .await
+            .map_err(|error| delivery_error(&error))
+        }));
+        poll_fn(|cx| {
+            assert!(pending.as_mut().poll(cx).is_pending());
+            Poll::Ready(())
+        })
+        .await;
+        assert!(attempt.not_dispatched());
+        drop(pending);
+        *adapter.cooldown.lock().await = None;
+        let attempt = agentix_domain::DeliveryAttempt::default();
+        attempt
+            .run(async {
+                with_tenant_token_refresh(&adapter, None, || async {
+                    assert!(!attempt.not_dispatched());
+                    Ok::<(), LarkError>(())
+                })
+                .await
+                .map_err(|error| delivery_error(&error))
+            })
+            .await
+            .unwrap();
+    }
 
     #[tokio::test]
     async fn cancelling_rate_limited_head_preserves_feishu_cooldown() {

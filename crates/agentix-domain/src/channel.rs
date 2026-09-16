@@ -228,10 +228,16 @@ impl MessageRef {
 
 #[derive(Debug, Error)]
 pub enum ChannelError {
+    /// No remote commit is possible; local admission expired or failed.
+    #[error("channel operation was not sent: {0}")]
+    NotSent(String),
+    /// Remote mutation outcome may be unknown, including malformed responses.
     #[error("channel transport failed: {0}")]
     Transport(String),
+    /// The provider explicitly rejected the operation without committing it.
     #[error("channel rejected the message: {0}")]
     Rejected(String),
+    /// Local validation failed before dispatch; never use for invalid responses.
     #[error("channel payload is invalid: {0}")]
     InvalidPayload(String),
 }

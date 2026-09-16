@@ -34,6 +34,7 @@ impl MessageCenter {
         conversation: Option<&ConversationRef>,
         operation: impl Future<Output = T>,
     ) -> T {
+        crate::DeliveryAttempt::waiting();
         let queue = {
             let mut queues = self.queues.outbound.lock().await;
             queues.retain(|_, queue| queue.strong_count() != 0);
@@ -47,6 +48,7 @@ impl MessageCenter {
             }
         };
         let _head = queue.lock().await;
+        crate::DeliveryAttempt::dispatched();
         operation.await
     }
 
