@@ -178,7 +178,7 @@ test("native archive checksums stay valid when a manual run replaces bottles", a
     assert.match(manual, /group: release-\$\{\{ inputs.tag \}\}/, "manual and automatic publication must share a tag lock");
 });
 
-test("real Homebrew trusts an absent tap before syntax validation", {
+test("real Homebrew trusts an absent tap before loading its formula", {
     skip: process.env.AGENTIX_TEST_HOMEBREW !== "1",
     timeout: 120_000,
 }, async () => {
@@ -187,7 +187,9 @@ test("real Homebrew trusts an absent tap before syntax validation", {
     const remote = join(dir, "remote");
     const tap = `codex-fixture/trust-${process.pid}`;
     const env = { ...process.env, BASH_ENV: "/dev/null", XDG_CONFIG_HOME: join(dir, "config"),
-        HOMEBREW_DEVELOPER: "", HOMEBREW_NO_AUTO_UPDATE: "1", HOMEBREW_NO_INSTALL_CLEANUP: "1" };
+        HOMEBREW_USER_CONFIG_HOME: join(dir, "brew-config"),
+        HOMEBREW_DEVELOPER: "", HOMEBREW_NO_REQUIRE_TAP_TRUST: "",
+        HOMEBREW_NO_AUTO_UPDATE: "1", HOMEBREW_NO_INSTALL_CLEANUP: "1" };
     const brew = (...args) => spawnSync("brew", args, { env, encoding: "utf8", timeout: 60_000 });
     let tapPath;
     try {
@@ -210,14 +212,22 @@ end
         git("commit", "-s", "-m", "test: prepare tap trust fixture");
         tapPath = brew("--repository", tap).stdout.trim();
         assert.ok(tapPath.endsWith(`homebrew-trust-${process.pid}`));
-        const untrusted = brew("tap", tap, `file://${remote}`);
+        const cloned = brew("tap", tap, `file://${remote}`);
+        assert.equal(cloned.status, 0, cloned.stdout + cloned.stderr);
+        // A fully qualified formula name explicitly permits loading without persisted trust.
+        const formulaPath = join(tapPath, "Formula", "tap-trust-fixture.rb");
+        const untrusted = brew("info", "--json=v2", formulaPath);
         assert.notEqual(untrusted.status, 0);
         assert.match(untrusted.stdout + untrusted.stderr, /untrusted tap/);
+        await rm(tapPath, { recursive: true, force: true });
         // The fixture has a custom local origin; trust that origin rather than GitHub shorthand.
         const trusted = brew("trust", `file://${remote}`);
         assert.equal(trusted.status, 0, trusted.stdout + trusted.stderr);
         const installed = brew("tap", tap, `file://${remote}`);
         assert.equal(installed.status, 0, installed.stdout + installed.stderr);
+        const loaded = brew("info", "--json=v2", formulaPath);
+        assert.equal(loaded.status, 0, loaded.stdout + loaded.stderr);
+        assert.equal(JSON.parse(loaded.stdout).formulae[0].name, "tap-trust-fixture");
         assert.match(await readFile(join(tapPath, "Formula", "tap-trust-fixture.rb"), "utf8"), /class TapTrustFixture/);
     } finally {
         if (tapPath) await rm(tapPath, { recursive: true, force: true });
