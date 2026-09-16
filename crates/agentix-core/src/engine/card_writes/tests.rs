@@ -98,7 +98,7 @@ fn incremental_cleanup_preserves_live_revisions_and_retired_aliases() {
         .lock()
         .unwrap()
         .cards
-        .insert(message(2), retired.card.clone());
+        .insert(Arc::new(message(2)), retired.card.clone());
     drop(retired);
     for index in 3..4096 {
         writes.reserve(&message(index));
@@ -172,4 +172,83 @@ async fn card_write_performance_update() {
             start.elapsed().as_secs_f64() * 1e9 / 5000.0
         );
     }
+}
+
+#[test]
+fn cleanup_queue_shares_message_storage_with_index() {
+    let writes = CardWrites::default();
+    let message = message(0);
+    let _revision = writes.reserve(&message);
+    let registry = writes.registry.lock().unwrap();
+    let (key, _) = registry.cards.get_key_value(&message).unwrap();
+    let queued = registry.sweep.front().unwrap();
+    assert!(std::ptr::eq(
+        std::borrow::Borrow::<MessageRef>::borrow(key),
+        std::borrow::Borrow::<MessageRef>::borrow(queued),
+    ));
+}
+
+#[tokio::test(start_paused = true)]
+async fn idle_cards_are_reclaimed_without_further_access() {
+    let writes = CardWrites::default();
+    let revision = writes.reserve(&message(0));
+    let weak = Arc::downgrade(&revision.card);
+    drop(revision);
+    tokio::task::yield_now().await;
+    tokio::time::advance(Duration::from_secs(2)).await;
+    tokio::task::yield_now().await;
+    assert_eq!(weak.strong_count(), 0);
+    let registry = writes.registry.lock().unwrap();
+    assert!(registry.cards.is_empty());
+    assert!(registry.sweep.is_empty());
+    assert_eq!(registry.cards.capacity(), 0);
+    assert_eq!(registry.sweep.capacity(), 0);
+}
+
+#[tokio::test(start_paused = true)]
+async fn idle_cleanup_is_bounded_and_preserves_live_and_retired_cards() {
+    let writes = CardWrites::default();
+    let live = writes.reserve(&message(0));
+    let retired = writes.reserve(&message(1));
+    retired.card.retain.store(true, Ordering::SeqCst);
+    writes
+        .registry
+        .lock()
+        .unwrap()
+        .cards
+        .insert(Arc::new(message(2)), retired.card.clone());
+    let retired_weak = Arc::downgrade(&retired.card);
+    drop(retired);
+    let idle: Vec<_> = (3..1027).map(|i| writes.reserve(&message(i))).collect();
+    let weak: Vec<_> = idle.iter().map(|r| Arc::downgrade(&r.card)).collect();
+    drop(idle);
+    tokio::task::yield_now().await;
+    tokio::time::advance(Duration::from_secs(1)).await;
+    tokio::task::yield_now().await;
+    let removed = weak.iter().filter(|w| w.strong_count() == 0).count();
+    assert!(removed > 0 && removed <= 256);
+    for _ in 0..5 {
+        tokio::time::advance(Duration::from_secs(1)).await;
+        tokio::task::yield_now().await;
+    }
+    assert!(weak.iter().all(|w| w.strong_count() == 0));
+    assert!(Arc::ptr_eq(&live.card, &writes.reserve(&message(0)).card));
+    assert!(Arc::ptr_eq(
+        &retired_weak.upgrade().unwrap(),
+        &writes.reserve(&message(2)).card
+    ));
+    assert_eq!(writes.registry.lock().unwrap().cards.len(), 3);
+}
+
+#[tokio::test]
+async fn dropping_writer_stops_cleanup_and_releases_registry() {
+    let writes = CardWrites::default();
+    writes.reserve(&message(0));
+    let registry = Arc::downgrade(&writes.registry);
+    let reaper = writes.reaper.get().unwrap().clone();
+    tokio::task::yield_now().await;
+    drop(writes);
+    tokio::task::yield_now().await;
+    assert!(reaper.is_finished());
+    assert!(registry.upgrade().is_none());
 }

@@ -8,7 +8,7 @@ use std::{
     borrow::Cow,
     collections::{HashMap, VecDeque},
     sync::{
-        Arc, Mutex,
+        Arc, Mutex, OnceLock,
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::Duration,
@@ -23,20 +23,25 @@ mod tests;
 
 #[derive(Default)]
 pub(super) struct CardWrites {
-    registry: Mutex<Registry>,
+    registry: Arc<Mutex<Registry>>,
+    reaper: OnceLock<tokio::task::AbortHandle>,
 }
 #[derive(Default)]
 struct Registry {
-    cards: HashMap<MessageRef, Arc<Card>>,
-    sweep: VecDeque<MessageRef>,
+    cards: HashMap<Arc<MessageRef>, Arc<Card>>,
+    sweep: VecDeque<Arc<MessageRef>>,
 }
 impl Registry {
     fn prune(&mut self) {
         if self.sweep.len() < 256 {
             return;
         }
-        // Bound work under the shared lock, even after a sustained provider outage.
-        for _ in 0..8 {
+        self.prune_batch(8);
+    }
+
+    fn prune_batch(&mut self, budget: usize) {
+        // Visit each candidate at most once per batch.
+        for _ in 0..budget.min(self.sweep.len()) {
             let Some(message) = self.sweep.pop_front() else {
                 break;
             };
@@ -47,6 +52,18 @@ impl Registry {
                     self.sweep.push_back(message);
                 }
             }
+        }
+        if self.cards.is_empty() {
+            // Release peak allocations after the final idle card is reclaimed.
+            self.cards = HashMap::new();
+            self.sweep = VecDeque::new();
+        }
+    }
+}
+impl Drop for CardWrites {
+    fn drop(&mut self) {
+        if let Some(reaper) = self.reaper.get() {
+            reaper.abort();
         }
     }
 }
@@ -73,7 +90,32 @@ impl Revision {
     }
 }
 impl CardWrites {
+    fn ensure_reaper(&self) {
+        if self.reaper.get().is_some() {
+            return;
+        }
+        // Synchronous construction is supported; start on first runtime access.
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        self.reaper.get_or_init(|| {
+            let registry = Arc::downgrade(&self.registry);
+            runtime
+                .spawn(async move {
+                    loop {
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        let Some(registry) = registry.upgrade() else {
+                            break;
+                        };
+                        registry.lock().unwrap().prune_batch(256);
+                    }
+                })
+                .abort_handle()
+        });
+    }
+
     fn card(&self, message: &MessageRef) -> Arc<Card> {
+        self.ensure_reaper();
         let mut registry = self.registry.lock().unwrap();
         // Hold the requested card across pruning; hits do not allocate a cloned key.
         let existing = registry.cards.get(message).cloned();
@@ -92,8 +134,9 @@ impl CardWrites {
                 applied_revision: 0,
             }),
         });
-        registry.cards.insert(message.clone(), card.clone());
-        registry.sweep.push_back(message.clone());
+        let key = Arc::new(message.clone());
+        registry.cards.insert(key.clone(), card.clone());
+        registry.sweep.push_back(key);
         card
     }
 
@@ -180,7 +223,7 @@ impl CardWrites {
             .lock()
             .unwrap()
             .cards
-            .insert(replacement.clone(), revision.card.clone());
+            .insert(Arc::new(replacement.clone()), revision.card.clone());
         state.target = Some(replacement);
         state.replaced = true;
         state.applied_revision = revision.number;
