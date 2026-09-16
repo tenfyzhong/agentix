@@ -29,9 +29,68 @@ pub(super) struct CardWrites {
 struct Registry {
     cards: HashMap<Arc<MessageRef>, Arc<Card>>,
     sweep: VecDeque<Arc<MessageRef>>,
+    compacting: Option<RegistryEntries>,
     reaper: Option<tokio::task::AbortHandle>,
 }
+struct RegistryEntries {
+    cards: HashMap<Arc<MessageRef>, Arc<Card>>,
+    sweep: VecDeque<Arc<MessageRef>>,
+}
 impl Registry {
+    fn get(&self, message: &MessageRef) -> Option<&Arc<Card>> {
+        self.cards.get(message).or_else(|| {
+            self.compacting
+                .as_ref()
+                .and_then(|old| old.cards.get(message))
+        })
+    }
+
+    fn insert(&mut self, message: Arc<MessageRef>, card: Arc<Card>) {
+        if let Some(old) = self.compacting.as_mut()
+            && let Some(existing) = old.cards.get_mut(&message)
+        {
+            *existing = card;
+            return;
+        }
+        if self.cards.insert(message.clone(), card).is_none() {
+            // Include replacement aliases so compaction can visit every key.
+            self.sweep.push_back(message);
+        }
+    }
+
+    fn maintain(&mut self) {
+        if let Some(old) = self.compacting.as_mut() {
+            // Move ownership rather than clone it: idle detection must not count
+            // a second index reference created by the migration itself.
+            for _ in 0..256 {
+                let Some(message) = old.sweep.pop_front() else {
+                    break;
+                };
+                if let Some(card) = old.cards.remove(&message)
+                    && (Arc::strong_count(&card) > 1 || card.retain.load(Ordering::SeqCst))
+                {
+                    self.cards.insert(message.clone(), card);
+                    self.sweep.push_back(message);
+                }
+            }
+            if old.sweep.is_empty() {
+                debug_assert!(old.cards.is_empty());
+                self.compacting = None;
+            }
+            return;
+        }
+        self.prune_batch(256);
+        // Hysteresis avoids rebuilding small or densely populated registries.
+        // Starting migration only swaps containers; no full scan or rehash here.
+        let capacity = self.cards.capacity().max(self.sweep.capacity());
+        if capacity >= 1024 && self.cards.len() <= capacity / 4 {
+            self.compacting = Some(RegistryEntries {
+                cards: std::mem::take(&mut self.cards),
+                sweep: std::mem::take(&mut self.sweep),
+            });
+        }
+    }
+
     fn prune(&mut self) {
         if self.sweep.len() < 256 {
             return;
@@ -113,7 +172,7 @@ impl CardWrites {
                         let Some(registry) = weak.upgrade() else {
                             break;
                         };
-                        registry.lock().unwrap().prune_batch(256);
+                        registry.lock().unwrap().maintain();
                     }
                 })
                 .abort_handle(),
@@ -124,7 +183,7 @@ impl CardWrites {
         let mut registry = self.registry.lock().unwrap();
         self.ensure_reaper(&mut registry);
         // Hold the requested card across pruning; hits do not allocate a cloned key.
-        let existing = registry.cards.get(message).cloned();
+        let existing = registry.get(message).cloned();
         registry.prune();
         if let Some(card) = existing {
             return card;
@@ -141,8 +200,7 @@ impl CardWrites {
             }),
         });
         let key = Arc::new(message.clone());
-        registry.cards.insert(key.clone(), card.clone());
-        registry.sweep.push_back(key);
+        registry.insert(key, card.clone());
         card
     }
 
@@ -228,7 +286,6 @@ impl CardWrites {
         self.registry
             .lock()
             .unwrap()
-            .cards
             .insert(Arc::new(replacement.clone()), revision.card.clone());
         state.target = Some(replacement);
         state.replaced = true;

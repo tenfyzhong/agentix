@@ -97,7 +97,6 @@ fn incremental_cleanup_preserves_live_revisions_and_retired_aliases() {
         .registry
         .lock()
         .unwrap()
-        .cards
         .insert(Arc::new(message(2)), retired.card.clone());
     drop(retired);
     for index in 3..4096 {
@@ -189,6 +188,54 @@ fn cleanup_queue_shares_message_storage_with_index() {
 }
 
 #[tokio::test(start_paused = true)]
+async fn idle_cleanup_releases_peak_capacity_with_retained_replacement() {
+    let writes = CardWrites::default();
+    let live = writes.reserve(&message(0));
+    let retired = writes.reserve(&message(1));
+    retired.card.state.lock().await.target = None;
+    retired.card.retain.store(true, Ordering::SeqCst);
+    writes
+        .update(
+            &Observer::default(),
+            &retired,
+            &message(1).conversation,
+            &OutboundView::text("Card", "replacement"),
+        )
+        .await
+        .unwrap();
+    let retained = Arc::downgrade(&retired.card);
+    drop(retired);
+    let idle: Vec<_> = (2..4098).map(|i| writes.reserve(&message(i))).collect();
+    let idle_refs: Vec<_> = idle.iter().map(|r| Arc::downgrade(&r.card)).collect();
+    drop(idle);
+    tokio::task::yield_now().await;
+    for _ in 0..64 {
+        tokio::time::advance(Duration::from_secs(1)).await;
+        tokio::task::yield_now().await;
+    }
+    assert!(idle_refs.iter().all(|card| card.strong_count() == 0));
+    assert!(Arc::ptr_eq(&live.card, &writes.reserve(&message(0)).card));
+    let original = writes.reserve(&message(1));
+    let alias = writes.reserve(&MessageRef::new(message(1).conversation, "replacement"));
+    assert!(Arc::ptr_eq(&retained.upgrade().unwrap(), &alias.card));
+    assert!(Arc::ptr_eq(&original.card, &alias.card));
+    assert!(!original.current());
+    let registry = writes.registry.lock().unwrap();
+    let capacities = (registry.cards.capacity(), registry.sweep.capacity());
+    drop(registry);
+    assert!(
+        capacities.0 <= 256,
+        "map retained peak capacity: {}",
+        capacities.0
+    );
+    assert!(
+        capacities.1 <= 256,
+        "queue retained peak capacity: {}",
+        capacities.1
+    );
+}
+
+#[tokio::test(start_paused = true)]
 async fn idle_cards_are_reclaimed_without_further_access() {
     let writes = CardWrites::default();
     let revision = writes.reserve(&message(0));
@@ -205,6 +252,103 @@ async fn idle_cards_are_reclaimed_without_further_access() {
     assert_eq!(registry.sweep.capacity(), 0);
 }
 
+#[tokio::test]
+async fn compaction_bounds_batches_and_preserves_writes_across_both_tables() {
+    let writes = CardWrites::default();
+    let revisions: Vec<_> = (0..1024).map(|i| writes.reserve(&message(i))).collect();
+    {
+        let mut registry = writes.registry.lock().unwrap();
+        registry.cards.reserve(8192);
+        registry.maintain();
+        assert_eq!(registry.compacting.as_ref().unwrap().cards.len(), 1024);
+        registry.maintain();
+        assert_eq!(registry.compacting.as_ref().unwrap().cards.len(), 768);
+        assert_eq!(registry.cards.len(), 256);
+    }
+    // Find one migrated and one pending key without depending on sweep rotation.
+    let (migrated, pending) = {
+        let registry = writes.registry.lock().unwrap();
+        (
+            registry.sweep.front().unwrap().as_ref().clone(),
+            registry
+                .compacting
+                .as_ref()
+                .unwrap()
+                .sweep
+                .front()
+                .unwrap()
+                .as_ref()
+                .clone(),
+        )
+    };
+    for key in [&migrated, &pending] {
+        let index: usize = key.message_id.parse().unwrap();
+        let newer = writes.reserve(key);
+        assert!(Arc::ptr_eq(&newer.card, &revisions[index].card));
+        assert!(!revisions[index].current());
+    }
+    let replacement = writes.reserve(&pending);
+    replacement.card.state.lock().await.target = None;
+    replacement.card.retain.store(true, Ordering::SeqCst);
+    writes
+        .update(
+            &Observer::default(),
+            &replacement,
+            &pending.conversation,
+            &OutboundView::text("Card", "replacement"),
+        )
+        .await
+        .unwrap();
+    let fresh = writes.reserve(&message(9999));
+    let idle: Vec<_> = revisions.iter().map(|r| Arc::downgrade(&r.card)).collect();
+    drop(revisions);
+    for _ in 0..16 {
+        let mut registry = writes.registry.lock().unwrap();
+        let before = registry
+            .compacting
+            .as_ref()
+            .map_or(0, |old| old.cards.len());
+        registry.maintain();
+        let after = registry
+            .compacting
+            .as_ref()
+            .map_or(0, |old| old.cards.len());
+        assert!(before.saturating_sub(after) <= 256);
+    }
+    assert_eq!(
+        idle.iter().filter(|card| card.strong_count() != 0).count(),
+        1
+    );
+    assert!(Arc::ptr_eq(
+        &fresh.card,
+        &writes.reserve(&message(9999)).card
+    ));
+    let alias = writes.reserve(&MessageRef::new(pending.conversation, "replacement"));
+    assert!(Arc::ptr_eq(&replacement.card, &alias.card));
+    let registry = writes.registry.lock().unwrap();
+    assert!(registry.compacting.is_none());
+    assert_eq!(registry.cards.len(), 3);
+    assert_eq!(registry.sweep.len(), 3);
+}
+
+#[test]
+fn dropping_writer_during_compaction_releases_both_tables() {
+    let writes = CardWrites::default();
+    let revisions: Vec<_> = (0..1024).map(|i| writes.reserve(&message(i))).collect();
+    let weak: Vec<_> = revisions.iter().map(|r| Arc::downgrade(&r.card)).collect();
+    {
+        let mut registry = writes.registry.lock().unwrap();
+        registry.cards.reserve(8192);
+        registry.maintain();
+        registry.maintain();
+        assert!(registry.compacting.is_some());
+        assert!(!registry.cards.is_empty());
+    }
+    drop(revisions);
+    drop(writes);
+    assert!(weak.iter().all(|card| card.strong_count() == 0));
+}
+
 #[tokio::test(start_paused = true)]
 async fn idle_cleanup_is_bounded_and_preserves_live_and_retired_cards() {
     let writes = CardWrites::default();
@@ -215,7 +359,6 @@ async fn idle_cleanup_is_bounded_and_preserves_live_and_retired_cards() {
         .registry
         .lock()
         .unwrap()
-        .cards
         .insert(Arc::new(message(2)), retired.card.clone());
     let retired_weak = Arc::downgrade(&retired.card);
     drop(retired);
