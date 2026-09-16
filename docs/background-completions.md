@@ -68,7 +68,7 @@ Before polling an edit, the writer reserves its target. Success restores it. Loc
 
 A definite replacement rejection leaves the original message retired but permits a later safe replacement attempt. If the replacement send itself has an unknown result, automatic replacement attempts stop rather than risk repeated sends. The old card can remain visible, and a delivery failure can still prevent final content from reaching IM. This is best-effort delivery, not an exactly-once outbox or a remote compare-and-swap protocol.
 
-Engine reloads share writer revisions and replacement mappings, including across notification-policy changes. Healthy idle card entries are pruned; revisions held by queries remain alive. Retired message IDs and replacement mappings are retained for the runtime lifetime so old handles cannot become writable again. Memory for these mappings is proportional to uncertain writes. They are not persisted across a full process restart; this change's ordering guarantee applies within a runtime and its reloads, not to unknown remote requests surviving a process restart.
+Engine reloads share writer revisions and replacement mappings, including across notification-policy changes. Healthy idle card entries are pruned incrementally (at most eight candidates per lookup once the cleanup queue reaches 256 entries); revisions held by queries remain alive. Lookup hits borrow their map key. Cleanup rotates live and retained candidates for later inspection, including cards temporarily retained during a write. Retired message IDs and replacement mappings are retained for the runtime lifetime so old handles cannot become writable again. Memory for these mappings is proportional to uncertain writes. They are not persisted across a full process restart; this change's ordering guarantee applies within a runtime and its reloads, not to unknown remote requests surviving a process restart.
 
 ## Completion cleanup and controls
 
@@ -120,3 +120,28 @@ Follow-up review (2026-09-17) found three regressions despite the earlier green 
 After the admission/dispatch and control-barrier fixes, 541 tests passed across core, domain, Feishu, Telegram and Slack, plus 10 production runtime tests. The three original review regressions and the additional Feishu cache-retention and Slack malformed-response regressions pass. Tests use local mocks, not live credentials.
 
 A repeat of the same release benchmark after compilation completed measured P50/P99 of 168.25/203.42 microseconds for cached completion, 2.62/4.08 for immediate history, 3.42/15.92 for stalled history, and 1.42/13.92 for duplicate stalled history. The stalled burst retained 4 active jobs and 60 queued jobs, rejecting 192; duplicates retained one active job. A run concurrent with other build work measured cached P50/P99 of 177.67/292.21 microseconds. These small local samples demonstrate bounded admission in the fixture, not a provider latency guarantee or a precise overhead percentage.
+
+## Card writer performance follow-up (2026-09-17)
+
+The ordering fix introduced measurable local CPU costs: full-registry scans above 256 entries, unconditional deep copies of each outbound view, and waiting for a busy writer even when a revision was already obsolete. Regression tests first reproduced all three behaviors. The writer now limits cleanup work, borrows unchanged views, and rejects already-obsolete revisions before acquiring the async lock. It still rechecks the revision and binding after acquiring the lock, and copies views only when enabled buttons must be disabled.
+
+Repeat the microbenchmarks with:
+
+```sh
+cargo test --release -p agentix-core --lib card_write_performance -- --ignored --nocapture --test-threads=1
+```
+
+Apple M3, macOS, Rust 1.95.0; median of three process runs, nanoseconds per operation. Baseline is PR commit `907f846` plus the same benchmarks. Each reserve scenario holds all card revisions alive and measures 20,000 lookups of one existing card; setup is excluded. Each update scenario measures 5,000 writes to a no-op adapter, including delivery tracking but excluding serialization and network I/O. These are throughput averages, not latency percentiles.
+
+| Operation | Before | After |
+| --- | ---: | ---: |
+| Reserve with 1 retained card | 54.3 | 18.8 |
+| Reserve with 256 retained cards | 235.3 | 207.2 |
+| Reserve with 4,096 retained cards | 6,399.0 | 224.0 |
+| Reserve with 16,384 retained cards | 25,864.8 | 239.7 |
+| Update with 1,024-byte body | 364.3 | 305.1 |
+| Update with 1,000,000-byte body | 15,203.6 | 303.7 |
+
+The large-registry lookup is about 108 times faster and the large-body wrapper update about 50 times faster in this fixture. Normal update copying no longer scales with body size. Cleanup visits at most eight candidates; map growth can still allocate and rehash, so this is not a hard real-time latency guarantee. The cleanup queue adds one message key per logical card. Safety mappings remain proportional to uncertain writes and are not evicted merely to meet a memory cap.
+
+These results compare two versions of the ordering implementation, not the whole application against synchronous delivery. Version tracking, per-card serialization and timeout instrumentation retain a small correctness cost. Background work remains limited to four active and 64 total jobs; incomplete histories may require a loading card and one retry. Increasing those limits would put more load on a stalled provider. Real IM throughput, provider latency and sustained-outage memory usage are not established by these local microbenchmarks; no universal optimum is claimed.

@@ -51,7 +51,7 @@ cargo test -p agentix-core --lib card_review_ -- --nocapture
 
 All three originally failed for the described assertions and now pass. The local-timeout fixture now uses a 90-second cooldown to exceed the new 60-second local budget; a separate cancellation test verifies successful delivery through a 30-second cooldown. Existing serialization, alias, reload and late-commit regressions remain enabled.
 
-Retired aliases are also retained for the lifetime of the runtime, and the registry scans all entries on each reservation once it reaches 256 entries. This is an additional resource-growth concern already implied by the documented retention policy; no sustained-outage performance bound has been established. Full-process-restart isolation remains outside the documented guarantee.
+Retired aliases remain retained for the lifetime of the runtime. The performance follow-up replaced the original full-registry scan on every reservation with incremental cleanup of at most eight candidates per lookup. The mapping memory still grows with uncertain writes; full-process-restart isolation remains outside the documented guarantee. See the repeatable measurements in [background-completions.md](background-completions.md).
 
 ## Second review: findings and fixes (2026-09-17)
 

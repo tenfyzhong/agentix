@@ -5,7 +5,8 @@ use crate::{
 };
 use async_trait::async_trait;
 use std::{
-    collections::HashMap,
+    borrow::Cow,
+    collections::{HashMap, VecDeque},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -17,9 +18,37 @@ use tokio_util::sync::CancellationToken;
 
 use agentix_domain::DeliveryAttempt;
 
+#[cfg(test)]
+mod tests;
+
 #[derive(Default)]
 pub(super) struct CardWrites {
-    cards: Mutex<HashMap<MessageRef, Arc<Card>>>,
+    registry: Mutex<Registry>,
+}
+#[derive(Default)]
+struct Registry {
+    cards: HashMap<MessageRef, Arc<Card>>,
+    sweep: VecDeque<MessageRef>,
+}
+impl Registry {
+    fn prune(&mut self) {
+        if self.sweep.len() < 256 {
+            return;
+        }
+        // Bound work under the shared lock, even after a sustained provider outage.
+        for _ in 0..8 {
+            let Some(message) = self.sweep.pop_front() else {
+                break;
+            };
+            if let Some(card) = self.cards.get(&message) {
+                if Arc::strong_count(card) == 1 && !card.retain.load(Ordering::SeqCst) {
+                    self.cards.remove(&message);
+                } else {
+                    self.sweep.push_back(message);
+                }
+            }
+        }
+    }
 }
 struct Card {
     latest: AtomicU64,
@@ -45,29 +74,27 @@ impl Revision {
 }
 impl CardWrites {
     fn card(&self, message: &MessageRef) -> Arc<Card> {
-        let mut cards = self.cards.lock().unwrap();
-        // Healthy idle cards need no tombstone. Query revisions keep their card alive.
-        if cards.len() >= 256 {
-            cards.retain(|_, card| {
-                Arc::strong_count(card) > 1 || card.retain.load(Ordering::SeqCst)
-            });
+        let mut registry = self.registry.lock().unwrap();
+        // Hold the requested card across pruning; hits do not allocate a cloned key.
+        let existing = registry.cards.get(message).cloned();
+        registry.prune();
+        if let Some(card) = existing {
+            return card;
         }
-        cards
-            .entry(message.clone())
-            .or_insert_with(|| {
-                Arc::new(Card {
-                    latest: AtomicU64::new(0),
-                    disabled_through: AtomicU64::new(0),
-                    retain: AtomicBool::new(false),
-                    state: AsyncMutex::new(CardState {
-                        target: Some(message.clone()),
-                        replacement_uncertain: false,
-                        replaced: false,
-                        applied_revision: 0,
-                    }),
-                })
-            })
-            .clone()
+        let card = Arc::new(Card {
+            latest: AtomicU64::new(0),
+            disabled_through: AtomicU64::new(0),
+            retain: AtomicBool::new(false),
+            state: AsyncMutex::new(CardState {
+                target: Some(message.clone()),
+                replacement_uncertain: false,
+                replaced: false,
+                applied_revision: 0,
+            }),
+        });
+        registry.cards.insert(message.clone(), card.clone());
+        registry.sweep.push_back(message.clone());
+        card
     }
 
     pub(super) fn reserve(&self, message: &MessageRef) -> Revision {
@@ -99,6 +126,9 @@ impl CardWrites {
         F: Fn() -> Fut + Send + Sync,
         Fut: std::future::Future<Output = bool> + Send,
     {
+        if !revision.current() {
+            return Ok(false);
+        }
         let mut state = revision.card.state.lock().await;
         if !revision.current() || !valid().await {
             return Ok(false);
@@ -108,9 +138,11 @@ impl CardWrites {
                 "replacement card delivery is uncertain".into(),
             ));
         }
-        let mut view = view.clone();
-        if revision.number <= revision.card.disabled_through.load(Ordering::SeqCst) {
-            for action in &mut view.actions {
+        let mut view = Cow::Borrowed(view);
+        if revision.number <= revision.card.disabled_through.load(Ordering::SeqCst)
+            && view.actions.iter().any(|action| !action.disabled)
+        {
+            for action in &mut view.to_mut().actions {
                 action.disabled = true;
             }
         }
@@ -144,9 +176,10 @@ impl CardWrites {
         drop(attempt);
         let replacement = result?;
         // Register the physical replacement as the same logical card (including callbacks).
-        self.cards
+        self.registry
             .lock()
             .unwrap()
+            .cards
             .insert(replacement.clone(), revision.card.clone());
         state.target = Some(replacement);
         state.replaced = true;
