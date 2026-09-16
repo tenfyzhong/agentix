@@ -245,10 +245,125 @@ async fn dropping_writer_stops_cleanup_and_releases_registry() {
     let writes = CardWrites::default();
     writes.reserve(&message(0));
     let registry = Arc::downgrade(&writes.registry);
-    let reaper = writes.reaper.get().unwrap().clone();
+    let reaper = writes
+        .registry
+        .lock()
+        .unwrap()
+        .reaper
+        .as_ref()
+        .unwrap()
+        .clone();
     tokio::task::yield_now().await;
     drop(writes);
     tokio::task::yield_now().await;
     assert!(reaper.is_finished());
     assert!(registry.upgrade().is_none());
+}
+
+#[test]
+fn cleanup_recovers_after_runtime_recreation() {
+    let writes = CardWrites::default();
+    let first = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    first.block_on(async {
+        writes.reserve(&message(0));
+        tokio::task::yield_now().await;
+    });
+    drop(first);
+    assert!(
+        writes
+            .registry
+            .lock()
+            .unwrap()
+            .reaper
+            .as_ref()
+            .unwrap()
+            .is_finished()
+    );
+    let second = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .start_paused(true)
+        .build()
+        .unwrap();
+    second.block_on(async {
+        let revision = writes.reserve(&message(1));
+        let weak = Arc::downgrade(&revision.card);
+        drop(revision);
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(2)).await;
+        tokio::task::yield_now().await;
+        assert_eq!(
+            weak.strong_count(),
+            0,
+            "idle cleanup must recover on the new runtime"
+        );
+    });
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_access_starts_only_one_reaper_and_restarts_after_exit() {
+    let writes = Arc::new(CardWrites::default());
+    let mut previous = None;
+    for _ in 0..2 {
+        let barrier = Arc::new(tokio::sync::Barrier::new(16));
+        let mut tasks = Vec::new();
+        for index in 0..16 {
+            let writes = writes.clone();
+            let barrier = barrier.clone();
+            tasks.push(tokio::spawn(async move {
+                barrier.wait().await;
+                let _revision = writes.reserve(&message(index));
+                writes
+                    .registry
+                    .lock()
+                    .unwrap()
+                    .reaper
+                    .as_ref()
+                    .unwrap()
+                    .id()
+            }));
+        }
+        let reaper_id = tasks.pop().unwrap().await.unwrap();
+        for task in tasks {
+            assert_eq!(task.await.unwrap(), reaper_id);
+        }
+        assert_ne!(previous, Some(reaper_id));
+        previous = Some(reaper_id);
+        let reaper = writes
+            .registry
+            .lock()
+            .unwrap()
+            .reaper
+            .as_ref()
+            .unwrap()
+            .clone();
+        reaper.abort();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !reaper.is_finished() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+    }
+    // Restart once more, then verify the owner aborts the replacement task too.
+    writes.reserve(&message(17));
+    let reaper = writes
+        .registry
+        .lock()
+        .unwrap()
+        .reaper
+        .as_ref()
+        .unwrap()
+        .clone();
+    drop(writes);
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while !reaper.is_finished() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
 }

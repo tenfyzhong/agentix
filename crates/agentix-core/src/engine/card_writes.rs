@@ -8,7 +8,7 @@ use std::{
     borrow::Cow,
     collections::{HashMap, VecDeque},
     sync::{
-        Arc, Mutex, OnceLock,
+        Arc, Mutex,
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::Duration,
@@ -24,12 +24,12 @@ mod tests;
 #[derive(Default)]
 pub(super) struct CardWrites {
     registry: Arc<Mutex<Registry>>,
-    reaper: OnceLock<tokio::task::AbortHandle>,
 }
 #[derive(Default)]
 struct Registry {
     cards: HashMap<Arc<MessageRef>, Arc<Card>>,
     sweep: VecDeque<Arc<MessageRef>>,
+    reaper: Option<tokio::task::AbortHandle>,
 }
 impl Registry {
     fn prune(&mut self) {
@@ -62,7 +62,7 @@ impl Registry {
 }
 impl Drop for CardWrites {
     fn drop(&mut self) {
-        if let Some(reaper) = self.reaper.get() {
+        if let Some(reaper) = self.registry.lock().unwrap().reaper.take() {
             reaper.abort();
         }
     }
@@ -90,33 +90,39 @@ impl Revision {
     }
 }
 impl CardWrites {
-    fn ensure_reaper(&self) {
-        if self.reaper.get().is_some() {
+    fn ensure_reaper(&self, registry: &mut Registry) {
+        if registry
+            .reaper
+            .as_ref()
+            .is_some_and(|task| !task.is_finished())
+        {
             return;
         }
         // Synchronous construction is supported; start on first runtime access.
         let Ok(runtime) = tokio::runtime::Handle::try_current() else {
             return;
         };
-        self.reaper.get_or_init(|| {
-            let registry = Arc::downgrade(&self.registry);
+        let weak = Arc::downgrade(&self.registry);
+        // The registry lock serializes both initial startup and replacement of a
+        // finished task after its runtime shuts down. No additional hot-path lock.
+        registry.reaper = Some(
             runtime
                 .spawn(async move {
                     loop {
                         tokio::time::sleep(Duration::from_secs(1)).await;
-                        let Some(registry) = registry.upgrade() else {
+                        let Some(registry) = weak.upgrade() else {
                             break;
                         };
                         registry.lock().unwrap().prune_batch(256);
                     }
                 })
-                .abort_handle()
-        });
+                .abort_handle(),
+        );
     }
 
     fn card(&self, message: &MessageRef) -> Arc<Card> {
-        self.ensure_reaper();
         let mut registry = self.registry.lock().unwrap();
+        self.ensure_reaper(&mut registry);
         // Hold the requested card across pruning; hits do not allocate a cloned key.
         let existing = registry.cards.get(message).cloned();
         registry.prune();
