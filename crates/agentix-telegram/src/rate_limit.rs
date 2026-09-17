@@ -33,7 +33,7 @@ impl RateLimiter {
         loop {
             agentix_domain::DeliveryAttempt::waiting();
             self.reserve(chat).await;
-            agentix_domain::DeliveryAttempt::dispatched();
+            agentix_domain::DeliveryAttempt::dispatched().await;
             let result = request.send_ref().await;
             let now = Instant::now();
             match result {

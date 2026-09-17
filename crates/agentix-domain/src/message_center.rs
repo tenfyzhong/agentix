@@ -48,7 +48,7 @@ impl MessageCenter {
             }
         };
         let _head = queue.lock().await;
-        crate::DeliveryAttempt::dispatched();
+        crate::DeliveryAttempt::dispatched().await;
         operation.await
     }
 

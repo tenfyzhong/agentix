@@ -167,3 +167,26 @@ Each job runs at most four recipient flows concurrently, including cached and im
 No detached read or per-recipient task is spawned. Cancellation drops the shared read and all active recipient futures together, and queued recipients never start. An uncertain initial loading send is never followed by a duplicate final send. Existing draining-card revisions, binding checks, Attach tokens and replacement rules still apply. A slow recipient can continue to hold its job slot until its delivery budget expires, but cannot suspend history timeout handling.
 
 Validation for independent progress: 437 core tests passed, with three opt-in benchmarks ignored; all-target/all-feature Clippy and formatting passed. The three pre-fix failures are now normal passing tests. The release admission fixture measured P50/P99 of 21.12/31.92 µs (cached), 2.33/3.50 µs (immediate history), 3.46/16.29 µs (stalled history), and 1.38/13.96 µs (duplicate stalled). Stalled pressure remains 4 active / 60 queued / 192 rejected. These short local samples remain subject to scheduling noise and do not measure real-provider notification latency.
+
+## Dispatch validation
+
+Initial background sends, edits, and replacement sends recheck their scope after
+transport admission and before each provider request or retry. The message center
+and Feishu, Slack, and Telegram adapters await the dispatch checkpoint. Validation
+runs in the owning caller future, under the existing operation budget, with no
+spawned validation task. An invalidated request is definitely unsent; card writers
+skip it without retiring a healthy target or creating a replacement. Rejection is
+recorded so callers do not reacquire validation locks outside the delivery budget.
+
+The checkpoint cannot undo an already dispatched remote request, and custom
+adapters must participate before every wire attempt to provide this guarantee.
+Attach-token presence uses the registry's hash index without consuming the token
+or changing callback authorization or historical-button lifetime.
+
+The permission handshake consumes successful validation in the same poll, even
+when Tokio's cooperative budget is exhausted. Only receipt of that one permission
+bypasses cooperative yielding; admission, validation, retries, and provider I/O
+remain cooperative. This closes an extra local scheduling gap, not the inherent
+race with simultaneous mutations on another thread or a request already handed
+to the provider future. The dispatch boundary is the adapter's provider-future
+poll, not proof that bytes have reached the network.

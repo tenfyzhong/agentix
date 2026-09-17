@@ -257,10 +257,16 @@ impl CardWrites {
             let mut attempt = WriteAttempt::new(&mut state, &revision.card.retain, false);
             let result = attempt
                 .delivery
-                .run(channel.update(conversation, &target, &view))
+                .run_if(channel.update(conversation, &target, &view), || async {
+                    valid().await && revision.current()
+                })
                 .await;
             attempt.finish(&result);
+            let invalidated = attempt.delivery.invalidated();
             drop(attempt);
+            if invalidated {
+                return Ok(false);
+            }
             match result {
                 Ok(()) => {
                     state.applied_revision = revision.number;
@@ -277,10 +283,16 @@ impl CardWrites {
         let mut attempt = WriteAttempt::new(&mut state, &revision.card.retain, true);
         let result = attempt
             .delivery
-            .run(channel.send(conversation, &view))
+            .run_if(channel.send(conversation, &view), || async {
+                valid().await && revision.current()
+            })
             .await;
         attempt.finish(&result);
+        let invalidated = attempt.delivery.invalidated();
         drop(attempt);
+        if invalidated {
+            return Ok(false);
+        }
         let replacement = result?;
         // Register the physical replacement as the same logical card (including callbacks).
         self.registry

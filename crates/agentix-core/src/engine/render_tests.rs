@@ -1917,7 +1917,7 @@ impl ChannelAdapter for ReorderingChannel {
             agentix_domain::DeliveryAttempt::waiting();
             self.entered.cancel();
             self.release.cancelled().await;
-            agentix_domain::DeliveryAttempt::dispatched();
+            agentix_domain::DeliveryAttempt::dispatched().await;
         }
         if self.stall_sends.load(std::sync::atomic::Ordering::Relaxed) {
             self.entered.cancel();
@@ -2385,6 +2385,168 @@ struct LocalCooldownChannel {
     wire_calls: std::sync::atomic::AtomicUsize,
     sends: std::sync::atomic::AtomicUsize,
 }
+
+#[tokio::test(start_paused = true)]
+async fn review_binding_fence_must_survive_transport_cooldown() {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    let writes = super::card_writes::CardWrites::default();
+    let conversation = ConversationRef::new(ChannelKind::Telegram, "cooldown-fence");
+    let message = MessageRef::new(conversation.clone(), "original");
+    let revision = writes.reserve(&message);
+    let channel = LocalCooldownChannel {
+        ready: tokio::time::Instant::now() + Duration::from_secs(30),
+        wire_calls: AtomicUsize::new(0),
+        sends: AtomicUsize::new(0),
+    };
+    let valid = AtomicBool::new(true);
+    let view = OutboundView::text("Card", "obsolete binding output");
+    let mut update =
+        Box::pin(
+            writes.update_if(&channel, &revision, &conversation, &view, || async {
+                valid.load(Ordering::SeqCst)
+            }),
+        );
+    assert!(poll_fn(|cx| Poll::Ready(update.as_mut().poll(cx).is_pending())).await);
+    assert_eq!(channel.wire_calls.load(Ordering::Relaxed), 0);
+    valid.store(false, Ordering::SeqCst);
+    tokio::time::advance(Duration::from_secs(30)).await;
+    let applied = update.await.unwrap();
+    assert_eq!(
+        channel.wire_calls.load(Ordering::Relaxed),
+        0,
+        "a binding invalidated before dispatch must not reach the provider"
+    );
+    assert!(!applied);
+    assert_eq!(channel.sends.load(Ordering::Relaxed), 0);
+    valid.store(true, Ordering::SeqCst);
+    assert!(
+        writes
+            .update_if(&channel, &revision, &conversation, &view, || async {
+                valid.load(Ordering::SeqCst)
+            })
+            .await
+            .unwrap()
+    );
+    assert_eq!(channel.wire_calls.load(Ordering::Relaxed), 1);
+    assert_eq!(
+        channel.sends.load(Ordering::Relaxed),
+        0,
+        "healthy target must survive rejected dispatch"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn invalidated_dispatch_does_not_reenter_validation_after_budget() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let writes = super::card_writes::CardWrites::default();
+    let conversation = ConversationRef::new(ChannelKind::Telegram, "validation-fence");
+    let message = MessageRef::new(conversation.clone(), "original");
+    let revision = writes.reserve(&message);
+    let channel = LocalCooldownChannel {
+        ready: tokio::time::Instant::now(),
+        wire_calls: AtomicUsize::new(0),
+        sends: AtomicUsize::new(0),
+    };
+    let checks = AtomicUsize::new(0);
+    let view = OutboundView::text("Card", "expired");
+    let result = tokio::time::timeout(
+        Duration::from_secs(2),
+        writes.update_if(&channel, &revision, &conversation, &view, || async {
+            match checks.fetch_add(1, Ordering::SeqCst) {
+                0 => true,
+                1 => false,
+                _ => std::future::pending().await,
+            }
+        }),
+    )
+    .await;
+    assert!(matches!(result, Ok(Ok(false))));
+    assert_eq!(checks.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn newer_revision_during_dispatch_validation_skips_old_write() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let writes = super::card_writes::CardWrites::default();
+    let conversation = ConversationRef::new(ChannelKind::Telegram, "revision-fence");
+    let message = MessageRef::new(conversation.clone(), "original");
+    let revision = writes.reserve(&message);
+    let channel = LocalCooldownChannel {
+        ready: tokio::time::Instant::now(),
+        wire_calls: AtomicUsize::new(0),
+        sends: AtomicUsize::new(0),
+    };
+    let checks = AtomicUsize::new(0);
+    let entered = tokio_util::sync::CancellationToken::new();
+    let release = tokio_util::sync::CancellationToken::new();
+    let view = OutboundView::text("Card", "old revision");
+    let update = writes.update_if(&channel, &revision, &conversation, &view, || async {
+        if checks.fetch_add(1, Ordering::SeqCst) > 0 {
+            entered.cancel();
+            release.cancelled().await;
+        }
+        true
+    });
+    let invalidate = async {
+        entered.cancelled().await;
+        let _next = writes.reserve(&message);
+        release.cancel();
+    };
+    let (result, ()) = tokio::join!(update, invalidate);
+    assert!(!result.unwrap());
+    assert_eq!(channel.wire_calls.load(Ordering::Relaxed), 0);
+}
+
+#[tokio::test]
+#[ignore = "manual release benchmark for background delivery with accumulated action tokens"]
+async fn review_background_action_registry_scaling() {
+    use std::hint::black_box;
+    for count in [1, 1_000, 100_000] {
+        let (engine, _agent, _raw, conversation, session) = review_background_fixture().await;
+        {
+            let mut actions = engine.interactions.actions.lock().await;
+            for index in 0..count {
+                actions.issue(
+                    crate::ActionScope::new(conversation.clone(), "owner", 0, 0, index.to_string()),
+                    super::UiAction::Attach(session.clone()),
+                );
+            }
+        }
+        let mut samples = Vec::new();
+        for index in 0..128 {
+            let turn = format!("benchmark-{index}");
+            engine.turns.buffers.lock().await.insert(
+                (session.clone(), turn.clone()),
+                super::TurnBuffer {
+                    user_text: "Question".into(),
+                    agent_text: "Answer".into(),
+                    answer_complete: true,
+                    ..super::TurnBuffer::default()
+                },
+            );
+            let start = std::time::Instant::now();
+            engine
+                .queue_background_completion(
+                    &session,
+                    &turn,
+                    &crate::TurnStatus::Completed,
+                    None,
+                    None,
+                )
+                .await
+                .unwrap();
+            wait_review_background(&engine).await;
+            samples.push(start.elapsed());
+        }
+        samples.sort();
+        println!(
+            "background action tokens={count}: p50={:.2} us p99={:.2} us",
+            samples[64].as_secs_f64() * 1e6,
+            samples[126].as_secs_f64() * 1e6
+        );
+        black_box(engine);
+    }
+}
 #[async_trait]
 impl ChannelAdapter for LocalCooldownChannel {
     fn kind(&self) -> ChannelKind {
@@ -2397,7 +2559,7 @@ impl ChannelAdapter for LocalCooldownChannel {
     ) -> Result<MessageRef, ChannelError> {
         agentix_domain::DeliveryAttempt::waiting();
         tokio::time::sleep_until(self.ready).await;
-        agentix_domain::DeliveryAttempt::dispatched();
+        agentix_domain::DeliveryAttempt::dispatched().await;
         self.wire_calls
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.sends
@@ -2412,7 +2574,7 @@ impl ChannelAdapter for LocalCooldownChannel {
     ) -> Result<(), ChannelError> {
         agentix_domain::DeliveryAttempt::waiting();
         tokio::time::sleep_until(self.ready).await;
-        agentix_domain::DeliveryAttempt::dispatched();
+        agentix_domain::DeliveryAttempt::dispatched().await;
         self.wire_calls
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         Ok(())
@@ -2572,6 +2734,39 @@ async fn wait_review_background(engine: &Engine) {
     })
     .await
     .unwrap();
+}
+
+#[tokio::test]
+async fn review_initial_send_must_recheck_owner_after_local_wait() {
+    use std::sync::atomic::Ordering;
+    let (engine, _agent, raw, conversation, session) = review_background_fixture().await;
+    {
+        let mut buffers = engine.turns.buffers.lock().await;
+        let buffer = buffers.get_mut(&(session.clone(), "turn".into())).unwrap();
+        buffer.agent_text = "Completed answer".into();
+        buffer.answer_complete = true;
+    }
+    raw.wait_sends.store(true, Ordering::Relaxed);
+    engine
+        .queue_background_completion(&session, "turn", &crate::TurnStatus::Completed, None, None)
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(1), raw.entered.cancelled())
+        .await
+        .unwrap();
+    assert!(raw.views.lock().await.is_empty());
+    engine
+        .interactions
+        .owners
+        .lock()
+        .await
+        .insert(conversation, "new-owner".into());
+    raw.release.cancel();
+    wait_review_background(&engine).await;
+    assert!(
+        raw.views.lock().await.is_empty(),
+        "a locally queued notice for the previous owner must not be dispatched"
+    );
 }
 
 #[tokio::test]

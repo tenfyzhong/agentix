@@ -74,7 +74,7 @@ impl Api {
         for attempt in 0..3 {
             agentix_domain::DeliveryAttempt::waiting();
             self.wait_turn(method, body).await;
-            agentix_domain::DeliveryAttempt::dispatched();
+            agentix_domain::DeliveryAttempt::dispatched().await;
             let response = self
                 .client
                 .post(url.clone())

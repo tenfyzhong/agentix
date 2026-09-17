@@ -716,7 +716,7 @@ where
                     }
                 }
                 let attempted_generation = *adapter.token_generation.lock().await;
-                agentix_domain::DeliveryAttempt::dispatched();
+                agentix_domain::DeliveryAttempt::dispatched().await;
                 match operation().await {
                     Err(LarkError::RateLimited(error)) => {
                         agentix_domain::DeliveryAttempt::waiting();

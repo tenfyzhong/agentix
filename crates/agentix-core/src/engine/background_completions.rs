@@ -355,7 +355,7 @@ impl Request {
             *cached_token = Some((epoch, token.clone()));
             token
         };
-        let consumed = !attached && !actions.iter().any(|(registered, _)| registered == token);
+        let consumed = !attached && !actions.contains(&token);
         drop(actions);
         drop(cached_token);
         let button = ActionButton {
@@ -457,7 +457,13 @@ impl Request {
                 }
             } else {
                 let message = agentix_domain::DeliveryAttempt::default()
-                    .run(recipient.channel.send(&recipient.conversation, &view))
+                    .run_if(
+                        recipient.channel.send(&recipient.conversation, &view),
+                        || async {
+                            self.valid(recipient).await
+                                && self.sessions.epoch(&recipient.conversation).await == epoch
+                        },
+                    )
                     .await?;
                 let revision = self.writes.reserve(&message);
                 Ok(Some((message, revision)))
