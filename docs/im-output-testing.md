@@ -37,6 +37,7 @@ structured process output changes.
 | Hidden commentary placeholders leave plain output formatting unchanged | `hidden_commentary_placeholder_does_not_change_plain_output_format` |
 | Native Codex goal objectives in paged/fallback history, read-only attach and background completion; unavailable rollouts preserve answers | `goal_input_is_restored_per_turn_for_history_and_read_only_attach` |
 | Native goal input on the first live output without a user-message event | `goal_input_is_visible_on_first_live_output_without_user_message_event` |
+| IM goal objectives activate completed, paused, and blocked goals without submitting a duplicate prompt | `im_goal_objective_activates_existing_stopped_goals` |
 | Goal context extraction excludes internal instructions and requires matching session/turn boundaries | `agentix-codex/src/client/goal_input.rs::tests` |
 | Old serialized views without sections | `legacy_views_without_sections_still_render_plain_markdown` |
 
