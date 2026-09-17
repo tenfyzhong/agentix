@@ -3,13 +3,19 @@
 use agentix_domain::ChannelCommand;
 use agentix_slack::SlackCommandSync;
 use serde_json::{Value, json};
-use std::{os::unix::fs::PermissionsExt, time::Duration};
+use std::time::Duration;
 
 fn fixture() -> (tempfile::TempDir, SlackCommandSync) {
     let dir = tempfile::tempdir().unwrap();
     let executable = dir.path().join("slack cli");
-    std::fs::write(&executable, include_str!("fixtures/slack-cli.sh")).unwrap();
-    std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+    // Concurrent process creation can briefly inherit a newly written executable
+    // and make Linux reject exec with ETXTBSY. Link the immutable fixture instead;
+    // the script uses the link path in $0 to keep each test's state isolated.
+    std::os::unix::fs::symlink(
+        concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/slack-cli.sh"),
+        &executable,
+    )
+    .unwrap();
     std::fs::write(
         dir.path().join("remote.json"),
         json!({
@@ -25,6 +31,34 @@ fn fixture() -> (tempfile::TempDir, SlackCommandSync) {
         vec![ChannelCommand::new("sessions", "Browse sessions")],
     );
     (dir, sync)
+}
+
+#[test]
+#[ignore = "stress test for concurrent CLI fixture creation and process spawning"]
+fn concurrent_cli_fixtures_remain_executable() {
+    std::thread::scope(|scope| {
+        let mut workers = Vec::new();
+        for worker in 0..8 {
+            workers.push(scope.spawn(move || {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .unwrap();
+                for iteration in 0..500 {
+                    let (dir, sync) = fixture();
+                    let result = runtime.block_on(sync.sync("T123"));
+                    assert!(
+                        matches!(result, Ok(true)),
+                        "worker {worker}, iteration {iteration}: {result:?}"
+                    );
+                    assert_projects_removed(&dir);
+                }
+            }));
+        }
+        for worker in workers {
+            worker.join().unwrap();
+        }
+    });
 }
 
 fn assert_projects_removed(dir: &tempfile::TempDir) {
@@ -212,12 +246,10 @@ async fn concurrent_changes_abort_and_install_failures_are_not_success() {
         let (dir, sync) = fixture();
         std::fs::write(dir.path().join(mode), "").unwrap();
         std::fs::write(dir.path().join("changed.json"), json!({"display_information":{"name":"Concurrent edit"},"settings":{"socket_mode_enabled":true}}).to_string()).unwrap();
+        let error = sync.sync("T123").await.unwrap_err().to_string();
         assert!(
-            sync.sync("T123")
-                .await
-                .unwrap_err()
-                .to_string()
-                .contains(message)
+            error.contains(message),
+            "mode {mode}: expected {message:?}, got {error:?}"
         );
         assert!(!dir.path().join("installed.json").exists());
         assert_projects_removed(&dir);
