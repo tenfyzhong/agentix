@@ -558,3 +558,62 @@ test("Obsidian restores ACTIVE when CLI rejects completion with unfinished Tasks
     assert.equal(f.files.get(f.row.path).status, "ACTIVE");
     assert.match(f.notices[0], /all Tasks must be/);
 });
+
+test("Obsidian reconciles delayed task projections without reporting a user conflict", async (t) => {
+    const f = await fixture(); t.after(() => f.engine.dispose());
+    Object.assign(f.files.get(f.row.path), { revision: 2, status: "IN_PROGRESS" });
+    f.engine.observe(f.row.path, copy(f.files.get(f.row.path)));
+    Object.assign(f.row, { revision: 5, status: "DONE" });
+    Object.assign(f.row.properties, { status: "DONE", phase: null });
+    await f.engine.flush();
+    assert.deepEqual(f.calls, []);
+    assert.deepEqual(f.notices, []);
+    assert.equal(f.files.get(f.row.path).status, "DONE");
+    assert.equal(f.files.get(f.row.path).revision, 5);
+});
+
+test("Obsidian retains a user edit following a queued newer projection", async (t) => {
+    const f = await fixture(); t.after(() => f.engine.dispose());
+    Object.assign(f.row, { revision: 2, status: "IN_PROGRESS" });
+    f.row.properties.status = "IN_PROGRESS";
+    Object.assign(f.files.get(f.row.path), { revision: 2, status: "IN_PROGRESS" });
+    f.engine.observe(f.row.path, copy(f.files.get(f.row.path)));
+    f.edit("BLOCKED");
+    await f.engine.flush();
+    assert.equal(f.calls.length, 1);
+    assert.equal(f.calls[0][1], "block");
+    assert.equal(f.calls[0][f.calls[0].indexOf("--expect-revision") + 1], "2");
+    assert.deepEqual(f.notices, []);
+});
+
+test("Obsidian never replays an intermediate writable projection over newer state", async (t) => {
+    for (const kind of ["task", "job"]) {
+        await t.test(kind, async (t) => {
+            const f = kind === "job" ? await jobFixture(t) : await fixture();
+            t.after(() => f.engine.dispose());
+            const projected = kind === "job" ? "PENDING_REVIEW" : "BLOCKED";
+            const latest = kind === "job" ? "ACTIVE" : "WAITING_USER";
+            Object.assign(f.files.get(f.row.path), { revision: 2, status: projected });
+            f.engine.observe(f.row.path, copy(f.files.get(f.row.path)));
+            Object.assign(f.row, { revision: 3, status: latest });
+            f.row.properties.status = latest;
+            await f.engine.flush();
+            assert.deepEqual(f.calls, []);
+            assert.deepEqual(f.notices, []);
+            assert.equal(f.files.get(f.row.path).status, latest);
+        });
+    }
+});
+
+test("Obsidian still rejects a concurrent change after a user edits a queued projection", async (t) => {
+    const f = await fixture(); t.after(() => f.engine.dispose());
+    Object.assign(f.files.get(f.row.path), { revision: 2, status: "IN_PROGRESS" });
+    f.engine.observe(f.row.path, copy(f.files.get(f.row.path)));
+    f.edit("BLOCKED");
+    Object.assign(f.row, { revision: 3, status: "WAITING_USER" });
+    f.row.properties.status = "WAITING_USER";
+    await f.engine.flush();
+    assert.deepEqual(f.calls, []);
+    assert.match(f.notices[0], /revision changed/);
+    assert.equal(f.files.get(f.row.path).status, "WAITING_USER");
+});
