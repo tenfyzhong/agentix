@@ -96,9 +96,9 @@ impl SlackAdapter {
         let mut body = render_view(view)?;
         destination(conversation, &mut body)?;
         let response = self.api.call("chat.postMessage", &body).await?;
-        let ts = response["ts"].as_str().ok_or_else(|| {
-            ChannelError::InvalidPayload("Slack omitted message timestamp".into())
-        })?;
+        let ts = response["ts"]
+            .as_str()
+            .ok_or_else(|| ChannelError::Transport("Slack omitted message timestamp".into()))?;
         let message = MessageRef::new(conversation.clone(), ts);
         self.cache(message.clone(), body, !view.actions.is_empty())
             .await;

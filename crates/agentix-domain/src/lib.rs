@@ -3,6 +3,8 @@ mod action;
 mod agent;
 mod binding;
 mod channel;
+mod delivery;
+pub use delivery::DeliveryAttempt;
 mod identity;
 mod message_center;
 mod model;

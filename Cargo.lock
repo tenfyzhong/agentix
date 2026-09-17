@@ -113,6 +113,7 @@ dependencies = [
  "agentix-storage",
  "agentix-task",
  "async-trait",
+ "futures-util",
  "serde",
  "serde_json",
  "sqlx",

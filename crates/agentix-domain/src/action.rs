@@ -73,6 +73,12 @@ impl<T> ActionRegistry<T> {
         token
     }
 
+    /// Check presence without consuming or authorizing the token.
+    #[must_use]
+    pub fn contains(&self, token: &str) -> bool {
+        self.actions.contains_key(token)
+    }
+
     /// Inspect routing metadata without consuming or authorizing an action.
     pub fn iter(&self) -> impl Iterator<Item = (&str, &T)> {
         self.actions

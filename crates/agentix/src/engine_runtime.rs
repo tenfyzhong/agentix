@@ -40,6 +40,7 @@ struct InputRecoveryOwner(watch::Receiver<Arc<Engine>>);
 impl Drop for InputRecoveryOwner {
     fn drop(&mut self) {
         self.0.borrow().cancel_input_recovery();
+        self.0.borrow().cancel_background_completions();
         self.0.borrow().abort_pending_prompts();
     }
 }
@@ -177,6 +178,7 @@ pub async fn run_engine_loop_with_config(
     }
     let engine = snapshots.borrow().clone();
     engine.cancel_input_recovery();
+    engine.cancel_background_completions();
     if let Err(error) = engine.cancel_pending_prompts().await {
         tracing::error!(%error, "failed to fence pending inputs at shutdown");
     }

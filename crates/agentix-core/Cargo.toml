@@ -11,15 +11,16 @@ agentix-domain = { path = "../agentix-domain" }
 agentix-storage = { path = "../agentix-storage" }
 agentix-task = { path = "../agentix-task" }
 async-trait.workspace = true
+futures-util.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+tokio-util.workspace = true
 tracing.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
-tokio-util.workspace = true
 sqlx.workspace = true
 agentix-storage = { path = "../agentix-storage", features = ["test-support"] }
 tempfile.workspace = true

@@ -1378,6 +1378,7 @@ fn hidden_commentary_placeholder_does_not_change_plain_output_format() {
 struct SlowInputAgent {
     reads: std::sync::atomic::AtomicUsize,
     release: tokio::sync::Notify,
+    history_dropped: tokio_util::sync::CancellationToken,
 }
 
 #[async_trait]
@@ -1386,7 +1387,10 @@ impl AgentAdapter for SlowInputAgent {
         "Test"
     }
     async fn list_sessions(&self, _: Option<String>, _: u32) -> Result<SessionPage, AgentError> {
-        unreachable!()
+        Ok(SessionPage {
+            sessions: vec![],
+            next_cursor: None,
+        })
     }
     async fn read_history(
         &self,
@@ -1394,13 +1398,21 @@ impl AgentAdapter for SlowInputAgent {
         _: Option<String>,
         _: u32,
     ) -> Result<HistoryPage, AgentError> {
-        unreachable!()
+        self.reads
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let _guard = self.history_dropped.clone().drop_guard();
+        self.release.notified().await;
+        Ok(HistoryPage {
+            turns: vec![],
+            older_cursor: None,
+            newer_cursor: None,
+        })
     }
     async fn attach(&self, _: &SessionId) -> Result<(), AgentError> {
         unreachable!()
     }
     async fn unsubscribe(&self, _: &SessionId) -> Result<(), AgentError> {
-        unreachable!()
+        Ok(())
     }
     async fn start_turn(&self, _: &SessionId, _: &str) -> Result<String, AgentError> {
         unreachable!()
@@ -1799,4 +1811,1549 @@ async fn terminal_elapsed_survives_cold_restore_and_repeated_completion() {
         assert!(subtitle.ends_with(expected), "{subtitle}");
     }
     clock_guard.abort();
+}
+
+#[tokio::test]
+async fn unattached_completion_finishes_cached_turn_without_removing_newer_active_turn() {
+    for cold in [false, true] {
+        let engine = Engine::new(
+            Arc::new(UnusedAgent),
+            SqliteState::in_memory().await.unwrap(),
+            vec![],
+        );
+        let session = SessionId::new("background");
+        let key = (session.clone(), "old".to_owned());
+        engine.turns.buffers.lock().await.insert(
+            key.clone(),
+            super::TurnBuffer {
+                status: crate::TurnStatus::InProgress,
+                started_at: Some(tokio::time::Instant::now()),
+                ..Default::default()
+            },
+        );
+        engine
+            .replace_stop_action(
+                &key,
+                &ConversationRef::new(ChannelKind::Telegram, "chat"),
+                Some("owner"),
+                true,
+            )
+            .await;
+        if cold {
+            engine.archive_turn(&session, "old").await.unwrap();
+        }
+        engine
+            .turns
+            .active
+            .lock()
+            .await
+            .insert(session.clone(), "newer".into());
+        engine
+            .notify_unattached_turn_completion(&session, "old", &crate::TurnStatus::Completed, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            engine.turns.active_turn(&session).await.as_deref(),
+            Some("newer")
+        );
+        let archived = engine
+            .turns
+            .cold
+            .load(&session, "old")
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(!engine.turns.stop_actions.lock().await.contains_key(&key));
+        assert!(
+            !engine
+                .interactions
+                .turn_action_groups
+                .lock()
+                .await
+                .contains_key(&key)
+        );
+        assert_eq!(archived.buffer.status, crate::TurnStatus::Completed);
+        assert!(archived.buffer.terminal_elapsed.is_some());
+        assert!(!engine.turns.buffers.lock().await.contains_key(&key));
+    }
+}
+
+#[derive(Default)]
+struct ReorderingChannel {
+    reject_sends: std::sync::atomic::AtomicBool,
+    reject_updates: std::sync::atomic::AtomicBool,
+    stall_sends: std::sync::atomic::AtomicBool,
+    wait_sends: std::sync::atomic::AtomicBool,
+    wait_conversation: std::sync::Mutex<Option<ConversationRef>>,
+    send_dropped: tokio_util::sync::CancellationToken,
+    send_calls: std::sync::atomic::AtomicUsize,
+    entered: tokio_util::sync::CancellationToken,
+    release: tokio_util::sync::CancellationToken,
+    applied: tokio_util::sync::CancellationToken,
+    messages: Arc<tokio::sync::Mutex<std::collections::HashMap<String, String>>>,
+    writes: tokio::sync::Mutex<Vec<String>>,
+    views: tokio::sync::Mutex<Vec<OutboundView>>,
+}
+
+#[async_trait]
+impl ChannelAdapter for ReorderingChannel {
+    fn kind(&self) -> ChannelKind {
+        ChannelKind::Telegram
+    }
+    async fn send(
+        &self,
+        conversation: &ConversationRef,
+        view: &OutboundView,
+    ) -> Result<MessageRef, ChannelError> {
+        self.send_calls
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if self.reject_sends.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(ChannelError::Rejected("injected definite rejection".into()));
+        }
+        if self.wait_sends.load(std::sync::atomic::Ordering::Relaxed)
+            || self.wait_conversation.lock().unwrap().as_ref() == Some(conversation)
+        {
+            let _guard = self.send_dropped.clone().drop_guard();
+            agentix_domain::DeliveryAttempt::waiting();
+            self.entered.cancel();
+            self.release.cancelled().await;
+            agentix_domain::DeliveryAttempt::dispatched().await;
+        }
+        if self.stall_sends.load(std::sync::atomic::Ordering::Relaxed) {
+            self.entered.cancel();
+            std::future::pending::<()>().await;
+        }
+        self.views.lock().await.push(view.clone());
+        let mut messages = self.messages.lock().await;
+        let id = format!("new-{}", messages.len());
+        messages.insert(id.clone(), view.body.clone());
+        Ok(MessageRef::new(conversation.clone(), id))
+    }
+    async fn update(
+        &self,
+        _: &ConversationRef,
+        message: &MessageRef,
+        view: &OutboundView,
+    ) -> Result<(), ChannelError> {
+        if self
+            .reject_updates
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            return Err(ChannelError::Rejected("injected edit rejection".into()));
+        }
+        self.writes.lock().await.push(view.body.clone());
+        self.views.lock().await.push(view.clone());
+        if view.body == "A" {
+            let messages = self.messages.clone();
+            let release = self.release.clone();
+            let applied = self.applied.clone();
+            let id = message.message_id.clone();
+            // Model a server that commits even after the client drops its request.
+            let remote = tokio::spawn(async move {
+                release.cancelled().await;
+                messages.lock().await.insert(id, "A".into());
+                applied.cancel();
+            });
+            self.entered.cancel();
+            remote.await.unwrap();
+        } else {
+            self.messages
+                .lock()
+                .await
+                .insert(message.message_id.clone(), view.body.clone());
+        }
+        Ok(())
+    }
+}
+
+async fn card_write_fixture() -> (Engine, Arc<ReorderingChannel>, ConversationRef, MessageRef) {
+    let raw = Arc::new(ReorderingChannel::default());
+    let engine = Engine::new(
+        Arc::new(UnusedAgent),
+        SqliteState::in_memory().await.unwrap(),
+        vec![raw.clone()],
+    );
+    let conversation = ConversationRef::new(ChannelKind::Telegram, "ordering");
+    let message = MessageRef::new(conversation.clone(), "original");
+    (engine, raw, conversation, message)
+}
+
+#[tokio::test]
+async fn card_writes_serialize_and_coalesce_pending_updates() {
+    let (engine, raw, conversation, message) = card_write_fixture().await;
+    let channel = engine.channel(ChannelKind::Telegram).unwrap();
+    let a = OutboundView::text("Card", "A");
+    let b = OutboundView::text("Card", "B");
+    let c = OutboundView::text("Card", "C");
+    let mut first = Box::pin(channel.update(&conversation, &message, &a));
+    assert!(poll_fn(|cx| Poll::Ready(first.as_mut().poll(cx).is_pending())).await);
+    raw.entered.cancelled().await;
+    let mut second = Box::pin(channel.update(&conversation, &message, &b));
+    let mut third = Box::pin(channel.update(&conversation, &message, &c));
+    assert!(
+        poll_fn(|cx| Poll::Ready(second.as_mut().poll(cx).is_pending())).await,
+        "B must wait while A is in flight"
+    );
+    assert!(poll_fn(|cx| Poll::Ready(third.as_mut().poll(cx).is_pending())).await);
+    raw.release.cancel();
+    first.await.unwrap();
+    second.await.unwrap();
+    third.await.unwrap();
+    assert_eq!(*raw.writes.lock().await, vec!["A", "C"]);
+    assert_eq!(raw.messages.lock().await.get("original").unwrap(), "C");
+}
+
+#[tokio::test]
+async fn card_writes_cancelled_request_cannot_overwrite_replacement() {
+    let (engine, raw, conversation, message) = card_write_fixture().await;
+    let channel = engine.channel(ChannelKind::Telegram).unwrap();
+    let a = OutboundView::text("Card", "A");
+    let mut first = Box::pin(channel.update(&conversation, &message, &a));
+    assert!(poll_fn(|cx| Poll::Ready(first.as_mut().poll(cx).is_pending())).await);
+    raw.entered.cancelled().await;
+    drop(first);
+    channel
+        .update(&conversation, &message, &OutboundView::text("Card", "B"))
+        .await
+        .unwrap();
+    raw.release.cancel();
+    raw.applied.cancelled().await;
+    let messages = raw.messages.lock().await;
+    assert!(
+        messages
+            .iter()
+            .any(|(id, body)| id != "original" && body == "B"),
+        "B must use a fresh card after the result of A becomes unknown"
+    );
+    assert_eq!(messages.get("original").unwrap(), "A");
+}
+
+#[tokio::test]
+async fn card_writes_background_query_keeps_its_original_revision() {
+    let agent = Arc::new(SlowInputAgent::default());
+    let raw = Arc::new(ReorderingChannel::default());
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![raw.clone()],
+    );
+    let conversation = ConversationRef::new(ChannelKind::Telegram, "query-revision");
+    let message = MessageRef::new(conversation.clone(), "original");
+    let session = SessionId::new("query-revision");
+    engine
+        .interactions
+        .owners
+        .lock()
+        .await
+        .insert(conversation.clone(), "owner".into());
+    engine
+        .turns
+        .views
+        .lock()
+        .await
+        .insert((session.clone(), "turn".into()), message.clone());
+    engine
+        .queue_background_completion(
+            &session,
+            "turn",
+            &crate::TurnStatus::Completed,
+            None,
+            Some(&conversation),
+        )
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while agent.reads.load(std::sync::atomic::Ordering::Relaxed) == 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    engine
+        .channel(ChannelKind::Telegram)
+        .unwrap()
+        .update(&conversation, &message, &OutboundView::text("Card", "B"))
+        .await
+        .unwrap();
+    agent.release.notify_one();
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while engine.background_completion_statistics().active != 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert_eq!(raw.messages.lock().await.get("original").unwrap(), "B");
+    assert_eq!(*raw.writes.lock().await, vec!["B"]);
+}
+
+#[tokio::test]
+async fn card_writes_timeout_replacement_survives_late_remote_commit_and_reload() {
+    let (engine, raw, conversation, message) = card_write_fixture().await;
+    tokio::time::pause();
+    let channel = engine.channel(ChannelKind::Telegram).unwrap();
+    let a = OutboundView::text("Card", "A");
+    let mut first = Box::pin(channel.update(&conversation, &message, &a));
+    assert!(poll_fn(|cx| Poll::Ready(first.as_mut().poll(cx).is_pending())).await);
+    tokio::time::advance(Duration::from_secs(5)).await;
+    first.await.unwrap();
+    let mut reloaded = Engine::new(
+        engine.agent.clone(),
+        engine.state.clone(),
+        vec![raw.clone()],
+    );
+    reloaded.inherit_runtime(&engine);
+    reloaded
+        .channel(ChannelKind::Telegram)
+        .unwrap()
+        .update(&conversation, &message, &OutboundView::text("Card", "B"))
+        .await
+        .unwrap();
+    raw.release.cancel();
+    raw.applied.cancelled().await;
+    let replacement = {
+        let messages = raw.messages.lock().await;
+        assert_eq!(messages.get("original").unwrap(), "A");
+        assert_eq!(messages.len(), 2);
+        messages
+            .iter()
+            .find(|(id, body)| id.as_str() != "original" && body.as_str() == "B")
+            .unwrap()
+            .0
+            .clone()
+    };
+    // A callback carries the physical replacement ID and must join the same queue.
+    let replacement = MessageRef::new(conversation.clone(), replacement);
+    let old_query = reloaded.card_writes.reserve(&message);
+    reloaded
+        .channel(ChannelKind::Telegram)
+        .unwrap()
+        .update(
+            &conversation,
+            &replacement,
+            &OutboundView::text("Card", "C"),
+        )
+        .await
+        .unwrap();
+    assert!(!old_query.current());
+    assert_eq!(
+        raw.messages
+            .lock()
+            .await
+            .get(&replacement.message_id)
+            .unwrap(),
+        "C"
+    );
+}
+
+#[tokio::test]
+async fn card_writes_other_cards_progress_while_one_is_blocked() {
+    let (engine, raw, conversation, message) = card_write_fixture().await;
+    let channel = engine.channel(ChannelKind::Telegram).unwrap();
+    let a = OutboundView::text("Card", "A");
+    let mut first = Box::pin(channel.update(&conversation, &message, &a));
+    assert!(poll_fn(|cx| Poll::Ready(first.as_mut().poll(cx).is_pending())).await);
+    let other = MessageRef::new(conversation.clone(), "other");
+    channel
+        .update(&conversation, &other, &OutboundView::text("Card", "B"))
+        .await
+        .unwrap();
+    assert_eq!(raw.messages.lock().await.get("other").unwrap(), "B");
+    raw.release.cancel();
+    first.await.unwrap();
+}
+
+#[tokio::test]
+async fn card_writes_duplicate_background_query_does_not_invalidate_first() {
+    let agent = Arc::new(SlowInputAgent::default());
+    let raw = Arc::new(ReorderingChannel::default());
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![raw.clone()],
+    );
+    let conversation = ConversationRef::new(ChannelKind::Telegram, "query-revision");
+    let message = MessageRef::new(conversation.clone(), "original");
+    let session = SessionId::new("query-revision");
+    engine
+        .interactions
+        .owners
+        .lock()
+        .await
+        .insert(conversation.clone(), "owner".into());
+    engine
+        .turns
+        .views
+        .lock()
+        .await
+        .insert((session.clone(), "turn".into()), message.clone());
+    engine
+        .queue_background_completion(
+            &session,
+            "turn",
+            &crate::TurnStatus::Completed,
+            None,
+            Some(&conversation),
+        )
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while agent.reads.load(std::sync::atomic::Ordering::Relaxed) == 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    engine
+        .queue_background_completion(
+            &session,
+            "turn",
+            &crate::TurnStatus::Completed,
+            None,
+            Some(&conversation),
+        )
+        .await
+        .unwrap();
+    agent.release.notify_one();
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while engine.background_completion_statistics().active != 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(
+        raw.messages
+            .lock()
+            .await
+            .get("original")
+            .is_some_and(|body| body.contains("Turn content is unavailable"))
+    );
+}
+
+#[tokio::test]
+async fn card_writes_cancelling_a_waiter_does_not_retire_the_active_card() {
+    let (engine, raw, conversation, message) = card_write_fixture().await;
+    let channel = engine.channel(ChannelKind::Telegram).unwrap();
+    let a = OutboundView::text("Card", "A");
+    let b = OutboundView::text("Card", "B");
+    let mut first = Box::pin(channel.update(&conversation, &message, &a));
+    assert!(poll_fn(|cx| Poll::Ready(first.as_mut().poll(cx).is_pending())).await);
+    let mut waiting = Box::pin(channel.update(&conversation, &message, &b));
+    assert!(poll_fn(|cx| Poll::Ready(waiting.as_mut().poll(cx).is_pending())).await);
+    drop(waiting);
+    raw.release.cancel();
+    first.await.unwrap();
+    channel
+        .update(&conversation, &message, &OutboundView::text("Card", "C"))
+        .await
+        .unwrap();
+    assert_eq!(raw.messages.lock().await.len(), 1);
+    assert_eq!(raw.messages.lock().await.get("original").unwrap(), "C");
+}
+
+#[tokio::test]
+async fn card_writes_disable_actions_waits_for_inflight_update() {
+    let (engine, raw, conversation, message) = card_write_fixture().await;
+    let channel = engine.channel(ChannelKind::Telegram).unwrap();
+    let a = OutboundView::text("Card", "A");
+    let mut first = Box::pin(channel.update(&conversation, &message, &a));
+    assert!(poll_fn(|cx| Poll::Ready(first.as_mut().poll(cx).is_pending())).await);
+    let mut disable = Box::pin(channel.disable_actions(&message));
+    assert!(poll_fn(|cx| Poll::Ready(disable.as_mut().poll(cx).is_pending())).await);
+    raw.release.cancel();
+    first.await.unwrap();
+    disable.await.unwrap();
+}
+
+#[tokio::test]
+async fn card_writes_uncertain_replacement_send_is_not_repeated() {
+    use std::sync::atomic::Ordering;
+    let (engine, raw, conversation, message) = card_write_fixture().await;
+    tokio::time::pause();
+    let channel = engine.channel(ChannelKind::Telegram).unwrap();
+    let a = OutboundView::text("Card", "A");
+    let mut first = Box::pin(channel.update(&conversation, &message, &a));
+    assert!(poll_fn(|cx| Poll::Ready(first.as_mut().poll(cx).is_pending())).await);
+    drop(first);
+    raw.stall_sends.store(true, Ordering::Relaxed);
+    let b = OutboundView::text("Card", "B");
+    let mut replacement = Box::pin(channel.update(&conversation, &message, &b));
+    assert!(poll_fn(|cx| Poll::Ready(replacement.as_mut().poll(cx).is_pending())).await);
+    tokio::time::advance(Duration::from_secs(5)).await;
+    assert!(replacement.await.is_err());
+    raw.stall_sends.store(false, Ordering::Relaxed);
+    assert!(
+        channel
+            .update(&conversation, &message, &OutboundView::text("Card", "C"))
+            .await
+            .is_err()
+    );
+    assert_eq!(raw.send_calls.load(Ordering::Relaxed), 1);
+    raw.release.cancel();
+    raw.applied.cancelled().await;
+}
+
+#[tokio::test]
+async fn card_writes_recheck_binding_after_waiting_for_active_writer() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let (engine, raw, conversation, message) = card_write_fixture().await;
+    let channel = engine.channel(ChannelKind::Telegram).unwrap();
+    let a = OutboundView::text("Card", "A");
+    let b = OutboundView::text("Card", "B");
+    let mut first = Box::pin(channel.update(&conversation, &message, &a));
+    assert!(poll_fn(|cx| Poll::Ready(first.as_mut().poll(cx).is_pending())).await);
+    let revision = engine.card_writes.reserve(&message);
+    let valid = AtomicBool::new(true);
+    let mut second = Box::pin(engine.card_writes.update_if(
+        raw.as_ref(),
+        &revision,
+        &conversation,
+        &b,
+        || async { valid.load(Ordering::SeqCst) },
+    ));
+    assert!(poll_fn(|cx| Poll::Ready(second.as_mut().poll(cx).is_pending())).await);
+    valid.store(false, Ordering::SeqCst);
+    raw.release.cancel();
+    first.await.unwrap();
+    assert!(!second.await.unwrap());
+    assert_eq!(*raw.writes.lock().await, vec!["A"]);
+}
+
+#[tokio::test]
+async fn card_review_disable_must_preserve_pending_final_content() {
+    let (engine, raw, conversation, message) = card_write_fixture().await;
+    let channel = engine.channel(ChannelKind::Telegram).unwrap();
+    let a = OutboundView::text("Card", "A");
+    let mut b = OutboundView::text("Card", "B");
+    b.actions.push(crate::ActionButton {
+        label: "Stop".into(),
+        token: "stop".into(),
+        style: crate::ActionStyle::Primary,
+        disabled: false,
+    });
+    let mut first = Box::pin(channel.update(&conversation, &message, &a));
+    assert!(poll_fn(|cx| Poll::Ready(first.as_mut().poll(cx).is_pending())).await);
+    let mut final_content = Box::pin(channel.update(&conversation, &message, &b));
+    assert!(poll_fn(|cx| Poll::Ready(final_content.as_mut().poll(cx).is_pending())).await);
+    let mut disable = Box::pin(channel.disable_actions(&message));
+    assert!(poll_fn(|cx| Poll::Ready(disable.as_mut().poll(cx).is_pending())).await);
+    raw.release.cancel();
+    first.await.unwrap();
+    final_content.await.unwrap();
+    disable.await.unwrap();
+    assert_eq!(
+        raw.messages.lock().await.get("original").unwrap(),
+        "B",
+        "disabling actions must not discard the latest answer body"
+    );
+    assert!(raw.views.lock().await.last().unwrap().actions[0].disabled);
+    channel.update(&conversation, &message, &b).await.unwrap();
+    assert!(!raw.views.lock().await.last().unwrap().actions[0].disabled);
+}
+
+#[tokio::test]
+async fn card_review_definite_replacement_rejection_must_allow_recovery() {
+    use std::sync::atomic::Ordering;
+    let (engine, raw, conversation, message) = card_write_fixture().await;
+    let channel = engine.channel(ChannelKind::Telegram).unwrap();
+    let a = OutboundView::text("Card", "A");
+    let mut first = Box::pin(channel.update(&conversation, &message, &a));
+    assert!(poll_fn(|cx| Poll::Ready(first.as_mut().poll(cx).is_pending())).await);
+    drop(first);
+    raw.reject_sends.store(true, Ordering::Relaxed);
+    assert!(
+        channel
+            .update(&conversation, &message, &OutboundView::text("Card", "B"))
+            .await
+            .is_err()
+    );
+    raw.reject_sends.store(false, Ordering::Relaxed);
+    let recovered = channel
+        .update(&conversation, &message, &OutboundView::text("Card", "C"))
+        .await;
+    raw.release.cancel();
+    raw.applied.cancelled().await;
+    assert!(
+        recovered.is_ok(),
+        "a definite rejection is not an unknown remote commit: {recovered:?}"
+    );
+}
+
+struct LocalCooldownChannel {
+    ready: tokio::time::Instant,
+    wire_calls: std::sync::atomic::AtomicUsize,
+    sends: std::sync::atomic::AtomicUsize,
+}
+
+#[tokio::test(start_paused = true)]
+async fn review_binding_fence_must_survive_transport_cooldown() {
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    let writes = super::card_writes::CardWrites::default();
+    let conversation = ConversationRef::new(ChannelKind::Telegram, "cooldown-fence");
+    let message = MessageRef::new(conversation.clone(), "original");
+    let revision = writes.reserve(&message);
+    let channel = LocalCooldownChannel {
+        ready: tokio::time::Instant::now() + Duration::from_secs(30),
+        wire_calls: AtomicUsize::new(0),
+        sends: AtomicUsize::new(0),
+    };
+    let valid = AtomicBool::new(true);
+    let view = OutboundView::text("Card", "obsolete binding output");
+    let mut update =
+        Box::pin(
+            writes.update_if(&channel, &revision, &conversation, &view, || async {
+                valid.load(Ordering::SeqCst)
+            }),
+        );
+    assert!(poll_fn(|cx| Poll::Ready(update.as_mut().poll(cx).is_pending())).await);
+    assert_eq!(channel.wire_calls.load(Ordering::Relaxed), 0);
+    valid.store(false, Ordering::SeqCst);
+    tokio::time::advance(Duration::from_secs(30)).await;
+    let applied = update.await.unwrap();
+    assert_eq!(
+        channel.wire_calls.load(Ordering::Relaxed),
+        0,
+        "a binding invalidated before dispatch must not reach the provider"
+    );
+    assert!(!applied);
+    assert_eq!(channel.sends.load(Ordering::Relaxed), 0);
+    valid.store(true, Ordering::SeqCst);
+    assert!(
+        writes
+            .update_if(&channel, &revision, &conversation, &view, || async {
+                valid.load(Ordering::SeqCst)
+            })
+            .await
+            .unwrap()
+    );
+    assert_eq!(channel.wire_calls.load(Ordering::Relaxed), 1);
+    assert_eq!(
+        channel.sends.load(Ordering::Relaxed),
+        0,
+        "healthy target must survive rejected dispatch"
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn invalidated_dispatch_does_not_reenter_validation_after_budget() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let writes = super::card_writes::CardWrites::default();
+    let conversation = ConversationRef::new(ChannelKind::Telegram, "validation-fence");
+    let message = MessageRef::new(conversation.clone(), "original");
+    let revision = writes.reserve(&message);
+    let channel = LocalCooldownChannel {
+        ready: tokio::time::Instant::now(),
+        wire_calls: AtomicUsize::new(0),
+        sends: AtomicUsize::new(0),
+    };
+    let checks = AtomicUsize::new(0);
+    let view = OutboundView::text("Card", "expired");
+    let result = tokio::time::timeout(
+        Duration::from_secs(2),
+        writes.update_if(&channel, &revision, &conversation, &view, || async {
+            match checks.fetch_add(1, Ordering::SeqCst) {
+                0 => true,
+                1 => false,
+                _ => std::future::pending().await,
+            }
+        }),
+    )
+    .await;
+    assert!(matches!(result, Ok(Ok(false))));
+    assert_eq!(checks.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn newer_revision_during_dispatch_validation_skips_old_write() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let writes = super::card_writes::CardWrites::default();
+    let conversation = ConversationRef::new(ChannelKind::Telegram, "revision-fence");
+    let message = MessageRef::new(conversation.clone(), "original");
+    let revision = writes.reserve(&message);
+    let channel = LocalCooldownChannel {
+        ready: tokio::time::Instant::now(),
+        wire_calls: AtomicUsize::new(0),
+        sends: AtomicUsize::new(0),
+    };
+    let checks = AtomicUsize::new(0);
+    let entered = tokio_util::sync::CancellationToken::new();
+    let release = tokio_util::sync::CancellationToken::new();
+    let view = OutboundView::text("Card", "old revision");
+    let update = writes.update_if(&channel, &revision, &conversation, &view, || async {
+        if checks.fetch_add(1, Ordering::SeqCst) > 0 {
+            entered.cancel();
+            release.cancelled().await;
+        }
+        true
+    });
+    let invalidate = async {
+        entered.cancelled().await;
+        let _next = writes.reserve(&message);
+        release.cancel();
+    };
+    let (result, ()) = tokio::join!(update, invalidate);
+    assert!(!result.unwrap());
+    assert_eq!(channel.wire_calls.load(Ordering::Relaxed), 0);
+}
+
+#[tokio::test]
+#[ignore = "manual release benchmark for background delivery with accumulated action tokens"]
+async fn review_background_action_registry_scaling() {
+    use std::hint::black_box;
+    for count in [1, 1_000, 100_000] {
+        let (engine, _agent, _raw, conversation, session) = review_background_fixture().await;
+        {
+            let mut actions = engine.interactions.actions.lock().await;
+            for index in 0..count {
+                actions.issue(
+                    crate::ActionScope::new(conversation.clone(), "owner", 0, 0, index.to_string()),
+                    super::UiAction::Attach(session.clone()),
+                );
+            }
+        }
+        let mut samples = Vec::new();
+        for index in 0..128 {
+            let turn = format!("benchmark-{index}");
+            engine.turns.buffers.lock().await.insert(
+                (session.clone(), turn.clone()),
+                super::TurnBuffer {
+                    user_text: "Question".into(),
+                    agent_text: "Answer".into(),
+                    answer_complete: true,
+                    ..super::TurnBuffer::default()
+                },
+            );
+            let start = std::time::Instant::now();
+            engine
+                .queue_background_completion(
+                    &session,
+                    &turn,
+                    &crate::TurnStatus::Completed,
+                    None,
+                    None,
+                )
+                .await
+                .unwrap();
+            wait_review_background(&engine).await;
+            samples.push(start.elapsed());
+        }
+        samples.sort();
+        println!(
+            "background action tokens={count}: p50={:.2} us p99={:.2} us",
+            samples[64].as_secs_f64() * 1e6,
+            samples[126].as_secs_f64() * 1e6
+        );
+        black_box(engine);
+    }
+}
+#[async_trait]
+impl ChannelAdapter for LocalCooldownChannel {
+    fn kind(&self) -> ChannelKind {
+        ChannelKind::Telegram
+    }
+    async fn send(
+        &self,
+        conversation: &ConversationRef,
+        _: &OutboundView,
+    ) -> Result<MessageRef, ChannelError> {
+        agentix_domain::DeliveryAttempt::waiting();
+        tokio::time::sleep_until(self.ready).await;
+        agentix_domain::DeliveryAttempt::dispatched().await;
+        self.wire_calls
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.sends
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Ok(MessageRef::new(conversation.clone(), "replacement"))
+    }
+    async fn update(
+        &self,
+        _: &ConversationRef,
+        _: &MessageRef,
+        _: &OutboundView,
+    ) -> Result<(), ChannelError> {
+        agentix_domain::DeliveryAttempt::waiting();
+        tokio::time::sleep_until(self.ready).await;
+        agentix_domain::DeliveryAttempt::dispatched().await;
+        self.wire_calls
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn card_review_local_cooldown_must_not_permanently_disable_card() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let state = SqliteState::in_memory().await.unwrap();
+    tokio::time::pause();
+    let raw = Arc::new(LocalCooldownChannel {
+        ready: tokio::time::Instant::now() + Duration::from_secs(90),
+        wire_calls: AtomicUsize::new(0),
+        sends: AtomicUsize::new(0),
+    });
+    let engine = Engine::new(Arc::new(UnusedAgent), state, vec![raw.clone()]);
+    let conversation = ConversationRef::new(ChannelKind::Telegram, "cooldown");
+    let message = MessageRef::new(conversation.clone(), "original");
+    let channel = engine.channel(ChannelKind::Telegram).unwrap();
+    let _ = channel
+        .update(&conversation, &message, &OutboundView::text("Card", "A"))
+        .await;
+    assert_eq!(
+        raw.wire_calls.load(Ordering::Relaxed),
+        0,
+        "no request reached the provider"
+    );
+    tokio::time::advance(Duration::from_secs(90)).await;
+    let recovered = channel
+        .update(&conversation, &message, &OutboundView::text("Card", "B"))
+        .await;
+    assert!(
+        recovered.is_ok(),
+        "expired local cooldown must allow delivery: {recovered:?}"
+    );
+}
+
+#[tokio::test]
+async fn card_writes_cancellation_during_local_wait_preserves_original_target() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let state = SqliteState::in_memory().await.unwrap();
+    tokio::time::pause();
+    let raw = Arc::new(LocalCooldownChannel {
+        ready: tokio::time::Instant::now() + Duration::from_secs(30),
+        wire_calls: AtomicUsize::new(0),
+        sends: AtomicUsize::new(0),
+    });
+    let engine = Engine::new(Arc::new(UnusedAgent), state, vec![raw.clone()]);
+    let conversation = ConversationRef::new(ChannelKind::Telegram, "cooldown");
+    let message = MessageRef::new(conversation.clone(), "original");
+    let channel = engine.channel(ChannelKind::Telegram).unwrap();
+    let view = OutboundView::text("Card", "A");
+    let mut pending = Box::pin(channel.update(&conversation, &message, &view));
+    assert!(poll_fn(|cx| Poll::Ready(pending.as_mut().poll(cx).is_pending())).await);
+    drop(pending);
+    // A fresh attempt can wait through a cooldown longer than the wire budget.
+    channel
+        .update(&conversation, &message, &view)
+        .await
+        .unwrap();
+    assert_eq!(raw.wire_calls.load(Ordering::Relaxed), 1);
+    assert_eq!(raw.sends.load(Ordering::Relaxed), 0);
+    // The original handle remains writable.
+    let revision = engine.card_writes.reserve(&message);
+    assert!(
+        engine
+            .card_writes
+            .update(raw.as_ref(), &revision, &conversation, &view)
+            .await
+            .unwrap()
+    );
+}
+
+#[tokio::test]
+async fn card_writes_definite_edit_rejection_does_not_replace_card() {
+    use std::sync::atomic::Ordering;
+    let (engine, raw, conversation, message) = card_write_fixture().await;
+    let channel = engine.channel(ChannelKind::Telegram).unwrap();
+    raw.reject_updates.store(true, Ordering::Relaxed);
+    assert!(matches!(
+        channel
+            .update(&conversation, &message, &OutboundView::text("Card", "B"))
+            .await,
+        Err(ChannelError::Rejected(_))
+    ));
+    raw.reject_updates.store(false, Ordering::Relaxed);
+    channel
+        .update(&conversation, &message, &OutboundView::text("Card", "C"))
+        .await
+        .unwrap();
+    assert_eq!(raw.send_calls.load(Ordering::Relaxed), 0);
+    assert_eq!(raw.messages.lock().await.get("original").unwrap(), "C");
+}
+
+async fn review_background_fixture() -> (
+    Engine,
+    Arc<SlowInputAgent>,
+    Arc<ReorderingChannel>,
+    ConversationRef,
+    SessionId,
+) {
+    let agent = Arc::new(SlowInputAgent::default());
+    let raw = Arc::new(ReorderingChannel::default());
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![raw.clone()],
+    );
+    let conversation = ConversationRef::new(ChannelKind::Telegram, "review");
+    let session = SessionId::new("review-session");
+    engine
+        .interactions
+        .owners
+        .lock()
+        .await
+        .insert(conversation.clone(), "owner".into());
+    engine.turns.views.lock().await.insert(
+        (session.clone(), "turn".into()),
+        MessageRef::new(conversation.clone(), "original"),
+    );
+    engine.turns.buffers.lock().await.insert(
+        (session.clone(), "turn".into()),
+        super::TurnBuffer {
+            user_text: "Question".into(),
+            ..super::TurnBuffer::default()
+        },
+    );
+    (engine, agent, raw, conversation, session)
+}
+
+async fn wait_review_loading(raw: &ReorderingChannel) -> OutboundView {
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if let Some(view) = raw
+                .views
+                .lock()
+                .await
+                .iter()
+                .find(|view| view.body.contains("Loading turn content"))
+                .cloned()
+            {
+                return view;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap()
+}
+
+async fn wait_review_background(engine: &Engine) {
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while engine.background_completion_statistics().active != 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn review_initial_send_must_recheck_owner_after_local_wait() {
+    use std::sync::atomic::Ordering;
+    let (engine, _agent, raw, conversation, session) = review_background_fixture().await;
+    {
+        let mut buffers = engine.turns.buffers.lock().await;
+        let buffer = buffers.get_mut(&(session.clone(), "turn".into())).unwrap();
+        buffer.agent_text = "Completed answer".into();
+        buffer.answer_complete = true;
+    }
+    raw.wait_sends.store(true, Ordering::Relaxed);
+    engine
+        .queue_background_completion(&session, "turn", &crate::TurnStatus::Completed, None, None)
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(1), raw.entered.cancelled())
+        .await
+        .unwrap();
+    assert!(raw.views.lock().await.is_empty());
+    engine
+        .interactions
+        .owners
+        .lock()
+        .await
+        .insert(conversation, "new-owner".into());
+    raw.release.cancel();
+    wait_review_background(&engine).await;
+    assert!(
+        raw.views.lock().await.is_empty(),
+        "a locally queued notice for the previous owner must not be dispatched"
+    );
+}
+
+#[tokio::test]
+async fn review_rejected_final_update_preserves_visible_attach_token() {
+    let (engine, agent, raw, conversation, session) = review_background_fixture().await;
+    engine
+        .queue_background_completion(
+            &session,
+            "turn",
+            &crate::TurnStatus::Completed,
+            None,
+            Some(&conversation),
+        )
+        .await
+        .unwrap();
+    let loading = wait_review_loading(&raw).await;
+    raw.reject_updates
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    agent.release.notify_one();
+    wait_review_background(&engine).await;
+    let epoch = engine.sessions.epoch(&conversation).await;
+    let consumed = engine.interactions.actions.lock().await.consume(
+        &loading.actions[0].token,
+        &conversation,
+        "owner",
+        agent.generation(),
+        epoch,
+    );
+    assert!(
+        consumed.is_ok(),
+        "the still-visible card must retain a usable Attach button: {consumed:?}"
+    );
+}
+
+#[tokio::test]
+async fn review_missing_content_notice_reaches_rich_card_sections() {
+    let (engine, agent, raw, conversation, session) = review_background_fixture().await;
+    engine
+        .queue_background_completion(
+            &session,
+            "turn",
+            &crate::TurnStatus::Completed,
+            None,
+            Some(&conversation),
+        )
+        .await
+        .unwrap();
+    wait_review_loading(&raw).await;
+    agent.release.notify_one();
+    wait_review_background(&engine).await;
+    let views = raw.views.lock().await;
+    let final_view = views.last().unwrap();
+    assert!(
+        final_view
+            .body
+            .contains("Additional turn content is unavailable")
+    );
+    assert!(!final_view.sections.is_empty());
+    assert!(
+        final_view.sections.iter().any(|section| section
+            .body
+            .contains("Additional turn content is unavailable")),
+        "Feishu renders sections instead of the fallback body"
+    );
+}
+
+#[tokio::test]
+async fn review_disabled_channel_owner_does_not_prevent_completion_archive() {
+    let (engine, agent, raw, conversation, session) = review_background_fixture().await;
+    engine.interactions.owners.lock().await.insert(
+        ConversationRef::new(ChannelKind::Feishu, "disabled-chat"),
+        "owner".into(),
+    );
+    let mut reloaded = Engine::new(agent, engine.state.clone(), vec![raw]);
+    reloaded.inherit_runtime(&engine);
+    let result = reloaded
+        .notify_unattached_turn_completion(&session, "turn", &crate::TurnStatus::Completed, None)
+        .await;
+    let archived = reloaded.turns.cold.load(&session, "turn").await.unwrap();
+    assert!(
+        archived.is_some(),
+        "optional disabled-channel recipient must not prevent local archival: {result:?}"
+    );
+    assert!(result.is_ok());
+    assert!(
+        reloaded
+            .interactions
+            .owners
+            .lock()
+            .await
+            .contains_key(&conversation)
+    );
+}
+
+#[tokio::test]
+async fn review_final_update_reuses_visible_attach_token() {
+    let (engine, agent, raw, conversation, session) = review_background_fixture().await;
+    engine
+        .queue_background_completion(
+            &session,
+            "turn",
+            &crate::TurnStatus::Completed,
+            None,
+            Some(&conversation),
+        )
+        .await
+        .unwrap();
+    let loading = wait_review_loading(&raw).await;
+    assert!(
+        loading
+            .sections
+            .iter()
+            .any(|section| section.body.contains("Loading turn content"))
+    );
+    agent.release.notify_one();
+    wait_review_background(&engine).await;
+    let views = raw.views.lock().await;
+    let final_view = views.last().unwrap();
+    assert_eq!(loading.actions[0].token, final_view.actions[0].token);
+    assert!(
+        !final_view
+            .sections
+            .iter()
+            .any(|section| section.body.contains("Loading turn content"))
+    );
+}
+
+#[tokio::test]
+async fn review_already_attached_completion_has_disabled_button() {
+    let (engine, agent, raw, conversation, session) = review_background_fixture().await;
+    engine
+        .sessions
+        .commit_binding(&conversation, &session, false)
+        .await
+        .unwrap();
+    engine
+        .queue_background_completion(
+            &session,
+            "turn",
+            &crate::TurnStatus::Completed,
+            None,
+            Some(&conversation),
+        )
+        .await
+        .unwrap();
+    let loading = wait_review_loading(&raw).await;
+    assert!(loading.actions[0].disabled);
+    assert_eq!(loading.actions[0].label, "Attached");
+    agent.release.notify_one();
+    wait_review_background(&engine).await;
+}
+
+#[tokio::test]
+async fn review_cancel_preserves_visible_attach_token() {
+    let (engine, agent, raw, conversation, session) = review_background_fixture().await;
+    engine
+        .queue_background_completion(
+            &session,
+            "turn",
+            &crate::TurnStatus::Completed,
+            None,
+            Some(&conversation),
+        )
+        .await
+        .unwrap();
+    let loading = wait_review_loading(&raw).await;
+    engine.cancel_background_completions();
+    tokio::task::yield_now().await;
+    let epoch = engine.sessions.epoch(&conversation).await;
+    assert!(
+        engine
+            .interactions
+            .actions
+            .lock()
+            .await
+            .consume(
+                &loading.actions[0].token,
+                &conversation,
+                "owner",
+                agent.generation(),
+                epoch
+            )
+            .is_ok()
+    );
+}
+
+#[tokio::test]
+async fn review_cleanup_gate_preserves_revision_before_optional_io() {
+    let (engine, agent, raw, conversation, session) = review_background_fixture().await;
+    let permit = engine
+        .prepare_background_completion(
+            &session,
+            "turn",
+            &crate::TurnStatus::Completed,
+            None,
+            Some(&conversation),
+        )
+        .await
+        .unwrap();
+    tokio::task::yield_now().await;
+    assert_eq!(agent.reads.load(std::sync::atomic::Ordering::Relaxed), 0);
+    engine
+        .channel(ChannelKind::Telegram)
+        .unwrap()
+        .update(
+            &conversation,
+            &MessageRef::new(conversation.clone(), "original"),
+            &OutboundView::text("Newer", "B"),
+        )
+        .await
+        .unwrap();
+    permit.send(()).unwrap();
+    agent.release.notify_one();
+    wait_review_background(&engine).await;
+    assert_eq!(*raw.writes.lock().await, vec!["B"]);
+}
+
+#[tokio::test]
+async fn review_cancelled_cleanup_does_not_start_optional_io() {
+    let (engine, agent, raw, conversation, session) = review_background_fixture().await;
+    let permit = engine
+        .prepare_background_completion(
+            &session,
+            "turn",
+            &crate::TurnStatus::Completed,
+            None,
+            Some(&conversation),
+        )
+        .await
+        .unwrap();
+    drop(permit);
+    wait_review_background(&engine).await;
+    assert_eq!(agent.reads.load(std::sync::atomic::Ordering::Relaxed), 0);
+    assert!(raw.views.lock().await.is_empty());
+}
+
+#[tokio::test]
+async fn review_disabled_draining_channel_still_finishes_cleanup() {
+    let (engine, agent, _, conversation, session) = review_background_fixture().await;
+    engine
+        .sessions
+        .commit_binding(&conversation, &session, false)
+        .await
+        .unwrap();
+    engine
+        .sessions
+        .commit_binding(&conversation, &SessionId::new("next"), true)
+        .await
+        .unwrap();
+    let mut reloaded = Engine::new(agent, engine.state.clone(), vec![]);
+    reloaded.inherit_runtime(&engine);
+    reloaded
+        .handle_turn_completed(
+            &conversation,
+            &session,
+            "turn".into(),
+            crate::TurnStatus::Completed,
+            None,
+            DeliveryClass::Draining,
+        )
+        .await
+        .unwrap();
+    assert!(
+        reloaded
+            .turns
+            .cold
+            .load(&session, "turn")
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(
+        reloaded
+            .sessions
+            .bindings
+            .lock()
+            .await
+            .route(&session, crate::EventImportance::Critical)
+            .is_none()
+    );
+    assert_eq!(reloaded.background_completion_statistics().active, 0);
+}
+
+#[tokio::test]
+async fn review_consumed_attach_token_is_not_reissued() {
+    let (engine, agent, raw, conversation, session) = review_background_fixture().await;
+    engine
+        .queue_background_completion(
+            &session,
+            "turn",
+            &crate::TurnStatus::Completed,
+            None,
+            Some(&conversation),
+        )
+        .await
+        .unwrap();
+    let loading = wait_review_loading(&raw).await;
+    let epoch = engine.sessions.epoch(&conversation).await;
+    engine
+        .interactions
+        .actions
+        .lock()
+        .await
+        .consume(
+            &loading.actions[0].token,
+            &conversation,
+            "owner",
+            agent.generation(),
+            epoch,
+        )
+        .unwrap();
+    agent.release.notify_one();
+    wait_review_background(&engine).await;
+    let views = raw.views.lock().await;
+    assert!(views.last().unwrap().actions[0].disabled);
+    assert!(
+        engine
+            .interactions
+            .actions
+            .lock()
+            .await
+            .iter()
+            .next()
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn review_binding_change_refreshes_background_attach_scope() {
+    let (engine, agent, raw, conversation, session) = review_background_fixture().await;
+    engine
+        .queue_background_completion(&session, "turn", &crate::TurnStatus::Completed, None, None)
+        .await
+        .unwrap();
+    let loading = wait_review_loading(&raw).await;
+    engine
+        .sessions
+        .commit_binding(&conversation, &SessionId::new("other"), false)
+        .await
+        .unwrap();
+    agent.release.notify_one();
+    wait_review_background(&engine).await;
+    let views = raw.views.lock().await;
+    let final_token = &views.last().unwrap().actions[0].token;
+    assert_ne!(&loading.actions[0].token, final_token);
+    let epoch = engine.sessions.epoch(&conversation).await;
+    let mut actions = engine.interactions.actions.lock().await;
+    assert!(matches!(
+        actions.consume(
+            &loading.actions[0].token,
+            &conversation,
+            "owner",
+            agent.generation(),
+            epoch
+        ),
+        Err(crate::ActionTokenError::StaleBinding)
+    ));
+    assert!(
+        actions
+            .consume(
+                final_token,
+                &conversation,
+                "owner",
+                agent.generation(),
+                epoch
+            )
+            .is_ok()
+    );
+}
+
+#[tokio::test]
+async fn review_attach_during_history_read_shows_attached() {
+    let (engine, agent, raw, conversation, session) = review_background_fixture().await;
+    engine
+        .queue_background_completion(&session, "turn", &crate::TurnStatus::Completed, None, None)
+        .await
+        .unwrap();
+    wait_review_loading(&raw).await;
+    engine
+        .sessions
+        .commit_binding(&conversation, &session, false)
+        .await
+        .unwrap();
+    agent.release.notify_one();
+    wait_review_background(&engine).await;
+    let views = raw.views.lock().await;
+    let button = &views.last().unwrap().actions[0];
+    assert!(button.disabled);
+    assert_eq!(button.label, "Attached");
+}
+
+// Review reproduction: a loading send currently suspends polling the read timeout.
+#[tokio::test]
+async fn review_loading_delivery_must_not_suspend_history_deadline() {
+    use std::sync::atomic::Ordering;
+    let (engine, agent, raw, _, session) = review_background_fixture().await;
+    tokio::time::pause();
+    raw.wait_sends.store(true, Ordering::Relaxed);
+    engine
+        .queue_background_completion(&session, "turn", &crate::TurnStatus::Completed, None, None)
+        .await
+        .unwrap();
+    raw.entered.cancelled().await;
+    assert_eq!(agent.reads.load(Ordering::Relaxed), 1);
+    tokio::time::advance(Duration::from_secs(6)).await;
+    for _ in 0..10 {
+        tokio::task::yield_now().await;
+    }
+    tokio::time::advance(Duration::from_millis(200)).await;
+    for _ in 0..10 {
+        tokio::task::yield_now().await;
+    }
+    let reads = agent.reads.load(Ordering::Relaxed);
+    engine.cancel_background_completions();
+    assert_eq!(
+        reads, 2,
+        "history must retry after its five-second deadline even while loading delivery waits locally"
+    );
+}
+
+#[tokio::test]
+async fn review_fast_recipient_finishes_while_loading_send_waits() {
+    let (engine, agent, raw, slow, session) = review_background_fixture().await;
+    let fast = ConversationRef::new(ChannelKind::Telegram, "fast");
+    engine
+        .interactions
+        .owners
+        .lock()
+        .await
+        .insert(fast, "owner".into());
+    *raw.wait_conversation.lock().unwrap() = Some(slow);
+    engine
+        .queue_background_completion(&session, "turn", &crate::TurnStatus::Completed, None, None)
+        .await
+        .unwrap();
+    raw.entered.cancelled().await;
+    agent.release.notify_one();
+    let completed = tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            if raw
+                .views
+                .lock()
+                .await
+                .iter()
+                .any(|view| view.body.contains("Additional turn content is unavailable"))
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    if completed.is_err() {
+        engine.cancel_background_completions();
+    }
+    assert!(
+        completed.is_ok(),
+        "fast recipient must finalize before the slow loading send is released"
+    );
+    assert_eq!(agent.reads.load(std::sync::atomic::Ordering::Relaxed), 1);
+    raw.release.cancel();
+    wait_review_background(&engine).await;
+    let views = raw.views.lock().await;
+    assert!(
+        views
+            .last()
+            .unwrap()
+            .body
+            .contains("Additional turn content is unavailable")
+    );
+    assert_eq!(
+        views
+            .iter()
+            .filter(|v| v.body.contains("Additional turn content is unavailable"))
+            .count(),
+        2
+    );
+}
+
+#[tokio::test]
+async fn review_recipient_fanout_is_bounded_and_cancelled_with_history() {
+    use std::sync::atomic::Ordering;
+    let (engine, agent, raw, _, session) = review_background_fixture().await;
+    for index in 0..9 {
+        engine.interactions.owners.lock().await.insert(
+            ConversationRef::new(ChannelKind::Telegram, format!("extra-{index}")),
+            "owner".into(),
+        );
+    }
+    raw.wait_sends.store(true, Ordering::Relaxed);
+    engine
+        .queue_background_completion(&session, "turn", &crate::TurnStatus::Completed, None, None)
+        .await
+        .unwrap();
+    raw.entered.cancelled().await;
+    for _ in 0..20 {
+        tokio::task::yield_now().await;
+    }
+    let started = raw.send_calls.load(Ordering::Relaxed);
+    engine.cancel_background_completions();
+    tokio::time::timeout(Duration::from_secs(1), agent.history_dropped.cancelled())
+        .await
+        .unwrap();
+    raw.send_dropped.cancelled().await;
+    raw.release.cancel();
+    agent.release.notify_waiters();
+    for _ in 0..20 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(
+        started, 4,
+        "only four recipient flows may start concurrently"
+    );
+    assert_eq!(
+        raw.send_calls.load(Ordering::Relaxed),
+        started,
+        "cancelled fanout must not start queued recipients"
+    );
+    assert!(raw.views.lock().await.is_empty());
+}
+
+#[tokio::test]
+async fn review_uncertain_loading_send_is_not_repeated_after_history_finishes() {
+    use std::sync::atomic::Ordering;
+    let (engine, agent, raw, _, session) = review_background_fixture().await;
+    tokio::time::pause();
+    raw.stall_sends.store(true, Ordering::Relaxed);
+    engine
+        .queue_background_completion(&session, "turn", &crate::TurnStatus::Completed, None, None)
+        .await
+        .unwrap();
+    raw.entered.cancelled().await;
+    agent.release.notify_one();
+    for _ in 0..20 {
+        tokio::task::yield_now().await;
+    }
+    tokio::time::advance(Duration::from_secs(6)).await;
+    wait_review_background(&engine).await;
+    assert_eq!(
+        raw.send_calls.load(Ordering::Relaxed),
+        1,
+        "an uncertain loading send must not be followed by a duplicate final send"
+    );
+    assert!(raw.views.lock().await.is_empty());
+}
+
+#[tokio::test]
+async fn review_queued_recipients_skip_loading_after_shared_history_finishes() {
+    use std::sync::atomic::Ordering;
+    let (engine, agent, raw, _, session) = review_background_fixture().await;
+    for index in 0..9 {
+        engine.interactions.owners.lock().await.insert(
+            ConversationRef::new(ChannelKind::Telegram, format!("extra-{index}")),
+            "owner".into(),
+        );
+    }
+    raw.wait_sends.store(true, Ordering::Relaxed);
+    engine
+        .queue_background_completion(&session, "turn", &crate::TurnStatus::Completed, None, None)
+        .await
+        .unwrap();
+    raw.entered.cancelled().await;
+    for _ in 0..20 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(raw.send_calls.load(Ordering::Relaxed), 4);
+    agent.release.notify_one();
+    tokio::time::timeout(Duration::from_secs(1), agent.history_dropped.cancelled())
+        .await
+        .unwrap();
+    raw.release.cancel();
+    wait_review_background(&engine).await;
+    assert_eq!(agent.reads.load(Ordering::Relaxed), 1);
+    let views = raw.views.lock().await;
+    assert_eq!(
+        views
+            .iter()
+            .filter(|v| v.body.contains("Loading turn content"))
+            .count(),
+        4
+    );
+    assert_eq!(
+        views
+            .iter()
+            .filter(|v| v.body.contains("Additional turn content is unavailable"))
+            .count(),
+        10
+    );
+    assert_eq!(raw.send_calls.load(Ordering::Relaxed), 10);
 }

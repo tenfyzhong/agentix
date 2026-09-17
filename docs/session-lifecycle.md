@@ -134,11 +134,20 @@ flowchart TD
     HOST --> EVENT["Backend publishes AgentEvent"]
     EVENT --> ROUTE{"Event and attachment"}
     ROUTE -->|Attached turn| BUFFER["Merge input, reasoning, tools, answer and status"]
-    ROUTE -->|Unattached completion and Background enabled| BG["Prepare background completion notification"]
+    ROUTE -->|Unattached completion and Background enabled| BG["Snapshot completion and admit bounded optional work"]
     BUFFER --> CARD["Render or update IM message"]
     BG --> CARD
     CARD --> ACTION["Expose only supported, valid actions"]
 ```
+
+Background/draining completion snapshots reserve the existing card revision before
+local archival. Archival and draining cleanup release a permit for the bounded
+background coordinator; a dropped permit cancels optional delivery. History reads
+and notifications then run outside the Engine dispatch lane. Loading/final writes
+share a logical card writer with live output and action disabling. Rejected edits
+preserve the visible Attach token; unknown remote edits retire the old physical
+message before replacement. See [background completions](background-completions.md)
+for budgets, cancellation, reload behavior and guarantee boundaries.
 
 Saved bindings are restored at service startup. Temporarily unavailable sessions
 remain eligible for recovery. Reconnection invalidates obsolete action scopes;

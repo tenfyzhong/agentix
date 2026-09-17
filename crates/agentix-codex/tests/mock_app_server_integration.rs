@@ -1502,6 +1502,7 @@ async fn background_codex_turn_completion_notifies_im_with_attach_action() {
         .handle_agent_event(recv_background_event(&mut events).await)
         .await
         .unwrap();
+    settle_background(&engine).await;
 
     let views = channel.views();
     assert_eq!(views.len(), before + 1);
@@ -1591,6 +1592,7 @@ async fn assert_subagent_completion_does_not_notify_im(polled: bool) {
             }
         };
         engine.handle_agent_event(event).await.unwrap();
+        settle_background(&engine).await;
         assert_eq!(
             channel.views().len(),
             before,
@@ -1610,6 +1612,7 @@ async fn assert_subagent_completion_does_not_notify_im(polled: bool) {
                     })
                     .await
                     .unwrap();
+                settle_background(&engine).await;
                 assert_eq!(
                     channel.views().len(),
                     before,
@@ -1640,8 +1643,12 @@ async fn background_completion_source_lookup_failure_does_not_notify_im() {
             error: None,
         })
         .await;
+    assert!(
+        result.is_ok(),
+        "optional source lookup must not fail local completion"
+    );
+    settle_background(&engine).await;
     assert_eq!(channel.views().len(), before);
-    assert!(result.is_err());
 }
 
 #[tokio::test]
@@ -1670,6 +1677,7 @@ async fn background_root_source_variants_still_notify_im() {
             })
             .await
             .unwrap();
+        settle_background(&engine).await;
         assert_eq!(channel.views().len(), before + 1, "source={source}");
     }
 }
@@ -2038,6 +2046,7 @@ async fn detached_codex_session_keeps_notifying_about_later_turns() {
         .handle_agent_event(recv_background_event(&mut events).await)
         .await
         .unwrap();
+    settle_background(&engine).await;
     assert_eq!(channel.views().len(), before + 1);
     assert!(
         channel
@@ -2585,6 +2594,7 @@ async fn restarted_engine_receives_discovered_background_completion_without_new_
         .handle_agent_event(recv_background_event(&mut events).await)
         .await
         .unwrap();
+    settle_background(&restarted).await;
     let views = channel.views();
     assert_eq!(views.len(), before + 1);
     assert!(
@@ -2689,6 +2699,7 @@ async fn goal_input_is_restored_per_turn_for_history_and_read_only_attach() {
         })
         .await
         .unwrap();
+    settle_background(&engine).await;
     assert!(
         channel
             .views()
@@ -3437,4 +3448,20 @@ async fn registered_observation_is_idle_until_a_notification() {
         .await
         .expect("notification must wake observation")
         .unwrap();
+}
+
+// Completion admission is synchronous; optional source/history reads and IM
+// delivery are owned by the Engine's background coordinator.
+async fn settle_background(engine: &Engine) {
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let pressure = engine.background_completion_statistics();
+            if pressure.active + pressure.queued == 0 {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("background completion must settle");
 }

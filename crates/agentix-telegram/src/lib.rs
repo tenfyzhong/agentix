@@ -447,7 +447,7 @@ impl ChannelAdapter for TelegramAdapter {
         let message = self
             .request(request, "sendMessage", Some(chat_id))
             .await
-            .map_err(|error| ChannelError::Transport(error.to_string()))?;
+            .map_err(|error| delivery_error(&error))?;
         Ok(MessageRef::new(
             conversation.clone(),
             message.id.0.to_string(),
@@ -479,7 +479,7 @@ impl ChannelAdapter for TelegramAdapter {
             Some(chat_id),
         )
         .await
-        .map_err(|error| ChannelError::Transport(error.to_string()))?;
+        .map_err(|error| delivery_error(&error))?;
         Ok(())
     }
 
@@ -500,7 +500,7 @@ impl ChannelAdapter for TelegramAdapter {
             Some(chat_id),
         )
         .await
-        .map_err(|error| ChannelError::Transport(error.to_string()))?;
+        .map_err(|error| delivery_error(&error))?;
         Ok(())
     }
 
@@ -960,6 +960,16 @@ fn strip_ascii_case_insensitive(text: &str, needle: &str) -> String {
             return result;
         };
         result.replace_range(position..position + needle.len(), "");
+    }
+}
+
+fn delivery_error(error: &teloxide::RequestError) -> ChannelError {
+    match error {
+        teloxide::RequestError::Api(_) | teloxide::RequestError::MigrateToChatId(_) => {
+            ChannelError::Rejected(error.to_string())
+        }
+        teloxide::RequestError::RetryAfter(_) => ChannelError::NotSent(error.to_string()),
+        _ => ChannelError::Transport(error.to_string()),
     }
 }
 

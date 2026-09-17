@@ -245,7 +245,7 @@ async fn feishu_command_menu_is_sent_once_and_updated_for_attached_sessions() {
 }
 
 #[tokio::test]
-async fn feishu_mock_api_errors_are_channel_transport_errors() {
+async fn feishu_mock_api_errors_are_definite_rejections() {
     let server = MockFeishuApi::start().await;
     server
         .fail_next("/open-apis/im/v1/messages", 230_001, "mock send failure")
@@ -266,7 +266,7 @@ async fn feishu_mock_api_errors_are_channel_transport_errors() {
         .unwrap_err();
 
     assert!(
-        matches!(error, ChannelError::Transport(message) if message.contains("mock send failure"))
+        matches!(error, ChannelError::Rejected(message) if message.contains("mock send failure"))
     );
     let requests = server.requests().await;
     assert_eq!(
@@ -376,7 +376,7 @@ async fn feishu_invalid_tenant_token_is_not_retried_more_than_once() {
         .await
         .unwrap_err();
 
-    assert!(matches!(error, ChannelError::Transport(message) if message.contains("99991663")));
+    assert!(matches!(error, ChannelError::Rejected(message) if message.contains("99991663")));
     let requests = server.requests().await;
     assert_eq!(
         requests
@@ -1890,4 +1890,73 @@ async fn background_panel_rotation_is_numeric_on_all_outbound_paths() {
             assert_eq!(panel["header"]["icon_expanded_angle"], 90);
         }
     }
+}
+
+#[tokio::test]
+async fn rejected_disable_preserves_card_for_retry() {
+    let server = MockFeishuApi::start().await;
+    let client = LarkClient::builder("mock-app", "mock-secret")
+        .base_url(server.base_url())
+        .max_retries(1)
+        .build()
+        .unwrap();
+    let adapter = FeishuAdapter::with_client(client, ["ou_owner"]);
+    let conversation = ConversationRef::new(ChannelKind::Feishu, "oc_mock_chat");
+    let message = adapter.send(&conversation, &process_view()).await.unwrap();
+    server
+        .fail_next("/open-apis/im/v1/messages/", 230_001, "rejected")
+        .await;
+    assert!(adapter.disable_actions(&message).await.is_err());
+    let before = server.requests().await.len();
+    adapter.disable_actions(&message).await.unwrap();
+    assert_eq!(server.requests().await.len(), before + 1);
+}
+
+#[tokio::test]
+async fn background_content_notices_survive_actual_wire_serialization() {
+    let server = MockFeishuApi::start().await;
+    let client = LarkClient::builder("mock-app", "mock-secret")
+        .base_url(server.base_url())
+        .max_retries(1)
+        .build()
+        .unwrap();
+    let adapter = FeishuAdapter::with_client(client, ["ou_owner"]);
+    let conversation = ConversationRef::new(ChannelKind::Feishu, "oc_mock_chat");
+    let mut view = OutboundView::text("Background", "Fallback body");
+    view.status = ViewStatus::Background;
+    view.sections.push(agentix_domain::ViewSection {
+        title: "You".into(),
+        body: "Question".into(),
+        ..agentix_domain::ViewSection::default()
+    });
+    view.sections.push(agentix_domain::ViewSection {
+        body: "Loading turn content…".into(),
+        ..agentix_domain::ViewSection::default()
+    });
+    let message = adapter.send(&conversation, &view).await.unwrap();
+    view.sections[1].body = "Additional turn content is unavailable.".into();
+    adapter
+        .update(&conversation, &message, &view)
+        .await
+        .unwrap();
+    let requests = server.requests().await;
+    let cards: Vec<serde_json::Value> = requests
+        .iter()
+        .filter(|request| request.target.contains("/im/v1/messages"))
+        .map(|request| {
+            let body: serde_json::Value = serde_json::from_str(&request.body).unwrap();
+            serde_json::from_str(body["content"].as_str().unwrap()).unwrap()
+        })
+        .collect();
+    assert_eq!(cards.len(), 2);
+    for (card, notice) in cards.iter().zip([
+        "Loading turn content…",
+        "Additional turn content is unavailable.",
+    ]) {
+        let elements = &card["body"]["elements"][0]["columns"][0]["elements"];
+        assert_eq!(elements[0]["content"], "**You**\nQuestion");
+        assert_eq!(elements[1]["tag"], "markdown");
+        assert_eq!(elements[1]["content"], notice);
+    }
+    assert!(!cards[1].to_string().contains("Loading turn content"));
 }

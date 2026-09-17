@@ -1200,6 +1200,9 @@ mod tests {
         input_started: CancellationToken,
         input_release: CancellationToken,
         input_dropped: CancellationToken,
+        history_started: CancellationToken,
+        history_release: CancellationToken,
+        history_dropped: CancellationToken,
         interrupted: CancellationToken,
     }
 
@@ -1216,6 +1219,9 @@ mod tests {
                 input_started: CancellationToken::new(),
                 input_release: CancellationToken::new(),
                 input_dropped: CancellationToken::new(),
+                history_started: CancellationToken::new(),
+                history_release: CancellationToken::new(),
+                history_dropped: CancellationToken::new(),
                 interrupted: CancellationToken::new(),
             }
         }
@@ -1255,10 +1261,15 @@ mod tests {
 
         async fn read_history(
             &self,
-            _session_id: &SessionId,
+            session_id: &SessionId,
             _cursor: Option<String>,
             _limit: u32,
         ) -> Result<HistoryPage, AgentError> {
+            if session_id.as_str() == "slow_background" {
+                let _lifetime = self.history_dropped.clone().drop_guard();
+                self.history_started.cancel();
+                self.history_release.cancelled().await;
+            }
             Ok(HistoryPage {
                 turns: self.history.lock().unwrap().clone(),
                 older_cursor: None,
@@ -1484,6 +1495,78 @@ mod tests {
             }
             Ok(())
         }
+    }
+
+    #[tokio::test]
+    async fn engine_runtime_background_read_releases_session_events_and_cancels_on_abort() {
+        use agentix_core::{Engine, InboundEnvelope, TurnStatus};
+        use std::time::Duration;
+        let agent = Arc::new(LifecycleAgent::new());
+        let channel = Arc::new(LifecycleChannel::new());
+        let engine = Arc::new(Engine::new(
+            agent.clone(),
+            SqliteState::in_memory().await.unwrap(),
+            vec![channel.clone()],
+        ));
+        engine
+            .handle_inbound(InboundEnvelope::text(
+                "register",
+                ConversationRef::new(ChannelKind::Telegram, "background"),
+                "owner",
+                "/help",
+            ))
+            .await
+            .unwrap();
+        let (_sender, inbound) = tokio::sync::mpsc::channel(8);
+        let runtime = tokio::spawn(super::run_engine_loop(
+            engine.clone(),
+            agent.clone(),
+            inbound,
+            CancellationToken::new(),
+        ));
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while agent.events.receiver_count() == 0 {
+                tokio::task::yield_now().await;
+            }
+            agent
+                .events
+                .send(AgentEvent::TurnCompleted {
+                    session_id: "slow_background".into(),
+                    turn_id: "first".into(),
+                    status: TurnStatus::Completed,
+                    error: None,
+                })
+                .unwrap();
+            agent.history_started.cancelled().await;
+            // These share the blocked read's dispatch scope and must still reach the Engine.
+            for index in 0..4 {
+                agent
+                    .events
+                    .send(AgentEvent::TurnCompleted {
+                        session_id: "slow_background".into(),
+                        turn_id: format!("next_{index}"),
+                        status: TurnStatus::Completed,
+                        error: None,
+                    })
+                    .unwrap();
+            }
+            loop {
+                let stats = engine.background_completion_statistics();
+                if stats.active == 4 && stats.queued == 1 {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("history must not block subsequent events in its session");
+        runtime.abort();
+        assert!(runtime.await.unwrap_err().is_cancelled());
+        tokio::time::timeout(Duration::from_secs(1), agent.history_dropped.cancelled())
+            .await
+            .unwrap();
+        let stats = engine.background_completion_statistics();
+        assert_eq!(stats.active + stats.queued, 0);
     }
 
     #[tokio::test]

@@ -1,4 +1,7 @@
-use std::collections::{HashMap, HashSet};
+mod background_completions;
+mod card_writes;
+pub use background_completions::BackgroundCompletionStatistics;
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -101,6 +104,7 @@ struct TurnOutputItem {
 
 #[derive(Debug, Clone, Default)]
 struct TurnBuffer {
+    answer_complete: bool,
     user_text: String,
     agent_text: String,
     output_items: Vec<TurnOutputItem>,
@@ -317,10 +321,13 @@ pub struct Engine {
     agent: Arc<dyn AgentAdapter>,
     operations: crate::SessionOperations,
     state: SqliteState,
-    channels: HashMap<ChannelKind, Arc<dyn ChannelAdapter>>,
+    transports: HashMap<ChannelKind, Arc<dyn ChannelAdapter>>,
+    delivery_channels: HashMap<ChannelKind, Arc<dyn ChannelAdapter>>,
+    card_writes: Arc<card_writes::CardWrites>,
     sessions: Arc<SessionService>,
     menus: Arc<command_menus::CommandMenus>,
     turns: Arc<TurnCoordinator>,
+    background: Arc<background_completions::BackgroundCompletions>,
     interactions: Arc<InteractionCoordinator>,
     multiplexer: Arc<MultiplexerController>,
     multiplexer_kind: crate::MultiplexerKind,
@@ -362,18 +369,31 @@ impl Engine {
         channels: Vec<Arc<dyn ChannelAdapter>>,
     ) -> Self {
         let multiplexer = MultiplexerController::new(agent.capabilities().workspace_runtime);
+        let card_writes = Arc::new(card_writes::CardWrites::default());
+        let delivery_channels = channels
+            .iter()
+            .map(|channel| {
+                (
+                    channel.kind(),
+                    card_writes::OrderedChannel::wrap(channel.clone(), card_writes.clone()),
+                )
+            })
+            .collect();
         Self {
+            card_writes,
+            delivery_channels,
             tasks: TaskBoardService::new(None, state.clone()),
             operations: crate::SessionOperations::new(agent.clone()),
             agent,
             state: state.clone(),
-            channels: channels
+            transports: channels
                 .into_iter()
                 .map(|channel| (channel.kind(), channel))
                 .collect(),
             sessions: Arc::new(SessionService::new(state)),
             menus: Arc::new(command_menus::CommandMenus::default()),
             turns: Arc::new(TurnCoordinator::default()),
+            background: Arc::default(),
             interactions: Arc::new(InteractionCoordinator::default()),
             multiplexer: Arc::new(multiplexer),
             multiplexer_kind: agentix_domain::MultiplexerKind::default(),
@@ -391,6 +411,34 @@ impl Engine {
     /// Share live coordination state with a new configuration snapshot. The caller
     /// must retain the same storage, channels and agent transports.
     pub fn inherit_runtime(&mut self, previous: &Self) {
+        self.card_writes = previous.card_writes.clone();
+        self.delivery_channels = self
+            .transports
+            .iter()
+            .map(|(kind, channel)| {
+                (
+                    *kind,
+                    card_writes::OrderedChannel::wrap(channel.clone(), self.card_writes.clone()),
+                )
+            })
+            .collect();
+        let compatible = self.background_turn_notifications
+            == previous.background_turn_notifications
+            && self.output.show_reasoning == previous.output.show_reasoning
+            && self.output.show_tool_calls == previous.output.show_tool_calls
+            && Arc::ptr_eq(&self.agent, &previous.agent)
+            && self.transports.len() == previous.transports.len()
+            && self.transports.iter().all(|(kind, channel)| {
+                previous
+                    .transports
+                    .get(kind)
+                    .is_some_and(|old| Arc::ptr_eq(channel, old))
+            });
+        if compatible {
+            self.background = previous.background.clone();
+        } else {
+            previous.background.cancel();
+        }
         self.sessions = previous.sessions.clone();
         self.menus = previous.menus.clone();
         self.turns = previous.turns.clone();
@@ -820,8 +868,24 @@ impl Engine {
             .map_err(EngineError::from)
     }
 
+    async fn update_card_revision(
+        &self,
+        conversation: &ConversationRef,
+        revision: &card_writes::Revision,
+        view: &OutboundView,
+    ) -> Result<bool, EngineError> {
+        let channel = self
+            .transports
+            .get(&conversation.channel)
+            .ok_or(EngineError::MissingChannel(conversation.channel))?;
+        self.card_writes
+            .update(channel.as_ref(), revision, conversation, view)
+            .await
+            .map_err(EngineError::from)
+    }
+
     fn channel(&self, kind: ChannelKind) -> Result<&Arc<dyn ChannelAdapter>, EngineError> {
-        self.channels
+        self.delivery_channels
             .get(&kind)
             .ok_or(EngineError::MissingChannel(kind))
     }
@@ -867,7 +931,7 @@ impl TaskBoardUi for Engine {
         &self.sessions
     }
     fn channels(&self) -> &HashMap<ChannelKind, Arc<dyn ChannelAdapter>> {
-        &self.channels
+        &self.delivery_channels
     }
     async fn send_view(
         &self,

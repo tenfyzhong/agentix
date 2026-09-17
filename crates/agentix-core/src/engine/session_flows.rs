@@ -1189,6 +1189,7 @@ impl Engine {
         self.turns.buffers.lock().await.insert(
             (session.clone(), turn_id.clone()),
             TurnBuffer {
+                answer_complete: false,
                 user_text: prompt.to_owned(),
                 agent_text: String::new(),
                 output_items: Vec::new(),

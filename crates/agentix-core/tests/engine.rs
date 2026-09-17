@@ -422,6 +422,8 @@ struct FakeAgent {
     start_gate: Option<Arc<tokio::sync::Notify>>,
     attach_gate: Option<Arc<tokio::sync::Notify>>,
     history_gate: Option<Arc<tokio::sync::Notify>>,
+    history_failures: Arc<Mutex<usize>>,
+    history_panics: Option<&'static str>,
     unsubscribe_gate: Arc<Mutex<Option<Arc<tokio::sync::Notify>>>>,
     title_gate: Option<Arc<tokio::sync::Notify>>,
     terminal_draft: Arc<Mutex<Option<String>>>,
@@ -456,6 +458,8 @@ impl FakeAgent {
             start_gate: None,
             attach_gate: None,
             history_gate: None,
+            history_panics: None,
+            history_failures: Arc::default(),
             unsubscribe_gate: Arc::default(),
             title_gate: None,
             terminal_error: Arc::default(),
@@ -643,7 +647,17 @@ impl AgentAdapter for FakeAgent {
         {
             gate.notified().await;
         }
+        assert!(self.history_panics.is_none(), "injected adapter panic");
         self.history_cursors.lock().unwrap().push(cursor);
+        {
+            let mut failures = self.history_failures.lock().unwrap();
+            if *failures > 0 {
+                *failures -= 1;
+                return Err(AgentError::Protocol(
+                    "history temporarily unavailable".into(),
+                ));
+            }
+        }
         let turns = self.history_turns.lock().unwrap();
         let start = turns.len().saturating_sub(limit as usize);
         let (older_cursor, newer_cursor) = self.history_result_cursors.lock().unwrap().clone();
@@ -3254,7 +3268,7 @@ async fn completion_notice_failure_does_not_keep_the_finished_turn_active() {
                 error: None,
             })
             .await
-            .is_err()
+            .is_ok()
     );
     assert_eq!(*channel.next_update_failures.lock().unwrap(), 0);
     engine
@@ -5247,7 +5261,7 @@ async fn exited_session_preserves_completion_after_final_edit_failure() {
                 error: None,
             })
             .await
-            .is_err()
+            .is_ok()
     );
     engine
         .handle_agent_event(AgentEvent::SessionExited {
@@ -5482,6 +5496,20 @@ async fn completion_invalidates_the_previous_stop_button() {
     assert!(matches!(error, EngineError::InvalidAction));
 }
 
+async fn settle_background(engine: &Engine) {
+    tokio::time::timeout(std::time::Duration::from_secs(12), async {
+        loop {
+            let stats = engine.background_completion_statistics();
+            if stats.active + stats.queued == 0 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        }
+    })
+    .await
+    .expect("optional completions must finish within their deadline");
+}
+
 #[tokio::test]
 async fn unattached_turn_completion_notifies_the_im_and_can_attach_the_session() {
     let agent = Arc::new(FakeAgent::with_history(vec![
@@ -5520,6 +5548,7 @@ async fn unattached_turn_completion_notifies_the_im_and_can_attach_the_session()
         })
         .await
         .unwrap();
+    settle_background(&engine).await;
 
     let sent = channel.sent();
     assert_eq!(sent.len(), before + 1);
@@ -5549,6 +5578,265 @@ async fn unattached_turn_completion_notifies_the_im_and_can_attach_the_session()
     )
     .await;
     assert!(agent.calls().contains(&"attach:thr_b".to_owned()));
+}
+
+#[tokio::test]
+async fn background_completion_recovers_from_transient_history_failure() {
+    let agent = Arc::new(FakeAgent::new());
+    *agent.history_failures.lock().unwrap() = 1;
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/help"))
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::TurnCompleted {
+            session_id: "thr_b".into(),
+            turn_id: "turn_history".into(),
+            status: TurnStatus::Completed,
+            error: None,
+        })
+        .await
+        .unwrap();
+    settle_background(&engine).await;
+    let messages = channel.messages.lock().unwrap();
+    let notice = messages
+        .values()
+        .find(|view| view.status == agentix_core::ViewStatus::Background)
+        .unwrap();
+    assert!(
+        !notice.body.contains("Turn content is unavailable."),
+        "{}",
+        notice.body
+    );
+    assert!(notice.body.contains("previous answer"));
+    assert_eq!(agent.history_cursors().len(), 2);
+    assert_eq!(notice.actions[0].label, "Attach");
+}
+
+#[tokio::test]
+async fn background_completion_stops_retrying_persistent_history_errors() {
+    let agent = Arc::new(FakeAgent::new());
+    *agent.history_failures.lock().unwrap() = 3;
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/help"))
+        .await
+        .unwrap();
+    let completion = AgentEvent::TurnCompleted {
+        session_id: "thr_b".into(),
+        turn_id: "turn_history".into(),
+        status: TurnStatus::Completed,
+        error: None,
+    };
+    engine.handle_agent_event(completion.clone()).await.unwrap();
+    settle_background(&engine).await;
+    let before = channel.sent().len();
+    engine.handle_agent_event(completion).await.unwrap();
+    settle_background(&engine).await;
+    assert_eq!(channel.sent().len(), before);
+    assert_eq!(agent.history_cursors().len(), 2);
+    let messages = channel.messages.lock().unwrap();
+    let notice = messages
+        .values()
+        .find(|view| view.status == agentix_core::ViewStatus::Background)
+        .unwrap();
+    assert!(notice.body.contains("Turn content is unavailable."));
+    assert_eq!(notice.actions[0].label, "Attach");
+}
+
+#[tokio::test]
+async fn background_completion_updates_only_its_loading_card_after_switch() {
+    let mut adapter = FakeAgent::new();
+    let release = Arc::new(tokio::sync::Notify::new());
+    adapter.history_gate = Some(release.clone());
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        Arc::new(adapter),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound_as("chat-a", "owner-42", "/help"))
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::TurnCompleted {
+            session_id: "thr_b".into(),
+            turn_id: "turn_history".into(),
+            status: TurnStatus::Completed,
+            error: None,
+        })
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        loop {
+            if channel
+                .sent()
+                .iter()
+                .any(|(_, view)| view.body.contains("Loading turn content"))
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let loading = channel
+        .messages
+        .lock()
+        .unwrap()
+        .iter()
+        .find(|(_, view)| view.body.contains("Loading turn content"))
+        .unwrap()
+        .0
+        .clone();
+    engine
+        .handle_inbound(inbound_as("chat-a", "owner-42", "/attach thr_a"))
+        .await
+        .unwrap();
+    release.notify_one();
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        loop {
+            if channel
+                .updated()
+                .iter()
+                .any(|(id, view)| id == &loading && view.body.contains("previous answer"))
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    assert!(channel.updated().iter().all(|(id, _)| id == &loading));
+    let final_view = channel
+        .messages
+        .lock()
+        .unwrap()
+        .get(&loading)
+        .unwrap()
+        .clone();
+    release.notify_one();
+    click_action(
+        &engine,
+        "attach-completed-loading",
+        final_view.actions[0].token.clone(),
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn disabling_background_notifications_cancels_in_flight_notice() {
+    let mut adapter = FakeAgent::new();
+    let release = Arc::new(tokio::sync::Notify::new());
+    adapter.history_gate = Some(release.clone());
+    let agent = Arc::new(adapter);
+    let channel = Arc::new(FakeChannel::default());
+    let state = SqliteState::in_memory().await.unwrap();
+    let engine = Engine::new(agent.clone(), state.clone(), vec![channel.clone()]);
+    engine
+        .handle_inbound(inbound("chat-a", "/help"))
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::TurnCompleted {
+            session_id: "thr_b".into(),
+            turn_id: "turn_history".into(),
+            status: TurnStatus::Completed,
+            error: None,
+        })
+        .await
+        .unwrap();
+    let mut next =
+        Engine::new(agent, state, vec![channel.clone()]).with_background_turn_notifications(false);
+    next.inherit_runtime(&engine);
+    let before = channel.sent().len();
+    release.notify_one();
+    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+    assert_eq!(
+        channel.sent().len(),
+        before,
+        "disabled snapshot must fence pending notices"
+    );
+}
+
+#[tokio::test]
+async fn background_completion_releases_event_lane_before_history_returns() {
+    let mut agent = FakeAgent::new();
+    agent.history_gate = Some(Arc::new(tokio::sync::Notify::new()));
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        Arc::new(agent),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/help"))
+        .await
+        .unwrap();
+    tokio::time::timeout(
+        std::time::Duration::from_millis(100),
+        engine.handle_agent_event(AgentEvent::TurnCompleted {
+            session_id: "thr_b".into(),
+            turn_id: "turn_history".into(),
+            status: TurnStatus::Completed,
+            error: None,
+        }),
+    )
+    .await
+    .expect("history must not occupy the event lane")
+    .unwrap();
+}
+
+#[tokio::test]
+async fn background_completion_bounds_stalled_history_reads() {
+    let mut agent = FakeAgent::new();
+    agent.history_gate = Some(Arc::new(tokio::sync::Notify::new()));
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        Arc::new(agent),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/help"))
+        .await
+        .unwrap();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(12),
+        engine.handle_agent_event(AgentEvent::TurnCompleted {
+            session_id: "thr_b".into(),
+            turn_id: "turn_history".into(),
+            status: TurnStatus::Completed,
+            error: None,
+        }),
+    )
+    .await
+    .expect("background content lookup must be bounded")
+    .unwrap();
+    settle_background(&engine).await;
+    assert!(
+        channel
+            .updated()
+            .last()
+            .unwrap()
+            .1
+            .body
+            .contains("Turn content is unavailable.")
+    );
 }
 
 #[tokio::test]
@@ -5635,7 +5923,9 @@ async fn unattached_turn_completion_is_not_notified_twice() {
     };
 
     engine.handle_agent_event(completed.clone()).await.unwrap();
+    settle_background(&engine).await;
     engine.handle_agent_event(completed).await.unwrap();
+    settle_background(&engine).await;
 
     assert_eq!(channel.sent().len(), before + 1);
 }
@@ -5678,6 +5968,7 @@ async fn draining_turn_completion_adds_an_attach_button() {
         error: None,
     };
     engine.handle_agent_event(completed.clone()).await.unwrap();
+    settle_background(&engine).await;
 
     let notification = channel.sent().last().unwrap().1.clone();
     assert_eq!(notification.title, "Codex · thr_a · Parser cleanup");
@@ -5688,6 +5979,7 @@ async fn draining_turn_completion_adds_an_attach_button() {
 
     let sent_after_completion = channel.sent().len();
     engine.handle_agent_event(completed).await.unwrap();
+    settle_background(&engine).await;
     assert_eq!(channel.sent().len(), sent_after_completion);
 
     click_action(
@@ -6399,6 +6691,7 @@ async fn reload_background_notifications_toggle_without_losing_owners_or_dedupli
             })
             .await
             .unwrap();
+        settle_background(&engine).await;
         notices = expected;
         assert_eq!(channel.sent().len(), initial + notices);
     }
@@ -7851,6 +8144,7 @@ async fn restart_preserves_background_recipients_without_bound_turn_views() {
             })
             .await
             .unwrap();
+        settle_background(&restarted).await;
         let sent = channel.sent();
         assert_eq!(sent.len(), before + 1, "detach={detach}");
         assert_eq!(sent.last().unwrap().0.conversation_id, "chat-a");
@@ -7906,6 +8200,7 @@ async fn restored_background_recipients_respect_bot_identity_channels_and_disabl
             })
             .await
             .unwrap();
+        settle_background(&restarted).await;
         assert_eq!(
             channel.sent().len(),
             expected,
@@ -7964,6 +8259,7 @@ async fn background_and_history_share_live_process_format_and_visibility() {
                 })
                 .await
                 .unwrap();
+            settle_background(&engine).await;
             let background = channel.sent().last().unwrap().1.clone();
             engine
                 .handle_inbound(inbound("chat-a", "/attach thr_a"))
@@ -7994,6 +8290,7 @@ async fn background_and_history_share_live_process_format_and_visibility() {
                 })
                 .await
                 .unwrap();
+            settle_background(&engine).await;
             let live = channel.updated().last().unwrap().1.clone();
             for view in [&background, &attached, &history] {
                 assert_eq!(view.sections, live.sections);
@@ -8263,6 +8560,7 @@ async fn history_routes_preserve_all_user_inputs() {
                 })
                 .await
                 .unwrap();
+            settle_background(&engine).await;
         } else {
             engine
                 .handle_inbound(inbound("chat-a", "/attach thr_a"))
@@ -8320,6 +8618,7 @@ async fn background_error_closes_the_previous_process_panel() {
         })
         .await
         .unwrap();
+    settle_background(&engine).await;
     let view = channel.sent().last().unwrap().1.clone();
     assert_eq!(view.sections.last().unwrap().title, "Error");
     assert_eq!(view.sections[1].expanded, Some(false));
@@ -9028,6 +9327,7 @@ async fn first_background_notification_loads_title_without_attach() {
         };
         let (result, ()) = tokio::join!(completion, release_title);
         result.unwrap();
+        settle_background(&engine).await;
         let view = channel.sent().last().unwrap().1.clone();
         assert_eq!(view.status, agentix_core::ViewStatus::Background);
         assert_eq!(view.title, "Codex · thr_a · Parser cleanup");
@@ -9066,6 +9366,7 @@ async fn background_feedback_does_not_wait_for_optional_title() {
     .await
     .expect("background completion must not wait for title metadata")
     .unwrap();
+    settle_background(&engine).await;
     assert_eq!(
         channel.sent().last().unwrap().1.status,
         agentix_core::ViewStatus::Background
@@ -9102,6 +9403,7 @@ async fn background_title_timeout_preserves_reader_and_native_identity() {
             })
             .await
             .unwrap();
+        settle_background(&engine).await;
         let title = channel.sent().last().unwrap().1.title.clone();
         if turn == "first" {
             assert_eq!(title, "Codex · thr_a");
@@ -10456,6 +10758,18 @@ async fn runtime_pending_queued_feedback_recovers_failed_final_update() {
             .values()
             .filter(|v| v.body.contains("failed final receipt update"))
             .count(),
+        2
+    );
+    // An uncertain update retires the queued card; only the replacement is final.
+    assert_eq!(
+        channel
+            .messages
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|v| v.title.contains("Input not sent")
+                && v.body.contains("failed final receipt update"))
+            .count(),
         1
     );
     engine.cancel_pending_prompts().await.unwrap();
@@ -10576,8 +10890,9 @@ async fn runtime_pending_queued_feedback_shutdown_aborts_stalled_delivery() {
         .await
         .unwrap();
     engine.cancel_pending_prompts().await.unwrap();
+    drop(engine);
     tokio::time::timeout(std::time::Duration::from_secs(1), async {
-        while Arc::strong_count(&channel) > 2 {
+        while Arc::strong_count(&channel) > 1 {
             tokio::task::yield_now().await;
         }
     })
@@ -11920,4 +12235,634 @@ async fn session_card_titles_are_consistent_across_registry_history_and_live_out
             );
         }
     }
+}
+
+#[tokio::test]
+async fn background_worker_panic_releases_capacity() {
+    let mut adapter = FakeAgent::new();
+    adapter.history_panics = Some("injected adapter panic");
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        Arc::new(adapter),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/help"))
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::TurnCompleted {
+            session_id: "thr_b".into(),
+            turn_id: "panic".into(),
+            status: TurnStatus::Completed,
+            error: None,
+        })
+        .await
+        .unwrap();
+    tokio::time::timeout(
+        std::time::Duration::from_millis(200),
+        settle_background(&engine),
+    )
+    .await
+    .expect("a panicked adapter must not strand a worker slot");
+}
+
+#[tokio::test]
+async fn background_queue_bounds_deduplicates_and_cancels_under_pressure() {
+    let mut adapter = FakeAgent::new();
+    adapter.history_gate = Some(Arc::new(tokio::sync::Notify::new()));
+    let agent = Arc::new(adapter);
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/help"))
+        .await
+        .unwrap();
+    for index in 0..100 {
+        for _ in 0..2 {
+            engine
+                .handle_agent_event(AgentEvent::TurnCompleted {
+                    session_id: "thr_b".into(),
+                    turn_id: format!("turn_{index}"),
+                    status: TurnStatus::Completed,
+                    error: None,
+                })
+                .await
+                .unwrap();
+        }
+    }
+    let stats = engine.background_completion_statistics();
+    assert_eq!(stats.active, 4);
+    assert_eq!(stats.queued, 60);
+    assert_eq!(stats.rejected, 72);
+    assert!(
+        agent
+            .calls()
+            .iter()
+            .filter(|call| call.starts_with("history:"))
+            .count()
+            <= 4
+    );
+    engine.cancel_background_completions();
+    let stats = engine.background_completion_statistics();
+    assert_eq!(stats.active + stats.queued, 0);
+}
+
+#[tokio::test]
+async fn background_generation_change_discards_late_result() {
+    let mut adapter = FakeAgent::new();
+    let release = Arc::new(tokio::sync::Notify::new());
+    adapter.history_gate = Some(release.clone());
+    let agent = Arc::new(adapter);
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/help"))
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::TurnCompleted {
+            session_id: "thr_b".into(),
+            turn_id: "turn_history".into(),
+            status: TurnStatus::Failed,
+            error: Some("backend failed".into()),
+        })
+        .await
+        .unwrap();
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while !channel
+            .sent()
+            .iter()
+            .any(|(_, view)| view.body.contains("Loading turn content"))
+        {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    let loading = channel.sent().last().unwrap().1.clone();
+    assert!(
+        !loading.body.contains("Turn completed."),
+        "a failed turn must not claim success"
+    );
+    let before = channel.updated().len();
+    agent
+        .generation
+        .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+    release.notify_one();
+    settle_background(&engine).await;
+    assert_eq!(channel.updated().len(), before);
+}
+
+#[tokio::test]
+async fn background_cached_prompt_and_answer_skip_history() {
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::TurnStarted {
+            session_id: "thr_a".into(),
+            turn_id: "cached".into(),
+        })
+        .await
+        .unwrap();
+    for (id, kind, text) in [
+        ("u", "userMessage", "cached question"),
+        ("a", "agentMessage", "cached answer"),
+    ] {
+        engine
+            .handle_agent_event(AgentEvent::ItemCompleted {
+                session_id: "thr_a".into(),
+                turn_id: "cached".into(),
+                item: ItemSummary {
+                    id: id.into(),
+                    kind: kind.into(),
+                    text: Some(text.into()),
+                    status: Some("completed".into()),
+                },
+            })
+            .await
+            .unwrap();
+    }
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_b"))
+        .await
+        .unwrap();
+    let before = agent.history_cursors().len();
+    engine
+        .handle_agent_event(AgentEvent::TurnCompleted {
+            session_id: "thr_a".into(),
+            turn_id: "cached".into(),
+            status: TurnStatus::Completed,
+            error: None,
+        })
+        .await
+        .unwrap();
+    settle_background(&engine).await;
+    assert_eq!(
+        agent.history_cursors().len(),
+        before,
+        "complete local content avoids remote history"
+    );
+    let messages = channel.messages.lock().unwrap();
+    let view = messages
+        .values()
+        .find(|view| {
+            view.body.contains("cached answer")
+                && view.status == agentix_core::ViewStatus::Background
+        })
+        .unwrap();
+    assert!(view.body.contains("cached question"));
+}
+
+/// Repeatable local admission benchmark; run with --release --ignored --nocapture.
+#[tokio::test]
+#[ignore = "release-mode background completion latency benchmark"]
+#[allow(clippy::too_many_lines)]
+async fn benchmark_background_completion_admission() {
+    use std::time::Instant;
+    const SAMPLES: usize = 256;
+    for mode in [
+        "cached",
+        "immediate_history",
+        "stalled_history",
+        "duplicate_stalled",
+    ] {
+        let mut adapter = FakeAgent::new();
+        if mode.contains("stalled") {
+            adapter.history_gate = Some(Arc::new(tokio::sync::Notify::new()));
+        }
+        let agent = Arc::new(adapter);
+        let channel = Arc::new(FakeChannel::default());
+        let engine = Engine::new(
+            agent.clone(),
+            SqliteState::in_memory().await.unwrap(),
+            vec![channel],
+        );
+        engine
+            .handle_inbound(inbound("chat-a", "/help"))
+            .await
+            .unwrap();
+        if mode == "cached" {
+            engine
+                .handle_inbound(inbound("chat-a", "/attach thr_a"))
+                .await
+                .unwrap();
+            for index in 0..SAMPLES {
+                let turn_id = format!("bench_{index}");
+                engine
+                    .handle_agent_event(AgentEvent::TurnStarted {
+                        session_id: "thr_a".into(),
+                        turn_id: turn_id.clone(),
+                    })
+                    .await
+                    .unwrap();
+                for (id, kind, text) in [
+                    ("u", "userMessage", "cached question"),
+                    ("a", "agentMessage", "cached answer"),
+                ] {
+                    engine
+                        .handle_agent_event(AgentEvent::ItemCompleted {
+                            session_id: "thr_a".into(),
+                            turn_id: turn_id.clone(),
+                            item: ItemSummary {
+                                id: id.into(),
+                                kind: kind.into(),
+                                text: Some(text.into()),
+                                status: Some("completed".into()),
+                            },
+                        })
+                        .await
+                        .unwrap();
+                }
+            }
+            engine
+                .handle_inbound(inbound("chat-a", "/attach thr_b"))
+                .await
+                .unwrap();
+        }
+        let reads_before = agent.history_cursors().len();
+        let mut micros = Vec::with_capacity(SAMPLES);
+        for index in 0..SAMPLES {
+            let turn_id = if mode == "duplicate_stalled" {
+                "same".to_owned()
+            } else {
+                format!("bench_{index}")
+            };
+            if mode == "immediate_history" {
+                agent.history_turns.lock().unwrap()[0].id = turn_id.clone();
+            }
+            let start = Instant::now();
+            engine
+                .handle_agent_event(AgentEvent::TurnCompleted {
+                    session_id: if mode == "cached" { "thr_a" } else { "thr_b" }.into(),
+                    turn_id,
+                    status: TurnStatus::Completed,
+                    error: None,
+                })
+                .await
+                .unwrap();
+            micros.push(start.elapsed().as_secs_f64() * 1_000_000.0);
+            if !mode.contains("stalled") {
+                tokio::time::timeout(std::time::Duration::from_secs(1), async {
+                    while engine.background_completion_statistics().active
+                        + engine.background_completion_statistics().queued
+                        != 0
+                    {
+                        tokio::task::yield_now().await;
+                    }
+                })
+                .await
+                .unwrap();
+            }
+        }
+        micros.sort_by(f64::total_cmp);
+        let stats = engine.background_completion_statistics();
+        println!(
+            "{mode}: n={SAMPLES} p50_us={:.2} p95_us={:.2} p99_us={:.2} max_us={:.2} active={} queued={} rejected={} reads={}",
+            micros[SAMPLES / 2],
+            micros[SAMPLES * 95 / 100],
+            micros[SAMPLES * 99 / 100],
+            micros[SAMPLES - 1],
+            stats.active,
+            stats.queued,
+            stats.rejected,
+            agent.history_cursors().len() - reads_before
+        );
+        assert!(stats.active <= 4 && stats.active + stats.queued <= 64);
+        if mode == "cached" {
+            assert_eq!(agent.history_cursors().len(), reads_before);
+        }
+        engine.cancel_background_completions();
+    }
+}
+
+#[tokio::test]
+async fn background_shared_query_isolates_recipient_delivery_failure() {
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    for chat in ["chat-a", "chat-b"] {
+        engine.handle_inbound(inbound(chat, "/help")).await.unwrap();
+    }
+    *channel.next_send_failures.lock().unwrap() = 1;
+    engine
+        .handle_agent_event(AgentEvent::TurnCompleted {
+            session_id: "thr_b".into(),
+            turn_id: "turn_history".into(),
+            status: TurnStatus::Completed,
+            error: None,
+        })
+        .await
+        .unwrap();
+    settle_background(&engine).await;
+    assert_eq!(
+        agent.history_cursors().len(),
+        1,
+        "recipients share a single content query"
+    );
+    assert_eq!(
+        channel
+            .sent()
+            .iter()
+            .filter(|(_, view)| view.status == agentix_core::ViewStatus::Background)
+            .count(),
+        1,
+        "one failed recipient cannot suppress another recipient"
+    );
+}
+
+#[tokio::test]
+async fn background_overlapping_turns_keep_content_and_dedup_separate() {
+    let mut adapter = FakeAgent::with_history(
+        ["first", "second"]
+            .into_iter()
+            .map(|turn| TurnSummary {
+                id: turn.into(),
+                status: TurnStatus::Completed,
+                user_text: Some(format!("question {turn}")),
+                agent_text: Some(format!("answer {turn}")),
+                tools: vec![],
+                items: vec![],
+            })
+            .collect(),
+    );
+    let release = Arc::new(tokio::sync::Notify::new());
+    adapter.history_gate = Some(release.clone());
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        Arc::new(adapter),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/help"))
+        .await
+        .unwrap();
+    for turn in ["first", "second"] {
+        engine
+            .handle_agent_event(AgentEvent::TurnCompleted {
+                session_id: "thr_b".into(),
+                turn_id: turn.into(),
+                status: TurnStatus::Completed,
+                error: None,
+            })
+            .await
+            .unwrap();
+    }
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while channel
+            .sent()
+            .iter()
+            .filter(|(_, view)| view.body.contains("Loading turn content"))
+            .count()
+            != 2
+        {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    release.notify_waiters();
+    settle_background(&engine).await;
+    for turn in ["first", "second"] {
+        let messages = channel.messages.lock().unwrap();
+        let view = messages
+            .values()
+            .find(|view| {
+                view.subtitle
+                    .as_deref()
+                    .is_some_and(|subtitle| subtitle.contains(turn))
+            })
+            .unwrap();
+        assert!(view.body.contains(&format!("answer {turn}")));
+        assert_eq!(view.body.matches(&format!("answer {turn}")).count(), 1);
+    }
+    let before = channel.sent().len();
+    for turn in ["second", "first"] {
+        engine
+            .handle_agent_event(AgentEvent::TurnCompleted {
+                session_id: "thr_b".into(),
+                turn_id: turn.into(),
+                status: TurnStatus::Completed,
+                error: None,
+            })
+            .await
+            .unwrap();
+    }
+    settle_background(&engine).await;
+    assert_eq!(channel.sent().len(), before);
+}
+
+#[tokio::test]
+async fn background_empty_cached_turn_reports_missing_content() {
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        Arc::new(FakeAgent::with_history(vec![])),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/help"))
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::TurnStarted {
+            session_id: "thr_b".into(),
+            turn_id: "empty".into(),
+        })
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::TurnCompleted {
+            session_id: "thr_b".into(),
+            turn_id: "empty".into(),
+            status: TurnStatus::Completed,
+            error: None,
+        })
+        .await
+        .unwrap();
+    settle_background(&engine).await;
+    assert!(
+        channel
+            .sent()
+            .last()
+            .unwrap()
+            .1
+            .body
+            .contains("Turn content is unavailable.")
+    );
+}
+
+#[tokio::test]
+async fn background_partial_cached_answer_is_completed_from_history() {
+    let agent = Arc::new(FakeAgent::with_history(vec![TurnSummary {
+        id: "partial".into(),
+        status: TurnStatus::Completed,
+        user_text: Some("question".into()),
+        agent_text: Some("complete answer".into()),
+        tools: vec![],
+        items: vec![],
+    }]));
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::TurnStarted {
+            session_id: "thr_a".into(),
+            turn_id: "partial".into(),
+        })
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::ItemCompleted {
+            session_id: "thr_a".into(),
+            turn_id: "partial".into(),
+            item: ItemSummary {
+                id: "u".into(),
+                kind: "userMessage".into(),
+                text: Some("question".into()),
+                status: Some("completed".into()),
+            },
+        })
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::AgentMessageDelta {
+            session_id: "thr_a".into(),
+            turn_id: "partial".into(),
+            item_id: "a".into(),
+            delta: "incomplete fragment".into(),
+        })
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_b"))
+        .await
+        .unwrap();
+    let before = agent.history_cursors().len();
+    engine
+        .handle_agent_event(AgentEvent::TurnCompleted {
+            session_id: "thr_a".into(),
+            turn_id: "partial".into(),
+            status: TurnStatus::Completed,
+            error: None,
+        })
+        .await
+        .unwrap();
+    settle_background(&engine).await;
+    assert_eq!(
+        agent.history_cursors().len(),
+        before + 1,
+        "stream fragments are not a complete cached answer"
+    );
+    let messages = channel.messages.lock().unwrap();
+    let view = messages
+        .values()
+        .find(|view| {
+            view.status == agentix_core::ViewStatus::Background
+                && view.body.contains("complete answer")
+        })
+        .unwrap();
+    assert!(!view.body.contains("incomplete fragment"));
+}
+
+#[tokio::test]
+async fn background_partial_cached_answer_marks_missing_history() {
+    let agent = Arc::new(FakeAgent::with_history(vec![]));
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::TurnStarted {
+            session_id: "thr_a".into(),
+            turn_id: "partial".into(),
+        })
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::ItemCompleted {
+            session_id: "thr_a".into(),
+            turn_id: "partial".into(),
+            item: ItemSummary {
+                id: "u".into(),
+                kind: "userMessage".into(),
+                text: Some("question".into()),
+                status: Some("completed".into()),
+            },
+        })
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::AgentMessageDelta {
+            session_id: "thr_a".into(),
+            turn_id: "partial".into(),
+            item_id: "a".into(),
+            delta: "incomplete fragment".into(),
+        })
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_b"))
+        .await
+        .unwrap();
+    let before = agent.history_cursors().len();
+    engine
+        .handle_agent_event(AgentEvent::TurnCompleted {
+            session_id: "thr_a".into(),
+            turn_id: "partial".into(),
+            status: TurnStatus::Completed,
+            error: None,
+        })
+        .await
+        .unwrap();
+    settle_background(&engine).await;
+    assert!(agent.history_cursors().len() > before);
+    let messages = channel.messages.lock().unwrap();
+    let view = messages
+        .values()
+        .find(|view| {
+            view.status == agentix_core::ViewStatus::Background
+                && view.body.contains("incomplete fragment")
+        })
+        .unwrap();
+    assert!(
+        view.body
+            .contains("Additional turn content is unavailable.")
+    );
 }

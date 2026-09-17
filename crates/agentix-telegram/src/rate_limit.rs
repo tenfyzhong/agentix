@@ -31,11 +31,14 @@ impl RateLimiter {
         R: Request<Err = teloxide::RequestError>,
     {
         loop {
+            agentix_domain::DeliveryAttempt::waiting();
             self.reserve(chat).await;
+            agentix_domain::DeliveryAttempt::dispatched().await;
             let result = request.send_ref().await;
             let now = Instant::now();
             match result {
                 Err(teloxide::RequestError::RetryAfter(delay)) => {
+                    agentix_domain::DeliveryAttempt::waiting();
                     // Keep the deadline in shared state even if this future is cancelled.
                     let mut state = self.state.lock().await;
                     let deadline = now + delay.duration() + Duration::from_millis(100);
@@ -145,6 +148,30 @@ mod tests {
                 Ok(True)
             })
         }
+    }
+
+    #[tokio::test]
+    async fn delivery_attempt_tracks_telegram_retry_wait_as_unsent() {
+        let limiter = RateLimiter::default();
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let request = RetryOnce {
+            payload: LogOut::new(),
+            attempts: attempts.clone(),
+        };
+        let attempt = agentix_domain::DeliveryAttempt::default();
+        let mut pending = Box::pin(attempt.run(async {
+            limiter
+                .send(request, "mock", None)
+                .await
+                .map_err(|error| crate::delivery_error(&error))
+        }));
+        while attempts.load(Ordering::SeqCst) == 0 {
+            assert_pending(&mut pending).await;
+            tokio::task::yield_now().await;
+        }
+        assert!(attempt.not_dispatched());
+        assert_eq!(pending.await.unwrap(), True);
+        assert!(!attempt.not_dispatched());
     }
 
     #[tokio::test]

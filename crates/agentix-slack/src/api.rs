@@ -72,7 +72,9 @@ impl Api {
             &self.bot_token
         };
         for attempt in 0..3 {
+            agentix_domain::DeliveryAttempt::waiting();
             self.wait_turn(method, body).await;
+            agentix_domain::DeliveryAttempt::dispatched().await;
             let response = self
                 .client
                 .post(url.clone())
@@ -83,6 +85,7 @@ impl Api {
                 .await
                 .map_err(|error| ChannelError::Transport(error.without_url().to_string()))?;
             if response.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+                agentix_domain::DeliveryAttempt::waiting();
                 let seconds = response
                     .headers()
                     .get("retry-after")
@@ -97,7 +100,7 @@ impl Api {
                 if attempt < 2 {
                     continue;
                 }
-                return Err(ChannelError::Transport(
+                return Err(ChannelError::NotSent(
                     "Slack rate limit retry budget exhausted".into(),
                 ));
             }
@@ -110,8 +113,11 @@ impl Api {
             let value: Value = response
                 .json()
                 .await
-                .map_err(|_| ChannelError::InvalidPayload("invalid Slack API response".into()))?;
-            if value["ok"] != true {
+                .map_err(|_| ChannelError::Transport("invalid Slack API response".into()))?;
+            let accepted = value["ok"].as_bool().ok_or_else(|| {
+                ChannelError::Transport("Slack API response omitted outcome".into())
+            })?;
+            if !accepted {
                 let code = value["error"].as_str().unwrap_or("unknown_error");
                 // Only Slack's symbolic codes are safe to expose. Never echo arbitrary payloads.
                 let code = if code.len() <= 80

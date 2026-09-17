@@ -582,3 +582,43 @@ async fn reload_preflight_checks_the_app_token() {
     assert!(socket.path.ends_with("apps.connections.open"));
     assert_eq!(socket.authorization, "Bearer bad-app");
 }
+
+#[tokio::test]
+async fn delivery_attempt_allows_slack_retry_after_longer_than_wire_budget() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let count = calls.clone();
+    let server = Server::new(move |_| {
+        if count.fetch_add(1, Ordering::SeqCst) == 0 {
+            (
+                429,
+                vec![("Retry-After".into(), "6".into())],
+                json!({"ok":false,"error":"ratelimited"}),
+            )
+        } else {
+            (200, vec![], json!({"ok":true,"ts":"1.1"}))
+        }
+    })
+    .await;
+    let adapter = adapter(&server);
+    agentix_domain::DeliveryAttempt::default()
+        .run(adapter.send(
+            &ConversationRef::new(ChannelKind::Slack, "T1:D1"),
+            &OutboundView::text("a", "b"),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn malformed_success_response_is_not_a_definite_rejection() {
+    let server = Server::new(|_| (200, vec![], json!({}))).await;
+    let error = adapter(&server)
+        .send(
+            &ConversationRef::new(ChannelKind::Slack, "T1:D1"),
+            &OutboundView::text("a", "b"),
+        )
+        .await
+        .unwrap_err();
+    assert!(matches!(error, agentix_domain::ChannelError::Transport(_)));
+}
