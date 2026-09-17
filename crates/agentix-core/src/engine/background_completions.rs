@@ -6,6 +6,7 @@ use std::{
 };
 
 use super::card_writes::{CardWrites, Revision};
+use futures_util::{StreamExt, stream};
 use tokio::task::JoinHandle;
 
 use super::{
@@ -20,6 +21,7 @@ use crate::{
 
 type Key = (SessionId, String);
 const CONCURRENCY: usize = 4;
+const RECIPIENT_CONCURRENCY: usize = 4;
 const CAPACITY: usize = 64;
 const RECENT_CAPACITY: usize = 256;
 const READ_TIMEOUT: Duration = Duration::from_secs(5);
@@ -222,7 +224,7 @@ impl Request {
                 && !buffer.agent_text.trim().is_empty()
         });
         if complete_cache {
-            self.publish(&label, None, false, None).await;
+            self.publish(&self.view(&label, None, false)).await;
             return;
         }
         let read = read_with_retry(self.agent.as_ref(), &self.session, &self.turn);
@@ -230,13 +232,20 @@ impl Request {
         let history = tokio::select! {
             result = &mut read => result,
             () = tokio::time::sleep(LOADING_DELAY) => {
-                let messages = self.publish(&label, None, true, None).await;
-                let result = read.await;
-                self.publish(&label, result.as_ref(), false, Some(&messages)).await;
+                let loading = self.view(&label, None, true);
+                let (ready, result) = tokio::sync::watch::channel(None);
+                // Both branches remain owned by this request. Delivery waits must
+                // never suspend polling the history deadline or its retry.
+                let finish_read = async {
+                    let history = read.await;
+                    ready.send_replace(Some(Arc::new(self.view(&label, history.as_ref(), false))));
+                };
+                tokio::join!(finish_read, self.publish_loading(&loading, result));
                 return;
             }
         };
-        self.publish(&label, history.as_ref(), false, None).await;
+        self.publish(&self.view(&label, history.as_ref(), false))
+            .await;
     }
 
     fn view(&self, label: &str, history: Option<&TurnSummary>, loading: bool) -> OutboundView {
@@ -358,90 +367,126 @@ impl Request {
         (epoch, button)
     }
 
-    async fn publish(
+    async fn publish(&self, view: &OutboundView) {
+        stream::iter(&self.recipients)
+            .for_each_concurrent(RECIPIENT_CONCURRENCY, |recipient| async move {
+                self.publish_one(recipient, view, None, false).await;
+            })
+            .await;
+    }
+
+    async fn publish_loading(
         &self,
-        label: &str,
-        history: Option<&TurnSummary>,
-        loading: bool,
-        messages: Option<&HashMap<ConversationRef, (MessageRef, Revision)>>,
-    ) -> HashMap<ConversationRef, (MessageRef, Revision)> {
-        let view = self.view(label, history, loading);
-        let mut delivered = HashMap::new();
-        for recipient in &self.recipients {
-            if !self.valid(recipient).await
-                || recipient
-                    .revision
-                    .as_ref()
-                    .is_some_and(|revision| !revision.current())
-                || messages
-                    .and_then(|messages| messages.get(&recipient.conversation))
-                    .is_some_and(|(_, revision)| !revision.current())
-            {
-                continue;
-            }
-            let mut view = view.clone();
-            let (epoch, button) = self.attachment_button(recipient).await;
-            view.actions.push(button);
-            let delivered_card =
-                messages.and_then(|messages| messages.get(&recipient.conversation));
-            let message = delivered_card
-                .map(|(message, _)| message)
-                .or(recipient.message.as_ref());
-            let revision = delivered_card
-                .map(|(_, revision)| revision)
-                .or(recipient.revision.as_ref());
-            // A failed/uncertain initial send must never trigger a duplicate send.
-            if messages.is_some() && message.is_none() {
-                continue;
-            }
-            let send = async {
-                if let (Some(message), Some(revision)) = (message, revision) {
-                    if self
-                        .writes
-                        .update_if(
-                            recipient.channel.as_ref(),
-                            revision,
-                            &recipient.conversation,
-                            &view,
-                            || async {
-                                self.valid(recipient).await
-                                    && self.sessions.epoch(&recipient.conversation).await == epoch
-                            },
-                        )
-                        .await?
-                    {
-                        Ok::<_, crate::ChannelError>(Some((message.clone(), revision.clone())))
-                    } else {
-                        Ok(None)
+        loading: &OutboundView,
+        result: tokio::sync::watch::Receiver<Option<Arc<OutboundView>>>,
+    ) {
+        stream::iter(&self.recipients)
+            .for_each_concurrent(RECIPIENT_CONCURRENCY, |recipient| {
+                let mut result = result.clone();
+                async move {
+                    // Recipients admitted after the query finishes need no loading card.
+                    let ready = result.borrow().clone();
+                    if let Some(view) = ready {
+                        self.publish_one(recipient, &view, None, false).await;
+                        return;
                     }
+                    // Preserve loading/final order independently for each recipient.
+                    // Never cancel an in-flight loading send to race a fresh final send.
+                    let card = self.publish_one(recipient, loading, None, false).await;
+                    let view = result
+                        .wait_for(Option::is_some)
+                        .await
+                        .expect("request owns the result sender")
+                        .clone()
+                        .expect("final view is ready");
+                    self.publish_one(recipient, &view, card.as_ref(), true)
+                        .await;
+                }
+            })
+            .await;
+    }
+
+    async fn publish_one(
+        &self,
+        recipient: &Recipient,
+        view: &OutboundView,
+        delivered_card: Option<&(MessageRef, Revision)>,
+        after_loading: bool,
+    ) -> Option<(MessageRef, Revision)> {
+        if !self.valid(recipient).await
+            || recipient
+                .revision
+                .as_ref()
+                .is_some_and(|revision| !revision.current())
+            || delivered_card.is_some_and(|(_, revision)| !revision.current())
+        {
+            return None;
+        }
+        let message = delivered_card
+            .map(|(message, _)| message)
+            .or(recipient.message.as_ref());
+        let revision = delivered_card
+            .map(|(_, revision)| revision)
+            .or(recipient.revision.as_ref());
+        // A failed/uncertain initial send must never trigger a duplicate send.
+        if after_loading && message.is_none() {
+            return None;
+        }
+        let mut view = view.clone();
+        let (epoch, button) = self.attachment_button(recipient).await;
+        view.actions.push(button);
+        let send = async {
+            if let (Some(message), Some(revision)) = (message, revision) {
+                if self
+                    .writes
+                    .update_if(
+                        recipient.channel.as_ref(),
+                        revision,
+                        &recipient.conversation,
+                        &view,
+                        || async {
+                            self.valid(recipient).await
+                                && self.sessions.epoch(&recipient.conversation).await == epoch
+                        },
+                    )
+                    .await?
+                {
+                    Ok::<_, crate::ChannelError>(Some((message.clone(), revision.clone())))
                 } else {
-                    let message = agentix_domain::DeliveryAttempt::default()
-                        .run(recipient.channel.send(&recipient.conversation, &view))
-                        .await?;
-                    let revision = self.writes.reserve(&message);
-                    Ok(Some((message, revision)))
+                    Ok(None)
                 }
-            };
-            // Updates have an internal write deadline and may need one replacement send.
-            match tokio::time::timeout(DELIVERY_TIMEOUT * 3, send).await {
-                Ok(Ok(Some(card))) => {
-                    delivered.insert(recipient.conversation.clone(), card);
-                    if let Some(turns) = self.turns.upgrade() {
-                        turns
-                            .record_background_notification(
-                                &recipient.conversation,
-                                &self.session,
-                                &self.turn,
-                            )
-                            .await;
-                    }
+            } else {
+                let message = agentix_domain::DeliveryAttempt::default()
+                    .run(recipient.channel.send(&recipient.conversation, &view))
+                    .await?;
+                let revision = self.writes.reserve(&message);
+                Ok(Some((message, revision)))
+            }
+        };
+        // Updates have an internal write deadline and may need one replacement send.
+        match tokio::time::timeout(DELIVERY_TIMEOUT * 3, send).await {
+            Ok(Ok(Some(card))) => {
+                if let Some(turns) = self.turns.upgrade() {
+                    turns
+                        .record_background_notification(
+                            &recipient.conversation,
+                            &self.session,
+                            &self.turn,
+                        )
+                        .await;
                 }
-                Ok(Ok(None)) => {}
-                Ok(Err(error)) => tracing::warn!(%error, "background completion delivery failed"),
-                Err(_) => tracing::warn!("background completion delivery timed out"),
+                Some(card)
+            }
+            Ok(Ok(None)) => None,
+            Ok(Err(error)) => {
+                tracing::warn!(%error, "background completion delivery failed");
+                None
+            }
+            Err(_) => {
+                tracing::warn!("background completion delivery timed out");
+                None
             }
         }
-        delivered
     }
 }
 

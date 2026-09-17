@@ -1378,6 +1378,7 @@ fn hidden_commentary_placeholder_does_not_change_plain_output_format() {
 struct SlowInputAgent {
     reads: std::sync::atomic::AtomicUsize,
     release: tokio::sync::Notify,
+    history_dropped: tokio_util::sync::CancellationToken,
 }
 
 #[async_trait]
@@ -1399,6 +1400,7 @@ impl AgentAdapter for SlowInputAgent {
     ) -> Result<HistoryPage, AgentError> {
         self.reads
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let _guard = self.history_dropped.clone().drop_guard();
         self.release.notified().await;
         Ok(HistoryPage {
             turns: vec![],
@@ -1881,6 +1883,9 @@ struct ReorderingChannel {
     reject_sends: std::sync::atomic::AtomicBool,
     reject_updates: std::sync::atomic::AtomicBool,
     stall_sends: std::sync::atomic::AtomicBool,
+    wait_sends: std::sync::atomic::AtomicBool,
+    wait_conversation: std::sync::Mutex<Option<ConversationRef>>,
+    send_dropped: tokio_util::sync::CancellationToken,
     send_calls: std::sync::atomic::AtomicUsize,
     entered: tokio_util::sync::CancellationToken,
     release: tokio_util::sync::CancellationToken,
@@ -1905,7 +1910,17 @@ impl ChannelAdapter for ReorderingChannel {
         if self.reject_sends.load(std::sync::atomic::Ordering::Relaxed) {
             return Err(ChannelError::Rejected("injected definite rejection".into()));
         }
+        if self.wait_sends.load(std::sync::atomic::Ordering::Relaxed)
+            || self.wait_conversation.lock().unwrap().as_ref() == Some(conversation)
+        {
+            let _guard = self.send_dropped.clone().drop_guard();
+            agentix_domain::DeliveryAttempt::waiting();
+            self.entered.cancel();
+            self.release.cancelled().await;
+            agentix_domain::DeliveryAttempt::dispatched();
+        }
         if self.stall_sends.load(std::sync::atomic::Ordering::Relaxed) {
+            self.entered.cancel();
             std::future::pending::<()>().await;
         }
         self.views.lock().await.push(view.clone());
@@ -2946,4 +2961,204 @@ async fn review_attach_during_history_read_shows_attached() {
     let button = &views.last().unwrap().actions[0];
     assert!(button.disabled);
     assert_eq!(button.label, "Attached");
+}
+
+// Review reproduction: a loading send currently suspends polling the read timeout.
+#[tokio::test]
+async fn review_loading_delivery_must_not_suspend_history_deadline() {
+    use std::sync::atomic::Ordering;
+    let (engine, agent, raw, _, session) = review_background_fixture().await;
+    tokio::time::pause();
+    raw.wait_sends.store(true, Ordering::Relaxed);
+    engine
+        .queue_background_completion(&session, "turn", &crate::TurnStatus::Completed, None, None)
+        .await
+        .unwrap();
+    raw.entered.cancelled().await;
+    assert_eq!(agent.reads.load(Ordering::Relaxed), 1);
+    tokio::time::advance(Duration::from_secs(6)).await;
+    for _ in 0..10 {
+        tokio::task::yield_now().await;
+    }
+    tokio::time::advance(Duration::from_millis(200)).await;
+    for _ in 0..10 {
+        tokio::task::yield_now().await;
+    }
+    let reads = agent.reads.load(Ordering::Relaxed);
+    engine.cancel_background_completions();
+    assert_eq!(
+        reads, 2,
+        "history must retry after its five-second deadline even while loading delivery waits locally"
+    );
+}
+
+#[tokio::test]
+async fn review_fast_recipient_finishes_while_loading_send_waits() {
+    let (engine, agent, raw, slow, session) = review_background_fixture().await;
+    let fast = ConversationRef::new(ChannelKind::Telegram, "fast");
+    engine
+        .interactions
+        .owners
+        .lock()
+        .await
+        .insert(fast, "owner".into());
+    *raw.wait_conversation.lock().unwrap() = Some(slow);
+    engine
+        .queue_background_completion(&session, "turn", &crate::TurnStatus::Completed, None, None)
+        .await
+        .unwrap();
+    raw.entered.cancelled().await;
+    agent.release.notify_one();
+    let completed = tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            if raw
+                .views
+                .lock()
+                .await
+                .iter()
+                .any(|view| view.body.contains("Additional turn content is unavailable"))
+            {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await;
+    if completed.is_err() {
+        engine.cancel_background_completions();
+    }
+    assert!(
+        completed.is_ok(),
+        "fast recipient must finalize before the slow loading send is released"
+    );
+    assert_eq!(agent.reads.load(std::sync::atomic::Ordering::Relaxed), 1);
+    raw.release.cancel();
+    wait_review_background(&engine).await;
+    let views = raw.views.lock().await;
+    assert!(
+        views
+            .last()
+            .unwrap()
+            .body
+            .contains("Additional turn content is unavailable")
+    );
+    assert_eq!(
+        views
+            .iter()
+            .filter(|v| v.body.contains("Additional turn content is unavailable"))
+            .count(),
+        2
+    );
+}
+
+#[tokio::test]
+async fn review_recipient_fanout_is_bounded_and_cancelled_with_history() {
+    use std::sync::atomic::Ordering;
+    let (engine, agent, raw, _, session) = review_background_fixture().await;
+    for index in 0..9 {
+        engine.interactions.owners.lock().await.insert(
+            ConversationRef::new(ChannelKind::Telegram, format!("extra-{index}")),
+            "owner".into(),
+        );
+    }
+    raw.wait_sends.store(true, Ordering::Relaxed);
+    engine
+        .queue_background_completion(&session, "turn", &crate::TurnStatus::Completed, None, None)
+        .await
+        .unwrap();
+    raw.entered.cancelled().await;
+    for _ in 0..20 {
+        tokio::task::yield_now().await;
+    }
+    let started = raw.send_calls.load(Ordering::Relaxed);
+    engine.cancel_background_completions();
+    tokio::time::timeout(Duration::from_secs(1), agent.history_dropped.cancelled())
+        .await
+        .unwrap();
+    raw.send_dropped.cancelled().await;
+    raw.release.cancel();
+    agent.release.notify_waiters();
+    for _ in 0..20 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(
+        started, 4,
+        "only four recipient flows may start concurrently"
+    );
+    assert_eq!(
+        raw.send_calls.load(Ordering::Relaxed),
+        started,
+        "cancelled fanout must not start queued recipients"
+    );
+    assert!(raw.views.lock().await.is_empty());
+}
+
+#[tokio::test]
+async fn review_uncertain_loading_send_is_not_repeated_after_history_finishes() {
+    use std::sync::atomic::Ordering;
+    let (engine, agent, raw, _, session) = review_background_fixture().await;
+    tokio::time::pause();
+    raw.stall_sends.store(true, Ordering::Relaxed);
+    engine
+        .queue_background_completion(&session, "turn", &crate::TurnStatus::Completed, None, None)
+        .await
+        .unwrap();
+    raw.entered.cancelled().await;
+    agent.release.notify_one();
+    for _ in 0..20 {
+        tokio::task::yield_now().await;
+    }
+    tokio::time::advance(Duration::from_secs(6)).await;
+    wait_review_background(&engine).await;
+    assert_eq!(
+        raw.send_calls.load(Ordering::Relaxed),
+        1,
+        "an uncertain loading send must not be followed by a duplicate final send"
+    );
+    assert!(raw.views.lock().await.is_empty());
+}
+
+#[tokio::test]
+async fn review_queued_recipients_skip_loading_after_shared_history_finishes() {
+    use std::sync::atomic::Ordering;
+    let (engine, agent, raw, _, session) = review_background_fixture().await;
+    for index in 0..9 {
+        engine.interactions.owners.lock().await.insert(
+            ConversationRef::new(ChannelKind::Telegram, format!("extra-{index}")),
+            "owner".into(),
+        );
+    }
+    raw.wait_sends.store(true, Ordering::Relaxed);
+    engine
+        .queue_background_completion(&session, "turn", &crate::TurnStatus::Completed, None, None)
+        .await
+        .unwrap();
+    raw.entered.cancelled().await;
+    for _ in 0..20 {
+        tokio::task::yield_now().await;
+    }
+    assert_eq!(raw.send_calls.load(Ordering::Relaxed), 4);
+    agent.release.notify_one();
+    tokio::time::timeout(Duration::from_secs(1), agent.history_dropped.cancelled())
+        .await
+        .unwrap();
+    raw.release.cancel();
+    wait_review_background(&engine).await;
+    assert_eq!(agent.reads.load(Ordering::Relaxed), 1);
+    let views = raw.views.lock().await;
+    assert_eq!(
+        views
+            .iter()
+            .filter(|v| v.body.contains("Loading turn content"))
+            .count(),
+        4
+    );
+    assert_eq!(
+        views
+            .iter()
+            .filter(|v| v.body.contains("Additional turn content is unavailable"))
+            .count(),
+        10
+    );
+    assert_eq!(raw.send_calls.load(Ordering::Relaxed), 10);
 }
