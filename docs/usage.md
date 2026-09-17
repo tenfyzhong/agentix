@@ -68,7 +68,7 @@ The following commands are available only while a Codex session is attached:
 - `/reasoning [effort]` — show or select a reasoning effort for later turns
 - `/skills` — list enabled skills in the attached workspace
 - `/plan [prompt]`, `/plan off` — enter plan mode, optionally with a prompt, or return to default mode; unavailable during an active turn
-- `/goal [objective|pause|resume|clear]` — inspect or manage the thread goal; goal-driven turns show `/goal <objective>` under You in live, Background, attach, and history output when the local Codex rollout is available.
+- `/goal [objective|pause|resume|clear]` — inspect or manage the thread goal. Supplying an objective explicitly activates it, including after a completed, paused, or blocked goal; bare `/goal` only displays the current state. Codex schedules goal-driven work without an additional chat prompt. Goal-driven turns show `/goal <objective>` under You in live, Background, attach, and history output when the local Codex rollout is available.
 - `/review` — start an inline review of staged, unstaged, and untracked changes
 - `/status` — show session, model, execution-policy, token-usage, goal details, and remaining account quota (window percentages, local reset times, and credits when reported)
 - `/mcp` — list MCP server connection, authentication, and tool status

@@ -100,7 +100,7 @@ pub struct MockThread {
     pub service_tier: Option<String>,
     pub turns: Vec<MockTurn>,
     pub source: Value,
-    goal: Option<Value>,
+    pub goal: Option<Value>,
     pub rollout_path: Option<String>,
 }
 

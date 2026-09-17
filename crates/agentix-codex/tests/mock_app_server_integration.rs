@@ -18,6 +18,56 @@ use serde_json::json;
 use support::{MockCodexAppServer, MockThread, MockTurn};
 
 #[tokio::test]
+async fn im_goal_objective_activates_existing_stopped_goals() {
+    for previous_status in ["complete", "paused", "blocked"] {
+        let server = MockCodexAppServer::start();
+        let mut thread = MockThread::new("thr_goal", "Goal", "/work");
+        thread.goal = Some(json!({
+            "objective": "Previous objective",
+            "status": previous_status,
+            "tokensUsed": 123,
+            "timeUsedSeconds": 45,
+            "tokenBudget": null
+        }));
+        server.add_thread(thread).await;
+        let client = Arc::new(CodexClient::connect(server.endpoint()).await.unwrap());
+        let channel = Arc::new(RecordingChannel::default());
+        let engine = Engine::new(
+            client,
+            SqliteState::in_memory().await.unwrap(),
+            vec![channel.clone()],
+        );
+        engine
+            .handle_inbound(inbound("/attach thr_goal"))
+            .await
+            .unwrap();
+
+        engine
+            .handle_inbound(inbound("/goal Fix the remaining bugs"))
+            .await
+            .unwrap();
+
+        let goal = server.thread("thr_goal").await.unwrap().goal.unwrap();
+        assert_eq!(goal["objective"], "Fix the remaining bugs");
+        assert_eq!(
+            goal["status"], "active",
+            "previous status: {previous_status}"
+        );
+        let views = channel.views();
+        let response = views.last().unwrap();
+        assert!(response.body.contains("Fix the remaining bugs"));
+        assert!(response.body.contains("`active`"));
+        // Native goal scheduling owns the turn; do not submit a duplicate prompt.
+        assert!(
+            !server
+                .request_methods()
+                .await
+                .contains(&"turn/start".into())
+        );
+    }
+}
+
+#[tokio::test]
 async fn session_selection_exposes_read_only_history_and_menu() {
     let server = MockCodexAppServer::start();
     server

@@ -626,6 +626,15 @@ mod unix {
     }
 
     fn assert_session_command_requests(requests: &[Value]) {
+        assert!(requests.iter().any(|request| {
+            request["method"] == "thread/goal/set"
+                && request["params"]
+                    == json!({
+                        "threadId": "thr_commands",
+                        "objective": "ship it",
+                        "status": "active"
+                    })
+        }));
         assert!(
             requests
                 .iter()

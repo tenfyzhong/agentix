@@ -1478,7 +1478,11 @@ impl CodexClient {
                 let result = self
                     .request(
                         "thread/goal/set",
-                        json!({"threadId": session_id.as_str(), "objective": objective}),
+                        json!({
+                            "threadId": session_id.as_str(),
+                            "objective": objective,
+                            "status": "active"
+                        }),
                     )
                     .await?;
                 Ok(SessionCommandResult::message(
