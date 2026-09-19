@@ -134,7 +134,7 @@ impl Listener {
     }
 }
 
-fn unix_pid(stream: &UnixStream) -> Option<u32> {
+pub(super) fn unix_pid(stream: &UnixStream) -> Option<u32> {
     #[cfg(target_os = "macos")]
     {
         nix::sys::socket::getsockopt(stream, nix::sys::socket::sockopt::LocalPeerPid)

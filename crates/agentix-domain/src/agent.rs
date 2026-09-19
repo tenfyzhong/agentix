@@ -580,6 +580,12 @@ pub trait WorkspaceRuntimePort: Send + Sync {
 
 #[async_trait]
 pub trait AgentAdapter: Send + Sync {
+    /// Stop resources owned by this backend at service exit, not during reload.
+    /// External runtimes must be left untouched. Repeated calls must be safe.
+    async fn shutdown(&self) -> Result<(), AgentError> {
+        Ok(())
+    }
+
     /// Inspect terminal input; clear only when it still equals the confirmed snapshot.
     /// `None` means no draft remains (or this operation does not use terminal input).
     async fn terminal_input(

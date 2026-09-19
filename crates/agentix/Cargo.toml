@@ -22,6 +22,7 @@ async-trait.workspace = true
 clap.workspace = true
 clap_complete.workspace = true
 dirs.workspace = true
+futures-util.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -38,7 +39,6 @@ url.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
-futures-util.workspace = true
 larksuite-oapi-sdk-rs.workspace = true
 prost.workspace = true
 time = { workspace = true, features = ["parsing"] }

@@ -15,7 +15,7 @@ pub struct DeferredAgent {
     directory: String,
     connected: Arc<RwLock<Option<Arc<dyn AgentAdapter>>>>,
     events: broadcast::Sender<AgentEvent>,
-    task: tokio::task::JoinHandle<()>,
+    task: tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 impl DeferredAgent {
     pub fn new<F, Fut>(name: &'static str, directory: String, factory: F) -> Self
@@ -62,7 +62,7 @@ impl DeferredAgent {
             directory,
             connected,
             events,
-            task,
+            task: tokio::sync::Mutex::new(Some(task)),
         }
     }
     fn agent(&self) -> Result<Arc<dyn AgentAdapter>, AgentError> {
@@ -75,7 +75,9 @@ impl DeferredAgent {
 }
 impl Drop for DeferredAgent {
     fn drop(&mut self) {
-        self.task.abort();
+        if let Some(task) = self.task.get_mut() {
+            task.abort();
+        }
     }
 }
 fn unsupported() -> AgentError {
@@ -83,6 +85,22 @@ fn unsupported() -> AgentError {
 }
 #[async_trait]
 impl AgentAdapter for DeferredAgent {
+    async fn shutdown(&self) -> Result<(), AgentError> {
+        // Stop connection attempts before reading the final connected backend.
+        // Keep the join handle in the mutex across await so cancellation is safe.
+        let mut task = self.task.lock().await;
+        if let Some(handle) = task.as_mut() {
+            handle.abort();
+            let _ = handle.await;
+            task.take();
+        }
+        let agent = self.connected.read().expect("backend lock").clone();
+        if let Some(agent) = agent {
+            agent.shutdown().await?;
+        }
+        Ok(())
+    }
+
     fn display_name(&self) -> &'static str {
         self.name
     }
@@ -277,5 +295,39 @@ impl WorkspaceRuntimePort for DeferredAgent {
             .ok_or_else(unsupported)?
             .mutate(mutation)
             .await
+    }
+}
+
+#[cfg(test)]
+mod shutdown_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn shutdown_cancels_in_flight_connection_before_returning() {
+        struct Attempt(Arc<std::sync::atomic::AtomicBool>);
+        impl Drop for Attempt {
+            fn drop(&mut self) {
+                self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let dropped = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let deferred = DeferredAgent::new("test", String::new(), {
+            let entered = entered.clone();
+            let dropped = dropped.clone();
+            move || {
+                let entered = entered.clone();
+                let dropped = dropped.clone();
+                async move {
+                    let _attempt = Attempt(dropped);
+                    entered.notify_one();
+                    std::future::pending().await
+                }
+            }
+        });
+        entered.notified().await;
+        deferred.shutdown().await.unwrap();
+        assert!(dropped.load(std::sync::atomic::Ordering::SeqCst));
+        deferred.shutdown().await.unwrap();
     }
 }
