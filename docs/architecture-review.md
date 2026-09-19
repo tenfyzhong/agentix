@@ -61,7 +61,7 @@ The proxy belongs to the Codex connection layer. The executable assembles config
 | Contract | Owner and evidence |
 | --- | --- |
 | Bind before upstream startup; reject occupied or aliased endpoints without deleting another owner's socket | ConnectionManager and proxy_address; CLI occupation tests and proxy endpoint regressions |
-| Preserve a ready shared app-server across Agentix shutdown | UpstreamServer; subprocess survival/process-group test and runtime reuse test |
+| Reap owned app-servers on exit while preserving external upstreams | UpstreamServer; graceful/forced termination, cancelled/concurrent waits, socket replacement and signal/restart tests |
 | Authenticate inbound WS before opening upstream; validate remote credentials in one layer | proxy_auth/proxy_handshake; real handshake tests for all seven options and failure ordering |
 | Forward established Unix/WS frames without local Pong or added Close deadline | proxy_wire and paired relay tasks; control-frame, fragmentation, backpressure and closure tests |
 | Adapt a single stdio client with bounded queues and cancellable I/O | proxy_stdio_io and stdio relay; blocked-stdout, EOF, shared-descriptor and subprocess-exit tests |
@@ -69,6 +69,6 @@ The proxy belongs to the Codex connection layer. The executable assembles config
 | Keep internal upstream subscriptions out of terminal discovery | CodexClient; production-runtime test with two same-directory clients and a disconnected but still loaded thread |
 | Release background state when the last public client disappears | ClientTasks; final-owner regression for both direct and proxy clients, plus surviving-clone and frontend EOF checks |
 
-The audit found a missing owner for the internal reader/reconnect and lifecycle-monitor tasks. A failing regression demonstrated that they retained upstream state after the public client was dropped. A connection-layer task guard now aborts both tasks on final-owner drop. Monitor clones deliberately omit the guard and proxy runtime to avoid retaining their own owner. Cancellation is processed asynchronously by Tokio; ready shared upstream processes remain detached.
+The audit found a missing owner for the internal reader/reconnect and lifecycle-monitor tasks. A failing regression demonstrated that they retained upstream state after the public client was dropped. A connection-layer task guard now aborts both tasks on final-owner drop. Monitor clones deliberately omit the guard and proxy runtime to avoid retaining their own owner. Cancellation is processed asynchronously by Tokio. Owned upstreams now terminate on final-owner drop or explicit service shutdown; adopted external upstreams remain running.
 
 The resulting ownership boundaries match the intended architecture. Transparency applies to established Unix/WS frames: authentication and HTTP routing are explicit proxy boundaries, and stdio is a JSONL adapter. Silent network partitions have no guaranteed detection deadline without a transport error; observation failure leaves forwarding intact but stops tracking that direction. These limitations are documented in the [guide](guide.md) and are not hidden by claiming app-server loaded threads prove terminal liveness. See [integration coverage](integration-coverage.md#codex-proxy-lifecycle) for executable checks and verification scope.

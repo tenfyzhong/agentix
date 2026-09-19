@@ -17,9 +17,13 @@ impl Drop for ClientTasks {
 
 pub(crate) struct ConnectionManager {
     pub proxy: CodexProxy,
-    _upstream: UpstreamServer,
+    upstream: UpstreamServer,
 }
 impl ConnectionManager {
+    pub async fn shutdown(&self) -> Result<()> {
+        self.upstream.shutdown().await
+    }
+
     pub async fn start(
         listen: &str,
         upstream: &CodexEndpoint,
@@ -51,7 +55,7 @@ impl ConnectionManager {
         }
         Ok(Self {
             proxy: proxy.unwrap(),
-            _upstream: server,
+            upstream: server,
         })
     }
 }

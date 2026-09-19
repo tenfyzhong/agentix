@@ -268,6 +268,19 @@ impl RunningService {
             .collect();
         wait_for_channel_shutdown(tasks, grace).await;
         let _ = self.handler.await;
+        // Shut down every backend, including Codex connected by DeferredAgent.
+        // Poll them together so owned upstream grace periods do not accumulate.
+        futures_util::future::join_all(self.prepared.backends.iter().map(|(_, built)| async {
+            if let Err(error) = built.adapter.shutdown().await {
+                tracing::warn!(%error, "failed to shut down agent backend");
+            }
+        }))
+        .await;
+        if let Some(codex) = &self.prepared.codex
+            && let Err(error) = codex.shutdown().await
+        {
+            tracing::warn!(%error, "failed to shut down Codex upstream");
+        }
     }
 }
 

@@ -144,6 +144,14 @@ pub struct CodexClient {
 }
 
 impl CodexClient {
+    /// Stop the app-server launched by this runtime, even if client clones remain.
+    pub async fn shutdown(&self) -> anyhow::Result<()> {
+        if let Some(runtime) = &self.runtime {
+            runtime.shutdown().await?;
+        }
+        Ok(())
+    }
+
     #[must_use]
     pub fn with_optional_multiplexer(
         self,
@@ -2347,6 +2355,12 @@ fn page_running_sessions(
 
 #[async_trait]
 impl AgentAdapter for CodexClient {
+    async fn shutdown(&self) -> Result<(), AgentError> {
+        CodexClient::shutdown(self)
+            .await
+            .map_err(|error| AgentError::Unavailable(error.to_string()))
+    }
+
     async fn terminal_input(
         &self,
         session: &SessionId,

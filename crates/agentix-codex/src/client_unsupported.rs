@@ -18,6 +18,10 @@ pub struct ClientError;
 pub struct CodexClient;
 
 impl CodexClient {
+    pub async fn shutdown(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
+
     #[must_use]
     pub fn with_optional_multiplexer(
         self,

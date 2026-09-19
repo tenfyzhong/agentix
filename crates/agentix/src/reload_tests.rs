@@ -230,17 +230,17 @@ async fn shutdown_signal_child() {
     let directory = PathBuf::from(directory);
     let mut fixture = Fixture::new();
     fixture.config.server.endpoint = format!("unix://{}", directory.join("control.sock").display());
-    let proxy = agentix_codex::CodexProxy::bind(
-        &format!(
-            "unix://{}",
-            directory.join("app-server-control.sock").display()
-        ),
-        &format!("unix://{}", directory.join("upstream.sock").display()),
-    )
-    .await
-    .unwrap();
+    let codex = owned_codex_fixture(&directory).await;
+    let mut prepared = fixture.prepare(false).await;
+    prepared.backends.push((
+        fixture.config.agent.clone().unwrap(),
+        BuiltAgent {
+            adapter: Arc::new(codex.clone()),
+            codex: Some(codex.clone()),
+        },
+    ));
     run(
-        fixture.prepare(false).await,
+        prepared,
         fixture.directory.path().join("config.toml"),
         ProxyOptions::default(),
         None,
@@ -251,7 +251,21 @@ async fn shutdown_signal_child() {
     )
     .await
     .unwrap();
-    drop(proxy);
+    assert!(
+        !directory.join("upstream.sock").exists(),
+        "service stop must await upstream cleanup even while a client clone remains"
+    );
+    let pid = std::fs::read_to_string(directory.join("upstream.pid")).unwrap();
+    assert!(
+        !std::process::Command::new("kill")
+            .args(["-0", pid.trim()])
+            .output()
+            .unwrap()
+            .status
+            .success(),
+        "owned upstream survived service stop"
+    );
+    drop(codex);
 }
 
 #[cfg(unix)]
@@ -295,6 +309,9 @@ async fn assert_signal_cleans_sockets(signal: &str) {
         })
         .await
         .expect("service must become ready");
+        let _cleanup = OwnedUpstreamCleanup(
+            std::fs::read_to_string(directory.path().join("upstream.pid")).unwrap(),
+        );
         assert!(
             tokio::process::Command::new("kill")
                 .args([signal, &child.id().unwrap().to_string()])
@@ -394,4 +411,141 @@ fn reload_preserves_startup_detection_without_reprobing() {
         assert_eq!(candidate.multiplexer.resolved_kind, kind);
         assert_eq!(candidate.multiplexer.kind, agentix::MultiplexerMode::Auto);
     }
+}
+
+#[cfg(unix)]
+async fn owned_codex_fixture(directory: &std::path::Path) -> CodexClient {
+    use std::os::unix::fs::PermissionsExt;
+    let command = directory.join("codex");
+    std::fs::write(&command, format!("#!/bin/sh\nexport AGENTIX_OWNED_UPSTREAM_DIR='{}'\nexec '{}' --ignored --exact reload::tests::owned_upstream_fixture\n", directory.display(), std::env::current_exe().unwrap().display())).unwrap();
+    std::fs::set_permissions(&command, std::fs::Permissions::from_mode(0o700)).unwrap();
+    CodexClient::connect_with_proxy_notification_setting(
+        &format!(
+            "unix://{}",
+            directory.join("app-server-control.sock").display()
+        ),
+        agentix_codex::CodexEndpoint::from_socket_path(&directory.join("upstream.sock")).unwrap(),
+        &command,
+        directory,
+        Arc::new(AtomicBool::new(false)),
+        &ProxyOptions::default(),
+    )
+    .await
+    .unwrap()
+}
+
+#[cfg(unix)]
+#[tokio::test]
+#[ignore = "isolated subprocess for service shutdown tests"]
+async fn owned_upstream_fixture() {
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message;
+    let directory = PathBuf::from(std::env::var("AGENTIX_OWNED_UPSTREAM_DIR").unwrap());
+    let listener = tokio::net::UnixListener::bind(directory.join("upstream.sock")).unwrap();
+    std::fs::write(
+        directory.join("upstream.pid"),
+        std::process::id().to_string(),
+    )
+    .unwrap();
+    loop {
+        let (stream, _) = listener.accept().await.unwrap();
+        tokio::spawn(async move {
+            let Ok(mut ws) = tokio_tungstenite::accept_async(stream).await else {
+                return;
+            };
+            while let Some(Ok(Message::Text(text))) = ws.next().await {
+                let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+                if let Some(id) = value.get("id") {
+                    let result = if value["method"] == "initialize" {
+                        serde_json::json!({"userAgent":"codex/0.155.0","platformFamily":"unix","platformOs":"test"})
+                    } else {
+                        serde_json::json!({"data":[],"nextCursor":null})
+                    };
+                    if ws
+                        .send(Message::text(
+                            serde_json::json!({"id":id,"result":result}).to_string(),
+                        ))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            }
+        });
+    }
+}
+
+#[cfg(unix)]
+struct OwnedUpstreamCleanup(String);
+
+#[cfg(unix)]
+impl Drop for OwnedUpstreamCleanup {
+    fn drop(&mut self) {
+        let _ = std::process::Command::new("kill")
+            .args(["-KILL", self.0.trim()])
+            .output();
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn service_stop_reaps_deferred_codex_after_reload_with_client_clones() {
+    use agentix_core::AgentEvent;
+    let directory = tempfile::tempdir_in("/tmp").unwrap();
+    let codex = owned_codex_fixture(directory.path()).await;
+    let cleanup = OwnedUpstreamCleanup(
+        std::fs::read_to_string(directory.path().join("upstream.pid")).unwrap(),
+    );
+    let deferred = Arc::new(agentix_core::DeferredAgent::new("Codex", String::new(), {
+        let codex = codex.clone();
+        move || {
+            let codex = codex.clone();
+            async move { Ok(Arc::new(codex) as Arc<dyn AgentAdapter>) }
+        }
+    }));
+    let mut events = deferred.subscribe();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while !matches!(events.recv().await.unwrap(), AgentEvent::Connected { .. }) {}
+    })
+    .await
+    .unwrap();
+    let fixture = Fixture::new();
+    let mut prepared = fixture.prepare(false).await;
+    prepared.backends.push((
+        fixture.config.agent.clone().unwrap(),
+        BuiltAgent {
+            adapter: deferred,
+            codex: None,
+        },
+    ));
+    let mut running = RunningService::start(
+        Arc::new(prepared),
+        None,
+        Arc::new(ClaimRegistry::default()),
+        fixture.directory.path().join("config.toml"),
+    );
+    let mut next = fixture.prepare(false).await;
+    next.backends = running.prepared.backends.clone();
+    running.replace(next, Duration::from_secs(1)).await;
+    assert!(
+        codex
+            .request("thread/list", serde_json::json!({}))
+            .await
+            .is_ok(),
+        "reload must retain the owned upstream"
+    );
+    running.stop(Duration::from_secs(1)).await;
+    assert!(
+        !directory.path().join("upstream.sock").exists(),
+        "deferred Codex must participate in service shutdown"
+    );
+    assert!(
+        !std::process::Command::new("kill")
+            .args(["-0", cleanup.0.trim()])
+            .output()
+            .unwrap()
+            .status
+            .success()
+    );
 }

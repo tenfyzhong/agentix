@@ -295,6 +295,18 @@ async fn unix_proxy_forwards_to_websocket_upstream() {
 #[ignore = "subprocess fixture for upstream lifetime test"]
 async fn upstream_process_fixture() {
     let path = std::env::var("AGENTIX_TEST_UPSTREAM_SOCKET").unwrap();
+    let mut terminate =
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).unwrap();
+    let term_path = format!("{path}.term");
+    let ignore_term = std::env::var_os("AGENTIX_TEST_IGNORE_TERM").is_some();
+    tokio::spawn(async move {
+        terminate.recv().await;
+        std::fs::write(term_path, "received").unwrap();
+        if !ignore_term {
+            std::process::exit(0);
+        }
+        std::future::pending::<()>().await;
+    });
     let listener = UnixListener::bind(&path).unwrap();
     std::fs::write(format!("{path}.pid"), std::process::id().to_string()).unwrap();
     loop {
@@ -305,13 +317,45 @@ async fn upstream_process_fixture() {
 }
 
 #[tokio::test]
-async fn started_upstream_survives_owner_drop_and_has_separate_process_group() {
+async fn started_upstream_stops_on_owner_drop_and_has_separate_process_group() {
+    let (_directory, path, owner, pid, _cleanup) = start_owned_upstream(false).await;
+    assert_ne!(
+        nix::unistd::getpgid(Some(nix::unistd::Pid::from_raw(pid))).unwrap(),
+        nix::unistd::getpgrp()
+    );
+    drop(owner);
+    tokio::time::timeout(Duration::from_secs(8), async {
+        while nix::unistd::getpgid(Some(nix::unistd::Pid::from_raw(pid))).is_ok() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("owned upstream must stop and be reaped on owner drop");
+    assert!(!path.exists(), "owned socket must be cleaned up");
+}
+
+async fn start_owned_upstream(
+    ignore_term: bool,
+) -> (
+    tempfile::TempDir,
+    std::path::PathBuf,
+    agentix_codex::UpstreamServer,
+    i32,
+    Cleanup,
+) {
     use std::os::unix::fs::PermissionsExt;
     let d = tempfile::tempdir().unwrap();
     let path = d.path().join("upstream.sock");
     let command = d.path().join("codex");
     let exe = std::env::current_exe().unwrap();
     std::fs::write(&command, format!("#!/bin/sh\nexport AGENTIX_TEST_UPSTREAM_SOCKET='{}'\nexec '{}' --ignored --exact upstream_process_fixture\n", path.display(), exe.display())).unwrap();
+    if ignore_term {
+        let script = std::fs::read_to_string(&command).unwrap().replace(
+            "#!/bin/sh\n",
+            "#!/bin/sh\nexport AGENTIX_TEST_IGNORE_TERM=1\n",
+        );
+        std::fs::write(&command, script).unwrap();
+    }
     std::fs::set_permissions(&command, std::fs::Permissions::from_mode(0o700)).unwrap();
     let endpoint = agentix_codex::CodexEndpoint::from_socket_path(&path).unwrap();
     let owner = agentix_codex::UpstreamServer::ensure(&endpoint, &command)
@@ -321,33 +365,73 @@ async fn started_upstream_survives_owner_drop_and_has_separate_process_group() {
         .unwrap()
         .parse()
         .unwrap();
-    let _cleanup = Cleanup(pid);
-    drop(owner);
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    let stream = UnixStream::connect(&path)
-        .await
-        .expect("upstream must survive owner drop");
-    let (mut ws, _) = tokio_tungstenite::client_async("ws://localhost/", stream)
-        .await
-        .unwrap();
-    assert_ne!(
-        nix::unistd::getpgid(Some(nix::unistd::Pid::from_raw(pid))).unwrap(),
-        nix::unistd::getpgrp()
-    );
-    ws.close(None).await.unwrap();
-    let reused =
+    (d, path, owner, pid, Cleanup(pid))
+}
+
+#[tokio::test]
+async fn upstream_shutdown_waits_for_exit_and_preserves_adopted_servers() {
+    let (_directory, path, owner, pid, _cleanup) = start_owned_upstream(false).await;
+    let endpoint = agentix_codex::CodexEndpoint::from_socket_path(&path).unwrap();
+    let adopted =
         agentix_codex::UpstreamServer::ensure(&endpoint, std::path::Path::new("must-not-launch"))
             .await
             .unwrap();
-    drop(reused);
+    adopted.shutdown().await.unwrap();
+    drop(adopted);
     assert!(path.exists());
+    assert!(nix::unistd::getpgid(Some(nix::unistd::Pid::from_raw(pid))).is_ok());
+    let (first, second) = tokio::join!(owner.shutdown(), owner.shutdown());
+    first.unwrap();
+    second.unwrap();
+    assert!(nix::unistd::getpgid(Some(nix::unistd::Pid::from_raw(pid))).is_err());
+    assert!(!path.exists());
+    assert!(
+        path.with_extension("sock.term").exists(),
+        "SIGTERM must precede forced termination"
+    );
+    owner.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn upstream_shutdown_escalates_after_cancelled_wait_and_preserves_replacement_socket() {
+    let (_directory, path, owner, pid, _cleanup) = start_owned_upstream(true).await;
+    std::fs::remove_file(&path).unwrap();
+    let replacement = UnixListener::bind(&path).unwrap();
+    {
+        let shutdown = owner.shutdown();
+        tokio::pin!(shutdown);
+        tokio::select! {
+            result = &mut shutdown => panic!("ignoring SIGTERM must require escalation: {result:?}"),
+            () = async {
+                tokio::time::timeout(Duration::from_secs(2), async {
+                    while !path.with_extension("sock.term").exists() {
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                    }
+                }).await.unwrap();
+            } => {}
+        }
+        // Cancelling a waiter must not lose the reaper or restart its grace period.
+    }
+    tokio::time::timeout(Duration::from_secs(8), owner.shutdown())
+        .await
+        .unwrap()
+        .unwrap();
+    drop(replacement);
+    tokio::time::timeout(Duration::from_secs(8), async {
+        while nix::unistd::getpgid(Some(nix::unistd::Pid::from_raw(pid))).is_ok() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("cancelled shutdown must still reap the child");
+    assert!(path.exists(), "replacement socket must be preserved");
 }
 
 struct Cleanup(i32);
 impl Drop for Cleanup {
     fn drop(&mut self) {
         let _ = std::process::Command::new("kill")
-            .args(["-TERM", &self.0.to_string()])
+            .args(["-KILL", &self.0.to_string()])
             .output();
     }
 }
@@ -929,4 +1013,47 @@ async fn http_rejection_finishes_at_body_boundary_without_upstream_eof() {
         assert_eq!(server.read(&mut [0]).await.unwrap(), 0);
         proxy.shutdown().await;
     }
+}
+
+#[tokio::test]
+async fn upstream_shutdown_preserves_foreign_listener_that_wins_startup_race() {
+    use std::os::unix::fs::PermissionsExt;
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("race.sock");
+    let marker = directory.path().join("started");
+    let command = directory.path().join("codex");
+    std::fs::write(
+        &command,
+        format!("#!/bin/sh\ntouch '{}'\nexec sleep 30\n", marker.display()),
+    )
+    .unwrap();
+    std::fs::set_permissions(&command, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let server = tokio::spawn({
+        let path = path.clone();
+        async move {
+            while !marker.exists() {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+            let listener = UnixListener::bind(path).unwrap();
+            loop {
+                let (stream, _) = listener.accept().await.unwrap();
+                tokio::spawn(async move {
+                    let _ = tokio_tungstenite::accept_async(stream).await;
+                });
+            }
+        }
+    });
+    let owner = agentix_codex::UpstreamServer::ensure(
+        &agentix_codex::CodexEndpoint::from_socket_path(&path).unwrap(),
+        &command,
+    )
+    .await
+    .unwrap();
+    owner.shutdown().await.unwrap();
+    assert!(
+        path.exists(),
+        "readiness must not claim another process's socket"
+    );
+    server.abort();
+    let _ = server.await;
 }
