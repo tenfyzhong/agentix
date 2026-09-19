@@ -62,7 +62,9 @@ The production runtime has a fixed-load regression in `engine_runtime_fixed_load
 cargo test -p agentix --bin agentix engine_runtime_ --all-features -- --nocapture
 ```
 
-On September 9, 2026, with Rust 1.95.0 on macOS arm64, 64 independent conversations completed their replies in 15.66 ms while 31 host prompt acknowledgments remained withheld. The same test then held all 32 workers: the runtime admitted 224 additional pending requests and the upstream test channel held eight, after which the producer remained blocked. This verifies the 32-worker / 256-operation bound and upstream backpressure. [Recorded run](benchmarks/engine-dispatch.json).
+On September 9, 2026, with Rust 1.95.0 on macOS arm64, 64 independent conversations completed their replies in 15.66 ms while 31 host prompt acknowledgments remained withheld. That historical fixture then held all 32 workers: the runtime admitted 224 additional pending requests and the upstream test channel held eight, after which the producer remained blocked. The [recorded run](benchmarks/engine-dispatch.json) predates deferred prompt acknowledgments.
+
+The current fixture gates session-list requests until explicitly released: 31 blocked lists leave room for 64 independent replies, then a 32nd blocked list fills worker capacity. After waiting beyond the 100 ms prompt feedback deadline, exactly 224 further operations fit in the runtime and eight in the upstream channel. Slow prompt acknowledgments now move to background tracking after that deadline, so they cannot reliably hold worker slots for this capacity test. The strict 232-envelope backpressure assertion remains unchanged.
 
 This is one regression run with in-memory SQLite and local agent/channel fixtures. It proves that unrelated work can finish before a slow host is released and that admission remains bounded; it is not a provider throughput benchmark or an IM latency guarantee. Separate tests verify same-conversation order, independent working-card refresh, dynamic binding transfers, early replacement events, and shutdown fencing. Both mocked IM end-to-end suites now run the production scheduler, including their native bridge paths.
 

@@ -11,7 +11,7 @@ The initial review covers cross-session I/O isolation, Engine responsibility sep
 
 ## Runtime contracts
 
-Engine admission allows 256 pending plus active operations and 32 workers. The fixed-load regression held 31 prompt acknowledgments while 64 independent conversations completed, then held all 32 workers and verified producer backpressure at the queue boundary. One recorded local run completed the independent replies in 15.66 ms; see [performance](performance.md) and [raw results](benchmarks/engine-dispatch.json).
+Engine admission allows 256 pending plus active operations and 32 workers. The fixed-load regression holds 31 session-list requests while 64 independent conversations complete, then holds all 32 workers and verifies producer backpressure at the queue boundary. Session-list gates remain blocked until explicitly released; prompt acknowledgments now release workers after their feedback deadline. A historical prompt-based run completed the independent replies in 15.66 ms; see [performance](performance.md) and [raw results](benchmarks/engine-dispatch.json).
 
 Same-session ordering, backend structural fences, event-gap recovery barriers, shared IM cooldowns and the task-board consumer cursor remain deliberate serialization boundaries. Ordinary remote calls execute in workers. Pending input state is taken as an owned value before remote calls, and adapter rate-state locks are released before HTTP I/O.
 

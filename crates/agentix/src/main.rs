@@ -1195,7 +1195,8 @@ mod tests {
         events: broadcast::Sender<AgentEvent>,
         attached: StdMutex<Vec<String>>,
         turn_blocked: CancellationToken,
-        blocked_calls: std::sync::atomic::AtomicUsize,
+        blocked_list_calls: std::sync::atomic::AtomicUsize,
+        list_release: Option<CancellationToken>,
         turn_release: CancellationToken,
         input_started: CancellationToken,
         input_release: CancellationToken,
@@ -1214,7 +1215,8 @@ mod tests {
                 events,
                 attached: StdMutex::new(Vec::new()),
                 turn_blocked: CancellationToken::new(),
-                blocked_calls: std::sync::atomic::AtomicUsize::new(0),
+                blocked_list_calls: std::sync::atomic::AtomicUsize::new(0),
+                list_release: None,
                 turn_release: CancellationToken::new(),
                 input_started: CancellationToken::new(),
                 input_release: CancellationToken::new(),
@@ -1245,6 +1247,11 @@ mod tests {
             _cursor: Option<String>,
             _limit: u32,
         ) -> Result<SessionPage, AgentError> {
+            if let Some(release) = &self.list_release {
+                self.blocked_list_calls
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                release.cancelled().await;
+            }
             Ok(SessionPage {
                 sessions: vec![SessionSummary {
                     id: SessionId::new("thr_saved"),
@@ -1292,8 +1299,6 @@ mod tests {
             text: &str,
         ) -> Result<String, AgentError> {
             if text == "blocked-prompt" {
-                self.blocked_calls
-                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 self.turn_blocked.cancel();
                 self.turn_release.cancelled().await;
             }
@@ -2551,7 +2556,11 @@ mod tests {
             sync::atomic::{AtomicUsize, Ordering},
             time::{Duration, Instant},
         };
-        let agent = Arc::new(LifecycleAgent::new());
+        let list_release = CancellationToken::new();
+        let agent = Arc::new(LifecycleAgent {
+            list_release: Some(list_release.clone()),
+            ..LifecycleAgent::new()
+        });
         let channel = Arc::new(LifecycleChannel::new());
         let engine = Arc::new(Engine::new(
             agent.clone(),
@@ -2559,18 +2568,6 @@ mod tests {
             vec![channel.clone()],
         ));
         let slow = |index| ConversationRef::new(ChannelKind::Telegram, format!("slow-{index}"));
-        for index in 0..32 {
-            engine
-                .handle_inbound(InboundEnvelope::text(
-                    format!("attach-{index}"),
-                    slow(index),
-                    "owner",
-                    format!("/attach thr_{index}"),
-                ))
-                .await
-                .unwrap();
-        }
-        channel.deliveries.lock().unwrap().clear();
         let (sender, inbound) = tokio::sync::mpsc::channel(8);
         let shutdown = CancellationToken::new();
         let runtime = tokio::spawn(super::run_engine_loop(
@@ -2585,13 +2582,13 @@ mod tests {
                     format!("blocked-{index}"),
                     slow(index),
                     "owner",
-                    "blocked-prompt",
+                    "/sessions",
                 ))
                 .await
                 .unwrap();
         }
         tokio::time::timeout(Duration::from_secs(3), async {
-            while agent.blocked_calls.load(Ordering::SeqCst) != 31 {
+            while agent.blocked_list_calls.load(Ordering::SeqCst) != 31 {
                 tokio::task::yield_now().await;
             }
         })
@@ -2630,17 +2627,20 @@ mod tests {
                 "blocked-31",
                 slow(31),
                 "owner",
-                "blocked-prompt",
+                "/sessions",
             ))
             .await
             .unwrap();
         tokio::time::timeout(Duration::from_secs(3), async {
-            while agent.blocked_calls.load(Ordering::SeqCst) != 32 {
+            while agent.blocked_list_calls.load(Ordering::SeqCst) != 32 {
                 tokio::task::yield_now().await;
             }
         })
         .await
         .unwrap();
+        // Admission must remain bounded after slow operations have been held
+        // beyond the prompt feedback deadline.
+        tokio::time::sleep(Duration::from_millis(200)).await;
         let admitted = Arc::new(AtomicUsize::new(0));
         let producer = tokio::spawn({
             let admitted = admitted.clone();
@@ -2677,13 +2677,13 @@ mod tests {
         }
         assert_eq!(admitted.load(Ordering::SeqCst), 232);
         assert!(!producer.is_finished());
-        assert_eq!(agent.blocked_calls.load(Ordering::SeqCst), 32);
+        assert_eq!(agent.blocked_list_calls.load(Ordering::SeqCst), 32);
         shutdown.cancel();
-        agent.turn_release.cancel();
+        list_release.cancel();
         runtime.await.unwrap();
         producer.await.unwrap();
         eprintln!(
-            "Engine fixed load: 31 held prompts, 64 independent replies in {independent_elapsed:?}; 32-worker / 256-operation bounds verified"
+            "Engine fixed load: 31 held session lists, 64 independent replies in {independent_elapsed:?}; 32-worker / 256-operation bounds verified"
         );
     }
 
