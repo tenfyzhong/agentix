@@ -13,6 +13,8 @@ struct Traffic {
     active: AtomicUsize,
     peak: AtomicUsize,
     delivered: Mutex<Vec<String>>,
+    stall_identity: AtomicBool,
+    identity_entered: tokio::sync::Notify,
 }
 
 struct ReceiverChannel {
@@ -50,6 +52,13 @@ impl ChannelAdapter for ReceiverChannel {
         }
         self.traffic.active.fetch_sub(1, Ordering::SeqCst);
         Ok(())
+    }
+    async fn identity(&self) -> std::result::Result<Option<String>, ChannelError> {
+        if self.traffic.stall_identity.load(Ordering::SeqCst) {
+            self.traffic.identity_entered.notify_one();
+            std::future::pending::<()>().await;
+        }
+        Ok(None)
     }
     async fn send(
         &self,
@@ -547,5 +556,62 @@ async fn service_stop_reaps_deferred_codex_after_reload_with_client_clones() {
             .unwrap()
             .status
             .success()
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn startup_signal_cancels_identity_lookup_and_stops_owned_upstream() {
+    let fixture = Fixture::new();
+    fixture.traffic.stall_identity.store(true, Ordering::SeqCst);
+    let directory = tempfile::tempdir_in("/tmp").unwrap();
+    let codex = owned_codex_fixture(directory.path()).await;
+    let _cleanup = OwnedUpstreamCleanup(
+        std::fs::read_to_string(directory.path().join("upstream.pid")).unwrap(),
+    );
+    let mut prepared = fixture.prepare(false).await;
+    prepared.backends.push((
+        fixture.config.agent.clone().unwrap(),
+        BuiltAgent {
+            adapter: Arc::new(codex.clone()),
+            codex: Some(codex.clone()),
+        },
+    ));
+    let stop = CancellationToken::new();
+    let signal = stop.clone();
+    let mut task = tokio::spawn(run(
+        prepared,
+        fixture.directory.path().join("config.toml"),
+        ProxyOptions::default(),
+        None,
+        Arc::new(ClaimRegistry::default()),
+        |_, _| async { unreachable!("reload is not used during startup") },
+        async move {
+            signal.cancelled().await;
+            Ok(())
+        },
+        Duration::from_secs(1),
+    ));
+    tokio::time::timeout(
+        Duration::from_secs(2),
+        fixture.traffic.identity_entered.notified(),
+    )
+    .await
+    .unwrap();
+    stop.cancel();
+    let result = tokio::time::timeout(Duration::from_secs(2), &mut task).await;
+    if result.is_err() {
+        task.abort();
+        let _ = task.await;
+    }
+    let cleaned = !directory.path().join("upstream.sock").exists();
+    codex.shutdown().await.unwrap();
+    result
+        .expect("shutdown must interrupt startup identity lookup")
+        .unwrap()
+        .unwrap();
+    assert!(
+        cleaned,
+        "startup cancellation must explicitly stop owned upstreams even with client clones"
     );
 }

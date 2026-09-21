@@ -46,6 +46,8 @@ mod proxy_wire;
 #[cfg(unix)]
 pub use proxy::{CodexProxy, proxy_stdio};
 #[cfg(unix)]
+mod socket_recovery;
+#[cfg(unix)]
 mod upstream;
 #[cfg(unix)]
 pub use upstream::UpstreamServer;
