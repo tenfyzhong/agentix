@@ -4,7 +4,7 @@ import { mkdtemp, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runHook, registerExtension } from "../runtime.mjs";
-import { visibleMessage, transcriptMessages } from "../conversation.mjs";
+import { visibleMessage, transcriptMessages, transcriptConversation } from "../conversation.mjs";
 
 test("current-turn extraction does not parse historical transcript records", async (t) => {
     const directory = await mkdtemp(join(tmpdir(), "taskix-transcript-budget-"));
@@ -75,7 +75,7 @@ test("fallback message IDs retain earlier turn context across a Claude user boun
 
 test("user context wrappers are excluded while real requests about AGENTS.md survive", () => {
     const context = "# AGENTS.md instructions\n\n<INSTRUCTIONS>\nInjected rules\n</INSTRUCTIONS><environment_context>\ncwd: /work\n</environment_context>";
-    for (const content of [context, "<environment_context>cwd: /work</environment_context>", "<system-reminder>Injected reminder</system-reminder>"]) {
+    for (const content of [context, context.replace("# AGENTS.md instructions\n", "# AGENTS.md instructions for /work\n"), "<environment_context>cwd: /work</environment_context>", "<system-reminder>Injected reminder</system-reminder>"]) {
         assert.equal(visibleMessage({role:"user",content}), undefined);
     }
     assert.equal(visibleMessage({role:"user",content:context + "\n\nPlease update AGENTS.md."}).text, "Please update AGENTS.md.");
@@ -84,18 +84,22 @@ test("user context wrappers are excluded while real requests about AGENTS.md sur
     }
 });
 
-async function captureHook(t, records) {
+async function captureHook(t, records, legacy = false) {
     const directory = await mkdtemp(join(tmpdir(), "taskix-transcript-test-"));
     t.after(() => rm(directory, { recursive: true, force: true }));
     const transcript = join(directory, "session.jsonl");
     await writeFile(transcript, records.map(record => JSON.stringify(record)).join("\n") + "\n");
+    if (legacy) {
+        const capture = await transcriptConversation(transcript);
+        return [capture.planning ? {messages:capture.messages,planning:capture.planning} : capture.messages];
+    }
     const batches = [];
     const runner = async (args) => {
         if (args[1] === "record") batches.push(JSON.parse(await readFile(args[args.indexOf("--file") + 1], "utf8")));
         return { result: {} };
     };
     await runHook({ hook_event_name: "Stop", session_id: "s", transcript_path: transcript }, runner);
-    return batches;
+    return batches.map(batch => batch.messages || batch);
 }
 
 test("Codex Stop records the current turn's visible messages without tools or context", async (t) => {
@@ -153,8 +157,9 @@ test("Pi and OMP agent_end persist prompt and visible output only", async () => 
             {role:"assistant",timestamp:1,content:[{type:"thinking",thinking:"private"},{type:"toolCall",name:"exec"},{type:"text",text:"Agent reply"}]},
             {role:"toolResult",content:[{type:"text",text:"private tool output"}]},
         ]},ctx);
-        assert.equal(batches.length,1);
-        assert.deepEqual(batches[0].map(({role,text})=>({role,text})),[{role:"user",text:"User prompt"},{role:"assistant",text:"Agent reply"}]);
+        assert.equal(batches.length,2);
+        assert.deepEqual(batches[0].messages.map(({role,text})=>({role,text})),[{role:"user",text:"User prompt"}]);
+        assert.deepEqual(batches[1].messages.map(({role,text})=>({role,text})),[{role:"user",text:"User prompt"},{role:"assistant",text:"Agent reply"}]);
         await handlers.get("session_shutdown")({},ctx);
     }
 });
@@ -187,7 +192,7 @@ test("Codex planning captures questions, choices and answers but excludes other 
     assert.equal(new Set(batches[0].map(message => message.id)).size, 4);
 });
 
-test("implementing a plan recovers consecutive planning turns with stable identities", async (t) => {
+test("legacy transcript implementing a plan recovers consecutive planning turns with stable identities", async (t) => {
     const plans = [
         ...codexTurn("p1", "plan", codexMessage("user", "Plan the change", "u"), questionCall, questionAnswer,
             codexMessage("assistant", "<proposed_plan>First plan</proposed_plan>", "a")),
@@ -197,19 +202,19 @@ test("implementing a plan recovers consecutive planning turns with stable identi
     const implementation = codexTurn("implementation", "default",
         codexMessage("user", "Implement the plan.", "u"), codexMessage("assistant", "Implemented", "a"));
     const prior = codexTurn("old", "default", codexMessage("user", "Unrelated work", "u"));
-    const batches = await captureHook(t, [...prior, ...plans, ...implementation]);
+    const batches = await captureHook(t, [...prior, ...plans, ...implementation], true);
     assert.equal(batches[0].messages[0].text, "Plan the change");
     assert.equal(batches[0].messages.at(-1).text, "Implemented");
     assert.equal(batches[0].messages.length, 8);
     assert.deepEqual(batches[0].planning, {prompt:"Plan the change",implementation_prompt:"Implement the plan."});
-    const first = await captureHook(t, plans.slice(0, 6));
+    const first = await captureHook(t, plans.slice(0, 6), true);
     assert.deepEqual(batches[0].messages.slice(0, 4), first[0]);
     const unrelated = await captureHook(t, [...plans, ...codexTurn("next", "default",
-        codexMessage("user", "Fix a different bug", "u"), codexMessage("assistant", "Fixed", "a"))]);
+        codexMessage("user", "Fix a different bug", "u"), codexMessage("assistant", "Fixed", "a"))], true);
     assert.deepEqual(unrelated[0].map(message => message.text), ["Fix a different bug", "Fixed"]);
 });
 
-test("planning recovery stops at execution turns and requires a proposed plan", async (t) => {
+test("legacy transcript planning recovery stops at execution turns and requires a proposed plan", async (t) => {
     for (const previous of [
         codexTurn("p", "plan", codexMessage("user", "Unfinished planning", "u")),
         [...codexTurn("p", "plan", codexMessage("user", "Old plan", "u"),
@@ -217,7 +222,7 @@ test("planning recovery stops at execution turns and requires a proposed plan", 
         ...codexTurn("other", "default", codexMessage("user", "Other work", "u"))],
     ]) {
         const batches = await captureHook(t, [...previous, ...codexTurn("i", "default",
-            codexMessage("user", "Implement the plan.", "u"), codexMessage("assistant", "Done", "a"))]);
+            codexMessage("user", "Implement the plan.", "u"), codexMessage("assistant", "Done", "a"))], true);
         assert.deepEqual(batches[0].map(message => message.text), ["Implement the plan.", "Done"]);
     }
 });

@@ -259,6 +259,7 @@ test("npm package contains all host manifests, hooks and resources but no tests"
         "hooks/run.mjs",
         "runtime.mjs",
         "conversation.mjs",
+        "discussion.mjs",
         "jev.mjs",
         "routing-state.mjs",
         "routing-delegation.mjs",

@@ -111,3 +111,47 @@ async fn task_service_records_configured_process_items_without_an_im_connection(
         "**Reasoning**\n\nother"
     );
 }
+
+#[tokio::test]
+async fn task_service_stages_discussion_before_a_job_exists() {
+    use agentix_task::{Config, DocumentConfig, StorageConfig};
+    let root = tempfile::tempdir().unwrap();
+    std::fs::create_dir(root.path().join(".obsidian")).unwrap();
+    let backend = Arc::new(
+        Service::open(Config {
+            schema_version: 1,
+            storage: StorageConfig {
+                path: root.path().join("tasks.sqlite3"),
+            },
+            documents: DocumentConfig {
+                root: root.path().into(),
+                directory: "docs".into(),
+            },
+        })
+        .await
+        .unwrap(),
+    );
+    let tasks = TaskBoardService::new(
+        Some(backend.clone()),
+        crate::SqliteState::in_memory().await.unwrap(),
+    );
+    tasks
+        .record_job_message(&crate::AgentEvent::ItemCompleted {
+            session_id: "discussion".into(),
+            turn_id: "turn".into(),
+            item: crate::ItemSummary {
+                id: "u".into(),
+                kind: "userMessage".into(),
+                text: Some("Discuss capacity".into()),
+                status: None,
+            },
+        })
+        .await;
+    let draft = backend
+        .store()
+        .discussion_list("discussion", 0, 10)
+        .await
+        .unwrap();
+    assert_eq!(draft["turns"][0]["messages"][0]["text"], "Discuss capacity");
+    assert!(backend.store().snapshot().await.unwrap().jobs.is_empty());
+}

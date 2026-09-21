@@ -1248,3 +1248,84 @@ fn routing_snapshot_renews_assignment_and_imports_human_cancellation() {
     assert_eq!(cancelled["inbox_cancellations"][0]["job_id"], job);
     assert_eq!(cancelled["routing"]["candidates"], json!([]));
 }
+
+#[test]
+fn discussion_cli_recovers_original_request_and_projects_selected_turns() {
+    let cli = Cli::new();
+    let capture = cli.dir.path().join("discussion.json");
+    std::fs::write(&capture, json!({"turn_id":"discussion","messages":[{"id":"question","role":"user","text":"Why are cards truncated?"},{"id":"reply","role":"assistant","text":"Split only at capacity."}]}).to_string()).unwrap();
+    let captured = cli.ok(&[
+        "hook",
+        "record",
+        "--session",
+        "s",
+        "--file",
+        capture.to_str().unwrap(),
+    ]);
+    assert_eq!(captured["staged"], true);
+    let pending = cli.ok(&["conversation", "list", "--session", "s"]);
+    assert_eq!(pending["turns"][0]["turn_id"], "discussion");
+    let project = cli.ok(&[
+        "project",
+        "register",
+        "--name",
+        "Demo",
+        "--root",
+        cli.dir.path().to_str().unwrap(),
+    ]);
+    let job = cli.ok(&[
+        "job",
+        "create",
+        "--project",
+        project["id"].as_str().unwrap(),
+        "--session",
+        "s",
+        "--title",
+        "Cards",
+        "--prompt",
+        "Implement it",
+        "--conversation-turn",
+        "discussion",
+        "--conversation-revision",
+        &pending["revision"].to_string(),
+    ]);
+    assert_eq!(job["prompt"], "Why are cards truncated?");
+    let document = std::fs::read_to_string(
+        cli.dir
+            .path()
+            .join("vault/Tasks ☃")
+            .join(job["document_path"].as_str().unwrap()),
+    )
+    .unwrap();
+    assert!(document.contains("Why are cards truncated?"));
+    assert!(document.contains("Split only at capacity."));
+    assert!(
+        cli.ok(&["conversation", "list", "--session", "s"])["turns"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn discussion_list_exposes_a_bounded_index_without_message_bodies() {
+    let cli = Cli::new();
+    let file = cli.dir.path().join("capture.json");
+    std::fs::write(&file,json!({"turn_id":"large","messages":[{"id":"u","role":"user","text":"Long source body".repeat(1000)}]}).to_string()).unwrap();
+    cli.ok(&[
+        "hook",
+        "record",
+        "--session",
+        "s",
+        "--file",
+        file.to_str().unwrap(),
+    ]);
+    let index = cli.ok(&["conversation", "list", "--session", "s"]);
+    assert!(index.to_string().len() < 1000);
+    assert!(index["turns"][0].get("messages").is_none());
+    assert!(index["turns"][0]["bytes"].as_u64().unwrap() > 10000);
+    assert_eq!(
+        cli.ok(&["conversation", "show", "large", "--session", "s"])["messages"][0]["text"],
+        "Long source body".repeat(1000)
+    );
+}

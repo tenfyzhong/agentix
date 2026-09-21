@@ -36,6 +36,16 @@ pub(crate) fn apply(
         "project.delete" | "job.delete" => crate::deletion::apply(state, request, options),
         "project.archive" | "project.unarchive" => archive_project(state, request, options, now),
         "session.record" => crate::conversation::record(state, request, options, now),
+        "session.stage" => Ok(json!({"staged":true,"recorded":0})),
+        "conversation.attach" => {
+            let job = &state.jobs[state.job_index(required(request, "job")?)?];
+            check_revision(job.revision, options)?;
+            ensure!(
+                job.status == JobStatus::Active && job.archived_at.is_none(),
+                "conflict: conversation attachment requires an ACTIVE Job"
+            );
+            Ok(json!(job))
+        }
         "job.create" => create_job(state, request, options, now),
         "job.update" | "job.cancel" | "job.archive" | "job.unarchive" | "job.submit"
         | "job.approve" | "job.reject" | "job.followup" => update_job(state, request, options, now),

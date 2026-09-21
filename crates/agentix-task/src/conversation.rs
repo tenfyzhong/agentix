@@ -18,7 +18,10 @@ pub struct JobMessage {
 pub(crate) fn user_text(mut text: &str) -> &str {
     loop {
         let value = text.trim_start();
-        let block = if let Some(rest) = value.strip_prefix("# AGENTS.md instructions\n") {
+        let block = if let Some((_, rest)) = value.split_once('\n').filter(|(heading, _)| {
+            *heading == "# AGENTS.md instructions"
+                || heading.starts_with("# AGENTS.md instructions for ")
+        }) {
             let rest = rest.trim_start();
             if !rest.starts_with("<INSTRUCTIONS>") {
                 return text;
@@ -48,7 +51,11 @@ pub(crate) fn user_text(mut text: &str) -> &str {
     }
 }
 
-fn session_job_index(state: &Snapshot, request: &Value, session: &str) -> Result<Option<usize>> {
+pub(crate) fn session_job_index(
+    state: &Snapshot,
+    request: &Value,
+    session: &str,
+) -> Result<Option<usize>> {
     let associated = |job: &crate::Job| {
         job.session_id.as_deref() == Some(session)
             || job.followup_session_id.as_deref() == Some(session)
@@ -189,8 +196,9 @@ pub(crate) fn record(
             // The live bridge may already have recorded the execution turn.
             // Insert recovered planning messages before the next known message
             // in this ordered batch, preserving all other conversation entries.
-            let next = planning_prompt
-                .and_then(|_| {
+            let next = (planning_prompt.is_some() || request["ordered"] == true)
+                .then_some(())
+                .and_then(|()| {
                     messages[position + 1..].iter().find_map(|following| {
                         job.conversation.iter().position(|entry| {
                             entry.session_id == session && following["id"] == entry.id

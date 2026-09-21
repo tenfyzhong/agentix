@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+import { stageTranscript, discussionNotice, selectDiscussion } from "./discussion.mjs";
 import { visibleMessage, transcriptConversation, recordMessages } from "./conversation.mjs";
 import { jevConfig, routePrompt, withJevMetrics } from "./jev.mjs";
 import { delegationContext, classifierHook } from "./routing-delegation.mjs";
@@ -209,9 +211,9 @@ export async function runHook(event, runner = runTaskix, routing = {}) {
     if (["SessionStart", "SessionEnd", "Interrupt", "PostToolUseFailure", "Stop", "UserPromptSubmit"].includes(event.hook_event_name))
         await routingReceipt(event, "clear", routing.cacheDir);
     const heartbeat = await runner(["hook", operation], options);
-    if (event.hook_event_name === "Stop" && event.transcript_path) {
-        const conversation = await transcriptConversation(event.transcript_path);
-        await recordMessages(conversation.messages, runner, options, conversation.planning);
+    let discussion;
+    if (["PreToolUse", "Stop", "Interrupt", "SessionEnd"].includes(event.hook_event_name)) {
+        discussion = await stageTranscript(event, runner, options, routing.cacheDir);
     }
     if (operation === "session-start") {
         if (enabled) return { hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: `Task session: ${event.session_id}. Taskix routes each prompt before execution. Use taskix-manager for tracked work.` } };
@@ -227,16 +229,16 @@ export async function runHook(event, runner = runTaskix, routing = {}) {
         // A receipt suppresses discovery, never the live lease/cancellation heartbeat.
         if (enabled && await routingReceipt(event, "read", routing.cacheDir) &&
             Array.isArray(heartbeat?.result?.inbox_cancellations)) {
-            const notice = cancellationContext(heartbeat.result);
+            const notice = [cancellationContext(heartbeat.result), discussion].filter(Boolean).join("\n");
             return notice ? { hookSpecificOutput: {
                 hookEventName: event.hook_event_name, additionalContext: notice,
             } } : {};
         }
         const context = await runner(["context"], options);
-        const notice = cancellationContext(context.result) ||
+        const notice = [discussion, cancellationContext(context.result) ||
             (event.hook_event_name === "PreToolUse" && !(enabled && await routingReceipt(event, "read", routing.cacheDir)) && (context.result.previous_job?.status === "PENDING_REVIEW" || context.result.inbox_todos?.length)
                 ? `${workflowContext(context.result)}\n${JSON.stringify(skillContext(context.result))}`
-                : undefined);
+                : undefined)].filter(Boolean).join("\n");
         if (notice)
             return {
                 hookSpecificOutput: {
@@ -261,6 +263,8 @@ export function registerExtension(
     routing = {},
 ) {
     let active;
+    // Same-process bridge integration shares native turn IDs without an IPC dependency.
+    const turnRegistry = globalThis[Symbol.for("agentix.discussion.turns")] ??= new Map();
     // Retries of one host call must retain the original authorization input,
     // even when the first attempt committed and released the current lease.
     const requestTokens = new Map();
@@ -343,6 +347,7 @@ export function registerExtension(
         if (!state) return;
         await release(state, "session-end");
         if (active === state) active = undefined;
+        turnRegistry.delete(state.options.session);
     });
     api.on("agent_start", async (_event, ctx) => {
         const state = stateFor(ctx);
@@ -353,11 +358,21 @@ export function registerExtension(
     api.on("agent_end", async (event, ctx) => {
         const state = stateFor(ctx);
         if (!state) return;
-        const messages = (event.messages || []).map(message => visibleMessage(message)).filter(Boolean);
-        if (state.prompt && !messages.some(message => message.role === "user")) messages.unshift(state.prompt);
-        await recordMessages(messages, runner, state.options);
+        let messages = (event.messages || []).map((message, index) => visibleMessage(message, `${state.turn}:${index}`)).filter(Boolean);
+        if (state.turn && turnRegistry.get(state.options.session)?.bridge) {
+            const text = messages.filter(message => message.role === "assistant").map(message => message.text).join("");
+            messages = messages.filter(message => message.role !== "assistant");
+            if (text) messages.push({id:`${state.turn}:${state.turn}:assistant`,role:"assistant",text});
+        }
+        if (state.prompt) {
+            const user = messages.findIndex(message => message.role === "user" && message.text === state.prompt.text);
+            if (user >= 0) messages[user] = state.prompt;
+            else messages.unshift(state.prompt);
+        }
+        await recordMessages(messages, runner, state.options, undefined, state.turn ? {turn_id:state.turn,source:host} : undefined);
         state.history = [...(state.history || []), ...messages].slice(-6);
-        state.prompt = undefined;
+        const shared = turnRegistry.get(state.options.session);
+        if (shared && shared.id === state.turn) shared.active = false;
         const lastAssistant = event.messages?.findLast(message => message.role === "assistant");
         state.aborted = lastAssistant?.stopReason === "aborted" && event.willContinue !== true;
         if (host === "omp" && state.aborted) await release(state, "interrupt");
@@ -380,7 +395,13 @@ export function registerExtension(
                 renew(state, ctx);
             }
         }
-        if (state && event.prompt) state.prompt = visibleMessage({role:"user",content:event.prompt,timestamp:Date.now()});
+        if (state && event.prompt) {
+            const shared = turnRegistry.get(state.options.session);
+            state.turn = event.turnId || event.turn_id || (shared?.active && shared.prompt === event.prompt ? shared.id : randomUUID());
+            turnRegistry.set(state.options.session, {id:state.turn,prompt:event.prompt,active:true,bridge:shared?.id===state.turn && shared.bridge});
+            state.prompt = visibleMessage({id:`${state.turn}:${state.turn}:user`,role:"user",content:event.prompt});
+            if (state.prompt) await recordMessages([state.prompt], runner, state.options, undefined, {turn_id:state.turn,source:host});
+        }
         const options = optionsFor(ctx);
         let content;
         if (jevConfig(routing.env)) {
@@ -394,7 +415,7 @@ export function registerExtension(
         return {
             message: {
                 customType: "taskix-context",
-                content,
+                content: `${state?.turn ? discussionNotice(state.turn) + "\n" : ""}${content}`,
                 display: false,
             },
         };
@@ -407,6 +428,11 @@ export function registerExtension(
         parameters,
         async execute(toolCallId, params, signal, _onUpdate, ctx) {
             const options = { ...optionsFor(ctx), signal };
+            if (params.args[0] === "conversation" && params.args[1] === "classify") {
+                const target = JSON.parse(params.args[2]);
+                const result = await selectDiscussion({target,current_turn:stateFor(ctx)?.turn},options,runner,routing);
+                return {content:[{type:"text",text:JSON.stringify(result)}],details:result};
+            }
             const context = await runner(["context"], options);
             const currentToken = async () => {
                 const [kind, command, identifier] = params.args;
@@ -431,6 +457,7 @@ export function registerExtension(
                 return context.result.lease?.token;
             };
             const writes = new Set([
+                "attach",
                 "add",
                 "create",
                 "update",

@@ -9,6 +9,7 @@ pub use browse::{BrowseScope, ProjectSummary};
 mod conversation;
 pub use conversation::JobMessage;
 mod deletion;
+mod discussion;
 mod inbox;
 mod inbox_document;
 mod inbox_read;

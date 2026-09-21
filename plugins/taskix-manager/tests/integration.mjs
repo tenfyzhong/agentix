@@ -446,7 +446,7 @@ for (const host of ["codex", "claude"]) {
             const f = await fixture(t);
             const root = join(f.dir, "installed plugin \u{2603}");
             await mkdir(root);
-            for (const path of ["hooks", "runtime.mjs", "conversation.mjs", "jev.mjs", "routing-state.mjs", "routing-delegation.mjs", "routing-decision.mjs", "jev-metrics.mjs", "jev-metrics-worker.mjs", "metrics-schema.sql", `.${host}-plugin`]) {
+            for (const path of ["hooks", "runtime.mjs", "conversation.mjs", "discussion.mjs", "jev.mjs", "routing-state.mjs", "routing-delegation.mjs", "routing-decision.mjs", "jev-metrics.mjs", "jev-metrics-worker.mjs", "metrics-schema.sql", `.${host}-plugin`]) {
                 await cp(resolve(path), join(root, path), { recursive: true });
             }
             const task = await f.run([
@@ -669,11 +669,9 @@ for (const host of ["pi", "omp"]) {
     });
 }
 
-test("Codex plan acceptance persists planning history through the real CLI", async (t) => {
+test("Codex plan discussions attach explicitly through the real CLI", async (t) => {
     const f = await fixture(t);
-    await f.run(["job", "update", f.job.id, "--prompt", "Implement the plan."]);
-    const task = await f.run(["task", "add", "--job", f.job.id, "--title", "Implement plan"]);
-    await f.run(["task", "claim", task.id], {executor:"agent:codex",session:"plan-session"});
+    const options = {executor:"agent:codex",session:"plan-session"};
     const transcript = join(f.dir, "session.jsonl");
     const rows = [
         {type:"event_msg",payload:{type:"task_started",turn_id:"p"}},
@@ -687,12 +685,16 @@ test("Codex plan acceptance persists planning history through the real CLI", asy
         {type:"response_item",payload:{type:"message",id:"u",role:"user",content:"Implement the plan."}},
         {type:"response_item",payload:{type:"message",id:"a",role:"assistant",content:"Implemented"}},
     ];
-    await writeFile(transcript, rows.map(row => JSON.stringify(row)).join("\n"));
     const event = {hook_event_name:"Stop",session_id:"plan-session",cwd:f.dir,transcript_path:transcript};
+    await writeFile(transcript, rows.slice(0,6).map(row => JSON.stringify(row)).join("\n"));
     await runHook(event);
-    const first = await f.run(["job", "show", f.job.id]);
+    await writeFile(transcript, rows.map(row => JSON.stringify(row)).join("\n"));
+    await runHook({...event,hook_event_name:"PreToolUse"});
+    const job = await f.run(["job","create","--project",f.project.id,"--title","Feature","--prompt","Implement the plan.","--conversation-turn","p","--conversation-turn","i"],options);
     await runHook(event);
-    assert.deepEqual(await f.run(["job", "show", f.job.id]), first);
+    const first = await f.run(["job", "show", job.id]);
+    await runHook(event);
+    assert.deepEqual(await f.run(["job", "show", job.id]), first);
     assert.equal(first.prompt, "Plan the feature");
     assert.deepEqual(first.conversation.map(message => message.text), [
         "Plan the feature", "Which scope?\n\n- Local: This project", "Which scope?\nLocal",
@@ -884,4 +886,58 @@ test("real CLI prompt latency includes optional metrics writing", async t => {
         } finally { if (lock) { lock.exec("ROLLBACK"); lock.close(); lock = null; } }
     }
     t.diagnostic(`Real CLI and SQLite whole-hook ms; HTTP mocked; startup excluded: ${JSON.stringify(elapsed)}`);
+});
+
+for (const host of ["codex","claude","pi","omp"]) test(`${host} discussion to implementation keeps selected original turns and no unrelated Job history`,async t=>{
+    const {selectDiscussion}=await import('../discussion.mjs');
+    const f=await fixture(t);
+    const session=`session:${host}`, options={cwd:f.dir,session,executor:`agent:${host}`};
+    const x=['pi','omp'].includes(host)?await extension(t,f,host):undefined;
+    const transcript=join(f.dir,'discussion.jsonl');
+    const rows=[];
+    const prompts=['Why are messages truncated?','Can multiple cards work?','Unrelated topic','Keep short messages in one card','Implement the latest capacity plan'];
+    let current;
+    for(let i=0;i<prompts.length;i++) {
+        const prompt=prompts[i];
+        if(x) {
+            await x.handlers.get('before_agent_start')({prompt},x.ctx);
+            if(i<prompts.length-1)await x.handlers.get('agent_end')({messages:[{role:'user',content:prompt},{role:'assistant',content:`Answer ${i}`}]},x.ctx);
+        } else {
+            if(host==='codex')rows.push({type:'event_msg',payload:{type:'task_started',turn_id:`t${i}`}},
+                {type:'response_item',payload:{type:'message',id:'u',role:'user',content:prompt}},
+                {type:'response_item',payload:{type:'message',id:'a',role:'assistant',content:`Answer ${i}`}});
+            else rows.push({type:'user',uuid:`u${i}`,message:{role:'user',content:prompt}},
+                {type:'assistant',uuid:`a${i}`,message:{role:'assistant',content:`Answer ${i}`}});
+            await writeFile(transcript,rows.map(JSON.stringify).join('\n'));
+            await runHook({hook_event_name:i===prompts.length-1?'PreToolUse':'Stop',session_id:session,cwd:f.dir,transcript_path:transcript});
+        }
+        const pending=(await runTaskix(['conversation','list','--limit','100'],options)).result;
+        current=pending.turns.at(-1).turn_id;
+        assert.deepEqual((await f.run(['job','show',f.job.id])).conversation,[],'discussion does not leak into a previous Job');
+    }
+    const target={title:'Capacity cards',goal:'Only split long messages',prompt:prompts.at(-1)};
+    const selected=await selectDiscussion({target,current_turn:current},options,runTaskix,{
+        env:{TASKIX_JEV_ENABLED:'true',TASKIX_JEV_URL:'https://unused.test',TASKIX_JEV_API_KEY:'test'},
+        fetch:async(_url,init)=>{
+            const request=JSON.parse(init.body);
+            return {ok:true,json:async()=>({answers:Object.fromEntries(Object.entries(request.questions).map(([id,q],i)=>{
+                const choice=i===2?'unrelated':'related';return [id,{type:'choice',choice,confidence:1,probabilities:Object.fromEntries(Object.keys(q.criteria).map(key=>[key,key===choice?1:0]))}];
+            }))})};
+        },
+    });
+    assert.equal(selected.status,'selected');
+    const job=await f.run(['job','create','--project',f.project.id,'--title',target.title,'--goal',target.goal,'--prompt',target.prompt,...selected.args],options);
+    assert.equal(job.prompt,prompts[0]);
+    assert.deepEqual(job.conversation.filter(m=>m.role==='user').map(m=>m.text),prompts.filter((_,i)=>i!==2));
+    const draft=(await runTaskix(['conversation','list','--full'],options)).result;
+    assert.equal(draft.turns.length,1);
+    assert.equal(draft.turns[0].messages[0].text,'Unrelated topic');
+    const note=await readFile(join(f.root,'Tasks ☃',job.document_path),'utf8');
+    assert.ok(note.includes('Why are messages truncated?'));
+    assert.ok(note.includes('Keep short messages in one card'));
+    assert.ok(!note.includes('Unrelated topic'));
+    if(x)await x.handlers.get('agent_end')({messages:[{role:'assistant',content:'Implementation complete'}]},x.ctx);
+    else await runHook({hook_event_name:'Stop',session_id:session,cwd:f.dir,transcript_path:transcript});
+    const after=await f.run(['job','show',job.id]);
+    assert.equal(after.conversation.filter(m=>m.role==='user').length,4);
 });

@@ -38,7 +38,122 @@ _taskix() {
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:taskix-command-$line[1]:"
         case $line[1] in
-            (inbox)
+            (conversation)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_taskix__subcmd__conversation_commands" \
+"*::: :->conversation" \
+&& ret=0
+
+    case $state in
+    (conversation)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskix-conversation-command-$line[1]:"
+        case $line[1] in
+            (list)
+_arguments "${_arguments_options[@]}" : \
+'--after=[]:AFTER:_default' \
+'--limit=[]:LIMIT:_default' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--full[Include original message bodies instead of only the bounded index]' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(show)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':turn:_default' \
+&& ret=0
+;;
+(attach)
+_arguments "${_arguments_options[@]}" : \
+'--job=[]:JOB:_default' \
+'*--turn=[]:TURNS:_default' \
+'--conversation-revision=[]:CONVERSATION_REVISION:_default' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_taskix__subcmd__conversation__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskix-conversation-help-command-$line[1]:"
+        case $line[1] in
+            (list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(show)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(attach)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(inbox)
 _arguments "${_arguments_options[@]}" : \
 '--config=[]:CONFIG:_files' \
 '--project=[]:PROJECT:_default' \
@@ -633,6 +748,9 @@ _arguments "${_arguments_options[@]}" : \
             (followup)
 _arguments "${_arguments_options[@]}" : \
 '--prompt=[]:PROMPT:_default' \
+'*--conversation-turn=[Related session turns selected by Jev or the agent; repeat to include several]:CONVERSATION_TURNS:_default' \
+'--conversation-revision=[]:CONVERSATION_REVISION:_default' \
+'--conversation-target=[Fingerprint of the target used by the discussion classifier]:CONVERSATION_TARGET:_default' \
 '*--inbox=[Inbox TODO IDs selected by the agent through semantic matching; repeat for multiple entries]:INBOX_IDS:_default' \
 '--config=[]:CONFIG:_files' \
 '--project=[]:PROJECT:_default' \
@@ -724,6 +842,9 @@ _arguments "${_arguments_options[@]}" : \
 '--title=[]:TITLE:_default' \
 '--goal=[]:GOAL:_default' \
 '--prompt=[Original user prompt, preserved verbatim in the Job document]:PROMPT:_default' \
+'*--conversation-turn=[Related session turns selected by Jev or the agent; repeat to include several]:CONVERSATION_TURNS:_default' \
+'--conversation-revision=[]:CONVERSATION_REVISION:_default' \
+'--conversation-target=[Fingerprint of the target used by the discussion classifier]:CONVERSATION_TARGET:_default' \
 '*--inbox=[Inbox TODO IDs selected by the agent through semantic matching; repeat for multiple entries]:INBOX_IDS:_default' \
 '--review-policy=[]:REVIEW_POLICY:(required none)' \
 '--config=[]:CONFIG:_files' \
@@ -1979,7 +2100,35 @@ _arguments "${_arguments_options[@]}" : \
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:taskix-help-command-$line[1]:"
         case $line[1] in
-            (inbox)
+            (conversation)
+_arguments "${_arguments_options[@]}" : \
+":: :_taskix__subcmd__help__subcmd__conversation_commands" \
+"*::: :->conversation" \
+&& ret=0
+
+    case $state in
+    (conversation)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskix-help-conversation-command-$line[1]:"
+        case $line[1] in
+            (list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(show)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(attach)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(inbox)
 _arguments "${_arguments_options[@]}" : \
 ":: :_taskix__subcmd__help__subcmd__inbox_commands" \
 "*::: :->inbox" \
@@ -2423,6 +2572,7 @@ esac
 (( $+functions[_taskix_commands] )) ||
 _taskix_commands() {
     local commands; commands=(
+'conversation:Inspect and attach session discussion turns' \
 'inbox:Submit, inspect, claim, or cancel human requirements in a Project Inbox' \
 'completions:Print a shell completion script without loading task configuration' \
 'init:Create configuration, initialize \`SQLite\` storage, and generate task documents' \
@@ -2450,6 +2600,61 @@ _taskix__subcmd__completions_commands() {
 _taskix__subcmd__context_commands() {
     local commands; commands=()
     _describe -t commands 'taskix context commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__conversation_commands] )) ||
+_taskix__subcmd__conversation_commands() {
+    local commands; commands=(
+'list:Read pending turns in source order, including their selection revision' \
+'show:Read a turn'\''s original messages and current binding' \
+'attach:Attach selected discussion turns to an ACTIVE session Job' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'taskix conversation commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__conversation__subcmd__attach_commands] )) ||
+_taskix__subcmd__conversation__subcmd__attach_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix conversation attach commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__conversation__subcmd__help_commands] )) ||
+_taskix__subcmd__conversation__subcmd__help_commands() {
+    local commands; commands=(
+'list:Read pending turns in source order, including their selection revision' \
+'show:Read a turn'\''s original messages and current binding' \
+'attach:Attach selected discussion turns to an ACTIVE session Job' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'taskix conversation help commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__conversation__subcmd__help__subcmd__attach_commands] )) ||
+_taskix__subcmd__conversation__subcmd__help__subcmd__attach_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix conversation help attach commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__conversation__subcmd__help__subcmd__help_commands] )) ||
+_taskix__subcmd__conversation__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix conversation help help commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__conversation__subcmd__help__subcmd__list_commands] )) ||
+_taskix__subcmd__conversation__subcmd__help__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix conversation help list commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__conversation__subcmd__help__subcmd__show_commands] )) ||
+_taskix__subcmd__conversation__subcmd__help__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix conversation help show commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__conversation__subcmd__list_commands] )) ||
+_taskix__subcmd__conversation__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix conversation list commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__conversation__subcmd__show_commands] )) ||
+_taskix__subcmd__conversation__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix conversation show commands' commands "$@"
 }
 (( $+functions[_taskix__subcmd__doctor_commands] )) ||
 _taskix__subcmd__doctor_commands() {
@@ -2490,6 +2695,7 @@ _taskix__subcmd__event__subcmd__list_commands() {
 (( $+functions[_taskix__subcmd__help_commands] )) ||
 _taskix__subcmd__help_commands() {
     local commands; commands=(
+'conversation:Inspect and attach session discussion turns' \
 'inbox:Submit, inspect, claim, or cancel human requirements in a Project Inbox' \
 'completions:Print a shell completion script without loading task configuration' \
 'init:Create configuration, initialize \`SQLite\` storage, and generate task documents' \
@@ -2517,6 +2723,30 @@ _taskix__subcmd__help__subcmd__completions_commands() {
 _taskix__subcmd__help__subcmd__context_commands() {
     local commands; commands=()
     _describe -t commands 'taskix help context commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__conversation_commands] )) ||
+_taskix__subcmd__help__subcmd__conversation_commands() {
+    local commands; commands=(
+'list:Read pending turns in source order, including their selection revision' \
+'show:Read a turn'\''s original messages and current binding' \
+'attach:Attach selected discussion turns to an ACTIVE session Job' \
+    )
+    _describe -t commands 'taskix help conversation commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__conversation__subcmd__attach_commands] )) ||
+_taskix__subcmd__help__subcmd__conversation__subcmd__attach_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help conversation attach commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__conversation__subcmd__list_commands] )) ||
+_taskix__subcmd__help__subcmd__conversation__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help conversation list commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__conversation__subcmd__show_commands] )) ||
+_taskix__subcmd__help__subcmd__conversation__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help conversation show commands' commands "$@"
 }
 (( $+functions[_taskix__subcmd__help__subcmd__doctor_commands] )) ||
 _taskix__subcmd__help__subcmd__doctor_commands() {

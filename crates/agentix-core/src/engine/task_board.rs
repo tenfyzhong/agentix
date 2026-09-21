@@ -528,6 +528,14 @@ impl TaskBoardService {
                 } else {
                     messages.push(message);
                 }
+                if role == "user" {
+                    let messages = messages.clone();
+                    drop(conversations);
+                    let native = SessionId::new(session_id);
+                    if let Err(error) = service.execute(json!({"command":"session.record","session":native.native_str(),"turn_id":turn_id,"source":"agentix","messages":messages}), WriteOptions {session_ref:Some(native.native_str().to_owned()), ..WriteOptions::default()}).await {
+                        tracing::warn!(%error, "Discussion prompt staging failed");
+                    }
+                }
             }
             crate::AgentEvent::TurnCompleted {
                 session_id,
@@ -546,25 +554,7 @@ impl TaskBoardService {
                     return;
                 }
                 let native = SessionId::new(session_id);
-                let job = if crate::SessionKey::decode(&native).is_some() {
-                    match service.store().session_job_page(session_id, 0, 1).await {
-                        Ok(page) => {
-                            if let Some(job) = page.jobs.first() {
-                                Some(job.id.clone())
-                            } else {
-                                self.conversations.lock().await.remove(&key);
-                                return;
-                            }
-                        }
-                        Err(error) => {
-                            tracing::warn!(%error, "task association failed");
-                            return;
-                        }
-                    }
-                } else {
-                    None
-                };
-                let result = service.execute(json!({"command":"session.record","session":native.native_str(),"job":job,"messages":messages}), WriteOptions {session_ref:Some(native.native_str().to_owned()), ..WriteOptions::default()}).await;
+                let result = service.execute(json!({"command":"session.record","session":native.native_str(),"turn_id":turn_id,"source":"agentix","messages":messages}), WriteOptions {session_ref:Some(native.native_str().to_owned()), ..WriteOptions::default()}).await;
                 match result {
                     Ok(result) => {
                         self.conversations.lock().await.remove(&key);
