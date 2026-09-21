@@ -22,9 +22,9 @@ use larksuite_oapi_sdk_rs::{EventDispatcher, LarkClient, LarkError, RequestOptio
 use tokio::sync::{Mutex, mpsc};
 use tokio_util::sync::CancellationToken;
 
+mod card_delivery;
+mod card_pages;
 mod card_sections;
-
-const CARD_BODY_LIMIT: usize = 25_000;
 const ATTACHED_COMMAND_MARKER: &str = "✌️ ";
 const INVALID_TENANT_ACCESS_TOKEN: i64 = 99_991_663;
 const TENANT_ACCESS_TOKEN_CACHE_KEY_PREFIX: &str = "tenant_access_token:app_secret:";
@@ -106,7 +106,7 @@ pub struct FeishuAdapter {
     client: LarkClient,
     policy: FeishuPolicy,
     owner_claim: Option<OwnerClaim>,
-    views: Arc<Mutex<HashMap<String, OutboundView>>>,
+    views: Arc<Mutex<HashMap<MessageRef, Arc<Mutex<card_delivery::CardGroup>>>>>,
     command_menu_messages: Arc<Mutex<HashMap<ConversationRef, CommandMenuState>>>,
     messages: MessageCenter,
     cooldown: Arc<Mutex<Option<tokio::time::Instant>>>,
@@ -357,27 +357,7 @@ impl ChannelAdapter for FeishuAdapter {
         conversation: &ConversationRef,
         view: &OutboundView,
     ) -> Result<MessageRef, ChannelError> {
-        ensure_feishu(conversation)?;
-        let card = render_card(view)?;
-        let card_json = card_sections::wire_json(&card)?;
-        let input = SendInput {
-            chat_id: Some(conversation.conversation_id.clone()),
-            card: Some(card_json),
-            ..SendInput::default()
-        };
-        let option = RequestOption::default();
-        let result = with_tenant_token_refresh(self, Some(conversation), || async {
-            self.client.channel_messaging().send(&input, &option).await
-        })
-        .await
-        .map_err(|error| delivery_error(&error))?;
-        if !view.actions.is_empty() {
-            self.views
-                .lock()
-                .await
-                .insert(result.message_id.clone(), view.clone());
-        }
-        Ok(MessageRef::new(conversation.clone(), result.message_id))
+        self.send_cards(conversation, view).await
     }
 
     async fn update(
@@ -386,51 +366,11 @@ impl ChannelAdapter for FeishuAdapter {
         message: &MessageRef,
         view: &OutboundView,
     ) -> Result<(), ChannelError> {
-        ensure_feishu(conversation)?;
-        let card = render_card(view)?;
-        let body = PatchMessageReqBody {
-            content: Some(card_sections::wire_json(&card)?),
-        };
-        let option = RequestOption::default();
-        with_tenant_token_refresh(self, Some(conversation), || async {
-            self.client
-                .im()
-                .message
-                .patch(&message.message_id, &body, &option)
-                .await
-        })
-        .await
-        .map_err(|error| delivery_error(&error))?;
-        let mut views = self.views.lock().await;
-        if view.actions.is_empty() {
-            views.remove(&message.message_id);
-        } else {
-            views.insert(message.message_id.clone(), view.clone());
-        }
-        Ok(())
+        self.update_cards(conversation, message, view).await
     }
 
     async fn disable_actions(&self, message: &MessageRef) -> Result<(), ChannelError> {
-        ensure_feishu(&message.conversation)?;
-        let Some(view) = self.views.lock().await.get(&message.message_id).cloned() else {
-            return Ok(());
-        };
-        let card = render_card_with_disabled_actions(&view)?;
-        let body = PatchMessageReqBody {
-            content: Some(card_sections::wire_json(&card)?),
-        };
-        let option = RequestOption::default();
-        with_tenant_token_refresh(self, Some(&message.conversation), || async {
-            self.client
-                .im()
-                .message
-                .patch(&message.message_id, &body, &option)
-                .await
-        })
-        .await
-        .map_err(|error| delivery_error(&error))?;
-        self.views.lock().await.remove(&message.message_id);
-        Ok(())
+        self.disable_card_actions(message).await
     }
 
     async fn set_command_menu(
@@ -692,7 +632,7 @@ async fn send_claim_response(adapter: &FeishuAdapter, chat_id: &str, text: &str)
 async fn with_tenant_token_refresh<T, F, Fut>(
     adapter: &FeishuAdapter,
     conversation: Option<&ConversationRef>,
-    mut operation: F,
+    operation: F,
 ) -> Result<T, LarkError>
 where
     F: FnMut() -> Fut,
@@ -700,59 +640,68 @@ where
 {
     adapter
         .messages
-        .outbound(conversation, async {
-            let mut retry_delay = Duration::from_secs(1);
-            let mut token_refreshed = false;
-            loop {
+        .outbound(conversation, retry_tenant_token(adapter, operation))
+        .await
+}
+
+// The caller owns the conversation FIFO for the entire logical operation.
+async fn retry_tenant_token<T, F, Fut>(
+    adapter: &FeishuAdapter,
+    mut operation: F,
+) -> Result<T, LarkError>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<T, LarkError>>,
+{
+    let mut retry_delay = Duration::from_secs(1);
+    let mut token_refreshed = false;
+    loop {
+        agentix_domain::DeliveryAttempt::waiting();
+        loop {
+            let deadline = *adapter.cooldown.lock().await;
+            if let Some(deadline) =
+                deadline.filter(|deadline| *deadline > tokio::time::Instant::now())
+            {
+                tokio::time::sleep_until(deadline).await;
+            } else {
+                break;
+            }
+        }
+        let attempted_generation = *adapter.token_generation.lock().await;
+        agentix_domain::DeliveryAttempt::dispatched().await;
+        match operation().await {
+            Err(LarkError::RateLimited(error)) => {
                 agentix_domain::DeliveryAttempt::waiting();
-                loop {
-                    let deadline = *adapter.cooldown.lock().await;
-                    if let Some(deadline) =
-                        deadline.filter(|deadline| *deadline > tokio::time::Instant::now())
-                    {
-                        tokio::time::sleep_until(deadline).await;
-                    } else {
-                        break;
-                    }
-                }
-                let attempted_generation = *adapter.token_generation.lock().await;
-                agentix_domain::DeliveryAttempt::dispatched().await;
-                match operation().await {
-                    Err(LarkError::RateLimited(error)) => {
-                        agentix_domain::DeliveryAttempt::waiting();
-                        // SDK 0.3.11 drops Retry-After, so use capped backoff.
-                        // Keep the deadline shared even if this head is cancelled.
-                        let mut cooldown = adapter.cooldown.lock().await;
-                        let deadline = tokio::time::Instant::now() + retry_delay;
-                        *cooldown =
-                            Some(cooldown.map_or(deadline, |current| current.max(deadline)));
-                        tracing::warn!(
-                            %error,
-                            retry_after_seconds = retry_delay.as_secs(),
-                            "Feishu rate limit reached; pausing the outbound queue head"
-                        );
-                        retry_delay = (retry_delay * 2).min(Duration::from_mins(1));
-                    }
-                    Err(error) if !token_refreshed && is_invalid_tenant_access_token(&error) => {
-                        agentix_domain::DeliveryAttempt::waiting();
-                        token_refreshed = true;
-                        tracing::debug!(
-                            app_id = adapter.client.config().app_id(),
-                            "refreshing an invalid Feishu tenant access token"
-                        );
-                        // Late failures for the previous token must not discard a
-                        // token another conversation has already refreshed.
-                        let mut generation = adapter.token_generation.lock().await;
-                        if *generation == attempted_generation {
-                            invalidate_tenant_access_token(&adapter.client).await?;
-                            *generation = generation.saturating_add(1);
-                        }
-                    }
-                    result => return result,
+                // SDK 0.3.11 drops Retry-After, so use capped backoff.
+                // Keep the deadline shared even if this head is cancelled.
+                let mut cooldown = adapter.cooldown.lock().await;
+                let deadline = tokio::time::Instant::now() + retry_delay;
+                *cooldown = Some(cooldown.map_or(deadline, |current| current.max(deadline)));
+                tracing::warn!(
+                    %error,
+                    retry_after_seconds = retry_delay.as_secs(),
+                    "Feishu rate limit reached; pausing the outbound queue head"
+                );
+                retry_delay = (retry_delay * 2).min(Duration::from_mins(1));
+            }
+            Err(error) if !token_refreshed && is_invalid_tenant_access_token(&error) => {
+                agentix_domain::DeliveryAttempt::waiting();
+                token_refreshed = true;
+                tracing::debug!(
+                    app_id = adapter.client.config().app_id(),
+                    "refreshing an invalid Feishu tenant access token"
+                );
+                // Late failures for the previous token must not discard a
+                // token another conversation has already refreshed.
+                let mut generation = adapter.token_generation.lock().await;
+                if *generation == attempted_generation {
+                    invalidate_tenant_access_token(&adapter.client).await?;
+                    *generation = generation.saturating_add(1);
                 }
             }
-        })
-        .await
+            result => return result,
+        }
+    }
 }
 
 fn is_invalid_tenant_access_token(error: &LarkError) -> bool {
@@ -772,7 +721,21 @@ async fn invalidate_tenant_access_token(client: &LarkClient) -> Result<(), LarkE
 }
 
 pub fn render_card(view: &OutboundView) -> Result<CardDocument, ChannelError> {
-    render_card_with_action_state(view, false)
+    let mut cards = render_cards(view)?;
+    if cards.len() != 1 {
+        return Err(ChannelError::InvalidPayload(
+            "Feishu view requires multiple cards; use render_cards".into(),
+        ));
+    }
+    Ok(cards.remove(0))
+}
+
+/// Render every capacity-bounded card without truncating the view.
+pub fn render_cards(view: &OutboundView) -> Result<Vec<CardDocument>, ChannelError> {
+    card_pages::paginate(view)?
+        .into_iter()
+        .map(|page| render_card_with_action_state(&page.view, false))
+        .collect()
 }
 
 pub fn render_command_menu(menu: &CommandMenu) -> Result<CardDocument, ChannelError> {
@@ -879,15 +842,6 @@ const fn template_color(status: ViewStatus) -> TemplateColor {
         ViewStatus::Muted => TemplateColor::Grey,
         ViewStatus::Background => TemplateColor::Purple,
     }
-}
-
-fn truncate_utf8(text: &str, max_bytes: usize) -> String {
-    if text.len() <= max_bytes {
-        return text.to_owned();
-    }
-    let suffix = "…";
-    let end = text.floor_char_boundary(max_bytes.saturating_sub(suffix.len()));
-    format!("{}{}", &text[..end], suffix)
 }
 
 fn delivery_error(error: &LarkError) -> ChannelError {

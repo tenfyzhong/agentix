@@ -281,13 +281,15 @@ async fn serve_request(
             None => serde_json::json!({"code": 230_001, "msg": "unknown mock message"}).to_string(),
         }
     } else if target.starts_with("/open-apis/im/v1/messages") {
-        if method == "POST" && target.contains("?receive_id_type=") {
-            successful_message_deliveries.fetch_add(1, Ordering::AcqRel);
-        }
+        let message_id = if method == "POST" && target.contains("?receive_id_type=") {
+            next_message_id(&successful_message_deliveries)
+        } else {
+            "om_mock_message".to_owned()
+        };
         serde_json::json!({
             "code": 0,
             "msg": "ok",
-            "data": {"message_id": "om_mock_message", "chat_id": "oc_mock_chat"}
+            "data": {"message_id": message_id, "chat_id": "oc_mock_chat"}
         })
         .to_string()
     } else {
@@ -301,6 +303,13 @@ fn request_message_id(target: &str) -> Option<&str> {
     let path = target.split('?').next()?;
     path.strip_prefix("/open-apis/im/v1/messages/")
         .filter(|message_id| !message_id.is_empty())
+}
+
+fn next_message_id(deliveries: &AtomicUsize) -> String {
+    match deliveries.fetch_add(1, Ordering::AcqRel) {
+        0 => "om_mock_message".to_owned(),
+        index => format!("om_mock_message_{index}"),
+    }
 }
 
 async fn serve_websocket(
