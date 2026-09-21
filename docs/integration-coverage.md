@@ -270,6 +270,8 @@ The opt-in [native CLI benchmark](../crates/agentix-codex/tests/native_cli_perfo
 
 The rmux pane lifecycle also has an opt-in real-daemon regression test: `cargo test -p agentix-rmux live_rmux -- --ignored`. It uses an isolated socket and checks foreground process detection, Ctrl-C, and shell input after agent exit. New session/window/split coverage verifies working directories and Ctrl-D closure; with `AGENTIX_LOGIN_SHELL=fish`, it also verifies isolated fish login and interactive configuration loading. The normal SDK wire tests verify explicit login-shell commands for new sessions/windows/splits and execute the agent launch command with successful and unsuccessful child exits and literal arguments.
 
+Codex workspace launch regressions in [workspace_launch.rs](../crates/agentix-codex/tests/workspace_launch.rs) verify that rmux and tmux launches pass an explicit absolute `--cd` for existing panes, new sessions, windows, and splits, including paths with spaces, quotes, and Unicode. Empty panes receive no agent command. These tests use the local mock app-server and assert the multiplexer launch boundary; they do not launch a real Codex TUI or contact a model.
+
 Native tmux lifecycle coverage runs with `AGENTIX_TEST_TMUX=1 cargo test -p agentix-tmux`. It verifies normal and unsuccessful agent exits, Ctrl-C with foreground process detection, and subsequent shell input in the requested working directory. It also checks that new sessions/windows/splits override the server default command with the user's login shell and close on Ctrl-D, even when global pane retention is enabled. The tmux CI jobs enable these tests with the account shell and fish on Linux and macOS.
 
 ## Native `/new` coverage

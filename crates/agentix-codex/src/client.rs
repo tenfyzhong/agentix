@@ -311,13 +311,15 @@ impl CodexClient {
         } else {
             CodexProcessDiscovery::for_endpoint(&endpoint)
         };
-        let workspace = WorkspaceManager::new(
+        let mut workspace = WorkspaceManager::new(
             crate::multiplexer::launch_argv(
                 command,
                 &format!("unix://{}", endpoint.socket_path().display()),
             ),
             working_directory,
         );
+        // Remote app-server sessions otherwise inherit the server's cwd, not the pane's.
+        workspace.set_cwd_argument("--cd");
         let websocket = connect_managed_socket(&endpoint, command).await?;
         let (writer, reader) = websocket.split();
         let writer = Arc::new(Mutex::new(writer));

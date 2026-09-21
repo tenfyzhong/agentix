@@ -14,6 +14,8 @@ The `/rmux` and `/tmux` menus create an empty shell pane for `+ Session`, `+ Win
 
 On macOS and Linux, agents launched from the `/rmux` or `/tmux` menu return to an interactive `$SHELL` (or `/bin/sh` when unset) after exiting, including unsuccessful exits. The pane remains usable in the configured working directory. Exiting that shell with Ctrl-D or `exit` closes the pane normally. This applies to new sessions, windows, splits, and reused panes; already dead panes are not revived by this change.
 
+Codex launches pass the selected pane’s absolute directory through `--cd` as well as the terminal process working directory. This keeps remote app-server sessions in the pane workspace instead of inheriting the server’s working directory (which can be `/` for a service). The directory is revalidated immediately before launch.
+
 ### Slack CLI startup synchronization
 
 Set `channel.slack.app_id` to enable startup slash-command synchronization through a logged-in Slack CLI. Run `slack login` as the service user. The global `slack_cli_path` option, placed before all TOML tables, optionally specifies an absolute executable path when `slack` is not on PATH. CLI authorization and refresh are managed by Slack CLI; Agentix does not store management tokens. Synchronization failures log a warning and allow Socket Mode to start with existing commands. See [Slack initialization and integration](slack-initialization.md).
