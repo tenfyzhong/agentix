@@ -61,24 +61,17 @@ using the links. To restore the installed commands, run
 
 ## Installing local plugins
 
-Run `make dev-test` to install plugins from the current checkout, or
-`make prod-test` to install them from GitHub. Both targets depend on
-`remove-plugin`, which first removes the Agentix Codex and Claude Code plugins
-and marketplaces, Pi's local and GitHub extension sources, and the OMP package.
-Run `make remove-plugin` separately to perform only this cleanup. Other
-marketplaces and plugins are not targeted.
+Run `make dev-test` to install the Taskix Manager Codex plugin from the current
+checkout, or `make prod-test` to install it from GitHub. Both depend on
+`remove-plugin`, which first removes the Agentix Codex plugin and marketplace.
+Run `make remove-plugin` separately for that cleanup. These targets leave Claude
+Code, Pi, OMP, and other marketplaces and plugins unchanged; use the individual
+plugin installation instructions for those hosts.
 
-The installation recipes only add marketplaces, plugins, and extensions. They do
-not build the workspace, copy or delete the `taskix` binary, or configure Obsidian.
-Run the build and Obsidian setup separately when needed. Installation failures
-make the target fail. Codex, Claude Code, Pi, and OMP cleanup is best-effort so
-missing installations do not prevent setup.
-
-Uninstalling the OMP package before linking a checkout avoids
-`EPERM: operation not permitted, unlink` when a previous GitHub installation is a
-regular directory. Uninstalling also removes OMP's saved configuration for this
-plugin; reapply any custom plugin settings afterward. Repeated local installations
-are supported.
+The recipes do not build the workspace, copy or delete the `taskix` binary, or
+configure Obsidian. Run the build and Obsidian setup separately when needed.
+Installation failures make the target fail. Cleanup is best-effort so missing
+Codex installations do not prevent setup. Repeated installations are supported.
 
 ## Tests and external dependencies
 
