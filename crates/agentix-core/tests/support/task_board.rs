@@ -59,6 +59,97 @@ async fn click(engine: &Engine, token: String) {
 }
 
 #[tokio::test]
+async fn dashboard_project_jobs_sort_by_update_and_filter_across_pages() {
+    use sqlx::Connection;
+    let (_dir, service, _) = task_fixture().await;
+    let state = service.store().snapshot().await.unwrap();
+    let project = &state.projects[0].id;
+    let mut conn = sqlx::SqliteConnection::connect_with(
+        &sqlx::sqlite::SqliteConnectOptions::new().filename(&service.config().storage.path),
+    )
+    .await
+    .unwrap();
+    // Explicit timestamps make ordering independent of the wall clock and insertion order.
+    sqlx::query("UPDATE jobs SET data=json_set(data,'$.updated_at',0)")
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    for index in 0..11 {
+        let job = write(
+            &service,
+            json!({"command":"job.create","project":project,"title":format!("Job {index:02}")}),
+        )
+        .await;
+        let status = match index {
+            7 => "PENDING_REVIEW",
+            8 => "COMPLETED",
+            9 | 10 => "CANCELLED",
+            _ => "ACTIVE",
+        };
+        sqlx::query("UPDATE jobs SET data=json_set(data,'$.updated_at',?,'$.status',?,'$.archived_at',?) WHERE id=?")
+            .bind(100 - index).bind(status).bind((index == 10).then_some(1))
+            .bind(job["id"].as_str().unwrap()).execute(&mut conn).await.unwrap();
+    }
+    let before = service.store().snapshot().await.unwrap();
+    let (engine, channel) = engine(service.clone()).await;
+    engine.handle_inbound(input("/dashboard")).await.unwrap();
+    click(&engine, button(&last(&channel), "demo")).await;
+    let jobs = last(&channel);
+    assert_eq!(jobs.title, "Jobs");
+    assert!(jobs.body.contains("Jobs (11)"));
+    assert!(jobs.body.contains("Status: ALL"));
+    let labels: Vec<_> = jobs
+        .actions
+        .iter()
+        .filter(|a| a.label.starts_with("Job "))
+        .map(|a| a.label.as_str())
+        .collect();
+    assert_eq!(
+        labels,
+        ["Job 00", "Job 01", "Job 02", "Job 03", "Job 04", "Job 05"]
+    );
+    click(&engine, button(&jobs, "Next")).await;
+    let second = last(&channel);
+    assert!(second.body.contains("Job 09"));
+    assert!(!second.body.contains("Job 10"));
+    click(&engine, button(&second, "ACTIVE")).await;
+    let active = last(&channel);
+    assert!(active.body.contains("Status: ACTIVE"));
+    assert!(active.body.contains("Jobs (8)"));
+    assert_eq!(active.subtitle.as_deref(), Some("Page 1 / 2"));
+    click(&engine, button(&active, "Next")).await;
+    assert!(last(&channel).body.contains("Status: ACTIVE"));
+    assert!(last(&channel).body.contains("Job 06"));
+    assert!(!last(&channel).body.contains("Job 07"));
+    click(&engine, button(&last(&channel), "Previous")).await;
+    assert_eq!(last(&channel).body, active.body);
+    for (status, title) in [
+        ("PENDING_REVIEW", "Job 07"),
+        ("COMPLETED", "Job 08"),
+        ("CANCELLED", "Job 09"),
+    ] {
+        click(&engine, button(&last(&channel), status)).await;
+        let filtered = last(&channel);
+        assert!(filtered.body.contains(&format!("Status: {status}")));
+        assert!(filtered.body.contains("Jobs (1)"));
+        assert!(filtered.body.contains(title));
+        assert!(
+            !filtered
+                .actions
+                .iter()
+                .any(|a| a.label == "Next" || a.label == "Previous")
+        );
+    }
+    click(&engine, button(&last(&channel), "All statuses")).await;
+    assert_eq!(last(&channel).body, jobs.body);
+    click(&engine, button(&last(&channel), "Job 00")).await;
+    assert_eq!(last(&channel).title, "Job 00");
+    click(&engine, button(&last(&channel), "Project jobs")).await;
+    assert_eq!(last(&channel).body, jobs.body);
+    assert_eq!(service.store().snapshot().await.unwrap(), before);
+}
+
+#[tokio::test]
 async fn browsing_ignores_unrelated_job_task_and_plan_bodies() {
     use sqlx::Connection;
     let (_dir, service, id) = task_fixture().await;
@@ -78,6 +169,7 @@ async fn browsing_ignores_unrelated_job_task_and_plan_bodies() {
     engine.handle_inbound(input("/dashboard")).await.unwrap();
     let dashboard = last(&channel);
     click(&engine, button(&dashboard, "demo")).await;
+    click(&engine, button(&last(&channel), "Task board")).await;
     click(&engine, button(&last(&channel), "Implement task board")).await;
     let task_view = last(&channel);
     // The dashboard only needs counts; the session board and details do not
@@ -115,7 +207,7 @@ async fn browsing_ignores_unrelated_job_task_and_plan_bodies() {
 }
 
 #[tokio::test]
-async fn dashboard_project_board_task_job_roundtrip_renders_authored_markdown() {
+async fn dashboard_project_jobs_task_job_roundtrip_renders_authored_markdown() {
     let (_dir, service, id) = task_fixture().await;
     service.execute(json!({"command":"plan.revise","task":id,"body":"## Implementation\n\n**Bold plan** with `code`\n\n- Test first"}), task_write_options(&service, &id).await).await.unwrap();
     let state = service.store().snapshot().await.unwrap();
@@ -149,8 +241,9 @@ async fn dashboard_project_board_task_job_roundtrip_renders_authored_markdown() 
     assert!(dashboard.body.contains("demo"));
     click(&engine, button(&dashboard, "demo")).await;
     let board = last(&channel);
-    assert!(board.body.contains("IN_PROGRESS (1)"));
-    click(&engine, button(&board, "Implement task board")).await;
+    assert_eq!(board.title, "Jobs");
+    click(&engine, button(&board, "Task board")).await;
+    click(&engine, button(&last(&channel), "Implement task board")).await;
     let task = last(&channel);
     assert!(task.body.contains("**Bold plan** with `code`"));
     assert!(!task.body.contains("taskix-generated:"));
@@ -250,7 +343,8 @@ async fn dashboard_navigation_is_owner_and_conversation_scoped() {
         assert!(matches!(result, Err(EngineError::InvalidAction)));
     }
     click(&engine, token).await;
-    assert!(last(&channel).body.contains("Implement task board"));
+    assert_eq!(last(&channel).title, "Jobs");
+    assert!(last(&channel).body.contains("Task board"));
 }
 
 #[tokio::test]
@@ -622,8 +716,24 @@ async fn legacy_task_list_reads_only_first_fifty_matches() {
     engine.handle_inbound(input("/tasks")).await.unwrap();
     let view = last(&channel);
     assert_eq!(view.title, "Tasks");
-    assert_eq!(view.body.split("\n\n").count(), 50);
-    assert!(view.body.contains("Extra 49"));
+    assert!(view.body.contains("first 50 matches"));
+    let mut titles = Vec::new();
+    loop {
+        let view = last(&channel);
+        titles.extend(
+            view.actions
+                .iter()
+                .filter(|a| a.label.starts_with("Extra ") || a.label == "Implement task board")
+                .map(|a| a.label.clone()),
+        );
+        let Some(next) = view.actions.iter().find(|a| a.label == "Next") else {
+            break;
+        };
+        click(&engine, next.token.clone()).await;
+    }
+    assert_eq!(titles.len(), 50);
+    assert!(titles.contains(&"Extra 49".into()));
+    assert!(!titles.contains(&"Extra 50".into()));
 }
 
 #[tokio::test]
@@ -756,7 +866,7 @@ async fn board_page_ignores_off_page_task_bodies_and_job_content() {
     assert!(view.body.contains("1 jobs · 1001 tasks"));
     assert!(view.body.contains("TODO (1000)"));
     assert!(view.body.contains("Current ·"));
-    assert_eq!(view.actions.len(), 8);
+    assert_eq!(view.actions.len(), 9);
 }
 
 #[tokio::test]
@@ -792,5 +902,109 @@ async fn job_page_ignores_off_page_tasks_and_unused_task_fields() {
         .unwrap();
     click(&engine, button(&last(&channel), "Job")).await;
     assert!(last(&channel).body.contains("**Tasks (1001)**"));
-    assert_eq!(last(&channel).actions.len(), 8);
+    assert_eq!(last(&channel).actions.len(), 9);
+}
+
+fn section_for_action<'a>(view: &'a OutboundView, label: &str) -> &'a agentix_domain::ViewSection {
+    let token = button(view, label);
+    let matches: Vec<_> = view
+        .sections
+        .iter()
+        .filter(|section| section.action_tokens.contains(&token))
+        .collect();
+    assert_eq!(
+        matches.len(),
+        1,
+        "{label} must belong to exactly one section: {view:?}"
+    );
+    matches[0]
+}
+
+#[tokio::test]
+async fn task_board_lists_place_entry_buttons_after_their_own_descriptions() {
+    let (_dir, service, _) = task_fixture().await;
+    let (engine, channel) = engine(service).await;
+    engine.handle_inbound(input("/dashboard")).await.unwrap();
+    let dashboard = last(&channel);
+    assert!(
+        section_for_action(&dashboard, "demo")
+            .body
+            .contains("1 jobs")
+    );
+    click(&engine, button(&dashboard, "demo")).await;
+    let jobs = last(&channel);
+    assert!(
+        section_for_action(&jobs, "Task board")
+            .body
+            .contains("1 tasks")
+    );
+    assert_eq!(
+        section_for_action(&jobs, "ACTIVE"),
+        jobs.sections.last().unwrap()
+    );
+    assert_ne!(
+        jobs.actions
+            .iter()
+            .find(|action| action.label == "ACTIVE")
+            .unwrap()
+            .style,
+        ActionStyle::Default
+    );
+    click(&engine, button(&jobs, "Task board")).await;
+    assert!(
+        section_for_action(&last(&channel), "Implement task board")
+            .body
+            .contains("IN_PROGRESS")
+    );
+    engine.handle_inbound(input("/attach thr_a")).await.unwrap();
+    for command in ["/board", "/tasks", "/jobs"] {
+        engine.handle_inbound(input(command)).await.unwrap();
+        let view = last(&channel);
+        let label = if command == "/jobs" {
+            "Task board"
+        } else {
+            "Implement task board"
+        };
+        assert!(
+            !section_for_action(&view, label).body.is_empty(),
+            "{command}"
+        );
+        assert!(
+            view.actions
+                .iter()
+                .any(|action| action.label == "Dashboard")
+        );
+    }
+}
+
+#[tokio::test]
+async fn task_detail_keeps_state_actions_in_a_styled_final_section() {
+    let (_dir, service, id) = task_fixture().await;
+    let (engine, channel) = engine(service).await;
+    engine.handle_inbound(input("/attach thr_a")).await.unwrap();
+    engine
+        .handle_inbound(input(&format!("/task {id}")))
+        .await
+        .unwrap();
+    let view = last(&channel);
+    let footer = view.sections.last().expect("structured task details");
+    assert_eq!(footer.title, "Task actions");
+    assert_eq!(section_for_action(&view, "Cancel"), footer);
+    assert_ne!(section_for_action(&view, "Job"), footer);
+    assert_eq!(
+        view.actions
+            .iter()
+            .find(|a| a.label == "Cancel")
+            .unwrap()
+            .style,
+        ActionStyle::Danger
+    );
+    assert_eq!(
+        view.actions
+            .iter()
+            .find(|a| a.label == "Done")
+            .unwrap()
+            .style,
+        ActionStyle::Primary
+    );
 }

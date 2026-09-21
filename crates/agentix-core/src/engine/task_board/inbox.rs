@@ -163,29 +163,40 @@ impl TaskBoardView<'_> {
                 entries.len()
             ),
         );
-        let mut buttons = Vec::new();
         for entry in entries.iter().skip(page * PAGE_SIZE).take(PAGE_SIZE) {
-            view.body.push_str(&format!(
-                "\n\n**{}**\n{}",
-                escape(&short(entry.title())),
-                entry.status
-            ));
-            buttons.push((
+            self.add_entry(
+                conversation,
+                owner,
+                &mut view,
+                format!("**{}**\n{}", escape(&short(entry.title())), entry.status),
                 entry.title().into(),
                 TaskBrowse::Inbox {
                     id: entry.id.clone(),
                     page: 0,
                 },
-            ));
+            )
+            .await;
         }
+        let buttons = vec![
+            (
+                "Project jobs".into(),
+                TaskBrowse::ProjectJobs {
+                    project: project.id.clone(),
+                    status: None,
+                    page: 0,
+                },
+            ),
+            ("Dashboard".into(), TaskBrowse::Dashboard(0)),
+        ];
         if entries.is_empty() {
-            view.body.push_str("\n\nNo inbox entries.");
+            super::browse::append_section(&mut view, "", "No inbox entries. Use /inbox <content> from an attached session to add a requirement.".into());
         }
         if let Some(warning) = result.projection_pending {
-            view.body.push_str(&format!(
-                "\n\nDocument synchronization is pending: {}",
-                escape(&warning)
-            ));
+            super::browse::append_section(
+                &mut view,
+                "",
+                format!("Document synchronization is pending: {}", escape(&warning)),
+            );
         }
         self.add_browse_actions(
             conversation,

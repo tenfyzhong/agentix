@@ -172,6 +172,58 @@ impl Store {
         })
     }
 
+    /// Project Jobs ordered by most recent update, filtered before pagination.
+    /// Only selected summaries are decoded; authored bodies are not loaded.
+    pub async fn project_job_page(
+        &self,
+        project: &str,
+        status: Option<JobStatus>,
+        page: usize,
+        size: usize,
+    ) -> Result<JobBrowsePage> {
+        let mut tx = self.pool.begin().await?;
+        let (selected, value, _) = selection(&mut tx, BrowseScope::Project(project)).await?;
+        let cte = format!(
+            "WITH selected AS ({selected}), filtered AS (
+            SELECT j.id,json_extract(j.data,'$.updated_at') AS updated_at FROM jobs j
+            WHERE j.id IN (SELECT id FROM selected)
+            AND (?2 IS NULL OR json_extract(j.data,'$.status')=?2))"
+        );
+        let status = status.map(|status| status.to_string());
+        let total: i64 = sqlx::query_scalar(&format!("{cte} SELECT COUNT(*) FROM filtered"))
+            .bind(&value)
+            .bind(&status)
+            .fetch_one(&mut *tx)
+            .await?;
+        let total = total.try_into()?;
+        let (page, pages, offset) = page_bounds(total, page, size, 1)?;
+        let rows: Vec<String> = sqlx::query_scalar(&format!(
+            "{cte}, paged AS MATERIALIZED (
+            SELECT id,updated_at FROM filtered ORDER BY updated_at DESC,id DESC LIMIT ?3 OFFSET ?4)
+            SELECT json_object('id',j.id,'title',json_extract(j.data,'$.title'),
+                'status',json_extract(j.data,'$.status'),
+                'task_count',(SELECT COUNT(*) FROM tasks WHERE job_id=j.id))
+            FROM paged p JOIN jobs j ON j.id=p.id ORDER BY p.updated_at DESC,p.id DESC"
+        ))
+        .bind(&value)
+        .bind(&status)
+        .bind(i64::try_from(size)?)
+        .bind(offset)
+        .fetch_all(&mut *tx)
+        .await?;
+        let jobs = rows
+            .iter()
+            .map(|row| serde_json::from_str(row).map_err(Into::into))
+            .collect::<Result<_>>()?;
+        tx.commit().await?;
+        Ok(JobBrowsePage {
+            jobs,
+            total,
+            page,
+            pages,
+        })
+    }
+
     /// Session-associated Jobs in insertion order, with counts but no authored bodies.
     pub async fn session_job_page(
         &self,

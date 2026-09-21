@@ -1977,3 +1977,40 @@ async fn background_content_notices_survive_actual_wire_serialization() {
     }
     assert!(!cards[1].to_string().contains("Loading turn content"));
 }
+
+#[test]
+fn task_board_sections_keep_each_button_next_to_its_description_and_style_footer() {
+    let mut view = OutboundView::text("Jobs", "Flat fallback");
+    for (label, token, style) in [
+        ("First", "a", ActionStyle::Default),
+        ("Second", "b", ActionStyle::Default),
+        ("ACTIVE", "active", ActionStyle::Primary),
+        ("CANCELLED", "cancelled", ActionStyle::Danger),
+    ] {
+        view.actions.push(ActionButton {
+            disabled: false,
+            label: label.into(),
+            token: token.into(),
+            style,
+        });
+        view.sections.push(agentix_domain::ViewSection {
+            title: label.into(),
+            body: format!("Description {label}"),
+            action_tokens: vec![token.into()],
+            ..Default::default()
+        });
+    }
+    let card = agentix_feishu::render_card(&view).unwrap();
+    let value = serde_json::to_value(card.card()).unwrap();
+    let elements = value["body"]["elements"].as_array().unwrap();
+    assert_eq!(elements.len(), 8);
+    for (index, token) in ["a", "b", "active", "cancelled"].into_iter().enumerate() {
+        assert_eq!(elements[index * 2]["tag"], "markdown");
+        assert_eq!(
+            elements[index * 2 + 1]["behaviors"][0]["value"]["token"],
+            token
+        );
+    }
+    assert_eq!(elements[5]["type"], "primary");
+    assert_eq!(elements[7]["type"], "danger");
+}

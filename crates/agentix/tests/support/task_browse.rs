@@ -64,12 +64,17 @@ impl Browser {
 
     async fn view(&self, after: usize, label: &str) -> Value {
         let body = wait_for_value(|| async {
-            self.requests().await.into_iter().skip(after).find(|body| {
-                serde_json::from_str(body)
-                    .ok()
-                    .and_then(|v| button_token(&v, label))
-                    .is_some()
-            })
+            let values: Vec<Value> = self
+                .requests()
+                .await
+                .into_iter()
+                .skip(after)
+                .filter_map(|body| serde_json::from_str(&body).ok())
+                .collect();
+            values
+                .iter()
+                .any(|value| button_token(value, label).is_some())
+                .then(|| serde_json::to_string(&values).unwrap())
         })
         .await;
         serde_json::from_str(&body).unwrap()
@@ -122,7 +127,10 @@ fn find_nested(value: &Value, predicate: &impl Fn(&Value) -> Option<String>) -> 
 
 fn button_token(value: &Value, label: &str) -> Option<String> {
     find_nested(value, &|v| {
-        if v["text"] == label {
+        if v["text"]
+            .as_str()
+            .is_some_and(|text| text.trim_start_matches(['🔵', '🔴', ' ']) == label)
+        {
             v["callback_data"].as_str().map(str::to_owned)
         } else if v["text"]["content"] == label {
             v["behaviors"][0]["value"]["token"]
@@ -135,15 +143,41 @@ fn button_token(value: &Value, label: &str) -> Option<String> {
 }
 
 fn markdown_content(value: &Value) -> Option<String> {
-    find_nested(value, &|v| {
-        if v["parse_mode"] == "MarkdownV2" {
-            v["text"].as_str().map(str::to_owned)
-        } else if v["tag"] == "markdown" {
-            v["content"].as_str().map(str::to_owned)
+    fn collect(value: &Value, parts: &mut Vec<String>) {
+        if value["parse_mode"] == "MarkdownV2" {
+            if let Some(text) = value["text"].as_str() {
+                parts.push(text.into());
+            }
+        } else if value["tag"] == "markdown" {
+            if let Some(text) = value["content"].as_str() {
+                parts.push(text.into());
+            }
         } else {
-            None
+            match value {
+                Value::Object(values) => {
+                    for value in values.values() {
+                        collect(value, parts);
+                    }
+                }
+                Value::Array(values) => {
+                    for value in values {
+                        collect(value, parts);
+                    }
+                }
+                Value::String(text) => {
+                    if let Ok(value) = serde_json::from_str::<Value>(text)
+                        && (value.is_object() || value.is_array())
+                    {
+                        collect(&value, parts);
+                    }
+                }
+                _ => {}
+            }
         }
-    })
+    }
+    let mut parts = Vec::new();
+    collect(value, &mut parts);
+    (!parts.is_empty()).then(|| parts.join("\n\n"))
 }
 
 async fn browse_round_trip(telegram: bool) {
@@ -189,36 +223,50 @@ async fn browse_round_trip(telegram: bool) {
     browser.command(400, "/dashboard").await;
     let dashboard = browser.view(0, "Channel tests").await;
     let board = browser
-        .follow(401, &dashboard, "Channel tests", "Channel task")
+        .follow(401, &dashboard, "Channel tests", "COMPLETED")
         .await;
-    let task = browser.follow(402, &board, "Channel task", "Job").await;
+    let empty = browser
+        .follow(402, &board, "COMPLETED", "All statuses")
+        .await;
+    assert!(
+        markdown_content(&empty)
+            .unwrap()
+            .contains("No matching jobs")
+    );
+    let board = browser
+        .follow(403, &empty, "All statuses", "IM integration")
+        .await;
+    let job = browser
+        .follow(404, &board, "IM integration", "Channel task")
+        .await;
+    let task = browser.follow(405, &job, "Channel task", "Job").await;
     browser.assert_markdown(&task, "Bold plan");
     assert!(markdown_content(&task).unwrap().contains("`code`"));
-    let job = browser.follow(403, &task, "Job", "Channel task").await;
+    let job = browser.follow(406, &task, "Job", "Channel task").await;
     browser.assert_markdown(&job, "Bold goal");
     browser.assert_markdown(&job, "Bold notes");
-    let task_again = browser.follow(404, &job, "Channel task", "Job").await;
+    let task_again = browser.follow(407, &job, "Channel task", "Job").await;
     browser.assert_markdown(&task_again, "Bold plan");
     let job_again = browser
-        .follow(405, &task_again, "Job", "Project board")
+        .follow(408, &task_again, "Job", "Project jobs")
         .await;
     let board_again = browser
-        .follow(406, &job_again, "Project board", "Dashboard")
+        .follow(409, &job_again, "Project jobs", "Dashboard")
         .await;
     browser
-        .follow(407, &board_again, "Dashboard", "Channel tests")
+        .follow(410, &board_again, "Dashboard", "Channel tests")
         .await;
 
-    browser.command(408, "/attach thr_tasks").await;
+    browser.command(411, "/attach thr_tasks").await;
     let after = browser.requests().await.len();
-    browser.command(409, "/board").await;
+    browser.command(412, "/board").await;
     let board = browser.view(after, "Channel task").await;
     assert!(markdown_content(&board).unwrap().contains("Current"));
     let after = browser.requests().await.len();
-    browser.command(410, "/jobs").await;
+    browser.command(413, "/jobs").await;
     let jobs = browser.view(after, "IM integration").await;
     let job = browser
-        .follow(411, &jobs, "IM integration", "Channel task")
+        .follow(414, &jobs, "IM integration", "Channel task")
         .await;
     browser.assert_markdown(&job, "Bold notes");
     assert_eq!(
@@ -258,11 +306,11 @@ async fn inbox_round_trip(browser: &Browser, service: &agentix_task::Service) {
     let content =
         "Transport requirement\n\n**Inbox detail** and `code`\n\n- [ ] nested acceptance check";
     let after = browser.requests().await.len();
-    browser.command(412, &format!("/inbox {content}")).await;
+    browser.command(415, &format!("/inbox {content}")).await;
     let receipt = browser.view(after, "View inbox entry").await;
     let after = browser.requests().await.len();
     browser
-        .click(413, &button_token(&receipt, "View inbox entry").unwrap())
+        .click(416, &button_token(&receipt, "View inbox entry").unwrap())
         .await;
     let entry = wait_for_value(|| async {
         browser
@@ -277,7 +325,7 @@ async fn inbox_round_trip(browser: &Browser, service: &agentix_task::Service) {
     .await;
     browser.assert_markdown(&serde_json::from_str(&entry).unwrap(), "Inbox detail");
     let after = browser.requests().await.len();
-    browser.command(414, "/inboxes").await;
+    browser.command(417, "/inboxes").await;
     let inbox = browser.view(after, "Transport requirement").await;
     assert!(markdown_content(&inbox).unwrap().contains("TODO"));
     let state = service.store().snapshot().await.unwrap();

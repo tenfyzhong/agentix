@@ -1213,3 +1213,67 @@ fn disabled_buttons_do_not_emit_clickable_actions() {
     .unwrap();
     assert!(render_keyboard(&view.actions).is_none());
 }
+
+#[tokio::test]
+async fn sectioned_task_board_sends_descriptions_with_their_buttons_before_footer() {
+    let server = MockTelegramApi::start().await;
+    let bot = Bot::new("test-token").set_api_url(server.api_url().parse().unwrap());
+    let adapter = TelegramAdapter::with_bot(bot, TelegramPolicy::new([42]));
+    let conversation = ConversationRef::new(ChannelKind::Telegram, "42");
+    let mut view = OutboundView::text("Jobs", "Flat fallback");
+    for (title, token, style) in [
+        ("First", "a", ActionStyle::Default),
+        ("Second", "b", ActionStyle::Default),
+        ("Status", "status", ActionStyle::Primary),
+    ] {
+        view.actions.push(ActionButton {
+            disabled: false,
+            label: title.into(),
+            token: token.into(),
+            style,
+        });
+        view.sections.push(agentix_domain::ViewSection {
+            title: title.into(),
+            body: format!("Description {title}"),
+            action_tokens: vec![token.into()],
+            ..Default::default()
+        });
+    }
+    adapter.send_sectioned(&conversation, &view).await.unwrap();
+    let requests = server.requests().await;
+    let messages: Vec<serde_json::Value> = requests
+        .iter()
+        .filter(|r| r.target.to_ascii_lowercase().ends_with("sendmessage"))
+        .map(|r| serde_json::from_str(&r.body).unwrap())
+        .collect();
+    assert_eq!(messages.len(), 3);
+    for (message, (title, token)) in
+        messages
+            .iter()
+            .zip([("First", "a"), ("Second", "b"), ("Status", "status")])
+    {
+        assert!(
+            message["text"]
+                .as_str()
+                .unwrap()
+                .contains(&format!("Description {title}"))
+        );
+        assert_eq!(
+            message["reply_markup"]["inline_keyboard"][0][0]["callback_data"],
+            token
+        );
+        assert_eq!(
+            message["reply_markup"]["inline_keyboard"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+    assert!(
+        messages[2]["reply_markup"]["inline_keyboard"][0][0]["text"]
+            .as_str()
+            .unwrap()
+            .starts_with("🔵")
+    );
+}

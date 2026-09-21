@@ -116,21 +116,71 @@ pub fn render_view(view: &OutboundView) -> Result<Value, ChannelError> {
     if let Some(subtitle) = view.subtitle.as_deref().filter(|text| !text.is_empty()) {
         blocks.push(json!({"type":"context","elements":[{"type":"plain_text","text":truncate(subtitle,2000)}]}));
     }
-    let budget = 50 - blocks.len() - usize::from(!actions.is_empty());
-    for text in sections(&view.body, budget) {
-        blocks.push(json!({"type":"section","text":{"type":"mrkdwn","text":text,"verbatim":true}}));
+    let mut placed = std::collections::HashSet::new();
+    let mut groups = Vec::new();
+    if view.sections.is_empty() {
+        groups.push((view.body.clone(), Vec::new()));
+    } else {
+        for section in &view.sections {
+            let text = if section.title.is_empty() {
+                section.body.clone()
+            } else {
+                format!("**{}**\n{}", section.title, section.body)
+            };
+            let buttons: Vec<_> = section
+                .action_tokens
+                .iter()
+                .filter_map(|token| {
+                    actions
+                        .iter()
+                        .enumerate()
+                        .find(|(_, action)| &action.token == token)
+                        .filter(|(_, action)| placed.insert(action.token.as_str()))
+                })
+                .collect();
+            groups.push((text, buttons));
+        }
     }
-    if !actions.is_empty() {
-        let elements: Vec<_> = actions.iter().enumerate().map(|(index,button)| {
-            let mut element = json!({"type":"button","action_id":format!("agentix_{index}"),"text":{"type":"plain_text","text":truncate(&button.label,75)},"value":button.token});
-            match button.style {
-                ActionStyle::Primary => element["style"] = json!("primary"),
-                ActionStyle::Danger => element["style"] = json!("danger"),
-                ActionStyle::Default => {}
-            }
-            element
-        }).collect();
-        blocks.push(json!({"type":"actions","elements":elements}));
+    let remaining: Vec<_> = actions
+        .iter()
+        .enumerate()
+        .filter(|(_, action)| !placed.contains(action.token.as_str()))
+        .collect();
+    if !remaining.is_empty() {
+        groups.push((String::new(), remaining));
+    }
+    let minimum = |text: &str, buttons: &Vec<_>| {
+        usize::from(!text.is_empty()) + usize::from(!buttons.is_empty())
+    };
+    let mut reserved: usize = groups
+        .iter()
+        .map(|(text, buttons)| minimum(text, buttons))
+        .sum();
+    if blocks.len() + reserved > 50 {
+        let mut fallback = view.clone();
+        fallback.sections.clear();
+        return render_view(&fallback);
+    }
+    for (text, buttons) in groups {
+        reserved -= minimum(&text, &buttons);
+        let budget = 50 - blocks.len() - reserved - usize::from(!buttons.is_empty());
+        for text in sections(&text, budget) {
+            blocks.push(
+                json!({"type":"section","text":{"type":"mrkdwn","text":text,"verbatim":true}}),
+            );
+        }
+        if !buttons.is_empty() {
+            let elements: Vec<_> = buttons.into_iter().map(|(index, button)| {
+                let mut element = json!({"type":"button","action_id":format!("agentix_{index}"),"text":{"type":"plain_text","text":truncate(&button.label,75)},"value":button.token});
+                match button.style {
+                    ActionStyle::Primary => element["style"] = json!("primary"),
+                    ActionStyle::Danger => element["style"] = json!("danger"),
+                    ActionStyle::Default => {}
+                }
+                element
+            }).collect();
+            blocks.push(json!({"type":"actions","elements":elements}));
+        }
     }
     Ok(
         json!({"text":fallback(title, &view.body),"blocks":blocks,"unfurl_links":false,"unfurl_media":false,"parse":"none"}),

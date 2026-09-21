@@ -112,3 +112,119 @@ fn disabled_buttons_do_not_emit_clickable_actions() {
             .all(|block| block["type"] != "actions")
     );
 }
+
+#[test]
+fn structured_entry_buttons_follow_descriptions_and_footer_comes_last() {
+    let mut view = OutboundView::text("Jobs", "Flat fallback");
+    for (label, token, style) in [
+        ("First", "a", ActionStyle::Default),
+        ("Second", "b", ActionStyle::Default),
+        ("ACTIVE", "filter", ActionStyle::Primary),
+    ] {
+        view.actions.push(ActionButton {
+            disabled: false,
+            label: label.into(),
+            token: token.into(),
+            style,
+        });
+        view.sections.push(agentix_domain::ViewSection {
+            title: label.into(),
+            body: format!("Description for {label}"),
+            action_tokens: vec![token.into()],
+            ..Default::default()
+        });
+    }
+    let payload = render_view(&view).unwrap();
+    let blocks = payload["blocks"].as_array().unwrap();
+    assert_eq!(blocks.len(), 7);
+    for (index, token) in ["a", "b", "filter"].into_iter().enumerate() {
+        assert_eq!(blocks[1 + index * 2]["type"], "section");
+        assert_eq!(blocks[2 + index * 2]["elements"][0]["value"], token);
+    }
+    assert_eq!(blocks[6]["elements"][0]["style"], "primary");
+}
+
+#[test]
+fn section_layout_deduplicates_tokens_and_keeps_unplaced_actions_at_the_end() {
+    let mut view = OutboundView::text("Jobs", "Fallback");
+    for (token, disabled) in [("a", false), ("disabled", true), ("unplaced", false)] {
+        view.actions.push(ActionButton {
+            disabled,
+            label: token.into(),
+            token: token.into(),
+            style: ActionStyle::Default,
+        });
+    }
+    for title in ["First", "Second"] {
+        view.sections.push(agentix_domain::ViewSection {
+            title: title.into(),
+            body: "Description".into(),
+            action_tokens: vec!["a".into(), "unknown".into(), "disabled".into()],
+            ..Default::default()
+        });
+    }
+    let value = render_view(&view).unwrap();
+    let buttons: Vec<_> = value["blocks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|b| b["type"] == "actions")
+        .flat_map(|b| b["elements"].as_array().unwrap())
+        .map(|b| b["value"].as_str().unwrap())
+        .collect();
+    assert_eq!(buttons, ["a", "unplaced"]);
+}
+
+#[test]
+fn section_layout_reserves_space_for_every_footer_control() {
+    let mut view = OutboundView::text("Jobs", "Fallback");
+    for index in 0..8 {
+        let token = format!("token-{index}");
+        view.actions.push(ActionButton {
+            disabled: false,
+            label: token.clone(),
+            token: token.clone(),
+            style: ActionStyle::Primary,
+        });
+        view.sections.push(agentix_domain::ViewSection {
+            title: index.to_string(),
+            body: "\u{957f}\u{5185}\u{5bb9}".repeat(10000),
+            action_tokens: vec![token],
+            ..Default::default()
+        });
+    }
+    let value = render_view(&view).unwrap();
+    let blocks = value["blocks"].as_array().unwrap();
+    assert!(blocks.len() <= 50);
+    assert_eq!(blocks.iter().filter(|b| b["type"] == "actions").count(), 8);
+    assert_eq!(blocks.last().unwrap()["elements"][0]["value"], "token-7");
+}
+
+#[test]
+fn excessive_sections_keep_the_flat_fallback_and_all_controls() {
+    let mut view = OutboundView::text("Job", "Complete bounded summary");
+    view.sections = (0..60)
+        .map(|_| agentix_domain::ViewSection {
+            body: "Detail".into(),
+            ..Default::default()
+        })
+        .collect();
+    view.actions.push(ActionButton {
+        disabled: false,
+        label: "Job".into(),
+        token: "job".into(),
+        style: ActionStyle::Default,
+    });
+    let payload = render_view(&view).unwrap();
+    assert!(payload["blocks"].as_array().unwrap().len() <= 50);
+    assert!(
+        payload["blocks"][1]["text"]["text"]
+            .as_str()
+            .unwrap()
+            .contains("Complete bounded summary")
+    );
+    assert_eq!(
+        payload["blocks"].as_array().unwrap().last().unwrap()["elements"][0]["value"],
+        "job"
+    );
+}

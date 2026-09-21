@@ -655,7 +655,9 @@ impl Engine {
                     .await?;
             }
             AgentCommand::Tasks(filter) => {
-                tasks.show_tasks(conversation, filter.as_deref()).await?;
+                tasks
+                    .show_legacy_tasks(conversation, owner_id, filter.as_deref(), 0)
+                    .await?;
             }
             AgentCommand::Task(id) => {
                 tasks.show_task(conversation, owner_id, &id).await?;
@@ -938,7 +940,10 @@ impl TaskBoardUi for Engine {
         conversation: &ConversationRef,
         view: &OutboundView,
     ) -> Result<MessageRef, EngineError> {
-        Engine::send_view(self, conversation, view).await
+        self.channel(conversation.channel)?
+            .send_sectioned(conversation, view)
+            .await
+            .map_err(EngineError::from)
     }
     async fn issue_action(
         &self,

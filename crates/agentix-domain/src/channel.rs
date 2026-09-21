@@ -280,6 +280,17 @@ pub trait ChannelAdapter: Send + Sync {
         view: &OutboundView,
     ) -> Result<MessageRef, ChannelError>;
 
+    /// Send a browse response with controls after their associated descriptions.
+    /// Flat channels may emit independent messages and return the final message;
+    /// callers must not treat this reference as an editable aggregate.
+    async fn send_sectioned(
+        &self,
+        conversation: &ConversationRef,
+        view: &OutboundView,
+    ) -> Result<MessageRef, ChannelError> {
+        self.send(conversation, view).await
+    }
+
     async fn update(
         &self,
         conversation: &ConversationRef,

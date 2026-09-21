@@ -1,4 +1,4 @@
-use agentix_task::{BrowseScope, TaskListItem, TaskStatus};
+use agentix_task::{BrowseScope, JobStatus, TaskListItem, TaskStatus};
 
 use super::{
     ActionButton, ActionStyle, ConversationRef, EngineError, OutboundView, SessionId,
@@ -16,6 +16,15 @@ pub(crate) enum TaskBrowse {
         page: usize,
     },
     Jobs(usize),
+    LegacyTasks {
+        filter: Option<String>,
+        page: usize,
+    },
+    ProjectJobs {
+        project: String,
+        status: Option<JobStatus>,
+        page: usize,
+    },
     Inboxes {
         project: String,
         page: usize,
@@ -39,6 +48,8 @@ impl TaskBrowse {
         match self {
             Self::Dashboard(page)
             | Self::Jobs(page)
+            | Self::LegacyTasks { page, .. }
+            | Self::ProjectJobs { page, .. }
             | Self::Inboxes { page, .. }
             | Self::Inbox { page, .. }
             | Self::Board { page, .. }
@@ -52,6 +63,8 @@ impl TaskBrowse {
         match &mut target {
             Self::Dashboard(current)
             | Self::Jobs(current)
+            | Self::LegacyTasks { page: current, .. }
+            | Self::ProjectJobs { page: current, .. }
             | Self::Inboxes { page: current, .. }
             | Self::Inbox { page: current, .. }
             | Self::Board { page: current, .. }
@@ -88,6 +101,18 @@ impl TaskBoardView<'_> {
             TaskBrowse::Board { project, page } => {
                 self.show_board(conversation, owner, project, page).await
             }
+            TaskBrowse::ProjectJobs {
+                project,
+                status,
+                page,
+            } => {
+                self.show_project_jobs(conversation, owner, &project, status, page)
+                    .await
+            }
+            TaskBrowse::LegacyTasks { filter, page } => {
+                self.show_legacy_tasks(conversation, owner, filter.as_deref(), page)
+                    .await
+            }
             TaskBrowse::Jobs(page) => self.show_session_jobs(conversation, owner, page).await,
             TaskBrowse::Inboxes { project, page } => {
                 self.show_inboxes(conversation, owner, &project, page).await
@@ -119,19 +144,72 @@ impl TaskBoardView<'_> {
         if pages > 1 {
             view.subtitle = Some(format!("Page {} / {pages}", page + 1));
         }
+        if !buttons.is_empty() {
+            self.add_action_section(
+                conversation,
+                owner,
+                view,
+                "Navigation",
+                buttons
+                    .into_iter()
+                    .map(|(label, target)| (label, target, ActionStyle::Default))
+                    .collect(),
+            )
+            .await;
+        }
+    }
+
+    pub(super) async fn add_action_section(
+        &self,
+        conversation: &ConversationRef,
+        owner: &str,
+        view: &mut OutboundView,
+        title: &str,
+        buttons: Vec<(String, TaskBrowse, ActionStyle)>,
+    ) {
+        let index = append_section(view, title, String::new());
         let group = format!("task-browse:{}", uuid::Uuid::new_v4());
-        for (label, target) in buttons {
+        for (label, target, style) in buttons {
             let token = self
                 .ui
                 .issue_action(conversation, owner, &group, UiAction::TaskBrowse(target))
                 .await;
+            view.sections[index].action_tokens.push(token.clone());
             view.actions.push(ActionButton {
                 disabled: false,
                 label: short(&label),
                 token,
-                style: ActionStyle::Default,
+                style,
             });
         }
+    }
+
+    pub(super) async fn add_entry(
+        &self,
+        conversation: &ConversationRef,
+        owner: &str,
+        view: &mut OutboundView,
+        body: String,
+        label: String,
+        target: TaskBrowse,
+    ) {
+        let index = append_section(view, "", body);
+        let token = self
+            .ui
+            .issue_action(
+                conversation,
+                owner,
+                &format!("task-browse:{}", uuid::Uuid::new_v4()),
+                UiAction::TaskBrowse(target),
+            )
+            .await;
+        view.sections[index].action_tokens.push(token.clone());
+        view.actions.push(ActionButton {
+            disabled: false,
+            label: short(&label),
+            token,
+            style: ActionStyle::Default,
+        });
     }
 
     async fn show_dashboard(
@@ -151,26 +229,30 @@ impl TaskBoardView<'_> {
         let mut view = OutboundView::text(
             "Dashboard",
             format!(
-                "**Projects ({})**\n\nSelect a project to open its board.",
+                "**Projects ({})**\n\nSelect a project to browse its jobs.",
                 projects.len()
             ),
         );
-        let mut buttons = Vec::new();
         for summary in projects.iter().skip(page * PAGE_SIZE).take(PAGE_SIZE) {
             let project = &summary.project;
-            view.body.push_str(&format!(
-                "\n\n**{}**\n{} jobs · {} tasks",
-                escape(&short(&project.name)),
-                summary.job_count,
-                summary.task_count
-            ));
-            buttons.push((
+            self.add_entry(
+                conversation,
+                owner,
+                &mut view,
+                format!(
+                    "**{}**\n{} jobs · {} tasks",
+                    escape(&short(&project.name)),
+                    summary.job_count,
+                    summary.task_count
+                ),
                 project.name.clone(),
-                TaskBrowse::Board {
-                    project: Some(project.id.clone()),
+                TaskBrowse::ProjectJobs {
+                    project: project.id.clone(),
+                    status: None,
                     page: 0,
                 },
-            ));
+            )
+            .await;
         }
         if projects.is_empty() {
             view.body.push_str("\n\nNo matching projects.");
@@ -181,7 +263,7 @@ impl TaskBoardView<'_> {
             &mut view,
             TaskBrowse::Dashboard(page),
             pages,
-            buttons,
+            Vec::new(),
         )
         .await;
         self.ui.send_view(conversation, &view).await?;
@@ -250,30 +332,46 @@ impl TaskBoardView<'_> {
                 result.job_count, result.total
             ),
         );
-        for status in TaskStatus::ALL {
-            view.body.push_str(&format!(
-                "\n{} ({})",
-                status,
-                result
-                    .status_counts
-                    .iter()
-                    .find(|(value, _)| *value == status)
-                    .map_or(0, |(_, count)| *count)
+        view.body
+            .push_str(&task_status_counts(&result.status_counts));
+        for task in &result.tasks {
+            self.add_entry(
+                conversation,
+                owner,
+                &mut view,
+                format!(
+                    "{}{}",
+                    if task.current { "Current · " } else { "" },
+                    task_summary(task)
+                ),
+                task.title.clone(),
+                TaskBrowse::Task {
+                    id: task.id.clone(),
+                    page: 0,
+                },
+            )
+            .await;
+        }
+        if result.tasks.is_empty() {
+            append_section(
+                &mut view,
+                "",
+                "No associated tasks. Use /jobs to browse the attached session's jobs.".into(),
+            );
+        }
+        let mut buttons = vec![("Dashboard".into(), TaskBrowse::Dashboard(0))];
+        if let Some(project) = &project {
+            buttons.push((
+                "Project jobs".into(),
+                TaskBrowse::ProjectJobs {
+                    project: project.clone(),
+                    status: None,
+                    page: 0,
+                },
             ));
+        } else {
+            buttons.push(("Session jobs".into(), TaskBrowse::Jobs(0)));
         }
-        let selected = &result.tasks;
-        let mut buttons = task_buttons(selected);
-        for task in selected {
-            view.body.push_str(&format!(
-                "\n\n{}{}",
-                if task.current { "Current · " } else { "" },
-                task_summary(task)
-            ));
-        }
-        if selected.is_empty() {
-            view.body.push_str("\n\nNo associated tasks.");
-        }
-        buttons.push(("Dashboard".into(), TaskBrowse::Dashboard(0)));
         self.add_browse_actions(
             conversation,
             owner,
@@ -281,6 +379,112 @@ impl TaskBoardView<'_> {
             TaskBrowse::Board { project, page },
             pages,
             buttons,
+        )
+        .await;
+        self.ui.send_view(conversation, &view).await?;
+        Ok(())
+    }
+
+    async fn show_project_jobs(
+        &self,
+        conversation: &ConversationRef,
+        owner: &str,
+        project: &str,
+        status: Option<JobStatus>,
+        page: usize,
+    ) -> Result<(), EngineError> {
+        let service = self.tasks_service()?;
+        let project = service
+            .store()
+            .project_result(project)
+            .await
+            .map_err(error)?;
+        let result = service
+            .store()
+            .project_job_page(&project.id, status, page, PAGE_SIZE)
+            .await
+            .map_err(error)?;
+        let mut view = OutboundView::text(
+            "Jobs",
+            format!(
+                "**Project:** {}\n**Jobs ({})**\nStatus: {}\nMost recently updated first.",
+                escape(&short(&project.name)),
+                result.total,
+                status.map_or_else(|| "ALL".into(), |status| status.to_string())
+            ),
+        );
+        for job in &result.jobs {
+            self.add_entry(
+                conversation,
+                owner,
+                &mut view,
+                format!(
+                    "**{}**\n{} · {} tasks",
+                    escape(&short(&job.title)),
+                    job.status,
+                    job.task_count
+                ),
+                job.title.clone(),
+                TaskBrowse::Job {
+                    id: job.id.clone(),
+                    page: 0,
+                },
+            )
+            .await;
+        }
+        if result.jobs.is_empty() {
+            append_section(
+                &mut view,
+                "",
+                "No matching jobs. Choose another status below.".into(),
+            );
+        }
+        let buttons = vec![
+            ("Dashboard".into(), TaskBrowse::Dashboard(0)),
+            (
+                "Project inbox".into(),
+                TaskBrowse::Inboxes {
+                    project: project.id.clone(),
+                    page: 0,
+                },
+            ),
+        ];
+        self.add_browse_actions(
+            conversation,
+            owner,
+            &mut view,
+            TaskBrowse::ProjectJobs {
+                project: project.id.clone(),
+                status,
+                page: result.page,
+            },
+            result.pages,
+            buttons,
+        )
+        .await;
+        self.add_action_section(
+            conversation,
+            owner,
+            &mut view,
+            "Filter by status",
+            std::iter::once(None)
+                .chain(JobStatus::ALL.into_iter().map(Some))
+                .map(|filter| {
+                    (
+                        filter.map_or_else(|| "All statuses".into(), |status| status.to_string()),
+                        TaskBrowse::ProjectJobs {
+                            project: project.id.clone(),
+                            status: filter,
+                            page: 0,
+                        },
+                        if filter == Some(JobStatus::Cancelled) {
+                            ActionStyle::Danger
+                        } else {
+                            ActionStyle::Primary
+                        },
+                    )
+                })
+                .collect(),
         )
         .await;
         self.ui.send_view(conversation, &view).await?;
@@ -309,25 +513,42 @@ impl TaskBoardView<'_> {
             "Jobs",
             format!("**Session:** `{session}`\n**Jobs ({})**", result.total),
         );
-        let mut buttons = Vec::new();
         for job in jobs {
-            let count = job.task_count;
-            view.body.push_str(&format!(
-                "\n\n**{}**\n{} · {count} tasks",
-                escape(&short(&job.title)),
-                job.status
-            ));
-            buttons.push((
+            self.add_entry(
+                conversation,
+                owner,
+                &mut view,
+                format!(
+                    "**{}**\n{} · {} tasks",
+                    escape(&short(&job.title)),
+                    job.status,
+                    job.task_count
+                ),
                 job.title.clone(),
                 TaskBrowse::Job {
                     id: job.id.clone(),
                     page: 0,
                 },
-            ));
+            )
+            .await;
         }
         if jobs.is_empty() {
-            view.body.push_str("\n\nNo associated jobs.");
+            append_section(
+                &mut view,
+                "",
+                "No associated jobs. Use Dashboard to browse all projects.".into(),
+            );
         }
+        let buttons = vec![
+            ("Dashboard".into(), TaskBrowse::Dashboard(0)),
+            (
+                "Session tasks".into(),
+                TaskBrowse::Board {
+                    project: None,
+                    page: 0,
+                },
+            ),
+        ];
         self.add_browse_actions(
             conversation,
             owner,
@@ -389,15 +610,34 @@ impl TaskBoardView<'_> {
                 result.total
             ),
         );
-        let mut buttons = task_buttons(&result.tasks);
-        // Task titles are on the buttons; keep the body available for authored Markdown.
-        buttons.push((
-            "Project board".into(),
-            TaskBrowse::Board {
-                project: Some(job.project_id.clone()),
-                page: 0,
-            },
-        ));
+        for task in &result.tasks {
+            self.add_entry(
+                conversation,
+                owner,
+                &mut view,
+                task_summary(task),
+                task.title.clone(),
+                TaskBrowse::Task {
+                    id: task.id.clone(),
+                    page: 0,
+                },
+            )
+            .await;
+        }
+        if result.tasks.is_empty() && result.total == 0 {
+            append_section(&mut view, "", "No tasks in this job yet.".into());
+        }
+        let buttons = vec![
+            (
+                "Project jobs".into(),
+                TaskBrowse::ProjectJobs {
+                    project: job.project_id.clone(),
+                    status: None,
+                    page: 0,
+                },
+            ),
+            ("Dashboard".into(), TaskBrowse::Dashboard(0)),
+        ];
         self.add_browse_actions(
             conversation,
             owner,
@@ -415,21 +655,6 @@ impl TaskBoardView<'_> {
     }
 }
 
-fn task_buttons(tasks: &[TaskListItem]) -> Vec<(String, TaskBrowse)> {
-    tasks
-        .iter()
-        .map(|t| {
-            (
-                t.title.clone(),
-                TaskBrowse::Task {
-                    id: t.id.clone(),
-                    page: 0,
-                },
-            )
-        })
-        .collect()
-}
-
 fn task_summary(task: &TaskListItem) -> String {
     let phase = task.phase.map_or_else(String::new, |p| format!(" · {p}"));
     let reason = task
@@ -441,6 +666,40 @@ fn task_summary(task: &TaskListItem) -> String {
         escape(&short(&task.title)),
         task.status
     )
+}
+
+fn task_status_counts(counts: &[(TaskStatus, usize)]) -> String {
+    use std::fmt::Write as _;
+    let mut text = String::new();
+    for status in TaskStatus::ALL {
+        let count = counts
+            .iter()
+            .find(|(value, _)| *value == status)
+            .map_or(0, |(_, count)| *count);
+        write!(text, "\n{status} ({count})").expect("writing to a String cannot fail");
+    }
+    text
+}
+
+pub(super) fn append_section(view: &mut OutboundView, title: &str, body: String) -> usize {
+    if view.sections.is_empty() {
+        view.sections.push(agentix_domain::ViewSection {
+            body: view.body.clone(),
+            ..Default::default()
+        });
+    }
+    if !title.is_empty() {
+        view.body.push_str(&format!("\n\n**{title}**"));
+    }
+    if !body.is_empty() {
+        view.body.push_str(&format!("\n\n{body}"));
+    }
+    view.sections.push(agentix_domain::ViewSection {
+        title: title.into(),
+        body,
+        ..Default::default()
+    });
+    view.sections.len() - 1
 }
 
 pub(super) fn page_count(count: usize) -> usize {

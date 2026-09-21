@@ -426,3 +426,34 @@ async fn job_process_output_keeps_tool_start_when_turn_is_interrupted() {
     let job = serde_json::to_value(&service.store().snapshot().await.unwrap().jobs[0]).unwrap();
     assert!(job["conversation"].to_string().contains("cargo test"));
 }
+
+#[tokio::test]
+async fn inbox_commands_keep_entry_controls_adjacent_and_return_paths_visible() {
+    let (_dir, service, _) = task_fixture().await;
+    let (engine, channel) = engine(service).await;
+    engine.handle_inbound(input("/attach thr_a")).await.unwrap();
+    engine
+        .handle_inbound(input("/inbox New requirement"))
+        .await
+        .unwrap();
+    assert_eq!(
+        section_for_action(&last(&channel), "View inbox entry").title,
+        "Navigation"
+    );
+    engine.handle_inbound(input("/inboxes")).await.unwrap();
+    let list = last(&channel);
+    assert!(
+        section_for_action(&list, "New requirement")
+            .body
+            .contains("TODO")
+    );
+    assert_eq!(
+        section_for_action(&list, "Project jobs").title,
+        "Navigation"
+    );
+    click(&engine, button(&list, "New requirement")).await;
+    assert_eq!(
+        section_for_action(&last(&channel), "Project inbox").title,
+        "Navigation"
+    );
+}
