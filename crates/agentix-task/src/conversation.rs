@@ -18,7 +18,10 @@ pub struct JobMessage {
 pub(crate) fn user_text(mut text: &str) -> &str {
     loop {
         let value = text.trim_start();
-        let block = if let Some(rest) = value.strip_prefix("# AGENTS.md instructions\n") {
+        let block = if let Some((_, rest)) = value.split_once('\n').filter(|(heading, _)| {
+            *heading == "# AGENTS.md instructions"
+                || heading.starts_with("# AGENTS.md instructions for ")
+        }) {
             let rest = rest.trim_start();
             if !rest.starts_with("<INSTRUCTIONS>") {
                 return text;
@@ -48,7 +51,11 @@ pub(crate) fn user_text(mut text: &str) -> &str {
     }
 }
 
-fn session_job_index(state: &Snapshot, request: &Value, session: &str) -> Result<Option<usize>> {
+pub(crate) fn session_job_index(
+    state: &Snapshot,
+    request: &Value,
+    session: &str,
+) -> Result<Option<usize>> {
     let associated = |job: &crate::Job| {
         job.session_id.as_deref() == Some(session)
             || job.followup_session_id.as_deref() == Some(session)
@@ -148,7 +155,68 @@ pub(crate) fn record(
         job.prompt = prompt.into();
         prompt_changed = true;
     }
+    let recorded = merge_messages(
+        job,
+        messages,
+        session,
+        now,
+        planning_prompt.is_some() || request["ordered"] == true,
+        request["before_message"].as_str(),
+    )?;
+    if recorded > 0 || prompt_changed {
+        job.revision += 1;
+        job.updated_at = now;
+    }
+    Ok(json!({"job_id":job.id,"recorded":recorded}))
+}
+
+// Compute insertion anchors once, then merge batches without nested scans or
+// shifting the existing history once for each new message.
+fn merge_messages(
+    job: &mut crate::Job,
+    messages: &[Value],
+    session: &str,
+    now: i64,
+    ordered: bool,
+    before: Option<&str>,
+) -> Result<usize> {
+    let mut entries = std::mem::take(&mut job.conversation);
+    let original_len = entries.len();
+    let mut indexes: std::collections::HashMap<String, usize> = entries
+        .iter()
+        .enumerate()
+        .filter(|(_, e)| e.session_id == session)
+        .map(|(i, e)| (e.id.clone(), i))
+        .collect();
     let mut recorded = 0;
+    if let Some(pending) = entries.last_mut()
+        && pending.role == "user"
+        && pending.session_id == session
+        && pending.id.starts_with("followup:")
+        && let Some(message) = messages.iter().find(|m| {
+            m["role"] == "user"
+                && m["text"].as_str().map(user_text) == Some(pending.text.as_str())
+                && m["id"].as_str().is_some_and(|id| !indexes.contains_key(id))
+        })
+    {
+        indexes.remove(&pending.id);
+        pending.id = required(message, "id")?.to_owned();
+        indexes.insert(pending.id.clone(), original_len - 1);
+        recorded += 1;
+    }
+    let mut next = before
+        .and_then(|id| indexes.get(id).copied())
+        .unwrap_or(original_len);
+    let mut anchors = vec![original_len; messages.len()];
+    if ordered {
+        for (i, message) in messages.iter().enumerate().rev() {
+            anchors[i] = next;
+            if let Some(index) = message["id"].as_str().and_then(|id| indexes.get(id)) {
+                next = *index;
+            }
+        }
+    }
+    let mut inserted = Vec::new();
     for (position, message) in messages.iter().enumerate() {
         let id = required(message, "id")?;
         let role = required(message, "role")?;
@@ -165,58 +233,43 @@ pub(crate) fn record(
         if text.trim().is_empty() {
             continue;
         }
-        // Deduplicate historical IDs before adopting a followup placeholder.
-        // Identical wording from an earlier turn must not claim the new prompt.
-        if let Some(existing) = job
-            .conversation
-            .iter_mut()
-            .find(|entry| entry.id == id && entry.session_id == session)
-        {
+        if let Some(&index) = indexes.get(id) {
+            let existing = &mut entries[index];
             ensure!(existing.role == role, "conflict: message role changed");
             if existing.text == text {
                 continue;
             }
             existing.text = text.into();
-        } else if role == "user"
-            && let Some(pending) = job.conversation.last_mut()
-            && pending.role == "user"
-            && pending.id.starts_with("followup:")
-            && pending.session_id == session
-            && pending.text == text
-        {
-            pending.id = id.into();
         } else {
-            // The live bridge may already have recorded the execution turn.
-            // Insert recovered planning messages before the next known message
-            // in this ordered batch, preserving all other conversation entries.
-            let next = planning_prompt
-                .and_then(|_| {
-                    messages[position + 1..].iter().find_map(|following| {
-                        job.conversation.iter().position(|entry| {
-                            entry.session_id == session && following["id"] == entry.id
-                        })
-                    })
-                })
-                .unwrap_or(job.conversation.len());
-            job.conversation.insert(
-                next,
-                JobMessage {
-                    id: id.into(),
-                    session_id: session.into(),
-                    role: role.into(),
-                    text: text.into(),
-                    recorded_at: now,
-                },
-            );
+            indexes.insert(id.into(), entries.len());
+            entries.push(JobMessage {
+                id: id.into(),
+                session_id: session.into(),
+                role: role.into(),
+                text: text.into(),
+                recorded_at: now,
+            });
+            inserted.push(anchors[position]);
         }
         if job.prompt.is_empty() && role == "user" {
             job.prompt = text.into();
         }
         recorded += 1;
     }
-    if recorded > 0 || prompt_changed {
-        job.revision += 1;
-        job.updated_at = now;
+    if inserted.is_empty() {
+        job.conversation = entries;
+    } else {
+        let mut buckets = vec![Vec::new(); original_len + 1];
+        for (entry, anchor) in entries.drain(original_len..).zip(inserted) {
+            buckets[anchor].push(entry);
+        }
+        let mut merged = Vec::with_capacity(original_len + messages.len());
+        for (entry, bucket) in entries.into_iter().zip(&mut buckets) {
+            merged.append(bucket);
+            merged.push(entry);
+        }
+        merged.append(&mut buckets[original_len]);
+        job.conversation = merged;
     }
-    Ok(json!({"job_id":job.id,"recorded":recorded}))
+    Ok(recorded)
 }

@@ -16,6 +16,7 @@
     "obsidian/",
     "runtime.mjs",
     "conversation.mjs",
+    "discussion.mjs",
     "README.md",
     "jev.mjs",
     "routing-state.mjs",

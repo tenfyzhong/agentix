@@ -9,7 +9,7 @@ function userText(text) {
     for (;;) {
         const value = text.trimStart();
         let block = value;
-        if (value.startsWith("# AGENTS.md instructions\n")) {
+        if (/^# AGENTS\.md instructions(?: for [^\n]+)?\n/.test(value)) {
             block = value.slice(value.indexOf("\n") + 1).trimStart();
             if (!block.startsWith("<INSTRUCTIONS>")) return text;
         }
@@ -115,7 +115,7 @@ function turnMessages(rows, turn) {
 }
 
 export async function transcriptConversation(path, options) {
-    let rows = [], current, planning = [], mode, turn = "";
+    let rows = [], current, planning = [], mode, turn = "", currentTurn;
     let needsTurn = false, foundUser = false, recovering = false;
     for await (const line of reverseLines(path, options)) {
         if (!line.trim()) continue;
@@ -140,9 +140,10 @@ export async function transcriptConversation(path, options) {
             const messages = turnMessages(rows, turn);
             if (!current) {
                 current = messages;
+                currentTurn = turn || messages.find(message => message.role === "user")?.id;
                 const input = messages.find(message => message.role === "user")?.text.trim();
                 // Codex's native accept-plan action submits this exact prompt.
-                if (!boundary || input !== "Implement the plan." || mode === "plan") break;
+                if (options?.currentOnly || !boundary || input !== "Implement the plan." || mode === "plan") break;
                 recovering = true;
             } else {
                 if (mode !== "plan") break;
@@ -156,19 +157,19 @@ export async function transcriptConversation(path, options) {
         const prompt = planning.find(message => message.role === "user")?.text;
         if (prompt) return {messages:[...planning, ...current],planning:{prompt,implementation_prompt:"Implement the plan."}};
     }
-    return {messages:current};
+    return {messages:current, turn_id:currentTurn || turn || current.find(message => message.role === "user")?.id};
 }
 
 export async function transcriptMessages(path) {
     return (await transcriptConversation(path)).messages;
 }
 
-export async function recordMessages(messages, runner, options, planning) {
+export async function recordMessages(messages, runner, options, planning, capture) {
     if (!messages.length) return;
     const directory = await mkdtemp(join(tmpdir(), "taskix-conversation-"));
     try {
         const path = join(directory, "messages.json");
-        await writeFile(path, JSON.stringify(planning ? {messages, planning} : messages), {mode:0o600});
+        await writeFile(path, JSON.stringify(capture ? {messages, ...capture} : planning ? {messages, planning} : messages), {mode:0o600});
         const response = await runner(["hook", "record", "--file", path], options);
         if (response.projection_pending) throw new Error(`Conversation saved; document synchronization is pending: ${response.projection_pending}`);
     } finally {

@@ -103,7 +103,30 @@ taskix obsidian setup --json
 
 `submit`, `approve`, and `reject` support expected revisions and idempotency keys. Submit requires ACTIVE and ready Tasks; reject requires PENDING_REVIEW. Human approval also accepts an ACTIVE Job with at least one Task when every Task is DONE, FAILED, or CANCELLED, preserving their outcomes. Reject preserves all Task outcomes and records `review_reason`. Approval sets completion time for `required` Jobs; ready `none` Jobs set it when completing directly. All status changes remain subject to CLI guards when initiated by Taskix Sync in Obsidian.
 
-`taskix hook record --session SESSION --file messages.json [--job JOB_ID]` records an array of visible `{id, role, text}` messages (`role` is `user` or `assistant`). Use stable IDs for retries. The Job must belong to that session; automatic selection uses its most recently worked Job. This does not claim work or change lifecycle state. Host hooks normally supply these records automatically. Conversation renders ordered `Turn N` sections with separate `User input` and `Agent output` for each turn; agent messages within a turn share one quote.
+## Discussion capture and attachment
+
+```sh
+taskix conversation list --session HOST_SESSION --limit 32 --json
+taskix conversation list --session HOST_SESSION --after CURSOR --limit 32 --full --json
+taskix conversation show TURN_ID --session HOST_SESSION --json
+taskix conversation attach --job JOB_ID --turn RELATED_TURN --turn CURRENT_TURN --conversation-revision 7 --expect-revision 12 --session HOST_SESSION --json
+```
+
+`list` returns a bounded metadata index by default, including turn IDs, byte sizes, `revision`, `next_cursor`, and `complete`. `--full` includes original visible messages. Follow cursors until complete before concluding which turns are relevant. `show` retrieves one original turn and its binding. All commands require the actual host session. Attachment requires a session-associated ACTIVE Job and does not claim work or change its lifecycle.
+
+Before creation/follow-up, call the packaged read-only helper using the absolute path supplied by the host's current-turn notice:
+
+```sh
+node /absolute/plugin/path/discussion.mjs HOST_SESSION < selection-request.json
+```
+
+The JSON request is `{"current_turn":"TURN_ID","target":{"title":"Final title","goal":"Acceptance goal","prompt":"Verbatim current request"}}`. Add `target.job_id` for an existing Job. Pi/OMP's structured `taskix` tool also accepts `args: ["conversation", "classify", "{...target JSON...}"]` and supplies the current turn ID. No `conversation classify` subcommand exists in the standalone CLI.
+
+For `status: selected`, append the returned `args` unchanged to creation/follow-up or ACTIVE attachment as appropriate. For `status: agent`, read all relevant original candidates and decide locally; uncertainty never means attaching every turn. Creation and follow-up accept repeated `--conversation-turn TURN_ID` and `--conversation-revision REV`. ACTIVE attachment uses repeated `--turn TURN_ID`. Existing Job writes also support `--expect-revision`. The helper's `--conversation-target` guards a new delivery's title, goal, and current prompt. Candidate/target conflicts reject the whole write; refresh and reassess. Always include the current implementation turn along with related preceding discussion. A new Prompt is taken from the earliest selected user input; follow-up keeps the original Prompt.
+
+`taskix hook record --session SESSION --file messages.json` accepts `{"turn_id":"native-turn-id","source":"host","messages":[{"id":"stable-message-id","role":"user","text":"visible text"}]}`. Capture stages unassigned turns without selecting a Job. After explicit attachment, repeated capture updates that Job even if another Job has since become more recent. Stable IDs deduplicate retries and preserve late replies. Drafts survive restart and expire after 30 days of session inactivity; bound history remains. Capture and attachment require no Task lease. Standalone hooks exclude tools, reasoning, and injected context.
+
+The legacy array of `{id, role, text}` and legacy `planning` wrapper remain accepted for older producers; those formats still use the latest eligible associated Job when no explicit `--job` is given. Upgrade producers to the turn-aware wrapper for discussion capture. Conversation renders ordered `Turn N` sections with `User input` and `Agent output`; replies within a turn share one quote.
 
 ## Jev routing statistics
 

@@ -303,6 +303,13 @@ async fn session_scope(
 ) -> Result<()> {
     let session = required(request, "session")?;
     let command = required(request, "command")?;
+    if command == "session.stage"
+        || (command == "session.record"
+            && request.get("turn_id").is_some()
+            && request["job"].is_null())
+    {
+        return Ok(());
+    }
     if command == "session.record" {
         if scope.jobs.is_empty() {
             scope.jobs.extend(ids(conn,"WITH activity(job_id,stamp,token) AS (SELECT id,json_extract(data,'$.created_at'),substr(id,instr(id,'_')+1) FROM jobs WHERE json_extract(data,'$.session_id')=?1 UNION ALL SELECT id,json_extract(data,'$.followup_at'),substr(COALESCE(json_extract(data,'$.followup_id'),id),instr(COALESCE(json_extract(data,'$.followup_id'),id),'_')+1) FROM jobs WHERE json_extract(data,'$.followup_session_id')=?1 UNION ALL SELECT job_id,json_extract(data,'$.updated_at'),substr(id,instr(id,'_')+1) FROM tasks WHERE json_extract(data,'$.last_session')=?1) SELECT jobs.id FROM activity JOIN jobs ON jobs.id=activity.job_id WHERE json_extract(jobs.data,'$.archived_at') IS NULL ORDER BY MAX(stamp,json_extract(jobs.data,'$.created_at')) DESC,token DESC,jobs.id DESC LIMIT 1",session).await?);

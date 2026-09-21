@@ -27,6 +27,8 @@ export class SessionState {
         if (!this.turn || this.turn.status !== 'inProgress') return false;
         this.associate();
         this.turn.status = this.interrupted ? 'interrupted' : this.turn.error ? 'failed' : 'completed';
+        const shared = globalThis[Symbol.for('agentix.discussion.turns')]?.get(this.ctx.sessionManager.getSessionId());
+        if (shared?.id === this.turn.id) shared.active = false;
         return true;
     }
     history(cursor, requestedLimit = 20) {
@@ -96,7 +98,12 @@ export class SessionState {
         this.interrupted = false;
         this.restored = false;
         this.touch();
-        this.turn = { previous_user_id: (this.ctx.sessionManager.getBranch?.() ?? this.ctx.sessionManager.getEntries()).findLast(e => e.type === 'message' && e.message?.role === 'user')?.id, id: randomUUID(), status: 'inProgress', user_text: this.pendingText || null, agent_text: '', tools: [], items: [] };
+        const registry = globalThis[Symbol.for('agentix.discussion.turns')];
+        const key = this.ctx.sessionManager.getSessionId();
+        const shared = registry?.get(key);
+        const id = shared?.active && shared.prompt === this.pendingText ? shared.id : randomUUID();
+        if (registry) registry.set(key, {id, prompt:this.pendingText, active:true, bridge:true});
+        this.turn = { previous_user_id: (this.ctx.sessionManager.getBranch?.() ?? this.ctx.sessionManager.getEntries()).findLast(e => e.type === 'message' && e.message?.role === 'user')?.id, id, status: 'inProgress', user_text: this.pendingText || null, agent_text: '', tools: [], items: [] };
         return true;
     }
     associate() {

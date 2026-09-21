@@ -77,7 +77,7 @@ impl Store {
             .fetch_one(&mut *tx)
             .await?;
         ensure!(
-            version <= 12,
+            version <= 13,
             "unsupported task database schema version {version}"
         );
         sqlx::raw_sql(include_str!("schema.sql"))
@@ -277,7 +277,7 @@ impl Store {
 
     pub(crate) async fn execute_as(
         &self,
-        request: Value,
+        mut request: Value,
         options: WriteOptions,
         source: Value,
     ) -> Result<Outcome> {
@@ -301,9 +301,19 @@ impl Store {
                 return Ok(serde_json::from_str(&row.get::<String, _>("result"))?);
             }
         }
+        crate::discussion::prepare(&mut tx, &mut request, &options, self.now()).await?;
         let before = crate::scoped::load_request(&mut tx, &request, self.now()).await?;
         let mut state = before.clone();
-        let result = mutations::apply(&mut state, &request, &options, self.now())?;
+        let mut result = mutations::apply(&mut state, &request, &options, self.now())?;
+        crate::discussion::attach(
+            &mut tx,
+            &mut state,
+            &request,
+            &options,
+            &mut result,
+            self.now(),
+        )
+        .await?;
         crate::inbox::refresh(&mut state, self.now());
         crate::deletion::check_pending_paths(&mut tx, &before, &state).await?;
         persist(&mut tx, &before, &state, &command, &options, self.now()).await?;

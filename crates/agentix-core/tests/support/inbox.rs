@@ -278,6 +278,24 @@ async fn inbox_polling_repairs_source_edits_without_an_attachment() {
     );
 }
 
+async fn attach_captured_turn(service: &agentix_task::Service, turn: &str) {
+    let job = service.store().snapshot().await.unwrap().jobs[0].clone();
+    assert!(
+        job.conversation.is_empty(),
+        "capture must await explicit ownership"
+    );
+    let pending = service
+        .store()
+        .discussion_list("thr_a", 0, 100)
+        .await
+        .unwrap();
+    assert_eq!(pending["turns"][0]["turn_id"], turn);
+    service.execute(
+        json!({"command":"conversation.attach","job":job.id,"conversation_turns":[turn],"conversation_revision":pending["revision"]}),
+        agentix_task::WriteOptions {session_ref:Some("thr_a".into()),expected_revision:Some(job.revision),..Default::default()},
+    ).await.unwrap();
+}
+
 #[tokio::test]
 async fn job_conversation_captures_completed_messages_even_without_im_binding() {
     let (_dir, service, _) = task_fixture().await;
@@ -302,7 +320,7 @@ async fn job_conversation_captures_completed_messages_even_without_im_binding() 
             .await
             .unwrap();
     }
-    // No user prompt is assigned until the turn has finished creating its Job.
+    // Capture stages the prompt without assigning it to the existing Job.
     assert!(serde_json::to_value(&service.store().snapshot().await.unwrap().jobs[0]).unwrap()["conversation"].as_array().unwrap().is_empty());
     engine
         .handle_agent_event(AgentEvent::TurnCompleted {
@@ -313,6 +331,7 @@ async fn job_conversation_captures_completed_messages_even_without_im_binding() 
         })
         .await
         .unwrap();
+    attach_captured_turn(&service, "turn_capture").await;
     let job = serde_json::to_value(&service.store().snapshot().await.unwrap().jobs[0]).unwrap();
     assert_eq!(job["conversation"].as_array().unwrap().len(), 2);
     assert_eq!(job["conversation"][1]["text"], "Visible answer");
@@ -347,7 +366,7 @@ async fn job_conversation_records_enabled_process_output_in_agent_quote() {
             .await
             .unwrap();
     }
-    // No user prompt is assigned until the turn has finished creating its Job.
+    // Capture stages the prompt without assigning it to the existing Job.
     assert!(serde_json::to_value(&service.store().snapshot().await.unwrap().jobs[0]).unwrap()["conversation"].as_array().unwrap().is_empty());
     engine
         .handle_agent_event(AgentEvent::TurnCompleted {
@@ -358,6 +377,7 @@ async fn job_conversation_records_enabled_process_output_in_agent_quote() {
         })
         .await
         .unwrap();
+    attach_captured_turn(&service, "turn_capture").await;
     let job = serde_json::to_value(&service.store().snapshot().await.unwrap().jobs[0]).unwrap();
     assert_eq!(job["conversation"].as_array().unwrap().len(), 4);
     assert_eq!(job["conversation"][3]["text"], "Visible answer");
@@ -402,6 +422,7 @@ async fn job_process_output_keeps_tool_start_when_turn_is_interrupted() {
         })
         .await
         .unwrap();
+    attach_captured_turn(&service, "t").await;
     let job = serde_json::to_value(&service.store().snapshot().await.unwrap().jobs[0]).unwrap();
     assert!(job["conversation"].to_string().contains("cargo test"));
 }

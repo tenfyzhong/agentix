@@ -48,6 +48,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Inspect and attach session discussion turns.
+    Conversation {
+        #[command(subcommand)]
+        action: ConversationCommand,
+    },
     /// Submit, inspect, claim, or cancel human requirements in a Project Inbox.
     Inbox {
         #[command(subcommand)]
@@ -114,6 +119,31 @@ enum Command {
     Hook {
         #[command(subcommand)]
         action: HookCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum ConversationCommand {
+    /// Read pending turns in source order, including their selection revision.
+    List {
+        /// Include original message bodies instead of only the bounded index.
+        #[arg(long)]
+        full: bool,
+        #[arg(long, default_value_t = 0)]
+        after: i64,
+        #[arg(long, default_value_t = 32)]
+        limit: i64,
+    },
+    /// Read a turn's original messages and current binding.
+    Show { turn: String },
+    /// Attach selected discussion turns to an ACTIVE session Job.
+    Attach {
+        #[arg(long)]
+        job: String,
+        #[arg(long = "turn", required = true)]
+        turns: Vec<String>,
+        #[arg(long)]
+        conversation_revision: Option<i64>,
     },
 }
 
@@ -235,6 +265,14 @@ enum JobCommand {
         id: String,
         #[arg(long)]
         prompt: String,
+        /// Related session turns selected by Jev or the agent; repeat to include several.
+        #[arg(long = "conversation-turn")]
+        conversation_turns: Vec<String>,
+        #[arg(long)]
+        conversation_revision: Option<i64>,
+        /// Fingerprint of the target used by the discussion classifier.
+        #[arg(long)]
+        conversation_target: Option<String>,
         /// Inbox TODO IDs selected by the agent through semantic matching; repeat for multiple entries.
         #[arg(long = "inbox")]
         inbox_ids: Vec<String>,
@@ -258,6 +296,14 @@ enum JobCommand {
         /// Original user prompt, preserved verbatim in the Job document.
         #[arg(long, default_value = "")]
         prompt: String,
+        /// Related session turns selected by Jev or the agent; repeat to include several.
+        #[arg(long = "conversation-turn")]
+        conversation_turns: Vec<String>,
+        #[arg(long)]
+        conversation_revision: Option<i64>,
+        /// Fingerprint of the target used by the discussion classifier.
+        #[arg(long)]
+        conversation_target: Option<String>,
         /// Inbox TODO IDs selected by the agent through semantic matching; repeat for multiple entries.
         #[arg(long = "inbox")]
         inbox_ids: Vec<String>,
@@ -583,6 +629,7 @@ async fn run_task_command(cli: &Cli) -> Result<Value> {
     }
     service.store().reap_expired().await?;
     match &cli.command {
+        Command::Conversation { action } => conversation(cli, &service, action).await,
         Command::Inbox { action } => inbox(cli, &service, action).await,
         Command::Doctor => {
             let state = service.store().snapshot().await?;
@@ -637,6 +684,22 @@ async fn run_task_command(cli: &Cli) -> Result<Value> {
             action: ObsidianCommand::Snapshot,
         } => Ok(response(service.obsidian_snapshot().await?)),
         Command::Init(_) | Command::Completions { .. } | Command::Obsidian { .. } => unreachable!(),
+    }
+}
+
+async fn conversation(cli: &Cli, service: &Service, action: &ConversationCommand) -> Result<Value> {
+    let session = cli
+        .session
+        .as_deref()
+        .context("conversation requires --session")?;
+    match action {
+        ConversationCommand::List { after, limit, full } => Ok(response(if *full {
+            service.store().discussion_list(session, *after, *limit).await?
+        } else {
+            service.store().discussion_index(session, *after, *limit).await?
+        })),
+        ConversationCommand::Show { turn } => Ok(response(service.store().discussion_show(session, turn).await?)),
+        ConversationCommand::Attach { job, turns, conversation_revision } => mutate(cli, service, json!({"command":"conversation.attach","job":job,"conversation_turns":turns,"conversation_revision":conversation_revision})).await,
     }
 }
 
@@ -788,11 +851,14 @@ async fn job(cli: &Cli, service: &Service, action: &JobCommand) -> Result<Value>
             id,
             prompt,
             inbox_ids,
+            conversation_turns,
+            conversation_revision,
+            conversation_target,
         } => {
             mutate(
                 cli,
                 service,
-                json!({"command":"job.followup","job":id,"prompt":prompt,"inbox_ids":inbox_ids}),
+                json!({"command":"job.followup","job":id,"prompt":prompt,"inbox_ids":inbox_ids,"conversation_turns":conversation_turns,"conversation_revision":conversation_revision,"conversation_target":conversation_target}),
             )
             .await
         }
@@ -814,6 +880,9 @@ async fn job(cli: &Cli, service: &Service, action: &JobCommand) -> Result<Value>
             mutate(cli, service, json!({"command":"job.delete","job":id})).await
         }
         JobCommand::Create {
+            conversation_turns,
+            conversation_revision,
+            conversation_target,
             title,
             goal,
             name,
@@ -825,7 +894,7 @@ async fn job(cli: &Cli, service: &Service, action: &JobCommand) -> Result<Value>
             mutate(
                 cli,
                 service,
-                json!({"command":"job.create","project":project,"title":title,"goal":goal,"name":name,"prompt":prompt,"inbox_ids":inbox_ids,"review_policy":review_policy}),
+                json!({"command":"job.create","project":project,"title":title,"goal":goal,"name":name,"prompt":prompt,"inbox_ids":inbox_ids,"review_policy":review_policy,"conversation_turns":conversation_turns,"conversation_revision":conversation_revision,"conversation_target":conversation_target}),
             )
             .await
         }
@@ -1044,6 +1113,10 @@ async fn context(
         value = context_snapshot(cli, service, task, job).await?;
     }
     value["result"]["inbox_todos"] = json!(todos);
+    if let Some(session) = cli.session.as_deref() {
+        let pending = service.store().discussion_index(session, 0, 8).await?;
+        value["result"]["discussion"] = pending;
+    }
     Ok(value)
 }
 
@@ -1149,6 +1222,11 @@ async fn hook(cli: &Cli, service: &Service, action: &HookCommand) -> Result<Valu
             };
             let mut request =
                 json!({"command":"session.record","session":session,"messages":messages});
+            for key in ["turn_id", "source"] {
+                if let Some(value) = capture.get(key) {
+                    request[key] = value.clone();
+                }
+            }
             if let Some(planning) = capture.get("planning") {
                 request["planning"] = planning.clone();
             }

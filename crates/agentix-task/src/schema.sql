@@ -90,7 +90,24 @@ CREATE TABLE IF NOT EXISTS pending_documents (
     key TEXT PRIMARY KEY,
     generation TEXT NOT NULL
 );
-PRAGMA user_version = 12;
+CREATE TABLE IF NOT EXISTS discussion_sessions (
+    session_id TEXT PRIMARY KEY,
+    revision INTEGER NOT NULL,
+    activity INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS discussion_turns (
+    position INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL REFERENCES discussion_sessions(session_id),
+    turn_id TEXT NOT NULL,
+    source TEXT NOT NULL,
+    messages TEXT NOT NULL CHECK(json_valid(messages)),
+    job_id TEXT,
+    UNIQUE(session_id, turn_id)
+);
+CREATE INDEX IF NOT EXISTS discussion_pending ON discussion_turns(session_id, job_id, position);
+CREATE INDEX IF NOT EXISTS discussion_job ON discussion_turns(job_id) WHERE job_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS discussion_activity ON discussion_sessions(activity);
+PRAGMA user_version = 13;
 PRAGMA application_id = 0x4158544b;
 CREATE INDEX IF NOT EXISTS jobs_by_followup_session ON jobs(json_extract(data, '$.followup_session_id'));
 CREATE INDEX IF NOT EXISTS inbox_by_lease_session ON inbox_entries(json_extract(data, '$.lease.session_ref'));

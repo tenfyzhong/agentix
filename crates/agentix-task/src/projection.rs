@@ -139,6 +139,11 @@ impl Service {
             return self.write_plan(request, options).await;
         }
         if let Some(mut outcome) = self.store.replay(&request, &options).await? {
+            if outcome.result["staged"] == true
+                || (command == "session.record" && outcome.result["unchanged"] == true)
+            {
+                return Ok(outcome);
+            }
             let deferred = (command == "inbox.set-status")
                 .then(|| outcome.result["id"].as_str())
                 .flatten();
@@ -204,8 +209,13 @@ impl Service {
             );
         }
         let inbox_status = command == "inbox.set-status";
+        let recording = command == "session.record";
         let mut outcome = self.store.execute(request, options).await?;
         drop(lock);
+        // Session drafts produce no documents and must not depend on vault access.
+        if outcome.result["staged"] == true || (recording && outcome.result["unchanged"] == true) {
+            return Ok(outcome);
+        }
         // A reopened entry still has its old [-] on disk until projection.
         // Do not import that stale mark as a new cancellation of this write.
         let deferred = inbox_status
