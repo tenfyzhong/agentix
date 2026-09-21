@@ -1,6 +1,12 @@
 // A real independent hook process for concurrent metrics and latency tests.
 import { runHook } from "../../runtime.mjs";
-const [directory, mode, session] = process.argv.slice(2);
+const [directory, mode, session, clock] = process.argv.slice(2);
+// Concurrent persistence checks must not depend on CI worker startup speed.
+// Latency samples retain the real production deadline.
+if (clock === "controlled") {
+    const { mock } = await import("node:test");
+    mock.timers.enable({ apis: ["setTimeout"] });
+}
 const started = performance.now();
 const result = await runHook({ hook_event_name: "UserPromptSubmit", session_id: session, cwd: directory, prompt: "Discuss routing" }, async args => {
     if (args[1] !== "snapshot") throw new Error("Unexpected lifecycle call");

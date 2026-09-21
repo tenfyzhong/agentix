@@ -207,18 +207,18 @@ test("metrics_worker_failure_is_redacted_and_does_not_reject", async () => {
     assert.equal(await pending, false);
 });
 
-async function hookProcess(directory, mode, session) {
+async function hookProcess(directory, mode, session, clock = "real") {
     const { execFile } = await import("node:child_process");
     const { promisify } = await import("node:util");
     const { fileURLToPath } = await import("node:url");
-    const { stdout } = await promisify(execFile)(process.execPath, [fileURLToPath(new URL("fixtures/metrics-process.mjs", import.meta.url)), directory, mode, session]);
+    const { stdout } = await promisify(execFile)(process.execPath, [fileURLToPath(new URL("fixtures/metrics-process.mjs", import.meta.url)), directory, mode, session, clock]);
     return JSON.parse(stdout);
 }
 
 test("concurrent_hook_processes_keep_complete_metrics_transactions", async t => {
     const f = await fixture(t);
     const directory = f.args.options.cwd;
-    const outputs = await Promise.all(Array.from({ length: 4 }, (_, i) => hookProcess(directory, "true", `parallel_${i}`)));
+    const outputs = await Promise.all(Array.from({ length: 4 }, (_, i) => hookProcess(directory, "true", `parallel_${i}`, "controlled")));
     assert.ok(outputs.every(output => output.routed));
     const requests = await rows(f.path, "SELECT * FROM requests");
     // Best effort may drop a contended event, but may never commit partial answers.
@@ -233,7 +233,11 @@ test("hook_latency_measurement_includes_optional_writer_and_lock_contention", as
     const f = await fixture(t);
     const off = await hookProcess(f.args.options.cwd, "false", "off");
     await assert.rejects(access(f.path));
+    // Seed the schema with a verified write independent of the real-clock sample.
+    await routePrompt(f.args);
     const on = await hookProcess(f.args.options.cwd, "true", "on");
+    const beforeLock = await rows(f.path, "SELECT * FROM requests ORDER BY rowid");
+    assert.ok(beforeLock.length >= 1 && beforeLock.length <= 2);
     const { DatabaseSync } = await import("node:sqlite");
     const db = new DatabaseSync(f.path);
     db.exec("BEGIN IMMEDIATE");
@@ -241,7 +245,7 @@ test("hook_latency_measurement_includes_optional_writer_and_lock_contention", as
     try { locked = await hookProcess(f.args.options.cwd, "true", "locked"); }
     finally { db.exec("ROLLBACK"); db.close(); }
     assert.ok(off.routed && on.routed && locked.routed);
-    assert.equal((await rows(f.path, "SELECT * FROM requests")).length, 1);
+    assert.deepEqual(await rows(f.path, "SELECT * FROM requests ORDER BY rowid"), beforeLock);
     assert.ok([off, on, locked].every(result => Number.isFinite(result.elapsed_ms) && result.elapsed_ms >= 0));
     t.diagnostic(`Whole hook milliseconds (not a CI performance threshold): ${JSON.stringify({ off: off.elapsed_ms, on: on.elapsed_ms, locked: locked.elapsed_ms })}`);
 });
