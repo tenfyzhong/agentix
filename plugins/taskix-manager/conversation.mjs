@@ -35,13 +35,18 @@ export function visibleMessage(message, identity = "") {
     return { id, role: message.role, text };
 }
 
-async function* reverseLines(path) {
+async function* reverseLines(path, { signal, maxBytes = Infinity } = {}) {
+    signal?.throwIfAborted();
     const file = await open(path, "r");
     try {
         let position = (await file.stat()).size;
         let fragments = [];
+        let remaining = maxBytes;
         while (position > 0) {
-            const length = Math.min(position, 64 * 1024);
+            signal?.throwIfAborted();
+            if (remaining <= 0) throw new Error("Transcript routing budget exceeded");
+            const length = Math.min(position, 64 * 1024, remaining);
+            remaining -= length;
             position -= length;
             const buffer = Buffer.allocUnsafe(length);
             let filled = 0;
@@ -51,6 +56,7 @@ async function* reverseLines(path) {
                 filled += bytesRead;
             }
             let end = filled;
+            signal?.throwIfAborted();
             for (let index = filled - 1; index >= 0; index--) {
                 if (buffer[index] !== 10) continue;
                 fragments.push(buffer.subarray(index + 1, end));
@@ -108,10 +114,10 @@ function turnMessages(rows, turn) {
     });
 }
 
-export async function transcriptConversation(path) {
+export async function transcriptConversation(path, options) {
     let rows = [], current, planning = [], mode, turn = "";
     let needsTurn = false, foundUser = false, recovering = false;
-    for await (const line of reverseLines(path)) {
+    for await (const line of reverseLines(path, options)) {
         if (!line.trim()) continue;
         const row = parsed(line);
         if (!row) continue;

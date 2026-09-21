@@ -232,3 +232,16 @@ test("question capture tolerates malformed results and keeps free text answers",
     assert.deepEqual(batches[0].map(message => message.text), ["Request",
         "Which scope?\n\n- Local: Only this project\n- Global: All projects", "Which scope?\nCustom scope\nWith exceptions"]);
 });
+
+test("routing_transcript_budget_rejects_oversized_records_and_honors_abort", async t => {
+    const { transcriptConversation } = await import("../conversation.mjs");
+    const directory = await mkdtemp(join(tmpdir(), "taskix-routing-history-"));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const path = join(directory, "session.jsonl");
+    await writeFile(path, JSON.stringify({ type: "user", uuid: "u", message: { role: "user", content: "界".repeat(100000) } }));
+    await assert.rejects(transcriptConversation(path, { maxBytes: 65536 }), /budget/);
+    const controller = new AbortController();
+    controller.abort();
+    await assert.rejects(transcriptConversation(path, { signal: controller.signal }), { name: "AbortError" });
+    assert.equal((await transcriptConversation(path)).messages[0].text.length, 100000, "default recording remains unbounded");
+});

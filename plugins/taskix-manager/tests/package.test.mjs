@@ -184,6 +184,7 @@ test("hosts discover shared hooks once and load only their own interruption even
         "SessionEnd",
         "SessionStart",
         "Stop",
+        "UserPromptSubmit",
     ]);
     for (const [event, groups] of Object.entries(config.hooks)) {
         assert.equal(groups.length, 1, event);
@@ -258,6 +259,12 @@ test("npm package contains all host manifests, hooks and resources but no tests"
         "hooks/run.mjs",
         "runtime.mjs",
         "conversation.mjs",
+        "jev.mjs",
+        "routing-state.mjs",
+        "routing-delegation.mjs",
+        "jev-metrics.mjs",
+        "metrics-schema.sql",
+        "metrics-schema.md",
         "extensions/pi.ts",
         "extensions/omp.ts",
         "skills/taskix-manager/SKILL.md",

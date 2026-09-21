@@ -1,5 +1,7 @@
 # Taskix workflow
 
+Optional host routing uses `TASKIX_JEV_ENABLED=true`, `TASKIX_JEV_URL` (full evaluation endpoint), and `TASKIX_JEV_API_KEY`. Missing configuration preserves the existing workflow. A confident host `Taskix route` supplies selected Job/Inbox IDs; use those in the normal guarded commands below. Uncertain or failed classification delegates to the Agent.
+
 Project Inbox commands (run `claim-next` only after an explicit user request to take the next Job; one request authorizes one entry):
 
 ```sh
@@ -102,3 +104,27 @@ taskix obsidian setup --json
 `submit`, `approve`, and `reject` support expected revisions and idempotency keys. Submit requires ACTIVE and ready Tasks; reject requires PENDING_REVIEW. Human approval also accepts an ACTIVE Job with at least one Task when every Task is DONE, FAILED, or CANCELLED, preserving their outcomes. Reject preserves all Task outcomes and records `review_reason`. Approval sets completion time for `required` Jobs; ready `none` Jobs set it when completing directly. All status changes remain subject to CLI guards when initiated by Taskix Sync in Obsidian.
 
 `taskix hook record --session SESSION --file messages.json [--job JOB_ID]` records an array of visible `{id, role, text}` messages (`role` is `user` or `assistant`). Use stable IDs for retries. The Job must belong to that session; automatic selection uses its most recently worked Job. This does not claim work or change lifecycle state. Host hooks normally supply these records automatically. Conversation renders ordered `Turn N` sections with separate `User input` and `Agent output` for each turn; agent messages within a turn share one quote.
+
+## Jev routing statistics
+
+Statistics collection is opt-in via `TASKIX_JEV_METRICS_ENABLED=true` in the host.
+Use `TASKIX_JEV_METRICS_DB` to select the same independent SQLite database for
+collection and queries. These commands do not open the task database or require
+`taskix init`; reading does not enable collection or create a missing database.
+
+```sh
+taskix routing metrics report
+taskix routing metrics report --json
+taskix routing metrics list --limit 50 --json
+taskix routing metrics label REQUEST_ID correct
+taskix routing metrics label REQUEST_ID incorrect
+```
+
+Report adoption, fallback reasons, per-question issues, reviewed accuracy and
+0.85/0.90/0.95 score gates. Gate counts are not predicted adoption. Only human
+labels establish reviewed accuracy; model agreement is not a correctness label.
+List returns the most recent requests and scores (limit 1–1000, default 50).
+
+`PREP_MS` (JSON `mean_duration_ms`) measures preparation and Jev evaluation only;
+it excludes metrics persistence and subsequent native classifier execution. Writes
+are best-effort, so reports describe stored observations, not all host prompts.

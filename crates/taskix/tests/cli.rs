@@ -478,7 +478,12 @@ fn plugin_entrypoints_execute_the_compiled_taskix() {
         &std::env::var_os("PATH").unwrap_or_default(),
     ));
     let output = Command::new("node")
-        .args(["--test", "tests/integration.mjs"])
+        .args([
+            "--test",
+            "tests/integration.mjs",
+            "tests/jev-metrics.test.mjs",
+        ])
+        .env("TASKIX_TEST_METRICS_BIN", env!("CARGO_BIN_EXE_taskix"))
         .current_dir(plugin)
         .env("PATH", std::env::join_paths(paths).unwrap())
         .output()
@@ -1174,4 +1179,72 @@ fn hook_record_accepts_planning_envelope() {
         result["conversation"][1]["text"],
         "<proposed_plan>Use local scope</proposed_plan>"
     );
+}
+
+#[test]
+fn routing_reads_bounded_candidates_and_revision_without_mutation() {
+    let cli = Cli::new();
+    let job = cli.job("Route work");
+    let task = cli.task(&job, "Waiting task");
+    cli.ok(&["task", "wait", &task, "--reason", "Choose a region"]);
+    let before = cli.ok(&["job", "show", &job]);
+    let project = before["project_id"].as_str().unwrap();
+    let result = cli.ok(&["routing", "candidates", project]);
+    assert_eq!(result["complete"], true);
+    assert_eq!(result["candidates"][0]["job"]["id"], job);
+    assert_eq!(
+        result["candidates"][0]["tasks"][0]["reason"],
+        "Choose a region"
+    );
+    let revision = cli.ok(&["routing", "revision", &job]);
+    assert_eq!(revision["revision"], before["revision"]);
+    assert!(revision.get("conversation").is_none());
+    assert_eq!(cli.ok(&["job", "show", &job]), before);
+}
+
+#[test]
+fn routing_snapshot_renews_assignment_and_imports_human_cancellation() {
+    let cli = Cli::new();
+    let job = cli.job("Route work");
+    let task = cli.task(&job, "Owned task");
+    cli.claim(&task, "routing-snapshot");
+    let project = cli.ok(&["job", "show", &job])["project_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let entry = cli.ok(&[
+        "inbox",
+        "add",
+        "--project",
+        &project,
+        "--content",
+        "Route work",
+    ]);
+    cli.ok(&[
+        "job",
+        "update",
+        &job,
+        "--inbox",
+        entry["id"].as_str().unwrap(),
+        "--executor",
+        "agent:codex",
+        "--session",
+        "routing-snapshot",
+    ]);
+    let snapshot = cli.ok(&["routing", "snapshot", "--session", "routing-snapshot"]);
+    assert_eq!(snapshot["job_id"], job);
+    assert_eq!(snapshot["task_id"], task);
+    assert_eq!(snapshot["routing"]["candidates"][0]["job"]["id"], job);
+    assert_eq!(snapshot["routing"]["complete"], true);
+    assert!(snapshot.get("lease").is_none());
+    let context = cli.ok(&["context", "--session", "routing-snapshot"]);
+    let path = context["inbox_path"].as_str().unwrap();
+    let body = std::fs::read_to_string(path).unwrap();
+    assert!(body.contains("- [/]"));
+    std::fs::write(path, body.replace("- [/]", "- [-]")).unwrap();
+    let cancelled = cli.ok(&["routing", "snapshot", "--session", "routing-snapshot"]);
+    assert_eq!(cancelled["job_id"], Value::Null);
+    assert_eq!(cancelled["task_id"], Value::Null);
+    assert_eq!(cancelled["inbox_cancellations"][0]["job_id"], job);
+    assert_eq!(cancelled["routing"]["candidates"], json!([]));
 }

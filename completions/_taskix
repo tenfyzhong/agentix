@@ -1548,6 +1548,255 @@ _arguments "${_arguments_options[@]}" : \
 '--help[Print help]' \
 && ret=0
 ;;
+(routing)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_taskix__subcmd__routing_commands" \
+"*::: :->routing" \
+&& ret=0
+
+    case $state in
+    (routing)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskix-routing-command-$line[1]:"
+        case $line[1] in
+            (metrics)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_taskix__subcmd__routing__subcmd__metrics_commands" \
+"*::: :->metrics" \
+&& ret=0
+
+    case $state in
+    (metrics)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskix-routing-metrics-command-$line[1]:"
+        case $line[1] in
+            (report)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+'--limit=[]:LIMIT:_default' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(label)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':request_id:_default' \
+':review:(correct incorrect)' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_taskix__subcmd__routing__subcmd__metrics__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskix-routing-metrics-help-command-$line[1]:"
+        case $line[1] in
+            (report)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(label)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(snapshot)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(candidates)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':project_id:_default' \
+&& ret=0
+;;
+(revision)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':job_id:_default' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_taskix__subcmd__routing__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskix-routing-help-command-$line[1]:"
+        case $line[1] in
+            (metrics)
+_arguments "${_arguments_options[@]}" : \
+":: :_taskix__subcmd__routing__subcmd__help__subcmd__metrics_commands" \
+"*::: :->metrics" \
+&& ret=0
+
+    case $state in
+    (metrics)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskix-routing-help-metrics-command-$line[1]:"
+        case $line[1] in
+            (report)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(label)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(snapshot)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(candidates)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(revision)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
 (hook)
 _arguments "${_arguments_options[@]}" : \
 '--config=[]:CONFIG:_files' \
@@ -2062,6 +2311,62 @@ esac
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
+(routing)
+_arguments "${_arguments_options[@]}" : \
+":: :_taskix__subcmd__help__subcmd__routing_commands" \
+"*::: :->routing" \
+&& ret=0
+
+    case $state in
+    (routing)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskix-help-routing-command-$line[1]:"
+        case $line[1] in
+            (metrics)
+_arguments "${_arguments_options[@]}" : \
+":: :_taskix__subcmd__help__subcmd__routing__subcmd__metrics_commands" \
+"*::: :->metrics" \
+&& ret=0
+
+    case $state in
+    (metrics)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskix-help-routing-metrics-command-$line[1]:"
+        case $line[1] in
+            (report)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(label)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(snapshot)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(candidates)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(revision)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
 (hook)
 _arguments "${_arguments_options[@]}" : \
 ":: :_taskix__subcmd__help__subcmd__hook_commands" \
@@ -2130,6 +2435,7 @@ _taskix_commands() {
 'plan:Publish, revise, or inspect the execution Plan in a Task note' \
 'event:Inspect the ordered audit log of task coordination events' \
 'context:Show Task, Job, lease, Plan, and document context for a session or explicit IDs' \
+'routing:Read bounded routing facts for host-side classifiers' \
 'hook:Handle agent session lifecycle events and maintain Task leases' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
@@ -2196,6 +2502,7 @@ _taskix__subcmd__help_commands() {
 'plan:Publish, revise, or inspect the execution Plan in a Task note' \
 'event:Inspect the ordered audit log of task coordination events' \
 'context:Show Task, Job, lease, Plan, and document context for a session or explicit IDs' \
+'routing:Read bounded routing facts for host-side classifiers' \
 'hook:Handle agent session lifecycle events and maintain Task leases' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
@@ -2501,6 +2808,55 @@ _taskix__subcmd__help__subcmd__project__subcmd__show_commands() {
 _taskix__subcmd__help__subcmd__project__subcmd__unarchive_commands() {
     local commands; commands=()
     _describe -t commands 'taskix help project unarchive commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__routing_commands] )) ||
+_taskix__subcmd__help__subcmd__routing_commands() {
+    local commands; commands=(
+'metrics:Inspect optional Jev statistics without loading the task database' \
+'snapshot:Refresh leases and Inbox edits and return bounded prompt routing context' \
+'candidates:Read bounded ACTIVE and \`PENDING_REVIEW\` Jobs and their Tasks by exact Project ID' \
+'revision:Read only identity and lifecycle fields by exact Job ID' \
+    )
+    _describe -t commands 'taskix help routing commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__routing__subcmd__candidates_commands] )) ||
+_taskix__subcmd__help__subcmd__routing__subcmd__candidates_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help routing candidates commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__routing__subcmd__metrics_commands] )) ||
+_taskix__subcmd__help__subcmd__routing__subcmd__metrics_commands() {
+    local commands; commands=(
+'report:Show adoption, fallback reasons, reviewed accuracy, and threshold comparisons' \
+'list:Show recent requests and their individual answer scores' \
+'label:Record human assessment of the full proposed route and Inbox selection' \
+    )
+    _describe -t commands 'taskix help routing metrics commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__routing__subcmd__metrics__subcmd__label_commands] )) ||
+_taskix__subcmd__help__subcmd__routing__subcmd__metrics__subcmd__label_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help routing metrics label commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__routing__subcmd__metrics__subcmd__list_commands] )) ||
+_taskix__subcmd__help__subcmd__routing__subcmd__metrics__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help routing metrics list commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__routing__subcmd__metrics__subcmd__report_commands] )) ||
+_taskix__subcmd__help__subcmd__routing__subcmd__metrics__subcmd__report_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help routing metrics report commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__routing__subcmd__revision_commands] )) ||
+_taskix__subcmd__help__subcmd__routing__subcmd__revision_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help routing revision commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__routing__subcmd__snapshot_commands] )) ||
+_taskix__subcmd__help__subcmd__routing__subcmd__snapshot_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help routing snapshot commands' commands "$@"
 }
 (( $+functions[_taskix__subcmd__help__subcmd__sync_commands] )) ||
 _taskix__subcmd__help__subcmd__sync_commands() {
@@ -3189,6 +3545,142 @@ _taskix__subcmd__project__subcmd__show_commands() {
 _taskix__subcmd__project__subcmd__unarchive_commands() {
     local commands; commands=()
     _describe -t commands 'taskix project unarchive commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__routing_commands] )) ||
+_taskix__subcmd__routing_commands() {
+    local commands; commands=(
+'metrics:Inspect optional Jev statistics without loading the task database' \
+'snapshot:Refresh leases and Inbox edits and return bounded prompt routing context' \
+'candidates:Read bounded ACTIVE and \`PENDING_REVIEW\` Jobs and their Tasks by exact Project ID' \
+'revision:Read only identity and lifecycle fields by exact Job ID' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'taskix routing commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__routing__subcmd__candidates_commands] )) ||
+_taskix__subcmd__routing__subcmd__candidates_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix routing candidates commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__routing__subcmd__help_commands] )) ||
+_taskix__subcmd__routing__subcmd__help_commands() {
+    local commands; commands=(
+'metrics:Inspect optional Jev statistics without loading the task database' \
+'snapshot:Refresh leases and Inbox edits and return bounded prompt routing context' \
+'candidates:Read bounded ACTIVE and \`PENDING_REVIEW\` Jobs and their Tasks by exact Project ID' \
+'revision:Read only identity and lifecycle fields by exact Job ID' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'taskix routing help commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__routing__subcmd__help__subcmd__candidates_commands] )) ||
+_taskix__subcmd__routing__subcmd__help__subcmd__candidates_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix routing help candidates commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__routing__subcmd__help__subcmd__help_commands] )) ||
+_taskix__subcmd__routing__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix routing help help commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__routing__subcmd__help__subcmd__metrics_commands] )) ||
+_taskix__subcmd__routing__subcmd__help__subcmd__metrics_commands() {
+    local commands; commands=(
+'report:Show adoption, fallback reasons, reviewed accuracy, and threshold comparisons' \
+'list:Show recent requests and their individual answer scores' \
+'label:Record human assessment of the full proposed route and Inbox selection' \
+    )
+    _describe -t commands 'taskix routing help metrics commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__routing__subcmd__help__subcmd__metrics__subcmd__label_commands] )) ||
+_taskix__subcmd__routing__subcmd__help__subcmd__metrics__subcmd__label_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix routing help metrics label commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__routing__subcmd__help__subcmd__metrics__subcmd__list_commands] )) ||
+_taskix__subcmd__routing__subcmd__help__subcmd__metrics__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix routing help metrics list commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__routing__subcmd__help__subcmd__metrics__subcmd__report_commands] )) ||
+_taskix__subcmd__routing__subcmd__help__subcmd__metrics__subcmd__report_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix routing help metrics report commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__routing__subcmd__help__subcmd__revision_commands] )) ||
+_taskix__subcmd__routing__subcmd__help__subcmd__revision_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix routing help revision commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__routing__subcmd__help__subcmd__snapshot_commands] )) ||
+_taskix__subcmd__routing__subcmd__help__subcmd__snapshot_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix routing help snapshot commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__routing__subcmd__metrics_commands] )) ||
+_taskix__subcmd__routing__subcmd__metrics_commands() {
+    local commands; commands=(
+'report:Show adoption, fallback reasons, reviewed accuracy, and threshold comparisons' \
+'list:Show recent requests and their individual answer scores' \
+'label:Record human assessment of the full proposed route and Inbox selection' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'taskix routing metrics commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__routing__subcmd__metrics__subcmd__help_commands] )) ||
+_taskix__subcmd__routing__subcmd__metrics__subcmd__help_commands() {
+    local commands; commands=(
+'report:Show adoption, fallback reasons, reviewed accuracy, and threshold comparisons' \
+'list:Show recent requests and their individual answer scores' \
+'label:Record human assessment of the full proposed route and Inbox selection' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'taskix routing metrics help commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__routing__subcmd__metrics__subcmd__help__subcmd__help_commands] )) ||
+_taskix__subcmd__routing__subcmd__metrics__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix routing metrics help help commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__routing__subcmd__metrics__subcmd__help__subcmd__label_commands] )) ||
+_taskix__subcmd__routing__subcmd__metrics__subcmd__help__subcmd__label_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix routing metrics help label commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__routing__subcmd__metrics__subcmd__help__subcmd__list_commands] )) ||
+_taskix__subcmd__routing__subcmd__metrics__subcmd__help__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix routing metrics help list commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__routing__subcmd__metrics__subcmd__help__subcmd__report_commands] )) ||
+_taskix__subcmd__routing__subcmd__metrics__subcmd__help__subcmd__report_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix routing metrics help report commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__routing__subcmd__metrics__subcmd__label_commands] )) ||
+_taskix__subcmd__routing__subcmd__metrics__subcmd__label_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix routing metrics label commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__routing__subcmd__metrics__subcmd__list_commands] )) ||
+_taskix__subcmd__routing__subcmd__metrics__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix routing metrics list commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__routing__subcmd__metrics__subcmd__report_commands] )) ||
+_taskix__subcmd__routing__subcmd__metrics__subcmd__report_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix routing metrics report commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__routing__subcmd__revision_commands] )) ||
+_taskix__subcmd__routing__subcmd__revision_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix routing revision commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__routing__subcmd__snapshot_commands] )) ||
+_taskix__subcmd__routing__subcmd__snapshot_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix routing snapshot commands' commands "$@"
 }
 (( $+functions[_taskix__subcmd__sync_commands] )) ||
 _taskix__subcmd__sync_commands() {

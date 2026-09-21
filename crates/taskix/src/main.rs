@@ -13,6 +13,7 @@ use clap::{Args, CommandFactory, Parser, Subcommand};
 use clap_complete::Shell;
 use serde_json::{Value, json};
 
+mod metrics;
 mod obsidian;
 
 #[derive(Parser)]
@@ -104,11 +105,31 @@ enum Command {
         #[arg(long)]
         job: Option<String>,
     },
+    /// Read bounded routing facts for host-side classifiers.
+    Routing {
+        #[command(subcommand)]
+        action: RoutingCommand,
+    },
     /// Handle agent session lifecycle events and maintain Task leases.
     Hook {
         #[command(subcommand)]
         action: HookCommand,
     },
+}
+
+#[derive(Subcommand)]
+enum RoutingCommand {
+    /// Inspect optional Jev statistics without loading the task database.
+    Metrics {
+        #[command(subcommand)]
+        action: metrics::MetricsCommand,
+    },
+    /// Refresh leases and Inbox edits and return bounded prompt routing context.
+    Snapshot,
+    /// Read bounded ACTIVE and `PENDING_REVIEW` Jobs and their Tasks by exact Project ID.
+    Candidates { project_id: String },
+    /// Read only identity and lifecycle fields by exact Job ID.
+    Revision { job_id: String },
 }
 
 #[derive(Subcommand)]
@@ -414,7 +435,18 @@ async fn main() -> ExitCode {
             if cli.json {
                 println!("{value}");
             } else {
-                print_human(&value["result"]);
+                if matches!(
+                    &cli.command,
+                    Command::Routing {
+                        action: RoutingCommand::Metrics {
+                            action: metrics::MetricsCommand::Report
+                        }
+                    }
+                ) {
+                    metrics::print_report(&value["result"]);
+                } else {
+                    print_human(&value["result"]);
+                }
                 if let Some(warning) = value["projection_pending"].as_str() {
                     eprintln!("projection pending: {warning}");
                 }
@@ -501,6 +533,16 @@ async fn setup_obsidian(
 }
 
 async fn run(cli: &Cli) -> Result<Value> {
+    if let Command::Routing {
+        action: RoutingCommand::Metrics { action },
+    } = &cli.command
+    {
+        return Ok(response(metrics::run(action).await?));
+    }
+    run_task_command(cli).await
+}
+
+async fn run_task_command(cli: &Cli) -> Result<Value> {
     if let Command::Init(init) = &cli.command {
         return initialize(cli, init).await;
     }
@@ -589,12 +631,35 @@ async fn run(cli: &Cli) -> Result<Value> {
         Command::Context { task, job } => {
             context(cli, &service, task.as_deref(), job.as_deref()).await
         }
+        Command::Routing { action } => routing(cli, &service, action).await,
         Command::Hook { action } => hook(cli, &service, action).await,
         Command::Obsidian {
             action: ObsidianCommand::Snapshot,
         } => Ok(response(service.obsidian_snapshot().await?)),
         Command::Init(_) | Command::Completions { .. } | Command::Obsidian { .. } => unreachable!(),
     }
+}
+
+async fn routing(cli: &Cli, service: &Service, action: &RoutingCommand) -> Result<Value> {
+    Ok(response(match action {
+        RoutingCommand::Metrics { .. } => unreachable!(),
+        RoutingCommand::Snapshot => {
+            service
+                .routing_snapshot(
+                    cli.session
+                        .as_deref()
+                        .context("routing snapshot requires --session")?,
+                    &std::env::current_dir()?,
+                    cli.project.as_deref(),
+                    cli.options(),
+                )
+                .await?
+        }
+        RoutingCommand::Candidates { project_id } => {
+            service.store().routing_candidates(project_id).await?
+        }
+        RoutingCommand::Revision { job_id } => service.store().routing_revision(job_id).await?,
+    }))
 }
 
 async fn initialize(cli: &Cli, init: &Init) -> Result<Value> {

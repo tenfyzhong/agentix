@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "parent_session": "fixture_parent",
+  "cwd": "/fixture/repository",
+  "expires": 4102444800000,
+  "reason": "network_error",
+  "prompt": "为刚才的登录修复创建 PR",
+  "assignment": {"project_id": "fixture_project"},
+  "complete": true,
+  "candidates": [
+    {"job": {"id": "fixture_login", "project_id": "fixture_project", "revision": 7, "status": "PENDING_REVIEW", "archived_at": null, "prompt": "修复登录失败", "goal": "登录失败应显示正确错误信息", "review_policy": "required"}, "tasks": []},
+    {"job": {"id": "fixture_search", "project_id": "fixture_project", "revision": 3, "status": "PENDING_REVIEW", "archived_at": null, "prompt": "优化搜索结果排序", "review_policy": "required"}, "tasks": []}
+  ],
+  "inbox": [],
+  "history": [
+    {"role": "user", "text": "修复登录失败"},
+    {"role": "assistant", "text": "登录错误信息已修复，测试通过，改动待提交。"}
+  ]
+}

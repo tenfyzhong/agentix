@@ -13,6 +13,8 @@ clap.workspace = true
 clap_complete.workspace = true
 reqwest.workspace = true
 serde_json.workspace = true
+sqlx.workspace = true
+dirs.workspace = true
 tempfile.workspace = true
 tokio.workspace = true
 toml.workspace = true
@@ -20,7 +22,6 @@ time = { workspace = true, features = ["formatting", "parsing"] }
 
 [dev-dependencies]
 serde_yaml.workspace = true
-sqlx.workspace = true
 
 [lints]
 workspace = true

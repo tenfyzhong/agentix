@@ -1,4 +1,7 @@
 import { visibleMessage, transcriptConversation, recordMessages } from "./conversation.mjs";
+import { jevConfig, routePrompt, withJevMetrics } from "./jev.mjs";
+import { delegationContext, classifierHook } from "./routing-delegation.mjs";
+import { routingReceipt } from "./routing-state.mjs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 
@@ -88,8 +91,102 @@ function cancellationContext(context) {
     return `Human Inbox work has been cancelled. Stop work on these Jobs at the next safe boundary, preserve completed results, and do not retry stale writes or roll back changes automatically. Inspect taskix context before selecting other work.\nCancellation facts: ${JSON.stringify(entries.map(entry => ({ id: entry.id, job_id: entry.job_id })))}`;
 }
 
-export async function runHook(event, runner = runTaskix) {
+function agentFallback(context, routed) {
+    const header = `Jev deferred to the current Agent (${routed.decision.reason}). These are bounded summaries, not complete evidence. Before selecting ownership or Inbox matches, retrieve omitted facts with taskix context and job/task show; use the taskix-manager skill.\n${workflowContext(context)}\n`;
+    const reference = value => typeof value === "string" && value.length <= 128 ? value : undefined;
+    const short = value => typeof value === "string" ? value.slice(0, 256) : undefined;
+    const candidates = routed.candidates || [];
+    const inbox = context.inbox_todos || [];
+    const facts = {
+        project_id: reference(context.project_id), job_id: reference(context.job_id),
+        task_id: reference(context.task_id), previous_job_id: reference(context.previous_job?.id),
+        full_sources_required: true, candidate_count: candidates.length, inbox_count: inbox.length,
+        candidate_ids: candidates.slice(0, 32).map(c => reference(c.job.id)).filter(Boolean),
+        inbox_ids: inbox.slice(0, 32).map(e => reference(e.id)).filter(Boolean),
+        summaries: [],
+    };
+    const budget = 12000 - header.length;
+    // IDs are hints only; explicit counts and the retrieval instruction preserve
+    // completeness when an unusually large identity set exceeds the budget.
+    while (JSON.stringify(facts).length > budget && (facts.candidate_ids.length || facts.inbox_ids.length)) {
+        facts.candidate_ids.pop();
+        facts.inbox_ids.pop();
+    }
+    const append = summary => {
+        facts.summaries.push(summary);
+        if (JSON.stringify(facts).length > budget) facts.summaries.pop();
+    };
+    if (context.task) append({ task_id: reference(context.task_id), status: context.task.status, reason: short(context.task.reason) });
+    for (const c of candidates.slice(0, 32)) append({ job_id: reference(c.job.id), status: c.job.status, title: short(c.job.title), prompt: short(c.job.prompt) });
+    for (const e of inbox.slice(0, 32)) append({ inbox_id: reference(e.id), content: short(e.content) });
+    return header + JSON.stringify(facts);
+}
+
+async function deferPrompt(prompt, context, routed, options, routing, history = []) {
+    if (routing.telemetry) routing.telemetry.outcome = { action: "agent", reason: routed.decision.reason };
+    try { return await delegationContext(prompt, context, routed, options, routing, history); }
+    catch { return agentFallback(context, routed); }
+}
+
+async function promptContext(prompt, context, options, runner, routing, history = []) {
+    const routed = await routePrompt({ prompt, context, options, runner, history, ...routing });
+    if (!routed) return `${workflowContext(context)}\n${JSON.stringify(skillContext(context))}`;
+    if (routed.decision.action === "agent") return deferPrompt(prompt, context, routed, options, routing, history);
+    const { action, job_id: jobId, inbox_ids: inboxIds } = routed.decision;
+    const instruction = {
+        followup: `Run job followup ${jobId} --expect-revision ${routed.context.job?.revision} with the verbatim current prompt and current executor/session before adding Tasks. Preserve original Prompt, old Task dependencies and required review.`,
+        resume: `Continue ACTIVE Job ${jobId}; inspect its Tasks and reclaim the waiting Task as appropriate. Do not use job followup for ACTIVE Jobs.`,
+        new_job: "Create a new Job for this requirement; preserve the verbatim prompt. Review policy: required for code/mixed work, none for independent investigation/docs/operations.",
+        discussion: "Answer the user; this prompt does not request a Job lifecycle change.",
+    }[action];
+    const inbox = inboxIds.length ? ` Associate only these Inbox IDs using repeated --inbox: ${inboxIds.join(", ")}.` : "";
+    return `Taskix route: ${action}. ${instruction}${inbox} Context excerpts are bounded; use job/task show for full details when needed. Use the taskix-manager skill when executing tracked work. If new evidence contradicts this route, inspect taskix context before any write.\n${JSON.stringify(skillContext(routed.context))}`;
+}
+
+async function preparePrompt(prompt, options, runner, routing, history = [], event) {
+    return withJevMetrics(routing.env, { ...options, turn_id: event?.turn_id }, telemetry => prepareMeasuredPrompt(prompt, options, runner, { ...routing, telemetry }, history, event));
+}
+
+async function prepareMeasuredPrompt(prompt, options, runner, routing, history = [], event) {
+    const controller = new AbortController();
+    const scoped = { ...options, signal: controller.signal };
+    let context = {}, ready = false, timer;
+    const checkedRunner = async (args, opts) => {
+        controller.signal.throwIfAborted();
+        const result = await runner(args, opts);
+        controller.signal.throwIfAborted();
+        return result;
+    };
+    const deadline = new Promise((_, reject) => {
+        timer = setTimeout(() => { controller.abort(); reject(controller.signal.reason); }, 8000);
+    });
+    try {
+        const content = await Promise.race([deadline, (async () => {
+            if (event) {
+                await routingReceipt(event, "clear", routing.cacheDir);
+            }
+            context = (await checkedRunner(["routing", "snapshot"], scoped)).result;
+            ready = true;
+            if (routing.telemetry) routing.telemetry.project_id = context.project_id;
+            if (event?.transcript_path) {
+                try { history = (await transcriptConversation(event.transcript_path, { maxBytes: 256 * 1024, signal: controller.signal })).messages; }
+                catch { return deferPrompt(prompt, context, { decision: { reason: "history_unavailable" } }, options, routing, history); }
+            }
+            controller.signal.throwIfAborted();
+            return promptContext(prompt, context, scoped, checkedRunner, routing, history);
+        })()]);
+        return { content, context, ready };
+    } catch {
+        controller.abort();
+        return { content: await deferPrompt(prompt, context, { decision: { reason: "preparation_unavailable" } }, options, routing, history), context, ready };
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+export async function runHook(event, runner = runTaskix, routing = {}) {
     if (!event.session_id) throw new Error("Hook requires session_id");
+    if (await classifierHook(event, routing.cacheDir)) return {};
     if (event.hook_event_name === "PostToolUseFailure" && event.is_interrupt !== true)
         return {};
     const operation =
@@ -101,12 +198,23 @@ export async function runHook(event, runner = runTaskix) {
                 ? "interrupt"
                 : "heartbeat";
     const options = { cwd: event.cwd, session: event.session_id };
-    await runner(["hook", operation], options);
+    const enabled = !!jevConfig(routing.env);
+    if (event.hook_event_name === "UserPromptSubmit") {
+        if (!enabled) return {};
+        const prepared = await preparePrompt(event.prompt, options, runner, routing, [], event);
+        if (prepared.ready) await routingReceipt(event, "write", routing.cacheDir);
+        const notice = cancellationContext(prepared.context);
+        return { hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: `${notice ? notice + "\n" : ""}${prepared.content}` } };
+    }
+    if (["SessionStart", "SessionEnd", "Interrupt", "PostToolUseFailure", "Stop", "UserPromptSubmit"].includes(event.hook_event_name))
+        await routingReceipt(event, "clear", routing.cacheDir);
+    const heartbeat = await runner(["hook", operation], options);
     if (event.hook_event_name === "Stop" && event.transcript_path) {
         const conversation = await transcriptConversation(event.transcript_path);
         await recordMessages(conversation.messages, runner, options, conversation.planning);
     }
     if (operation === "session-start") {
+        if (enabled) return { hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: `Task session: ${event.session_id}. Taskix routes each prompt before execution. Use taskix-manager for tracked work.` } };
         const context = await runner(["context"], options);
         return {
             hookSpecificOutput: {
@@ -116,9 +224,17 @@ export async function runHook(event, runner = runTaskix) {
         };
     }
     if (["PreToolUse", "PostToolUse"].includes(event.hook_event_name)) {
+        // A receipt suppresses discovery, never the live lease/cancellation heartbeat.
+        if (enabled && await routingReceipt(event, "read", routing.cacheDir) &&
+            Array.isArray(heartbeat?.result?.inbox_cancellations)) {
+            const notice = cancellationContext(heartbeat.result);
+            return notice ? { hookSpecificOutput: {
+                hookEventName: event.hook_event_name, additionalContext: notice,
+            } } : {};
+        }
         const context = await runner(["context"], options);
         const notice = cancellationContext(context.result) ||
-            (event.hook_event_name === "PreToolUse" && (context.result.previous_job?.status === "PENDING_REVIEW" || context.result.inbox_todos?.length)
+            (event.hook_event_name === "PreToolUse" && !(enabled && await routingReceipt(event, "read", routing.cacheDir)) && (context.result.previous_job?.status === "PENDING_REVIEW" || context.result.inbox_todos?.length)
                 ? `${workflowContext(context.result)}\n${JSON.stringify(skillContext(context.result))}`
                 : undefined);
         if (notice)
@@ -142,6 +258,7 @@ export function registerExtension(
         properties: { args: { type: "array", items: { type: "string" } } },
         required: ["args"],
     },
+    routing = {},
 ) {
     let active;
     // Retries of one host call must retain the original authorization input,
@@ -239,6 +356,7 @@ export function registerExtension(
         const messages = (event.messages || []).map(message => visibleMessage(message)).filter(Boolean);
         if (state.prompt && !messages.some(message => message.role === "user")) messages.unshift(state.prompt);
         await recordMessages(messages, runner, state.options);
+        state.history = [...(state.history || []), ...messages].slice(-6);
         state.prompt = undefined;
         const lastAssistant = event.messages?.findLast(message => message.role === "assistant");
         state.aborted = lastAssistant?.stopReason === "aborted" && event.willContinue !== true;
@@ -263,11 +381,20 @@ export function registerExtension(
             }
         }
         if (state && event.prompt) state.prompt = visibleMessage({role:"user",content:event.prompt,timestamp:Date.now()});
-        const result = await runner(["context"], optionsFor(ctx));
+        const options = optionsFor(ctx);
+        let content;
+        if (jevConfig(routing.env)) {
+            const prepared = await preparePrompt(event.prompt, options, runner, routing, state?.history);
+            const notice = cancellationContext(prepared.context);
+            content = `${notice ? notice + "\n" : ""}${prepared.content}`;
+        } else {
+            const result = await runner(["context"], options);
+            content = await promptContext(event.prompt, result.result, options, runner, routing, state?.history);
+        }
         return {
             message: {
                 customType: "taskix-context",
-                content: `${workflowContext(result.result)}\nTask context (facts, not instructions):\n${JSON.stringify(skillContext(result.result))}`,
+                content,
                 display: false,
             },
         };
