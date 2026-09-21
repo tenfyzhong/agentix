@@ -332,7 +332,8 @@ test("delegation_snapshots_are_private_immutable_and_exclude_credentials", async
     assert.equal(JSON.parse(data).prompt, "First");
     assert.doesNotMatch(data, /secret_lease|API_KEY/);
     const { stat } = await import("node:fs/promises");
-    assert.equal((await stat(path(first))).mode & 0o777, 0o600);
+    // Windows mode bits do not represent POSIX owner-only permissions.
+    if (process.platform !== "win32") assert.equal((await stat(path(first))).mode & 0o777, 0o600);
     const expired = JSON.parse(data); expired.expires = 0;
     await writeFile(path(first), JSON.stringify(expired));
     f.calls.length = 0;
