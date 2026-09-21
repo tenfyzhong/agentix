@@ -53,37 +53,37 @@ test: plugin-deps
 remove-plugin:
 	codex plugin remove taskix-manager@agentix || true
 	codex plugin marketplace remove agentix || true
-	claude plugin uninstall taskix-manager@agentix || true
-	claude plugin uninstall agentix-bridge@agentix || true
-	claude plugin marketplace remove agentix || true
-	pi remove . || true
-	pi remove git:github.com/tenfyzhong/agentix || true
-	omp plugin uninstall agentix-plugins || true
-	omp plugin uninstall taskix-manager@agentix || true
-	omp plugin uninstall agentix-bridge@agentix || true
-	omp plugin marketplace remove agentix || true
+	# claude plugin uninstall taskix-manager@agentix || true
+	# claude plugin uninstall agentix-bridge@agentix || true
+	# claude plugin marketplace remove agentix || true
+	# pi remove . || true
+	# pi remove git:github.com/tenfyzhong/agentix || true
+	# omp plugin uninstall agentix-plugins || true
+	# omp plugin uninstall taskix-manager@agentix || true
+	# omp plugin uninstall agentix-bridge@agentix || true
+	# omp plugin marketplace remove agentix || true
 
 dev-test: remove-plugin
 	codex plugin marketplace add .
 	codex plugin add taskix-manager@agentix
-	claude plugin marketplace add ./
-	claude plugin install taskix-manager@agentix
-	claude plugin install agentix-bridge@agentix
-	pi install .
-	omp plugin marketplace add ./
-	omp plugin install taskix-manager@agentix
-	omp plugin install agentix-bridge@agentix
+	# claude plugin marketplace add ./
+	# claude plugin install taskix-manager@agentix
+	# claude plugin install agentix-bridge@agentix
+	# pi install .
+	# omp plugin marketplace add ./
+	# omp plugin install taskix-manager@agentix
+	# omp plugin install agentix-bridge@agentix
 
 prod-test: remove-plugin
 	codex plugin marketplace add tenfyzhong/agentix
 	codex plugin add taskix-manager@agentix
-	claude plugin marketplace add tenfyzhong/agentix
-	claude plugin install taskix-manager@agentix
-	claude plugin install agentix-bridge@agentix
-	pi install git:github.com/tenfyzhong/agentix
-	omp plugin marketplace add tenfyzhong/agentix
-	omp plugin install taskix-manager@agentix
-	omp plugin install agentix-bridge@agentix
+	# claude plugin marketplace add tenfyzhong/agentix
+	# claude plugin install taskix-manager@agentix
+	# claude plugin install agentix-bridge@agentix
+	# pi install git:github.com/tenfyzhong/agentix
+	# omp plugin marketplace add tenfyzhong/agentix
+	# omp plugin install taskix-manager@agentix
+	# omp plugin install agentix-bridge@agentix
 
 clean:
 	$(CARGO) clean
