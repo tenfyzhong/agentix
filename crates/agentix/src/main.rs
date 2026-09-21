@@ -376,14 +376,25 @@ async fn serve(
     config_path: &Path,
     proxy: agentix_codex::ProxyOptions,
 ) -> Result<()> {
-    config.multiplexer.detect().await;
+    // Poll the signal future before startup creates any sockets or children.
+    let signal = shutdown_signal();
+    tokio::pin!(signal);
+    tokio::select! {
+        biased;
+        result = &mut signal => return result,
+        () = config.multiplexer.detect() => {}
+    }
     // Keep this hub and the control listener alive across runtime generations.
     let bridge = Arc::new(BridgeHub::with_multiplexer_kind(
         config.multiplexer.resolved_kind,
     ));
     let claims = Arc::new(ClaimRegistry::default());
     let path = std::path::absolute(config_path)?;
-    let initial = build_service(config, None, bridge.clone(), claims.clone(), path.clone()).await?;
+    let initial = tokio::select! {
+        biased;
+        result = &mut signal => return result,
+        result = build_service(config, None, bridge.clone(), claims.clone(), path.clone()) => result?,
+    };
     reload::run(
         initial,
         path.clone(),
@@ -399,7 +410,7 @@ async fn serve(
                 path.clone(),
             )
         },
-        shutdown_signal(),
+        signal,
         Duration::from_secs(5),
     )
     .await

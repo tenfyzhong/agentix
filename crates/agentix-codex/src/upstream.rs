@@ -1,6 +1,6 @@
 use crate::CodexEndpoint;
 use anyhow::{Context, Result, bail};
-use std::os::unix::fs::MetadataExt;
+use std::os::unix::fs::{FileTypeExt, MetadataExt};
 use std::path::Path;
 use std::process::Stdio;
 use std::time::Duration;
@@ -20,12 +20,17 @@ impl Drop for UpstreamServer {
     }
 }
 
-struct StartingChild(Option<Child>);
-impl Drop for StartingChild {
+// The group and socket guard must survive cancellation during startup as well as
+// runtime teardown. A launcher may spawn Codex without replacing its own PID.
+struct OwnedChild {
+    child: Child,
+    group: nix::unistd::Pid,
+    socket: Option<OwnedSocket>,
+}
+impl Drop for OwnedChild {
     fn drop(&mut self) {
-        if let Some(child) = &mut self.0 {
-            let _ = child.start_kill();
-        }
+        let _ = nix::sys::signal::killpg(self.group, nix::sys::signal::Signal::SIGKILL);
+        let _ = self.child.start_kill();
     }
 }
 
@@ -102,30 +107,31 @@ impl UpstreamServer {
             .kill_on_drop(true)
             .spawn()
             .context("start Codex upstream app-server")?;
-        let mut startup = StartingChild(Some(child));
+        let group =
+            nix::unistd::Pid::from_raw(i32::try_from(child.id().context("missing Codex PID")?)?);
+        let mut startup = OwnedChild {
+            child,
+            group,
+            socket: None,
+        };
         let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
         loop {
-            if let Some(status) = startup.0.as_mut().unwrap().try_wait()? {
+            if let Some(status) = startup.child.try_wait()? {
                 bail!("Codex upstream exited during startup: {status}");
             }
-            if let Ok(Ok(socket)) = tokio::time::timeout(
-                Duration::from_secs(1),
-                ready_socket(endpoint, startup.0.as_ref().unwrap().id()),
-            )
-            .await
+            if let Ok(Ok(())) =
+                tokio::time::timeout(Duration::from_secs(1), ready_socket(endpoint, &mut startup))
+                    .await
             {
-                let mut child = startup.0.take().unwrap();
+                let mut owned = startup;
                 let stop = CancellationToken::new();
                 let token = stop.clone();
                 let reaper = tokio::spawn(async move {
-                    // Keep the guard in the future even if runtime teardown cancels it.
-                    // kill_on_drop handles the child when this future is cancelled.
-                    let socket = socket;
                     let result = tokio::select! {
-                        status = child.wait() => status.map(|_| ()).context("reap Codex upstream"),
-                        () = token.cancelled() => terminate_child(&mut child).await,
+                        status = owned.child.wait() => status.map(|_| ()).context("reap Codex upstream"),
+                        () = token.cancelled() => terminate_child(&mut owned).await,
                     };
-                    drop(socket);
+                    drop(owned);
                     if let Err(error) = &result {
                         tracing::warn!(%error, "failed to stop owned Codex upstream");
                     }
@@ -144,28 +150,35 @@ impl UpstreamServer {
     }
 }
 
-async fn ready_socket(
-    endpoint: &CodexEndpoint,
-    child_pid: Option<u32>,
-) -> Result<Option<OwnedSocket>> {
+async fn ready_socket(endpoint: &CodexEndpoint, owned: &mut OwnedChild) -> Result<()> {
     if endpoint.is_websocket() {
         crate::proxy::open_socket(&endpoint.address()).await?;
-        return Ok(None);
+        return Ok(());
     }
     let path = endpoint.socket_path();
     let before = std::fs::symlink_metadata(path)?;
     let stream = tokio::net::UnixStream::connect(path).await?;
-    let peer_pid = crate::proxy::unix_pid(&stream);
-    tokio_tungstenite::client_async("ws://localhost/", stream).await?;
+    let peer_group = crate::proxy::unix_pid(&stream)
+        .and_then(|pid| i32::try_from(pid).ok())
+        .and_then(|pid| nix::unistd::getpgid(Some(nix::unistd::Pid::from_raw(pid))).ok());
     let after = std::fs::symlink_metadata(path)?;
-    // Readiness can come from a competing server. Only claim the child's own inode.
-    Ok((peer_pid.is_some()
-        && peer_pid == child_pid
-        && (before.dev(), before.ino()) == (after.dev(), after.ino()))
-        .then(|| OwnedSocket {
+    // Capture before the handshake: cancellation or a failed handshake must
+    // still clean up a socket created by our child or its launcher descendant.
+    if peer_group == Some(owned.group)
+        && after.file_type().is_socket()
+        && (before.dev(), before.ino()) == (after.dev(), after.ino())
+        && owned
+            .socket
+            .as_ref()
+            .is_none_or(|socket| socket.identity != (after.dev(), after.ino()))
+    {
+        owned.socket = Some(OwnedSocket {
             path: path.to_owned(),
             identity: (after.dev(), after.ino()),
-        }))
+        });
+    }
+    tokio_tungstenite::client_async("ws://localhost/", stream).await?;
+    Ok(())
 }
 
 struct OwnedSocket {
@@ -183,26 +196,21 @@ impl Drop for OwnedSocket {
     }
 }
 
-async fn terminate_child(child: &mut Child) -> Result<()> {
-    if child.try_wait()?.is_some() {
-        return Ok(());
-    }
-    let pid = child.id().context("missing owned Codex PID")?;
-    match nix::sys::signal::kill(
-        nix::unistd::Pid::from_raw(i32::try_from(pid)?),
-        nix::sys::signal::Signal::SIGTERM,
-    ) {
+async fn terminate_child(owned: &mut OwnedChild) -> Result<()> {
+    match nix::sys::signal::killpg(owned.group, nix::sys::signal::Signal::SIGTERM) {
         Ok(()) | Err(nix::errno::Errno::ESRCH) => {}
         Err(error) => return Err(error.into()),
     }
-    if let Ok(status) = tokio::time::timeout(Duration::from_secs(5), child.wait()).await {
+    if let Ok(status) = tokio::time::timeout(Duration::from_secs(5), owned.child.wait()).await {
         status?;
     } else {
-        tracing::warn!(
-            pid,
-            "Codex upstream did not stop within five seconds; killing owned child"
-        );
-        child.kill().await?;
+        tracing::warn!(group = %owned.group, "Codex upstream did not stop within five seconds; killing owned group");
+        match nix::sys::signal::killpg(owned.group, nix::sys::signal::Signal::SIGKILL) {
+            Ok(()) | Err(nix::errno::Errno::ESRCH) => {}
+            Err(error) => return Err(error.into()),
+        }
+        owned.child.kill().await?;
     }
+    // OwnedChild's guard also removes descendants if the launcher exited first.
     Ok(())
 }

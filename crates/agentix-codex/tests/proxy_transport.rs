@@ -309,9 +309,25 @@ async fn upstream_process_fixture() {
     });
     let listener = UnixListener::bind(&path).unwrap();
     std::fs::write(format!("{path}.pid"), std::process::id().to_string()).unwrap();
+    let mut accepted = 0;
     loop {
-        let (stream, _) = listener.accept().await.unwrap();
-        let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+        let (mut stream, _) = listener.accept().await.unwrap();
+        accepted += 1;
+        if std::env::var_os("AGENTIX_TEST_HANG_HANDSHAKE").is_some() {
+            let marker = format!("{path}.handshake-{accepted}");
+            tokio::spawn(async move {
+                use tokio::io::AsyncReadExt;
+                // Receipt proves the parent's ownership capture preceded client_async.
+                stream.read_exact(&mut [0]).await.unwrap();
+                std::fs::write(marker, "received").unwrap();
+                std::future::pending::<()>().await;
+                drop(stream);
+            });
+            continue;
+        }
+        let Ok(mut ws) = tokio_tungstenite::accept_async(stream).await else {
+            continue;
+        };
         let _ = ws.next().await;
     }
 }
@@ -1056,4 +1072,229 @@ async fn upstream_shutdown_preserves_foreign_listener_that_wins_startup_race() {
     );
     server.abort();
     let _ = server.await;
+}
+
+#[tokio::test]
+async fn proxy_recovers_abandoned_socket_but_preserves_live_listener_and_symlink() {
+    let d = tempfile::tempdir().unwrap();
+    let path = d.path().join("abandoned.sock");
+    let endpoint = format!("unix://{}", path.display());
+    let listener = UnixListener::bind(&path).unwrap();
+    assert!(
+        CodexProxy::bind(&endpoint, "ws://127.0.0.1:1")
+            .await
+            .is_err()
+    );
+    assert!(path.exists());
+    drop(listener);
+    // Use a separate path and establish the stale-socket precondition explicitly.
+    let path = d.path().join("stale.sock");
+    let endpoint = format!("unix://{}", path.display());
+    drop(UnixListener::bind(&path).unwrap());
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            match UnixStream::connect(&path).await {
+                Err(error) if error.kind() == std::io::ErrorKind::ConnectionRefused => break,
+                Ok(stream) => drop(stream),
+                Err(error) => panic!("unexpected stale socket probe: {error}"),
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("the last listener must close before testing abandoned recovery");
+    let proxy = CodexProxy::bind(&endpoint, "ws://127.0.0.1:1")
+        .await
+        .expect("a socket with no listener must not block restart");
+    proxy.shutdown().await;
+    assert!(!path.exists());
+    let target = d.path().join("target.sock");
+    drop(UnixListener::bind(&target).unwrap());
+    std::os::unix::fs::symlink(&target, &path).unwrap();
+    assert!(
+        CodexProxy::bind(&endpoint, "ws://127.0.0.1:1")
+            .await
+            .is_err()
+    );
+    assert!(path.is_symlink());
+    assert!(target.exists());
+}
+
+#[tokio::test]
+async fn wrapped_upstream_shutdown_reaps_descendant_and_removes_socket() {
+    use std::os::unix::fs::PermissionsExt;
+    let d = tempfile::tempdir().unwrap();
+    let path = d.path().join("wrapped.sock");
+    let command = d.path().join("codex");
+    std::fs::write(&command, format!(
+        "#!/bin/sh\nexport AGENTIX_TEST_UPSTREAM_SOCKET='{}'\ntrap '' TERM\n'{}' --ignored --exact upstream_process_fixture &\nwait\n",
+        path.display(), std::env::current_exe().unwrap().display()
+    )).unwrap();
+    std::fs::set_permissions(&command, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let endpoint = agentix_codex::CodexEndpoint::from_socket_path(&path).unwrap();
+    let owner = agentix_codex::UpstreamServer::ensure(&endpoint, &command)
+        .await
+        .unwrap();
+    let pid: i32 = std::fs::read_to_string(path.with_extension("sock.pid"))
+        .unwrap()
+        .parse()
+        .unwrap();
+    let _cleanup = Cleanup(pid);
+    owner.shutdown().await.unwrap();
+    assert!(
+        nix::unistd::getpgid(Some(nix::unistd::Pid::from_raw(pid))).is_err(),
+        "wrapper descendant survived shutdown"
+    );
+    assert!(
+        !path.exists(),
+        "wrapper descendant socket survived shutdown"
+    );
+}
+
+#[tokio::test]
+async fn owned_upstream_external_kill_removes_socket() {
+    let (_directory, path, owner, pid, _cleanup) = start_owned_upstream(false).await;
+    nix::sys::signal::kill(
+        nix::unistd::Pid::from_raw(pid),
+        nix::sys::signal::Signal::SIGKILL,
+    )
+    .unwrap();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while path.exists() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("reaper must unlink an externally killed owned server socket");
+    owner.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn proxy_reclaims_confirmed_codex_app_server_listener() {
+    assert_frontend_recovery("codex", false, true).await;
+}
+
+#[tokio::test]
+async fn proxy_recovery_escalates_for_verified_unresponsive_codex() {
+    assert_frontend_recovery("codex", true, true).await;
+}
+
+#[tokio::test]
+async fn proxy_recovery_preserves_other_executable_with_codex_arguments() {
+    assert_frontend_recovery("other", false, false).await;
+}
+
+async fn assert_frontend_recovery(name: &str, ignore_term: bool, reclaim: bool) {
+    use std::os::unix::fs::PermissionsExt;
+    let d = tempfile::tempdir().unwrap();
+    let path = d.path().join("frontend.sock");
+    // A real child with executable name codex, exercising peer credentials and ps.
+    let exe = d.path().join(name);
+    std::fs::copy(std::env::current_exe().unwrap(), &exe).unwrap();
+    std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let mut command = tokio::process::Command::new("bash");
+    if ignore_term {
+        command.env("AGENTIX_TEST_IGNORE_TERM", "1");
+    }
+    let mut child = command
+        .args([
+            "-c",
+            "exec -a \"$1\" \"$2\" --ignored --exact upstream_process_fixture",
+            "fixture",
+        ])
+        .arg(format!(
+            "codex app-server --listen unix://{}",
+            path.display()
+        ))
+        .arg(&exe)
+        .env("AGENTIX_TEST_UPSTREAM_SOCKET", &path)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !path.with_extension("sock.pid").exists() {
+            assert!(child.try_wait().unwrap().is_none(), "fixture exited");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let result = CodexProxy::bind(&format!("unix://{}", path.display()), "ws://127.0.0.1:1").await;
+    if !reclaim {
+        assert!(result.is_err(), "unrelated executable was reclaimed");
+        assert!(child.try_wait().unwrap().is_none());
+        assert!(path.exists());
+        assert!(!path.with_extension("sock.term").exists());
+        child.kill().await.unwrap();
+        return;
+    }
+    if result.is_err() {
+        child.kill().await.unwrap();
+    }
+    let proxy = result.expect("confirmed Codex app-server must yield the frontend socket");
+    tokio::time::timeout(Duration::from_secs(2), child.wait())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(path.with_extension("sock.term").exists());
+    proxy.shutdown().await;
+    assert!(!path.exists());
+}
+
+#[tokio::test]
+async fn cancelled_upstream_startup_removes_unready_child_socket() {
+    use std::os::unix::fs::PermissionsExt;
+    let d = tempfile::tempdir().unwrap();
+    let path = d.path().join("unready.sock");
+    let command = d.path().join("codex");
+    std::fs::write(&command, format!(
+        "#!/bin/sh\nexport AGENTIX_TEST_HANG_HANDSHAKE=1\nexport AGENTIX_TEST_UPSTREAM_SOCKET='{}'\nexec '{}' --ignored --exact upstream_process_fixture\n",
+        path.display(), std::env::current_exe().unwrap().display()
+    )).unwrap();
+    std::fs::set_permissions(&command, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let endpoint = agentix_codex::CodexEndpoint::from_socket_path(&path).unwrap();
+    let task =
+        tokio::spawn(
+            async move { agentix_codex::UpstreamServer::ensure(&endpoint, &command).await },
+        );
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !path.with_extension("sock.pid").exists() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    let pid: i32 = std::fs::read_to_string(path.with_extension("sock.pid"))
+        .unwrap()
+        .parse()
+        .unwrap();
+    let _cleanup = Cleanup(pid);
+    // Wait for the second handshake, not a scheduling-dependent sleep.
+    let retried = tokio::time::timeout(Duration::from_secs(5), async {
+        while !path.with_extension("sock.handshake-2").exists() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    let preserved = path.exists();
+    task.abort();
+    assert!(matches!(task.await, Err(error) if error.is_cancelled()));
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while nix::unistd::getpgid(Some(nix::unistd::Pid::from_raw(pid))).is_ok() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    retried.expect("startup must retry a stalled handshake");
+    assert!(
+        preserved,
+        "handshake retry unlinked a still-running child socket"
+    );
+    assert!(
+        !path.exists(),
+        "cancelled startup left the unready socket behind"
+    );
 }

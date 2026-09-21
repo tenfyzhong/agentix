@@ -164,7 +164,7 @@ proxy_endpoint = "unix://~/.codex/app-server-control/app-server-control.sock"
 endpoint = "unix://~/.codex/app-server-control/app-server-control-upstream.sock"
 ```
 
-Agentix owns `proxy_endpoint` and forwards each client to `endpoint` (the upstream). Both settings are optional; the defaults use the paths above, respecting `CODEX_HOME`. Agentix starts a missing local upstream with `codex app-server --listen ENDPOINT`. Its own requests and notifications connect directly to that upstream. On graceful exit, Agentix stops and reaps the app-server it launched: SIGTERM first, then forced termination if it has not exited within five seconds. It cleans its proxy socket and the unchanged socket belonging to its owned upstream. Existing external upstreams and replacement socket files are preserved. Configuration reload retains the running upstream, but stopping or restarting Agentix interrupts active work in an app-server it owns.
+Agentix owns `proxy_endpoint` and forwards each client to `endpoint` (the upstream). Both settings are optional; the defaults use the paths above, respecting `CODEX_HOME`. Agentix starts a missing local upstream with `codex app-server --listen ENDPOINT`. Its own requests and notifications connect directly to that upstream. On graceful exit, Agentix stops and reaps the app-server it launched: SIGTERM to the owned process group first, then forced termination if it has not exited within five seconds. Launcher descendants are included. It cleans its proxy socket and the unchanged socket belonging to its owned upstream. Existing external upstreams and replacement socket files are preserved. Configuration reload retains the running upstream, but stopping or restarting Agentix interrupts active work in an app-server it owns.
 
 Start Agentix first, then connect terminals with `codex --remote unix://`. For a custom proxy, pass its exact address to `--remote`. Existing clients that bypass the proxy are not registered; reconnect them through the proxy. If the old Codex daemon occupies the default proxy socket, stop it before migration or choose another proxy path. Agentix never removes an existing listener to take its place.
 
@@ -224,7 +224,7 @@ Start Agentix:
 agentix serve
 ```
 
-With Codex, run `agentix doctor` from another terminal after startup, then connect the CLI with `codex --remote unix://`. The `proxy_endpoint` socket is reserved for Agentix: do not launch app-server on it. An occupied address causes an ERROR log and immediate nonzero exit. See [proxy setup and recovery](development-and-operations.md#codex).
+With Codex, run `agentix doctor` from another terminal after startup, then connect the CLI with `codex --remote unix://`. The `proxy_endpoint` socket is reserved for Agentix: do not launch app-server on it. Agentix recovers abandoned Unix sockets and reclaims a Unix frontend held by a verified Codex app-server. Other occupied addresses cause an ERROR log and nonzero exit. See [proxy setup and recovery](development-and-operations.md#codex).
 
 On Windows, use `agentix.exe doctor` and `agentix.exe serve`. A Homebrew installation can run in the background instead:
 

@@ -72,7 +72,7 @@ agentix serve
 
 After editing configuration, run `agentix reload` to apply supported runtime settings without restarting the process. See [reload usage and limitations](docs/development-and-operations.md#reloading-configuration).
 
-With Codex, run `agentix doctor` from another terminal after startup, then connect with `codex --remote unix://`. The proxy socket belongs exclusively to Agentix; do not start app-server on it. An occupied address causes startup to fail. See [proxy setup and recovery](docs/development-and-operations.md#codex).
+With Codex, run `agentix doctor` from another terminal after startup, then connect with `codex --remote unix://`. The proxy socket belongs exclusively to Agentix; do not start app-server on it. Agentix recovers abandoned Unix sockets and reclaims a Unix frontend held by a verified Codex app-server; other occupied addresses still cause startup to fail. See [proxy setup and recovery](docs/development-and-operations.md#codex).
 
 On Windows, use `agentix.exe doctor` and `agentix.exe serve`. To run a Homebrew installation in the background, use `brew services start tenfyzhong/tap/agentix`.
 

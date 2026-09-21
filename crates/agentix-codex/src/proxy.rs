@@ -213,8 +213,15 @@ impl CodexProxy {
             if let Some(parent) = path.parent() {
                 tokio::fs::create_dir_all(parent).await?;
             }
-            // Never unlink an occupied path: it may belong to a live daemon.
-            let listener = UnixListener::bind(path).map_err(|source| crate::ProxyBindError {
+            let listener = match UnixListener::bind(path) {
+                Err(error) if error.kind() == std::io::ErrorKind::AddrInUse => {
+                    crate::socket_recovery::recover(path)
+                        .await
+                        .and_then(|()| UnixListener::bind(path))
+                }
+                result => result,
+            }
+            .map_err(|source| crate::ProxyBindError {
                 endpoint: listen.to_owned(),
                 source,
             })?;

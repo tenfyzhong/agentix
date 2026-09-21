@@ -559,7 +559,7 @@ owner_user_ids = [42]
     #[tokio::test]
     async fn serve_exits_and_logs_when_proxy_endpoint_is_occupied() {
         use std::os::unix::fs::MetadataExt;
-        for kind in ["active", "stale", "file", "ws"] {
+        for kind in ["active", "file", "ws"] {
             let d = tempdir().unwrap();
             let path = d.path().join("proxy.sock");
             let mut unix_listener = None;
@@ -627,6 +627,78 @@ owner_user_ids = [42]
             }
             drop((unix_listener, tcp_listener));
         }
+    }
+
+    #[tokio::test]
+    async fn serve_recovers_stale_proxy_before_starting_upstream() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tempdir().unwrap();
+        let path = d.path().join("proxy.sock");
+        drop(UnixListener::bind(&path).unwrap());
+        let command = d.path().join("codex");
+        let marker = d.path().join("launched");
+        std::fs::write(
+            &command,
+            format!("#!/bin/sh\necho started > '{}'\nexit 1\n", marker.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&command, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let config = write_config(d.path(), &d.path().join("upstream.sock"));
+        let mut source = std::fs::read_to_string(&config).unwrap().replace(
+            "kind = \"codex\"",
+            &format!(
+                "kind = \"codex\"\nproxy_endpoint = 'unix://{}'\ncommand = '{}'",
+                path.display(),
+                command.display()
+            ),
+        );
+        // Prevent the configured mock Telegram channel from reaching a live service.
+        source.push_str(&format!(
+            "\n[network]\nproxy='http://127.0.0.1:1'\n[server]\nendpoint='unix://{}'\n",
+            d.path().join("control.sock").display()
+        ));
+        std::fs::write(&config, source).unwrap();
+        let mut child = Command::new(env!("CARGO_BIN_EXE_agentix"))
+            .arg("--config")
+            .arg(&config)
+            .arg("serve")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let launched = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            while !marker.exists() {
+                if child.try_wait().unwrap().is_some() {
+                    return false;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            true
+        })
+        .await
+        .unwrap_or(false);
+        if let Some(pid) = child.id() {
+            let _ = Command::new("kill")
+                .args(["-TERM", &pid.to_string()])
+                .output()
+                .await;
+        }
+        let output =
+            tokio::time::timeout(std::time::Duration::from_secs(5), child.wait_with_output())
+                .await
+                .unwrap()
+                .unwrap();
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(launched, "stale proxy blocked upstream startup: {stderr}");
+        assert!(
+            !stderr.contains("cannot bind Codex proxy_endpoint"),
+            "{stderr}"
+        );
+        assert!(
+            !path.exists(),
+            "proxy must also be removed on service shutdown"
+        );
     }
 
     #[tokio::test]
