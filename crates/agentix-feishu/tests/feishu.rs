@@ -1,3 +1,5 @@
+#[path = "feishu/capacity.rs"]
+mod capacity;
 mod support;
 
 use std::sync::{Arc, Mutex};
@@ -1636,22 +1638,37 @@ fn long_unicode_sections_and_many_panels_retain_the_final_answer() {
             collapsible: false,
             expanded: None,
         });
-        let card = serde_json::to_value(render_card(&view).unwrap().card()).unwrap();
-        let elements = card["body"]["elements"].as_array().unwrap();
-        assert_eq!(elements.len(), count + 1);
-        let mut ids = std::collections::HashSet::new();
-        for element in &elements[..count] {
-            assert!(ids.insert(element["element_id"].as_str().unwrap()));
-            let text = element["elements"][0]["content"].as_str().unwrap();
-            assert!(text.starts_with("中文🧠\n"));
-            assert!(text.ends_with('…'));
-            assert!(!text.contains('\u{fffd}'));
+        let cards = agentix_feishu::render_cards(&view).unwrap();
+        assert!(cards.len() > 1);
+        let mut recovered = std::collections::HashMap::<String, String>::new();
+        for card in &cards {
+            let card = serde_json::to_value(card.card()).unwrap();
+            assert!(serde_json::to_string(&card).unwrap().len() < 25_000);
+            let mut ids = std::collections::HashSet::new();
+            for element in card["body"]["elements"].as_array().unwrap() {
+                if element["tag"] == "collapsible_panel" {
+                    assert!(ids.insert(element["element_id"].as_str().unwrap()));
+                    assert_eq!(element["expanded"], false);
+                    recovered
+                        .entry(
+                            element["header"]["title"]["content"]
+                                .as_str()
+                                .unwrap()
+                                .to_owned(),
+                        )
+                        .or_default()
+                        .push_str(element["elements"][0]["content"].as_str().unwrap());
+                }
+            }
         }
+        for section in &view.sections[..count] {
+            assert_eq!(recovered.get(&section.title), Some(&section.body));
+        }
+        let last = serde_json::to_value(cards.last().unwrap().card()).unwrap();
         assert_eq!(
-            elements.last().unwrap()["content"],
+            last["body"]["elements"].as_array().unwrap().last().unwrap()["content"],
             "**🤖 Codex**\nFinal answer"
         );
-        assert!(serde_json::to_string(&card).unwrap().len() < 100_000);
     }
 }
 

@@ -1,5 +1,5 @@
 //! Render typed turn sections without interpreting arbitrary Markdown as controls.
-use super::{CARD_BODY_LIMIT, render_action, truncate_utf8};
+use super::render_action;
 use agentix_domain::{OutboundView, ViewStatus};
 use larksuite_oapi_sdk_rs::card::v2::{
     BackgroundStyle, Body, CollapsiblePanel, CollapsiblePanelHeader, Color, Column, ColumnSet,
@@ -10,17 +10,13 @@ use std::collections::HashSet;
 pub(super) fn view_body(view: &OutboundView, actions_disabled: bool) -> Body {
     let mut placed_actions = HashSet::new();
     let elements = if view.sections.is_empty() {
-        vec![Element::Markdown(Markdown::new(truncate_utf8(
-            &view.body,
-            CARD_BODY_LIMIT,
-        )))]
+        vec![Element::Markdown(Markdown::new(&view.body))]
     } else {
-        let limit = CARD_BODY_LIMIT / view.sections.len();
         view.sections
             .iter()
             .enumerate()
             .flat_map(|(index, section)| {
-                let content = truncate_utf8(&section.body, limit);
+                let content = &section.body;
                 let element = if section.collapsible {
                     let mut header = CollapsiblePanelHeader::new(Text::plain(&section.title));
                     header.icon = Some(HeaderIcon::standard("right-small-ccm_outlined"));
