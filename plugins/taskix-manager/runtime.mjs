@@ -212,7 +212,7 @@ export async function runHook(event, runner = runTaskix, routing = {}) {
         await routingReceipt(event, "clear", routing.cacheDir);
     const heartbeat = await runner(["hook", operation], options);
     let discussion;
-    if (["PreToolUse", "Stop", "Interrupt", "SessionEnd"].includes(event.hook_event_name)) {
+    if (["PreToolUse", "Stop", "Interrupt", "PostToolUseFailure", "SessionEnd"].includes(event.hook_event_name)) {
         discussion = await stageTranscript(event, runner, options, routing.cacheDir);
     }
     if (operation === "session-start") {

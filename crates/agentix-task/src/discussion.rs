@@ -41,7 +41,7 @@ pub(crate) async fn prepare(
     sqlx::query("INSERT INTO discussion_sessions(session_id,revision,activity) VALUES (?,0,?) ON CONFLICT(session_id) DO UPDATE SET activity=MAX(activity,excluded.activity)")
         .bind(&session).bind(now).execute(&mut *conn).await?;
     let existing = sqlx::query(
-        "SELECT messages,job_id FROM discussion_turns WHERE session_id=? AND turn_id=?",
+        "SELECT position,messages,job_id FROM discussion_turns WHERE session_id=? AND turn_id=?",
     )
     .bind(&session)
     .bind(&turn)
@@ -52,7 +52,53 @@ pub(crate) async fn prepare(
         .map(|r| serde_json::from_str(&r.get::<String, _>("messages")))
         .transpose()?
         .unwrap_or_default();
-    let original = messages.clone();
+    let changed = merge_turn_messages(&mut messages, incoming)?;
+    let bound: Option<String> = existing.as_ref().and_then(|r| r.get("job_id"));
+    if changed || existing.is_none() {
+        sqlx::query("INSERT INTO discussion_turns(session_id,turn_id,source,messages) VALUES (?,?,?,?) ON CONFLICT(session_id,turn_id) DO UPDATE SET messages=excluded.messages")
+            .bind(&session).bind(&turn).bind(request["source"].as_str().unwrap_or("host")).bind(json!(messages).to_string()).execute(&mut *conn).await?;
+        sqlx::query("UPDATE discussion_sessions SET revision=revision+1 WHERE session_id=?")
+            .bind(&session)
+            .execute(&mut *conn)
+            .await?;
+    }
+    if let Some(job) = bound {
+        if let Some(explicit) = request["job"].as_str() {
+            ensure!(explicit == job, "conflict: turn belongs to another Job");
+        }
+        if !changed {
+            request["command"] = json!("session.stage");
+            request["job"] = Value::Null;
+            request["recorded_job"] = json!(job);
+            return Ok(());
+        }
+        request["job"] = json!(job);
+        request["messages"] = json!(messages);
+        // Only the current turn body is needed. One later-turn identity anchors
+        // late replies without reading and replaying every historical draft.
+        let position: i64 = existing.as_ref().unwrap().get("position");
+        let before: Option<String> = sqlx::query_scalar("SELECT json_extract(messages,'$[0].id') FROM discussion_turns WHERE session_id=? AND job_id=? AND position>? AND json_array_length(messages)>0 ORDER BY position LIMIT 1")
+            .bind(&session).bind(&job).bind(position).fetch_optional(&mut *conn).await?.flatten();
+        request["before_message"] = json!(before);
+        request["ordered"] = json!(true);
+    } else {
+        // Association is an explicit lifecycle/attach decision, never latest-Job inference.
+        ensure!(
+            request["job"].is_null(),
+            "conflict: bind the turn before recording into a Job"
+        );
+        request["command"] = json!("session.stage");
+    }
+    Ok(())
+}
+
+fn merge_turn_messages(messages: &mut Vec<Value>, incoming: &[Value]) -> Result<bool> {
+    let mut changed = false;
+    let mut indexes: std::collections::HashMap<String, usize> = messages
+        .iter()
+        .enumerate()
+        .map(|(i, m)| Ok((required(m, "id")?.to_owned(), i)))
+        .collect::<Result<_>>()?;
     for message in incoming {
         let id = required(message, "id")?;
         let role = required(message, "role")?;
@@ -70,38 +116,18 @@ pub(crate) async fn prepare(
             continue;
         }
         let value = json!({"id":id,"role":role,"text":text});
-        if let Some(old) = messages.iter_mut().find(|m| m["id"] == id) {
+        if let Some(&index) = indexes.get(id) {
+            let old = &mut messages[index];
             ensure!(old["role"] == role, "conflict: message role changed");
+            changed |= *old != value;
             *old = value;
         } else {
+            indexes.insert(id.to_owned(), messages.len());
+            changed = true;
             messages.push(value);
         }
     }
-    let bound: Option<String> = existing.as_ref().and_then(|r| r.get("job_id"));
-    if original != messages || existing.is_none() {
-        sqlx::query("INSERT INTO discussion_turns(session_id,turn_id,source,messages) VALUES (?,?,?,?) ON CONFLICT(session_id,turn_id) DO UPDATE SET messages=excluded.messages")
-            .bind(&session).bind(&turn).bind(request["source"].as_str().unwrap_or("host")).bind(json!(messages).to_string()).execute(&mut *conn).await?;
-        sqlx::query("UPDATE discussion_sessions SET revision=revision+1 WHERE session_id=?")
-            .bind(&session)
-            .execute(&mut *conn)
-            .await?;
-    }
-    if let Some(job) = bound {
-        if let Some(explicit) = request["job"].as_str() {
-            ensure!(explicit == job, "conflict: turn belongs to another Job");
-        }
-        request["job"] = json!(job);
-        request["messages"] = ordered_messages(conn, &session, &job).await?;
-        request["ordered"] = json!(true);
-    } else {
-        // Association is an explicit lifecycle/attach decision, never latest-Job inference.
-        ensure!(
-            request["job"].is_null(),
-            "conflict: bind the turn before recording into a Job"
-        );
-        request["command"] = json!("session.stage");
-    }
-    Ok(())
+    Ok(changed)
 }
 
 async fn ordered_messages(conn: &mut SqliteConnection, session: &str, job: &str) -> Result<Value> {
@@ -134,6 +160,33 @@ fn validate_target(job: &crate::Job, request: &Value) -> Result<()> {
     Ok(())
 }
 
+fn selected_turns(request: &Value) -> Result<Option<&Vec<Value>>> {
+    let turns = request
+        .get("conversation_turns")
+        .filter(|v| !v.is_null())
+        .map(|v| {
+            v.as_array()
+                .context("invalid: conversation turns must be an array")
+        })
+        .transpose()?;
+    let revision = &request["conversation_revision"];
+    let target = &request["conversation_target"];
+    ensure!(
+        revision.is_null() || revision.as_i64().is_some_and(|v| v >= 0),
+        "invalid: conversation revision"
+    );
+    ensure!(
+        target.is_null() || target.as_str().is_some_and(|v| !v.is_empty()),
+        "invalid: conversation target"
+    );
+    let turns = turns.filter(|v| !v.is_empty());
+    ensure!(
+        turns.is_some() || (revision.is_null() && target.is_null()),
+        "invalid: conversation guards require selected turns"
+    );
+    Ok(turns)
+}
+
 pub(crate) async fn attach(
     conn: &mut SqliteConnection,
     state: &mut Snapshot,
@@ -142,11 +195,7 @@ pub(crate) async fn attach(
     result: &mut Value,
     now: i64,
 ) -> Result<()> {
-    let Some(turns) = request
-        .get("conversation_turns")
-        .and_then(Value::as_array)
-        .filter(|t| !t.is_empty())
-    else {
+    let Some(turns) = selected_turns(request)? else {
         return Ok(());
     };
     ensure!(

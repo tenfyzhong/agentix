@@ -252,6 +252,10 @@ pub(crate) async fn persist(
         if let Some(path) = previous.get(&format!("job:{}", job.id)) {
             cleanup.files.insert(path.clone());
         }
+        sqlx::query("DELETE FROM discussion_turns WHERE job_id = ?")
+            .bind(&job.id)
+            .execute(&mut *conn)
+            .await?;
         sqlx::query("DELETE FROM jobs WHERE id = ?")
             .bind(&job.id)
             .execute(&mut *conn)

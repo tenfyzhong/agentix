@@ -888,10 +888,21 @@ test("real CLI prompt latency includes optional metrics writing", async t => {
     t.diagnostic(`Real CLI and SQLite whole-hook ms; HTTP mocked; startup excluded: ${JSON.stringify(elapsed)}`);
 });
 
-for (const host of ["codex","claude","pi","omp"]) test(`${host} discussion to implementation keeps selected original turns and no unrelated Job history`,async t=>{
+for (const host of ["codex","claude","pi","omp"]) for (const mode of ["create","followup","resume"]) test(`${host} discussion ${mode} keeps selected original turns and no unrelated Job history`,async t=>{
     const {selectDiscussion}=await import('../discussion.mjs');
-    const f=await fixture(t);
-    const session=`session:${host}`, options={cwd:f.dir,session,executor:`agent:${host}`};
+    const session=`session:${host}`;
+    const f=await fixture(t,session);
+    const options={cwd:f.dir,session,executor:`agent:${host}`};
+    if(mode!=="create")await f.run(['job','update',f.job.id,'--prompt','Original capacity requirement']);
+    if(mode==="followup") {
+        const task=await f.run(['task','add','--job',f.job.id,'--title','Original delivery'],options);
+        const owned=await f.run(['task','claim',task.id],options);
+        const owner={...options,token:owned.lease.token};
+        await f.run(['plan','create',task.id,'--body','Original implementation'],owner);
+        await f.run(['task','start',task.id],owner);
+        await f.run(['task','done',task.id],owner);
+        assert.equal((await f.run(['job','show',f.job.id])).status,'PENDING_REVIEW');
+    }
     const x=['pi','omp'].includes(host)?await extension(t,f,host):undefined;
     const transcript=join(f.dir,'discussion.jsonl');
     const rows=[];
@@ -915,9 +926,9 @@ for (const host of ["codex","claude","pi","omp"]) test(`${host} discussion to im
         current=pending.turns.at(-1).turn_id;
         assert.deepEqual((await f.run(['job','show',f.job.id])).conversation,[],'discussion does not leak into a previous Job');
     }
-    const target={title:'Capacity cards',goal:'Only split long messages',prompt:prompts.at(-1)};
-    const selected=await selectDiscussion({target,current_turn:current},options,runTaskix,{
-        env:{TASKIX_JEV_ENABLED:'true',TASKIX_JEV_URL:'https://unused.test',TASKIX_JEV_API_KEY:'test'},
+    const target={title:'Capacity cards',goal:'Only split long messages',prompt:prompts.at(-1),...(mode==='create'?{}:{job_id:f.job.id})};
+    let selected=await selectDiscussion({target,current_turn:current},options,runTaskix,{
+        env:mode==='resume'?{}:{TASKIX_JEV_ENABLED:'true',TASKIX_JEV_URL:'https://unused.test',TASKIX_JEV_API_KEY:'test'},
         fetch:async(_url,init)=>{
             const request=JSON.parse(init.body);
             return {ok:true,json:async()=>({answers:Object.fromEntries(Object.entries(request.questions).map(([id,q],i)=>{
@@ -925,9 +936,20 @@ for (const host of ["codex","claude","pi","omp"]) test(`${host} discussion to im
             }))})};
         },
     });
+    if(mode==='resume') {
+        assert.equal(selected.status,'agent');
+        const full=(await runTaskix(['conversation','list','--full'],options)).result;
+        const job=await f.run(['job','show',f.job.id]);
+        const related=full.turns.filter(turn=>!turn.messages.some(m=>m.text==='Unrelated topic'));
+        selected={status:'selected',args:['--conversation-revision',String(full.revision),'--expect-revision',String(job.revision),...related.flatMap(turn=>['--turn',turn.turn_id])]};
+    }
     assert.equal(selected.status,'selected');
-    const job=await f.run(['job','create','--project',f.project.id,'--title',target.title,'--goal',target.goal,'--prompt',target.prompt,...selected.args],options);
-    assert.equal(job.prompt,prompts[0]);
+    const args=mode==='create'?['job','create','--project',f.project.id,'--title',target.title,'--goal',target.goal,'--prompt',target.prompt]
+        :mode==='followup'?['job','followup',f.job.id,'--prompt',target.prompt]:['conversation','attach','--job',f.job.id];
+    const job=await f.run([...args,...selected.args],options);
+    assert.equal(job.prompt,mode==='create'?prompts[0]:'Original capacity requirement');
+    assert.equal(job.status,'ACTIVE');
+    if(mode!=='create')assert.equal(job.id,f.job.id);
     assert.deepEqual(job.conversation.filter(m=>m.role==='user').map(m=>m.text),prompts.filter((_,i)=>i!==2));
     const draft=(await runTaskix(['conversation','list','--full'],options)).result;
     assert.equal(draft.turns.length,1);

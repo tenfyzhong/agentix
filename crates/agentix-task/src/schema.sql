@@ -105,6 +105,7 @@ CREATE TABLE IF NOT EXISTS discussion_turns (
     UNIQUE(session_id, turn_id)
 );
 CREATE INDEX IF NOT EXISTS discussion_pending ON discussion_turns(session_id, job_id, position);
+CREATE INDEX IF NOT EXISTS discussion_job ON discussion_turns(job_id) WHERE job_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS discussion_activity ON discussion_sessions(activity);
 PRAGMA user_version = 13;
 PRAGMA application_id = 0x4158544b;

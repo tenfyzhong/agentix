@@ -303,7 +303,11 @@ async fn session_scope(
 ) -> Result<()> {
     let session = required(request, "session")?;
     let command = required(request, "command")?;
-    if command == "session.stage" {
+    if command == "session.stage"
+        || (command == "session.record"
+            && request.get("turn_id").is_some()
+            && request["job"].is_null())
+    {
         return Ok(());
     }
     if command == "session.record" {

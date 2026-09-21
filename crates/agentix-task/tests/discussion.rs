@@ -282,3 +282,267 @@ async fn changed_delivery_target_rejects_stale_discussion_selection() {
     );
     assert!(store.snapshot().await.unwrap().jobs.is_empty());
 }
+
+#[tokio::test]
+async fn draft_capture_does_not_load_a_previous_jobs_body() {
+    use agentix_task::{Config, DocumentConfig, Service, StorageConfig};
+    use sqlx::Connection;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("tasks.sqlite3");
+    std::fs::create_dir(dir.path().join(".obsidian")).unwrap();
+    let service = Service::open(Config {
+        schema_version: 1,
+        storage: StorageConfig { path: path.clone() },
+        documents: DocumentConfig {
+            root: dir.path().into(),
+            directory: "notes".into(),
+        },
+    })
+    .await
+    .unwrap();
+    let project = service
+        .execute(
+            json!({"command":"project.register","root":dir.path(),"name":"Scope"}),
+            options(),
+        )
+        .await
+        .unwrap()
+        .result;
+    service
+        .execute(
+            json!({"command":"job.create","project":project["id"],"title":"Previous"}),
+            options(),
+        )
+        .await
+        .unwrap();
+    let mut conn = sqlx::SqliteConnection::connect_with(
+        &sqlx::sqlite::SqliteConnectOptions::new().filename(&path),
+    )
+    .await
+    .unwrap();
+    let lock = service.config().output_dir().join(".taskix.lock");
+    std::fs::remove_file(&lock).unwrap();
+    std::fs::create_dir(&lock).unwrap();
+    // A previous Job must not even be deserialized when recording an unbound turn.
+    sqlx::query("UPDATE jobs SET data=json_remove(data,'$.title')")
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    let captured = service.execute(json!({"command":"session.record","session":"discussion-session","turn_id":"new","messages":[{"id":"new:user","role":"user","text":"Independent discussion"}]}),options()).await.unwrap();
+    assert_eq!(captured.result["staged"], true);
+    assert!(
+        captured.projection_pending.is_none(),
+        "drafts need no Obsidian lock"
+    );
+    assert_eq!(
+        service
+            .store()
+            .discussion_list("discussion-session", 0, 100)
+            .await
+            .unwrap()["turns"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn bound_capture_does_not_reparse_earlier_draft_bodies() {
+    use sqlx::Connection;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("tasks.sqlite3");
+    let store = Store::open(&path).await.unwrap();
+    record(&store, "old", "Original").await;
+    record(&store, "now", "Implement").await;
+    let project = store
+        .execute(
+            json!({"command":"project.register","root":dir.path(),"name":"Scope"}),
+            options(),
+        )
+        .await
+        .unwrap()
+        .result;
+    store.execute(json!({"command":"job.create","project":project["id"],"title":"Scoped capture","conversation_turns":["old","now"]}),options()).await.unwrap();
+    let mut conn = sqlx::SqliteConnection::connect_with(
+        &sqlx::sqlite::SqliteConnectOptions::new().filename(&path),
+    )
+    .await
+    .unwrap();
+    sqlx::query("UPDATE discussion_turns SET messages='{}' WHERE turn_id='old'")
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    let capture = json!({"command":"session.record","session":"discussion-session","turn_id":"now","messages":[{"id":"final","role":"assistant","text":"Final response"}]});
+    store.execute(capture.clone(), options()).await.unwrap();
+    store.execute(capture, options()).await.unwrap();
+    let job = &store.snapshot().await.unwrap().jobs[0];
+    assert_eq!(job.conversation.len(), 5);
+    assert_eq!(job.conversation.last().unwrap().text, "Final response");
+}
+
+#[tokio::test]
+async fn malformed_selection_guards_never_silently_create_an_unbound_job() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(&dir.path().join("tasks.sqlite3"))
+        .await
+        .unwrap();
+    record(&store, "one", "Original").await;
+    let project = store
+        .execute(
+            json!({"command":"project.register","root":dir.path(),"name":"Validation"}),
+            options(),
+        )
+        .await
+        .unwrap()
+        .result;
+    for patch in [
+        json!({"conversation_turns":"one"}),
+        json!({"conversation_turns":[],"conversation_revision":1}),
+        json!({"conversation_turns":["one"],"conversation_revision":"1"}),
+        json!({"conversation_turns":["one"],"conversation_target":42}),
+    ] {
+        let mut request = json!({"command":"job.create","project":project["id"],"title":"Guarded"});
+        request
+            .as_object_mut()
+            .unwrap()
+            .extend(patch.as_object().unwrap().clone());
+        assert!(
+            store.execute(request, options()).await.is_err(),
+            "invalid selection must reject atomically: {patch}"
+        );
+        assert!(store.snapshot().await.unwrap().jobs.is_empty());
+    }
+}
+
+#[tokio::test]
+async fn deleting_a_job_removes_its_bound_source_copies_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(&dir.path().join("tasks.sqlite3"))
+        .await
+        .unwrap();
+    record(&store, "bound", "Delete this history").await;
+    record(&store, "pending", "Keep this draft").await;
+    let project = store
+        .execute(
+            json!({"command":"project.register","root":dir.path(),"name":"Delete"}),
+            options(),
+        )
+        .await
+        .unwrap()
+        .result;
+    let job=store.execute(json!({"command":"job.create","project":project["id"],"title":"Delete","conversation_turns":["bound"]}),options()).await.unwrap().result;
+    store
+        .execute(json!({"command":"job.cancel","job":job["id"]}), options())
+        .await
+        .unwrap();
+    store
+        .execute(json!({"command":"job.delete","job":job["id"]}), options())
+        .await
+        .unwrap();
+    assert!(
+        store
+            .discussion_show("discussion-session", "bound")
+            .await
+            .is_err()
+    );
+    assert!(
+        store
+            .discussion_show("discussion-session", "pending")
+            .await
+            .is_ok()
+    );
+}
+
+#[tokio::test]
+async fn concurrent_selection_commits_exactly_one_job() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(&dir.path().join("tasks.sqlite3"))
+        .await
+        .unwrap();
+    record(&store, "one", "Original").await;
+    let project = store
+        .execute(
+            json!({"command":"project.register","root":dir.path(),"name":"Concurrent"}),
+            options(),
+        )
+        .await
+        .unwrap()
+        .result;
+    let revision = store
+        .discussion_index("discussion-session", 0, 1)
+        .await
+        .unwrap()["revision"]
+        .clone();
+    let request = json!({"command":"job.create","project":project["id"],"title":"Selected","conversation_turns":["one"],"conversation_revision":revision});
+    let (first, second) = tokio::join!(
+        store.execute(request.clone(), options()),
+        store.execute(request, options())
+    );
+    assert_ne!(first.is_ok(), second.is_ok());
+    assert_eq!(store.snapshot().await.unwrap().jobs.len(), 1);
+}
+
+#[tokio::test]
+async fn unchanged_bound_capture_skips_job_loading_and_projection() {
+    use sqlx::Connection;
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("tasks.sqlite3");
+    let store = Store::open(&path).await.unwrap();
+    record(&store, "one", "Original").await;
+    let project = store
+        .execute(
+            json!({"command":"project.register","root":dir.path(),"name":"Replay"}),
+            options(),
+        )
+        .await
+        .unwrap()
+        .result;
+    let job=store.execute(json!({"command":"job.create","project":project["id"],"title":"Replay","conversation_turns":["one"]}),options()).await.unwrap().result;
+    let mut conn = sqlx::SqliteConnection::connect_with(
+        &sqlx::sqlite::SqliteConnectOptions::new().filename(&path),
+    )
+    .await
+    .unwrap();
+    sqlx::query("UPDATE jobs SET data=json_remove(data,'$.title')")
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    let outcome = record(&store, "one", "Original").await;
+    assert_eq!(outcome["job_id"], job["id"]);
+    assert_eq!(outcome["recorded"], 0);
+}
+
+#[tokio::test]
+#[ignore = "manual discussion batch benchmark"]
+async fn discussion_batch_scaling_benchmark() {
+    for count in [1000, 4000] {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("tasks.sqlite3"))
+            .await
+            .unwrap();
+        let messages:Vec<_>=(0..count).map(|i|json!({"id":format!("m{i}"),"role":if i%2==0 {"user"} else {"assistant"},"text":format!("Original message {i}")})).collect();
+        let request = json!({"command":"session.record","session":"discussion-session","turn_id":"batch","messages":messages});
+        let began = std::time::Instant::now();
+        store.execute(request.clone(), options()).await.unwrap();
+        let stage = began.elapsed();
+        let project = store
+            .execute(
+                json!({"command":"project.register","root":dir.path(),"name":"Benchmark"}),
+                options(),
+            )
+            .await
+            .unwrap()
+            .result;
+        let began = std::time::Instant::now();
+        let job=store.execute(json!({"command":"job.create","project":project["id"],"title":"Batch","conversation_turns":["batch"]}),options()).await.unwrap().result;
+        let attach = began.elapsed();
+        let began = std::time::Instant::now();
+        store.execute(request, options()).await.unwrap();
+        println!(
+            "messages={count} stage={stage:?} attach={attach:?} replay={:?}",
+            began.elapsed()
+        );
+        assert_eq!(job["conversation"].as_array().unwrap().len(), count);
+    }
+}

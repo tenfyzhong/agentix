@@ -136,3 +136,17 @@ test('native agent_end retries preserve the staged user message identity',async 
     await handlers.get('agent_end')(event,ctx);
     assert.deepEqual(captures[1],captures[2]);
 });
+
+test('Claude interrupted tool failure refreshes the discussion before exit',async t=>{
+    const dir=await mkdtemp(join(tmpdir(),'taskix-interrupt-test-'));t.after(()=>rm(dir,{recursive:true,force:true}));
+    const path=join(dir,'transcript.jsonl');
+    await writeFile(path,JSON.stringify({type:'user',uuid:'claude-turn',message:{role:'user',content:'Discuss before interrupt'}})+'\n');
+    const captures=[];
+    const runner=async args=>{
+        if(args[1]==='record')captures.push(JSON.parse(await readFile(args[args.indexOf('--file')+1],'utf8')));
+        return {result:{}};
+    };
+    await runHook({hook_event_name:'PostToolUseFailure',is_interrupt:true,session_id:'interrupt-session',cwd:dir,transcript_path:path},runner,{cacheDir:dir});
+    assert.equal(captures.length,1);
+    assert.equal(captures[0].messages[0].text,'Discuss before interrupt');
+});

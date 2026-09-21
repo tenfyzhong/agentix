@@ -424,3 +424,23 @@ Integration fixtures retain real Taskix CLI subprocesses, SQLite and guarded
 lifecycle transitions to verify how the application handles those responses.
 Installed Codex/Claude/Pi/OMP hook delivery and repeated production latency samples
 remain separate live-host checks. Mock tests do not measure model accuracy.
+
+## Discussion attachment and scaling
+
+| Boundary | Executable coverage |
+| --- | --- |
+| Codex, Claude, Pi and OMP discussion → new Job, PENDING_REVIEW follow-up, or ACTIVE Job continuation (12 combinations) | [Real CLI host integration](../plugins/taskix-manager/tests/integration.mjs): full original messages, unrelated-turn exclusion, original Prompt preservation, late output deduplication, and generated Obsidian notes |
+| Jev selection and explicit agent fallback | [Discussion helper tests](../plugins/taskix-manager/tests/discussion.test.mjs): deterministic model responses, disabled/unavailable/uncertain/incomplete context, timeout, stale snapshots and targets; real CLI continuation paths use agent-selected explicit attachment |
+| Transactional selection, concurrent writers, malformed guards, restart/expiry, stable order and ownership | [Discussion storage tests](../crates/agentix-task/tests/discussion.rs) |
+| Draft capture with an inaccessible output lock, no deserialization of unrelated Job bodies, incremental bound capture, unchanged replay, and deletion cleanup | [Discussion storage tests](../crates/agentix-task/tests/discussion.rs), using isolated SQLite databases and failure injection |
+| Interrupted Claude transcript capture | [Discussion helper tests](../plugins/taskix-manager/tests/discussion.test.mjs) through the production hook runtime |
+
+The host matrix uses actual plugin entrypoints and taskix subprocesses with temporary vaults. Model decisions and native host event delivery are controlled fixtures; this does not establish live model accuracy, installed-client event delivery, or production deployment.
+
+Run the opt-in storage scaling check with:
+
+```sh
+cargo test -p agentix-task --test discussion discussion_batch_scaling_benchmark -- --ignored --nocapture
+```
+
+On one macOS ARM64 debug run with Rust 1.95, attaching 1,000 messages took approximately 9.97 seconds before batched merging and 19 milliseconds afterward; 4,000 messages took 77 milliseconds afterward. These are illustrative local measurements, not timing assertions or service latency guarantees. The benchmark verifies message counts and measures staging, attachment, and unchanged replay separately. It excludes Obsidian projection and model/network calls. Routine tests assert scope and ordering contracts instead of fragile wall-clock thresholds.

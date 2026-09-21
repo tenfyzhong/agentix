@@ -36,7 +36,11 @@ pub(crate) fn apply(
         "project.delete" | "job.delete" => crate::deletion::apply(state, request, options),
         "project.archive" | "project.unarchive" => archive_project(state, request, options, now),
         "session.record" => crate::conversation::record(state, request, options, now),
-        "session.stage" => Ok(json!({"staged":true,"recorded":0})),
+        "session.stage" => Ok(if request["recorded_job"].is_string() {
+            json!({"job_id":request["recorded_job"],"recorded":0,"unchanged":true})
+        } else {
+            json!({"staged":true,"recorded":0})
+        }),
         "conversation.attach" => {
             let job = &state.jobs[state.job_index(required(request, "job")?)?];
             check_revision(job.revision, options)?;
