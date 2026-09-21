@@ -6,6 +6,11 @@ import { join } from "node:path";
 import { routePrompt } from "../jev.mjs";
 
 async function fixture(t, enabled = true) {
+    // Persistence assertions use real workers/SQLite but a controlled parent clock.
+    // Cold worker startup on CI may exceed the best-effort production deadline.
+    // The separate timeout test advances that clock and verifies the 250 ms bound;
+    // subprocess latency/contended-write fixtures still use real clocks.
+    t.mock.timers.enable({ apis: ["setTimeout"] });
     const dir = await mkdtemp(join(tmpdir(), "jev-metrics-"));
     t.after(() => rm(dir, { recursive: true, force: true }));
     const path = join(dir, "metrics.sqlite");
