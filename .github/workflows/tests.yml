@@ -34,7 +34,8 @@ jobs:
       - name: Test task host plugin
         run: |
           npm ci --ignore-scripts --prefix plugins/taskix-manager
-          node --test plugins/taskix-manager/tests/*.test.mjs plugins/agentix-bridge/tests/*.test.mjs
+          # Avoid starving the bounded metrics worker during concurrent suite startup.
+          node --test --test-concurrency=1 plugins/taskix-manager/tests/*.test.mjs plugins/agentix-bridge/tests/*.test.mjs
 
   bottles:
     name: Bottle packaging (${{ matrix.os }})

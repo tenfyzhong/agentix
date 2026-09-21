@@ -4,7 +4,9 @@
   "description": "Shared taskix workflow for Codex, Claude, Pi, and OMP",
   "type": "module",
   "license": "MIT",
-  "keywords": ["pi-package"],
+  "keywords": [
+    "pi-package"
+  ],
   "files": [
     ".codex-plugin/",
     ".claude-plugin/",
@@ -14,7 +16,15 @@
     "obsidian/",
     "runtime.mjs",
     "conversation.mjs",
-    "README.md"
+    "README.md",
+    "jev.mjs",
+    "routing-state.mjs",
+    "routing-delegation.mjs",
+    "routing-decision.mjs",
+    "jev-metrics.mjs",
+    "jev-metrics-worker.mjs",
+    "metrics-schema.sql",
+    "metrics-schema.md"
   ],
   "dependencies": {
     "@sinclair/typebox": "^0.34.0"

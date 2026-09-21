@@ -11,7 +11,7 @@ import { loadPlugin, copy } from "./support/obsidian-plugin.mjs";
 // Run through cargo test -p taskix, which prepends the compiled binary directory
 // to PATH. Each fixture uses an isolated configuration and database.
 
-async function fixture(t) {
+async function fixture(t, session) {
     const dir = await mkdtemp(join(tmpdir(), "task-plugin \u{2603} "));
     const previous = process.env.TASKIX_CONFIG;
     const cleanup = [];
@@ -50,7 +50,7 @@ async function fixture(t) {
         project.id,
         "--title",
         "Integration",
-    ]);
+    ], { session });
     return { dir, root, project, job, run, cleanup };
 }
 
@@ -409,12 +409,12 @@ for (const host of ["pi", "omp"]) {
     }
 }
 
-async function hookProcess(event, command, host, root, shell) {
+async function hookProcess(event, command, host, root, shell, extraEnv = {}) {
     const args =
         process.platform === "win32"
             ? ["cmd.exe", ["/d", "/s", "/c", `"${command}"`]]
             : [shell, ["-c", command]];
-    const env = { ...process.env };
+    const env = { ...process.env, ...extraEnv };
     delete env.CLAUDE_PLUGIN_ROOT;
     delete env.PLUGIN_ROOT;
     env[host === "claude" ? "CLAUDE_PLUGIN_ROOT" : "PLUGIN_ROOT"] = root;
@@ -446,7 +446,7 @@ for (const host of ["codex", "claude"]) {
             const f = await fixture(t);
             const root = join(f.dir, "installed plugin \u{2603}");
             await mkdir(root);
-            for (const path of ["hooks", "runtime.mjs", "conversation.mjs", `.${host}-plugin`]) {
+            for (const path of ["hooks", "runtime.mjs", "conversation.mjs", "jev.mjs", "routing-state.mjs", "routing-delegation.mjs", "routing-decision.mjs", "jev-metrics.mjs", "jev-metrics-worker.mjs", "metrics-schema.sql", `.${host}-plugin`]) {
                 await cp(resolve(path), join(root, path), { recursive: true });
             }
             const task = await f.run([
@@ -702,4 +702,186 @@ test("Codex plan acceptance persists planning history through the real CLI", asy
     assert.ok(doc.includes("    Plan the feature"));
     assert.ok(doc.includes("> # Feature"));
     assert.ok(doc.includes("    Which scope?\n    Local"));
+});
+
+test("Jev routing uses real project-scoped CLI candidates and recovers waiting work", async (t) => {
+    const { routePrompt } = await import("../jev.mjs");
+    const f = await fixture(t);
+    const task = await f.run(["task", "add", "--job", f.job.id, "--title", "Choose deployment region"]);
+    await f.run(["task", "wait", task.id, "--reason", "Which region?"]);
+    const options = { cwd: f.dir, session: "routing-session" };
+    const context = (await runTaskix(["context", "--project", f.project.id], options)).result;
+    assert.equal(context.previous_job, null);
+    const routed = await routePrompt({
+        prompt: "Asia", context, options, runner: runTaskix,
+        env: { TASKIX_JEV_ENABLED: "true", TASKIX_JEV_URL: "https://unused.test", TASKIX_JEV_API_KEY: "mock" },
+        fetch: async (_url, init) => {
+            const request = JSON.parse(init.body);
+            const candidate = request.state.candidates.find(c => c.job.id === f.job.id);
+            assert.equal(candidate.tasks[0].reason, "Which region?");
+            const choice = `resume:${f.job.id}`;
+            return { ok: true, json: async () => ({ answers: { route: {
+                type: "choice", choice, confidence: 1,
+                probabilities: Object.fromEntries(Object.keys(request.questions.route.criteria).map(k => [k, k === choice ? 1 : 0])),
+            } } }) };
+        },
+    });
+    assert.equal(routed.decision.action, "resume");
+    assert.equal(routed.context.tasks[0].id, task.id);
+    assert.equal((await f.run(["task", "show", task.id])).status, "WAITING_USER", "classification must not acquire a lease");
+});
+
+for (const host of ["codex", "claude"]) test(`${host} Jev prompt and tool hooks work across processes with real HTTP`, async (t) => {
+    const { createServer } = await import("node:http");
+    const f = await fixture(t);
+    const task = await f.run(["task", "add", "--job", f.job.id, "--title", "Waiting task"]);
+    await f.run(["task", "wait", task.id, "--reason", "Which region?"]);
+    const requests = [];
+    const server = createServer(async (req, res) => {
+        let text = "";
+        for await (const chunk of req) text += chunk;
+        const body = JSON.parse(text);
+        requests.push({ method: req.method, url: req.url, authorization: req.headers.authorization, body });
+        const choice = `resume:${f.job.id}`;
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ answers: { route: {
+            type: "choice", choice, confidence: 1,
+            probabilities: Object.fromEntries(Object.keys(body.questions.route.criteria).map(k => [k, k === choice ? 1 : 0])),
+        } } }));
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    t.after(() => new Promise(resolve => { server.closeAllConnections(); server.close(resolve); }));
+    const config = JSON.parse(await readFile(resolve("hooks/hooks.json"), "utf8"));
+    const env = { TASKIX_JEV_ENABLED: "true", TASKIX_JEV_URL: `http://127.0.0.1:${server.address().port}/v1/systemone`, TASKIX_JEV_API_KEY: "integration-key" };
+    const event = { session_id: "jev-process", cwd: f.dir, ...(host === "codex" ? { turn_id: "turn_1" } : {}) };
+    const hook = (name, extra = {}) => hookProcess({ ...event, hook_event_name: name, ...extra }, config.hooks[name][0].hooks[0].command, host, resolve("."), "/bin/sh", env);
+    const prompt = await hook("UserPromptSubmit", { prompt: "Asia" });
+    assert.match(prompt.hookSpecificOutput.additionalContext, /Taskix route: resume/);
+    assert.ok(!JSON.stringify(prompt).includes("integration-key"));
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].method, "POST");
+    assert.equal(requests[0].url, "/v1/systemone");
+    assert.equal(requests[0].authorization, "Bearer integration-key");
+    assert.equal(requests[0].body.state.prompt, "Asia");
+    assert.deepEqual(await hook("PreToolUse"), {});
+    assert.deepEqual(await hook("PostToolUse"), {});
+    assert.equal(requests.length, 1, "tool hooks must not classify again");
+    assert.equal((await f.run(["task", "show", task.id])).status, "WAITING_USER");
+    await hook("Stop");
+});
+
+// Opt-in measurements use real CLI processes and isolated databases. HTTP is
+// deterministic so the reported times describe local overhead, not Jev latency.
+for (const [count, history] of [[0, 0], [1, 0], [8, 0], [32, 0], [33, 0], [1, 10000]]) {
+    test(`routing benchmark ${count} candidates ${history} messages`, { skip: process.env.TASKIX_ROUTING_BENCH !== "1" }, async t => {
+        const f = await fixture(t, "benchmark");
+        if (count === 0) await f.run(["job", "cancel", f.job.id]);
+        for (let i = 1; i < count; i++) await f.run(["job", "create", "--project", f.project.id, "--title", `Candidate ${i}`]);
+        if (history) {
+            const path = join(f.dir, "history.json");
+            await writeFile(path, JSON.stringify(Array.from({ length: history }, (_, i) => ({
+                id: `message_${i}`, role: i % 2 ? "assistant" : "user", text: `Message ${i} ${"x".repeat(100)}`,
+            }))));
+            await f.run(["hook", "record", "--file", path, "--job", f.job.id], { session: "benchmark" });
+        }
+        const samples = [];
+        for (let i = 0; i < 5; i++) {
+            let processes = 0, cliBytes = 0, requestBytes = 0, requests = 0;
+            const runner = async (args, options) => {
+                processes++;
+                const result = await runTaskix(args, options);
+                cliBytes += Buffer.byteLength(JSON.stringify(result));
+                return result;
+            };
+            const begin = performance.now();
+            const result = await runHook({ hook_event_name: "UserPromptSubmit", session_id: "benchmark", cwd: f.dir, turn_id: `turn_${i}`, prompt: "Continue the integration work" }, runner, {
+                cacheDir: join(f.dir, "receipts"),
+                env: { TASKIX_JEV_ENABLED: "true", TASKIX_JEV_URL: "https://unused.test", TASKIX_JEV_API_KEY: "mock" },
+                fetch: async (_url, init) => {
+                    requests++;
+                    requestBytes = Buffer.byteLength(init.body);
+                    const request = JSON.parse(init.body);
+                    const choice = count ? `resume:${f.job.id}` : "new_job";
+                    return { ok: true, json: async () => ({ answers: { route: {
+                        type: "choice", choice, confidence: 1,
+                        probabilities: Object.fromEntries(Object.keys(request.questions.route.criteria).map(k => [k, +(k === choice)])),
+                    } } }) };
+                },
+            });
+            const content = result.hookSpecificOutput.additionalContext;
+            assert.equal(processes, count > 0 && count <= 32 ? 2 : 1);
+            assert.equal(requests, count > 32 ? 0 : 1);
+            assert.match(content, count > 32 ? /Agent/ : count ? /Taskix route: resume/ : /Taskix route: new_job/);
+            assert.ok(content.length <= 12000);
+            samples.push({ ms: performance.now() - begin, processes, cliBytes, requestBytes, contextChars: content.length });
+        }
+        samples.sort((a, b) => a.ms - b.ms);
+        t.diagnostic(JSON.stringify({ candidates: count, history, median: samples[2], maxMs: samples[4].ms }));
+    });
+}
+
+for (const changed of [false, true]) test(`delegated followup validates child output and rejects stale writes changed=${changed}`, async t => {
+    const f = await fixture(t);
+    const ownerOptions = { cwd: f.dir, session: "delegation-parent", executor: "agent:codex" };
+    const old = await f.run(["task", "add", "--job", f.job.id, "--title", "Original implementation"], ownerOptions);
+    const claim = await f.run(["task", "claim", old.id], ownerOptions);
+    const leased = { ...ownerOptions, token: claim.lease.token };
+    await f.run(["plan", "create", old.id, "--body", "Deliver implementation"], leased);
+    await f.run(["task", "start", old.id], leased);
+    await f.run(["task", "done", old.id], leased);
+    const hook = await runHook({ hook_event_name: "UserPromptSubmit", session_id: ownerOptions.session, cwd: f.dir, prompt: "Create the PR" }, runTaskix, {
+        env: { TASKIX_JEV_ENABLED: "true", TASKIX_JEV_URL: "https://unused.test", TASKIX_JEV_API_KEY: "mock" },
+        fetch: async () => { throw new Error("offline"); }, cacheDir: join(f.dir, "routing"),
+    });
+    const snapshotPath = JSON.parse(hook.hookSpecificOutput.additionalContext.split("Snapshot: ")[1]);
+    const packet = JSON.parse(await readFile(snapshotPath, "utf8"));
+    const selected = packet.candidates.find(candidate => candidate.job.id === f.job.id).job;
+    // Only semantic inference is substituted; the validator and lifecycle writes are real.
+    const childResult = { action: "followup", job_id: selected.id, revision: selected.revision, inbox_ids: [], reason: "Deliver the pending implementation", questions: [] };
+    const validator = spawn(process.execPath, [resolve("routing-decision.mjs"), snapshotPath, ownerOptions.session], { cwd: f.dir, env: process.env, stdio: ["pipe", "pipe", "pipe"] });
+    let stdout = "", stderr = "";
+    validator.stdout.on("data", chunk => { stdout += chunk; });
+    validator.stderr.on("data", chunk => { stderr += chunk; });
+    validator.stdin.end(JSON.stringify(childResult));
+    const code = await new Promise((resolve, reject) => { validator.on("error", reject); validator.on("close", resolve); });
+    assert.equal(code, 0, stderr);
+    const validated = JSON.parse(stdout);
+    assert.deepEqual(validated.followup_args, ["job", "followup", selected.id, "--expect-revision", String(selected.revision)]);
+    if (changed) {
+        await f.run(["job", "update", selected.id, "--name", "Human renamed the delivery"]);
+        await assert.rejects(f.run([...validated.followup_args, "--prompt", "Create the PR"], ownerOptions), /revision changed/);
+        assert.equal((await f.run(["job", "show", selected.id])).status, "PENDING_REVIEW");
+    } else {
+        await f.run([...validated.followup_args, "--prompt", "Create the PR"], ownerOptions);
+        const next = await f.run(["task", "add", "--job", selected.id, "--title", "PR delivery"], ownerOptions);
+        assert.deepEqual(next.dependencies, [old.id]);
+        assert.equal((await f.run(["job", "show", selected.id])).review_policy, "required");
+    }
+});
+
+test("real CLI prompt latency includes optional metrics writing", async t => {
+    const f = await fixture(t);
+    const path = join(f.dir, "metrics.sqlite");
+    const env = { TASKIX_JEV_ENABLED: "true", TASKIX_JEV_URL: "https://unused.test", TASKIX_JEV_API_KEY: "mock", TASKIX_JEV_METRICS_DB: path };
+    const elapsed = {};
+    let lock;
+    for (const mode of ["off", "on", "locked"]) {
+        if (mode === "locked") {
+            const { DatabaseSync } = await import("node:sqlite");
+            lock = new DatabaseSync(path); lock.exec("BEGIN IMMEDIATE");
+        }
+        const start = performance.now();
+        try {
+            const result = await runHook({ hook_event_name: "UserPromptSubmit", session_id: `metrics_${mode}`, cwd: f.dir, prompt: "Explain the current status" }, runTaskix, {
+                env: { ...env, TASKIX_JEV_METRICS_ENABLED: mode === "off" ? "false" : "true" }, cacheDir: join(f.dir, "routing"),
+                fetch: async (_url, init) => ({ ok: true, json: async () => ({ answers: { route: {
+                    type: "choice", choice: "discussion", confidence: 1,
+                    probabilities: Object.fromEntries(Object.keys(JSON.parse(init.body).questions.route.criteria).map(key => [key, key === "discussion" ? 1 : 0])),
+                } } }) }),
+            });
+            elapsed[mode] = performance.now() - start;
+            assert.match(result.hookSpecificOutput.additionalContext, /Taskix route: discussion/);
+        } finally { if (lock) { lock.exec("ROLLBACK"); lock.close(); lock = null; } }
+    }
+    t.diagnostic(`Real CLI and SQLite whole-hook ms; HTTP mocked; startup excluded: ${JSON.stringify(elapsed)}`);
 });

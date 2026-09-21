@@ -371,3 +371,55 @@ Background completion cleanup regressions cover channel removal across runtime i
 Codex background integration assertions wait for completion workers before checking root notifications, subagent suppression, source-lookup failure, detached sessions, restored recipients and native goal input. A source-query failure is isolated from the already successful local completion handler.
 
 Combined slow-history/slow-delivery regressions verify history retry while a loading send waits, independent fast-recipient finalization, four-recipient fan-out bounds, cancellation of history and active sends, no queued starts after cancellation, omission of obsolete loading cards, and no duplicate final send after an uncertain loading send.
+
+## Taskix Jev routing
+
+The 2026-09-21 audit covers routing advice through guarded Taskix mutations.
+Taskix owns lifecycle invariants and bounded snapshots; the plugin owns host
+adaptation, Jev calls and optional observation writes. Semantic advice cannot
+replace Taskix revision checks, dependency gates or review policy.
+
+| Requirement | Automated evidence | Boundary |
+| --- | --- | --- |
+| Disabled or incomplete Jev configuration preserves the legacy path | `jev-runtime.test.mjs`, `jev.test.mjs` | No Jev HTTP request; credentials are synthetic |
+| Model/configuration, confidence, ambiguity, timeout and payload budgets | `jev.test.mjs`, `jev-runtime.test.mjs` | Mock provider responses; no accuracy guarantee |
+| Bounded candidates and critical truncation | `crates/agentix-task/tests/routing_snapshot.rs` | Real SQLite; terminal Tasks excluded before limit, history excerpts marked separately |
+| Confident route includes checked revision | `jev-runtime.test.mjs` and real CLI routing fixtures in `integration.mjs` | Hook output is advice; Agent must execute the supplied guard |
+| Fallback result validation and stale-write rejection | `routing-decision.test.mjs`, delegated routing cases in `integration.mjs` | Real CLI/subprocess validator and SQLite; deterministic child JSON in CI |
+| Child isolation and recursion suppression | `jev-runtime.test.mjs` | Protocol/host adapter tests; native inference is opt-in |
+| Followup preserves old dependencies and review policy | `integration.mjs`, `crates/agentix-task/tests/task_system.rs` | Real Taskix lifecycle writes |
+| Metrics default-off, privacy, worker timeout, lock contention and concurrent writes | `jev-metrics.test.mjs`, `tests/fixtures/metrics-process.mjs` | Best-effort writes may be lost; no task database writes |
+| Node writer to Rust report/list/label interoperability | `plugin_entrypoints_execute_the_compiled_taskix` in `crates/taskix/tests/cli.rs` | Default Rust CI sets `TASKIX_TEST_METRICS_BIN`; standalone Node runs skip interop without it |
+| Full hook latency includes optional persistence | `real CLI prompt latency` in `integration.mjs` | Mock HTTP; diagnostic samples, not percentile guarantees |
+
+Run the scoped suites from the repository root:
+
+```sh
+cargo test -p agentix-task -p taskix --all-features
+cargo clippy -p agentix-task -p taskix --all-targets --all-features -- -D warnings
+TASKIX_TEST_METRICS_BIN="$PWD/target/debug/taskix" node --test plugins/taskix-manager/tests/*.test.mjs
+```
+
+For native classifier acceptance, build Taskix and run from the plugin directory:
+
+```sh
+TASKIX_NATIVE_ROUTING_DIR=/tmp/taskix-native-routing-unique \
+PATH="$PWD/../../target/debug:$PATH" node --test tests/native-routing-smoke.mjs
+```
+
+Use a new private exchange directory. The fixture writes `request.json`; the host
+Agent reads it and uses the referenced classifier protocol to spawn a fresh-context
+native child at low reasoning effort with the current model. Write only that
+child's compact JSON atomically to the supplied result path, with mode 0600.
+The fixture validates the result and lifecycle effects and cleans up its isolated
+Taskix database and snapshot. This requires native orchestration and is intentionally
+outside default CI. A real native run passed on 2026-09-21 with two competing Jobs.
+
+Jev acceptance uses deterministic mock responses, including confidence, ambiguity,
+malformed responses and transport failures. No real Jev endpoint or API key is
+required. Real provider availability, model accuracy and confidence calibration
+are outside this delivery's test scope, rather than missing acceptance checks.
+Integration fixtures retain real Taskix CLI subprocesses, SQLite and guarded
+lifecycle transitions to verify how the application handles those responses.
+Installed Codex/Claude/Pi/OMP hook delivery and repeated production latency samples
+remain separate live-host checks. Mock tests do not measure model accuracy.

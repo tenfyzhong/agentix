@@ -19,6 +19,7 @@ mod naming;
 mod project;
 mod projection;
 mod publication;
+mod routing;
 mod scoped;
 pub use scoped::JobFilter;
 mod state_index;

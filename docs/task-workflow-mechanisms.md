@@ -10,7 +10,7 @@ First decompose the requirement into a Task DAG, create or resolve every node’
 | --- | --- | --- |
 | Agent | Understand requirements, decompose work, claim Tasks, write Plans, execute, and verify acceptance | A natural-language statement such as "finished" does not change database state |
 | Skill | Provide the agent with a workflow, command guidance, and document rules | Does not run continuously, acquire locks, execute tests, or enforce compliance |
-| Hook / Extension | Handle session events, inject task context, renew leases, and handle exits and resumption | Does not decompose work, generate Plans, or automatically call start or done |
+| Hook / Extension | Handle session events, optionally classify prompt ownership with Jev, inject task context, renew leases, and handle exits and resumption | Does not decompose work, generate Plans, or automatically call start or done |
 | taskix / agentix-task | Validate state transitions, ownership, dependencies, revisions, and idempotency; persist changes | Does not judge business correctness or run acceptance commands from a Plan |
 | SQLite | Store Project, Inbox, Job, Task, and Plan metadata, leases, and events | Does not store complete Plan bodies or isolate code workspaces |
 | Obsidian files | Store Plans, Goal/Notes, and the human Project Inbox; display generated boards | Inbox imports human requests; Taskix Sync submits supported Obsidian status edits through taskix |
@@ -287,3 +287,15 @@ A future layer could assign the coordinator responsibility for requirements and 
 | Actual CLI and host-adapter entrypoint integration tests | [integration.mjs](../plugins/taskix-manager/tests/integration.mjs) |
 
 Existing tests cover competing CLI processes, phase transitions, stale tokens, planning resumption without a Plan, Plan validation, idempotent retries, and hooks calling the actual CLI. Host-adapter tests use event and API harnesses; they do not establish that a real model always decomposes work correctly, reads the Skill, or verifies acceptance. The opt-in Obsidian desktop test checks Dashboard tables, project filtering and links, TaskNotes cards, and rendered note navigation in a foreground vault. Live host loading and trust remain separate acceptance checks. See the [coverage map](integration-coverage.md) for test entrypoints and boundaries.
+
+Optional [Jev routing](../plugins/taskix-manager/README.md#optional-jev-routing) runs before the coding Agent. It selects Job ownership and semantic Inbox matches without lifecycle writes. Confident routes omit unrelated candidates and repeated tool-hook rules; low confidence, conflicts, incomplete evidence, or service failures return the decision to the Agent. Disabled or incomplete configuration preserves the default workflow.
+
+The fallback classifier is a native child with independent context and low reasoning
+effort, requested through the host Agent protocol. The Node hook prepares the
+private snapshot but does not spawn the child itself. The packaged parent validator
+checks the returned advice against live assignment, revision, status and Inbox
+availability. The Agent performs lifecycle writes through Taskix, preserving the
+validated revision guard; Taskix remains authoritative for transitions, dependencies
+and review policy. Optional metrics are recorded by the plugin in an independent
+SQLite database through a worker with a 250 ms parent wait budget. Taskix owns
+reporting and human labels; metrics failure does not change routing.

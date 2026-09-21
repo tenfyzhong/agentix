@@ -217,7 +217,7 @@ impl Service {
         Ok(outcome)
     }
 
-    async fn lock_output(&self) -> Result<File> {
+    pub(crate) async fn lock_output(&self) -> Result<File> {
         self.config.validate()?;
         std::fs::create_dir_all(self.config.output_dir())?;
         let path = self.safe_path(".taskix.lock")?;

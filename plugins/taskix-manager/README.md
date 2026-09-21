@@ -17,6 +17,182 @@ Codex terminal `/plan` questions, option descriptions, and submitted answers are
 
 Codex and Claude share the common lifecycle hooks. Codex explicitly loads the shared file and a separate Interrupt hook; its manifest replaces default discovery, so each hook loads once. Claude merges default discovery of the shared file with its manifest-selected `hooks/claude.json`, which only adds PostToolUseFailure. Do not repeat the shared file in Claude’s manifest. Pi and OMP each select exactly one extension, so neither loads the other host's entrypoint. Pi declares the shared `skills/` directory in its manifest. OMP installs the marketplace plugin and discovers its shared `skills/` directory. The npm `files` list includes all four host manifests, hooks, extensions, runtime, skills, TaskNotes settings and setup guide, and this guide.
 
+## Optional Jev routing
+
+Jev can classify each user prompt in the host before the coding agent runs. It is
+opt-in; the existing Agent-driven workflow remains the default. Set these
+variables in the environment inherited by the host and its hook subprocesses:
+
+```fish
+set -gx TASKIX_JEV_ENABLED true
+set -gx TASKIX_JEV_URL https://api.typesafe.ai/v1/systemone
+set -gx TASKIX_JEV_API_KEY YOUR_API_KEY
+# Optional:
+set -gx TASKIX_JEV_MODEL jev-latest
+set -gx TASKIX_JEV_MIN_CONFIDENCE 0.9
+```
+
+| Variable | Behavior |
+| --- | --- |
+| `TASKIX_JEV_ENABLED` | Only `true` or `1` enables routing, case-insensitively. Default: disabled. |
+| `TASKIX_JEV_URL` | Full HTTP(S) evaluation endpoint, including `/v1/systemone` for TypeSafe. No URL is assumed. |
+| `TASKIX_JEV_API_KEY` | Sent as `Authorization: Bearer ...`; never included in model context or routing receipts. |
+| `TASKIX_JEV_MODEL` | Defaults to `jev-latest`; may pin a provider-supported Jev version. |
+| `TASKIX_JEV_MIN_CONFIDENCE` | Defaults to `0.9`, valid range `0.5`–`1`. Both confidence and selected-option probability must meet it; the winning probability must also exceed the runner-up by at least `0.2`. |
+
+Disabled routing, blank URL/key, or invalid configuration uses the original
+workflow without a Jev request. Network/HTTP/JSON errors, an eight-second routing
+deadline shared by prompt preparation (including hook heartbeat, context and transcript reads),
+candidate lookup and HTTP/body reading, low confidence, conflicting options, missing context, or stale selected
+Job revisions defer to the current Agent. They never mean “create a new Job.”
+Confidence is a provider statistic, not a measured correctness guarantee; tune
+thresholds against representative conversations before lowering them.
+
+The host sends the current prompt, current assignment IDs, recent conversation
+excerpts, current-Project unarchived ACTIVE/PENDING_REVIEW Job facts,
+Task states and waiting reasons, and available Inbox requirements to the configured
+endpoint. It does not send task lease tokens or separately collect reasoning, tool output
+or source file contents. The current prompt stays verbatim. For each Job and the
+current session, only the two latest distinct historical messages are sent; old user
+messages are limited to 512 UTF-8 bytes and assistant replies to 256 bytes, including
+an explicit `[excerpt]` marker. Repeated current prompts and history already present
+in the session excerpt are omitted. Completed/cancelled Task details, filesystem
+paths, session identities, and revision metadata stay local. Original Job requirements
+and waiting reasons remain available for matching. Missing evidence must select
+`uncertain`; excerpts are not complete conversation records. Prompt-time transcript
+reads are limited to 256 KiB; unreadable or oversized current-turn history defers
+to the Agent. Stop-time conversation recording retains its existing behavior. More than
+32 candidate Jobs, 256 unfinished candidate Tasks, or 32 Inbox entries, or a full serialized
+request exceeding 24,000 UTF-8 bytes (including model, state, and questions),
+defers to the Agent without silently dropping candidates. Taskix state remains
+local and authoritative. The byte limit is a conservative policy for a 32k context
+window, leaving headroom for service framing and structured answers. It is not an
+exact Jev token count and does not use a characters/4 estimate. Over-budget prompts
+are delegated without HTTP; they are never silently cut to fit. Prompt preparation uses one `taskix routing snapshot --session SESSION_ID`
+process to import Inbox edits, renew ownership, and read bounded assignment, Inbox,
+and candidate facts. Candidate Jobs and Tasks use two SQL queries in one read
+transaction. A selected Job is checked with
+`taskix routing revision JOB_ID`, which excludes prompt and conversation bodies.
+This makes one CLI call per prompt, or two when revalidating a selected Job.
+`taskix routing candidates PROJECT_ID` remains available for candidate diagnostics;
+candidate and revision commands require exact IDs. SQL bounds Job title/prompt/goal to 300/4,000/2,000
+characters, each recent message to 2,000, and Task title/reason to 300/1,000;
+Truncated requirements or waiting reasons mark the snapshot incomplete and defer classification. Historical messages carry an explicit excerpt marker; long historical replies alone do not invalidate candidate coverage. DONE and CANCELLED Tasks do not consume the unfinished-task budget.
+Enable Jev with a matching taskix CLI; older CLIs defer to the original Agent workflow.
+See the [TypeSafe API](https://docs.typesafe.ai/api) for
+the request and response contract.
+The repository document `docs/task-routing-performance.md` contains repeatable
+local benchmarks, process counts, and measurement boundaries.
+
+Routes are `followup`, `resume`, `new_job`, and `discussion`, with an explicit
+uncertainty option. Waiting Tasks are found through ACTIVE Project Jobs even when
+`context.previous_job` is empty. A confident result contains only the selected
+Job/Tasks and matched Inbox IDs. Model-visible excerpts include up to 2,000 prompt
+characters, 1,000 Goal characters, the last two messages (1,000 characters each),
+and up to eight unfinished Tasks with a total Task count. Truncation is explicit;
+the Agent can fetch complete details with `job show` / `task list` / `task show`. An existing owned assignment cannot be silently
+redirected. The Agent still issues guarded taskix lifecycle commands, including
+`job followup`; Jev never writes state, approves work, claims tasks, or starts Inbox
+intake. The original prompt, review policy and dependency rules remain in force.
+
+Codex/Claude run this at `UserPromptSubmit`; Pi/OMP use `before_agent_start`. With
+valid Jev configuration, SessionStart gives a short session notice. After prompt
+routing, Codex/Claude suppress repeated workflow/Inbox injection during tool calls,
+including when the Agent received a fallback at prompt entry. Cancellation notices
+and lease heartbeats remain active. Routed tool hooks reuse the heartbeat's live
+cancellation facts and skip the additional `context` process. Older CLI versions
+without cancellation facts retain the context check. Disabled or incomplete Jev
+configuration makes `UserPromptSubmit` return without a taskix CLI call.
+A private, expiring receipt in the OS temporary
+directory coordinates separate hook processes; it contains only a turn identifier
+and expiry. Session start/end, interruption, Stop, and the next prompt clear it.
+A missing/unreadable receipt or a different Codex turn uses the legacy tool notice.
+Hosts must load the new prompt hook; previously loaded plugin code is not hot-replaced.
+
+This reduces routing overhead in the coding agent's context. It does not remove
+execution plans, task results or relevant requirement history, and does not make
+Taskix management fully autonomous. On ambiguous results the hook supplies a
+short delegation instruction and a private snapshot reference. The main Agent
+requests a fresh-context, low-reasoning subagent through its native host tools;
+the hook itself does not spawn one. The classifier reads facts on demand and
+returns at most 1,000 characters of structured advice. The main Agent retains
+revision checks and all lifecycle writes. The parent validates compact child results using the packaged `routing-decision.mjs` helper; follow-up arguments include `--expect-revision`. Jev success instructions bind the observed revision too. A conflict requires reassessment, never dropping the guard. See the [classifier protocol](skills/taskix-manager/references/routing-classifier.md).
+
+Snapshots have a one-hour expiry, use owner-only files, omit credential/lease
+fields, and are capped at 1 MiB. They contain prompt and candidate data; expired
+files are removed on subsequent fallback writes (expiry is not immediate disk
+erasure). New prompts get distinct files. A validated classifier prompt marker
+suppresses child task hooks without suppressing parent heartbeats or cancellation
+notices. On hosts without child prompt events, the role instructions prevent
+recursive delegation; this is not a security sandbox. Hosts without subagents
+judge locally from the snapshot. Unwritable/oversized snapshots retain the old
+bounded main-Agent fallback, capped at 12,000 characters excluding cancellation
+notices. Disabled routing keeps the original context format.
+
+## Optional Jev statistics
+
+The plugin only collects and appends observations; taskix owns reports and human
+labels. The [versioned storage protocol](metrics-schema.md) defines their shared
+contract. Unknown or nonempty unversioned databases are rejected without migration;
+preserve old development statistics and choose a fresh database path for v1.
+
+Statistics are disabled by default, independently of Jev routing. Enable them in
+its host process environment before starting/restarting the host:
+
+```fish
+set -gx TASKIX_JEV_METRICS_ENABLED true
+# Optional: use an absolute path to a separate statistics database.
+set -gx TASKIX_JEV_METRICS_DB "$HOME/.local/state/taskix/jev-metrics.sqlite"
+```
+
+Only `true` (case insensitive) or `1` enables writes. Unset/false skips metric
+collection, SQLite loading, directory creation and database access. Jev itself must
+also be enabled with valid configuration. Recording starts with subsequent prompts;
+there is no historical backfill. Tool heartbeats and classifier children do not
+write routing statistics. The default database is
+`$XDG_STATE_HOME/taskix/jev-metrics.sqlite`, or
+`~/.local/state/taskix/jev-metrics.sqlite` when XDG_STATE_HOME is unset. It is separate
+from the Taskix task database. Newly created directories/files use 0700/0600 modes.
+
+Each prompt records a generated request ID, timestamp, host session/turn when
+available, Project ID, model, configured threshold, preparation duration, whether
+HTTP was attempted, whether the route was accepted, and fallback reason. Each
+route/Inbox answer records its known choice, Inbox ID, confidence, selected-option
+probability, runner-up margin, validation status and rejection issue. It stores no
+prompt/history/Inbox bodies, API keys, endpoint URLs, leases or raw model response.
+Metrics stay outside injected Agent context.
+
+Use the taskix CLI from any directory; no task database initialization is required:
+
+```sh
+taskix routing metrics report
+taskix routing metrics list --limit 50
+taskix routing metrics label REQUEST_ID correct
+taskix routing metrics label REQUEST_ID incorrect
+```
+
+Add `--json` for the standard taskix response envelope. Reports display text
+tables by default; list/label use the standard human-readable JSON display.
+Queries use the same `TASKIX_JEV_METRICS_DB` setting; reading an absent database
+fails instead of creating one. `list` shows the latest 50 requests and their
+question scores; use session/turn/time to locate the corresponding conversation.
+`report` groups adoption and reviewed accuracy by model and configured threshold,
+lists fallback/question issues, and compares all-question score gates at
+0.85/0.90/0.95. `response_quality` gives valid-response and low-confidence-response
+counts: divide the latter by the former for the fraction of valid responses with
+at least one low score. A failed Inbox answer can cause the entire prompt to defer.
+
+Score-gate passes are not predicted adoption: later assignment/revision checks
+might reject, and missing/invalid/uncertain answers cannot be fixed by lowering a
+threshold. `reviewed_accuracy` measures only manually labeled accepted requests;
+without labels it is null, not 100%. Label the correctness of the complete proposed
+route and Inbox selection, not agreement with another model. Review both accepted
+and deferred samples before changing thresholds.
+
+Writing uses one transaction per prompt in a dedicated worker and closes the connection afterward. The worker receives only sanitized metrics, with an empty environment; no API key or prompt is transferred. SQLite lock waits use a 25 ms busy timeout. The parent waits at most 250 ms for worker startup and persistence, then requests termination and continues without awaiting OS cleanup. This bounds parent waiting under normal event-loop scheduling, not physical disk completion. Failures skip the sample with a generic stderr notice and never alter routing. The report labels `duration_ms` as `PREP_MS`: preparation and Jev time, excluding statistics writing and native subagent work. Reports describe successfully stored
+samples, so dropped writes can bias them. No automatic retention/deletion is
+performed; disable collection when finished. The query tool adds no model calls.
+
 ## Prerequisites and activation
 
 Install Node.js 24+ and put `taskix` on PATH. Initialize taskix with your chosen document directory before enabling the plugin. Set `TASKIX_CONFIG` if its configuration is not in the default location.
@@ -89,7 +265,8 @@ The shared Skill uses `claim → Plan → start → execute/verify → done`. Cl
 
 | Trigger | Behavior |
 | --- | --- |
-| Codex/Claude `SessionStart` | Restore eligible Tasks to PLANNING with a new token and inject task context |
+| Codex/Claude `SessionStart` | Restore eligible Tasks to PLANNING with a new token; inject full context by default or a short notice with Jev enabled |
+| Codex/Claude `UserPromptSubmit` | Optionally classify ownership with Jev and inject selected context or Agent fallback |
 | Codex/Claude `PreToolUse`, `PostToolUse` | Renew leases and surface human cancellation facts |
 | Codex/Claude `Stop` | Renew leases; leave Inbox work pending for explicit user input |
 | Codex `Interrupt` | Block active Tasks owned by the interrupted session and release their leases |
