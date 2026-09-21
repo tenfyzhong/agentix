@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdtemp, mkdir, readFile, writeFile, rm } from "node:fs/promises";
-import { devNull, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
@@ -9,7 +9,7 @@ const repository = new URL("../../../", import.meta.url);
 const executable = `version-probe${process.platform === "win32" ? ".exe" : ""}`;
 const run = (cwd, command, args) => execFileSync(command, args, {
     cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
-    env: { ...process.env, CARGO_TARGET_DIR: join(cwd, "target"), CARGO_NET_OFFLINE: "true", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: devNull },
+    env: { ...process.env, CARGO_TARGET_DIR: join(cwd, "target"), CARGO_NET_OFFLINE: "true", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: join(cwd, ".gitconfig") },
 }).trim();
 const git = (cwd, ...args) => run(cwd, "git", args);
 
@@ -17,6 +17,8 @@ async function fixture(t, version = "0.0.0-dev") {
     const root = await mkdtemp(join(tmpdir(), "agentix-version-"));
     t.after(() => rm(root, { recursive: true, force: true }));
     await mkdir(join(root, "crates/probe/src"), { recursive: true });
+    // Git for Windows rejects the device path returned by node:os devNull.
+    await writeFile(join(root, ".gitconfig"), "");
     await writeFile(join(root, "Cargo.toml"), '[workspace]\nmembers = ["crates/probe"]\nresolver = "3"\n');
     await writeFile(join(root, "crates/probe/Cargo.toml"), `[package]\nname = "version-probe"\nversion = "${version}"\nedition = "2024"\nbuild = "../../build.rs"\n`);
     await writeFile(join(root, "crates/probe/src/main.rs"), 'fn main() { println!("{}", option_env!("AGENTIX_BUILD_VERSION").unwrap_or(env!("CARGO_PKG_VERSION"))); }\n');
