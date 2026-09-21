@@ -276,19 +276,14 @@ pub async fn codex_terminal_input(
 }
 
 async fn run(command: &Path, prefix: &[String], args: &[&str]) -> Result<String, MultiplexerError> {
-    let output = tokio::time::timeout(
-        Duration::from_secs(5),
-        Command::new(command)
-            .args(prefix)
-            .args(args)
-            .env_remove("TMUX")
-            .env_remove("TMUX_PANE")
-            .kill_on_drop(true)
-            .output(),
-    )
-    .await
-    .map_err(error)?
-    .map_err(error)?;
+    let mut process = Command::new(command);
+    process
+        .args(prefix)
+        .args(args)
+        .env_remove("TMUX")
+        .env_remove("TMUX_PANE")
+        .kill_on_drop(true);
+    let output = super::terminal_command_output(&mut process).await?;
     if !output.status.success() {
         return Err(error(String::from_utf8_lossy(&output.stderr)));
     }
@@ -459,3 +454,7 @@ mod styled_draft_tests {
         assert_eq!(codex_ansi_draft("codex|2|1|0|0", empty).unwrap(), None);
     }
 }
+
+#[cfg(all(test, unix))]
+#[path = "native_command_tests.rs"]
+mod command_tests;

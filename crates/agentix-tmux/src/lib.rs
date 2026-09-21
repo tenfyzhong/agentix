@@ -8,10 +8,8 @@ use async_trait::async_trait;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::process::{Output, Stdio};
-use std::time::Duration;
 use tokio::process::Command;
 
-const TIMEOUT: Duration = Duration::from_secs(5);
 const FORMAT: &str = "#{session_id}|#{session_name}|#{window_id}|#{window_index}|#{window_name}|#{pane_id}|#{pane_index}|#{pane_active}|#{pane_current_command}|#{pane_current_path}|#{pane_pid}|#{pane_tty}";
 
 #[derive(Debug)]
@@ -67,10 +65,7 @@ impl TmuxDriver {
             }))
             .stdin(Stdio::null())
             .kill_on_drop(true);
-        tokio::time::timeout(TIMEOUT, command.output())
-            .await
-            .map_err(|_| error("tmux operation timed out"))?
-            .map_err(error)
+        agentix_multiplexer::terminal_command_output(&mut command).await
     }
     async fn run(&self, args: &[String]) -> Result<String, MultiplexerError> {
         let output = self.output(args).await?;
@@ -281,10 +276,7 @@ impl MultiplexerDriver for TmuxDriver {
         }
         let mut command = Command::new("ps");
         command.args(["-A", "-o", "pid=,ppid="]).kill_on_drop(true);
-        let output = tokio::time::timeout(TIMEOUT, command.output())
-            .await
-            .map_err(error)?
-            .map_err(error)?;
+        let output = agentix_multiplexer::terminal_command_output(&mut command).await?;
         if !output.status.success() {
             return Err(error(String::from_utf8_lossy(&output.stderr)));
         }

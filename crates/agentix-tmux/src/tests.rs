@@ -2,6 +2,7 @@ use super::*;
 use agentix_domain::MultiplexerMutation;
 use agentix_multiplexer::WorkspaceManager;
 use std::sync::Arc;
+use std::time::Duration;
 
 struct Cleanup(PathBuf);
 impl Drop for Cleanup {
@@ -537,4 +538,59 @@ async fn native_blank_panes_close_with_global_remain_on_exit_enabled() {
             "on"
         );
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn terminal_queries_use_login_path_before_inherited_commands() {
+    use std::os::unix::fs::PermissionsExt;
+    let directory = tempfile::tempdir().unwrap();
+    let login = directory.path().join("login");
+    let inherited = directory.path().join("inherited");
+    std::fs::create_dir(&login).unwrap();
+    std::fs::create_dir(&inherited).unwrap();
+    let script = |path: &std::path::Path, body: &str| {
+        std::fs::write(path, format!("#!/bin/sh\n{body}\n")).unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    };
+    let shell = directory.path().join("shell");
+    script(
+        &shell,
+        "export PATH=\"$LOGIN_BIN:/usr/bin:/bin\"; exec /bin/sh -c \"$2\"",
+    );
+    script(&inherited.join("tmux"), "printf wrong-program; exit 0");
+    script(
+        &login.join("tmux"),
+        "printf '%s\\n' '$1|work|@2|0|code|%4|0|1|fish|/tmp|42|/dev/pts/7'",
+    );
+    script(&login.join("ps"), "printf '42 1\\n43 42\\n'");
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "tests::login_path_child",
+            "--ignored",
+            "--nocapture",
+        ])
+        .env_clear()
+        .env("PATH", format!("{}:/usr/bin:/bin", inherited.display()))
+        .env("LOGIN_BIN", login)
+        .env("AGENTIX_LOGIN_SHELL", shell)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+#[ignore = "invoked with isolated service and login environments"]
+async fn login_path_child() {
+    let driver = TmuxDriver::default();
+    assert!(driver.probe().await.unwrap());
+    let locations = driver.process_locations().await.unwrap();
+    assert_eq!(locations[&43].pane_id, "%4");
 }

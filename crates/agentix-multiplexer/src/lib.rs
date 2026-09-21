@@ -3,9 +3,11 @@ mod directories;
 mod launch;
 pub use launch::{interactive_login_shell_argv, persistent_launch_argv};
 mod native_control;
+mod terminal_command;
 #[cfg(test)]
 use native_control::validate_codex_prompt;
 pub use native_control::{codex_terminal_input, send_codex_new};
+pub use terminal_command::terminal_command_output;
 
 use agentix_domain::{
     MultiplexerKind, MultiplexerMutation, MultiplexerPane, MultiplexerSession, MultiplexerSnapshot,
