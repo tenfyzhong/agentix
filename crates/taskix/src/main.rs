@@ -18,7 +18,7 @@ mod obsidian;
 
 #[derive(Parser)]
 #[command(
-    version,
+    version = env!("AGENTIX_BUILD_VERSION"),
     about = "Coordinate agent tasks with SQLite and read-only Obsidian boards"
 )]
 struct Cli {
@@ -1292,6 +1292,20 @@ fn format_date(timestamp: i64) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn cli_reports_build_version() {
+        use clap::Parser;
+
+        let Err(version) = super::Cli::try_parse_from(["taskix", "--version"]) else {
+            panic!("--version must exit with the version text");
+        };
+        assert_eq!(version.kind(), clap::error::ErrorKind::DisplayVersion);
+        assert_eq!(
+            version.to_string(),
+            format!("taskix {}\n", env!("AGENTIX_BUILD_VERSION"))
+        );
+    }
+
     use super::*;
 
     async fn previous_job(

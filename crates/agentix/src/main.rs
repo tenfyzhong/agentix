@@ -45,7 +45,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 use uuid::Uuid;
 
 #[derive(Debug, Parser)]
-#[command(version, about = "Control local coding-agent sessions from IM")]
+#[command(version = env!("AGENTIX_BUILD_VERSION"), about = "Control local coding-agent sessions from IM")]
 struct Cli {
     #[arg(short, long, value_name = "FILE", value_hint = clap::ValueHint::FilePath, default_value_os_t = default_config_path())]
     config: PathBuf,
@@ -1180,6 +1180,20 @@ fn default_config_path() -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn cli_reports_build_version() {
+        use clap::Parser;
+
+        let Err(version) = super::Cli::try_parse_from(["agentix", "--version"]) else {
+            panic!("--version must exit with the version text");
+        };
+        assert_eq!(version.kind(), clap::error::ErrorKind::DisplayVersion);
+        assert_eq!(
+            version.to_string(),
+            format!("agentix {}\n", env!("AGENTIX_BUILD_VERSION"))
+        );
+    }
+
     use agentix_core::SqliteState;
     #[test]
     fn claude_terminal_launch_does_not_require_channels() {
