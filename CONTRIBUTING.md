@@ -121,6 +121,13 @@ The core exposes a small common agent interface plus optional queue, attached-se
 
 Run `make` for a debug build, `make release` for a release build, or `make help` to list the available targets.
 
+Both CLIs append the current Git commit to development versions, for example
+`0.0.0-dev+dd207c5abc12`. Uncommitted tracked or untracked changes add `.dirty`;
+ignored build artifacts do not. Cargo refreshes this metadata on each build,
+including optimized builds and `brew install --HEAD`. Versions ending in `-dev`
+use this rule; tagged releases retain their exact release version. Development
+source archives without Git metadata report `0.0.0-dev+unknown`.
+
 ## Code and documentation style
 
 - Follow rustfmt and the workspace Clippy configuration.

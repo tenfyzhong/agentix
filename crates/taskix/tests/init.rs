@@ -71,6 +71,6 @@ fn cli_identifies_itself_as_taskix() {
     assert!(output.status.success());
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
-        format!("taskix {}\n", env!("CARGO_PKG_VERSION"))
+        format!("taskix {}\n", env!("AGENTIX_BUILD_VERSION"))
     );
 }
