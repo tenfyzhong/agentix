@@ -446,7 +446,7 @@ for (const host of ["codex", "claude"]) {
             const f = await fixture(t);
             const root = join(f.dir, "installed plugin \u{2603}");
             await mkdir(root);
-            for (const path of ["hooks", "runtime.mjs", "conversation.mjs", "discussion.mjs", "jev.mjs", "routing-state.mjs", "routing-delegation.mjs", "routing-decision.mjs", "jev-metrics.mjs", "jev-metrics-worker.mjs", "metrics-schema.sql", `.${host}-plugin`]) {
+            for (const path of ["hooks", "runtime.mjs", "taskix-cli.mjs", "routing-context.mjs", "conversation.mjs", "discussion.mjs", "jev.mjs", "routing-state.mjs", "jev-metrics.mjs", "jev-metrics-worker.mjs", "metrics-schema.sql", `.${host}-plugin`]) {
                 await cp(resolve(path), join(root, path), { recursive: true });
             }
             const task = await f.run([
@@ -722,7 +722,7 @@ test("Jev routing uses real project-scoped CLI candidates and recovers waiting w
             const candidate = request.state.candidates.find(c => c.job.id === f.job.id);
             assert.equal(candidate.tasks[0].reason, "Which region?");
             const choice = `resume:${f.job.id}`;
-            return { ok: true, json: async () => ({ answers: { route: {
+            return { ok: true, json: async () => ({ answers: { intent: {type:"choice",choice:"work",confidence:1,probabilities:{work:1,question:0,uncertain:0}}, route: {
                 type: "choice", choice, confidence: 1,
                 probabilities: Object.fromEntries(Object.keys(request.questions.route.criteria).map(k => [k, k === choice ? 1 : 0])),
             } } }) };
@@ -746,7 +746,7 @@ for (const host of ["codex", "claude"]) test(`${host} Jev prompt and tool hooks 
         requests.push({ method: req.method, url: req.url, authorization: req.headers.authorization, body });
         const choice = `resume:${f.job.id}`;
         res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ answers: { route: {
+        res.end(JSON.stringify({ answers: { intent: {type:"choice",choice:"work",confidence:1,probabilities:{work:1,question:0,uncertain:0}}, route: {
             type: "choice", choice, confidence: 1,
             probabilities: Object.fromEntries(Object.keys(body.questions.route.criteria).map(k => [k, k === choice ? 1 : 0])),
         } } }));
@@ -804,7 +804,7 @@ for (const [count, history] of [[0, 0], [1, 0], [8, 0], [32, 0], [33, 0], [1, 10
                     requestBytes = Buffer.byteLength(init.body);
                     const request = JSON.parse(init.body);
                     const choice = count ? `resume:${f.job.id}` : "new_job";
-                    return { ok: true, json: async () => ({ answers: { route: {
+                    return { ok: true, json: async () => ({ answers: { intent: {type:"choice",choice:"work",confidence:1,probabilities:{work:1,question:0,uncertain:0}}, route: {
                         type: "choice", choice, confidence: 1,
                         probabilities: Object.fromEntries(Object.keys(request.questions.route.criteria).map(k => [k, +(k === choice)])),
                     } } }) };
@@ -822,39 +822,57 @@ for (const [count, history] of [[0, 0], [1, 0], [8, 0], [32, 0], [33, 0], [1, 10
     });
 }
 
-for (const changed of [false, true]) test(`delegated followup validates child output and rejects stale writes changed=${changed}`, async t => {
+for (const host of ["codex", "claude", "pi", "omp"]) for (const changed of [false, true]) test(`${host}_main_agent_fallback_preserves_guarded_followup_and_rejects_stale_writes changed=${changed}`, async t => {
     const f = await fixture(t);
-    const ownerOptions = { cwd: f.dir, session: "delegation-parent", executor: "agent:codex" };
+    const ownerOptions = { cwd: f.dir, session: `session:${host}`, executor: `agent:${host}` };
     const old = await f.run(["task", "add", "--job", f.job.id, "--title", "Original implementation"], ownerOptions);
     const claim = await f.run(["task", "claim", old.id], ownerOptions);
     const leased = { ...ownerOptions, token: claim.lease.token };
     await f.run(["plan", "create", old.id, "--body", "Deliver implementation"], leased);
     await f.run(["task", "start", old.id], leased);
     await f.run(["task", "done", old.id], leased);
-    const hook = await runHook({ hook_event_name: "UserPromptSubmit", session_id: ownerOptions.session, cwd: f.dir, prompt: "Create the PR" }, runTaskix, {
-        env: { TASKIX_JEV_ENABLED: "true", TASKIX_JEV_URL: "https://unused.test", TASKIX_JEV_API_KEY: "mock" },
-        fetch: async () => { throw new Error("offline"); }, cacheDir: join(f.dir, "routing"),
+    const { createServer } = await import("node:http");
+    let requests = 0;
+    const server = createServer((req, res) => {
+        requests++;
+        req.resume();
+        res.writeHead(503).end("Synthetic outage");
     });
-    const snapshotPath = JSON.parse(hook.hookSpecificOutput.additionalContext.split("Snapshot: ")[1]);
-    const packet = JSON.parse(await readFile(snapshotPath, "utf8"));
-    const selected = packet.candidates.find(candidate => candidate.job.id === f.job.id).job;
-    // Only semantic inference is substituted; the validator and lifecycle writes are real.
-    const childResult = { action: "followup", job_id: selected.id, revision: selected.revision, inbox_ids: [], reason: "Deliver the pending implementation", questions: [] };
-    const validator = spawn(process.execPath, [resolve("routing-decision.mjs"), snapshotPath, ownerOptions.session], { cwd: f.dir, env: process.env, stdio: ["pipe", "pipe", "pipe"] });
-    let stdout = "", stderr = "";
-    validator.stdout.on("data", chunk => { stdout += chunk; });
-    validator.stderr.on("data", chunk => { stderr += chunk; });
-    validator.stdin.end(JSON.stringify(childResult));
-    const code = await new Promise((resolve, reject) => { validator.on("error", reject); validator.on("close", resolve); });
-    assert.equal(code, 0, stderr);
-    const validated = JSON.parse(stdout);
-    assert.deepEqual(validated.followup_args, ["job", "followup", selected.id, "--expect-revision", String(selected.revision)]);
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    t.after(() => new Promise(resolve => { server.closeAllConnections(); server.close(resolve); }));
+    const env = { TASKIX_JEV_ENABLED: "true", TASKIX_JEV_URL: `http://127.0.0.1:${server.address().port}`, TASKIX_JEV_API_KEY: "fixture-key", TASKIX_JEV_METRICS_ENABLED: "false" };
+    let content;
+    if (["pi", "omp"].includes(host)) {
+        const previous = Object.fromEntries(Object.keys(env).map(key => [key, process.env[key]]));
+        Object.assign(process.env, env);
+        t.after(() => { for (const [key, value] of Object.entries(previous)) {
+            if (value === undefined) delete process.env[key]; else process.env[key] = value;
+        } });
+        const x = await extension(t, f, host);
+        content = (await x.handlers.get("before_agent_start")({ prompt: "Create the PR" }, x.ctx)).message.content;
+    } else {
+        const hooks = JSON.parse(await readFile("hooks/hooks.json", "utf8"));
+        const output = await hookProcess({ hook_event_name: "UserPromptSubmit", session_id: ownerOptions.session,
+            cwd: f.dir, prompt: "Create the PR", ...(host === "codex" ? { turn_id: "fallback-turn" } : {}),
+        }, hooks.hooks.UserPromptSubmit[0].hooks[0].command, host, resolve("."), "/bin/sh", env);
+        content = output.hookSpecificOutput.additionalContext;
+    }
+    assert.equal(requests, 1, "each host tries Jev once before main-Agent fallback");
+    assert.match(content, /Jev deferred to the current Agent/);
+    assert.match(content, /--expect-revision/);
+    assert.doesNotMatch(content, /Delegate once|Snapshot:/);
+    const facts = JSON.parse(content.slice(content.lastIndexOf("\n") + 1));
+    assert.ok(facts.candidate_ids.includes(f.job.id));
+    // Substitute only the main Agent's semantic selection; all reads and writes use real CLI guards.
+    const selected = await f.run(["job", "show", f.job.id], ownerOptions);
+    assert.equal(selected.status, "PENDING_REVIEW", "routing advice must not reopen the Job");
+    const followupArgs = ["job", "followup", selected.id, "--expect-revision", String(selected.revision)];
     if (changed) {
         await f.run(["job", "update", selected.id, "--name", "Human renamed the delivery"]);
-        await assert.rejects(f.run([...validated.followup_args, "--prompt", "Create the PR"], ownerOptions), /revision changed/);
+        await assert.rejects(f.run([...followupArgs, "--prompt", "Create the PR"], ownerOptions), /revision changed/);
         assert.equal((await f.run(["job", "show", selected.id])).status, "PENDING_REVIEW");
     } else {
-        await f.run([...validated.followup_args, "--prompt", "Create the PR"], ownerOptions);
+        await f.run([...followupArgs, "--prompt", "Create the PR"], ownerOptions);
         const next = await f.run(["task", "add", "--job", selected.id, "--title", "PR delivery"], ownerOptions);
         assert.deepEqual(next.dependencies, [old.id]);
         assert.equal((await f.run(["job", "show", selected.id])).review_policy, "required");
@@ -876,9 +894,9 @@ test("real CLI prompt latency includes optional metrics writing", async t => {
         try {
             const result = await runHook({ hook_event_name: "UserPromptSubmit", session_id: `metrics_${mode}`, cwd: f.dir, prompt: "Explain the current status" }, runTaskix, {
                 env: { ...env, TASKIX_JEV_METRICS_ENABLED: mode === "off" ? "false" : "true" }, cacheDir: join(f.dir, "routing"),
-                fetch: async (_url, init) => ({ ok: true, json: async () => ({ answers: { route: {
-                    type: "choice", choice: "discussion", confidence: 1,
-                    probabilities: Object.fromEntries(Object.keys(JSON.parse(init.body).questions.route.criteria).map(key => [key, key === "discussion" ? 1 : 0])),
+                fetch: async (_url, init) => ({ ok: true, json: async () => ({ answers: { intent: {type:"choice",choice:"question",confidence:1,probabilities:{work:0,question:1,uncertain:0}}, route: {
+                    type: "choice", choice: "new_job", confidence: 1,
+                    probabilities: Object.fromEntries(Object.keys(JSON.parse(init.body).questions.route.criteria).map(key => [key, key === "new_job" ? 1 : 0])),
                 } } }) }),
             });
             elapsed[mode] = performance.now() - start;
@@ -962,4 +980,38 @@ for (const host of ["codex","claude","pi","omp"]) for (const mode of ["create","
     else await runHook({hook_event_name:'Stop',session_id:session,cwd:f.dir,transcript_path:transcript});
     const after=await f.run(['job','show',job.id]);
     assert.equal(after.conversation.filter(m=>m.role==='user').length,4);
+});
+
+// Execute the packaged standalone helper, not only its imported implementation.
+test("packaged_discussion_cli_returns_guarded_arguments_and_attaches_the_original_turn", async t => {
+    const session = "discussion-cli", f = await fixture(t, session);
+    const options = { cwd: f.dir, session, executor: "agent:codex" };
+    const transcript = join(f.dir, "turn.json");
+    await writeFile(transcript, JSON.stringify({ turn_id: "current", source: "test", messages: [
+        { id: "original", role: "user", text: "Improve the current fallback" },
+    ] }));
+    await f.run(["hook", "record", "--file", transcript], options);
+    const packaged = join(f.dir, "packaged plugin");
+    await mkdir(packaged);
+    const pkg = JSON.parse(await readFile("package.json", "utf8"));
+    for (const file of ["package.json", ...pkg.files.filter(file => file.endsWith(".mjs"))]) {
+        await cp(resolve(file), join(packaged, file));
+    }
+    const child = spawn(process.execPath, [join(packaged, "discussion.mjs"), session], {
+        cwd: f.dir, env: { ...process.env, TASKIX_JEV_ENABLED: "false" }, stdio: ["pipe", "pipe", "pipe"],
+    });
+    let stdout = "", stderr = "";
+    child.stdout.on("data", chunk => { stdout += chunk; });
+    child.stderr.on("data", chunk => { stderr += chunk; });
+    const exited = new Promise((resolve, reject) => { child.on("error", reject); child.on("close", resolve); });
+    child.stdin.end(JSON.stringify({ current_turn: "current", target: {
+        title: "Improve fallback", prompt: "Improve the current fallback", job_id: f.job.id,
+    } }));
+    assert.equal(await exited, 0, stderr);
+    const selected = JSON.parse(stdout);
+    assert.equal(selected.status, "selected");
+    assert.ok(selected.args.includes("--expect-revision"));
+    await f.run(["conversation", "attach", "--job", f.job.id, ...selected.args], options);
+    const job = await f.run(["job", "show", f.job.id]);
+    assert.deepEqual(job.conversation.map(message => message.text), ["Improve the current fallback"]);
 });

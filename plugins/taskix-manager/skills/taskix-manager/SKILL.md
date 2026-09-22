@@ -20,14 +20,17 @@ This is a skill setting. Do not write language settings into taskix configuratio
 When the host supplies a `Taskix route`, use its selected Job and Inbox IDs instead
 of repeating candidate discovery or semantic classification. `followup` still
 requires `job followup` with the supplied `--expect-revision`; `resume` continues an ACTIVE Job and
-may reclaim a WAITING_USER Task. `discussion` needs no lifecycle write. Read fresh
+may reclaim a WAITING_USER Task. `discussion` needs no lifecycle write. When it includes a Job ID and selected Job context, answer about that Job without reopening it; attach related discussion through the normal guarded workflow when implementation resumes. Read fresh
 context when ownership, cancellation or revision checks require it, or when new
-evidence contradicts the route. For a Jev deferral with a snapshot reference, use
-[the routing classifier protocol](references/routing-classifier.md) before normal
-discovery. Validate the child result with the packaged parent validator and use
-its guarded `followup_args`; reassess rejected evidence without dropping the guard.
-A classifier child must not create tracked work or delegate again. Routing never bypasses claims, Plans, dependencies,
-review policy or explicit Inbox intake authorization.
+evidence contradicts the route. When Jev defers, the current main Agent handles
+routing directly; do not delegate classification to a subagent. The hook supplies
+bounded summaries and references, not complete evidence. Read omitted facts with
+`taskix context` and `job/task show` before deciding ownership or Inbox matches.
+Preserve an existing assignment. Before `job followup`, read the selected Job's
+current revision and pass it with `--expect-revision`; reassess conflicts without
+removing the guard. If evidence remains uncertain, inspect missing facts or ask a
+focused question instead of creating a Job. Routing never bypasses claims, Plans,
+dependencies, review policy or explicit Inbox intake authorization.
 
 1. Read `taskix context --session <host-session-id> --json`. Use the actual host session ID from SessionStart or the extension; do not invent one. Preserve a caller-provided `job_id` and Task assignment. A Team's shared context is external and keyed by `job_id`.
 2. Discover or register the Git Project with `project register`; non-Git work requires explicit `--project`. Inspect existing active Jobs and `context.previous_job` before creating another for the same request. A previous PENDING_REVIEW Job is a candidate, not an automatic assignment: decide whether the new prompt supplements that requirement. For a related supplement, run `job followup JOB_ID --prompt 'Verbatim supplementary request' --executor agent:HOST --session HOST_SESSION` with the new request verbatim before adding Tasks; reuse the Job, which returns to ACTIVE. Keep old Tasks and add new Tasks for the supplement. Each new Task automatically depends on the snapshot of all old Tasks taken when follow-up begins; add any dependencies among the new Tasks separately. Cancelled or otherwise unfinished prerequisites do not satisfy execution gates. An independent requirement or a request after COMPLETED gets a new Job; do not reopen every Job on every prompt.

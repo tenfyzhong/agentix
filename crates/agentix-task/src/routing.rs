@@ -16,6 +16,14 @@ const JOBS: &str = "SELECT json_object(
     'review_policy',json_extract(data,'$.review_policy'),
     'session_id',json_extract(data,'$.session_id'),
     'followup_session_id',json_extract(data,'$.followup_session_id'),
+    'completed_tasks',json((SELECT json_group_array(json(summary)) FROM (
+        SELECT * FROM (
+            SELECT rowid AS task_rowid,json_object('id',id,'status','DONE',
+                'title',substr(json_extract(data,'$.title'),1,300)) AS summary
+            FROM tasks WHERE job_id=jobs.id AND json_extract(data,'$.status')='DONE'
+            ORDER BY rowid DESC LIMIT 8
+        ) ORDER BY task_rowid
+    ))),
     'conversation',json((SELECT json_group_array(json(message)) FROM (
         SELECT json_object('role',json_extract(value,'$.role'),
             'text',substr(json_extract(value,'$.text'),1,2000),

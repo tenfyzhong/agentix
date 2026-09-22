@@ -250,3 +250,73 @@ test("routing_transcript_budget_rejects_oversized_records_and_honors_abort", asy
     await assert.rejects(transcriptConversation(path, { signal: controller.signal }), { name: "AbortError" });
     assert.equal((await transcriptConversation(path)).messages[0].text.length, 100000, "default recording remains unbounded");
 });
+
+for (const host of ["codex", "claude"]) test(`${host}_routing_reads_bounded_recent_turns_without_changing_capture`, async t => {
+    const directory = await mkdtemp(join(tmpdir(), "taskix-recent-turns-"));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const path = join(directory, "history.jsonl");
+    const rows = Array.from({ length: 12 }, (_, i) => host === "codex" ? [
+        { type: "event_msg", payload: { type: "task_started", turn_id: `turn_${i}` } },
+        { type: "response_item", payload: { type: "message", role: "user", id: `u${i}`, content: `Request ${i}` } },
+        { type: "response_item", payload: { type: "message", role: "assistant", id: `a${i}`, content: `Reply ${i}` } },
+    ] : [
+        { type: "user", uuid: `u${i}`, message: { role: "user", content: `Request ${i}` } },
+        { type: "assistant", uuid: `a${i}`, message: { role: "assistant", content: `Reply ${i}` } },
+    ]).flat();
+    await writeFile(path, rows.map(row => JSON.stringify(row)).join("\n"));
+    const recent = await transcriptConversation(path, { recentTurns: 4, maxBytes: 256 * 1024 });
+    assert.deepEqual(recent.messages.map(m => m.text), Array.from({ length: 4 }, (_, i) => [`Request ${i + 8}`, `Reply ${i + 8}`]).flat());
+    assert.deepEqual((await transcriptConversation(path, { currentOnly: true })).messages.map(m => m.text), ["Request 11", "Reply 11"]);
+});
+
+test("host_plugin_and_goal_wrappers_do_not_displace_the_real_user_request", () => {
+    const plugins = "<recommended_plugins>Available host integrations</recommended_plugins>";
+    const goal = '<codex_internal_context source="goal">Continue the tracked objective</codex_internal_context>';
+    const rules = "# AGENTS.md instructions for /work\n<INSTRUCTIONS>Injected rules</INSTRUCTIONS><environment_context>cwd: /work</environment_context>";
+    for (const content of [plugins, goal, plugins + rules]) {
+        assert.equal(visibleMessage({ role: "user", content }), undefined);
+        assert.equal(visibleMessage({ role: "user", content: content + "\n按照建议进行修改" }).text, "按照建议进行修改");
+    }
+    for (const content of ["Explain <recommended_plugins> and <codex_internal_context>.", "<recommended_plugins>Unclosed user example"]) {
+        assert.equal(visibleMessage({ role: "user", content }).text, content);
+    }
+    assert.equal(visibleMessage({ role: "assistant", content: goal }).text, goal);
+});
+
+test("routing_keeps_complete_recent_turns_when_older_optional_history_exceeds_budget", async t => {
+    const directory = await mkdtemp(join(tmpdir(), "taskix-recent-budget-"));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const path = join(directory, "session.jsonl");
+    const rows = [
+        { type: "event_msg", payload: { type: "task_started", turn_id: "old" } },
+        { type: "response_item", payload: { type: "message", role: "user", id: "old-u", content: "x".repeat(5000) } },
+        { type: "event_msg", payload: { type: "task_started", turn_id: "advice" } },
+        { type: "response_item", payload: { type: "message", role: "user", id: "u", content: "How should this be fixed?" } },
+        { type: "response_item", payload: { type: "message", role: "assistant", id: "a", content: "Reuse the existing callback." } },
+        { type: "event_msg", payload: { type: "task_started", turn_id: "current" } },
+        { type: "response_item", payload: { type: "message", role: "user", id: "c", content: "按照建议进行修改" } },
+    ];
+    await writeFile(path, rows.map(row => JSON.stringify(row)).join("\n"));
+    const recent = await transcriptConversation(path, { recentTurns: 8, maxBytes: 1024 });
+    assert.equal(recent.turn_id, "current");
+    assert.deepEqual(recent.messages.map(message => message.text), [
+        "How should this be fixed?", "Reuse the existing callback.", "按照建议进行修改",
+    ]);
+    assert.equal(recent.history_truncated, true);
+});
+
+test("routing_preserves_complete_messages_from_an_older_turn_cut_off_by_budget", async t => {
+    const directory = await mkdtemp(join(tmpdir(), "taskix-partial-turn-"));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const path = join(directory, "session.jsonl");
+    const rows = [
+        { type: "event_msg", payload: { type: "task_started", turn_id: "old" } },
+        { type: "response_item", payload: { type: "message", role: "user", id: "old-u", content: "x".repeat(5000) } },
+        { type: "response_item", payload: { type: "message", role: "assistant", id: "advice", content: "Use the existing callback." } },
+    ];
+    await writeFile(path, rows.map(row => JSON.stringify(row)).join("\n"));
+    const recent = await transcriptConversation(path, { recentTurns: 8, maxBytes: 1024 });
+    assert.deepEqual(recent.messages.map(message => message.text), ["Use the existing callback."]);
+    assert.equal(recent.history_truncated, true);
+    await assert.rejects(transcriptConversation(path, { currentOnly: true, maxBytes: 1024 }), /budget/);
+});

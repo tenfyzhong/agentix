@@ -2,72 +2,10 @@ import { randomUUID } from "node:crypto";
 import { stageTranscript, discussionNotice, selectDiscussion } from "./discussion.mjs";
 import { visibleMessage, transcriptConversation, recordMessages } from "./conversation.mjs";
 import { jevConfig, routePrompt, withJevMetrics } from "./jev.mjs";
-import { delegationContext, classifierHook } from "./routing-delegation.mjs";
 import { routingReceipt } from "./routing-state.mjs";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-
-const executeFile = promisify(execFile);
-const reserved = new Set([
-    "--session",
-    "--executor",
-    "--lease-token",
-    "--actor",
-    "--json",
-]);
-
-export function buildArgs(args, options = {}) {
-    if (!Array.isArray(args) || args.some((arg) => typeof arg !== "string")) {
-        throw new Error("taskix args must be an array of strings");
-    }
-    for (const arg of args) {
-        if (reserved.has(arg.split("=")[0]))
-            throw new Error(`Identity option is managed by the host: ${arg}`);
-    }
-    const result = ["--json", ...args];
-    for (const [flag, value] of [
-        ["--session", options.session],
-        ["--executor", options.executor],
-        ["--lease-token", options.token],
-        ["--idempotency-key", options.idempotencyKey],
-    ]) {
-        if (value) result.push(flag, value);
-    }
-    return result;
-}
-
-export async function runTaskix(args, options = {}) {
-    try {
-        const { stdout } = await executeFile(
-            "taskix",
-            buildArgs(args, options),
-            {
-                cwd: options.cwd,
-                signal: options.signal,
-                timeout: 30000,
-                maxBuffer: 4 * 1024 * 1024,
-                windowsHide: true,
-            },
-        );
-        const response = JSON.parse(stdout);
-        if (response.schema_version !== 1 || !response.ok)
-            throw new Error(
-                response.error?.message || "Unsupported taskix response",
-            );
-        return response;
-    } catch (error) {
-        if (error.stdout) {
-            try {
-                throw new Error(
-                    JSON.parse(error.stdout).error?.message || error.message,
-                );
-            } catch (parsed) {
-                if (!(parsed instanceof SyntaxError)) throw parsed;
-            }
-        }
-        throw error;
-    }
-}
+import { runTaskix } from "./taskix-cli.mjs";
+import { agentFallback } from "./routing-context.mjs";
+export { buildArgs, runTaskix } from "./taskix-cli.mjs";
 
 function skillContext(context) {
     return {
@@ -93,53 +31,21 @@ function cancellationContext(context) {
     return `Human Inbox work has been cancelled. Stop work on these Jobs at the next safe boundary, preserve completed results, and do not retry stale writes or roll back changes automatically. Inspect taskix context before selecting other work.\nCancellation facts: ${JSON.stringify(entries.map(entry => ({ id: entry.id, job_id: entry.job_id })))}`;
 }
 
-function agentFallback(context, routed) {
-    const header = `Jev deferred to the current Agent (${routed.decision.reason}). These are bounded summaries, not complete evidence. Before selecting ownership or Inbox matches, retrieve omitted facts with taskix context and job/task show; use the taskix-manager skill.\n${workflowContext(context)}\n`;
-    const reference = value => typeof value === "string" && value.length <= 128 ? value : undefined;
-    const short = value => typeof value === "string" ? value.slice(0, 256) : undefined;
-    const candidates = routed.candidates || [];
-    const inbox = context.inbox_todos || [];
-    const facts = {
-        project_id: reference(context.project_id), job_id: reference(context.job_id),
-        task_id: reference(context.task_id), previous_job_id: reference(context.previous_job?.id),
-        full_sources_required: true, candidate_count: candidates.length, inbox_count: inbox.length,
-        candidate_ids: candidates.slice(0, 32).map(c => reference(c.job.id)).filter(Boolean),
-        inbox_ids: inbox.slice(0, 32).map(e => reference(e.id)).filter(Boolean),
-        summaries: [],
-    };
-    const budget = 12000 - header.length;
-    // IDs are hints only; explicit counts and the retrieval instruction preserve
-    // completeness when an unusually large identity set exceeds the budget.
-    while (JSON.stringify(facts).length > budget && (facts.candidate_ids.length || facts.inbox_ids.length)) {
-        facts.candidate_ids.pop();
-        facts.inbox_ids.pop();
-    }
-    const append = summary => {
-        facts.summaries.push(summary);
-        if (JSON.stringify(facts).length > budget) facts.summaries.pop();
-    };
-    if (context.task) append({ task_id: reference(context.task_id), status: context.task.status, reason: short(context.task.reason) });
-    for (const c of candidates.slice(0, 32)) append({ job_id: reference(c.job.id), status: c.job.status, title: short(c.job.title), prompt: short(c.job.prompt) });
-    for (const e of inbox.slice(0, 32)) append({ inbox_id: reference(e.id), content: short(e.content) });
-    return header + JSON.stringify(facts);
-}
-
-async function deferPrompt(prompt, context, routed, options, routing, history = []) {
+function deferPrompt(context, routed, routing) {
     if (routing.telemetry) routing.telemetry.outcome = { action: "agent", reason: routed.decision.reason };
-    try { return await delegationContext(prompt, context, routed, options, routing, history); }
-    catch { return agentFallback(context, routed); }
+    return agentFallback(context, routed);
 }
 
 async function promptContext(prompt, context, options, runner, routing, history = []) {
     const routed = await routePrompt({ prompt, context, options, runner, history, ...routing });
     if (!routed) return `${workflowContext(context)}\n${JSON.stringify(skillContext(context))}`;
-    if (routed.decision.action === "agent") return deferPrompt(prompt, context, routed, options, routing, history);
+    if (routed.decision.action === "agent") return deferPrompt(context, routed, routing);
     const { action, job_id: jobId, inbox_ids: inboxIds } = routed.decision;
     const instruction = {
         followup: `Run job followup ${jobId} --expect-revision ${routed.context.job?.revision} with the verbatim current prompt and current executor/session before adding Tasks. Preserve original Prompt, old Task dependencies and required review.`,
         resume: `Continue ACTIVE Job ${jobId}; inspect its Tasks and reclaim the waiting Task as appropriate. Do not use job followup for ACTIVE Jobs.`,
         new_job: "Create a new Job for this requirement; preserve the verbatim prompt. Review policy: required for code/mixed work, none for independent investigation/docs/operations.",
-        discussion: "Answer the user; this prompt does not request a Job lifecycle change.",
+        discussion: `${jobId ? `Discussion about Job ${jobId}. ` : ""}Answer the user; this prompt does not request a Job lifecycle change.`,
     }[action];
     const inbox = inboxIds.length ? ` Associate only these Inbox IDs using repeated --inbox: ${inboxIds.join(", ")}.` : "";
     return `Taskix route: ${action}. ${instruction}${inbox} Context excerpts are bounded; use job/task show for full details when needed. Use the taskix-manager skill when executing tracked work. If new evidence contradicts this route, inspect taskix context before any write.\n${JSON.stringify(skillContext(routed.context))}`;
@@ -171,8 +77,8 @@ async function prepareMeasuredPrompt(prompt, options, runner, routing, history =
             ready = true;
             if (routing.telemetry) routing.telemetry.project_id = context.project_id;
             if (event?.transcript_path) {
-                try { history = (await transcriptConversation(event.transcript_path, { maxBytes: 256 * 1024, signal: controller.signal })).messages; }
-                catch { return deferPrompt(prompt, context, { decision: { reason: "history_unavailable" } }, options, routing, history); }
+                try { history = (await transcriptConversation(event.transcript_path, { maxBytes: 256 * 1024, recentTurns: 8, signal: controller.signal })).messages; }
+                catch { return deferPrompt(context, { decision: { reason: "history_unavailable" } }, routing); }
             }
             controller.signal.throwIfAborted();
             return promptContext(prompt, context, scoped, checkedRunner, routing, history);
@@ -180,7 +86,7 @@ async function prepareMeasuredPrompt(prompt, options, runner, routing, history =
         return { content, context, ready };
     } catch {
         controller.abort();
-        return { content: await deferPrompt(prompt, context, { decision: { reason: "preparation_unavailable" } }, options, routing, history), context, ready };
+        return { content: deferPrompt(context, { decision: { reason: "preparation_unavailable" } }, routing), context, ready };
     } finally {
         clearTimeout(timer);
     }
@@ -188,7 +94,6 @@ async function prepareMeasuredPrompt(prompt, options, runner, routing, history =
 
 export async function runHook(event, runner = runTaskix, routing = {}) {
     if (!event.session_id) throw new Error("Hook requires session_id");
-    if (await classifierHook(event, routing.cacheDir)) return {};
     if (event.hook_event_name === "PostToolUseFailure" && event.is_interrupt !== true)
         return {};
     const operation =
@@ -370,7 +275,7 @@ export function registerExtension(
             else messages.unshift(state.prompt);
         }
         await recordMessages(messages, runner, state.options, undefined, state.turn ? {turn_id:state.turn,source:host} : undefined);
-        state.history = [...(state.history || []), ...messages].slice(-6);
+        state.history = [...(state.history || []), ...messages].slice(-8);
         const shared = turnRegistry.get(state.options.session);
         if (shared && shared.id === state.turn) shared.active = false;
         const lastAssistant = event.messages?.findLast(message => message.role === "assistant");

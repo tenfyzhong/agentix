@@ -150,3 +150,32 @@ test('Claude interrupted tool failure refreshes the discussion before exit',asyn
     assert.equal(captures.length,1);
     assert.equal(captures[0].messages[0].text,'Discuss before interrupt');
 });
+
+for (const [input, expected, status] of [
+    [JSON.stringify({ current_turn: "turn", target: {} }), "missing_target", 0],
+    ["not-json", "invalid_input", 1],
+]) test(`discussion_cli_returns_${expected}_without_a_circular_import`, async () => {
+    const { spawnSync } = await import("node:child_process");
+    const { fileURLToPath } = await import("node:url");
+    const result = spawnSync(process.execPath, [fileURLToPath(new URL("../discussion.mjs", import.meta.url)), "isolated-test-session"], {
+        input, encoding: "utf8", timeout: 10000,
+    });
+    assert.equal(result.status, status, result.stderr);
+    assert.equal(JSON.parse(result.stdout).reason, expected);
+    assert.doesNotMatch(result.stderr, /unsettled top-level await/);
+});
+
+test("discussion_cli_recognizes_a_symlinked_plugin_directory", async t => {
+    const { symlink } = await import("node:fs/promises");
+    const { spawnSync } = await import("node:child_process");
+    const { fileURLToPath } = await import("node:url");
+    const dir = await mkdtemp(join(tmpdir(), "discussion-alias-"));
+    t.after(() => rm(dir, { recursive: true, force: true }));
+    const alias = join(dir, "plugin alias");
+    await symlink(fileURLToPath(new URL("../", import.meta.url)), alias, process.platform === "win32" ? "junction" : "dir");
+    const result = spawnSync(process.execPath, [join(alias, "discussion.mjs"), "isolated-session"], {
+        input: JSON.stringify({ target: {}, current_turn: "turn" }), encoding: "utf8", timeout: 10000,
+    });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(JSON.parse(result.stdout).reason, "missing_target");
+});

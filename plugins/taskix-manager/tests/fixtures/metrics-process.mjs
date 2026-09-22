@@ -14,9 +14,12 @@ const result = await runHook({ hook_event_name: "UserPromptSubmit", session_id: 
 }, {
     env: { TASKIX_JEV_ENABLED: "true", TASKIX_JEV_URL: "https://unused.test", TASKIX_JEV_API_KEY: "fixture-key", TASKIX_JEV_METRICS_ENABLED: mode, TASKIX_JEV_METRICS_DB: `${directory}/metrics.sqlite` },
     cacheDir: directory,
-    fetch: async (_url, init) => ({ ok: true, json: async () => ({ answers: { route: {
-        type: "choice", choice: "discussion", confidence: 1,
-        probabilities: Object.fromEntries(Object.keys(JSON.parse(init.body).questions.route.criteria).map(key => [key, key === "discussion" ? 1 : 0])),
-    } } }) }),
+    fetch: async (_url, init) => ({ ok: true, json: async () => ({ answers: Object.fromEntries(
+        Object.entries(JSON.parse(init.body).questions).map(([id, question]) => {
+            const choice = id === "intent" ? "question" : "new_job";
+            return [id, { type: "choice", choice, confidence: 1,
+                probabilities: Object.fromEntries(Object.keys(question.criteria).map(key => [key, key === choice ? 1 : 0])) }];
+        }),
+    ) }) }),
 });
 process.stdout.write(JSON.stringify({ elapsed_ms: performance.now() - started, routed: result.hookSpecificOutput.additionalContext.startsWith("Taskix route: discussion.") }));

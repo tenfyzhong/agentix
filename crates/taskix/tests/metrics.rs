@@ -69,7 +69,7 @@ async fn metrics_report_list_and_label_without_task_database() {
         body["result"]["note"]
             .as_str()
             .unwrap()
-            .contains("excludes metrics writing and native classifier execution")
+            .contains("excludes metrics writing and subsequent Agent handling")
     );
     assert!(String::from_utf8_lossy(&text.stdout).contains("50.0%"));
     let list = command(
