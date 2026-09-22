@@ -13,8 +13,10 @@ function userText(text) {
             block = value.slice(value.indexOf("\n") + 1).trimStart();
             if (!block.startsWith("<INSTRUCTIONS>")) return text;
         }
-        const tag = ["INSTRUCTIONS", "environment_context", "system-reminder", "turn_aborted"]
-            .find(tag => block.startsWith(`<${tag}>`));
+        const tag = ["INSTRUCTIONS", "environment_context", "system-reminder", "turn_aborted",
+            "recommended_plugins", "codex_internal_context"]
+            .find(tag => block.startsWith(`<${tag}>`) ||
+                (tag === "codex_internal_context" && /^<codex_internal_context\s[^>]*>/.test(block)));
         if (!tag || (tag === "INSTRUCTIONS" && block === value)) return text;
         const end = block.indexOf(`</${tag}>`);
         if (end < 0) return text;
@@ -35,6 +37,10 @@ export function visibleMessage(message, identity = "") {
     return { id, role: message.role, text };
 }
 
+class TranscriptBudgetError extends Error {
+    constructor() { super("Transcript routing budget exceeded"); }
+}
+
 async function* reverseLines(path, { signal, maxBytes = Infinity } = {}) {
     signal?.throwIfAborted();
     const file = await open(path, "r");
@@ -44,7 +50,7 @@ async function* reverseLines(path, { signal, maxBytes = Infinity } = {}) {
         let remaining = maxBytes;
         while (position > 0) {
             signal?.throwIfAborted();
-            if (remaining <= 0) throw new Error("Transcript routing budget exceeded");
+            if (remaining <= 0) throw new TranscriptBudgetError();
             const length = Math.min(position, 64 * 1024, remaining);
             remaining -= length;
             position -= length;
@@ -117,41 +123,66 @@ function turnMessages(rows, turn) {
 export async function transcriptConversation(path, options) {
     let rows = [], current, planning = [], mode, turn = "", currentTurn;
     let needsTurn = false, foundUser = false, recovering = false;
-    for await (const line of reverseLines(path, options)) {
-        if (!line.trim()) continue;
-        const row = parsed(line);
-        if (!row) continue;
-        if (row.type === "turn_context") {
-            mode = row.payload?.collaboration_mode?.mode;
-            // Never traverse an older execution turn to recover a plan.
-            if (recovering && mode !== "plan") break;
-        }
-        const boundary = row.type === "event_msg" && row.payload?.type === "task_started";
-        if (boundary) turn = row.payload.turn_id || row.timestamp;
-        const codex = row.type === "response_item";
-        const raw = codex ? row.payload : row.message;
-        const message = !foundUser && !row.isMeta && visibleMessage(raw);
-        if (!foundUser) rows.push(row);
-        if (message) {
-            needsTurn ||= (codex && !!raw.id) || (!raw.id && !row.uuid);
-            if (!codex && message.role === "user") foundUser = true;
-        }
-        if (boundary || (foundUser && !needsTurn)) {
-            const messages = turnMessages(rows, turn);
-            if (!current) {
-                current = messages;
-                currentTurn = turn || messages.find(message => message.role === "user")?.id;
-                const input = messages.find(message => message.role === "user")?.text.trim();
-                // Codex's native accept-plan action submits this exact prompt.
-                if (options?.currentOnly || !boundary || input !== "Implement the plan." || mode === "plan") break;
-                recovering = true;
-            } else {
-                if (mode !== "plan") break;
-                planning = [...messages, ...planning];
+    const recentLimit = !options?.currentOnly && Number.isInteger(options?.recentTurns)
+        ? Math.min(8, Math.max(1, options.recentTurns)) : 0;
+    let recent = [], recentCount = 0;
+    let historyTruncated = false;
+    try {
+        for await (const line of reverseLines(path, options)) {
+            if (!line.trim()) continue;
+            const row = parsed(line);
+            if (!row) continue;
+            if (row.type === "turn_context") {
+                mode = row.payload?.collaboration_mode?.mode;
+                // Never traverse an older execution turn to recover a plan.
+                if (recovering && mode !== "plan") break;
             }
-            rows = []; mode = undefined; turn = ""; needsTurn = false; foundUser = false;
+            const boundary = row.type === "event_msg" && row.payload?.type === "task_started";
+            if (boundary) turn = row.payload.turn_id || row.timestamp;
+            const codex = row.type === "response_item";
+            const raw = codex ? row.payload : row.message;
+            const message = !foundUser && !row.isMeta && visibleMessage(raw);
+            if (!foundUser) rows.push(row);
+            if (message) {
+                needsTurn ||= (codex && !!raw.id) || (!raw.id && !row.uuid);
+                if (!codex && message.role === "user") foundUser = true;
+            }
+            if (boundary || (foundUser && !needsTurn)) {
+                const messages = turnMessages(rows, turn);
+                if (recentLimit) {
+                    currentTurn ??= turn || messages.find(message => message.role === "user")?.id;
+                    recent = [...messages, ...recent];
+                    rows = []; mode = undefined; turn = ""; needsTurn = false; foundUser = false;
+                    if (++recentCount >= recentLimit) break;
+                    continue;
+                }
+                if (!current) {
+                    current = messages;
+                    currentTurn = turn || messages.find(message => message.role === "user")?.id;
+                    const input = messages.find(message => message.role === "user")?.text.trim();
+                    // Codex's native accept-plan action submits this exact prompt.
+                    if (options?.currentOnly || !boundary || input !== "Implement the plan." || mode === "plan") break;
+                    recovering = true;
+                } else {
+                    if (mode !== "plan") break;
+                    planning = [...messages, ...planning];
+                }
+                rows = []; mode = undefined; turn = ""; needsTurn = false; foundUser = false;
+            }
         }
+    } catch (error) {
+        if (!(error instanceof TranscriptBudgetError) || !recentLimit) throw error;
+        // Every yielded row is a complete JSON record, even when the beginning
+        // of its turn is outside the budget. Preserve visible messages already
+        // read; incomplete JSON fragments never reach turnMessages.
+        const partial = turnMessages(rows, turn);
+        if (!recentCount && !partial.length) throw error;
+        recent = [...partial, ...recent];
+        rows = [];
+        historyTruncated = true;
     }
+    if (recentLimit) return { messages: [...turnMessages(rows, turn), ...recent], turn_id: currentTurn,
+        ...(historyTruncated ? { history_truncated: true } : {}) };
     current ??= turnMessages(rows, turn);
     if (planning.some(message => message.role === "assistant" && message.text.includes("<proposed_plan>"))) {
         const prompt = planning.find(message => message.role === "user")?.text;

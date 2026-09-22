@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, writeFile, rename, rm } from "node:fs/promises";
+import { mkdir, readFile, writeFile, rename, rm, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -76,13 +76,17 @@ export async function selectDiscussion({target,current_turn:currentTurn}, option
     finally { clearTimeout(timer); }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+// Node canonicalizes the module URL, while argv may use a symlinked install path.
+// Retain canonical detection on runtimes without import.meta.main.
+const main = import.meta.main ?? (process.argv[1] &&
+    import.meta.url === pathToFileURL(await realpath(process.argv[1]).catch(() => "")).href);
+if (main) {
     try {
         const session = process.argv[2];
         if (!session || process.argv.length !== 3) throw new Error("Session required");
         let input="";
         for await (const chunk of process.stdin) { input+=chunk; if (Buffer.byteLength(input)>1024*1024) throw new Error("Input too large"); }
-        const {runTaskix} = await import("./runtime.mjs");
+        const {runTaskix} = await import("./taskix-cli.mjs");
         process.stdout.write(JSON.stringify(await selectDiscussion(JSON.parse(input),{session,cwd:process.cwd()},runTaskix))+"\n");
     } catch { process.stdout.write(JSON.stringify({status:"agent",reason:"invalid_input"})+"\n"); process.exitCode=1; }
 }

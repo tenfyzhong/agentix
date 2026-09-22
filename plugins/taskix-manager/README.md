@@ -31,7 +31,7 @@ set -gx TASKIX_JEV_URL https://api.typesafe.ai/v1/systemone
 set -gx TASKIX_JEV_API_KEY YOUR_API_KEY
 # Optional:
 set -gx TASKIX_JEV_MODEL jev-latest
-set -gx TASKIX_JEV_MIN_CONFIDENCE 0.9
+set -gx TASKIX_JEV_MIN_CONFIDENCE 0.65
 ```
 
 | Variable | Behavior |
@@ -40,22 +40,25 @@ set -gx TASKIX_JEV_MIN_CONFIDENCE 0.9
 | `TASKIX_JEV_URL` | Full HTTP(S) evaluation endpoint, including `/v1/systemone` for TypeSafe. No URL is assumed. |
 | `TASKIX_JEV_API_KEY` | Sent as `Authorization: Bearer ...`; never included in model context or routing receipts. |
 | `TASKIX_JEV_MODEL` | Defaults to `jev-latest`; may pin a provider-supported Jev version. |
-| `TASKIX_JEV_MIN_CONFIDENCE` | Defaults to `0.9`, valid range `0.5`–`1`. Both confidence and selected-option probability must meet it; the winning probability must also exceed the runner-up by at least `0.2`. |
+| `TASKIX_JEV_MIN_CONFIDENCE` | Defaults to `0.65`, valid range `0.5`–`1`. Both confidence and selected-option probability must meet it; the winning probability must also exceed the runner-up by at least `0.2`. |
 
 Disabled routing, blank URL/key, or invalid configuration uses the original
 workflow without a Jev request. Network/HTTP/JSON errors, an eight-second routing
 deadline shared by prompt preparation (including hook heartbeat, context and transcript reads),
 candidate lookup and HTTP/body reading, low confidence, conflicting options, missing context, or stale selected
 Job revisions defer to the current Agent. They never mean “create a new Job.”
-Confidence is a provider statistic, not a measured correctness guarantee; tune
-thresholds against representative conversations before lowering them.
+We recommend the built-in default of `TASKIX_JEV_MIN_CONFIDENCE=0.65`.
+An explicit environment value overrides it. See the [confidence threshold guide](https://github.com/tenfyzhong/agentix/blob/main/docs/jev-confidence-thresholds.md)
+for the comparison table, provisional error labels, and configuration guidance.
+Confidence is a provider statistic, not a measured correctness guarantee;
+review representative conversations when tuning the threshold.
 
 The host sends the current prompt, current assignment IDs, recent conversation
 excerpts, current-Project unarchived ACTIVE/PENDING_REVIEW Job facts,
 Task states and waiting reasons, and available Inbox requirements to the configured
 endpoint. It does not send task lease tokens or separately collect reasoning, tool output
-or source file contents. The current prompt stays verbatim. For each Job and the
-current session, only the two latest distinct historical messages are sent; old user
+or source file contents. The current prompt stays verbatim. For each Job, two distinct historical messages are sent in addition to
+references to the shared recent session dialogue; old user
 messages are limited to 512 UTF-8 bytes and assistant replies to 256 bytes, including
 an explicit `[excerpt]` marker. Repeated current prompts and history already present
 in the session excerpt are omitted. Completed/cancelled Task details, filesystem
@@ -63,14 +66,18 @@ paths, session identities, and revision metadata stay local. Original Job requir
 and waiting reasons remain available for matching. Missing evidence must select
 `uncertain`; excerpts are not complete conversation records. Prompt-time transcript
 reads are limited to 256 KiB; unreadable or oversized current-turn history defers
-to the Agent. Stop-time conversation recording retains its existing behavior. More than
+to the Agent. When only older optional turns exceed the read budget, routing
+retains already parsed visible messages, even if their turn boundary is outside
+the window. Incomplete JSON records are discarded.
+Abort and I/O errors still defer. Stop-time conversation recording retains its existing behavior. More than
 32 candidate Jobs, 256 unfinished candidate Tasks, or 32 Inbox entries, or a full serialized
-request exceeding 24,000 UTF-8 bytes (including model, state, and questions),
+request exceeding 30,000 UTF-8 bytes (including model, state, and questions),
 defers to the Agent without silently dropping candidates. Taskix state remains
-local and authoritative. The byte limit is a conservative policy for a 32k context
-window, leaving headroom for service framing and structured answers. It is not an
+local and authoritative. The context ceiling is 32k tokens for state plus its longest question,
+matching the provider limit. The 30,000-byte total-request guard
+is a conservative policy below that ceiling, leaving service framing headroom. It is not an
 exact Jev token count and does not use a characters/4 estimate. Over-budget prompts
-are delegated without HTTP; they are never silently cut to fit. Prompt preparation uses one `taskix routing snapshot --session SESSION_ID`
+return to the main Agent without HTTP; they are never silently cut to fit. Prompt preparation uses one `taskix routing snapshot --session SESSION_ID`
 process to import Inbox edits, renew ownership, and read bounded assignment, Inbox,
 and candidate facts. Candidate Jobs and Tasks use two SQL queries in one read
 transaction. A selected Job is checked with
@@ -111,25 +118,40 @@ and expiry. Session start/end, interruption, Stop, and the next prompt clear it.
 A missing/unreadable receipt or a different Codex turn uses the legacy tool notice.
 Hosts must load the new prompt hook; previously loaded plugin code is not hot-replaced.
 
-This reduces routing overhead in the coding agent's context. It does not remove
-execution plans, task results or relevant requirement history, and does not make
-Taskix management fully autonomous. On ambiguous results the hook supplies a
-short delegation instruction and a private snapshot reference. The main Agent
-requests a fresh-context, low-reasoning subagent through its native host tools;
-the hook itself does not spawn one. The classifier reads facts on demand and
-returns at most 1,000 characters of structured advice. The main Agent retains
-revision checks and all lifecycle writes. The parent validates compact child results using the packaged `routing-decision.mjs` helper; follow-up arguments include `--expect-revision`. Jev success instructions bind the observed revision too. A conflict requires reassessment, never dropping the guard. See the [classifier protocol](skills/taskix-manager/references/routing-classifier.md).
+Jev remains the first routing step. When it is uncertain or fails, the hook returns
+bounded summaries directly to the current main Agent; no classifier subagent or
+private delegation snapshot is used. The routing fallback is capped at 12,000 UTF-16 code units, excluding host discussion
+and cancellation notices, and includes assignment and candidate references.
+It is not complete evidence: the Agent reads omitted facts through `taskix context`
+and `job/task show` before selecting ownership or Inbox matches. Existing assignment,
+claims, execution plans, dependencies and review policy still apply.
 
-Snapshots have a one-hour expiry, use owner-only files, omit credential/lease
-fields, and are capped at 1 MiB. They contain prompt and candidate data; expired
-files are removed on subsequent fallback writes (expiry is not immediate disk
-erasure). New prompts get distinct files. A validated classifier prompt marker
-suppresses child task hooks without suppressing parent heartbeats or cancellation
-notices. On hosts without child prompt events, the role instructions prevent
-recursive delegation; this is not a security sandbox. Hosts without subagents
-judge locally from the snapshot. Unwritable/oversized snapshots retain the old
-bounded main-Agent fallback, capped at 12,000 characters excluding cancellation
-notices. Disabled routing keeps the original context format.
+Before fallback followup, the main Agent reads the selected Job's current revision
+and supplies `--expect-revision`. Jev success instructions also bind the observed
+revision. A conflict requires reassessment, never dropping the guard. Disabled
+routing keeps the original context format. Install the updated plugin and reload
+the host to replace previously loaded delegation instructions.
+
+## Runtime boundaries
+
+| Module | Responsibility |
+| --- | --- |
+| `jev.mjs` | Provider requests, confidence checks and semantic routing advice |
+| `routing-context.mjs` | Pure, bounded rendering of fallback hints; no I/O or task writes |
+| `runtime.mjs` | Shared Codex/Claude/Pi/OMP orchestration, deadlines, receipts and heartbeats |
+| `taskix-cli.mjs` | Shell-free CLI execution, host identity arguments and error handling |
+| `discussion.mjs` | Discussion selection and its standalone command-line entrypoint |
+
+The runtime re-exports `buildArgs` and `runTaskix` for existing callers. The standalone
+discussion helper loads the CLI adapter directly, avoiding a runtime/discussion
+import cycle. Its entrypoint recognizes canonical and symlinked installation paths.
+
+Fallback instructions refer to the workflow skill instead of repeating its full
+policy. Identity hints have priority over body excerpts. The renderer considers at
+most 32 Job and 32 Inbox entries, serializes each fragment once, and accounts for
+JSON escaping and separators before appending it. Counts and `candidates_complete`
+make omitted evidence explicit. A discussion-only prompt needs no lifecycle write;
+Jev confidence thresholds and task ownership rules are unchanged.
 
 ## Optional Jev statistics
 
@@ -150,7 +172,7 @@ set -gx TASKIX_JEV_METRICS_DB "$HOME/.local/state/taskix/jev-metrics.sqlite"
 Only `true` (case insensitive) or `1` enables writes. Unset/false skips metric
 collection, SQLite loading, directory creation and database access. Jev itself must
 also be enabled with valid configuration. Recording starts with subsequent prompts;
-there is no historical backfill. Tool heartbeats and classifier children do not
+there is no historical backfill. Tool heartbeats do not
 write routing statistics. The default database is
 `$XDG_STATE_HOME/taskix/jev-metrics.sqlite`, or
 `~/.local/state/taskix/jev-metrics.sqlite` when XDG_STATE_HOME is unset. It is separate
@@ -335,3 +357,33 @@ When all non-cancelled Tasks are DONE and at least one exists, the default `revi
 Git and gh delivery requests such as `git commit`, `git push`, `gh pr create`, and `gh pr edit` also supplement a pending Job when they concern its changes, even if the prompt only says "commit" or "create a PR". Resolve that ownership before creating a Job or choosing a review policy. Use the conversation and repository/worktree evidence to confirm the delivery; if `context.previous_job` is absent, inspect the current Project with `job list --pending-review` rather than assuming the request is independent. Tool names alone do not establish relevance. For a match, run `job followup` before delivery work, then add new Tasks to the same ACTIVE Job with the old Tasks as dependencies. Preserve the whole Job's review policy: a Git-only supplement to an implementation Job still requires review. Only independent operational Jobs use `none`; unrelated requests and requests after COMPLETED get new Jobs.
 
 A new prompt supplementing a PENDING_REVIEW Job reuses it through `job followup JOB_ID --prompt 'Verbatim supplementary request'`. Context and hooks expose `previous_job` as a candidate for the agent to assess; they do not reopen every Job automatically. Follow-up returns the Job to ACTIVE, preserves old Tasks, and makes each newly added Task depend on the snapshot of all old Tasks. Unsatisfied prerequisites still block execution. Independent requests and requests after COMPLETED get new Jobs. The original Prompt is preserved; Conversation records successive `Turn N` sections, each with User input and Agent output.
+
+### Short follow-up references
+
+Routing includes up to eight recent dialogue messages (8,192 serialized bytes),
+with 1,024-byte user and 1,536-byte assistant excerpts that retain the beginning
+and end. Progress updates retain the latest preceding user request even when
+eight assistant updates would otherwise displace it. Codex/Claude read up to eight turns within the existing 256 KiB limit;
+Pi/OMP retain eight messages. The complete request remains capped at 30,000 UTF-8 bytes. The latest user and assistant messages
+also have focused 4,096/8,192-byte excerpts with their matching source Jobs.
+Leading host plugin catalogs and internal continuation wrappers are removed
+before extracting visible user messages, while any following real request remains.
+The previous Job is an explicit hint, not an automatic ownership decision.
+
+Jev answers separate intent and ownership questions in one HTTP request. Both
+must pass the existing score gates. A question about an existing delivery returns
+`action: discussion` with that `job_id`. The
+main Agent receives that Job context without reopening it or creating a Task.
+An implementation request referring to the same conversation uses the existing
+revision-guarded resume/followup workflow. Discussion drafts are still attached
+when work resumes; routing alone does not mutate their ownership. Ambiguity still
+falls back to the main Agent. No threshold or statistics configuration is changed.
+
+When a candidate Job contains the same visible dialogue as the recent context,
+`recent_conversation_indices` preserve that source relationship instead of
+silently discarding duplicated text. References are zero-based indices into the
+final bounded dialogue, recomputed after trimming; multiple matching Jobs remain
+visible. They are evidence for the model, not an automatic ownership decision.
+A same-session boolean supplies additional evidence without exposing session IDs
+or automatically assigning ownership. Route options include bounded Job titles, and instructions distinguish accepting
+an earlier implementation suggestion from asking another question about it.

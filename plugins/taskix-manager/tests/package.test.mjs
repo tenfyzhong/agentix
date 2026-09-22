@@ -258,11 +258,12 @@ test("npm package contains all host manifests, hooks and resources but no tests"
         "hooks/claude.json",
         "hooks/run.mjs",
         "runtime.mjs",
+        "taskix-cli.mjs",
+        "routing-context.mjs",
         "conversation.mjs",
         "discussion.mjs",
         "jev.mjs",
         "routing-state.mjs",
-        "routing-delegation.mjs",
         "jev-metrics.mjs",
         "metrics-schema.sql",
         "metrics-schema.md",
@@ -278,6 +279,9 @@ test("npm package contains all host manifests, hooks and resources but no tests"
     ])
         assert.ok(files.includes(path), `missing packaged file: ${path}`);
     assert.ok(!files.some((path) => path.startsWith("tests/")));
+    for (const obsolete of ["routing-delegation.mjs", "routing-decision.mjs", "skills/taskix-manager/references/routing-classifier.md"]) {
+        assert.ok(!files.includes(obsolete), `obsolete classifier file packaged: ${obsolete}`);
+    }
     for (const path of files.filter(path => path.endsWith(".md"))) {
         const prose = (await readFile(new URL(path, root), "utf8"))
             .replace(/```[\s\S]*?```/g, "")

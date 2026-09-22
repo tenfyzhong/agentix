@@ -14,10 +14,10 @@ async function fixture(t, enabled = true) {
     const dir = await mkdtemp(join(tmpdir(), "jev-metrics-"));
     t.after(() => rm(dir, { recursive: true, force: true }));
     const path = join(dir, "metrics.sqlite");
-    const env = { TASKIX_JEV_ENABLED: "true", TASKIX_JEV_URL: "https://example.test", TASKIX_JEV_API_KEY: "private-key", TASKIX_JEV_METRICS_DB: path, ...(enabled ? { TASKIX_JEV_METRICS_ENABLED: "true" } : {}) };
+    const env = { TASKIX_JEV_ENABLED: "true", TASKIX_JEV_URL: "https://example.test", TASKIX_JEV_API_KEY: "private-key", TASKIX_JEV_MIN_CONFIDENCE: "0.9", TASKIX_JEV_METRICS_DB: path, ...(enabled ? { TASKIX_JEV_METRICS_ENABLED: "true" } : {}) };
     const args = { env, prompt: "private prompt", options: { session: "session", cwd: dir }, context: { project_id: "p", inbox_todos: [{ id: "inbox_a", content: "private inbox" }], routing: { complete: true, candidates: [] } }, runner: () => assert.fail("unexpected CLI"), fetch: async (_url, init) => ({ ok: true, json: async () => ({ answers: Object.fromEntries(Object.entries(JSON.parse(init.body).questions).map(([id, q]) => {
-        const choice = id === "route" ? "new_job" : "unrelated";
-        return [id, { type: "choice", choice, confidence: id === "route" ? .99 : .87, probabilities: Object.fromEntries(Object.keys(q.criteria).map(k => [k, k === choice ? 1 : 0])) }];
+        const choice = id === "intent" ? "work" : id === "route" ? "new_job" : "unrelated";
+        return [id, { type: "choice", choice, confidence: id.startsWith("inbox_") ? .87 : .99, probabilities: Object.fromEntries(Object.keys(q.criteria).map(k => [k, k === choice ? 1 : 0])) }];
     })) }) }) };
     return { path, args };
 }
@@ -43,7 +43,7 @@ test("metrics_records_all_question_scores_without_prompt_or_credentials", async 
     assert.equal(request.threshold, .9);
     assert.ok(request.duration_ms >= 0);
     const scores = await rows(f.path, "SELECT * FROM answers ORDER BY question");
-    assert.equal(scores.length, 2);
+    assert.equal(scores.length, 3);
     assert.equal(scores[0].confidence, .87);
     assert.equal(scores[0].issue, "low_confidence");
     assert.equal(scores[1].issue, null);
@@ -178,7 +178,7 @@ test("metrics_answer_insert_failure_rolls_back_whole_event", async t => {
     db.close();
     await routePrompt(f.args);
     assert.equal((await rows(f.path, "SELECT count(*) AS count FROM requests"))[0].count, 1);
-    assert.equal((await rows(f.path, "SELECT count(*) AS count FROM answers"))[0].count, 2);
+    assert.equal((await rows(f.path, "SELECT count(*) AS count FROM answers"))[0].count, 3);
 });
 
 test("metrics_worker_timeout_preserves_event_loop_and_terminates_writer", async t => {
@@ -224,7 +224,7 @@ test("concurrent_hook_processes_keep_complete_metrics_transactions", async t => 
     // Best effort may drop a contended event, but may never commit partial answers.
     assert.ok(requests.length > 0 && requests.length <= 4);
     assert.equal(new Set(requests.map(row => row.session_id)).size, requests.length);
-    assert.equal((await rows(f.path, "SELECT * FROM answers")).length, requests.length);
+    assert.equal((await rows(f.path, "SELECT * FROM answers")).length, requests.length * 2);
     assert.deepEqual(await rows(f.path, "PRAGMA integrity_check"), [{ integrity_check: "ok" }]);
     assert.deepEqual(await rows(f.path, "PRAGMA foreign_key_check"), []);
 });

@@ -167,7 +167,7 @@ async fn report(db: &mut SqliteConnection, path: &std::path::Path) -> Result<Val
         FROM requests r GROUP BY model").await?;
     Ok(
         json!({"path":path,"totals":totals,"reasons":reasons,"issues":issues,"response_quality":response_quality,"score_gates":score_gates,
-        "note":"Score gates are not predicted adoption: assignment/revision checks may still reject. Accuracy includes only manually reviewed accepted requests. mean_duration_ms measures preparation and Jev; it excludes metrics writing and native classifier execution. Metrics writes are best-effort."}),
+        "note":"Score gates are not predicted adoption: assignment/revision checks may still reject. Accuracy includes only manually reviewed accepted requests. mean_duration_ms measures preparation and Jev; it excludes metrics writing and subsequent Agent handling. Metrics writes are best-effort."}),
     )
 }
 

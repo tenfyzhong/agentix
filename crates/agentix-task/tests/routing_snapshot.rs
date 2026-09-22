@@ -1,5 +1,70 @@
 use agentix_task::{Store, WriteOptions};
 use serde_json::json;
+use sqlx::Connection;
+
+#[tokio::test]
+async fn routing_snapshot_retains_bounded_completed_task_evidence() {
+    let (dir, store, project) = fixture().await;
+    let job = store
+        .execute(
+            json!({"command":"job.create","project":project,"title":"Delivery"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap()
+        .result;
+    let current = store
+        .execute(
+            json!({"command":"task.add","job":job["id"],"title":"Current"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap()
+        .result;
+    let mut connection = sqlx::SqliteConnection::connect_with(
+        &sqlx::sqlite::SqliteConnectOptions::new().filename(dir.path().join("tasks.sqlite3")),
+    )
+    .await
+    .unwrap();
+    for index in 0..12 {
+        let task = store.execute(json!({"command":"task.add","job":job["id"],"title":format!("Change {index} {}", "界".repeat(400))}), WriteOptions::default()).await.unwrap().result;
+        sqlx::query("UPDATE tasks SET data=json_set(data,'$.status','DONE') WHERE id=?")
+            .bind(task["id"].as_str().unwrap())
+            .execute(&mut connection)
+            .await
+            .unwrap();
+    }
+    let cancelled = store
+        .execute(
+            json!({"command":"task.add","job":job["id"],"title":"Abandoned"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap()
+        .result;
+    store
+        .execute(
+            json!({"command":"task.cancel","task":cancelled["id"]}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    let snapshot = store.routing_candidates(&project).await.unwrap();
+    assert_eq!(snapshot["complete"], true);
+    let candidate = &snapshot["candidates"][0];
+    assert_eq!(candidate["tasks"].as_array().unwrap().len(), 1);
+    assert_eq!(candidate["tasks"][0]["id"], current["id"]);
+    let completed = candidate["job"]["completed_tasks"]
+        .as_array()
+        .expect("completed evidence");
+    assert_eq!(completed.len(), 8);
+    for (index, task) in completed.iter().enumerate() {
+        assert_eq!(task["status"], "DONE");
+        let title = task["title"].as_str().unwrap();
+        assert!(title.starts_with(&format!("Change {} ", index + 4)));
+        assert!(title.chars().count() <= 300);
+    }
+}
 
 async fn fixture() -> (tempfile::TempDir, Store, String) {
     let dir = tempfile::tempdir().unwrap();

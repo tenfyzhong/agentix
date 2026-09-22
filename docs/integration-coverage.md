@@ -388,8 +388,10 @@ replace Taskix revision checks, dependency gates or review policy.
 | Model/configuration, confidence, ambiguity, timeout and payload budgets | `jev.test.mjs`, `jev-runtime.test.mjs` | Mock provider responses; no accuracy guarantee |
 | Bounded candidates and critical truncation | `crates/agentix-task/tests/routing_snapshot.rs` | Real SQLite; terminal Tasks excluded before limit, history excerpts marked separately |
 | Confident route includes checked revision | `jev-runtime.test.mjs` and real CLI routing fixtures in `integration.mjs` | Hook output is advice; Agent must execute the supplied guard |
-| Fallback result validation and stale-write rejection | `routing-decision.test.mjs`, delegated routing cases in `integration.mjs` | Real CLI/subprocess validator and SQLite; deterministic child JSON in CI |
-| Child isolation and recursion suppression | `jev-runtime.test.mjs` | Protocol/host adapter tests; native inference is opt-in |
+| Main-Agent fallback and stale-write rejection | `jev-runtime.test.mjs`, eight main-Agent fallback cases in `integration.mjs` | All four actual host entrypoints, local HTTP 503, real CLI and SQLite; semantic selection is deterministic in CI |
+| Fallback avoids classifier delegation and snapshot files | `jev-runtime.test.mjs`, `package.test.mjs` | Codex/Claude/Pi/OMP adapters; bounded summaries retain assignment and candidate references |
+| Compact fallback, escaped-text budgets, large candidate sets and sensitive-field exclusion | `routing-context.test.mjs`, `jev-runtime.test.mjs` | Pure rendering; 100% line, branch and function coverage for `routing-context.mjs` in the 2026-09-22 audit |
+| Standalone discussion helper startup and packaged execution | `discussion.test.mjs`, packaged discussion CLI case in `integration.mjs` | Independent Node process, installed-path aliases, real guarded attachment; no runtime import cycle |
 | Followup preserves old dependencies and review policy | `integration.mjs`, `crates/agentix-task/tests/task_system.rs` | Real Taskix lifecycle writes |
 | Metrics default-off, privacy, worker timeout, lock contention and concurrent writes | `jev-metrics.test.mjs`, `tests/fixtures/metrics-process.mjs` | Best-effort writes may be lost; no task database writes |
 | Node writer to Rust report/list/label interoperability | `plugin_entrypoints_execute_the_compiled_taskix` in `crates/taskix/tests/cli.rs` | Default Rust CI sets `TASKIX_TEST_METRICS_BIN`; standalone Node runs skip interop without it |
@@ -403,20 +405,19 @@ cargo clippy -p agentix-task -p taskix --all-targets --all-features -- -D warnin
 TASKIX_TEST_METRICS_BIN="$PWD/target/debug/taskix" node --test plugins/taskix-manager/tests/*.test.mjs
 ```
 
-For native classifier acceptance, build Taskix and run from the plugin directory:
+For the isolated fallback renderer's coverage report:
 
 ```sh
-TASKIX_NATIVE_ROUTING_DIR=/tmp/taskix-native-routing-unique \
-PATH="$PWD/../../target/debug:$PATH" node --test tests/native-routing-smoke.mjs
+node --test --experimental-test-coverage \
+  --test-coverage-include='**/routing-context.mjs' \
+  plugins/taskix-manager/tests/routing-context.test.mjs
 ```
 
-Use a new private exchange directory. The fixture writes `request.json`; the host
-Agent reads it and uses the referenced classifier protocol to spawn a fresh-context
-native child at low reasoning effort with the current model. Write only that
-child's compact JSON atomically to the supplied result path, with mode 0600.
-The fixture validates the result and lifecycle effects and cleans up its isolated
-Taskix database and snapshot. This requires native orchestration and is intentionally
-outside default CI. A real native run passed on 2026-09-21 with two competing Jobs.
+This coverage percentage applies only to the renderer, not the entire runtime or
+semantic model decisions. Host regressions separately cover disabled routing,
+uncertain/low-confidence responses, service failure, incomplete evidence, deadlines,
+assignment preservation, cancellation, receipt failure and stale revisions. Optional
+native-client and Homebrew acceptance remain separate from default automated tests.
 
 Jev acceptance uses deterministic mock responses, including confidence, ambiguity,
 malformed responses and transport failures. No real Jev endpoint or API key is
@@ -450,3 +451,39 @@ On one macOS ARM64 debug run with Rust 1.95, attaching 1,000 messages took appro
 ### Native terminal command discovery
 
 `agentix-multiplexer` runs isolated child-process regressions with conflicting service and login PATH commands. They verify login PATH precedence, explicit executable PATH inheritance, shell startup noise, paths with spaces, literal argv and server prefixes, removal of inherited tmux selectors, non-replay of executed failures, rejection of invalid/failed shell output, and bounded shell lookup. `agentix-tmux` verifies that inventory and process queries both use the login PATH. These tests require no live IM channel or user terminal. Real Codex terminal tests remain opt-in.
+
+### Jev references across turns
+
+The conversation and Jev tests cover bounded multi-turn transcript reads on
+Codex/Claude, eight-message Pi/OMP history, head/tail UTF-8 excerpts, serialized
+history and total-request budgets, and preservation of candidate evidence.
+Fixtures for "这样修改" and "有性能问题吗" verify that earlier referents reach the
+request and that a `discussion:JOB_ID` response retains Job context in all four
+host adapters without lifecycle writes. Assignment conflicts and stale revisions
+still defer. Responses are deterministic mocks; these tests do not measure live
+Jev semantic correctness or acceptance rates.
+
+### Opt-in live Jev replay
+
+`tests/jev-live-replay.test.mjs` replays explicitly supplied local Job conversation
+fixtures through the current `routePrompt` implementation and configured real Jev
+provider. It is skipped unless `TASKIX_JEV_REPLAY_INPUT` is set. Each fixture supplies
+`prompt`, prior `history`, a complete routing `context`, and source Job metadata;
+its read-only revision runner uses that fixture's snapshot. It does not mutate Jobs.
+Set `TASKIX_JEV_REPLAY_OUTPUT` to a private local report path. Results are persisted
+after each call and include acceptance, scores, reasons, bytes and elapsed time.
+
+```sh
+fish -lic 'env TASKIX_JEV_REPLAY_INPUT=/absolute/private/input.json TASKIX_JEV_REPLAY_OUTPUT=/absolute/private/results.json node --test plugins/taskix-manager/tests/jev-live-replay.test.mjs'
+```
+
+Use prior conversation only and document candidate-state reconstruction, selection
+rules, missing Tasks/Inbox, and sampling limits. Acceptance and agreement with a
+source Job are not substitutes for human-reviewed correctness. Private inputs and
+outputs must remain outside committed source. This replay gathers telemetry directly
+without inserting observations into the ordinary routing metrics database.
+
+Suggestion-reference tests preserve candidate source indices through dialogue
+truncation and deduplication, include all sources for shared advice, and retain
+Agent fallback for ambiguous choices. Live replay reports must retain individual
+runs: confidence and acceptance can vary between identical provider requests.

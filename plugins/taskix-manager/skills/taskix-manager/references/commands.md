@@ -1,6 +1,6 @@
 # Taskix workflow
 
-Optional host routing uses `TASKIX_JEV_ENABLED=true`, `TASKIX_JEV_URL` (full evaluation endpoint), and `TASKIX_JEV_API_KEY`. Missing configuration preserves the existing workflow. A confident host `Taskix route` supplies selected Job/Inbox IDs; use those in the normal guarded commands below. Uncertain or failed classification delegates to the Agent.
+Optional host routing uses `TASKIX_JEV_ENABLED=true`, `TASKIX_JEV_URL` (full evaluation endpoint), and `TASKIX_JEV_API_KEY`. Missing configuration preserves the existing workflow. A confident host `Taskix route` supplies selected Job/Inbox IDs; use those in the normal guarded commands below. Uncertain or failed classification returns directly to the current main Agent without a classifier subagent. Read the selected Job and pass its current revision with `--expect-revision` on fallback followup.
 
 Project Inbox commands (run `claim-next` only after an explicit user request to take the next Job; one request authorizes one entry):
 
@@ -149,5 +149,5 @@ labels establish reviewed accuracy; model agreement is not a correctness label.
 List returns the most recent requests and scores (limit 1–1000, default 50).
 
 `PREP_MS` (JSON `mean_duration_ms`) measures preparation and Jev evaluation only;
-it excludes metrics persistence and subsequent native classifier execution. Writes
+it excludes metrics persistence and subsequent main-Agent handling. Writes
 are best-effort, so reports describe stored observations, not all host prompts.

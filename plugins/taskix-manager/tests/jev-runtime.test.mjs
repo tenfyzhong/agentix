@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { mkdtemp, rm, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, readFile, writeFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runHook, registerExtension } from "../runtime.mjs";
@@ -26,7 +26,9 @@ async function fixture(t, choice="followup:job_a") {
         requests++;
         const q=JSON.parse(init.body).questions;
         return {ok:true,json:async()=>({answers:Object.fromEntries(Object.entries(q).map(([id,v])=>{
-            const selected=id==="route"?choice:"unrelated";
+            const discussion=choice==="discussion"||choice.startsWith("discussion:");
+            const owner=discussion?(choice.includes(":")?Object.keys(q.route.criteria).find(k=>k.endsWith(":"+choice.split(":")[1])):"new_job"):choice;
+            const selected=id==="intent"?(discussion?"question":"work"):id==="route"?owner:"unrelated";
             return [id,{type:"choice",choice:selected,confidence:.99,probabilities:Object.fromEntries(Object.keys(v.criteria).map(k=>[k,k===selected?1:0]))}];
         }))})};
     }};
@@ -49,12 +51,13 @@ test("hook_routes_before_model_and_suppresses_repeated_tool_context",async t=>{
     assert.match(cancel.hookSpecificOutput.additionalContext,/cancelled/);
 });
 
-test("uncertain_prompt_is_delegated_once_and_next_turn_is_not_suppressed",async t=>{
+test("uncertain_prompt_returns_to_main_agent_and_next_turn_is_not_suppressed",async t=>{
     const f=await fixture(t,"uncertain");
     const prompt=await runHook({...f.event,hook_event_name:"UserPromptSubmit",prompt:"Continue"},f.runner,f.routing);
     assert.match(prompt.hookSpecificOutput.additionalContext,/Agent/);
-    assert.doesNotMatch(prompt.hookSpecificOutput.additionalContext,/Unrelated Inbox body/);
-    assert.match(prompt.hookSpecificOutput.additionalContext,/reasoning_effort=low/);
+    assert.match(prompt.hookSpecificOutput.additionalContext,/Unrelated Inbox body/);
+    assert.match(prompt.hookSpecificOutput.additionalContext,/current Agent/);
+    assert.doesNotMatch(prompt.hookSpecificOutput.additionalContext,/Delegate once|Snapshot:/);
     assert.deepEqual(await runHook({...f.event,hook_event_name:"PreToolUse"},f.runner,f.routing),{});
     const next=await runHook({...f.event,turn_id:"turn_2",hook_event_name:"PreToolUse"},f.runner,f.routing);
     assert.match(next.hookSpecificOutput.additionalContext,/Resolve whether/);
@@ -153,14 +156,14 @@ test("agent_fallback_has_a_total_budget_and_preserves_assignment_references", as
     f.context.inbox_todos = Array.from({ length: 32 }, (_, i) => ({ id: `inbox_${i}`, content: "界".repeat(10000) }));
     const output = await runHook({ ...f.event, hook_event_name: "UserPromptSubmit", prompt: "Continue" }, f.runner, f.routing);
     const content = output.hookSpecificOutput.additionalContext;
-    assert.ok(content.length < 1800, `fallback injected ${content.length} characters`);
-    assert.doesNotMatch(content, /inbox_31|task_owned/);
-    const path = JSON.parse(content.split("Snapshot: ")[1]);
-    const snapshot = JSON.parse(await readFile(path, "utf8"));
-    assert.equal(snapshot.assignment.task_id, "task_owned");
-    assert.equal(snapshot.assignment.job_id, "job_a");
-    assert.equal(snapshot.inbox.length, 32);
-    assert.ok(snapshot.expires > Date.now());
+    assert.ok(content.length <= 12000, `fallback injected ${content.length} characters`);
+    const facts = JSON.parse(content.slice(content.lastIndexOf("\n") + 1));
+    assert.equal(facts.task_id, "task_owned");
+    assert.equal(facts.job_id, "job_a");
+    assert.equal(facts.inbox_count, 32);
+    assert.equal(facts.inbox_ids.length, 32);
+    assert.equal(facts.full_sources_required, true);
+    assert.ok(!(await readdir(f.routing.cacheDir)).some(name => name.endsWith(".snapshot.json")));
 });
 
 test("oversized_prompt_history_defers_without_a_jev_request", async t => {
@@ -299,21 +302,7 @@ test("older_cli_without_snapshot_defers_and_retains_legacy_tool_context", async 
     assert.deepEqual(f.calls, [["hook", "heartbeat"], ["context"]]);
 });
 
- test("classifier_child_skips_routing_and_tracking_without_affecting_parent", async t => {
-    const f = await fixture(t, "uncertain");
-    const output = await runHook({ ...f.event, hook_event_name: "UserPromptSubmit", prompt: "Continue" }, f.runner, f.routing);
-    const path = JSON.parse(output.hookSpecificOutput.additionalContext.split("Snapshot: ")[1]);
-    f.calls.length = 0;
-    const child = { ...f.event, session_id: "child" };
-    assert.deepEqual(await runHook({ ...child, hook_event_name: "UserPromptSubmit", prompt: `TASKIX_ROUTING_CLASSIFIER ${JSON.stringify(path)}` }, f.runner, f.routing), {});
-    for (const hook of ["PreToolUse", "PostToolUse", "Stop", "SessionEnd"]) {
-        assert.deepEqual(await runHook({ ...child, hook_event_name: hook }, f.runner, f.routing), {});
-    }
-    assert.deepEqual(f.calls, []);
-    await runHook({ ...f.event, hook_event_name: "PreToolUse" }, f.runner, f.routing);
-    assert.deepEqual(f.calls, [["hook", "heartbeat"]]);
-});
- test("snapshot_storage_failure_keeps_bounded_main_agent_fallback", async t => {
+test("unwritable_receipt_keeps_bounded_main_agent_fallback", async t => {
     const f = await fixture(t, "uncertain");
     f.routing.cacheDir = new URL("../package.json", import.meta.url).pathname;
     const output = await runHook({ ...f.event, hook_event_name: "UserPromptSubmit", prompt: "Continue" }, f.runner, f.routing);
@@ -321,39 +310,46 @@ test("older_cli_without_snapshot_defers_and_retains_legacy_tool_context", async 
     assert.doesNotMatch(output.hookSpecificOutput.additionalContext, /Snapshot:/);
 });
 
-test("delegation_snapshots_are_private_immutable_and_exclude_credentials", async t => {
-    const f = await fixture(t, "uncertain");
-    f.context.lease = { token: "secret_lease" };
-    const first = await runHook({ ...f.event, hook_event_name: "UserPromptSubmit", prompt: "First" }, f.runner, f.routing);
-    const second = await runHook({ ...f.event, turn_id: "two", hook_event_name: "UserPromptSubmit", prompt: "Second" }, f.runner, f.routing);
-    const path = value => JSON.parse(value.hookSpecificOutput.additionalContext.split("Snapshot: ")[1]);
-    assert.notEqual(path(first), path(second));
-    const data = await readFile(path(first), "utf8");
-    assert.equal(JSON.parse(data).prompt, "First");
-    assert.doesNotMatch(data, /secret_lease|API_KEY/);
-    const { stat } = await import("node:fs/promises");
-    // Windows mode bits do not represent POSIX owner-only permissions.
-    if (process.platform !== "win32") assert.equal((await stat(path(first))).mode & 0o777, 0o600);
-    const expired = JSON.parse(data); expired.expires = 0;
-    await writeFile(path(first), JSON.stringify(expired));
-    f.calls.length = 0;
-    await runHook({ ...f.event, session_id: "child", hook_event_name: "UserPromptSubmit", prompt: `TASKIX_ROUTING_CLASSIFIER ${JSON.stringify(path(first))}` }, f.runner, f.routing);
-    assert.ok(f.calls.length > 0, "expired marker must not suppress tracking");
-});
-
-for (const invalid of ["missing_expiry", "parent_session", "different_cwd"]) test(`classifier_marker_rejects_${invalid}`, async t => {
-    const f = await fixture(t, "uncertain");
-    const output = await runHook({ ...f.event, hook_event_name: "UserPromptSubmit", prompt: "Continue" }, f.runner, f.routing);
-    const path = JSON.parse(output.hookSpecificOutput.additionalContext.split("Snapshot: ")[1]);
-    if (invalid === "missing_expiry") {
-        const packet = JSON.parse(await readFile(path, "utf8"));
-        delete packet.expires;
-        await writeFile(path, JSON.stringify(packet));
+for (const host of ["codex", "claude", "pi", "omp"]) {
+    for (const failure of ["uncertain", "low_confidence", "service_unavailable", "incomplete_snapshot"]) {
+        test(`${host}_${failure}_returns_to_main_agent_without_delegation`, async t => {
+            const f = await fixture(t, failure === "uncertain" ? "uncertain" : "discussion");
+            const fetch = f.routing.fetch;
+            if (failure === "service_unavailable") f.routing.fetch = async () => { throw new Error("offline"); };
+            if (failure === "low_confidence") f.routing.fetch = async (...args) => {
+                const data = await (await fetch(...args)).json();
+                data.answers.route.confidence = 0.64;
+                return { ok: true, json: async () => data };
+            };
+            const runner = async args => {
+                const result = await f.runner(args);
+                if (failure === "incomplete_snapshot" && args[1] === "snapshot") result.result.routing.complete = false;
+                return result;
+            };
+            let content;
+            if (["codex", "claude"].includes(host)) {
+                const event = { ...f.event, hook_event_name: "UserPromptSubmit", prompt: "hey" };
+                if (host === "claude") delete event.turn_id;
+                content = (await runHook(event, runner, f.routing)).hookSpecificOutput.additionalContext;
+            } else {
+                const handlers = new Map();
+                registerExtension({ on: (name, handler) => handlers.set(name, handler), registerTool() {} }, host, runner, globalThis, undefined, f.routing);
+                content = (await handlers.get("before_agent_start")({ prompt: "hey" }, {
+                    cwd: "/work", sessionManager: { getSessionId: () => "session" },
+                })).message.content;
+            }
+            assert.match(content, /Jev deferred to the current Agent/);
+            assert.match(content, /taskix context/);
+            assert.match(content, /--expect-revision/);
+            assert.match(content, /job_a/);
+            assert.match(content, /inbox_other/);
+            assert.doesNotMatch(content, /Delegate once|Snapshot:|routing-classifier|routing-decision|private/);
+            assert.ok(content.length <= 12000);
+            assert.ok(!(await readdir(f.routing.cacheDir)).some(name => name.endsWith(".snapshot.json")));
+            assert.ok(f.calls.every(args => ["context", "routing"].includes(args[0])));
+        });
     }
-    f.calls.length = 0;
-    await runHook({ ...f.event, session_id: invalid === "parent_session" ? f.event.session_id : "child", cwd: invalid === "different_cwd" ? "/other" : f.event.cwd, hook_event_name: "UserPromptSubmit", prompt: `TASKIX_ROUTING_CLASSIFIER ${JSON.stringify(path)}` }, f.runner, f.routing);
-    assert.ok(f.calls.length > 0);
-});
+}
 
 // The revision checked by the router must survive into the actual write command.
 test("followup_instruction_binds_the_observed_revision", async t => {
@@ -362,13 +358,98 @@ test("followup_instruction_binds_the_observed_revision", async t => {
     assert.match(result.hookSpecificOutput.additionalContext, /job followup job_a --expect-revision 1/);
 });
 
-test("classifier_guard_accepts_canonical_cwd_alias", async t => {
+for (const candidates of [0, 1]) test(`main_agent_fallback_has_compact_instructions_${candidates}_candidates`, async t => {
     const f = await fixture(t, "uncertain");
-    const { realpath } = await import("node:fs/promises");
-    f.event.cwd = f.routing.cacheDir;
-    const result = await runHook({ ...f.event, hook_event_name: "UserPromptSubmit", prompt: "Continue" }, f.runner, f.routing);
-    const path = JSON.parse(result.hookSpecificOutput.additionalContext.split("Snapshot: ")[1]);
-    const before = f.calls.length;
-    await runHook({ ...f.event, session_id: "child", cwd: await realpath(f.event.cwd), hook_event_name: "UserPromptSubmit", prompt: `TASKIX_ROUTING_CLASSIFIER ${JSON.stringify(path)}` }, f.runner, f.routing);
-    assert.equal(f.calls.length, before);
+    const runner = async args => {
+        const result = await f.runner(args);
+        if (args[1] === "snapshot" && !candidates) result.result.routing.candidates = [];
+        return result;
+    };
+    const output = await runHook({ ...f.event, hook_event_name: "UserPromptSubmit", prompt: "hey" }, runner, f.routing);
+    const content = output.hookSpecificOutput.additionalContext;
+    assert.ok(content.length < 1800, `small fallback injected ${content.length} characters`);
+    t.diagnostic(JSON.stringify({ candidates, contextChars: content.length }));
+    assert.match(content, /discussion.*no.*lifecycle/i);
+    assert.match(content, /--expect-revision/);
+    const facts = JSON.parse(content.slice(content.lastIndexOf("\n") + 1));
+    assert.equal(facts.candidate_count, candidates);
+    assert.equal(facts.candidates_complete, true);
+    assert.deepEqual(f.calls, [["routing", "snapshot"]]);
+});
+
+for (const host of ["codex", "claude", "pi", "omp"]) test(`${host}_related_discussion_preserves_job_without_lifecycle_write`, async t => {
+    const f = await fixture(t, "discussion:job_a");
+    let content;
+    if (["codex", "claude"].includes(host)) {
+        const result = await runHook({ ...f.event, hook_event_name: "UserPromptSubmit", prompt: "有性能问题吗" }, f.runner, f.routing);
+        content = result.hookSpecificOutput.additionalContext;
+    } else {
+        const handlers = new Map();
+        registerExtension({ on: (n, h) => handlers.set(n, h), registerTool() {} }, host, f.runner, globalThis, undefined, f.routing);
+        const result = await handlers.get("before_agent_start")({ prompt: "有性能问题吗" }, { cwd: "/work", sessionManager: { getSessionId: () => "session" } });
+        content = result.message.content;
+    }
+    assert.match(content, /Discussion about Job job_a/);
+    assert.match(content, /does not request a Job lifecycle change/);
+    assert.equal(JSON.parse(content.slice(content.indexOf("\n") + 1)).job.id, "job_a");
+    assert.ok(f.calls.every(args => args[0] === "routing" || args[0] === "hook"));
+    assert.equal(f.requests(), 1);
+});
+
+test("prompt_hook_passes_earlier_turn_referent_to_jev", async t => {
+    const f = await fixture(t, "discussion:job_a");
+    const path = join(f.routing.cacheDir, "multi-turn.jsonl");
+    const messages = ["优化登录缓存", "采用写入失效", "风险呢", "验证并发更新", "有性能问题吗"];
+    const rows = messages.flatMap((text, i) => [
+        ...(i % 2 === 0 ? [{ type: "event_msg", payload: { type: "task_started", turn_id: `t${i}` } }] : []),
+        { type: "response_item", payload: { type: "message", role: i % 2 ? "assistant" : "user", id: `m${i}`, content: text } },
+    ]);
+    await writeFile(path, rows.map(row => JSON.stringify(row)).join("\n"));
+    const fetch = f.routing.fetch;
+    let history;
+    f.routing.fetch = async (url, init) => { history = JSON.parse(init.body).state.recent_conversation; return fetch(url, init); };
+    await runHook({ ...f.event, hook_event_name: "UserPromptSubmit", prompt: "有性能问题吗", transcript_path: path }, f.runner, f.routing);
+    assert.deepEqual(history.map(m => m.text), messages.slice(0, -1));
+});
+
+for (const host of ["pi", "omp"]) test(`${host}_keeps_four_pairs_for_followup_references`, async t => {
+    const f = await fixture(t, "discussion:job_a"), handlers = new Map();
+    registerExtension({ on: (n, h) => handlers.set(n, h), registerTool() {} }, host, f.runner, globalThis, undefined, f.routing);
+    const ctx = { cwd: "/work", sessionManager: { getSessionId: () => "session" } };
+    await handlers.get("session_start")({}, ctx);
+    t.after(() => handlers.get("session_shutdown")({}, ctx));
+    for (let i = 0; i < 4; i++) {
+        await handlers.get("before_agent_start")({ prompt: `讨论登录方案 ${i}` }, ctx);
+        await handlers.get("agent_end")({ messages: [{ role: "assistant", content: `回答 ${i}` }] }, ctx);
+    }
+    const fetch = f.routing.fetch;
+    let history;
+    f.routing.fetch = async (url, init) => { history = JSON.parse(init.body).state.recent_conversation; return fetch(url, init); };
+    await handlers.get("before_agent_start")({ prompt: "这样修改" }, ctx);
+    assert.equal(history.length, 8);
+    assert.equal(history[0].text, "讨论登录方案 0");
+});
+
+test("prompt_routes_with_complete_recent_advice_despite_oversized_older_history", async t => {
+    const f = await fixture(t);
+    const path = join(f.routing.cacheDir, "transcript.jsonl");
+    const rows = [
+        { type: "response_item", payload: { type: "message", role: "user", id: "old", content: "x".repeat(300000) } },
+        { type: "event_msg", payload: { type: "task_started", turn_id: "advice" } },
+        { type: "response_item", payload: { type: "message", role: "user", id: "u", content: "How should login be fixed?" } },
+        { type: "response_item", payload: { type: "message", role: "assistant", id: "a", content: "Reuse the login callback." } },
+        { type: "event_msg", payload: { type: "task_started", turn_id: "current" } },
+        { type: "response_item", payload: { type: "message", role: "user", id: "c", content: "按照建议进行修改" } },
+    ];
+    await writeFile(path, rows.map(row => JSON.stringify(row)).join("\n"));
+    const fetcher = f.routing.fetch;
+    f.routing.fetch = async (url, init) => {
+        const state = JSON.parse(init.body).state;
+        assert.equal(state.dialogue_focus.previous_assistant_message.text, "Reuse the login callback.");
+        assert.equal(state.dialogue_focus.previous_user_message.text, "How should login be fixed?");
+        return fetcher(url, init);
+    };
+    const result = await runHook({ ...f.event, hook_event_name: "UserPromptSubmit", prompt: "按照建议进行修改", transcript_path: path }, f.runner, f.routing);
+    assert.equal(f.requests(), 1);
+    assert.match(result.hookSpecificOutput.additionalContext, /job followup/);
 });
