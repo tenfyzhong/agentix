@@ -149,7 +149,7 @@ async fn report(db: &mut SqliteConnection, path: &std::path::Path) -> Result<Val
     .await?;
     let issues = rows(db, "SELECT question, issue, COUNT(*) AS answers FROM answers WHERE issue IS NOT NULL GROUP BY question, issue").await?;
     let mut score_gates = Vec::new();
-    for threshold in [0.85, 0.9, 0.95] {
+    for threshold in [0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95] {
         let data = sqlx::query("SELECT model, COUNT(*) AS requests,
             SUM(CASE WHEN answer_count>0 AND NOT EXISTS (SELECT 1 FROM answers a WHERE a.request_id=r.id AND
                 (valid=0 OR choice='uncertain' OR confidence<? OR probability<? OR margin<0.2)) THEN 1 ELSE 0 END) AS score_gate_pass

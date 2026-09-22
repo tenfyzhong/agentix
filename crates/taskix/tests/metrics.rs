@@ -61,9 +61,38 @@ async fn metrics_report_list_and_label_without_task_database() {
         body["result"]["totals"][0]["reviewed_accuracy"],
         Value::Null
     );
-    assert_eq!(body["result"]["score_gates"][0]["score_gate_pass"], 2);
-    assert_eq!(body["result"]["score_gates"][1]["score_gate_pass"], 1);
+    let gates = body["result"]["score_gates"].as_array().unwrap();
+    let thresholds = [0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95];
+    assert_eq!(gates.len(), thresholds.len());
+    for (gate, threshold) in gates.iter().zip(thresholds) {
+        assert_eq!(gate["model"], "jev-test");
+        assert_eq!(gate["threshold"], threshold);
+        assert_eq!(gate["requests"], 2);
+        assert_eq!(
+            gate["score_gate_pass"],
+            if threshold <= 0.87 { 2 } else { 1 }
+        );
+    }
     let text = command(&dir, &["routing", "metrics", "report"]);
+    assert!(text.status.success());
+    let stdout = String::from_utf8_lossy(&text.stdout);
+    let gate_lines: Vec<_> = stdout
+        .split_once(
+            "Score gates (not predicted adoption): model  threshold  score_gate_pass  requests\n",
+        )
+        .unwrap()
+        .1
+        .lines()
+        .take_while(|line| !line.is_empty())
+        .collect();
+    let expected_lines: Vec<_> = thresholds
+        .iter()
+        .map(|threshold| {
+            let pass = if *threshold <= 0.87 { 2 } else { 1 };
+            format!("jev-test  {threshold}  {pass}  2")
+        })
+        .collect();
+    assert_eq!(gate_lines, expected_lines);
     assert!(String::from_utf8_lossy(&text.stdout).contains("PREP_MS"));
     assert!(
         body["result"]["note"]

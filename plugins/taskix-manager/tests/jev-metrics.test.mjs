@@ -139,7 +139,8 @@ test("native_taskix_report_matches_plugin_database_and_preserves_read_only_data"
         return JSON.parse(stdout).result;
     };
     const report = await run("report");
-    assert.deepEqual(report.score_gates.map(row => row.score_gate_pass), [2, 0, 0]);
+    assert.deepEqual(report.score_gates.map(row => row.threshold), [.5, .55, .6, .65, .7, .75, .8, .85, .9, .95]);
+    assert.deepEqual(report.score_gates.map(row => row.score_gate_pass), [2, 2, 2, 2, 2, 2, 2, 2, 0, 0]);
     assert.equal(report.totals.find(row => row.threshold === .85).adoption_rate, 1);
     assert.equal(report.totals.find(row => row.threshold === .9).adoption_rate, 0);
     assert.deepEqual(await readFile(f.path), before);
