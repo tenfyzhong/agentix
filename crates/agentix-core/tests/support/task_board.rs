@@ -59,6 +59,68 @@ async fn click(engine: &Engine, token: String) {
 }
 
 #[tokio::test]
+async fn navigation_buttons_are_primary_while_entries_remain_default() {
+    let (dir, service, _) = task_fixture().await;
+    for index in 0..6 {
+        let root = dir.path().join(format!("project-{index}"));
+        std::fs::create_dir(&root).unwrap();
+        write(
+            &service,
+            json!({"command":"project.register","root":root,"name":format!("Project {index}")}),
+        )
+        .await;
+    }
+    let (engine, channel) = engine(service).await;
+    engine.handle_inbound(input("/attach thr_a")).await.unwrap();
+    for command in ["/dashboard", "/jobs", "/tasks", "/board"] {
+        engine.handle_inbound(input(command)).await.unwrap();
+        assert_navigation_styles(&last(&channel));
+    }
+    engine.handle_inbound(input("/dashboard")).await.unwrap();
+    click(&engine, button(&last(&channel), "Next")).await;
+    assert_navigation_styles(&last(&channel));
+    click(&engine, button(&last(&channel), "Previous")).await;
+    assert_navigation_styles(&last(&channel));
+    click(&engine, button(&last(&channel), "demo")).await;
+    assert_navigation_styles(&last(&channel));
+    click(&engine, button(&last(&channel), "Task board")).await;
+    assert_navigation_styles(&last(&channel));
+    click(&engine, button(&last(&channel), "Implement task board")).await;
+    assert_navigation_styles(&last(&channel));
+}
+
+fn assert_navigation_styles(view: &OutboundView) {
+    let navigation = view
+        .sections
+        .iter()
+        .find(|section| section.title == "Navigation")
+        .expect("navigation section");
+    assert!(!navigation.action_tokens.is_empty());
+    for token in &navigation.action_tokens {
+        let action = view
+            .actions
+            .iter()
+            .find(|action| &action.token == token)
+            .unwrap();
+        assert_eq!(action.style, ActionStyle::Primary, "{}", action.label);
+    }
+    for section in view
+        .sections
+        .iter()
+        .filter(|section| section.title.is_empty())
+    {
+        for token in &section.action_tokens {
+            let action = view
+                .actions
+                .iter()
+                .find(|action| &action.token == token)
+                .unwrap();
+            assert_eq!(action.style, ActionStyle::Default, "{}", action.label);
+        }
+    }
+}
+
+#[tokio::test]
 async fn dashboard_project_jobs_sort_by_update_and_filter_across_pages() {
     use sqlx::Connection;
     let (_dir, service, _) = task_fixture().await;

@@ -152,7 +152,7 @@ impl TaskBoardView<'_> {
                 "Navigation",
                 buttons
                     .into_iter()
-                    .map(|(label, target)| (label, target, ActionStyle::Default))
+                    .map(|(label, target)| (label, target, ActionStyle::Primary))
                     .collect(),
             )
             .await;
