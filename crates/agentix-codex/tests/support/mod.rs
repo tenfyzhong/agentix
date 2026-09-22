@@ -190,6 +190,7 @@ struct ServerState {
     threads: BTreeMap<String, MockThread>,
     queues: HashMap<String, Vec<QueuedSubmission>>,
     request_methods: Vec<String>,
+    request_params: HashMap<String, Vec<Value>>,
     native_thread_ids: bool,
     active_writers: HashSet<String>,
     turn_reads: HashMap<String, usize>,
@@ -335,6 +336,18 @@ impl MockCodexAppServer {
 
     pub async fn request_methods(&self) -> Vec<String> {
         self.shared.state.lock().await.request_methods.clone()
+    }
+
+    #[allow(dead_code)] // Used by native session-switch request-budget tests.
+    pub async fn request_params(&self, method: &str) -> Vec<Value> {
+        self.shared
+            .state
+            .lock()
+            .await
+            .request_params
+            .get(method)
+            .cloned()
+            .unwrap_or_default()
     }
 
     pub async fn last_result(&self, method: &str) -> Option<Value> {
@@ -850,6 +863,11 @@ async fn handle_request(
 ) -> (Result<Value, (i64, String)>, Vec<Value>) {
     let mut state = server.state.lock().await;
     state.request_methods.push(method.into());
+    state
+        .request_params
+        .entry(method.into())
+        .or_default()
+        .push(params.clone());
     let mut notifications = Vec::new();
     if let Some(error) = state.failures.get_mut(method).and_then(VecDeque::pop_front) {
         return (Err(error), notifications);
