@@ -8431,6 +8431,7 @@ async fn draining_completion_includes_process_items_produced_after_switching() {
         })
         .await
         .unwrap();
+    settle_background(&engine).await;
     let view = channel.sent().last().unwrap().1.clone();
     assert_eq!(view.status, agentix_core::ViewStatus::Background);
     assert!(view.body.contains("Background thought"));
@@ -8509,6 +8510,7 @@ async fn draining_truncated_history_preserves_received_items_and_updates_matchin
         })
         .await
         .unwrap();
+    settle_background(&engine).await;
     let view = channel.updated().last().unwrap().1.clone();
     for n in 0..5 {
         assert!(view.body.contains(&format!("Original {n}")));
