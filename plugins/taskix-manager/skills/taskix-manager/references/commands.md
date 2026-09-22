@@ -144,7 +144,7 @@ taskix routing metrics label REQUEST_ID incorrect
 ```
 
 Report adoption, fallback reasons, per-question issues, reviewed accuracy and
-0.85/0.90/0.95 score gates. Gate counts are not predicted adoption. Only human
+score gates from 0.50 through 0.95 in 0.05 increments. Gate counts are not predicted adoption. Only human
 labels establish reviewed accuracy; model agreement is not a correctness label.
 List returns the most recent requests and scores (limit 1–1000, default 50).
 

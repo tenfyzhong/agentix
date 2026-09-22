@@ -202,7 +202,7 @@ fails instead of creating one. `list` shows the latest 50 requests and their
 question scores; use session/turn/time to locate the corresponding conversation.
 `report` groups adoption and reviewed accuracy by model and configured threshold,
 lists fallback/question issues, and compares all-question score gates at
-0.85/0.90/0.95. `response_quality` gives valid-response and low-confidence-response
+0.50 through 0.95 in 0.05 increments. `response_quality` gives valid-response and low-confidence-response
 counts: divide the latter by the former for the fraction of valid responses with
 at least one low score. A failed Inbox answer can cause the entire prompt to defer.
 
