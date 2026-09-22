@@ -50,15 +50,23 @@ export async function runTaskix(args, options = {}) {
             );
         return response;
     } catch (error) {
+        const status = error.signal ? `signal ${error.signal}`
+            : typeof error.code === "number" ? `exit code ${error.code}` : error.code;
+        let message = error.stderr?.trim() || (status ? `Taskix failed (${status})` : error.message);
         if (error.stdout) {
             try {
-                throw new Error(
-                    JSON.parse(error.stdout).error?.message || error.message,
-                );
-            } catch (parsed) {
-                if (!(parsed instanceof SyntaxError)) throw parsed;
+                message = JSON.parse(error.stdout).error?.message || message;
+            } catch {
+                // Keep the subprocess error for non-JSON output.
             }
         }
-        throw error;
+        // Keep only command words, never user-supplied arguments or lease tokens.
+        const command = `taskix ${args.slice(0, 2).filter(arg => /^[a-z][a-z-]*$/.test(arg)).join(" ")}`.trim();
+        const failure = new Error(`${command}: ${message}`, { cause: error });
+        failure.command = command;
+        failure.exitCode = typeof error.code === "number" ? error.code : undefined;
+        failure.code = error.code;
+        failure.signal = error.signal;
+        throw failure;
     }
 }

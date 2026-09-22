@@ -247,6 +247,25 @@ Inside Claude Code, the equivalent commands start with `/plugin`. Reload plugins
 
 Both hosts fetch the marketplace catalogs from GitHub. Source checkouts contain both catalogs; `taskix-*` release archives provide the plugin directory, not a marketplace root. The `agentix-*` archives do not include the plugin. Both hosts load the shared `hooks/hooks.json`; Codex additionally loads `hooks/codex.json`, and Claude loads `hooks/claude.json`. No per-project hook files need to be copied.
 
+### Hook failure diagnostics
+
+Failed command hooks exit with code 1 and print the underlying error to stderr,
+including the Taskix command words when a CLI call fails. Taskix JSON error
+messages take precedence over subprocess stderr. Hosts may display only a generic
+hook failure, so the entrypoint also appends a JSON line to
+`$XDG_STATE_HOME/taskix/hooks.jsonl`, or `~/.local/state/taskix/hooks.jsonl` when
+`XDG_STATE_HOME` is unset. Stderr includes the log path after a successful write.
+
+Each entry records the timestamp, hook event, session ID, working directory,
+command words, available exit code or spawn error code/signal, and error message.
+The logger does not copy the event payload, transcript, environment, or complete
+CLI argument list. Error messages can contain local paths or subprocess-provided
+details; newly created log files use owner-only permissions. The file is
+append-only and can be removed or rotated when needed. Log write failures are
+reported to stderr without replacing the original failure. Successful hooks do
+not write this error log. Failures before the entrypoint loads, or processes
+forcibly killed by the host timeout, cannot be captured by this handler.
+
 ### Pi: install
 
 Install the package directly from GitHub:
