@@ -17,7 +17,7 @@ use agentix_domain::{
     MultiplexerMutation, MultiplexerMutationResult, MultiplexerSnapshot, QueuedPrompt,
     QueuedPromptPort, SessionCommand, SessionCommandChoice, SessionCommandResult,
     SessionControlPort, SessionId, SessionPage, SessionStatus, SessionSummary, TerminalLocation,
-    ToolSummary, TurnSummary, WorkspaceRuntimePort,
+    ToolSummary, TurnStatus, TurnSummary, WorkspaceRuntimePort,
 };
 use async_trait::async_trait;
 use futures_util::future::try_join_all;
@@ -1764,6 +1764,67 @@ impl CodexClient {
 }
 
 impl CodexClient {
+    async fn latest_turn_state(
+        &self,
+        session: &SessionId,
+    ) -> Result<Option<(String, TurnStatus)>, ClientError> {
+        let (result, field, newest_first) = match self
+            .request_after_reconnect(
+                "thread/turns/list",
+                json!({
+                    "threadId": session.as_str(),
+                    "limit": 1,
+                    "sortDirection": "desc",
+                    "itemsView": "notLoaded"
+                }),
+            )
+            .await
+        {
+            Ok(page) => (page, "data", true),
+            Err(ClientError::Rpc { code: -32601, .. }) => {
+                (self.read_thread(session, true).await?, "turns", false)
+            }
+            Err(error) => return Err(error),
+        };
+        let turns = result[field]
+            .as_array()
+            .ok_or(ClientError::InvalidResponse("session switch turns"))?;
+        let turn = if newest_first {
+            turns.first()
+        } else {
+            turns.last()
+        };
+        turn.map(|turn| {
+            let id = turn["id"]
+                .as_str()
+                .ok_or(ClientError::InvalidResponse("session switch turn id"))?;
+            Ok((id.to_owned(), parse_turn_status(turn["status"].as_str())))
+        })
+        .transpose()
+    }
+
+    async fn latest_turn_for_session_switch(
+        &self,
+        session: &SessionId,
+    ) -> Result<Option<(String, TurnStatus)>, ClientError> {
+        match self.latest_turn_state(session).await {
+            Err(error)
+                if is_thread_unmaterialized(&error)
+                    || matches!(&error, ClientError::Rpc { code: -32601, .. }) =>
+            {
+                // A fresh thread may have no readable history until its first
+                // message. Only live idle metadata can authorize the switch.
+                let thread = self.read_thread(session, false).await?;
+                if parse_session_status(thread.get("status")) == SessionStatus::Idle {
+                    Ok(None)
+                } else {
+                    Err(error)
+                }
+            }
+            result => result,
+        }
+    }
+
     async fn request_native_new(
         &self,
         session: &SessionId,
@@ -1792,28 +1853,21 @@ impl CodexClient {
         let session = session.clone();
         tokio::spawn(async move {
             let result: Result<(), AgentError> = async {
-                let thread = client
-                    .read_thread(&session, true)
+                // Switching only needs turn identity and status, never content
+                // enrichment or local rollout reads.
+                let turn = client
+                    .latest_turn_for_session_switch(&session)
                     .await
                     .map_err(agent_error)?;
-                if let Some(turn) = thread["turns"]
-                    .as_array()
-                    .and_then(|turns| turns.iter().find(|t| t["status"] == "inProgress"))
-                {
-                    let id = turn["id"]
-                        .as_str()
-                        .ok_or_else(|| AgentError::Rejected("Active turn has no ID".into()))?;
-                    client.interrupt(&session, id).await?;
+                if let Some((id, TurnStatus::InProgress)) = turn {
+                    client.interrupt(&session, &id).await?;
                     let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
                     loop {
-                        let thread = client
-                            .read_thread(&session, true)
+                        let turn = client
+                            .latest_turn_for_session_switch(&session)
                             .await
                             .map_err(agent_error)?;
-                        if !thread["turns"]
-                            .as_array()
-                            .is_some_and(|turns| turns.iter().any(|t| t["status"] == "inProgress"))
-                        {
+                        if !turn.is_some_and(|(_, status)| status == TurnStatus::InProgress) {
                             break;
                         }
                         if tokio::time::Instant::now() >= deadline {
