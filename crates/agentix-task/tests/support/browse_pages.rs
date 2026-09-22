@@ -231,3 +231,88 @@ async fn session_job_pages_keep_insertion_order_and_only_read_selected_titles() 
     assert_eq!(result.total, 21);
     assert!(result.jobs.iter().all(|job| job.task_count == 1));
 }
+
+#[tokio::test]
+async fn project_job_pages_handle_ties_empty_filters_and_scope_without_decoding_other_rows() {
+    use agentix_task::JobStatus;
+    let f = Fixture::new().await;
+    let mut conn = connection(&f).await;
+    sqlx::query("INSERT INTO projects(id,data) SELECT 'prj_other',json_set(data,'$.id','prj_other','$.root','/other','$.name','other') FROM projects WHERE id=?")
+        .bind(&f.project).execute(&mut conn).await.unwrap();
+    for (id, project, archived) in [
+        ("job_z", f.project.as_str(), None),
+        ("job_y", f.project.as_str(), None),
+        ("job_archived", f.project.as_str(), Some(1)),
+        ("job_foreign", "prj_other", None),
+    ] {
+        sqlx::query(
+            "INSERT INTO jobs(id,data) SELECT ?,json_set(data,'$.id',?,'$.project_id',?,
+            '$.updated_at',9999999999,'$.archived_at',?) FROM jobs WHERE id=?",
+        )
+        .bind(id)
+        .bind(id)
+        .bind(project)
+        .bind(archived)
+        .bind(&f.job)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    }
+    let store = f.service.store();
+    let first = store
+        .project_job_page(&f.project, None, 0, 1)
+        .await
+        .unwrap();
+    assert_eq!((first.total, first.pages), (3, 3));
+    assert_eq!(first.jobs[0].id, "job_z");
+    let second = store
+        .project_job_page(&f.project, None, 1, 1)
+        .await
+        .unwrap();
+    assert_eq!(second.jobs[0].id, "job_y");
+    let last = store
+        .project_job_page(&f.project, None, usize::MAX, 1)
+        .await
+        .unwrap();
+    assert_eq!(last.page, 2);
+    assert_eq!(last.jobs[0].id, f.job);
+    let empty = store
+        .project_job_page(&f.project, Some(JobStatus::Completed), usize::MAX, 1)
+        .await
+        .unwrap();
+    assert_eq!((empty.total, empty.page, empty.pages), (0, 0, 1));
+    assert!(empty.jobs.is_empty());
+    assert!(
+        store
+            .project_job_page(&f.project, None, 0, 0)
+            .await
+            .is_err()
+    );
+    assert!(store.project_job_page("unknown", None, 0, 6).await.is_err());
+    sqlx::query("UPDATE jobs SET data=json_remove(data,'$.title','$.goal') WHERE id != 'job_z'")
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .project_job_page(&f.project, None, 0, 1)
+            .await
+            .unwrap()
+            .jobs[0]
+            .id,
+        "job_z"
+    );
+    sqlx::query("UPDATE projects SET data=json_set(data,'$.archived_at',1) WHERE id=?")
+        .bind(&f.project)
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .project_job_page(&f.project, None, 0, 6)
+            .await
+            .unwrap()
+            .total,
+        0
+    );
+}

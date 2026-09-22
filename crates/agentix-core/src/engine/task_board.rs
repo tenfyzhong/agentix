@@ -114,10 +114,12 @@ impl TaskBoardView<'_> {
             .ok_or_else(|| error("Task board is not configured."))
     }
 
-    pub(super) async fn show_tasks(
+    pub(super) async fn show_legacy_tasks(
         &self,
         conversation: &ConversationRef,
+        owner: &str,
         filter: Option<&str>,
+        page: usize,
     ) -> Result<(), EngineError> {
         let tasks = self
             .tasks_service()?
@@ -125,24 +127,63 @@ impl TaskBoardView<'_> {
             .legacy_tasks(filter, 50)
             .await
             .map_err(error)?;
-        let body = tasks
+        let pages = browse::page_count(tasks.len());
+        let page = page.min(pages - 1);
+        let mut view = OutboundView::text(
+            "Tasks",
+            format!(
+                "**Tasks ({})**\nSelect a task to view its details. Use /board for the attached session's tasks.",
+                tasks.len()
+            ),
+        );
+        if tasks.len() == 50 {
+            view.body.push_str(
+                "\nShowing the first 50 matches. Narrow the list with /tasks <job-or-project>.",
+            );
+        }
+        for task in tasks
             .iter()
-            .map(|t| format!("{} · {}\n{}", t.id, t.status, t.title))
-            .collect::<Vec<_>>()
-            .join("\n\n");
-        self.ui
-            .send_view(
+            .skip(page * browse::PAGE_SIZE)
+            .take(browse::PAGE_SIZE)
+        {
+            self.add_entry(
                 conversation,
-                &OutboundView::text(
-                    "Tasks",
-                    if body.is_empty() {
-                        "No matching tasks.".into()
-                    } else {
-                        body
-                    },
+                owner,
+                &mut view,
+                format!(
+                    "**{}**\n{}\n`{}`",
+                    browse::escape(&browse::short(&task.title)),
+                    task.status,
+                    task.id
                 ),
+                task.title.clone(),
+                TaskBrowse::Task {
+                    id: task.id.clone(),
+                    page: 0,
+                },
             )
-            .await?;
+            .await;
+        }
+        if tasks.is_empty() {
+            browse::append_section(
+                &mut view,
+                "",
+                "No matching tasks. Use Dashboard to browse projects.".into(),
+            );
+        }
+        self.add_browse_actions(
+            conversation,
+            owner,
+            &mut view,
+            TaskBrowse::LegacyTasks {
+                filter: filter.map(str::to_owned),
+                page,
+            },
+            pages,
+            vec![("Dashboard".into(), TaskBrowse::Dashboard(0))],
+        )
+        .await;
+        self.ui.send_view(conversation, &view).await?;
         Ok(())
     }
 
@@ -217,8 +258,20 @@ impl TaskBoardView<'_> {
             )],
         )
         .await;
+        let action_start = view.actions.len();
         self.add_task_mutations(conversation, owner_id, &state, task, &mut view)
             .await;
+        if view.actions.len() > action_start {
+            let index = browse::append_section(
+                &mut view,
+                "Task actions",
+                "Actions apply to this task. Block, Wait and Fail ask for a reason.".into(),
+            );
+            view.sections[index].action_tokens = view.actions[action_start..]
+                .iter()
+                .map(|action| action.token.clone())
+                .collect();
+        }
         self.ui.send_view(conversation, &view).await?;
         Ok(())
     }
@@ -285,7 +338,12 @@ impl TaskBoardView<'_> {
                     disabled: false,
                     label: label.into(),
                     token,
-                    style: ActionStyle::Default,
+                    style: match command {
+                        "task.fail" | "task.cancel" => ActionStyle::Danger,
+                        "task.claim" | "task.start" | "task.done" | "task.retry"
+                        | "task.reopen" => ActionStyle::Primary,
+                        _ => ActionStyle::Default,
+                    },
                 });
             }
         }

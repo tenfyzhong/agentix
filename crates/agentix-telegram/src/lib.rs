@@ -454,6 +454,18 @@ impl ChannelAdapter for TelegramAdapter {
         ))
     }
 
+    async fn send_sectioned(
+        &self,
+        conversation: &ConversationRef,
+        view: &OutboundView,
+    ) -> Result<MessageRef, ChannelError> {
+        let mut last = None;
+        for message in sectioned_messages(view) {
+            last = Some(self.send(conversation, &message).await?);
+        }
+        last.ok_or_else(|| ChannelError::InvalidPayload("Empty sectioned response".into()))
+    }
+
     async fn update(
         &self,
         conversation: &ConversationRef,
@@ -697,6 +709,62 @@ pub fn attached_menu_commands() -> Vec<BotCommand> {
             .then_with(|| left.command.cmp(&right.command))
     });
     commands
+}
+
+/// Task-board messages are independent: each description carries only its own controls.
+fn sectioned_messages(view: &OutboundView) -> Vec<OutboundView> {
+    if view.sections.is_empty() {
+        return vec![view.clone()];
+    }
+    let mut messages = Vec::new();
+    let mut placed = HashSet::new();
+    for section in &view.sections {
+        let body = if section.title.is_empty() {
+            section.body.clone()
+        } else {
+            format!("**{}**\n{}", section.title, section.body)
+        };
+        let mut message = OutboundView::text(&view.title, body);
+        message.subtitle.clone_from(&view.subtitle);
+        message.status = view.status;
+        for token in &section.action_tokens {
+            if let Some(action) = view.actions.iter().find(|action| &action.token == token)
+                && !action.disabled
+                && placed.insert(token.clone())
+            {
+                message.actions.push(colored_action(action));
+            }
+        }
+        if !message.body.trim().is_empty() || !message.actions.is_empty() {
+            messages.push(message);
+        }
+    }
+    let remaining: Vec<_> = view
+        .actions
+        .iter()
+        .filter(|action| !action.disabled && !placed.contains(&action.token))
+        .map(colored_action)
+        .collect();
+    if !remaining.is_empty() {
+        let mut footer = OutboundView::text(&view.title, "Choose an action.");
+        footer.actions = remaining;
+        messages.push(footer);
+    }
+    if messages.is_empty() {
+        messages.push(view.clone());
+    }
+    messages
+}
+
+fn colored_action(action: &ActionButton) -> ActionButton {
+    let mut action = action.clone();
+    let prefix = match action.style {
+        agentix_domain::ActionStyle::Primary => "🔵 ",
+        agentix_domain::ActionStyle::Danger => "🔴 ",
+        agentix_domain::ActionStyle::Default => "",
+    };
+    action.label = format!("{prefix}{}", action.label);
+    action
 }
 
 #[must_use]
@@ -983,5 +1051,42 @@ mod reload_tests {
         adapter.replace_owners(&["2".into()]).await;
         assert!(live.policy.is_owner(2));
         assert!(!live.policy.is_owner(1));
+    }
+}
+
+#[cfg(test)]
+mod sectioned_tests {
+    use super::*;
+
+    #[test]
+    fn section_messages_preserve_controls_once_and_skip_unknown_or_disabled_tokens() {
+        let mut view = OutboundView::text("Tasks", "Fallback");
+        for (token, disabled) in [("a", false), ("disabled", true), ("unplaced", false)] {
+            view.actions.push(ActionButton {
+                disabled,
+                label: token.into(),
+                token: token.into(),
+                style: agentix_domain::ActionStyle::Danger,
+            });
+        }
+        for title in ["First", "Second"] {
+            view.sections.push(agentix_domain::ViewSection {
+                title: title.into(),
+                body: "Description".into(),
+                action_tokens: vec!["a".into(), "unknown".into(), "disabled".into()],
+                ..Default::default()
+            });
+        }
+        let messages = sectioned_messages(&view);
+        let tokens: Vec<_> = messages
+            .iter()
+            .flat_map(|m| &m.actions)
+            .map(|a| a.token.as_str())
+            .collect();
+        assert_eq!(tokens, ["a", "unplaced"]);
+        assert!(messages[0].body.contains("First"));
+        assert_eq!(messages[0].actions[0].label, "🔴 a");
+        assert!(messages[1].actions.is_empty());
+        assert_eq!(messages.last().unwrap().actions[0].token, "unplaced");
     }
 }
