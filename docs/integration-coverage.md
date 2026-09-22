@@ -444,3 +444,7 @@ cargo test -p agentix-task --test discussion discussion_batch_scaling_benchmark 
 ```
 
 On one macOS ARM64 debug run with Rust 1.95, attaching 1,000 messages took approximately 9.97 seconds before batched merging and 19 milliseconds afterward; 4,000 messages took 77 milliseconds afterward. These are illustrative local measurements, not timing assertions or service latency guarantees. The benchmark verifies message counts and measures staging, attachment, and unchanged replay separately. It excludes Obsidian projection and model/network calls. Routine tests assert scope and ordering contracts instead of fragile wall-clock thresholds.
+
+### Native terminal command discovery
+
+`agentix-multiplexer` runs isolated child-process regressions with conflicting service and login PATH commands. They verify login PATH precedence, explicit executable PATH inheritance, shell startup noise, paths with spaces, literal argv and server prefixes, removal of inherited tmux selectors, non-replay of executed failures, rejection of invalid/failed shell output, and bounded shell lookup. `agentix-tmux` verifies that inventory and process queries both use the login PATH. These tests require no live IM channel or user terminal. Real Codex terminal tests remain opt-in.

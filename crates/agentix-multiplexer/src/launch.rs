@@ -20,7 +20,7 @@ pub fn interactive_login_shell_argv() -> Option<Vec<String>> {
 }
 
 #[cfg(unix)]
-fn login_shell() -> String {
+pub(super) fn login_shell() -> String {
     use nix::unistd::{Uid, User};
     std::env::var("AGENTIX_LOGIN_SHELL")
         .ok()
