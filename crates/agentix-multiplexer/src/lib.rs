@@ -86,6 +86,7 @@ pub trait MultiplexerDriver: std::fmt::Debug + Send + Sync {
 pub struct WorkspaceManager {
     driver: Arc<RwLock<Option<Arc<dyn MultiplexerDriver>>>>,
     argv: Vec<String>,
+    cwd_argument: Option<String>,
     default_directory: PathBuf,
 }
 
@@ -95,11 +96,16 @@ impl WorkspaceManager {
         Self {
             driver: Arc::default(),
             argv,
+            cwd_argument: None,
             default_directory: default_directory.into(),
         }
     }
     pub fn set_argv(&mut self, argv: Vec<String>) {
         self.argv = argv;
+    }
+    /// Pass the revalidated pane directory explicitly to agents that need it.
+    pub fn set_cwd_argument(&mut self, argument: &str) {
+        self.cwd_argument = Some(argument.into());
     }
     pub fn set_driver(&self, driver: Arc<dyn MultiplexerDriver>) {
         *self.driver.write().expect("multiplexer driver lock") = Some(driver);
@@ -173,11 +179,15 @@ impl WorkspaceManager {
     ) -> Result<MultiplexerOutcome, MultiplexerError> {
         let driver = self.driver()?;
         let prepared = self.prepare(prepared.mutation.clone()).await?;
-        let argv = prepared
-            .mutation
-            .launch_agent
-            .then_some(self.argv.as_slice());
-        driver.execute(&prepared, argv).await
+        let argv = prepared.mutation.launch_agent.then(|| {
+            let mut argv = self.argv.clone();
+            if let Some(argument) = &self.cwd_argument {
+                argv.push(argument.clone());
+                argv.push(prepared.cwd.to_string_lossy().into_owned());
+            }
+            argv
+        });
+        driver.execute(&prepared, argv.as_deref()).await
     }
     pub async fn prepare(
         &self,
