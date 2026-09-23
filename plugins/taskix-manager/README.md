@@ -290,7 +290,7 @@ omp plugin install taskix-manager@agentix
 omp plugin install agentix-bridge@agentix
 ```
 
-OMP installs the plugins from the same marketplace used by Claude. The marketplace selects `plugins/taskix-manager/` and `plugins/agentix-bridge/`; each plugin selects its OMP extension through `omp.extensions`. OMP discovers `plugins/taskix-manager/skills/`, so all hosts use the same workflow and reference files. No repository-root skill copies are required. For local development, `make dev-test` registers the current checkout as the marketplace. Restart OMP after installation.
+OMP installs the plugins from the same marketplace used by Claude. The marketplace selects `plugins/taskix-manager/` and `plugins/agentix-bridge/`; each plugin selects its OMP extension through `omp.extensions`. OMP discovers `plugins/taskix-manager/skills/`, so all hosts use the same workflow and reference files. No repository-root skill copies are required. For local development, `make plugin SOURCE=local HOSTS=omp` registers the current checkout as the marketplace. Restart OMP after installation.
 
 If `skill://taskix-manager` reports `Unknown skill` while the taskix tool is available, remove the old root package with `omp plugin uninstall agentix-plugins`, install the marketplace plugins above, and restart OMP. In a new session, check `/status` for the skill and read `skill://taskix-manager` and `skill://taskix-manager/references/commands.md`. Older repository packages placed skills only below `plugins/taskix-manager/`, outside OMP's discovery root.
 

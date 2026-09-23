@@ -59,19 +59,86 @@ after stopping any existing service. Keep the checkout and build output while
 using the links. To restore the installed commands, run
 `brew link --overwrite agentix taskix`.
 
-## Installing local plugins
+## Installing and switching Homebrew versions
 
-Run `make dev-test` to install the Taskix Manager Codex plugin from the current
-checkout, or `make prod-test` to install it from GitHub. Both depend on
-`remove-plugin`, which first removes the Agentix Codex plugin and marketplace.
-Run `make remove-plugin` separately for that cleanup. These targets leave Claude
-Code, Pi, OMP, and other marketplaces and plugins unchanged; use the individual
-plugin installation instructions for those hosts.
+The following targets manage both `agentix` and `taskix` from
+`tenfyzhong/tap`. Use `FORMULAE=agentix` or `FORMULAE=taskix` to select
+one CLI. `VERSION` defaults to `stable`.
 
-The recipes do not build the workspace, copy or delete the `taskix` binary, or
-configure Obsidian. Run the build and Obsidian setup separately when needed.
-Installation failures make the target fail. Cleanup is best-effort so missing
-Codex installations do not prevent setup. Repeated installations are supported.
+| Operation | Command |
+| --- | --- |
+| Install and use the latest release | `make install` |
+| Update and use the latest release | `make update` |
+| Install and use HEAD | `make install VERSION=head` |
+| Update and use the latest HEAD | `make update VERSION=head` |
+| Switch to an installed release | `make switch` |
+| Switch to an installed HEAD | `make switch VERSION=head` |
+
+Install and update refresh Homebrew metadata, install the explicitly selected
+version with `--skip-link`, then switch command links. Release updates use
+`brew install` to select the current stable formula even when HEAD is installed;
+HEAD updates additionally use `--fetch-HEAD` to check upstream commits.
+An already current installation is reusable. Switch only checks installed kegs
+and changes links; it does not download or build. Every selected CLI must have
+the requested version installed before any command is unlinked.
+
+These targets do not restart services. Homebrew installation can change the
+`opt` path even with `--skip-link`; that flag only defers ordinary command
+linking. If you run Agentix as a Homebrew service, restart it explicitly after
+installation, update, or switching:
+
+```sh
+brew services restart tenfyzhong/tap/agentix
+brew info agentix taskix
+agentix --version
+taskix --version
+```
+
+Installation failures stop before the explicit switch. A link failure is
+reported without attempting rollback. Existing versions are not explicitly
+uninstalled, but Homebrew's own cleanup policy still applies. After using
+`make link-debug`, remove those manual debug symlinks before switching if
+Homebrew reports a link conflict; the targets do not overwrite arbitrary files.
+
+## Installing plugins
+
+Run `make plugin` (or `make plugin SOURCE=main`) to install from GitHub.
+Run `make plugin SOURCE=local` to install from the current checkout. Both commands
+default to all four hosts: Codex, Pi, OMP, and Claude Code. Select one or more
+with `HOSTS`:
+
+```sh
+make plugin HOSTS=pi
+make plugin SOURCE=main HOSTS="codex omp claude"
+make remove-plugin HOSTS="pi omp"
+```
+
+| Host | Installed integration | Remote source |
+| --- | --- | --- |
+| Codex | Taskix Manager | GitHub marketplace with `--ref main` |
+| Pi | Repository package containing Taskix Manager and Agentix Bridge | `git:github.com/tenfyzhong/agentix@main` |
+| OMP | Taskix Manager and Agentix Bridge | GitHub marketplace using the repository's default branch, currently `main` |
+| Claude Code | Taskix Manager and Agentix Bridge | GitHub marketplace with `@main` |
+
+OMP's marketplace CLI does not expose a branch selector. If the repository's
+default branch changes, its remote source handling must be updated accordingly.
+Local marketplace paths use `./`, which OMP requires for relative paths.
+
+All selected host CLIs must be on PATH; missing commands, unknown hosts, an empty selection,
+or an invalid source fail before cleanup. Unselected hosts are untouched.
+
+Installation first removes the selected hosts' Agentix registrations.
+Cleanup is best-effort so absent plugins do not prevent setup. OMP also removes
+the legacy `agentix-plugins` package. Pi cleanup covers the current checkout and
+the unqualified and `@main` Git sources. If Pi still has another checkout
+registered, remove it explicitly with `pi remove /path/to/old/checkout`;
+project-local registrations require `-l` in that project.
+
+The recipes do not build or replace CLI binaries or configure Obsidian.
+Installation failures stop the target and are reported; earlier host changes
+are not rolled back. Repeated installations are supported. Restart or reload
+the hosts after installation. Start a new Codex thread and review/trust hooks
+with `/hooks`; see the [plugin installation guide](plugins/taskix-manager/README.md#prerequisites-and-activation).
 
 ## Tests and external dependencies
 
