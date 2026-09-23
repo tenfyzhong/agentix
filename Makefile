@@ -68,6 +68,8 @@ install update:
 
 # Validate every requested keg before unlinking any commands. In particular,
 # plain brew link can fall back to HEAD when no stable keg exists.
+# unlink by formula follows opt, which --skip-link may already have moved.
+# Use Homebrew's locked unlink operation on the actual linked keg instead.
 switch:
 	@set -eu; \
 	case "$(VERSION)" in stable|head) ;; *) echo 'VERSION must be stable or head' >&2; exit 2 ;; esac; \
@@ -79,7 +81,7 @@ switch:
 			exit 1; \
 		fi; \
 	done; \
-	$(BREW) unlink $(BREW_FORMULAE); \
+	$(BREW) ruby -e 'require "keg"; require "unlink"; ARGV.each { |name| ref = HOMEBREW_LINKED_KEGS/name.split("/").last; Homebrew::Unlink.unlink(Keg.new(ref.realpath)) if ref.symlink? }' $(BREW_FORMULAE); \
 	$(BREW) link $(if $(filter head,$(VERSION)),--HEAD) $(BREW_FORMULAE)
 
 # Validate the complete selection before removing anything.

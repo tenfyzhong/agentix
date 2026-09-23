@@ -9,8 +9,9 @@ import { fileURLToPath } from "node:url";
 const repository = fileURLToPath(new URL("../../../", import.meta.url));
 const formulas = ["agentix", "taskix"];
 const preflight = formulas.map(name => `list --versions tenfyzhong/tap/${name}`);
+const unlink = 'ruby -e require "keg"; require "unlink"; ARGV.each { |name| ref = HOMEBREW_LINKED_KEGS/name.split("/").last; Homebrew::Unlink.unlink(Keg.new(ref.realpath)) if ref.symlink? }';
 const links = version => [
-    "unlink tenfyzhong/tap/agentix tenfyzhong/tap/taskix",
+    `${unlink} tenfyzhong/tap/agentix tenfyzhong/tap/taskix`,
     `link ${version === "head" ? "--HEAD " : ""}tenfyzhong/tap/agentix tenfyzhong/tap/taskix`,
 ];
 
@@ -19,10 +20,28 @@ async function fixture(t, options = {}) {
     t.after(() => rm(directory, { recursive: true, force: true }));
     const executable = join(directory, "brew");
     const log = join(directory, "calls");
+    const state = join(directory, "linked");
+    await writeFile(state, options.linked ?? "");
     await writeFile(log, "");
     await writeFile(executable, `#!/bin/sh
 echo "$*" >> "$BREW_TEST_LOG"
 [ "$*" != "$BREW_TEST_FAIL" ] || exit 9
+if [ "$1" = unlink ] && [ "$BREW_TEST_OPT" = "$(cat "$BREW_TEST_STATE")" ]; then
+    : > "$BREW_TEST_STATE"
+fi
+if [ "$1" = ruby ]; then
+    : > "$BREW_TEST_STATE"
+fi
+if [ "$1" = link ]; then
+    selected=stable
+    [ "$2" != --HEAD ] || selected=head
+    linked=$(cat "$BREW_TEST_STATE")
+    if [ -n "$linked" ] && [ "$linked" != "$selected" ]; then
+        echo "Another version is already linked: $linked" >&2
+        exit 1
+    fi
+    echo "$selected" > "$BREW_TEST_STATE"
+fi
 if [ "$1" = list ]; then
     echo "$3 $BREW_TEST_VERSIONS"
 fi
@@ -31,9 +50,10 @@ fi
     return {
         run: (...args) => spawnSync("make", [...args, `BREW=${executable}`], {
             cwd: repository,
-            env: { ...process.env, BREW_TEST_LOG: log, BREW_TEST_VERSIONS: options.versions ?? "0.4.10 HEAD-abc", BREW_TEST_FAIL: options.fail ?? "" },
+            env: { ...process.env, BREW_TEST_LOG: log, BREW_TEST_STATE: state, BREW_TEST_OPT: options.opt ?? "", BREW_TEST_VERSIONS: options.versions ?? "0.4.10 HEAD-abc", BREW_TEST_FAIL: options.fail ?? "" },
             encoding: "utf8",
         }),
+        linked: async () => (await readFile(state, "utf8")).trim(),
         calls: async () => (await readFile(log, "utf8")).trim().split("\n").filter(Boolean),
     };
 }
@@ -75,11 +95,11 @@ test("switch_supports_a_single_formula", { skip: process.platform === "win32" },
     const f = await fixture(t);
     assert.equal(f.run("switch", "FORMULAE=agentix").status, 0);
     assert.deepEqual(await f.calls(), [
-        preflight[0], "unlink tenfyzhong/tap/agentix", "link tenfyzhong/tap/agentix",
+        preflight[0], `${unlink} tenfyzhong/tap/agentix`, "link tenfyzhong/tap/agentix",
     ]);
 });
 
-for (const failure of ["update", "unlink tenfyzhong/tap/agentix tenfyzhong/tap/taskix", "link tenfyzhong/tap/agentix tenfyzhong/tap/taskix"]) {
+for (const failure of ["update", `${unlink} tenfyzhong/tap/agentix tenfyzhong/tap/taskix`, "link tenfyzhong/tap/agentix tenfyzhong/tap/taskix"]) {
     test(`brew_failure_is_propagated_at_${failure.split(" ")[0]}`, { skip: process.platform === "win32" }, async t => {
         const f = await fixture(t, { fail: failure });
         assert.notEqual(f.run("install").status, 0);
@@ -93,3 +113,14 @@ test("missing_second_formula_preserves_all_command_links", { skip: process.platf
     assert.notEqual(f.run("switch").status, 0);
     assert.deepEqual(await f.calls(), preflight);
 });
+
+for (const version of ["head", "stable"]) {
+    for (const target of ["install", "update", "switch"]) {
+        test(`${target}_${version}_unlinks_active_keg_when_opt_points_elsewhere`, { skip: process.platform === "win32" }, async t => {
+            const f = await fixture(t, { linked: version === "head" ? "stable" : "head", opt: version });
+            const result = f.run(target, `VERSION=${version}`);
+            assert.equal(result.status, 0, result.stderr);
+            assert.equal(await f.linked(), version);
+        });
+    }
+}
