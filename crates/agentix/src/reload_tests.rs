@@ -499,6 +499,47 @@ impl Drop for OwnedUpstreamCleanup {
 
 #[cfg(unix)]
 #[tokio::test]
+async fn service_stop_reaps_codex_while_channel_shutdown_is_stalled() {
+    let directory = tempfile::tempdir_in("/tmp").unwrap();
+    let codex = owned_codex_fixture(directory.path()).await;
+    let _cleanup = OwnedUpstreamCleanup(
+        std::fs::read_to_string(directory.path().join("upstream.pid")).unwrap(),
+    );
+    let fixture = Fixture::new();
+    let mut prepared = fixture.prepare(false).await;
+    prepared.backends.push((
+        fixture.config.agent.clone().unwrap(),
+        BuiltAgent {
+            adapter: Arc::new(codex.clone()),
+            codex: Some(codex.clone()),
+        },
+    ));
+    let mut running = RunningService::start(
+        Arc::new(prepared),
+        None,
+        Arc::new(ClaimRegistry::default()),
+        fixture.directory.path().join("config.toml"),
+    );
+    // Model a transport that cannot finish until its shutdown grace expires.
+    running.channels[0].task.abort();
+    let _ = (&mut running.channels[0].task).await;
+    running.channels[0].task = tokio::spawn(std::future::pending());
+    let stop = tokio::spawn(running.stop(Duration::from_secs(5)));
+    let reaped = tokio::time::timeout(Duration::from_secs(2), async {
+        while directory.path().join("upstream.sock").exists() {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    stop.await.unwrap();
+    assert!(
+        reaped.is_ok(),
+        "channel shutdown delayed owned Codex cleanup"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn service_stop_reaps_deferred_codex_after_reload_with_client_clones() {
     use agentix_core::AgentEvent;
     let directory = tempfile::tempdir_in("/tmp").unwrap();

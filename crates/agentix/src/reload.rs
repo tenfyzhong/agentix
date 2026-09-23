@@ -282,9 +282,15 @@ impl RunningService {
                 channel.task
             })
             .collect();
-        wait_for_channel_shutdown(tasks, grace).await;
-        let _ = self.handler.await;
-        self.prepared.shutdown_backends().await;
+        // Local shutdown preparation is complete. Reap owned children without
+        // waiting for a slow channel to consume another full grace period.
+        tokio::join!(
+            wait_for_channel_shutdown(tasks, grace),
+            async {
+                let _ = self.handler.await;
+            },
+            self.prepared.shutdown_backends(),
+        );
     }
 }
 
