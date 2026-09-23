@@ -80,7 +80,9 @@ version with `--skip-link`, then switch command links. Release updates use
 HEAD updates additionally use `--fetch-HEAD` to check upstream commits.
 An already current installation is reusable. Switch only checks installed kegs
 and changes links; it does not download or build. Every selected CLI must have
-the requested version installed before any command is unlinked.
+the requested version installed before any command is unlinked. Switching uses
+Homebrew's Ruby unlink operation on the actual linked keg, because `brew unlink`
+by formula can select the new `opt` keg while commands still link to the old one.
 
 These targets do not restart services. Homebrew installation can change the
 `opt` path even with `--skip-link`; that flag only defers ordinary command
