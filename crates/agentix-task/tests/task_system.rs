@@ -37,6 +37,9 @@ mod browse;
 #[path = "support/browse_pages.rs"]
 mod browse_pages;
 
+#[path = "support/project_resolution.rs"]
+mod project_resolution;
+
 struct Fixture {
     dir: TempDir,
     service: Service,
@@ -631,7 +634,7 @@ async fn legacy_executing_tasks_migrate_without_losing_their_lease_or_history() 
         .fetch_one(&mut db)
         .await
         .unwrap();
-    assert_eq!(version, 13);
+    assert_eq!(version, 14);
 }
 
 #[tokio::test]

@@ -209,7 +209,12 @@ pub(crate) async fn request_scope(conn: &mut SqliteConnection, request: &Value) 
         }
     }
     if command == "project.register" {
-        scope.projects = ids(conn, "SELECT id FROM projects WHERE ? IS NOT NULL", "").await?;
+        scope.projects = ids(
+            conn,
+            crate::project_lookup::BY_ROOT,
+            &crate::project_lookup::canonical_root(required(request, "root")?),
+        )
+        .await?;
     }
     if command.starts_with("session.") {
         session_scope(conn, &mut scope, request).await?;
@@ -388,6 +393,13 @@ async fn load_query_context(
     now: i64,
 ) -> Result<()> {
     let command = required(request, "command")?;
+    if command == "project.register" {
+        state.query_context.registered_project = state.projects.first().map(|p| p.id.clone());
+        if state.query_context.registered_project.is_none() {
+            state.query_context.available_project_key =
+                Some(crate::project_lookup::available_key(conn, required(request, "name")?).await?);
+        }
+    }
     let selected = json!(state.tasks.iter().map(|t| &t.id).collect::<Vec<_>>()).to_string();
     for job in &state.jobs {
         let row=sqlx::query("SELECT COUNT(*) AS eligible, COALESCE(SUM(json_extract(data,'$.status') IS NOT 'DONE'),0) AS incomplete FROM tasks WHERE job_id=? AND json_extract(data,'$.status') IS NOT 'CANCELLED' AND id NOT IN (SELECT value FROM json_each(?))")
@@ -508,8 +520,9 @@ impl Store {
             .remove(0))
     }
 
+    /// Indexed lookup by canonical directory identity, without filesystem access.
     pub async fn project_by_root(&self, root: &str) -> Result<Option<crate::Project>> {
-        let data: Option<String> = sqlx::query_scalar("SELECT data FROM projects WHERE root=?")
+        let data: Option<String> = sqlx::query_scalar("SELECT data FROM projects WHERE id=(SELECT p.id FROM project_lookup l JOIN projects p ON p.id=l.project_id WHERE l.canonical_root=? ORDER BY p.rowid LIMIT 1)")
             .bind(root)
             .fetch_optional(&self.pool)
             .await?;

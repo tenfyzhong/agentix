@@ -212,7 +212,7 @@ async fn session_project_history_rejects_ambiguity_but_defers_to_directory() {
 }
 
 #[tokio::test]
-async fn session_project_directory_uses_the_closest_registered_ancestor() {
+async fn session_project_directory_requires_an_exact_registered_root() {
     let f = Fixture::new().await;
     let nested = f.dir.path().join("nested");
     let cwd = nested.join("working");
@@ -231,9 +231,16 @@ async fn session_project_directory_uses_the_closest_registered_ancestor() {
         .to_owned();
     let task = f.task("Outer history").await;
     f.claim(&task, "target").await;
-    assert_eq!(
+    assert!(
         f.service
             .project_for_session(Some(&cwd), Some("target"))
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        f.service
+            .project_for_session(Some(&nested), Some("target"))
             .await
             .unwrap()
             .unwrap()

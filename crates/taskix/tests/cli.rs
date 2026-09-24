@@ -18,6 +18,9 @@ mod obsidian_sync;
 #[path = "support/scoped_reads.rs"]
 mod scoped_reads;
 
+#[path = "support/project_resolution.rs"]
+mod project_resolution;
+
 struct Cli {
     dir: TempDir,
 }
@@ -904,6 +907,20 @@ fn git_worktrees_share_one_project() {
     let first = cli.ok(&["project", "register", "--root", repo.to_str().unwrap()]);
     let second = cli.ok(&["project", "register", "--root", worktree.to_str().unwrap()]);
     assert_eq!(first["id"], second["id"]);
+    let nested = worktree.join("nested");
+    std::fs::create_dir(&nested).unwrap();
+    for cwd in [&repo, &worktree, &nested] {
+        let out = cli.command(&["context"]).current_dir(cwd).output().unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+        assert_eq!(
+            serde_json::from_slice::<Value>(&out.stdout).unwrap()["result"]["project_id"],
+            first["id"]
+        );
+    }
     assert_eq!(cli.ok(&["project", "list"]).as_array().unwrap().len(), 1);
 }
 
@@ -1328,4 +1345,70 @@ fn discussion_list_exposes_a_bounded_index_without_message_bodies() {
         cli.ok(&["conversation", "show", "large", "--session", "s"])["messages"][0]["text"],
         "Long source body".repeat(1000)
     );
+}
+
+#[test]
+fn non_git_directory_uses_its_own_project_and_reuses_it() {
+    let cli = Cli::new();
+    let outer = cli.ok(&["project", "register", "--name", "Machine maintenance"]);
+    let cwd = cli.dir.path().join("customer-notes");
+    std::fs::create_dir(&cwd).unwrap();
+    let run = |args: &[&str]| {
+        let out = cli.command(args).current_dir(&cwd).output().unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+        serde_json::from_slice::<Value>(&out.stdout).unwrap()["result"].clone()
+    };
+    let context = run(&["context", "--session", "directory-session"]);
+    let id = context["project_id"].as_str().expect("directory project");
+    assert_ne!(id, outer["id"].as_str().unwrap());
+    let project = cli.ok(&["project", "show", id]);
+    assert_eq!(project["name"], "customer-notes");
+    assert_eq!(
+        project["root"],
+        cwd.canonicalize().unwrap().to_str().unwrap()
+    );
+    assert_eq!(run(&["context"])["project_id"], id);
+    assert_eq!(
+        run(&["job", "create", "--title", "Directory work"])["project_id"],
+        id
+    );
+    assert_eq!(
+        run(&[
+            "job",
+            "create",
+            "--title",
+            "Explicit work",
+            "--project",
+            outer["id"].as_str().unwrap()
+        ])["project_id"],
+        outer["id"]
+    );
+}
+
+#[test]
+fn non_git_job_creation_registers_directory_without_context() {
+    let cli = Cli::new();
+    let cwd = cli.dir.path().join("directory-work");
+    std::fs::create_dir(&cwd).unwrap();
+    let out = cli
+        .command(&["job", "create", "--title", "First directory job"])
+        .current_dir(&cwd)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let job = serde_json::from_slice::<Value>(&out.stdout).unwrap()["result"].clone();
+    let project = cli.ok(&["project", "show", job["project_id"].as_str().unwrap()]);
+    assert_eq!(
+        project["root"],
+        cwd.canonicalize().unwrap().to_str().unwrap()
+    );
+    assert_eq!(project["name"], "directory-work");
 }

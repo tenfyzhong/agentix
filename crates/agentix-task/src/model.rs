@@ -253,6 +253,8 @@ pub struct Snapshot {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct QueryContext {
+    pub(crate) registered_project: Option<String>,
+    pub(crate) available_project_key: Option<String>,
     pub(crate) done_dependencies: Option<std::collections::BTreeSet<String>>,
     pub(crate) cancelled_inboxes:
         std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,

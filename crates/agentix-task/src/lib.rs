@@ -18,6 +18,7 @@ mod model;
 mod mutations;
 mod naming;
 mod project;
+mod project_lookup;
 mod projection;
 mod publication;
 mod routing;
@@ -28,6 +29,6 @@ mod store;
 
 pub use config::{Config, DocumentConfig, StorageConfig, expand_home};
 pub use model::*;
-pub use project::git_identity;
+pub use project::{ProjectDirectory, git_identity};
 pub use projection::Service;
 pub use store::Store;
