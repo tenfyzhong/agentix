@@ -1,11 +1,11 @@
 use std::{
     io::{IsTerminal, Read, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Command as Process, ExitCode},
 };
 
 use agentix_task::{
-    Config, DocumentConfig, JobStatus, Service, StorageConfig, WriteOptions, expand_home,
+    Config, DocumentConfig, JobStatus, Project, Service, StorageConfig, WriteOptions, expand_home,
     git_identity,
 };
 use anyhow::{Context, Result, bail, ensure};
@@ -821,20 +821,50 @@ async fn project(cli: &Cli, service: &Service, action: &ProjectCommand) -> Resul
     }
 }
 
+/// Register non-Git working directories independently from their ancestors.
+async fn directory_project(service: &Service, cwd: &Path) -> Result<Option<Project>> {
+    let check = Process::new("git")
+        .arg("-C")
+        .arg(cwd)
+        .args(["rev-parse", "--git-dir"])
+        .output()?;
+    if check.status.success() {
+        return Ok(None);
+    }
+    let root = cwd.canonicalize()?;
+    if let Some(project) = service
+        .store()
+        .project_by_root(&root.to_string_lossy())
+        .await?
+    {
+        return Ok(Some(project));
+    }
+    let name = root.file_name().map_or_else(
+        || root.to_string_lossy().into_owned(),
+        |name| name.to_string_lossy().into_owned(),
+    );
+    let outcome = service
+        .execute(
+            json!({"command":"project.register","name":name,"root":root}),
+            WriteOptions::default(),
+        )
+        .await?;
+    ensure!(
+        outcome.projection_pending.is_none(),
+        "Project synchronization pending: {:?}",
+        outcome.projection_pending
+    );
+    Ok(Some(serde_json::from_value(outcome.result)?))
+}
+
 async fn resolve_project(cli: &Cli, service: &Service) -> Result<String> {
     if let Some(id) = &cli.project {
         return Ok(service.store().project_result(id).await?.id);
     }
     let cwd = std::env::current_dir()?;
-    let check = Process::new("git")
-        .arg("-C")
-        .arg(&cwd)
-        .args(["rev-parse", "--git-dir"])
-        .output()?;
-    ensure!(
-        check.status.success(),
-        "--project is required outside a Git repository"
-    );
+    if let Some(project) = directory_project(service, &cwd).await? {
+        return Ok(project.id);
+    }
     let (root, _) = git_identity(&cwd)?;
     let root = root.to_string_lossy();
     service
@@ -1162,11 +1192,14 @@ async fn context_snapshot(
             .await?
         {
             Some(project) => Some(project),
-            None => {
-                service
-                    .project_for_session(None, cli.session.as_deref())
-                    .await?
-            }
+            None => match directory_project(service, &cwd).await? {
+                Some(project) => Some(project),
+                None => {
+                    service
+                        .project_for_session(None, cli.session.as_deref())
+                        .await?
+                }
+            },
         }
     };
     let previous_job = if job.is_none() {

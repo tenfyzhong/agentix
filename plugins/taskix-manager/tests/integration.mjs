@@ -399,6 +399,13 @@ for (const host of ["pi", "omp"]) {
             await x.handlers.get("session_shutdown")({}, x.ctx);
             const deleted = await x.invoke(args, "delete-once");
             assert.equal(deleted.deleted, true);
+            if (entity === "project") {
+                // Refreshing a non-Git directory registers a new, empty Project.
+                const current = await f.run(["context"]);
+                assert.notEqual(current.project_id, f.project.id);
+                assert.equal(current.job_id, null);
+                assert.deepEqual(await f.run(["job", "list", "--project", current.project_id]), []);
+            }
             const events = await f.run(["event", "list"]);
             assert.deepEqual(await x.invoke(args, "delete-once"), deleted);
             assert.deepEqual(await f.run(["event", "list"]), events);

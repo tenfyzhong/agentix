@@ -52,21 +52,14 @@ impl Service {
         session: Option<&str>,
     ) -> Result<Option<Project>> {
         if let Some(cwd) = cwd.filter(|p| p.is_dir()) {
-            let (root, _, git) = directory_identity(cwd)?;
+            let (root, _, _) = directory_identity(cwd)?;
             let projects = self.store().projects().await?;
-            return Ok(projects
-                .into_iter()
-                .filter(|p| {
-                    let registered = Path::new(&p.root)
-                        .canonicalize()
-                        .unwrap_or_else(|_| PathBuf::from(&p.root));
-                    if git {
-                        root == registered
-                    } else {
-                        root.starts_with(registered)
-                    }
-                })
-                .min_by_key(|p| std::cmp::Reverse(Path::new(&p.root).components().count())));
+            return Ok(projects.into_iter().find(|p| {
+                let registered = Path::new(&p.root)
+                    .canonicalize()
+                    .unwrap_or_else(|_| PathBuf::from(&p.root));
+                root == registered
+            }));
         }
         let Some(session) = session else {
             return Ok(None);

@@ -1329,3 +1329,69 @@ fn discussion_list_exposes_a_bounded_index_without_message_bodies() {
         "Long source body".repeat(1000)
     );
 }
+
+#[test]
+fn non_git_directory_uses_its_own_project_and_reuses_it() {
+    let cli = Cli::new();
+    let outer = cli.ok(&["project", "register", "--name", "Machine maintenance"]);
+    let cwd = cli.dir.path().join("customer-notes");
+    std::fs::create_dir(&cwd).unwrap();
+    let run = |args: &[&str]| {
+        let out = cli.command(args).current_dir(&cwd).output().unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+        serde_json::from_slice::<Value>(&out.stdout).unwrap()["result"].clone()
+    };
+    let context = run(&["context", "--session", "directory-session"]);
+    let id = context["project_id"].as_str().expect("directory project");
+    assert_ne!(id, outer["id"].as_str().unwrap());
+    let project = cli.ok(&["project", "show", id]);
+    assert_eq!(project["name"], "customer-notes");
+    assert_eq!(
+        project["root"],
+        cwd.canonicalize().unwrap().to_str().unwrap()
+    );
+    assert_eq!(run(&["context"])["project_id"], id);
+    assert_eq!(
+        run(&["job", "create", "--title", "Directory work"])["project_id"],
+        id
+    );
+    assert_eq!(
+        run(&[
+            "job",
+            "create",
+            "--title",
+            "Explicit work",
+            "--project",
+            outer["id"].as_str().unwrap()
+        ])["project_id"],
+        outer["id"]
+    );
+}
+
+#[test]
+fn non_git_job_creation_registers_directory_without_context() {
+    let cli = Cli::new();
+    let cwd = cli.dir.path().join("directory-work");
+    std::fs::create_dir(&cwd).unwrap();
+    let out = cli
+        .command(&["job", "create", "--title", "First directory job"])
+        .current_dir(&cwd)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let job = serde_json::from_slice::<Value>(&out.stdout).unwrap()["result"].clone();
+    let project = cli.ok(&["project", "show", job["project_id"].as_str().unwrap()]);
+    assert_eq!(
+        project["root"],
+        cwd.canonicalize().unwrap().to_str().unwrap()
+    );
+    assert_eq!(project["name"], "directory-work");
+}
