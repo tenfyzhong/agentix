@@ -18,6 +18,9 @@ mod obsidian_sync;
 #[path = "support/scoped_reads.rs"]
 mod scoped_reads;
 
+#[path = "support/project_resolution.rs"]
+mod project_resolution;
+
 struct Cli {
     dir: TempDir,
 }
@@ -904,6 +907,20 @@ fn git_worktrees_share_one_project() {
     let first = cli.ok(&["project", "register", "--root", repo.to_str().unwrap()]);
     let second = cli.ok(&["project", "register", "--root", worktree.to_str().unwrap()]);
     assert_eq!(first["id"], second["id"]);
+    let nested = worktree.join("nested");
+    std::fs::create_dir(&nested).unwrap();
+    for cwd in [&repo, &worktree, &nested] {
+        let out = cli.command(&["context"]).current_dir(cwd).output().unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+        assert_eq!(
+            serde_json::from_slice::<Value>(&out.stdout).unwrap()["result"]["project_id"],
+            first["id"]
+        );
+    }
     assert_eq!(cli.ok(&["project", "list"]).as_array().unwrap().len(), 1);
 }
 

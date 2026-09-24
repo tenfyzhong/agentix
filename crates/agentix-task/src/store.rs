@@ -77,7 +77,7 @@ impl Store {
             .fetch_one(&mut *tx)
             .await?;
         ensure!(
-            version <= 13,
+            version <= 14,
             "unsupported task database schema version {version}"
         );
         sqlx::raw_sql(include_str!("schema.sql"))
@@ -123,6 +123,9 @@ impl Store {
             .bind(new_id("publication"))
             .execute(&mut *tx)
             .await?;
+        }
+        if version < 14 {
+            crate::project_lookup::migrate(&mut tx).await?;
         }
         tx.commit().await?;
         Ok(())
@@ -804,6 +807,13 @@ async fn persist(
             continue;
         }
         upsert(conn, "projects", &project.id, project).await?;
+        if old
+            .projects
+            .get(project.id.as_str())
+            .is_none_or(|old| old.root != project.root || old.key != project.key)
+        {
+            crate::project_lookup::upsert(conn, &project.id, &project.root, &project.key).await?;
+        }
         append_event(
             conn,
             TaskEvent {

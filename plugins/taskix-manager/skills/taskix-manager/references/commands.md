@@ -31,6 +31,8 @@ taskix job create --project prj_ID --title "Login repair" --prompt "Fix login an
 taskix job update job_ID --inbox inbox_ID --executor agent:HOST --session HOST_SESSION --json
 ```
 
+Outside Git, `context` and implicit Job/Inbox selection register or reuse the current directory's Project. A parent Project does not own its subdirectories. Explicit `--project` and session-owned work retain their assignment. Git repositories and worktrees share their registered Project; register a new repository with `project register`. Directory discovery is reused within a context refresh, and lookup uses the indexed canonical root. Upgrade Agentix and Taskix together for schema 14; old binaries cannot maintain its lookup indexes.
+
 Configuration defaults to `~/.config/taskix/config.toml`; `TASKIX_CONFIG` or `--config` selects another file. Run `taskix <command> --help` for arguments. `--json` always has `schema_version`, `ok`, and `result` or `error`. Exit codes: 0 success, 1 business/runtime failure, 2 argument error.
 
 ```sh

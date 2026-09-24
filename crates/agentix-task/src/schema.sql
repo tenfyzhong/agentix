@@ -107,7 +107,14 @@ CREATE TABLE IF NOT EXISTS discussion_turns (
 CREATE INDEX IF NOT EXISTS discussion_pending ON discussion_turns(session_id, job_id, position);
 CREATE INDEX IF NOT EXISTS discussion_job ON discussion_turns(job_id) WHERE job_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS discussion_activity ON discussion_sessions(activity);
-PRAGMA user_version = 13;
+CREATE TABLE IF NOT EXISTS project_lookup (
+    project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+    canonical_root TEXT NOT NULL,
+    folded_key TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS project_lookup_by_root ON project_lookup(canonical_root);
+CREATE INDEX IF NOT EXISTS project_lookup_by_key ON project_lookup(folded_key);
+PRAGMA user_version = 14;
 PRAGMA application_id = 0x4158544b;
 CREATE INDEX IF NOT EXISTS jobs_by_followup_session ON jobs(json_extract(data, '$.followup_session_id'));
 CREATE INDEX IF NOT EXISTS inbox_by_lease_session ON inbox_entries(json_extract(data, '$.lease.session_ref'));

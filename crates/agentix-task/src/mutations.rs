@@ -226,12 +226,20 @@ fn add_task(
 
 fn register_project(state: &mut Snapshot, request: &Value, now: i64) -> Result<Value> {
     let root = required(request, "root")?;
-    if let Some(project) = state.projects.iter().find(|p| p.root == root) {
+    if let Some(project) = state
+        .projects
+        .iter()
+        .find(|p| p.root == root || state.query_context.registered_project.as_ref() == Some(&p.id))
+    {
         return Ok(serde_json::to_value(project)?);
     }
     let name = required(request, "name")?;
     let id = new_id("prj");
-    let key = unique_name(name, state.projects.iter().map(|p| p.key.as_str()));
+    let key = state
+        .query_context
+        .available_project_key
+        .clone()
+        .unwrap_or_else(|| unique_name(name, state.projects.iter().map(|p| p.key.as_str())));
     let project = Project {
         id,
         name: key.clone(),

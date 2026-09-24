@@ -1,12 +1,12 @@
 use std::{
     io::{IsTerminal, Read, Write},
-    path::{Path, PathBuf},
-    process::{Command as Process, ExitCode},
+    path::PathBuf,
+    process::ExitCode,
 };
 
 use agentix_task::{
-    Config, DocumentConfig, JobStatus, Project, Service, StorageConfig, WriteOptions, expand_home,
-    git_identity,
+    Config, DocumentConfig, JobStatus, ProjectDirectory, Service, StorageConfig, WriteOptions,
+    expand_home, git_identity,
 };
 use anyhow::{Context, Result, bail, ensure};
 use clap::{Args, CommandFactory, Parser, Subcommand};
@@ -821,55 +821,13 @@ async fn project(cli: &Cli, service: &Service, action: &ProjectCommand) -> Resul
     }
 }
 
-/// Register non-Git working directories independently from their ancestors.
-async fn directory_project(service: &Service, cwd: &Path) -> Result<Option<Project>> {
-    let check = Process::new("git")
-        .arg("-C")
-        .arg(cwd)
-        .args(["rev-parse", "--git-dir"])
-        .output()?;
-    if check.status.success() {
-        return Ok(None);
-    }
-    let root = cwd.canonicalize()?;
-    if let Some(project) = service
-        .store()
-        .project_by_root(&root.to_string_lossy())
-        .await?
-    {
-        return Ok(Some(project));
-    }
-    let name = root.file_name().map_or_else(
-        || root.to_string_lossy().into_owned(),
-        |name| name.to_string_lossy().into_owned(),
-    );
-    let outcome = service
-        .execute(
-            json!({"command":"project.register","name":name,"root":root}),
-            WriteOptions::default(),
-        )
-        .await?;
-    ensure!(
-        outcome.projection_pending.is_none(),
-        "Project synchronization pending: {:?}",
-        outcome.projection_pending
-    );
-    Ok(Some(serde_json::from_value(outcome.result)?))
-}
-
 async fn resolve_project(cli: &Cli, service: &Service) -> Result<String> {
     if let Some(id) = &cli.project {
         return Ok(service.store().project_result(id).await?.id);
     }
-    let cwd = std::env::current_dir()?;
-    if let Some(project) = directory_project(service, &cwd).await? {
-        return Ok(project.id);
-    }
-    let (root, _) = git_identity(&cwd)?;
-    let root = root.to_string_lossy();
+    let directory = ProjectDirectory::discover(&std::env::current_dir()?)?;
     service
-        .store()
-        .project_by_root(&root)
+        .ensure_directory_project(&directory)
         .await?
         .map(|p| p.id)
         .context("register this project first with taskix project register, or specify --project")
@@ -1117,7 +1075,8 @@ async fn context(
     task: Option<&str>,
     job: Option<&str>,
 ) -> Result<Value> {
-    let mut value = context_snapshot(cli, service, task, job).await?;
+    let mut directory = None;
+    let mut value = context_snapshot(cli, service, task, job, &mut directory).await?;
     let mut todos = Vec::new();
     if let Some(project) = value["result"]["project_id"].as_str() {
         let outcome = service
@@ -1140,7 +1099,7 @@ async fn context(
             .cloned()
             .collect();
         // Import can cancel work and revoke leases; return the refreshed assignment.
-        value = context_snapshot(cli, service, task, job).await?;
+        value = context_snapshot(cli, service, task, job, &mut directory).await?;
     }
     value["result"]["inbox_todos"] = json!(todos);
     if let Some(session) = cli.session.as_deref() {
@@ -1155,6 +1114,7 @@ async fn context_snapshot(
     service: &Service,
     task: Option<&str>,
     job: Option<&str>,
+    directory: &mut Option<ProjectDirectory>,
 ) -> Result<Value> {
     let state = service
         .store()
@@ -1186,20 +1146,19 @@ async fn context_snapshot(
     } else if let Some(id) = &cli.project {
         Some(service.store().project_result(id).await?)
     } else {
-        let cwd = std::env::current_dir()?;
+        if directory.is_none() {
+            *directory = Some(ProjectDirectory::discover(&std::env::current_dir()?)?);
+        }
         match service
-            .project_for_session(Some(&cwd), cli.session.as_deref())
+            .ensure_directory_project(directory.as_ref().unwrap())
             .await?
         {
             Some(project) => Some(project),
-            None => match directory_project(service, &cwd).await? {
-                Some(project) => Some(project),
-                None => {
-                    service
-                        .project_for_session(None, cli.session.as_deref())
-                        .await?
-                }
-            },
+            None => {
+                service
+                    .project_for_session(None, cli.session.as_deref())
+                    .await?
+            }
         }
     };
     let previous_job = if job.is_none() {
