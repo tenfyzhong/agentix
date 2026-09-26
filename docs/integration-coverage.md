@@ -497,7 +497,7 @@ runs: confidence and acceptance can vary between identical provider requests.
 
 | Contract | Coverage | Boundary |
 | --- | --- | --- |
-| Work review policy, upgrade/preservation, approval/rejection/cancellation | `jev-lifecycle.test.mjs` | Mock semantic answers; runtime applies state/revision guards |
+| Work review policy, completion destination, upgrade/preservation, approval/rejection/cancellation | `jev-lifecycle.test.mjs` | Mock semantic answers; runtime applies state/revision guards |
 | Outcome, waiting recovery, Task selection, retry/reopen/cancel/release | `jev-lifecycle-assessment.test.mjs` | Same bounded context and provider validation; ready requires executor verification |
 | Shared helper, disabled zero-I/O path, host routing and structured calls | `lifecycle-runtime.test.mjs` | No lifecycle write by classifier |
 | Codex/Claude helper processes and Pi/OMP tool, HTTP, CLI, policy completion matrix, all mutating actions and stale writes | Lifecycle cases in `integration.mjs` | Isolated real SQLite/notes; mock HTTP provider, no semantic accuracy claim |
@@ -505,3 +505,5 @@ runs: confidence and acceptance can vary between identical provider requests.
 The actual service's semantic quality requires opt-in historical replay. Deterministic integration coverage does not prove live model accuracy or that a completed task met its acceptance criteria.
 
 Historical replay methods, observed outcomes and local performance measurements are recorded in [Jev lifecycle decisions](jev-lifecycle-decisions.md).
+
+Completion checkpoint integration cases verify ACTIVE -> COMPLETED and ACTIVE -> PENDING_REVIEW after the final Task, including replacement of an earlier required default, disabled/uncertain fallback, read-only classification and stale policy writes. Already PENDING_REVIEW Jobs reject completion assessment.

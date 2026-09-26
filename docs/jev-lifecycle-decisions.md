@@ -19,6 +19,7 @@ classifiers. The packaged Skill defines when to call the helper.
 | Decision | Jev responsibility | Deterministic responsibility |
 | --- | --- | --- |
 | New work / supplement | Ownership and scope; required/none review policy | Preserve existing required review; guard updates by Job revision |
+| ACTIVE Job completion | Choose pending_review/completed from the whole delivered scope, replacing an earlier default if appropriate | Persist selected policy with revision guard before final Task transition; aggregate status |
 | Job approve/reject/cancel | Explicit user acceptance, rejection or abandonment | Valid source state, revision and actual transition |
 | Task recovery | Resolved waiting/blocking reason; retry/reopen/cancel/release intent; unambiguous target | Ownership, Task revision, dependency and lease checks |
 | Task outcome | Continue/wait/block/fail/readiness from visible evidence | Valid execution state; verify real acceptance evidence before done |
@@ -39,7 +40,7 @@ requests and conflicting ownership defer. The 0.65 default confidence threshold,
 ## Performance review
 
 Routing intent, ownership, Inbox matching and review policy share one HTTP call.
-A lifecycle checkpoint uses one HTTP call; disabled assessment performs no CLI or
+A lifecycle checkpoint uses one HTTP call; the completion checkpoint is called before the final Task transition, after actual acceptance verification. It returns a policy update, not Job approval. Direct standalone CLI calls continue to use their saved policy. Disabled assessment performs no CLI or
 network I/O. Snapshot and revision reads are bounded, with one optional read for
 an explicitly named omitted terminal Task. Requests do not fetch complete history.
 The helper's deadline covers its snapshot and optional Task read as well as model
@@ -115,10 +116,21 @@ raw answer scores and incremental summaries to a private output file. Preserve
 the original results when tuning; report abstention separately from wrong accepts.
 Private conversation fixtures and credentials are not committed.
 
+## Completion checkpoint replay
+
+After adding the final Job destination assessment, six historical Job scopes were
+replayed with ACTIVE status and an initial required policy explicitly reconstructed.
+The original requests and real Task titles used the same production SQL projection.
+Jev accepted three release/tag Jobs as completed and one implementation Job as
+pending_review; two implementation Jobs deferred and retained required review.
+All four accepted results matched manually reviewed labels (no wrong accepts).
+Mean latency was 516 ms, p95 980 ms, and the largest request was 3,456 bytes.
+This is an additional small checkpoint sample, not a general accuracy estimate.
+
 ## Verification
 
-The full plugin suite passed 428 tests with seven opt-in skips. Real CLI
-integration passed 66 tests with six benchmark skips; those six benchmarks passed
+The full plugin suite passed 432 tests with seven opt-in skips. Real CLI
+integration passed 70 tests with six benchmark skips; those six benchmarks passed
 separately. The native metrics compatibility test also passed separately. The
 live lifecycle replay and held-out replay passed with the outcomes above. The
 remaining optional skips cover the older live routing replay, native OMP install,

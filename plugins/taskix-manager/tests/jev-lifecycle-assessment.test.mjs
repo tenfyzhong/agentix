@@ -69,3 +69,17 @@ test("review_policy_assessment_reports_the_effective_required_action", async () 
     assert.equal(result.decision.review_policy, "required");
     assert.equal(result.decision.action, "required");
 });
+for (const [choice, policy] of [["pending_review", "required"], ["completed", "none"]]) test(`completion_classifies_entire_job_destination_${choice}`, async () => {
+    const { result, request, calls } = await run("completion", choice);
+    assert.equal(result.decision.action, choice);
+    assert.equal(result.decision.review_policy, policy);
+    assert.equal(result.decision.job_revision, 3);
+    assert.equal(calls, 1);
+    assert.deepEqual(Object.keys(request.questions), ["completion"]);
+});
+test("completion_does_not_approve_an_already_pending_job", async () => {
+    const context = { project_id: "p", routing: { complete: true, candidates: [{ job: { ...job, status: "PENDING_REVIEW" }, tasks: [] }] } };
+    const { result, calls } = await run("completion", "completed", { context, assessment: { kind: "completion", job_id: job.id } });
+    assert.equal(result.decision.action, "agent");
+    assert.equal(calls, 0);
+});

@@ -77,3 +77,19 @@ test("helper_covers_http_errors_without_exposing_provider_text", async () => {
     assert.equal(result.status, "agent");
     assert.doesNotMatch(JSON.stringify(result), /private|secret/);
 });
+test("completion_helper_returns_policy_update_before_final_task_done", async () => {
+    const { assessLifecycle } = await import("../lifecycle.mjs");
+    const f = fixture("completed");
+    const runner = async (...args) => {
+        const result = structuredClone(await f.runner(...args));
+        if (result.result.routing) result.result.routing.candidates[0].job.status = "ACTIVE";
+        else result.result.status = "ACTIVE";
+        return result;
+    };
+    const result = await assessLifecycle({ kind: "completion", job_id: job.id, prompt: "Create the requested release tag" }, { session: "s" }, runner, f.settings);
+    assert.equal(result.status, "selected");
+    assert.equal(result.decision.action, "completed");
+    assert.deepEqual(result.args, ["job", "update", job.id, "--review-policy", "none", "--expect-revision", "3"]);
+    assert.match(result.instruction, /before.*task done/);
+    assert.ok(f.calls.every(args => args[0] === "routing"));
+});

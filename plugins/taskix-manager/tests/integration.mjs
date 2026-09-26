@@ -1138,3 +1138,30 @@ for (const [initial, choice, effective] of [["none", "required", "required"], ["
     assert.equal((await f.run(["job", "show", f.job.id])).status, effective === "required" ? "PENDING_REVIEW" : "COMPLETED");
     await assert.rejects(f.run(verdict.args, owner), /revision|conflict/);
 });
+
+for (const [choice, expected] of [["completed", "COMPLETED"], ["pending_review", "PENDING_REVIEW"], ["uncertain", "PENDING_REVIEW"], ["disabled", "PENDING_REVIEW"]]) test(`Jev completion checkpoint ${choice} controls final ACTIVE Job destination`, async t => {
+    const { assessLifecycle } = await import("../lifecycle.mjs");
+    const f = await fixture(t, "completion"), owner = { cwd: f.dir, session: "completion", executor: "agent:test" };
+    const task = await f.run(["task", "add", "--job", f.job.id, "--title", "Verify the requested delivery"]);
+    owner.token = (await f.run(["task", "claim", task.id], owner)).lease.token;
+    await f.run(["plan", "create", task.id, "--body", "Check outputs against the requirement"], owner);
+    await f.run(["task", "start", task.id], owner);
+    let requests = 0;
+    const verdict = await assessLifecycle({ kind: "completion", job_id: f.job.id, prompt: "Finish the delivery" }, owner, runTaskix, {
+        env: { TASKIX_JEV_ENABLED: String(choice !== "disabled"), TASKIX_JEV_URL: "https://mock.test", TASKIX_JEV_API_KEY: "test" },
+        fetch: async (_url, init) => { requests++; return { ok: true, json: async () => choiceAnswers(JSON.parse(init.body), { completion: choice }) }; },
+    });
+    const unchanged = await f.run(["job", "show", f.job.id]);
+    assert.equal(unchanged.status, "ACTIVE");
+    assert.equal(unchanged.review_policy, "required");
+    assert.equal(requests, choice === "disabled" ? 0 : 1);
+    if (["uncertain", "disabled"].includes(choice)) assert.equal(verdict.status, "agent");
+    else {
+        assert.equal(verdict.decision.action, choice);
+        await f.run(verdict.args, owner);
+        assert.equal((await f.run(["job", "show", f.job.id])).status, "ACTIVE");
+        await assert.rejects(f.run(verdict.args, owner), /revision|conflict/);
+    }
+    await f.run(["task", "done", task.id], owner);
+    assert.equal((await f.run(["job", "show", f.job.id])).status, expected);
+});

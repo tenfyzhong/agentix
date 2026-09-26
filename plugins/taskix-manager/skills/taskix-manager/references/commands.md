@@ -174,3 +174,18 @@ node /absolute/plugin/path/lifecycle.mjs HOST_SESSION < assessment.json
 Use `kind: "outcome"` and an owned `task_id` for execution result assessment, or `kind: "review_policy"` for changed Job scope. An explicit `task_id` also scopes recovery, including terminal Tasks omitted from the normal candidate list. Without one, recovery selects among the existing unfinished candidates. Pi/OMP accept `args: ["lifecycle", "classify", JSON.stringify(input)]`; the standalone CLI has no `lifecycle classify` subcommand.
 
 On `status: selected`, use `args` without removing revision guards and supply normal ownership credentials plus listed `required_arguments`. A `ready` result requires actual acceptance verification and contains no done command. A `status: agent` result uses the existing main-Agent workflow. The same Jev enablement, endpoint, threshold, context limits and deadline apply. Assessments are separate from prompt-routing metrics.
+
+### Job completion checkpoint
+
+Before the final Task makes an ACTIVE Job ready, call the shared helper with
+`{"kind":"completion","job_id":"JOB_ID","prompt":"verbatim current request","history":[]}`.
+Use the same shell entry point or Pi/OMP `lifecycle classify` operation above.
+Jev returns `pending_review` (`review_policy: required`) or `completed`
+(`review_policy: none`) based on the entire Job. Apply the returned revision-guarded
+`job update` arguments before `task done`; then use the normal Task lease and
+revision. Reassess on conflict. An entirely non-code Job can replace an earlier
+required default; a Git-only last Task does not erase earlier code changes.
+Disabled/unavailable/uncertain results preserve the existing policy. This is not
+`job approve`, and already pending Jobs are not eligible for completion assessment.
+Direct standalone CLI calls still execute their saved policy; the optional Jev
+checkpoint belongs to the host workflow.
