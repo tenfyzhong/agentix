@@ -28,7 +28,7 @@ async function fixture(t, choice="followup:job_a") {
         return {ok:true,json:async()=>({answers:Object.fromEntries(Object.entries(q).map(([id,v])=>{
             const discussion=choice==="discussion"||choice.startsWith("discussion:");
             const owner=discussion?(choice.includes(":")?Object.keys(q.route.criteria).find(k=>k.endsWith(":"+choice.split(":")[1])):"new_job"):choice;
-            const selected=id==="intent"?(discussion?"question":"work"):id==="route"?owner:"unrelated";
+            const selected=id==="review_policy"?"required":id==="intent"?(discussion?"question":"work"):id==="route"?owner:"unrelated";
             return [id,{type:"choice",choice:selected,confidence:.99,probabilities:Object.fromEntries(Object.keys(v.criteria).map(k=>[k,k===selected?1:0]))}];
         }))})};
     }};

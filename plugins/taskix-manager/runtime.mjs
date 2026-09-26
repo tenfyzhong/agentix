@@ -1,3 +1,4 @@
+import { assessLifecycle, lifecycleNotice } from "./lifecycle.mjs";
 import { randomUUID } from "node:crypto";
 import { stageTranscript, discussionNotice, selectDiscussion } from "./discussion.mjs";
 import { visibleMessage, transcriptConversation, recordMessages } from "./conversation.mjs";
@@ -45,10 +46,15 @@ async function promptContext(prompt, context, options, runner, routing, history 
         followup: `Run job followup ${jobId} --expect-revision ${routed.context.job?.revision} with the verbatim current prompt and current executor/session before adding Tasks. Preserve original Prompt, old Task dependencies and required review.`,
         resume: `Continue ACTIVE Job ${jobId}; inspect its Tasks and reclaim the waiting Task as appropriate. Do not use job followup for ACTIVE Jobs.`,
         new_job: "Create a new Job for this requirement; preserve the verbatim prompt. Review policy: required for code/mixed work, none for independent investigation/docs/operations.",
+        approve: `The user accepts delivery. Run job approve ${jobId} --expect-revision ${routed.decision.job_revision}; this records the user decision, not agent self-approval.`,
+        reject: `The user rejects delivery. Run job reject ${jobId} --expect-revision ${routed.decision.job_revision} with a concrete --reason from the user request. Preserve completed Tasks.`,
+        cancel: `The user abandons this Job. Run job cancel ${jobId} --expect-revision ${routed.decision.job_revision}. Preserve completed results; do not roll back changes automatically.`,
+        task_action: `Resolve the exact Task in Job ${jobId} and call the lifecycle recovery helper before retry, reopen, cancel or release. Do not reopen the whole Job as a followup merely for this operation.`,
         discussion: `${jobId ? `Discussion about Job ${jobId}. ` : ""}Answer the user; this prompt does not request a Job lifecycle change.`,
     }[action];
+    const policy = routed.decision.review_policy ? ` Review policy: ${routed.decision.review_policy}. Pass --review-policy ${routed.decision.review_policy} on creation; for existing Jobs preserve required or upgrade none to required with job update and its current --expect-revision before implementation.` : "";
     const inbox = inboxIds.length ? ` Associate only these Inbox IDs using repeated --inbox: ${inboxIds.join(", ")}.` : "";
-    return `Taskix route: ${action}. ${instruction}${inbox} Context excerpts are bounded; use job/task show for full details when needed. Use the taskix-manager skill when executing tracked work. If new evidence contradicts this route, inspect taskix context before any write.\n${JSON.stringify(skillContext(routed.context))}`;
+    return `Taskix route: ${action}. ${instruction}${policy}${inbox} Context excerpts are bounded; use job/task show for full details when needed. Use the taskix-manager skill when executing tracked work. If new evidence contradicts this route, inspect taskix context before any write.\n${JSON.stringify(skillContext(routed.context))}`;
 }
 
 async function preparePrompt(prompt, options, runner, routing, history = [], event) {
@@ -121,7 +127,7 @@ export async function runHook(event, runner = runTaskix, routing = {}) {
         discussion = await stageTranscript(event, runner, options, routing.cacheDir);
     }
     if (operation === "session-start") {
-        if (enabled) return { hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: `Task session: ${event.session_id}. Taskix routes each prompt before execution. Use taskix-manager for tracked work.` } };
+        if (enabled) return { hookSpecificOutput: { hookEventName: "SessionStart", additionalContext: `Task session: ${event.session_id}. Taskix routes each prompt before execution. Use taskix-manager for tracked work. ${lifecycleNotice()}` } };
         const context = await runner(["context"], options);
         return {
             hookSpecificOutput: {
@@ -333,6 +339,10 @@ export function registerExtension(
         parameters,
         async execute(toolCallId, params, signal, _onUpdate, ctx) {
             const options = { ...optionsFor(ctx), signal };
+            if (params.args[0] === "lifecycle" && params.args[1] === "classify") {
+                const result = await assessLifecycle(JSON.parse(params.args[2]), options, runner, routing);
+                return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
+            }
             if (params.args[0] === "conversation" && params.args[1] === "classify") {
                 const target = JSON.parse(params.args[2]);
                 const result = await selectDiscussion({target,current_turn:stateFor(ctx)?.turn},options,runner,routing);

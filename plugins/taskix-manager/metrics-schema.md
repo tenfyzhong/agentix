@@ -34,17 +34,20 @@ excluding metrics persistence and subsequent subagent work. Session/turn and
 Project references are nullable when unavailable. Model and configured threshold
 are captured per request. `called` and `accepted` are integer booleans; accepted
 means the host delivered Jev's route, not that a human confirmed it was correct.
-`action` is followup/resume/new_job/discussion/agent; `reason` is the fallback code
+`action` is followup/resume/new_job/discussion/approve/reject/cancel/task_action/agent; `reason` is the fallback code
 or null. `answer_count` counts recorded expected questions, including invalid or
 missing answers. Preparation/network failures can have zero recorded answers.
 
-`answers.question` is route or inbox_N. `subject_id` identifies the Inbox entry
+`answers.question` is intent, route, review_policy, or inbox_N. The review_policy
+answer is recorded and gated only for work intent. Other intents do not require a
+policy classification. Explicit lifecycle helper assessments are not prompt-routing
+observations and are not written to this metrics database. `subject_id` identifies the Inbox entry
 for an Inbox question. `choice` contains only a known option (including selected
 Job identity for followup/resume) or null. Confidence, selected probability and
 runner-up margin are nullable for invalid answers. `valid` is a boolean independent
 of the configured confidence gate. `issue` is null, invalid_answer,
 uncertain_choice, low_confidence or small_margin. An entire prompt passes only
-when every expected answer passes; later ownership/revision checks can still defer.
+when every applicable expected answer passes; later ownership/revision checks can still defer.
 
 `requests.review` is null until a human labels the complete proposed routing and
 Inbox selection correct/incorrect. Only taskix modifies this field; later plugin

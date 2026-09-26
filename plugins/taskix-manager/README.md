@@ -93,7 +93,8 @@ the request and response contract.
 The repository document `docs/task-routing-performance.md` contains repeatable
 local benchmarks, process counts, and measurement boundaries.
 
-Routes are `followup`, `resume`, `new_job`, and `discussion`, with an explicit
+Routes are `followup`, `resume`, `new_job`, `discussion`, `approve`, `reject`,
+`cancel`, and `task_action`, with an explicit
 uncertainty option. Waiting Tasks are found through ACTIVE Project Jobs even when
 `context.previous_job` is empty. A confident result contains only the selected
 Job/Tasks and matched Inbox IDs. Model-visible excerpts include up to 2,000 prompt
@@ -389,7 +390,7 @@ Leading host plugin catalogs and internal continuation wrappers are removed
 before extracting visible user messages, while any following real request remains.
 The previous Job is an explicit hint, not an automatic ownership decision.
 
-Jev answers separate intent and ownership questions in one HTTP request. Both
+Jev answers intent, ownership and requested work scope (review policy) in one HTTP request. Intent and ownership
 must pass the existing score gates. A question about an existing delivery returns
 `action: discussion` with that `job_id`. The
 main Agent receives that Job context without reopening it or creating a Task.
@@ -406,3 +407,13 @@ visible. They are evidence for the model, not an automatic ownership decision.
 A same-session boolean supplies additional evidence without exposing session IDs
 or automatically assigning ownership. Route options include bounded Job titles, and instructions distinguish accepting
 an earlier implementation suggestion from asking another question about it.
+
+## Optional lifecycle assessment
+
+With the existing `TASKIX_JEV_ENABLED` configuration, prompt routing also classifies review policy and explicit user acceptance, rejection, Job cancellation and Task-operation intent. A proposal accepted for implementation remains work; delivery acceptance is distinct. Existing required review is preserved locally; code supplements upgrade a none policy. Disabling Jev retains the original main-Agent workflow.
+
+`lifecycle.mjs` supplies a shared read-only checkpoint for Codex/Claude shell calls and Pi/OMP's `taskix` structured tool. Recovery can select a Task from the existing Job candidates, assess whether waiting reasons have been resolved, or classify explicit retry, reopen, cancellation and handoff. Outcome assessment distinguishes continuing work, waiting for the user, external blockage, final failure and readiness for independent acceptance verification. Reassessment of review policy uses the same pipeline when scope changes.
+
+All assessments reuse the existing filtered Job/Task facts and visible conversation excerpts, 30,000-byte request ceiling, eight-second deadline, score gates and current-Job revision check. No raw tool results, source files, lease credentials or reasoning are collected. Explicit terminal Task recovery reads only that named Task and projects the same title/status/reason fields within existing bounds; normal prompt candidate discovery is unchanged. Shared instructions are sent once rather than repeated for every Job. Each assessment makes one provider request; disabled configuration makes no CLI or HTTP calls.
+
+Results contain guarded command arguments, never execute them, and defer to the main Agent on uncertainty, failure, oversize or stale evidence. Actual CLI lease, dependency, Plan and transition guards remain authoritative. `ready` is not `done` and never authorizes self-approval. Prompt metrics include the new work-scope question when the intent is work; lifecycle checkpoints are separate from prompt-routing statistics. See [command examples](skills/taskix-manager/references/commands.md#optional-lifecycle-classification).

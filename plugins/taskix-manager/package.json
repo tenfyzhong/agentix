@@ -19,6 +19,7 @@
     "routing-context.mjs",
     "conversation.mjs",
     "discussion.mjs",
+    "lifecycle.mjs",
     "README.md",
     "jev.mjs",
     "routing-state.mjs",

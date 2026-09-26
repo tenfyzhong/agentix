@@ -1,3 +1,4 @@
+import { choiceAnswers } from "./support/jev.mjs";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { spawn } from "node:child_process";
@@ -453,7 +454,7 @@ for (const host of ["codex", "claude"]) {
             const f = await fixture(t);
             const root = join(f.dir, "installed plugin \u{2603}");
             await mkdir(root);
-            for (const path of ["hooks", "runtime.mjs", "taskix-cli.mjs", "routing-context.mjs", "conversation.mjs", "discussion.mjs", "jev.mjs", "routing-state.mjs", "jev-metrics.mjs", "jev-metrics-worker.mjs", "metrics-schema.sql", `.${host}-plugin`]) {
+            for (const path of ["hooks", "runtime.mjs", "taskix-cli.mjs", "routing-context.mjs", "conversation.mjs", "discussion.mjs", "lifecycle.mjs", "jev.mjs", "routing-state.mjs", "jev-metrics.mjs", "jev-metrics-worker.mjs", "metrics-schema.sql", `.${host}-plugin`]) {
                 await cp(resolve(path), join(root, path), { recursive: true });
             }
             const task = await f.run([
@@ -729,10 +730,7 @@ test("Jev routing uses real project-scoped CLI candidates and recovers waiting w
             const candidate = request.state.candidates.find(c => c.job.id === f.job.id);
             assert.equal(candidate.tasks[0].reason, "Which region?");
             const choice = `resume:${f.job.id}`;
-            return { ok: true, json: async () => ({ answers: { intent: {type:"choice",choice:"work",confidence:1,probabilities:{work:1,question:0,uncertain:0}}, route: {
-                type: "choice", choice, confidence: 1,
-                probabilities: Object.fromEntries(Object.keys(request.questions.route.criteria).map(k => [k, k === choice ? 1 : 0])),
-            } } }) };
+            return { ok: true, json: async () => (choiceAnswers(request, { intent: "work", route: choice })) };
         },
     });
     assert.equal(routed.decision.action, "resume");
@@ -753,10 +751,7 @@ for (const host of ["codex", "claude"]) test(`${host} Jev prompt and tool hooks 
         requests.push({ method: req.method, url: req.url, authorization: req.headers.authorization, body });
         const choice = `resume:${f.job.id}`;
         res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ answers: { intent: {type:"choice",choice:"work",confidence:1,probabilities:{work:1,question:0,uncertain:0}}, route: {
-            type: "choice", choice, confidence: 1,
-            probabilities: Object.fromEntries(Object.keys(body.questions.route.criteria).map(k => [k, k === choice ? 1 : 0])),
-        } } }));
+        res.end(JSON.stringify(choiceAnswers(body, { intent: "work", route: choice })));
     });
     await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
     t.after(() => new Promise(resolve => { server.closeAllConnections(); server.close(resolve); }));
@@ -811,10 +806,7 @@ for (const [count, history] of [[0, 0], [1, 0], [8, 0], [32, 0], [33, 0], [1, 10
                     requestBytes = Buffer.byteLength(init.body);
                     const request = JSON.parse(init.body);
                     const choice = count ? `resume:${f.job.id}` : "new_job";
-                    return { ok: true, json: async () => ({ answers: { intent: {type:"choice",choice:"work",confidence:1,probabilities:{work:1,question:0,uncertain:0}}, route: {
-                        type: "choice", choice, confidence: 1,
-                        probabilities: Object.fromEntries(Object.keys(request.questions.route.criteria).map(k => [k, +(k === choice)])),
-                    } } }) };
+                    return { ok: true, json: async () => (choiceAnswers(request, { intent: "work", route: choice })) };
                 },
             });
             const content = result.hookSpecificOutput.additionalContext;
@@ -901,10 +893,7 @@ test("real CLI prompt latency includes optional metrics writing", async t => {
         try {
             const result = await runHook({ hook_event_name: "UserPromptSubmit", session_id: `metrics_${mode}`, cwd: f.dir, prompt: "Explain the current status" }, runTaskix, {
                 env: { ...env, TASKIX_JEV_METRICS_ENABLED: mode === "off" ? "false" : "true" }, cacheDir: join(f.dir, "routing"),
-                fetch: async (_url, init) => ({ ok: true, json: async () => ({ answers: { intent: {type:"choice",choice:"question",confidence:1,probabilities:{work:0,question:1,uncertain:0}}, route: {
-                    type: "choice", choice: "new_job", confidence: 1,
-                    probabilities: Object.fromEntries(Object.keys(JSON.parse(init.body).questions.route.criteria).map(key => [key, key === "new_job" ? 1 : 0])),
-                } } }) }),
+                fetch: async (_url, init) => ({ ok: true, json: async () => (choiceAnswers(JSON.parse(init.body), { intent: "question", route: "new_job", review_policy: "not_applicable" })) }),
             });
             elapsed[mode] = performance.now() - start;
             assert.match(result.hookSpecificOutput.additionalContext, /Taskix route: discussion/);
@@ -1021,4 +1010,131 @@ test("packaged_discussion_cli_returns_guarded_arguments_and_attaches_the_origina
     await f.run(["conversation", "attach", "--job", f.job.id, ...selected.args], options);
     const job = await f.run(["job", "show", f.job.id]);
     assert.deepEqual(job.conversation.map(message => message.text), ["Improve the current fallback"]);
+});
+
+for (const host of ["codex", "claude", "pi", "omp"]) test(`${host} lifecycle assessment uses real HTTP and CLI guards without mutating work`, async t => {
+    const { createServer } = await import("node:http");
+    const { registerExtension } = await import("../runtime.mjs");
+    const session = `lifecycle-${host}`, f = await fixture(t, session);
+    const owner = { cwd: f.dir, session, executor: `agent:${host}` };
+    const task = await f.run(["task", "add", "--job", f.job.id, "--title", "Choose region and verify deployment"]);
+    owner.token = (await f.run(["task", "claim", task.id], owner)).lease.token;
+    await f.run(["plan", "create", task.id, "--body", "Verify deployment in the selected region"], owner);
+    await f.run(["task", "start", task.id], owner);
+    let choice = "wait", requests = 0;
+    const server = createServer(async (req, res) => {
+        let text = "";
+        for await (const chunk of req) text += chunk;
+        const request = JSON.parse(text); requests++;
+        assert.ok(Buffer.byteLength(text) <= 30000);
+        assert.ok(!text.includes(owner.token));
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify(choiceAnswers(request, { outcome: choice, recovery: choice })));
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    t.after(() => new Promise(resolve => { server.closeAllConnections(); server.close(resolve); }));
+    const env = { TASKIX_JEV_ENABLED: "true", TASKIX_JEV_URL: `http://127.0.0.1:${server.address().port}`, TASKIX_JEV_API_KEY: "test" };
+    let tool;
+    if (["pi", "omp"].includes(host)) registerExtension({ on() {}, registerTool: registered => { tool = registered; } }, host, runTaskix, globalThis, undefined, { env });
+    const classify = async kind => {
+        const input = { kind, job_id: f.job.id, task_id: task.id, prompt: "Deploy to the chosen region", history: [{ role: "assistant", text: "Need the user to select a region before deployment." }] };
+        if (tool) return (await tool.execute("assessment", { args: ["lifecycle", "classify", JSON.stringify(input)] }, undefined, undefined,
+            { cwd: f.dir, sessionManager: { getSessionId: () => session } })).details;
+        const child = spawn(process.execPath, [resolve("lifecycle.mjs"), session], { cwd: f.dir, env: { ...process.env, ...env }, stdio: ["pipe", "pipe", "pipe"] });
+        let stdout = "", stderr = "";
+        child.stdout.on("data", c => { stdout += c; }); child.stderr.on("data", c => { stderr += c; });
+        child.stdin.end(JSON.stringify(input));
+        assert.equal(await new Promise(resolve => child.on("close", resolve)), 0, stderr);
+        return JSON.parse(stdout);
+    };
+    const verdict = await classify("outcome");
+    assert.equal(verdict.status, "selected");
+    assert.equal(verdict.decision.action, "wait");
+    assert.equal((await f.run(["task", "show", task.id])).status, "IN_PROGRESS");
+    await f.run([...verdict.args, "--reason", "Need region"], owner);
+    assert.equal((await f.run(["task", "show", task.id])).status, "WAITING_USER");
+    choice = "resume";
+    const recovery = await classify("recovery");
+    assert.equal(recovery.decision.action, "resume");
+    const recovered = await f.run(recovery.args, { ...owner, token: undefined });
+    owner.token = recovered.lease.token;
+    await assert.rejects(f.run(recovery.args, { ...owner, token: undefined }), /revision|lease|claimed/);
+    await f.run(["task", "start", task.id], owner);
+    choice = "ready";
+    const ready = await classify("outcome");
+    assert.equal(ready.decision.requires_verification, true);
+    assert.deepEqual(ready.args, []);
+    assert.equal((await f.run(["task", "show", task.id])).status, "IN_PROGRESS");
+    assert.equal((await f.run(["job", "show", f.job.id])).status, "ACTIVE");
+    assert.equal(requests, 3);
+});
+
+for (const [kind, action, prepare, expected] of [
+    ["outcome", "block", null, "BLOCKED"], ["outcome", "fail", null, "FAILED"],
+    ["recovery", "retry", "fail", "TODO"], ["recovery", "reopen", "done", "TODO"],
+    ["recovery", "cancel", null, "CANCELLED"], ["recovery", "release", null, "BLOCKED"],
+]) test(`Jev ${kind} ${action} obeys real Task transition guards`, async t => {
+    const { assessLifecycle } = await import("../lifecycle.mjs");
+    const f = await fixture(t, "assessment"), owner = { session: "assessment", executor: "agent:test" };
+    const task = await f.run(["task", "add", "--job", f.job.id, "--title", "Implement and verify"]);
+    owner.token = (await f.run(["task", "claim", task.id], owner)).lease.token;
+    await f.run(["plan", "create", task.id, "--body", "Verify implementation"], owner);
+    await f.run(["task", "start", task.id], owner);
+    if (prepare) {
+        await f.run(["task", prepare, task.id, ...(prepare === "fail" ? ["--reason", "Validation failed"] : [])], owner);
+        delete owner.token;
+    }
+    const input = { kind, job_id: f.job.id, task_id: task.id, prompt: "Explicit user request", history: [] };
+    const verdict = await assessLifecycle(input, { cwd: f.dir, session: owner.session }, runTaskix, {
+        env: { TASKIX_JEV_ENABLED: "true", TASKIX_JEV_URL: "https://mock.test", TASKIX_JEV_API_KEY: "test" },
+        fetch: async (_url, init) => ({ ok: true, json: async () => choiceAnswers(JSON.parse(init.body), { [kind]: action }) }),
+    });
+    assert.equal(verdict.status, "selected", JSON.stringify(verdict));
+    const before = await f.run(["task", "show", task.id]);
+    assert.notEqual(before.status, expected);
+    await f.run([...verdict.args, ...(verdict.required_arguments.length ? ["--reason", "Verified reason"] : [])], owner);
+    assert.equal((await f.run(["task", "show", task.id])).status, expected);
+});
+
+for (const action of ["approve", "reject", "cancel"]) test(`Jev explicit Job ${action} produces a revision-guarded real transition`, async t => {
+    const { routePrompt } = await import("../jev.mjs");
+    const f = await fixture(t, "job-review"), options = { cwd: f.dir, session: "job-review", executor: "agent:test" };
+    const task = await f.run(["task", "add", "--job", f.job.id, "--title", "Deliver"]);
+    const token = (await f.run(["task", "claim", task.id], options)).lease.token;
+    await f.run(["plan", "create", task.id, "--body", "Verify"], { ...options, token });
+    await f.run(["task", "start", task.id], { ...options, token });
+    await f.run(["task", "done", task.id], { ...options, token });
+    const context = (await runTaskix(["routing", "snapshot"], options)).result;
+    const result = await routePrompt({ prompt: "Explicit user review decision", context, options, runner: runTaskix,
+        env: { TASKIX_JEV_ENABLED: "true", TASKIX_JEV_URL: "https://mock.test", TASKIX_JEV_API_KEY: "test" },
+        fetch: async (_url, init) => ({ ok: true, json: async () => choiceAnswers(JSON.parse(init.body), { intent: action, route: `followup:${f.job.id}`, review_policy: "not_applicable" }) }),
+    });
+    assert.equal(result.decision.action, action);
+    assert.equal((await f.run(["job", "show", f.job.id])).status, "PENDING_REVIEW");
+    const args = ["job", action, f.job.id, "--expect-revision", String(result.decision.job_revision), ...(action === "reject" ? ["--reason", "User rejected verification"] : [])];
+    await f.run(args);
+    assert.equal((await f.run(["job", "show", f.job.id])).status, { approve: "COMPLETED", reject: "ACTIVE", cancel: "CANCELLED" }[action]);
+    await assert.rejects(f.run(args), /revision|conflict/);
+});
+
+for (const [initial, choice, effective] of [["none", "required", "required"], ["required", "none", "required"], ["none", "none", "none"]]) test(`Jev review policy ${initial} plus ${choice} persists ${effective} and controls completion`, async t => {
+    const { assessLifecycle } = await import("../lifecycle.mjs");
+    const f = await fixture(t, "policy-assessment"), owner = { cwd: f.dir, session: "policy-assessment", executor: "agent:test" };
+    await f.run(["job", "update", f.job.id, "--review-policy", initial]);
+    const verdict = await assessLifecycle({ kind: "review_policy", job_id: f.job.id, prompt: "Classify the requested scope" }, owner, runTaskix, {
+        env: { TASKIX_JEV_ENABLED: "true", TASKIX_JEV_URL: "https://mock.test", TASKIX_JEV_API_KEY: "test" },
+        fetch: async (_url, init) => ({ ok: true, json: async () => choiceAnswers(JSON.parse(init.body), { review_policy: choice }) }),
+    });
+    assert.equal(verdict.status, "selected");
+    assert.equal(verdict.decision.action, effective);
+    assert.equal((await f.run(["job", "show", f.job.id])).review_policy, initial);
+    await f.run(verdict.args, owner);
+    assert.equal((await f.run(["job", "show", f.job.id])).review_policy, effective);
+    const task = await f.run(["task", "add", "--job", f.job.id, "--title", "Verify scope"]);
+    owner.token = (await f.run(["task", "claim", task.id], owner)).lease.token;
+    await f.run(["plan", "create", task.id, "--body", "Verify acceptance criteria"], owner);
+    await f.run(["task", "start", task.id], owner);
+    await f.run(["task", "done", task.id], owner);
+    assert.equal((await f.run(["job", "show", f.job.id])).status, effective === "required" ? "PENDING_REVIEW" : "COMPLETED");
+    await assert.rejects(f.run(verdict.args, owner), /revision|conflict/);
 });

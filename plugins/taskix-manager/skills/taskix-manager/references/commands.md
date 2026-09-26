@@ -153,3 +153,24 @@ List returns the most recent requests and scores (limit 1–1000, default 50).
 `PREP_MS` (JSON `mean_duration_ms`) measures preparation and Jev evaluation only;
 it excludes metrics persistence and subsequent main-Agent handling. Writes
 are best-effort, so reports describe stored observations, not all host prompts.
+
+## Optional lifecycle classification
+
+The shared plugin helper supports all four hosts and performs no lifecycle writes:
+
+```sh
+node /absolute/plugin/path/lifecycle.mjs HOST_SESSION < assessment.json
+```
+
+```json
+{
+  "kind": "recovery",
+  "job_id": "job_ID",
+  "prompt": "Use us-east-1 and continue",
+  "history": [{ "role": "assistant", "text": "Waiting for the deployment region." }]
+}
+```
+
+Use `kind: "outcome"` and an owned `task_id` for execution result assessment, or `kind: "review_policy"` for changed Job scope. An explicit `task_id` also scopes recovery, including terminal Tasks omitted from the normal candidate list. Without one, recovery selects among the existing unfinished candidates. Pi/OMP accept `args: ["lifecycle", "classify", JSON.stringify(input)]`; the standalone CLI has no `lifecycle classify` subcommand.
+
+On `status: selected`, use `args` without removing revision guards and supply normal ownership credentials plus listed `required_arguments`. A `ready` result requires actual acceptance verification and contains no done command. A `status: agent` result uses the existing main-Agent workflow. The same Jev enablement, endpoint, threshold, context limits and deadline apply. Assessments are separate from prompt-routing metrics.
