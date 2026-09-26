@@ -30,7 +30,7 @@ function response(request, selected = "followup:job_a", overrides = {}) {
     return { answers: Object.fromEntries(Object.entries(request.questions).map(([id, q]) => {
         const discussion = selected === "discussion" || selected.startsWith("discussion:");
         const owner = discussion ? selected.includes(":") ? Object.keys(request.questions.route.criteria).find(k => k.endsWith(":" + selected.split(":")[1])) : "new_job" : selected;
-        const choice = id === "intent" ? discussion ? "question" : "work" : id === "route" ? owner : "unrelated";
+        const choice = id === "review_policy" ? "required" : id === "intent" ? discussion ? "question" : "work" : id === "route" ? owner : "unrelated";
         return [id, { type: "choice", choice, confidence: .99, probabilities: Object.fromEntries(Object.keys(q.criteria).map(key => [key, key === choice ? 1 : 0])), ...(id === "route" ? overrides : {}) }];
     })) };
 }
@@ -480,7 +480,7 @@ for (const intent of ["work", "question"]) test(`separate_intent_and_ownership_$
         fetch: async (_url, init) => {
             requested = JSON.parse(init.body);
             return { ok:true, json:async()=>({ answers: Object.fromEntries(Object.entries(requested.questions).map(([id,q]) => {
-                const choice = id === "intent" ? intent : "followup:job_a";
+                const choice = id === "review_policy" ? "required" : id === "intent" ? intent : "followup:job_a";
                 return [id,{type:"choice",choice,confidence:.99,probabilities:Object.fromEntries(Object.keys(q.criteria).map(k=>[k,k===choice?1:0]))}];
             })) }) };
         } });

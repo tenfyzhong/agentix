@@ -16,7 +16,7 @@ const result = await runHook({ hook_event_name: "UserPromptSubmit", session_id: 
     cacheDir: directory,
     fetch: async (_url, init) => ({ ok: true, json: async () => ({ answers: Object.fromEntries(
         Object.entries(JSON.parse(init.body).questions).map(([id, question]) => {
-            const choice = id === "intent" ? "question" : "new_job";
+            const choice = id === "review_policy" ? "not_applicable" : id === "intent" ? "question" : "new_job";
             return [id, { type: "choice", choice, confidence: 1,
                 probabilities: Object.fromEntries(Object.keys(question.criteria).map(key => [key, key === choice ? 1 : 0])) }];
         }),

@@ -4849,12 +4849,20 @@ _taskix() {
             return 0
             ;;
         taskix__subcmd__job__subcmd__submit)
-            opts="-h --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help"
+            opts="-h --review-policy --expect-job-revision --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi
             case "${prev}" in
+                --review-policy)
+                    COMPREPLY=($(compgen -W "required none" -- "${cur}"))
+                    return 0
+                    ;;
+                --expect-job-revision)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
                 --config)
                     local oldifs
                     if [ -n "${IFS+x}" ]; then
@@ -7302,12 +7310,20 @@ _taskix() {
             return 0
             ;;
         taskix__subcmd__task__subcmd__cancel)
-            opts="-h --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help"
+            opts="-h --review-policy --expect-job-revision --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi
             case "${prev}" in
+                --review-policy)
+                    COMPREPLY=($(compgen -W "required none" -- "${cur}"))
+                    return 0
+                    ;;
+                --expect-job-revision)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
                 --config)
                     local oldifs
                     if [ -n "${IFS+x}" ]; then
@@ -7485,12 +7501,20 @@ _taskix() {
             return 0
             ;;
         taskix__subcmd__task__subcmd__done)
-            opts="-h --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help"
+            opts="-h --review-policy --expect-job-revision --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
             fi
             case "${prev}" in
+                --review-policy)
+                    COMPREPLY=($(compgen -W "required none" -- "${cur}"))
+                    return 0
+                    ;;
+                --expect-job-revision)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
                 --config)
                     local oldifs
                     if [ -n "${IFS+x}" ]; then

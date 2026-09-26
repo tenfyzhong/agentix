@@ -153,3 +153,45 @@ List returns the most recent requests and scores (limit 1–1000, default 50).
 `PREP_MS` (JSON `mean_duration_ms`) measures preparation and Jev evaluation only;
 it excludes metrics persistence and subsequent main-Agent handling. Writes
 are best-effort, so reports describe stored observations, not all host prompts.
+
+## Optional lifecycle classification
+
+The shared plugin helper supports all four hosts and performs no lifecycle writes:
+
+```sh
+node /absolute/plugin/path/lifecycle.mjs HOST_SESSION < assessment.json
+```
+
+```json
+{
+  "kind": "recovery",
+  "job_id": "job_ID",
+  "prompt": "Use us-east-1 and continue",
+  "history": [{ "role": "assistant", "text": "Waiting for the deployment region." }]
+}
+```
+
+Use `kind: "outcome"` and an owned `task_id` for execution result assessment, or `kind: "review_policy"` for changed Job scope. An explicit `task_id` also scopes recovery, including terminal Tasks omitted from the normal candidate list. Without one, recovery selects among the existing unfinished candidates. Pi/OMP accept `args: ["lifecycle", "classify", JSON.stringify(input)]`; the standalone CLI has no `lifecycle classify` subcommand.
+
+On `status: selected`, use `args` without removing revision guards and supply normal ownership credentials plus listed `required_arguments`. A `ready` result requires actual acceptance verification and contains no done command. A `status: agent` result uses the existing main-Agent workflow. The same Jev enablement, endpoint, threshold, context limits and deadline apply. Assessments are separate from prompt-routing metrics.
+
+### Job completion checkpoint
+
+Before the final Task makes an ACTIVE Job ready, call the shared helper with
+`{"kind":"completion","job_id":"JOB_ID","task_id":"TASK_ID","prompt":"verbatim current request","history":[]}`.
+Use the same shell entry point or Pi/OMP `lifecycle classify` operation above.
+Jev returns `pending_review` (`review_policy: required`) or `completed`
+(`review_policy: none`) based on the entire Job. Execute the returned `task done TASK_ID --review-policy required|none
+--expect-job-revision JOB_REV --expect-revision TASK_REV` arguments with the normal
+Task lease after acceptance verification. Policy and state commit in one transaction. Reassess on conflict. An entirely non-code Job can replace an earlier
+required default; a Git-only last Task does not erase earlier code changes.
+Disabled/unavailable/uncertain results preserve the existing policy. This is not
+`job approve`, and already pending Jobs are not eligible for completion assessment.
+Direct standalone CLI calls still execute their saved policy; the optional Jev
+checkpoint belongs to the host workflow.
+
+The completion helper accepts `transition: "cancel"` for the final cancelled Task,
+or `transition: "submit"` without `task_id` for an already ready ACTIVE Job.
+Both use the same `--review-policy` and mandatory `--expect-job-revision` pair.
+Older CLIs reject these flags; upgrade Taskix and the plugin together. Missing
+completed-scope metadata also causes a safe main-agent fallback.

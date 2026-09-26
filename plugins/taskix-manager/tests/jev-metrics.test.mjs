@@ -16,7 +16,7 @@ async function fixture(t, enabled = true) {
     const path = join(dir, "metrics.sqlite");
     const env = { TASKIX_JEV_ENABLED: "true", TASKIX_JEV_URL: "https://example.test", TASKIX_JEV_API_KEY: "private-key", TASKIX_JEV_MIN_CONFIDENCE: "0.9", TASKIX_JEV_METRICS_DB: path, ...(enabled ? { TASKIX_JEV_METRICS_ENABLED: "true" } : {}) };
     const args = { env, prompt: "private prompt", options: { session: "session", cwd: dir }, context: { project_id: "p", inbox_todos: [{ id: "inbox_a", content: "private inbox" }], routing: { complete: true, candidates: [] } }, runner: () => assert.fail("unexpected CLI"), fetch: async (_url, init) => ({ ok: true, json: async () => ({ answers: Object.fromEntries(Object.entries(JSON.parse(init.body).questions).map(([id, q]) => {
-        const choice = id === "intent" ? "work" : id === "route" ? "new_job" : "unrelated";
+        const choice = id === "review_policy" ? "required" : id === "intent" ? "work" : id === "route" ? "new_job" : "unrelated";
         return [id, { type: "choice", choice, confidence: id.startsWith("inbox_") ? .87 : .99, probabilities: Object.fromEntries(Object.keys(q.criteria).map(k => [k, k === choice ? 1 : 0])) }];
     })) }) }) };
     return { path, args };
@@ -43,7 +43,7 @@ test("metrics_records_all_question_scores_without_prompt_or_credentials", async 
     assert.equal(request.threshold, .9);
     assert.ok(request.duration_ms >= 0);
     const scores = await rows(f.path, "SELECT * FROM answers ORDER BY question");
-    assert.equal(scores.length, 3);
+    assert.equal(scores.length, 4);
     assert.equal(scores[0].confidence, .87);
     assert.equal(scores[0].issue, "low_confidence");
     assert.equal(scores[1].issue, null);
@@ -179,7 +179,7 @@ test("metrics_answer_insert_failure_rolls_back_whole_event", async t => {
     db.close();
     await routePrompt(f.args);
     assert.equal((await rows(f.path, "SELECT count(*) AS count FROM requests"))[0].count, 1);
-    assert.equal((await rows(f.path, "SELECT count(*) AS count FROM answers"))[0].count, 3);
+    assert.equal((await rows(f.path, "SELECT count(*) AS count FROM answers"))[0].count, 4);
 });
 
 test("metrics_worker_timeout_preserves_event_loop_and_terminates_writer", async t => {
@@ -249,4 +249,14 @@ test("hook_latency_measurement_includes_optional_writer_and_lock_contention", as
     assert.deepEqual(await rows(f.path, "SELECT * FROM requests ORDER BY rowid"), beforeLock);
     assert.ok([off, on, locked].every(result => Number.isFinite(result.elapsed_ms) && result.elapsed_ms >= 0));
     t.diagnostic(`Whole hook milliseconds (not a CI performance threshold): ${JSON.stringify({ off: off.elapsed_ms, on: on.elapsed_ms, locked: locked.elapsed_ms })}`);
+});
+test("discussion_metrics_do_not_gate_on_inapplicable_work_policy", async t => {
+    const f = await fixture(t);
+    const { choiceAnswers } = await import("./support/jev.mjs");
+    f.args.fetch = async (_url, init) => ({ ok: true, json: async () => choiceAnswers(JSON.parse(init.body), {
+        intent: "question", route: "new_job", review_policy: "uncertain", inbox_0: "unrelated",
+    }) });
+    assert.equal((await routePrompt(f.args)).decision.action, "discussion");
+    const scores = await rows(f.path, "SELECT question FROM answers ORDER BY question");
+    assert.deepEqual(scores.map(s => s.question), ["inbox_0", "intent", "route"]);
 });

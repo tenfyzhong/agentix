@@ -58,6 +58,7 @@ async fn routing_snapshot_retains_bounded_completed_task_evidence() {
         .as_array()
         .expect("completed evidence");
     assert_eq!(completed.len(), 8);
+    assert_eq!(candidate["job"]["completed_tasks_complete"], false);
     for (index, task) in completed.iter().enumerate() {
         assert_eq!(task["status"], "DONE");
         let title = task["title"].as_str().unwrap();
@@ -346,4 +347,50 @@ async fn terminal_tasks_do_not_consume_unfinished_candidate_budget() {
         1
     );
     assert_eq!(result["candidates"][0]["tasks"][0]["id"], waiting["id"]);
+}
+
+#[tokio::test]
+async fn completion_scope_marker_handles_empty_exact_limit_and_long_titles() {
+    let (dir, store, project) = fixture().await;
+    let job = store
+        .execute(
+            json!({"command":"job.create","project":project,"title":"Scope"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap()
+        .result;
+    let mut connection = sqlx::SqliteConnection::connect_with(
+        &sqlx::sqlite::SqliteConnectOptions::new().filename(dir.path().join("tasks.sqlite3")),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        store.routing_candidates(&project).await.unwrap()["candidates"][0]["job"]["completed_tasks_complete"],
+        true
+    );
+    for _ in 0..8 {
+        let task = store
+            .execute(
+                json!({"command":"task.add","job":job["id"],"title":"Verified work"}),
+                WriteOptions::default(),
+            )
+            .await
+            .unwrap()
+            .result;
+        sqlx::query("UPDATE tasks SET data=json_set(data,'$.status','DONE') WHERE id=?")
+            .bind(task["id"].as_str().unwrap())
+            .execute(&mut connection)
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        store.routing_candidates(&project).await.unwrap()["candidates"][0]["job"]["completed_tasks_complete"],
+        true
+    );
+    sqlx::query("UPDATE tasks SET data=json_set(data,'$.title',?) WHERE rowid=(SELECT max(rowid) FROM tasks)").bind("界".repeat(301)).execute(&mut connection).await.unwrap();
+    assert_eq!(
+        store.routing_candidates(&project).await.unwrap()["candidates"][0]["job"]["completed_tasks_complete"],
+        false
+    );
 }

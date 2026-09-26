@@ -16,6 +16,11 @@ const JOBS: &str = "SELECT json_object(
     'review_policy',json_extract(data,'$.review_policy'),
     'session_id',json_extract(data,'$.session_id'),
     'followup_session_id',json_extract(data,'$.followup_session_id'),
+    'completed_tasks_complete',json((SELECT CASE
+        WHEN count(*)<=8 AND COALESCE(max(title_length),0)<=300 THEN 'true' ELSE 'false' END
+        FROM (SELECT length(json_extract(data,'$.title')) AS title_length
+            FROM tasks WHERE job_id=jobs.id AND json_extract(data,'$.status')='DONE'
+            ORDER BY rowid DESC LIMIT 9))),
     'completed_tasks',json((SELECT json_group_array(json(summary)) FROM (
         SELECT * FROM (
             SELECT rowid AS task_rowid,json_object('id',id,'status','DONE',

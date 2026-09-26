@@ -1,3 +1,4 @@
+import { withDeadline } from "./jev-io.mjs";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, writeFile, rename, rm, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -36,44 +37,49 @@ export async function stageTranscript(event, runner, options, directory = join(t
 
 export async function selectDiscussion({target,current_turn:currentTurn}, options, runner, settings = {}) {
     if (!target?.title?.trim() || !target?.prompt?.trim() || typeof currentTurn !== "string") return {status:"agent",reason:"missing_target"};
-    const controller = new AbortController();
-    const timer = setTimeout(()=>controller.abort(),8000);
-    const scoped = {...options,signal:options.signal ? AbortSignal.any([options.signal,controller.signal]) : controller.signal};
     try {
-        let job;
-        if (target.job_id) {
-            job = (await runner(["job","show",target.job_id],scoped)).result;
-            if (!job || !["ACTIVE","PENDING_REVIEW"].includes(job.status) || job.archived_at) return {status:"agent",reason:"invalid_target"};
-        }
-        const pending = (await runner(["conversation","list","--limit","100"],scoped)).result;
-        let result;
-        if (pending?.complete !== true || !Number.isSafeInteger(pending.revision) || !pending.turns?.some(turn=>turn.turn_id===currentTurn)) {
-            result = {status:"agent",reason:"incomplete_context"};
-        } else if (pending.turns.length === 1) {
-            result = {status:"selected",turn_ids:[currentTurn],revision:pending.revision};
-        } else if (!jevConfig(settings.env)) {
-            result = {status:"agent",reason:"disabled"};
-        } else if (pending.turns.reduce((sum,turn)=>sum+(turn.bytes || 0),0)>24000) {
-            result = {status:"agent",reason:"context_too_large"};
-        } else {
-            const full = (await runner(["conversation","list","--limit","100","--full"],scoped)).result;
-            result = full.revision !== pending.revision ? {status:"agent",reason:"candidates_changed"}
-                : await classifyDiscussionTurns({target:job ? {...target,job} : target,pending:full,currentTurn,...settings,signal:scoped.signal});
-        }
-        if (result.status !== "selected") return {...result,revision:pending?.revision,read_args:["conversation","list","--limit","100"]};
-        // Classification cannot authorize stale draft ownership or a changed Job.
-        const fresh = (await runner(["conversation","list","--limit","1"],scoped)).result;
-        if (fresh.revision !== result.revision) return {status:"agent",reason:"candidates_changed"};
-        if (job) {
-            const current = (await runner(["routing","revision",job.id],scoped)).result;
-            if (current?.revision !== job.revision || current.status !== job.status || current.archived_at) return {status:"agent",reason:"target_changed"};
-        }
-        const flag = job?.status === "ACTIVE" ? "--turn" : "--conversation-turn";
-        const targetGuard = !job ? ["--conversation-target",createHash("sha256").update(JSON.stringify([target.title,target.goal || "",target.prompt])).digest("hex")] : [];
-        return {...result,target,job_revision:job?.revision,
-            args:[...targetGuard,"--conversation-revision",String(result.revision),...(job?["--expect-revision",String(job.revision)]:[]),...result.turn_ids.flatMap(id=>[flag,id])]};
+        return await withDeadline(options.signal, async signal => {
+            const scoped = {...options, signal};
+            const checkedRunner = async (args, opts) => {
+                signal.throwIfAborted();
+                const result = await runner(args, opts);
+                signal.throwIfAborted();
+                return result;
+            };
+            let job;
+            if (target.job_id) {
+                job = (await checkedRunner(["job","show",target.job_id],scoped)).result;
+                if (!job || !["ACTIVE","PENDING_REVIEW"].includes(job.status) || job.archived_at) return {status:"agent",reason:"invalid_target"};
+            }
+            const pending = (await checkedRunner(["conversation","list","--limit","100"],scoped)).result;
+            let result;
+            if (pending?.complete !== true || !Number.isSafeInteger(pending.revision) || !pending.turns?.some(turn=>turn.turn_id===currentTurn)) {
+                result = {status:"agent",reason:"incomplete_context"};
+            } else if (pending.turns.length === 1) {
+                result = {status:"selected",turn_ids:[currentTurn],revision:pending.revision};
+            } else if (!jevConfig(settings.env)) {
+                result = {status:"agent",reason:"disabled"};
+            } else if (pending.turns.reduce((sum,turn)=>sum+(turn.bytes || 0),0)>24000) {
+                result = {status:"agent",reason:"context_too_large"};
+            } else {
+                const full = (await checkedRunner(["conversation","list","--limit","100","--full"],scoped)).result;
+                result = full.revision !== pending.revision ? {status:"agent",reason:"candidates_changed"}
+                    : await classifyDiscussionTurns({target:job ? {...target,job} : target,pending:full,currentTurn,...settings,signal:scoped.signal});
+            }
+            if (result.status !== "selected") return {...result,revision:pending?.revision,read_args:["conversation","list","--limit","100"]};
+            // Classification cannot authorize stale draft ownership or a changed Job.
+            const fresh = (await checkedRunner(["conversation","list","--limit","1"],scoped)).result;
+            if (fresh.revision !== result.revision) return {status:"agent",reason:"candidates_changed"};
+            if (job) {
+                const current = (await checkedRunner(["routing","revision",job.id],scoped)).result;
+                if (current?.revision !== job.revision || current.status !== job.status || current.archived_at) return {status:"agent",reason:"target_changed"};
+            }
+            const flag = job?.status === "ACTIVE" ? "--turn" : "--conversation-turn";
+            const targetGuard = !job ? ["--conversation-target",createHash("sha256").update(JSON.stringify([target.title,target.goal || "",target.prompt])).digest("hex")] : [];
+            return {...result,target,job_revision:job?.revision,
+                args:[...targetGuard,"--conversation-revision",String(result.revision),...(job?["--expect-revision",String(job.revision)]:[]),...result.turn_ids.flatMap(id=>[flag,id])]};
+        });
     } catch { return {status:"agent",reason:"discussion_unavailable"}; }
-    finally { clearTimeout(timer); }
 }
 
 // Node canonicalizes the module URL, while argv may use a symlinked install path.

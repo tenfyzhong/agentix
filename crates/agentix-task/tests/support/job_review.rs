@@ -653,3 +653,106 @@ async fn human_can_finish_blocked_tasks_and_release_dependent_tasks() {
     assert!(result["lease"].is_null());
     f.start(&dependent, "dependent").await;
 }
+
+#[tokio::test]
+async fn completion_policy_and_final_task_commit_atomically() {
+    for (policy, expected) in [("none", "COMPLETED"), ("required", "PENDING_REVIEW")] {
+        let f = Fixture::new().await;
+        let task = f.task("Verify delivery").await;
+        let claimed = f.start(&task, "completion").await;
+        let revision = job(&f).await["revision"].clone();
+        f.service
+            .execute(
+                json!({"command":"task.done","task":task,
+            "completion_policy":policy,"expected_job_revision":revision}),
+                owner(&claimed),
+            )
+            .await
+            .unwrap();
+        let result = job(&f).await;
+        assert_eq!(result["review_policy"], policy);
+        assert_eq!(result["status"], expected);
+    }
+}
+
+#[tokio::test]
+async fn completion_policy_rejects_changed_job_without_finishing_task_or_changing_policy() {
+    let f = Fixture::new().await;
+    let task = f.task("Verify delivery").await;
+    let claimed = f.start(&task, "completion").await;
+    let revision = job(&f).await["revision"].clone();
+    f.task("Concurrent new implementation").await;
+    let error = f
+        .service
+        .execute(
+            json!({"command":"task.done","task":task,
+        "completion_policy":"none","expected_job_revision":revision}),
+            owner(&claimed),
+        )
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("Job revision"), "{error}");
+    assert_eq!(job(&f).await["review_policy"], "required");
+    let state = f.service.store().snapshot().await.unwrap();
+    assert_eq!(
+        state
+            .tasks
+            .iter()
+            .find(|t| t.id == task)
+            .unwrap()
+            .status
+            .to_string(),
+        "IN_PROGRESS"
+    );
+    assert!(state.leases.iter().any(|l| l.task_id == task));
+}
+
+#[tokio::test]
+async fn completion_policy_requires_a_guard_and_actual_readiness() {
+    for guard in [None, Some(0)] {
+        let f = Fixture::new().await;
+        let task = f.task("Verify delivery").await;
+        let claimed = f.start(&task, "completion").await;
+        f.task("Still unfinished").await;
+        let mut request = json!({"command":"task.done","task":task,"completion_policy":"none"});
+        if guard.is_some() {
+            request["expected_job_revision"] = job(&f).await["revision"].clone();
+        }
+        assert!(f.service.execute(request, owner(&claimed)).await.is_err());
+        assert_eq!(job(&f).await["review_policy"], "required");
+        assert_eq!(job(&f).await["status"], "ACTIVE");
+    }
+}
+
+#[tokio::test]
+async fn completion_policy_can_atomically_submit_or_cancel_the_last_task() {
+    let f = Fixture::new().await;
+    let task = f.task("Delivered work").await;
+    finish(&f, &task).await;
+    change(&f, "job.reject").await;
+    let revision = job(&f).await["revision"].clone();
+    f.service
+        .execute(
+            json!({"command":"job.submit","job":f.job,
+        "completion_policy":"none","expected_job_revision":revision}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(job(&f).await["status"], "COMPLETED");
+
+    let f = Fixture::new().await;
+    let done = f.task("Delivered work").await;
+    let cancelled = f.task("Optional remaining work").await;
+    finish(&f, &done).await;
+    let revision = job(&f).await["revision"].clone();
+    f.service
+        .execute(
+            json!({"command":"task.cancel","task":cancelled,
+        "completion_policy":"none","expected_job_revision":revision}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(job(&f).await["status"], "COMPLETED");
+}

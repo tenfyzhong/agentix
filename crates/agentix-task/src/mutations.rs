@@ -30,6 +30,11 @@ pub(crate) fn apply(
     now: i64,
 ) -> Result<Value> {
     let command = required(request, "command")?;
+    ensure!(
+        request.get("completion_policy").is_none()
+            || matches!(command, "task.done" | "task.cancel" | "job.submit"),
+        "invalid: completion_policy requires task.done, task.cancel or job.submit"
+    );
     let result = match command {
         _ if command.starts_with("inbox.") => crate::inbox::apply(state, request, options, now),
         "project.register" => register_project(state, request, now),
@@ -151,7 +156,8 @@ fn add_task(
     options: &WriteOptions,
     now: i64,
 ) -> Result<Value> {
-    let job = &state.jobs[state.job_index(required(request, "job")?)?];
+    let job_index = state.job_index(required(request, "job")?)?;
+    let job = &state.jobs[job_index];
     ensure!(
         state.projects[state.project_index(&job.project_id)?]
             .archived_at
@@ -221,6 +227,8 @@ fn add_task(
     };
     let result = serde_json::to_value(&task)?;
     state.tasks.push(task);
+    state.jobs[job_index].revision += 1;
+    state.jobs[job_index].updated_at = now;
     Ok(result)
 }
 
@@ -434,6 +442,7 @@ fn update_task(
     let task = state.tasks[i].clone();
     let j = state.job_index(&task.job_id)?;
     let was_ready = job_ready(state, &task.job_id);
+    let completion = completion_policy(&state.jobs[j], request)?;
     check_revision(task.revision, options)?;
     ensure!(
         state.projects[state.project_index(&task.project_id)?]
@@ -629,6 +638,13 @@ fn update_task(
     }
     state.tasks[i].revision += 1;
     state.tasks[i].updated_at = now;
+    if let Some(policy) = completion {
+        ensure!(
+            !was_ready && job_ready(state, &task.job_id),
+            "conflict: completion policy requires the final unfinished Task"
+        );
+        state.jobs[j].review_policy = policy;
+    }
     aggregate_job(state, j, was_ready, now);
     state.task_result(&task.id)
 }
@@ -752,6 +768,7 @@ pub(crate) fn review_job(
     now: i64,
 ) -> Result<Value> {
     let command = required(request, "command")?;
+    let completion = completion_policy(&state.jobs[index], request)?;
     let accept_active = command == "job.approve" && state.jobs[index].status == JobStatus::Active;
     let expected = if command == "job.submit" || accept_active {
         JobStatus::Active
@@ -785,6 +802,9 @@ pub(crate) fn review_job(
         None
     };
     let job = &mut state.jobs[index];
+    if let Some(policy) = completion {
+        job.review_policy = policy;
+    }
     job.status = match command {
         "job.submit" => ready_status(job.review_policy),
         "job.approve" => JobStatus::Completed,
@@ -890,6 +910,28 @@ fn review_policy(request: &Value) -> Result<Option<crate::ReviewPolicy>> {
                 .context("invalid: review_policy must be required or none")
         })
         .transpose()
+}
+
+fn completion_policy(job: &Job, request: &Value) -> Result<Option<crate::ReviewPolicy>> {
+    let Some(value) = request.get("completion_policy") else {
+        return Ok(None);
+    };
+    let policy = serde_json::from_value(value.clone())
+        .context("invalid: completion_policy must be required or none")?;
+    let revision = request
+        .get("expected_job_revision")
+        .and_then(Value::as_i64)
+        .context("invalid: completion_policy requires expected_job_revision")?;
+    ensure!(
+        job.revision == revision,
+        "conflict: Job revision changed (current {})",
+        job.revision
+    );
+    ensure!(
+        job.status == JobStatus::Active,
+        "conflict: completion policy requires an ACTIVE Job"
+    );
+    Ok(Some(policy))
 }
 
 fn ready_status(policy: crate::ReviewPolicy) -> JobStatus {

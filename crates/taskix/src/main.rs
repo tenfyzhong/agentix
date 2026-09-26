@@ -278,7 +278,7 @@ enum JobCommand {
         inbox_ids: Vec<String>,
     },
     /// Submit an ACTIVE Job for review once all non-cancelled Tasks are DONE.
-    Submit { id: String },
+    Submit(CompletionId),
     /// Record human acceptance of a Job awaiting review.
     Approve { id: String },
     /// Return a Job awaiting review to ACTIVE, preserving its Tasks.
@@ -350,6 +350,26 @@ struct Reason {
 struct TaskId {
     id: String,
 }
+#[derive(Args)]
+struct CompletionId {
+    id: String,
+    /// Apply a Jev completion decision atomically with this transition.
+    #[arg(long, value_parser = ["required", "none"], requires = "expect_job_revision")]
+    review_policy: Option<String>,
+    /// Reject a decision based on an outdated Job snapshot.
+    #[arg(long, requires = "review_policy")]
+    expect_job_revision: Option<i64>,
+}
+impl CompletionId {
+    fn request(&self, command: &str, entity: &str) -> Value {
+        let mut request = json!({"command":command, entity:&self.id});
+        if let Some(policy) = &self.review_policy {
+            request["completion_policy"] = json!(policy);
+            request["expected_job_revision"] = json!(self.expect_job_revision);
+        }
+        request
+    }
+}
 #[derive(Subcommand)]
 enum TaskCommand {
     /// Add a Task to a Job and create its note without publishing a Plan.
@@ -401,9 +421,9 @@ enum TaskCommand {
     /// Mark a Task FAILED with a reason and release its lease.
     Fail(Reason),
     /// Mark an EXECUTING Task DONE and release its lease.
-    Done(TaskId),
+    Done(CompletionId),
     /// Cancel a Task and release its lease.
-    Cancel(TaskId),
+    Cancel(CompletionId),
     /// Return a FAILED Task to TODO so it can be claimed again.
     Retry(TaskId),
     /// Return a DONE or CANCELLED Task to TODO so it can be claimed again.
@@ -850,8 +870,8 @@ async fn job(cli: &Cli, service: &Service, action: &JobCommand) -> Result<Value>
             )
             .await
         }
-        JobCommand::Submit { id } => {
-            mutate(cli, service, json!({"command":"job.submit","job":id})).await
+        JobCommand::Submit(args) => {
+            mutate(cli, service, args.request("job.submit", "job")).await
         }
         JobCommand::Approve { id } => {
             mutate(cli, service, json!({"command":"job.approve","job":id})).await
@@ -1030,8 +1050,8 @@ async fn task(cli: &Cli, service: &Service, action: &TaskCommand) -> Result<Valu
         }
         TaskCommand::Heartbeat(args) => json!({"command":"task.heartbeat","task":args.id}),
         TaskCommand::Start(args) => json!({"command":"task.start","task":args.id}),
-        TaskCommand::Done(args) => json!({"command":"task.done","task":args.id}),
-        TaskCommand::Cancel(args) => json!({"command":"task.cancel","task":args.id}),
+        TaskCommand::Done(args) => args.request("task.done", "task"),
+        TaskCommand::Cancel(args) => args.request("task.cancel", "task"),
         TaskCommand::Retry(args) => json!({"command":"task.retry","task":args.id}),
         TaskCommand::Reopen(args) => json!({"command":"task.reopen","task":args.id}),
         TaskCommand::Block(args) => {
@@ -1284,6 +1304,33 @@ fn format_date(timestamp: i64) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn completion_flags_require_both_policy_and_job_revision() {
+        for (entity, action) in [("task", "done"), ("task", "cancel"), ("job", "submit")] {
+            assert!(
+                Cli::try_parse_from([
+                    "taskix",
+                    entity,
+                    action,
+                    "id",
+                    "--review-policy",
+                    "none",
+                    "--expect-job-revision",
+                    "7"
+                ])
+                .is_ok()
+            );
+            assert!(
+                Cli::try_parse_from(["taskix", entity, action, "id", "--review-policy", "none"])
+                    .is_err()
+            );
+            assert!(
+                Cli::try_parse_from(["taskix", entity, action, "id", "--expect-job-revision", "7"])
+                    .is_err()
+            );
+        }
+    }
+
     #[test]
     fn cli_reports_build_version() {
         use clap::Parser;

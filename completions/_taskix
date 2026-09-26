@@ -769,6 +769,8 @@ _arguments "${_arguments_options[@]}" : \
 ;;
 (submit)
 _arguments "${_arguments_options[@]}" : \
+'--review-policy=[Apply a Jev completion decision atomically with this transition]:REVIEW_POLICY:(required none)' \
+'--expect-job-revision=[Reject a decision based on an outdated Job snapshot]:EXPECT_JOB_REVISION:_default' \
 '--config=[]:CONFIG:_files' \
 '--project=[]:PROJECT:_default' \
 '--actor=[]:ACTOR:_default' \
@@ -1307,6 +1309,8 @@ _arguments "${_arguments_options[@]}" : \
 ;;
 (done)
 _arguments "${_arguments_options[@]}" : \
+'--review-policy=[Apply a Jev completion decision atomically with this transition]:REVIEW_POLICY:(required none)' \
+'--expect-job-revision=[Reject a decision based on an outdated Job snapshot]:EXPECT_JOB_REVISION:_default' \
 '--config=[]:CONFIG:_files' \
 '--project=[]:PROJECT:_default' \
 '--actor=[]:ACTOR:_default' \
@@ -1324,6 +1328,8 @@ _arguments "${_arguments_options[@]}" : \
 ;;
 (cancel)
 _arguments "${_arguments_options[@]}" : \
+'--review-policy=[Apply a Jev completion decision atomically with this transition]:REVIEW_POLICY:(required none)' \
+'--expect-job-revision=[Reject a decision based on an outdated Job snapshot]:EXPECT_JOB_REVISION:_default' \
 '--config=[]:CONFIG:_files' \
 '--project=[]:PROJECT:_default' \
 '--actor=[]:ACTOR:_default' \
