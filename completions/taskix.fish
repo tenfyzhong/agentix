@@ -471,6 +471,9 @@ complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subco
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from followup" -l idempotency-key -r
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from followup" -l json
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from followup" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from submit" -l review-policy -d 'Apply a Jev completion decision atomically with this transition' -r -f -a "required\t''
+none\t''"
+complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from submit" -l expect-job-revision -d 'Reject a decision based on an outdated Job snapshot' -r
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from submit" -l config -r -F
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from submit" -l project -r
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from submit" -l actor -r
@@ -815,6 +818,9 @@ complete -c taskix -n "__fish_taskix_using_subcommand task; and __fish_seen_subc
 complete -c taskix -n "__fish_taskix_using_subcommand task; and __fish_seen_subcommand_from fail" -l idempotency-key -r
 complete -c taskix -n "__fish_taskix_using_subcommand task; and __fish_seen_subcommand_from fail" -l json
 complete -c taskix -n "__fish_taskix_using_subcommand task; and __fish_seen_subcommand_from fail" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand task; and __fish_seen_subcommand_from done" -l review-policy -d 'Apply a Jev completion decision atomically with this transition' -r -f -a "required\t''
+none\t''"
+complete -c taskix -n "__fish_taskix_using_subcommand task; and __fish_seen_subcommand_from done" -l expect-job-revision -d 'Reject a decision based on an outdated Job snapshot' -r
 complete -c taskix -n "__fish_taskix_using_subcommand task; and __fish_seen_subcommand_from done" -l config -r -F
 complete -c taskix -n "__fish_taskix_using_subcommand task; and __fish_seen_subcommand_from done" -l project -r
 complete -c taskix -n "__fish_taskix_using_subcommand task; and __fish_seen_subcommand_from done" -l actor -r
@@ -826,6 +832,9 @@ complete -c taskix -n "__fish_taskix_using_subcommand task; and __fish_seen_subc
 complete -c taskix -n "__fish_taskix_using_subcommand task; and __fish_seen_subcommand_from done" -l idempotency-key -r
 complete -c taskix -n "__fish_taskix_using_subcommand task; and __fish_seen_subcommand_from done" -l json
 complete -c taskix -n "__fish_taskix_using_subcommand task; and __fish_seen_subcommand_from done" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand task; and __fish_seen_subcommand_from cancel" -l review-policy -d 'Apply a Jev completion decision atomically with this transition' -r -f -a "required\t''
+none\t''"
+complete -c taskix -n "__fish_taskix_using_subcommand task; and __fish_seen_subcommand_from cancel" -l expect-job-revision -d 'Reject a decision based on an outdated Job snapshot' -r
 complete -c taskix -n "__fish_taskix_using_subcommand task; and __fish_seen_subcommand_from cancel" -l config -r -F
 complete -c taskix -n "__fish_taskix_using_subcommand task; and __fish_seen_subcommand_from cancel" -l project -r
 complete -c taskix -n "__fish_taskix_using_subcommand task; and __fish_seen_subcommand_from cancel" -l actor -r

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { runHook, registerExtension } from "../runtime.mjs";
 const env = { TASKIX_JEV_ENABLED: "true", TASKIX_JEV_URL: "https://jev.test", TASKIX_JEV_API_KEY: "secret" };
-const job = { id: "job_a", project_id: "p", status: "PENDING_REVIEW", revision: 3, title: "Login", prompt: "Fix login", review_policy: "required" };
+const job = { id: "job_a", project_id: "p", status: "PENDING_REVIEW", revision: 3, title: "Login", prompt: "Fix login", review_policy: "required", completed_tasks_complete: true };
 const task = { id: "task_a", job_id: job.id, project_id: "p", revision: 2, status: "WAITING_USER", title: "Fix login", reason: "Need region" };
 function fixture(choice = "resume") {
     const calls = [];
@@ -77,19 +77,59 @@ test("helper_covers_http_errors_without_exposing_provider_text", async () => {
     assert.equal(result.status, "agent");
     assert.doesNotMatch(JSON.stringify(result), /private|secret/);
 });
-test("completion_helper_returns_policy_update_before_final_task_done", async () => {
+test("completion_helper_returns_atomic_final_task_command", async () => {
     const { assessLifecycle } = await import("../lifecycle.mjs");
     const f = fixture("completed");
     const runner = async (...args) => {
         const result = structuredClone(await f.runner(...args));
-        if (result.result.routing) result.result.routing.candidates[0].job.status = "ACTIVE";
+        if (result.result.routing) {
+            result.result.routing.candidates[0].job.status = "ACTIVE";
+            result.result.routing.candidates[0].tasks[0].status = "IN_PROGRESS";
+            result.result.routing.candidates[0].tasks[0].phase = "EXECUTING";
+        }
         else result.result.status = "ACTIVE";
         return result;
     };
-    const result = await assessLifecycle({ kind: "completion", job_id: job.id, prompt: "Create the requested release tag" }, { session: "s" }, runner, f.settings);
+    const result = await assessLifecycle({ kind: "completion", job_id: job.id, task_id: task.id, prompt: "Create the requested release tag" }, { session: "s" }, runner, f.settings);
     assert.equal(result.status, "selected");
     assert.equal(result.decision.action, "completed");
-    assert.deepEqual(result.args, ["job", "update", job.id, "--review-policy", "none", "--expect-revision", "3"]);
-    assert.match(result.instruction, /before.*task done/);
+    assert.deepEqual(result.args, ["task", "done", task.id, "--review-policy", "none", "--expect-job-revision", "3", "--expect-revision", "2"]);
+    assert.match(result.instruction, /atomic/);
     assert.ok(f.calls.every(args => args[0] === "routing"));
+});
+
+test("helper_rejects_non_string_prompt_without_throwing", async () => {
+    const { assessLifecycle } = await import("../lifecycle.mjs");
+    const f = fixture();
+    assert.equal((await assessLifecycle({kind:"completion",job_id:job.id,prompt:42}, {session:"s"}, f.runner,f.settings)).status,"agent");
+});
+test("helper_preaborted_signal_performs_no_io", async () => {
+    const { assessLifecycle } = await import("../lifecycle.mjs");
+    const f = fixture();
+    const result = await assessLifecycle({kind:"recovery",job_id:job.id,task_id:task.id,prompt:"Continue"}, {session:"s",signal:AbortSignal.abort()}, ()=>assert.fail("No I/O"), f.settings);
+    assert.equal(result.status,"agent");
+});
+
+for (const kind of ["lifecycle", "discussion"]) test(kind+"_deadline_bounds_runner_ignoring_abort", async t => {
+    t.mock.timers.enable({apis:["setTimeout"]});
+    const {assessLifecycle} = await import("../lifecycle.mjs");
+    const {selectDiscussion} = await import("../discussion.mjs");
+    let calls=0;
+    const runner = () => {calls++;return new Promise(()=>{});};
+    const options = {session:"s",signal:new AbortController().signal};
+    const pending = kind==="lifecycle"
+        ? assessLifecycle({kind:"recovery",job_id:job.id,prompt:"Continue"}, options, runner, fixture().settings)
+        : selectDiscussion({current_turn:"t",target:{title:"Work",prompt:"Continue"}},options,runner,fixture().settings);
+    t.mock.timers.tick(8000);
+    assert.equal((await pending).status,"agent");
+    assert.equal(calls,1);
+});
+test("completion_without_final_target_does_not_call_provider", async () => {
+    const {assessLifecycle}=await import("../lifecycle.mjs");
+    const f=fixture();
+    let calls=0;
+    const result=await assessLifecycle({kind:"completion",job_id:job.id,prompt:"Finish"}, {session:"s"},f.runner,
+        {...f.settings,fetch:()=>{calls++;throw Error("Unexpected provider");}});
+    assert.equal(result.status,"agent");
+    assert.equal(calls,0);
 });

@@ -1,3 +1,4 @@
+import { withDeadline } from "./jev-io.mjs";
 import { assessLifecycle, lifecycleNotice } from "./lifecycle.mjs";
 import { randomUUID } from "node:crypto";
 import { stageTranscript, discussionNotice, selectDiscussion } from "./discussion.mjs";
@@ -62,20 +63,16 @@ async function preparePrompt(prompt, options, runner, routing, history = [], eve
 }
 
 async function prepareMeasuredPrompt(prompt, options, runner, routing, history = [], event) {
-    const controller = new AbortController();
-    const scoped = { ...options, signal: controller.signal };
-    let context = {}, ready = false, timer;
-    const checkedRunner = async (args, opts) => {
-        controller.signal.throwIfAborted();
-        const result = await runner(args, opts);
-        controller.signal.throwIfAborted();
-        return result;
-    };
-    const deadline = new Promise((_, reject) => {
-        timer = setTimeout(() => { controller.abort(); reject(controller.signal.reason); }, 8000);
-    });
+    let context = {}, ready = false;
     try {
-        const content = await Promise.race([deadline, (async () => {
+        const content = await withDeadline(options.signal, async signal => {
+            const scoped = { ...options, signal };
+            const checkedRunner = async (args, opts) => {
+                signal.throwIfAborted();
+                const result = await runner(args, opts);
+                signal.throwIfAborted();
+                return result;
+            };
             if (event) {
                 await routingReceipt(event, "clear", routing.cacheDir);
             }
@@ -83,18 +80,15 @@ async function prepareMeasuredPrompt(prompt, options, runner, routing, history =
             ready = true;
             if (routing.telemetry) routing.telemetry.project_id = context.project_id;
             if (event?.transcript_path) {
-                try { history = (await transcriptConversation(event.transcript_path, { maxBytes: 256 * 1024, recentTurns: 8, signal: controller.signal })).messages; }
+                try { history = (await transcriptConversation(event.transcript_path, { maxBytes: 256 * 1024, recentTurns: 8, signal })).messages; }
                 catch { return deferPrompt(context, { decision: { reason: "history_unavailable" } }, routing); }
             }
-            controller.signal.throwIfAborted();
+            signal.throwIfAborted();
             return promptContext(prompt, context, scoped, checkedRunner, routing, history);
-        })()]);
+        });
         return { content, context, ready };
     } catch {
-        controller.abort();
         return { content: deferPrompt(context, { decision: { reason: "preparation_unavailable" } }, routing), context, ready };
-    } finally {
-        clearTimeout(timer);
     }
 }
 

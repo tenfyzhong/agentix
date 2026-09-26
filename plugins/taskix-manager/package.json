@@ -22,6 +22,7 @@
     "lifecycle.mjs",
     "README.md",
     "jev.mjs",
+    "jev-io.mjs",
     "routing-state.mjs",
     "jev-metrics.mjs",
     "jev-metrics-worker.mjs",

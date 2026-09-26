@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import * as jev from "../jev.mjs";
 const env = { TASKIX_JEV_ENABLED: "true", TASKIX_JEV_URL: "https://jev.test/evaluate", TASKIX_JEV_API_KEY: "secret" };
-const job = { id: "job_a", project_id: "p", status: "ACTIVE", revision: 3, title: "Login", prompt: "Fix login", review_policy: "required", conversation: [] };
+const job = { id: "job_a", project_id: "p", status: "ACTIVE", revision: 3, title: "Login", prompt: "Fix login", review_policy: "required", completed_tasks_complete: true, conversation: [] };
 const task = { id: "task_a", job_id: job.id, status: "IN_PROGRESS", phase: "EXECUTING", revision: 2, title: "Fix login with regression coverage", reason: null };
 function answer(request, choice) {
     return { answers: Object.fromEntries(Object.entries(request.questions).map(([id, q]) => [id, {
@@ -82,4 +82,12 @@ test("completion_does_not_approve_an_already_pending_job", async () => {
     const { result, calls } = await run("completion", "completed", { context, assessment: { kind: "completion", job_id: job.id } });
     assert.equal(result.decision.action, "agent");
     assert.equal(calls, 0);
+});
+
+test("completion_defers_when_completed_scope_is_incomplete", async () => {
+    const context = {project_id:"p", routing:{complete:true,candidates:[{job:{...job,completed_tasks_complete:false},tasks:[task]}]}};
+    const {result,calls} = await run("completion","completed",{context});
+    assert.equal(result.decision.action,"agent");
+    assert.equal(result.decision.reason,"incomplete_scope");
+    assert.equal(calls,0);
 });

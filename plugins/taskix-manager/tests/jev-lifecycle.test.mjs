@@ -73,3 +73,17 @@ test("review_scope_separates_delivery_operations_from_taskix_lifecycle_commands"
     assert.match(criteria.not_applicable, /Taskix Job\/Task/);
     assert.doesNotMatch(criteria.not_applicable, /without new implementation/);
 });
+
+test("existing_required_policy_does_not_gate_work_on_redundant_uncertain_answer", async () => {
+    const { result } = await run({intent:"work",route:"followup:job_a",review_policy:"uncertain"});
+    assert.equal(result.decision.action,"followup");
+    assert.equal(result.decision.review_policy,"required");
+});
+test("external_signal_keeps_hard_classifier_deadline", async t => {
+    t.mock.timers.enable({apis:["setTimeout"]});
+    const pending = routePrompt({prompt:"Work",context:{project_id:"p",routing:{complete:true,candidates:[]}},
+        options:{session:"s",signal:new AbortController().signal},env,telemetry:{},
+        runner:()=>assert.fail("No runner"),fetch:()=>new Promise(()=>{})});
+    t.mock.timers.tick(8000);
+    assert.equal((await pending).decision.action,"agent");
+});

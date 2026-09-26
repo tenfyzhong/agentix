@@ -19,7 +19,7 @@ classifiers. The packaged Skill defines when to call the helper.
 | Decision | Jev responsibility | Deterministic responsibility |
 | --- | --- | --- |
 | New work / supplement | Ownership and scope; required/none review policy | Preserve existing required review; guard updates by Job revision |
-| ACTIVE Job completion | Choose pending_review/completed from the whole delivered scope, replacing an earlier default if appropriate | Persist selected policy with revision guard before final Task transition; aggregate status |
+| ACTIVE Job completion | Choose pending_review/completed from the whole delivered scope, replacing an earlier default if appropriate | Persist policy and final transition atomically with Job and Task revision guards |
 | Job approve/reject/cancel | Explicit user acceptance, rejection or abandonment | Valid source state, revision and actual transition |
 | Task recovery | Resolved waiting/blocking reason; retry/reopen/cancel/release intent; unambiguous target | Ownership, Task revision, dependency and lease checks |
 | Task outcome | Continue/wait/block/fail/readiness from visible evidence | Valid execution state; verify real acceptance evidence before done |
@@ -40,7 +40,7 @@ requests and conflicting ownership defer. The 0.65 default confidence threshold,
 ## Performance review
 
 Routing intent, ownership, Inbox matching and review policy share one HTTP call.
-A lifecycle checkpoint uses one HTTP call; the completion checkpoint is called before the final Task transition, after actual acceptance verification. It returns a policy update, not Job approval. Direct standalone CLI calls continue to use their saved policy. Disabled assessment performs no CLI or
+A lifecycle checkpoint uses one HTTP call; the completion checkpoint is called before the final Task transition, after actual acceptance verification. It returns one atomic completion command, not Job approval. Direct standalone CLI calls continue to use their saved policy. Disabled assessment performs no CLI or
 network I/O. Snapshot and revision reads are bounded, with one optional read for
 an explicitly named omitted terminal Task. Requests do not fetch complete history.
 The helper's deadline covers its snapshot and optional Task read as well as model
@@ -129,13 +129,13 @@ This is an additional small checkpoint sample, not a general accuracy estimate.
 
 ## Verification
 
-The full plugin suite passed 432 tests with seven opt-in skips. Real CLI
+The plugin suite passed 446 tests with seven opt-in skips. Real CLI
 integration passed 70 tests with six benchmark skips; those six benchmarks passed
 separately. The native metrics compatibility test also passed separately. The
 live lifecycle replay and held-out replay passed with the outcomes above. The
 remaining optional skips cover the older live routing replay, native OMP install,
 Homebrew bottle/tap checks and a fallback-rendering benchmark; they are not new
-lifecycle coverage. The existing Rust plugin-entrypoint integration also passed.
+lifecycle coverage. The Rust Taskix CLI suite and plugin-entrypoint integration passed, as did the agentix-task suite, 12 routing snapshot tests, formatting and focused Clippy checks.
 
 Deterministic tests cover enabled/disabled operation, each semantic action,
 review-policy preservation and upgrade, all four host paths, mocked HTTP errors,
@@ -145,3 +145,52 @@ policy matrix verifies that the saved policy controls `PENDING_REVIEW` versus
 that a live model is always correct or that every possible user utterance is
 covered. See [integration coverage](integration-coverage.md#jev-lifecycle-and-review-policy)
 and [command reference](../plugins/taskix-manager/skills/taskix-manager/references/commands.md).
+
+## Concurrency and resource audit
+
+Completion now returns a single `task done`, `task cancel`, or `job submit`
+command with `--review-policy` and `--expect-job-revision`. The transaction
+checks the Job version, ACTIVE status, actual readiness, Task revision and lease
+before committing policy and status together. A failed guard rolls back the
+entire write. Adding a Task advances the parent Job revision, invalidating
+previous scope decisions. Standalone calls without these flags retain saved-policy
+behavior; upgrade the CLI and plugin together to use atomic completion.
+
+The shared `jev-io.mjs` gives nested preparation, discussion and lifecycle
+operations one eight-second budget. Cancellation races the operation, so a
+transport ignoring AbortSignal cannot hold up the caller. Checks before and after
+CLI reads prevent late results from initiating subsequent work. Native response
+bodies are bounded to 1 MiB before JSON parsing, including chunked responses.
+The early review-policy answer does not gate a route to an already-required Job;
+completion still assesses the whole delivery.
+
+A local `completed_tasks_complete` marker reports whether the existing eight
+completed Task titles cover all DONE Tasks without title truncation. It is not
+sent to Jev and does not expand the model context. Incomplete or older snapshots
+defer completion to the main agent instead of treating omitted work as non-code.
+
+Regression coverage includes atomic done/cancel/submit, concurrent scope changes,
+missing guards, actual readiness, external cancellation, transports ignoring
+abort, response bounds, incomplete historical scope, and four-host real HTTP/CLI
+completion. These checks establish the documented invariants; they do not prove
+all possible model outputs or production host behavior are covered.
+
+After the concurrency/resource changes, an idle-machine repeat measured medians
+of 21.0 / 25.2 / 26.9 / 27.9 / 19.3 / 35.6 ms for the six routing scenarios
+above. Request bytes and CLI process counts were unchanged. A concurrent-build
+sample was discarded because CPU contention inflated latency. These repeat
+measurements show no clear preparation regression, not a statistically significant
+speedup. Completion uses one transaction/write instead of separate policy and Task
+writes, eliminating one CLI write process and the race between them.
+
+The six completion samples were repeated after the audit with the new local
+scope metadata derived from the same source Tasks: four correct accepts, two
+deferrals, no wrong accepts, mean 676 ms and p95 1,904 ms. Model requests remained
+at most 3,456 bytes. This verifies the live response path after resource bounding;
+network timing variability is not attributed to local changes.
+
+The 31-case routing/lifecycle set was also repeated without changing its labels,
+thresholds or context: 28 correct accepts, three deferrals and no wrong accepts;
+mean 514 ms, p95 737 ms, maximum request 13,135 bytes. Model variability and the
+removed redundant early-policy gate can both affect abstention, so this small
+repeat is not an independent accuracy estimate.

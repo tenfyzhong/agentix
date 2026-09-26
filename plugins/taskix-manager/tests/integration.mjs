@@ -454,7 +454,7 @@ for (const host of ["codex", "claude"]) {
             const f = await fixture(t);
             const root = join(f.dir, "installed plugin \u{2603}");
             await mkdir(root);
-            for (const path of ["hooks", "runtime.mjs", "taskix-cli.mjs", "routing-context.mjs", "conversation.mjs", "discussion.mjs", "lifecycle.mjs", "jev.mjs", "routing-state.mjs", "jev-metrics.mjs", "jev-metrics-worker.mjs", "metrics-schema.sql", `.${host}-plugin`]) {
+            for (const path of ["hooks", "runtime.mjs", "taskix-cli.mjs", "routing-context.mjs", "conversation.mjs", "discussion.mjs", "lifecycle.mjs", "jev.mjs", "jev-io.mjs", "routing-state.mjs", "jev-metrics.mjs", "jev-metrics-worker.mjs", "metrics-schema.sql", `.${host}-plugin`]) {
                 await cp(resolve(path), join(root, path), { recursive: true });
             }
             const task = await f.run([
@@ -1029,7 +1029,7 @@ for (const host of ["codex", "claude", "pi", "omp"]) test(`${host} lifecycle ass
         assert.ok(Buffer.byteLength(text) <= 30000);
         assert.ok(!text.includes(owner.token));
         res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify(choiceAnswers(request, { outcome: choice, recovery: choice })));
+        res.end(JSON.stringify(choiceAnswers(request, { outcome: choice, recovery: choice, completion: choice })));
     });
     await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
     t.after(() => new Promise(resolve => { server.closeAllConnections(); server.close(resolve); }));
@@ -1067,6 +1067,19 @@ for (const host of ["codex", "claude", "pi", "omp"]) test(`${host} lifecycle ass
     assert.equal((await f.run(["task", "show", task.id])).status, "IN_PROGRESS");
     assert.equal((await f.run(["job", "show", f.job.id])).status, "ACTIVE");
     assert.equal(requests, 3);
+    choice = host === "codex" || host === "pi" ? "completed" : "pending_review";
+    const completion = await classify("completion");
+    assert.equal(completion.status, "selected");
+    assert.equal((await f.run(["job", "show", f.job.id])).review_policy, "required");
+    // A scope change after classification invalidates the whole decision.
+    await f.run(["job", "update", f.job.id, "--goal", "Updated acceptance"]);
+    await assert.rejects(f.run(completion.args, owner), /revision/);
+    assert.equal((await f.run(["task", "show", task.id])).status, "IN_PROGRESS");
+    assert.equal((await f.run(["job", "show", f.job.id])).review_policy, "required");
+    const fresh = await classify("completion");
+    await f.run(fresh.args, owner);
+    assert.equal((await f.run(["job", "show", f.job.id])).status, choice.toUpperCase());
+    assert.equal(requests, 5);
 });
 
 for (const [kind, action, prepare, expected] of [
@@ -1147,7 +1160,7 @@ for (const [choice, expected] of [["completed", "COMPLETED"], ["pending_review",
     await f.run(["plan", "create", task.id, "--body", "Check outputs against the requirement"], owner);
     await f.run(["task", "start", task.id], owner);
     let requests = 0;
-    const verdict = await assessLifecycle({ kind: "completion", job_id: f.job.id, prompt: "Finish the delivery" }, owner, runTaskix, {
+    const verdict = await assessLifecycle({ kind: "completion", job_id: f.job.id, task_id: task.id, prompt: "Finish the delivery" }, owner, runTaskix, {
         env: { TASKIX_JEV_ENABLED: String(choice !== "disabled"), TASKIX_JEV_URL: "https://mock.test", TASKIX_JEV_API_KEY: "test" },
         fetch: async (_url, init) => { requests++; return { ok: true, json: async () => choiceAnswers(JSON.parse(init.body), { completion: choice }) }; },
     });
@@ -1155,13 +1168,15 @@ for (const [choice, expected] of [["completed", "COMPLETED"], ["pending_review",
     assert.equal(unchanged.status, "ACTIVE");
     assert.equal(unchanged.review_policy, "required");
     assert.equal(requests, choice === "disabled" ? 0 : 1);
-    if (["uncertain", "disabled"].includes(choice)) assert.equal(verdict.status, "agent");
+    if (["uncertain", "disabled"].includes(choice)) {
+        assert.equal(verdict.status, "agent");
+        await f.run(["task", "done", task.id], owner);
+    }
     else {
         assert.equal(verdict.decision.action, choice);
         await f.run(verdict.args, owner);
-        assert.equal((await f.run(["job", "show", f.job.id])).status, "ACTIVE");
+        assert.equal((await f.run(["job", "show", f.job.id])).status, expected);
         await assert.rejects(f.run(verdict.args, owner), /revision|conflict/);
     }
-    await f.run(["task", "done", task.id], owner);
     assert.equal((await f.run(["job", "show", f.job.id])).status, expected);
 });

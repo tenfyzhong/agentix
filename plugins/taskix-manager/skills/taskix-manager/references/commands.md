@@ -178,14 +178,20 @@ On `status: selected`, use `args` without removing revision guards and supply no
 ### Job completion checkpoint
 
 Before the final Task makes an ACTIVE Job ready, call the shared helper with
-`{"kind":"completion","job_id":"JOB_ID","prompt":"verbatim current request","history":[]}`.
+`{"kind":"completion","job_id":"JOB_ID","task_id":"TASK_ID","prompt":"verbatim current request","history":[]}`.
 Use the same shell entry point or Pi/OMP `lifecycle classify` operation above.
 Jev returns `pending_review` (`review_policy: required`) or `completed`
-(`review_policy: none`) based on the entire Job. Apply the returned revision-guarded
-`job update` arguments before `task done`; then use the normal Task lease and
-revision. Reassess on conflict. An entirely non-code Job can replace an earlier
+(`review_policy: none`) based on the entire Job. Execute the returned `task done TASK_ID --review-policy required|none
+--expect-job-revision JOB_REV --expect-revision TASK_REV` arguments with the normal
+Task lease after acceptance verification. Policy and state commit in one transaction. Reassess on conflict. An entirely non-code Job can replace an earlier
 required default; a Git-only last Task does not erase earlier code changes.
 Disabled/unavailable/uncertain results preserve the existing policy. This is not
 `job approve`, and already pending Jobs are not eligible for completion assessment.
 Direct standalone CLI calls still execute their saved policy; the optional Jev
 checkpoint belongs to the host workflow.
+
+The completion helper accepts `transition: "cancel"` for the final cancelled Task,
+or `transition: "submit"` without `task_id` for an already ready ACTIVE Job.
+Both use the same `--review-policy` and mandatory `--expect-job-revision` pair.
+Older CLIs reject these flags; upgrade Taskix and the plugin together. Missing
+completed-scope metadata also causes a safe main-agent fallback.

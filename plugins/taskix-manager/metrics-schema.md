@@ -39,8 +39,9 @@ or null. `answer_count` counts recorded expected questions, including invalid or
 missing answers. Preparation/network failures can have zero recorded answers.
 
 `answers.question` is intent, route, review_policy, or inbox_N. The review_policy
-answer is recorded and gated only for work intent. Other intents do not require a
-policy classification. Explicit lifecycle helper assessments are not prompt-routing
+answer is recorded and gated only for work intent when the selected Job does not
+already require review. Other intents and existing required Jobs do not need an
+early policy classification. Explicit lifecycle helper assessments are not prompt-routing
 observations and are not written to this metrics database. `subject_id` identifies the Inbox entry
 for an Inbox question. `choice` contains only a known option (including selected
 Job identity for followup/resume) or null. Confidence, selected probability and
