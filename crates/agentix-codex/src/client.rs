@@ -996,7 +996,9 @@ impl CodexClient {
                     "cursor": cursor,
                     "limit": limit,
                     "sortDirection": "desc",
-                    "itemsView": "full"
+                    // IM renders input/output, not persisted tool payloads.
+                    // A single full turn can contain hundreds of MB of media.
+                    "itemsView": "summary"
                 }),
             )
             .await?;
