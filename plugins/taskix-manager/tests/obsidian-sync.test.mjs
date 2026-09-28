@@ -2,6 +2,32 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { fixture, loadPlugin, copy, connectionFixture } from "./support/obsidian-plugin.mjs";
 
+test("Obsidian project folder rename triggers sync and invalidates descendant caches", async (t) => {
+    const f = await connectionFixture(); t.after(() => f.plugin.onunload());
+    const connecting = f.plugin.connect(); f.reply(); await connecting;
+    const oldPath = "11-Agents/Projects/demo";
+    const notePath = `${oldPath}/Jobs/One.md`;
+    f.plugin.engine.notes.set(notePath, { id: "job_one", path: notePath });
+    const renaming = f.vaultEvents.get("rename")({ path: "11-Agents/Projects/视频项目", children: [] }, oldPath);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(copy(f.requests.at(-1).args.slice(-2)), ["sync", "--pending"]);
+    f.reply(null, f.requests.length - 1, {});
+    await renaming;
+    assert.equal(f.plugin.engine.notes.has(notePath), false);
+    assert.equal(f.notices.length, 0);
+});
+
+test("Obsidian project folder rename surfaces synchronization failures", async (t) => {
+    const f = await connectionFixture(); t.after(() => f.plugin.onunload());
+    const connecting = f.plugin.connect(); f.reply(); await connecting;
+    const renaming = f.vaultEvents.get("rename")({ path: "11-Agents/Projects/New", children: [] }, "11-Agents/Projects/Old");
+    await new Promise(resolve => setImmediate(resolve));
+    assert.ok(f.requests.at(-1).args.includes("sync"));
+    f.reply("Ambiguous project folders");
+    await renaming;
+    assert.match(f.notices.at(-1).message, /Ambiguous project folders/);
+});
+
 test("Obsidian starts without a snapshot and bounds its cache while querying only requested IDs", async (t) => {
     const { SyncEngine } = loadPlugin();
     const ids = [];

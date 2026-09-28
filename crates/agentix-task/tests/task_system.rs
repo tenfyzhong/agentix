@@ -40,6 +40,9 @@ mod browse_pages;
 #[path = "support/project_resolution.rs"]
 mod project_resolution;
 
+#[path = "support/project_rename.rs"]
+mod project_rename;
+
 struct Fixture {
     dir: TempDir,
     service: Service,

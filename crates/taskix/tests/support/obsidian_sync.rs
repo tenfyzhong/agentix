@@ -1,5 +1,41 @@
 use super::*;
 
+#[test]
+fn obsidian_project_folder_rename_preserves_cli_context_and_registered_note_paths() {
+    let cli = Cli::new();
+    let job = cli.job("Work in original directory");
+    let task = cli.task(&job, "Continue tracking");
+    let before = cli.ok(&["context", "--session", "rename-session"]);
+    let project = before["project_id"].as_str().unwrap();
+    let output = cli.dir.path().join("vault/Tasks ☃/Projects");
+    std::fs::rename(output.join("Demo"), output.join("中文项目")).unwrap();
+    cli.ok(&["sync", "--pending"]);
+    let after = cli.ok(&["context", "--session", "rename-session"]);
+    assert_eq!(after["project_id"], project);
+    assert_eq!(cli.ok(&["project", "show", project])["name"], "中文项目");
+    assert_eq!(
+        cli.ok(&["project", "show", project])["root"],
+        cli.dir.path().canonicalize().unwrap().to_str().unwrap()
+    );
+    for id in [&job, &task] {
+        assert!(
+            cli.ok(&["obsidian", "show", id])["path"]
+                .as_str()
+                .unwrap()
+                .contains("/Projects/中文项目/")
+        );
+    }
+    let next = cli.ok(&["job", "create", "--title", "Next work"]);
+    assert_eq!(next["project_id"], project);
+    assert!(
+        next["document_path"]
+            .as_str()
+            .unwrap()
+            .starts_with("Projects/中文项目/")
+    );
+    assert!(!output.join("Demo").exists());
+}
+
 #[tokio::test]
 async fn cli_writes_resolve_projects_without_loading_other_jobs() {
     use sqlx::Connection;

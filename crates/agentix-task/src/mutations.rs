@@ -38,6 +38,7 @@ pub(crate) fn apply(
     let result = match command {
         _ if command.starts_with("inbox.") => crate::inbox::apply(state, request, options, now),
         "project.register" => register_project(state, request, now),
+        "project.rename" => crate::project_rename::rename(state, request, options),
         "project.delete" | "job.delete" => crate::deletion::apply(state, request, options),
         "project.archive" | "project.unarchive" => archive_project(state, request, options, now),
         "session.record" => crate::conversation::record(state, request, options, now),

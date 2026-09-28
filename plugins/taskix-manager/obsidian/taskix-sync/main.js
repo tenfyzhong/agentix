@@ -478,11 +478,33 @@ class TaskixSyncPlugin extends Plugin {
         }));
         this.registerEvent(this.app.vault.on("rename", (file, oldPath) => {
             if (!this.engine?.watches(file.path) && !this.engine?.watches(oldPath)) return;
+            const projects = path.posix.join(this.engine.directory, "Projects");
+            if (Array.isArray(file.children) && path.posix.dirname(oldPath) === projects &&
+                path.posix.dirname(file.path) === projects) return this.renameProjectFolder(oldPath);
             this.engine.forget(oldPath);
             return this.inspectFile(file);
         }));
         this.registerEvent(this.app.workspace.on("file-open", (file) => { void this.inspectFile(file); }));
         this.app.workspace.onLayoutReady(() => { if (!this.stopped) void this.connect(); });
+    }
+
+    async renameProjectFolder(oldPath) {
+        const engine = this.engine;
+        for (const filePath of new Set([...engine.notes.keys(), ...engine.pending.keys(),
+            ...engine.timers.keys(), ...(engine.inFlight ? [engine.inFlight.path] : [])])) {
+            if (filePath.startsWith(`${oldPath}/`)) engine.forget(filePath);
+        }
+        try {
+            await engine.flush();
+            if (engine.disposed) return;
+            await engine.io.execute(["sync", "--pending"]);
+            if (engine.disposed) return;
+            for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
+                await this.inspectFile(leaf.view.file);
+            }
+        } catch (error) {
+            engine.notify(`Could not synchronize Project folder rename: ${error.message}`);
+        }
     }
 
     async inspectFile(file) {
