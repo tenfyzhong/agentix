@@ -6,7 +6,7 @@ Hosts stage visible user prompts and agent replies in SQLite session drafts befo
 
 When discussion leads to implementation, the agent selects the related pending turns and attaches them atomically on Job creation or follow-up, or explicitly to an ACTIVE Job. The generated **Conversation** preserves the selected original inputs and replies in order, including superseded alternatives and Codex Plan-mode questions and answers. A new Job's **Prompt** comes from the earliest selected request; follow-up preserves its original Prompt. Unrelated turns remain pending. Discussion alone produces no Job note. Drafts survive restart and expire after 30 days of session inactivity; recorded Job history is retained. Existing Jobs are not scanned or backfilled automatically. Upgrade Taskix, this plugin, and Agentix together. See [conversation capture](https://github.com/tenfyzhong/agentix/blob/main/docs/task-board.md#job-conversation-records).
 
-Before the lifecycle write, the packaged `discussion.mjs` helper classifies pending turns against the final delivery target. It uses the same opt-in Jev settings below, sends full candidate messages rather than excerpts, and never writes task state. The current turn is always included. Disabled Jev, uncertainty, errors, incomplete candidate pages, more than 24,000 bytes of context, or the eight-second deadline defer to the agent, which reads the original pending turns. The helper rechecks candidate and target revisions and returns guarded write arguments. Creation also binds the classified title, goal, and current prompt with a fingerprint. A changed target requires reassessment. This selection is separate from prompt-time Job routing and its metrics.
+Before the lifecycle write, the packaged `discussion.mjs` helper classifies pending turns against the final delivery target. It uses the same opt-in Jev settings below, sends full candidate messages rather than excerpts, and never writes task state. The current turn is always included. Disabled Jev, uncertainty, errors, incomplete candidate pages, more than 24,000 bytes of context, or the eight-second deadline defer to the agent, which reads the original pending turns. The helper rechecks candidate and target revisions and returns guarded write arguments. Creation also binds the classified title, goal, and current prompt with a fingerprint. A changed target requires reassessment. Its metrics are recorded separately from prompt-time Job routing.
 
 ## Bundled entrypoints
 
@@ -159,7 +159,7 @@ Jev confidence thresholds and task ownership rules are unchanged.
 The plugin only collects and appends observations; taskix owns reports and human
 labels. The [versioned storage protocol](metrics-schema.md) defines their shared
 contract. Unknown or nonempty unversioned databases are rejected without migration;
-preserve old development statistics and choose a fresh database path for v1.
+preserve old development statistics and choose a fresh database path for v2.
 
 Statistics are disabled by default, independently of Jev routing. Enable them in
 its host process environment before starting/restarting the host:
@@ -191,10 +191,25 @@ Use the taskix CLI from any directory; no task database initialization is requir
 
 ```sh
 taskix routing metrics report
+taskix routing metrics report --details
+taskix routing metrics report --json
 taskix routing metrics list --limit 50
 taskix routing metrics label REQUEST_ID correct
 taskix routing metrics label REQUEST_ID incorrect
 ```
+
+The default report uses a compact table for routing, discussion ownership,
+recovery, outcome, review policy and completion. A second table groups individual
+questions, combining all Inbox and discussion-turn indices. Request acceptance
+and question score-gate pass rates are separate; neither is human-reviewed
+accuracy. Use `--details` for fallback reasons, issues, model/threshold totals,
+reviewed accuracy and all ten score gates; JSON retains full data and adds
+`by_kind` and `by_question`. The standard summary fits an 80×24 terminal.
+Collection remains opt-in. The writer migrates v1 metrics to v2 atomically,
+preserving routing history and labels; the new CLI reads either version without
+migration. Upgrade CLI and plugin together. Past unrecorded lifecycle assessments
+cannot be recovered from the old database.
+
 
 Add `--json` for the standard taskix response envelope. Reports display text
 tables by default; list/label use the standard human-readable JSON display.
@@ -214,7 +229,7 @@ without labels it is null, not 100%. Label the correctness of the complete propo
 route and Inbox selection, not agreement with another model. Review both accepted
 and deferred samples before changing thresholds.
 
-Writing uses one transaction per prompt in a dedicated worker and closes the connection afterward. The worker receives only sanitized metrics, with an empty environment; no API key or prompt is transferred. SQLite lock waits use a 25 ms busy timeout. The parent waits at most 250 ms for worker startup and persistence, then requests termination and continues without awaiting OS cleanup. This bounds parent waiting under normal event-loop scheduling, not physical disk completion. Failures skip the sample with a generic stderr notice and never alter routing. The report labels `duration_ms` as `PREP_MS`: preparation and Jev time, excluding statistics writing and native subagent work. Reports describe successfully stored
+Writing uses one transaction per assessment in a dedicated worker and closes the connection afterward. The worker receives only sanitized metrics, with an empty environment; no API key or prompt is transferred. SQLite lock waits use a 25 ms busy timeout. The parent waits at most 250 ms for worker startup and persistence, then requests termination and continues without awaiting OS cleanup. This bounds parent waiting under normal event-loop scheduling, not physical disk completion. Failures skip the sample with a generic stderr notice and never alter routing. The report labels `duration_ms` as `PREP_MS`: preparation and Jev time, excluding statistics writing and native subagent work. Reports describe successfully stored
 samples, so dropped writes can bias them. No automatic retention/deletion is
 performed; disable collection when finished. The query tool adds no model calls.
 
@@ -416,4 +431,4 @@ With the existing `TASKIX_JEV_ENABLED` configuration, prompt routing also classi
 
 All assessments reuse the existing filtered Job/Task facts and visible conversation excerpts, 30,000-byte request ceiling, eight-second deadline, score gates and current-Job revision check. No raw tool results, source files, lease credentials or reasoning are collected. Explicit terminal Task recovery reads only that named Task and projects the same title/status/reason fields within existing bounds; normal prompt candidate discovery is unchanged. Shared instructions are sent once rather than repeated for every Job. Each assessment makes one provider request; disabled configuration makes no CLI or HTTP calls.
 
-Results contain guarded command arguments, never execute them, and defer to the main Agent on uncertainty, failure, oversize or stale evidence. Actual CLI lease, dependency, Plan and transition guards remain authoritative. `ready` is not `done` and never authorizes self-approval. Prompt metrics include the work-scope question when it can change the selected policy; lifecycle checkpoints are separate from prompt-routing statistics. See [command examples](skills/taskix-manager/references/commands.md#optional-lifecycle-classification).
+Results contain guarded command arguments, never execute them, and defer to the main Agent on uncertainty, failure, oversize or stale evidence. Actual CLI lease, dependency, Plan and transition guards remain authoritative. `ready` is not `done` and never authorizes self-approval. Prompt metrics include the work-scope question when it can change the selected policy; lifecycle checkpoints have separate request-kind statistics. See [command examples](skills/taskix-manager/references/commands.md#optional-lifecycle-classification).

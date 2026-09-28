@@ -139,13 +139,23 @@ collection and queries. These commands do not open the task database or require
 
 ```sh
 taskix routing metrics report
+taskix routing metrics report --details
 taskix routing metrics report --json
 taskix routing metrics list --limit 50 --json
 taskix routing metrics label REQUEST_ID correct
 taskix routing metrics label REQUEST_ID incorrect
 ```
 
-Report adoption, fallback reasons, per-question issues, reviewed accuracy and
+The default report is a compact per-kind request summary (routing, discussion,
+recovery, outcome, review_policy, completion) plus per-question score-pass rates.
+Inbox and discussion-turn indices are grouped. Request acceptance and question
+score passes are different measures; neither establishes correctness.
+Use `--details` for the expanded diagnostics and `--json` for complete data,
+including `by_kind` and `by_question`. New writers migrate v1 to v2 atomically;
+new readers support both without migration. Upgrade the CLI and plugin together.
+Historical unrecorded lifecycle assessments are not backfilled.
+
+Detailed reports include adoption, fallback reasons, per-question issues, reviewed accuracy and
 score gates from 0.50 through 0.95 in 0.05 increments. Gate counts are not predicted adoption. Only human
 labels establish reviewed accuracy; model agreement is not a correctness label.
 List returns the most recent requests and scores (limit 1–1000, default 50).

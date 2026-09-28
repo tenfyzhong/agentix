@@ -1734,6 +1734,7 @@ _arguments "${_arguments_options[@]}" : \
 '--lease-token=[]:LEASE_TOKEN:_default' \
 '--expect-revision=[]:EXPECT_REVISION:_default' \
 '--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--details[Include fallback reasons, answer issues, and all score gates]' \
 '--json[]' \
 '-h[Print help]' \
 '--help[Print help]' \

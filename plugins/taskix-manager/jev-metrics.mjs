@@ -31,7 +31,7 @@ export async function measuredRouting({ env, options, config }, callback) {
         // Snapshot values now: a timed-out operation must not mutate an already
         // finalized event while asynchronous filesystem setup is in progress.
         const event = structuredClone(metric);
-        await writeMetricBounded({ path: metricsPath(env),
+        if (!event.skip) await writeMetricBounded({ path: metricsPath(env),
             options: { session: options?.session, turn_id: options?.turn_id },
             config: { model: config.model, threshold: config.threshold }, metric: event });
     }
@@ -51,15 +51,20 @@ export async function writeMetric({ path, options, config, metric }) {
             db.prepare("SELECT count(*) AS count FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'").get().count === 0;
         if (empty) {
             db.exec(await readFile(new URL("./metrics-schema.sql", import.meta.url), "utf8"));
-        } else if (version !== 1 || application !== 0x544a4556) {
+        } else if (![1, 2].includes(version) || application !== 0x544a4556) {
             db.exec("ROLLBACK");
             return "unsupported_schema";
         }
-        db.prepare("INSERT INTO requests (id, started_at, session_id, turn_id, project_id, model, threshold, duration_ms, called, accepted, action, reason, review, answer_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)").run(
+        if (version === 1) {
+            db.exec("ALTER TABLE requests ADD COLUMN kind TEXT NOT NULL DEFAULT 'routing'; PRAGMA user_version=2");
+        }
+        const kind = ["routing", "discussion", "recovery", "outcome", "review_policy", "completion"].includes(metric.kind)
+            ? metric.kind : metric.kind == null ? "routing" : "unknown";
+        db.prepare("INSERT INTO requests (id, started_at, session_id, turn_id, project_id, model, threshold, duration_ms, called, accepted, action, reason, review, answer_count, kind) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)").run(
             metric.id, metric.started_at, options?.session ?? null, options?.turn_id ?? null, metric.project_id ?? null,
             config.model, config.threshold, metric.duration_ms, Number(metric.called),
-            Number(metric.outcome.action !== "agent"), metric.outcome.action,
-            metric.outcome.reason ?? null, metric.answers.length);
+            Number(metric.called && metric.outcome.action !== "agent"), metric.outcome.action,
+            metric.outcome.reason ?? null, metric.answers.length, kind);
         const insert = db.prepare("INSERT INTO answers (request_id, question, subject_id, choice, confidence, probability, margin, valid, issue) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
         for (const answer of metric.answers) insert.run(metric.id, answer.question, answer.subject_id ?? null, answer.choice, answer.confidence, answer.probability, answer.margin, answer.valid, answer.issue);
         db.exec("COMMIT");

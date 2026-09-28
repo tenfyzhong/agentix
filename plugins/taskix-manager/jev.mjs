@@ -164,10 +164,10 @@ export async function withJevMetrics(env = process.env, options, callback) {
 }
 
 // Shares the prompt projection, request budget, provider validation and revision guard.
-// Lifecycle assessments are not prompt-routing metrics or state mutations.
+// Each assessment is measured separately without mutating lifecycle state.
 export async function classifyLifecycle(args) {
     if (!jevConfig(args.env)) return { decision: { action: "agent", reason: "disabled" } };
-    return classifyPrompt(args);
+    return routePrompt(args);
 }
 
 function lifecycleQuestions(assessment, task, tasks = []) {
@@ -204,7 +204,10 @@ function lifecycleQuestions(assessment, task, tasks = []) {
 
 export async function routePrompt(args) {
     const run = async telemetry => {
-        if (telemetry) telemetry.project_id = args.context.project_id;
+        if (telemetry) {
+            telemetry.project_id = args.context.project_id;
+            telemetry.kind = args.assessment?.kind || "routing";
+        }
         const result = await classifyPrompt({ ...args, telemetry });
         if (telemetry && result) telemetry.outcome = result.decision;
         return result;
@@ -359,9 +362,29 @@ async function classifyPrompt({ prompt, context, options, runner, history = [], 
     }
 }
 
+// Reuse the outer observation so preparation and final guards count exactly once.
+export async function withDecisionMetrics(kind, env, options, telemetry, callback) {
+    const run = async metric => {
+        if (metric) metric.kind = kind;
+        const result = await callback(metric);
+        if (metric) {
+            metric.skip = result.status === "selected" && !metric.called;
+            metric.outcome = result.status === "selected"
+                ? { action: "selected" } : { action: "agent", reason: result.reason };
+        }
+        return result;
+    };
+    return telemetry ? run(telemetry) : withJevMetrics(env, options, run);
+}
+
 // This is a separate, read-only decision after the delivery target is known.
 // Never reuse the route's short history excerpts to classify discussion ownership.
-export async function classifyDiscussionTurns({ target, pending, currentTurn, env = process.env, fetch = globalThis.fetch, signal }) {
+export async function classifyDiscussionTurns(args) {
+    return withDecisionMetrics("discussion", args.env, args.options, args.telemetry,
+        telemetry => classifyDiscussionMeasured({...args, telemetry}));
+}
+
+async function classifyDiscussionMeasured({ target, pending, currentTurn, env = process.env, fetch = globalThis.fetch, signal, telemetry }) {
     const fallback = reason => ({ status: "agent", reason });
     if (!pending || pending.complete !== true || !Number.isSafeInteger(pending.revision) ||
         !Array.isArray(pending.turns) || !target?.prompt?.trim() || !target?.title?.trim()) return fallback("incomplete_context");
@@ -382,7 +405,13 @@ export async function classifyDiscussionTurns({ target, pending, currentTurn, en
     if (Buffer.byteLength(body, "utf8") > 24000) return fallback("context_too_large");
     try {
         return await withDeadline(signal, async combined => {
+            if (telemetry) telemetry.called = true;
             const data = await evaluate(config, body, combined, fetch);
+            if (telemetry) {
+                const { answerScore } = await import("./jev-metrics.mjs");
+                telemetry.answers = Object.entries(questions).map(([id, question]) =>
+                    answerScore(id, data.answers?.[id], question.criteria, config.threshold));
+            }
             const matches = [];
             for (const [i, turn] of candidates.entries()) {
                 const id = `turn_${i}`, answer = data.answers?.[id];
