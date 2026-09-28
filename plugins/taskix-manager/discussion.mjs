@@ -4,7 +4,7 @@ import { mkdir, readFile, writeFile, rename, rm, realpath } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { classifyDiscussionTurns, jevConfig } from "./jev.mjs";
+import { classifyDiscussionTurns, jevConfig, withDecisionMetrics } from "./jev.mjs";
 import { transcriptConversation, recordMessages } from "./conversation.mjs";
 
 export function discussionNotice(turn) {
@@ -35,7 +35,12 @@ export async function stageTranscript(event, runner, options, directory = join(t
     }
 }
 
-export async function selectDiscussion({target,current_turn:currentTurn}, options, runner, settings = {}) {
+export async function selectDiscussion(input, options, runner, settings = {}) {
+    return withDecisionMetrics("discussion", settings.env, options, settings.telemetry,
+        telemetry => selectDiscussionMeasured(input, options, runner, {...settings, telemetry}));
+}
+
+async function selectDiscussionMeasured({target,current_turn:currentTurn}, options, runner, settings) {
     if (!target?.title?.trim() || !target?.prompt?.trim() || typeof currentTurn !== "string") return {status:"agent",reason:"missing_target"};
     try {
         return await withDeadline(options.signal, async signal => {

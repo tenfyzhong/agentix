@@ -1,7 +1,7 @@
 import { withDeadline } from "./jev-io.mjs";
 import { realpath } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { classifyLifecycle, jevConfig } from "./jev.mjs";
+import { classifyLifecycle, jevConfig, withDecisionMetrics } from "./jev.mjs";
 
 export function lifecycleNotice() {
     return `Before the final Task completes an ACTIVE Job, classify kind=completion to decide pending_review versus completed from the whole Job. Execute its guarded atomic completion command after acceptance verification. Before Task recovery or outcome transitions, use the read-only Jev helper: node ${JSON.stringify(fileURLToPath(import.meta.url))} SESSION_ID with JSON {"kind":"recovery|outcome|review_policy|completion","job_id":"JOB_ID","task_id":"TASK_ID","prompt":"current verbatim user request","history":[{"role":"assistant","text":"visible execution evidence"}]} on stdin. Pi/OMP may use taskix args ["lifecycle","classify",JSON.stringify(input)]. Reuse routed review_policy; reassess if scope changes. On status=agent use the existing main-Agent workflow. ready still requires actual acceptance verification; it is never Job approval.`;
@@ -9,6 +9,11 @@ export function lifecycleNotice() {
 
 // Read-only: the caller retains lease, Plan, dependency and authorization duties.
 export async function assessLifecycle(input, options, runner, settings = {}) {
+    return withDecisionMetrics(input?.kind, settings.env, options, settings.telemetry,
+        telemetry => assessLifecycleMeasured(input, options, runner, {...settings, telemetry}));
+}
+
+async function assessLifecycleMeasured(input, options, runner, settings) {
     const fallback = reason => ({ status: "agent", reason });
     if (!jevConfig(settings.env)) return fallback("disabled");
     if (!options.session || (typeof input?.prompt !== "string" || !input.prompt.trim()) || !input.job_id ||

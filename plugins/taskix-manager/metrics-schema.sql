@@ -1,13 +1,13 @@
--- Taskix Jev metrics protocol v1. See metrics-schema.md.
+-- Taskix Jev metrics protocol v2. See metrics-schema.md.
 PRAGMA application_id=0x544A4556;
-PRAGMA user_version=1;
+PRAGMA user_version=2;
 
 CREATE TABLE requests (
     id TEXT PRIMARY KEY, started_at INTEGER NOT NULL, session_id TEXT, turn_id TEXT,
     project_id TEXT, model TEXT NOT NULL, threshold REAL NOT NULL,
     duration_ms REAL NOT NULL, called INTEGER NOT NULL, accepted INTEGER NOT NULL,
     action TEXT NOT NULL, reason TEXT, review TEXT CHECK(review IN ('correct','incorrect')),
-    answer_count INTEGER NOT NULL
+    answer_count INTEGER NOT NULL, kind TEXT NOT NULL DEFAULT 'routing'
 );
 
 CREATE TABLE answers (

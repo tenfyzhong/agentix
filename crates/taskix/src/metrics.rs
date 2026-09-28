@@ -11,7 +11,11 @@ use sqlx::{
 #[derive(Subcommand)]
 pub enum MetricsCommand {
     /// Show adoption, fallback reasons, reviewed accuracy, and threshold comparisons.
-    Report,
+    Report {
+        /// Include fallback reasons, answer issues, and all score gates.
+        #[arg(long)]
+        details: bool,
+    },
     /// Show recent requests and their individual answer scores.
     List {
         #[arg(long, default_value_t = 50, value_parser = clap::value_parser!(u32).range(1..=1000))]
@@ -89,8 +93,8 @@ pub async fn run(command: &MetricsCommand) -> Result<Value> {
     let result = async {
         let version: i64 = sqlx::query_scalar("PRAGMA user_version").fetch_one(&mut db).await?;
         let application: i64 = sqlx::query_scalar("PRAGMA application_id").fetch_one(&mut db).await?;
-        if version != 1 || application != 0x544A_4556 {
-            bail!("Unsupported Jev metrics schema (application_id={application}, version={version}); expected Taskix Jev metrics v1. Use a compatible version or a new TASKIX_JEV_METRICS_DB path.");
+        if !matches!(version, 1 | 2) || application != 0x544A_4556 {
+            bail!("Unsupported Jev metrics schema (application_id={application}, version={version}); expected Taskix Jev metrics v1 or v2. Use a compatible version or a new TASKIX_JEV_METRICS_DB path.");
         }
         query(&mut db, command, &path).await
     }.await;
@@ -132,11 +136,32 @@ async fn query(
             }
             Ok(json!(result))
         }
-        MetricsCommand::Report => report(db, path).await,
+        MetricsCommand::Report { .. } => report(db, path).await,
     }
 }
 
 async fn report(db: &mut SqliteConnection, path: &std::path::Path) -> Result<Value> {
+    let version: i64 = sqlx::query_scalar("PRAGMA user_version")
+        .fetch_one(&mut *db)
+        .await?;
+    let kind = if version == 1 { "'routing'" } else { "kind" };
+    let by_kind = rows(db, &format!("SELECT {kind} AS kind, COUNT(*) AS requests,
+        SUM(called) AS called, SUM(accepted) AS accepted, AVG(accepted) AS adoption_rate,
+        AVG(duration_ms) AS mean_duration_ms,
+        SUM(CASE WHEN accepted=1 AND review IS NOT NULL THEN 1 ELSE 0 END) AS reviewed_accepted,
+        AVG(CASE WHEN accepted=1 AND review IS NOT NULL THEN review='correct' END) AS reviewed_accuracy
+        FROM requests GROUP BY {kind} ORDER BY kind")).await?;
+    let by_question = rows(
+        db,
+        "SELECT
+        CASE WHEN question GLOB 'inbox_[0-9]*' THEN 'inbox'
+             WHEN question GLOB 'turn_[0-9]*' THEN 'discussion' ELSE question END AS question,
+        COUNT(*) AS answers,
+        SUM(CASE WHEN valid=1 AND choice!='uncertain' AND confidence>=r.threshold
+            AND probability>=r.threshold AND margin>=0.2 THEN 1 ELSE 0 END) AS passed
+        FROM answers a JOIN requests r ON r.id=a.request_id GROUP BY 1 ORDER BY 1",
+    )
+    .await?;
     let totals = rows(db, "SELECT model, threshold, COUNT(*) AS requests, SUM(called) AS called,
         SUM(accepted) AS accepted, AVG(accepted) AS adoption_rate, AVG(duration_ms) AS mean_duration_ms,
         SUM(CASE WHEN accepted=1 AND review IS NOT NULL THEN 1 ELSE 0 END) AS reviewed_accepted,
@@ -166,7 +191,7 @@ async fn report(db: &mut SqliteConnection, path: &std::path::Path) -> Result<Val
             AND EXISTS (SELECT 1 FROM answers a WHERE a.request_id=r.id AND issue='low_confidence') THEN 1 ELSE 0 END) AS responses_with_low_confidence
         FROM requests r GROUP BY model").await?;
     Ok(
-        json!({"path":path,"totals":totals,"reasons":reasons,"issues":issues,"response_quality":response_quality,"score_gates":score_gates,
+        json!({"path":path,"totals":totals,"by_kind":by_kind,"by_question":by_question,"reasons":reasons,"issues":issues,"response_quality":response_quality,"score_gates":score_gates,
         "note":"Score gates are not predicted adoption: assignment/revision checks may still reject. Accuracy includes only manually reviewed accepted requests. mean_duration_ms measures preparation and Jev; it excludes metrics writing and subsequent Agent handling. Metrics writes are best-effort."}),
     )
 }
@@ -177,7 +202,11 @@ fn percent(value: &Value) -> String {
         .map_or_else(|| "n/a".to_string(), |v| format!("{:.1}%", v * 100.0))
 }
 
-pub fn print_report(value: &Value) {
+pub fn print_report(value: &Value, details: bool) {
+    print_summary(value);
+    if !details {
+        return;
+    }
     println!(
         "Jev routing metrics: {}",
         value["path"].as_str().unwrap_or("")
@@ -229,4 +258,56 @@ pub fn print_report(value: &Value) {
         }
     }
     println!("\n{}", value["note"].as_str().unwrap_or(""));
+}
+
+fn print_summary(value: &Value) {
+    println!("Jev metrics");
+    println!(
+        "{:<13} {:>8} {:>7} {:>8} {:>7} {:>8}",
+        "KIND", "REQUESTS", "CALLED", "ACCEPTED", "RATE", "PREP_MS"
+    );
+    let rows = value["by_kind"].as_array().into_iter().flatten();
+    let mut requests = 0;
+    let mut accepted = 0;
+    for row in rows {
+        requests += row["requests"].as_u64().unwrap_or(0);
+        accepted += row["accepted"].as_u64().unwrap_or(0);
+        println!(
+            "{:<13} {:>8} {:>7} {:>8} {:>7} {:>8.1}",
+            row["kind"].as_str().unwrap_or("unknown"),
+            row["requests"].as_u64().unwrap_or(0),
+            row["called"].as_u64().unwrap_or(0),
+            row["accepted"].as_u64().unwrap_or(0),
+            percent(&row["adoption_rate"]),
+            row["mean_duration_ms"].as_f64().unwrap_or(0.0)
+        );
+    }
+    println!(
+        "Total: {accepted}/{requests} accepted ({})",
+        percent(&ratio(&json!(accepted), &json!(requests)))
+    );
+    println!(
+        "{:<13} {:>8} {:>7} {:>8}",
+        "QUESTION", "ANSWERS", "PASSED", "RATE"
+    );
+    for row in value["by_question"].as_array().into_iter().flatten() {
+        let rate = ratio(&row["passed"], &row["answers"]);
+        println!(
+            "{:<13} {:>8} {:>7} {:>8}",
+            row["question"].as_str().unwrap_or("unknown"),
+            row["answers"].as_u64().unwrap_or(0),
+            row["passed"].as_u64().unwrap_or(0),
+            percent(&rate)
+        );
+    }
+    println!("Question pass rate is a score gate, not adoption or accuracy.");
+    println!("PREP_MS excludes metrics writes and subsequent Agent handling.");
+    println!("Details: --details | Full data: --json | Collection is best-effort.");
+}
+
+fn ratio(numerator: &Value, denominator: &Value) -> Value {
+    match (numerator.as_f64(), denominator.as_f64()) {
+        (Some(n), Some(d)) if d > 0.0 => json!(n / d),
+        _ => Value::Null,
+    }
 }

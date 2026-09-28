@@ -501,15 +501,14 @@ async fn main() -> ExitCode {
             if cli.json {
                 println!("{value}");
             } else {
-                if matches!(
-                    &cli.command,
-                    Command::Routing {
-                        action: RoutingCommand::Metrics {
-                            action: metrics::MetricsCommand::Report
-                        }
-                    }
-                ) {
-                    metrics::print_report(&value["result"]);
+                if let Command::Routing {
+                    action:
+                        RoutingCommand::Metrics {
+                            action: metrics::MetricsCommand::Report { details },
+                        },
+                } = &cli.command
+                {
+                    metrics::print_report(&value["result"], *details);
                 } else {
                     print_human(&value["result"]);
                 }

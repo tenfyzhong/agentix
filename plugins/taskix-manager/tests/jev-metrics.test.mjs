@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { mkdtemp, rm, access, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { routePrompt } from "../jev.mjs";
+import { classifyLifecycle, classifyDiscussionTurns, routePrompt } from "../jev.mjs";
 
 async function fixture(t, enabled = true) {
     // Persistence assertions use real workers/SQLite but a controlled parent clock.
@@ -156,7 +156,7 @@ test("native_taskix_report_matches_plugin_database_and_preserves_read_only_data"
 test("metrics_initializes_versioned_database", async t => {
     const f = await fixture(t);
     await routePrompt(f.args);
-    assert.equal((await rows(f.path, "PRAGMA user_version"))[0].user_version, 1);
+    assert.equal((await rows(f.path, "PRAGMA user_version"))[0].user_version, 2);
     assert.equal((await rows(f.path, "PRAGMA application_id"))[0].application_id, 0x544a4556);
 });
 
@@ -259,4 +259,78 @@ test("discussion_metrics_do_not_gate_on_inapplicable_work_policy", async t => {
     assert.equal((await routePrompt(f.args)).decision.action, "discussion");
     const scores = await rows(f.path, "SELECT question FROM answers ORDER BY question");
     assert.deepEqual(scores.map(s => s.question), ["inbox_0", "intent", "route"]);
+});
+
+test("metrics_records_lifecycle_kinds_and_discussion_once_including_fallback", async t => {
+    const f = await fixture(t);
+    for (const kind of ["recovery", "outcome", "review_policy", "completion"]) {
+        await classifyLifecycle({ ...f.args, assessment: {kind, job_id: "missing"} });
+    }
+    await classifyDiscussionTurns({env: f.args.env, target: {}, pending: null});
+    const requests = await rows(f.path, "SELECT kind, called, accepted FROM requests ORDER BY rowid");
+    assert.deepEqual(requests, ["recovery", "outcome", "review_policy", "completion", "discussion"]
+        .map(kind => ({kind, called: 0, accepted: 0})));
+});
+
+test("metrics_migrates_v1_preserving_rows_and_labels", async t => {
+    const f = await fixture(t);
+    const { DatabaseSync } = await import("node:sqlite");
+    const db = new DatabaseSync(f.path);
+    const schema = (await readFile(new URL("../metrics-schema.sql", import.meta.url), "utf8"))
+        .replace("PRAGMA user_version=2", "PRAGMA user_version=1")
+        .replace(", kind TEXT NOT NULL DEFAULT 'routing'", "");
+    db.exec(schema);
+    db.exec("INSERT INTO requests VALUES ('old',1,NULL,NULL,NULL,'old-model',0.9,1,1,1,'new_job',NULL,'correct',0)");
+    db.close();
+    await routePrompt(f.args);
+    const old = (await rows(f.path, "SELECT kind, review FROM requests WHERE id='old'"))[0];
+    assert.deepEqual(old, {kind: "routing", review: "correct"});
+    assert.equal((await rows(f.path, "PRAGMA user_version"))[0].user_version, 2);
+});
+
+test("metrics_helper_acceptance_includes_final_guards_and_skips_deterministic_selection", async t => {
+    const f = await fixture(t);
+    const { assessLifecycle } = await import("../lifecycle.mjs");
+    const { selectDiscussion } = await import("../discussion.mjs");
+    const job = {id:"job_a", project_id:"p", status:"ACTIVE", revision:3, title:"Fix", prompt:"Fix", review_policy:"required", completed_tasks_complete:true, conversation:[]};
+    const task = {id:"task_a", job_id:job.id, status:"IN_PROGRESS", phase:"EXECUTING", revision:2, title:"Fix"};
+    const context = {project_id:"p", job_id:job.id, task_id:task.id, routing:{complete:true, candidates:[{job,tasks:[task]}]}};
+    const pending = {complete:true, revision:1, turns:[{turn_id:"old", messages:[{role:"user",text:"Fix"}]}, {turn_id:"now", messages:[{role:"user",text:"Implement"}]}]};
+    const fetchFor = choice => async (_url, init) => ({ok:true,json:async()=>({answers:Object.fromEntries(Object.entries(JSON.parse(init.body).questions).map(([id,q])=>[id,{type:"choice",choice,confidence:.99,probabilities:Object.fromEntries(Object.keys(q.criteria).map(k=>[k,k===choice?1:0]))}]))})});
+    for (const [kind, choice] of [["recovery","keep"],["outcome","ready"],["review_policy","required"],["completion","pending_review"]]) {
+        const result = await assessLifecycle({kind,job_id:job.id,task_id:task.id,prompt:"Fix"},
+            f.args.options, async args => ({result:args[1]==="snapshot"?context:job}),
+            {env:f.args.env,fetch:fetchFor(choice)});
+        assert.equal(result.status,"selected");
+    }
+    await assessLifecycle({kind:"outcome",job_id:job.id,task_id:task.id,prompt:"Fix"}, f.args.options,
+        async args=>({result:args[1]==="snapshot"?context:{...job,revision:4}}), {env:f.args.env,fetch:fetchFor("ready")});
+    const target = {title:"Fix",prompt:"Implement"};
+    const runner = async args => ({result:args.includes("--full") || args.includes("100") ? pending : {...pending,revision:2}});
+    assert.equal((await selectDiscussion({target,current_turn:"now"},f.args.options,runner,
+        {env:f.args.env,fetch:fetchFor("related")})).reason,"candidates_changed");
+    pending.turns = pending.turns.slice(1);
+    await selectDiscussion({target,current_turn:"now"},f.args.options,async()=>({result:pending}),{env:f.args.env});
+    const requests = await rows(f.path,"SELECT kind, called, accepted FROM requests ORDER BY rowid");
+    assert.deepEqual(requests, [
+        ...["recovery","outcome","review_policy","completion"].map(kind=>({kind,called:1,accepted:1})),
+        {kind:"outcome",called:1,accepted:0}, {kind:"discussion",called:1,accepted:0},
+    ]);
+    const scores = await rows(f.path,"SELECT question FROM answers ORDER BY rowid");
+    assert.deepEqual(scores.map(v=>v.question),["recovery","outcome","review_policy","completion","outcome","turn_0"]);
+});
+
+test("metrics_failed_v1_append_rolls_back_migration", async t => {
+    const f = await fixture(t);
+    const { DatabaseSync } = await import("node:sqlite");
+    const db = new DatabaseSync(f.path);
+    db.exec((await readFile(new URL("../metrics-schema.sql", import.meta.url), "utf8"))
+        .replace("PRAGMA user_version=2", "PRAGMA user_version=1")
+        .replace(", kind TEXT NOT NULL DEFAULT 'routing'", ""));
+    db.exec("CREATE TRIGGER reject_request BEFORE INSERT ON requests BEGIN SELECT RAISE(ABORT, 'test failure'); END");
+    db.close();
+    await routePrompt(f.args);
+    assert.equal((await rows(f.path, "PRAGMA user_version"))[0].user_version, 1);
+    assert.equal((await rows(f.path, "PRAGMA table_info(requests)")).some(row => row.name === "kind"), false);
+    assert.deepEqual(await rows(f.path, "SELECT * FROM requests"), []);
 });
