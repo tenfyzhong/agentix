@@ -19,6 +19,7 @@ mod mutations;
 mod naming;
 mod project;
 mod project_lookup;
+mod project_rename;
 mod projection;
 mod publication;
 mod routing;

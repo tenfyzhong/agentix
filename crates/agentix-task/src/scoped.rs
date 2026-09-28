@@ -222,7 +222,7 @@ pub(crate) async fn request_scope(conn: &mut SqliteConnection, request: &Value) 
     scope.parents(conn).await?;
     let project_wide = matches!(
         command,
-        "project.archive" | "project.unarchive" | "project.delete"
+        "project.archive" | "project.unarchive" | "project.delete" | "project.rename"
     );
     let inbox_wide = command.starts_with("inbox.");
     if project_wide || inbox_wide || crate::inbox::needs_job_inbox(request) {
@@ -264,7 +264,12 @@ pub(crate) async fn request_scope(conn: &mut SqliteConnection, request: &Value) 
     // Other lifecycle checks use SQL summaries of the unmaterialized siblings.
     if matches!(
         command,
-        "job.cancel" | "job.approve" | "job.followup" | "job.delete" | "project.delete"
+        "job.cancel"
+            | "job.approve"
+            | "job.followup"
+            | "job.delete"
+            | "project.delete"
+            | "project.rename"
     ) || inbox_wide
     {
         scope.job_tasks(conn).await?;
@@ -399,6 +404,20 @@ async fn load_query_context(
             state.query_context.available_project_key =
                 Some(crate::project_lookup::available_key(conn, required(request, "name")?).await?);
         }
+    }
+    if command == "project.rename" {
+        let project = &state.projects[state.project_index(required(request, "project")?)?];
+        let collision: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM project_lookup WHERE folded_key=? AND project_id<>?)",
+        )
+        .bind(required(request, "name")?.to_lowercase())
+        .bind(&project.id)
+        .fetch_one(&mut *conn)
+        .await?;
+        ensure!(
+            !collision,
+            "conflict: Project folder name is already registered"
+        );
     }
     let selected = json!(state.tasks.iter().map(|t| &t.id).collect::<Vec<_>>()).to_string();
     for job in &state.jobs {

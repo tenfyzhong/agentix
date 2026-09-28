@@ -320,6 +320,9 @@ impl Store {
         crate::inbox::refresh(&mut state, self.now());
         crate::deletion::check_pending_paths(&mut tx, &before, &state).await?;
         persist(&mut tx, &before, &state, &command, &options, self.now()).await?;
+        if command == "project.rename" {
+            crate::project_rename::rebase_registry(&mut tx, &before, &state).await?;
+        }
         let sequence = max_sequence(&mut tx).await?;
         let outcome = Outcome {
             result,

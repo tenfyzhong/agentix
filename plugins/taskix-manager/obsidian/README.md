@@ -61,6 +61,8 @@ The reusable [tasknotes-settings.json](tasknotes-settings.json) contains this se
 
 Open Board in Reading view or Live Preview. Each Base filters the exact project's `Jobs/` or `Tasks/` folder, project ID, corresponding `agent/job` or `agent/task` tag, and `archived != true`. Jobs expose `title`, `created_at`, `updated_at`, and `completed_at` through the configured TaskNotes mappings without carrying the `task` tag. Both views sort by `completed_at` descending, then `updated_at` descending, with filename breaking ties, and use 300px columns. Completed tasks remain visible until their Job or Project is archived. No generated checkbox lists are used as the view's data source.
 
+To rename a Project, rename its entire immediate folder under `Projects/` in Obsidian's file explorer. Taskix Sync runs `taskix sync --pending`; the CLI recognizes the moved Board by Project ID, updates its name/title and all generated project paths, links and filters, and preserves editable content and attachments. The original working directory (`root`), IDs, task ownership and tracking remain unchanged. No extra project grouping is added. Keep Board's identity properties intact and use a unique portable folder name of at most 48 characters. Invalid names and ambiguous moves show a synchronization error; correct them and retry sync. Copying a folder while retaining its original does not rename the Project. Upgrade Taskix and refresh this plugin with `taskix obsidian setup` together; offline moves are imported at the next synchronization.
+
 ## Task properties and plan body
 
 A task note has this shape:

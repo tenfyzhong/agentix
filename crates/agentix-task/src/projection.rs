@@ -231,7 +231,7 @@ impl Service {
         self.config.validate()?;
         std::fs::create_dir_all(self.config.output_dir())?;
         let path = self.safe_path(".taskix.lock")?;
-        tokio::task::spawn_blocking(move || {
+        let lock = tokio::task::spawn_blocking(move || {
             let lock = OpenOptions::new()
                 .create(true)
                 .truncate(false)
@@ -239,9 +239,11 @@ impl Service {
                 .write(true)
                 .open(path)?;
             lock.lock()?;
-            Ok(lock)
+            Ok::<_, anyhow::Error>(lock)
         })
-        .await?
+        .await??;
+        self.reconcile_project_folders_locked().await?;
+        Ok(lock)
     }
 
     pub async fn sync(&self) -> Result<()> {
@@ -1142,7 +1144,7 @@ pub(crate) fn normalize_document_timestamps(source: &str) -> Result<String> {
     ))
 }
 
-fn split_properties(body: &str) -> Result<(Value, &str)> {
+pub(crate) fn split_properties(body: &str) -> Result<(Value, &str)> {
     let remainder = body
         .strip_prefix("---\r\n")
         .or_else(|| body.strip_prefix("---\n"));
