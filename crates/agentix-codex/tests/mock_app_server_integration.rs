@@ -696,6 +696,58 @@ async fn mock_pagination_covers_sessions_history_models_and_queues() {
 }
 
 #[tokio::test]
+async fn attachment_and_history_work_when_full_tool_history_stalls() {
+    for read_only in [false, true] {
+        let server = MockCodexAppServer::start();
+        server.set_page_size(1).await;
+        server.stall_full_history().await;
+        server
+            .add_thread(
+                MockThread::new("thr_large", "Large tool history", "/work")
+                    .with_turn(MockTurn::completed("old", "first", "first answer"))
+                    .with_turn(MockTurn::in_progress_with_output(
+                        "latest",
+                        "make a video",
+                        "rendering video",
+                    )),
+            )
+            .await;
+        if read_only {
+            server
+                .fail_next(
+                    "thread/resume",
+                    -32600,
+                    "thread already has an active writer",
+                )
+                .await;
+        }
+        let client = CodexClient::connect(server.endpoint()).await.unwrap();
+        let session = SessionId::new("thr_large");
+        tokio::time::timeout(Duration::from_secs(2), async {
+            client.attach(&session).await.unwrap();
+            let recent = client.read_history(&session, None, 1).await.unwrap();
+            assert_eq!(recent.turns[0].id, "latest");
+            assert_eq!(recent.turns[0].status, TurnStatus::InProgress);
+            assert_eq!(recent.turns[0].user_text.as_deref(), Some("make a video"));
+            assert_eq!(
+                recent.turns[0].agent_text.as_deref(),
+                Some("rendering video")
+            );
+            assert!(recent.older_cursor.is_some());
+            let older = client
+                .read_history(&session, recent.older_cursor, 1)
+                .await
+                .unwrap();
+            assert_eq!(older.turns[0].id, "old");
+            assert_eq!(older.turns[0].agent_text.as_deref(), Some("first answer"));
+            assert!(older.older_cursor.is_none());
+        })
+        .await
+        .expect("attachment and pagination must not load stalled full tool history");
+    }
+}
+
+#[tokio::test]
 async fn mock_rpc_failures_cover_history_fallback_and_rejected_requests() {
     let server = MockCodexAppServer::start();
     server

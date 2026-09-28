@@ -203,6 +203,7 @@ struct ServerState {
     failures: HashMap<String, VecDeque<(i64, String)>>,
     disconnect_responses: HashMap<String, usize>,
     held_requests: HashMap<String, (oneshot::Sender<()>, oneshot::Receiver<()>)>,
+    stall_full_history: bool,
 }
 
 #[derive(Clone)]
@@ -275,6 +276,10 @@ impl MockCodexAppServer {
     pub async fn set_page_size(&self, page_size: usize) {
         assert!(page_size > 0);
         self.shared.state.lock().await.page_size = Some(page_size);
+    }
+
+    pub async fn stall_full_history(&self) {
+        self.shared.state.lock().await.stall_full_history = true;
     }
 
     pub async fn hold_next_request(
@@ -774,6 +779,14 @@ async fn serve_connection<S>(
                             json!({"id": id, "error": {"code": code, "message": message}})
                         }
                     };
+                    // Large persisted tool outputs can stall full history while
+                    // the app-server's display summary remains available.
+                    if method == "thread/turns/list"
+                        && params["itemsView"] == "full"
+                        && server.state.lock().await.stall_full_history
+                    {
+                        continue;
+                    }
                     let held = server.state.lock().await.held_requests.remove(method);
                     if let Some((entered, release)) = held {
                         let sender = held_tx.clone();
