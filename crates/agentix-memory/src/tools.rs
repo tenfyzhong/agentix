@@ -161,8 +161,8 @@ impl ToolSet for ProjectTools {
             ),
             definition(
                 "repo_search",
-                "Bounded literal repository search; inspect incomplete coverage before concluding absence",
-                &json!({"query":{"type":"string"}}),
+                "Bounded literal repository search. Query must be nonempty and at most 512 UTF-8 bytes; empty queries cannot list files. Inspect incomplete coverage before concluding absence.",
+                &json!({"query":{"type":"string","minLength":1,"maxLength":512}}),
             ),
         ]
     }

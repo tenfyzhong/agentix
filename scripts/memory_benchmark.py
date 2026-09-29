@@ -6,6 +6,8 @@ import argparse
 import hashlib
 import json
 import math
+import sqlite3
+from collections import Counter
 from pathlib import Path
 import urllib.request
 
@@ -28,6 +30,93 @@ def dialogues(sample):
                 text += '\nImage caption: ' + turn['blip_caption']
             rows.append({'id': identity, 'text': text, 'session': session})
     return rows
+
+
+def source_receipts(sample):
+    """One attributed human-source receipt per dialogue turn, in original order.
+
+    Receipt timestamps are deterministic ordering values, not event dates. Event
+    dates remain in the message itself. Both persona speakers are human sources.
+    """
+    project = sample['sample_id']
+    return [{'instance_id': 'locomo-v1', 'receipt_id': f"{project}/{row['id']}",
+             'sequence': sequence, 'project_id': project, 'session_id': project,
+             'turn_id': row['id'], 'revision': 1, 'job_id': None,
+             'recorded_at': 1682899200 + sequence,
+             'messages': [{'id': row['id'], 'role': 'user', 'text': row['text']}]}
+            for sequence, row in enumerate(dialogues(sample), 1)]
+
+
+def policy_receipts(cases):
+    """Export only the authored dialogue, never expected or forbidden memories."""
+    sources = []
+    for case in cases:
+        project = 'policy-' + case['id']
+        for turn, messages in enumerate(case['turns'], 1):
+            sources.append({'instance_id': 'project-policy-v1',
+                            'receipt_id': f'{project}/{turn}', 'sequence': turn,
+                            'project_id': project, 'session_id': project,
+                            'turn_id': str(turn), 'revision': 1, 'job_id': None,
+                            'recorded_at': 1735689600 + turn,
+                            'messages': [{'id': f'turn-{turn}-message-{index}',
+                                          'role': message['role'], 'text': message['text']}
+                                         for index, message in enumerate(messages, 1)]})
+    return sources
+
+
+def audit_extraction(sources, database):
+    """Read one SQLite snapshot; audit coverage separately from semantic quality."""
+    expected = {source['receipt_id']: source for source in sources}
+    if not expected or len(expected) != len(sources):
+        raise ValueError('empty or duplicate source receipts')
+    with sqlite3.connect(Path(database).resolve().as_uri() + '?mode=ro', uri=True) as connection:
+        connection.execute('BEGIN')
+        now = connection.execute('SELECT unixepoch()').fetchone()[0]
+        actual = {identity: json.loads(data) for identity, data in
+                  connection.execute('SELECT receipt_id, data FROM sources')}
+        work = list(connection.execute(
+            'SELECT receipt_id, kind, state, payload, attempts, error FROM work_items'))
+        memories = [json.loads(row[0]) for row in connection.execute('SELECT data FROM memories')]
+    missing = sorted(set(expected) - set(actual))
+    unexpected = sorted(set(actual) - set(expected))
+    changed = sorted(identity for identity in expected.keys() & actual.keys()
+                     if expected[identity] != actual[identity])
+    states = Counter(row[2] for row in work)
+    processed = {(row[0], json.loads(row[3]).get('message_id'))
+                 for row in work if row[1] == 'extract' and row[2] == 'done'}
+    missing_messages = [{'receipt_id': identity, 'message_id': message['id']}
+                        for identity, source in expected.items() for message in source['messages']
+                        if message['text'] and (identity, message['id']) not in processed]
+    invalid, cited, eligible = [], set(), []
+    for memory in memories:
+        content = memory['content']
+        if memory['status'] not in ('active', 'conflicted'):
+            continue
+        if content.get('valid_until') is not None and content['valid_until'] <= now:
+            continue
+        eligible.append(memory)
+        if not content.get('evidence'):
+            invalid.append({'memory_id': memory['id'], 'reason': 'missing evidence'})
+        for evidence in content.get('evidence', []):
+            source = actual.get(evidence['receipt_id'])
+            message = next((m for m in source['messages'] if m['id'] == evidence['message_id']), None) if source else None
+            if not source or source['project_id'] != memory['project_id'] or not message or not evidence['quote'] or evidence['quote'] not in message['text']:
+                invalid.append({'memory_id': memory['id'], 'evidence': evidence})
+            else:
+                cited.add((memory['project_id'], evidence['receipt_id'], evidence['message_id']))
+    failures = [{'receipt_id': row[0], 'kind': row[1], 'attempts': row[4], 'error': row[5]}
+                for row in work if row[2] == 'failed']
+    complete = not (missing or unexpected or changed or missing_messages or invalid or
+                    any(state != 'done' and count for state, count in states.items()))
+    report = {'complete': complete, 'snapshot_at': now, 'expected_receipts': len(expected),
+              'received_receipts': len(actual), 'missing_receipts': missing,
+              'unexpected_receipts': unexpected, 'changed_receipts': changed,
+              'missing_completed_messages': missing_messages, 'work_states': dict(states),
+              'failed_work': failures, 'retried_work': sum(row[4] > 1 for row in work),
+              'memory_states': dict(Counter(m['status'] for m in memories)),
+              'retrievable_memories': len(eligible), 'invalid_evidence': invalid,
+              'cited_source_messages': len(cited)}
+    return report, eligible
 
 
 def retrieval_metrics(ranked_evidence, gold, k):
@@ -54,9 +143,10 @@ def prepare(dataset, output):
     """Export source-only corpus and a separate scoring file."""
     raw = Path(dataset).read_bytes()
     data = json.loads(raw)
-    corpus, questions = [], []
+    corpus, questions, sources = [], [], []
     for sample in data:
         project = sample['sample_id']
+        sources.extend(source_receipts(sample))
         rows = dialogues(sample)
         corpus.extend(dict(row, project=project) for row in rows)
         valid = {r['id'] for r in rows}
@@ -69,6 +159,7 @@ def prepare(dataset, output):
                               'invalid_evidence': sorted(set(evidence) - valid)})
     output = Path(output)
     output.mkdir(parents=True, exist_ok=True)
+    (output / 'sources.json').write_text(json.dumps(sources, ensure_ascii=False))
     (output / 'corpus.json').write_text(json.dumps(corpus, ensure_ascii=False))
     (output / 'questions.json').write_text(json.dumps(questions, ensure_ascii=False))
     manifest = {'dataset_sha256': hashlib.sha256(raw).hexdigest(),
@@ -139,6 +230,13 @@ def score_rows(questions, results, modes):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest='command', required=True)
+    audit_parser = commands.add_parser('audit-extraction')
+    audit_parser.add_argument('sources')
+    audit_parser.add_argument('database')
+    audit_parser.add_argument('output')
+    policy_parser = commands.add_parser('prepare-policy')
+    policy_parser.add_argument('cases')
+    policy_parser.add_argument('output')
     prepare_parser = commands.add_parser('prepare')
     prepare_parser.add_argument('dataset')
     prepare_parser.add_argument('output')
@@ -153,7 +251,20 @@ def main():
     score_parser.add_argument('output')
     score_parser.add_argument('--modes', default='fts,hybrid')
     args = parser.parse_args()
-    if args.command == 'prepare':
+    if args.command == 'audit-extraction':
+        sources = json.loads(Path(args.sources).read_text())
+        report, memories = audit_extraction(sources, args.database)
+        output = Path(args.output)
+        output.mkdir(parents=True, exist_ok=False)
+        (output / 'audit.json').write_text(json.dumps(report, indent=2))
+        print(json.dumps(report, indent=2))
+        if not report['complete']:
+            raise SystemExit(1)
+        (output / 'memories.json').write_text(json.dumps(memories, ensure_ascii=False, indent=2))
+    elif args.command == 'prepare-policy':
+        cases = json.loads(Path(args.cases).read_text())
+        Path(args.output).write_text(json.dumps(policy_receipts(cases), ensure_ascii=False, indent=2))
+    elif args.command == 'prepare':
         prepare(args.dataset, args.output)
     elif args.command == 'score':
         questions = json.loads(Path(args.questions).read_text())

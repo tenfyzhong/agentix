@@ -177,3 +177,91 @@ image captions. The existing reciprocal-rank fusion uses a constant of 60 and
 80 candidates per channel for the requested top 20; @5 and @10 here are prefixes
 of that top-20 ranking, not separate production queries at those limits.
 Extraction, reader, optimization, and competitor results remain outstanding.
+
+## Extraction replay progress and reproducibility
+
+`prepare` also exports `sources.json`: one immutable receipt per original dialogue
+turn, preserving speaker/date text and the dialogue ID as its message ID. Both
+persona speakers use the `user` evidence role; attribution remains in the text.
+All receipts for a conversation share a session so backward source discovery
+works. Synthetic receipt timestamps establish order only; original event dates
+remain in the source text. No gold QA fields enter these receipts. The initial
+export contains all 5,882 turns; this does not mean extraction has completed.
+
+The independently authored policy fixture is
+`crates/agentix-memory/tests/fixtures/quality/policy-cases.json`. Its first frozen
+version contains 12 cases and has SHA-256
+`1e6e040bd4303d5e125ca3b0116f504d9f883b493beba3e775982d92f1baefaf`.
+Required and forbidden facts are grading inputs, excluded by `prepare-policy`.
+This small development suite tests policy boundaries; it is not an estimate of
+real-world extraction accuracy. The offline case is related to the development
+smoke case and is not an independent held-out example.
+
+```sh
+python3 scripts/memory_benchmark.py prepare-policy crates/agentix-memory/tests/fixtures/quality/policy-cases.json /path/to/policy-sources.json
+cargo run -p agentix-memory --example extraction_benchmark -- /path/to/policy-sources.json crates/agentix-memory/tests/fixtures/quality/repository /path/to/new-policy-run
+```
+
+The replay adapter requires the installed Codex CLI with access to `gpt-6-astra`.
+It executes the production worker and repository/source tools, saves each model
+request, response, event stream and stderr, and retains the resulting isolated
+SQLite database. Start with a new output directory. Append `--resume` to the same
+command after an interruption to continue an existing run. The adapter holds an
+exclusive OS file lock, validates source/repository/binary/model/CLI fingerprints,
+and checkpoints after draining each receipt. Replayed intake is idempotent, and
+request numbers resume above all existing artifacts. Keep the exact executable
+used for the run; a rebuilt executable with a different digest requires a new run.
+A failed worker remains a failed run and is not silently skipped on resumption.
+CLI-native tool events invalidate a model-only benchmark attempt. Only the outer
+production worker may execute the returned memory/repository tool calls.
+
+Initial smoke `extraction-smoke-v1` failed all three worker attempts because the
+model requested an empty repository query. The runtime already prohibited it,
+but the tool schema did not disclose that restriction. The schema now specifies
+a nonempty query and describes the 512 UTF-8 byte limit; the existing runtime
+byte check remains authoritative. Regression testing reproduced the missing
+schema constraint before the fix.
+
+`extraction-smoke-v2` completed one extraction and one consolidation, with no
+failed work and one active memory. Inspection confirmed the Acorn production
+scope, contractual reason, rejected cloud embeddings, staging exception, and
+literal source evidence. All six model event streams contained no CLI-native
+tool actions. Their aggregate usage was 124,732 input tokens (30,464 cached) and
+627 output tokens. This verifies the pipeline on one development example only;
+CLI overhead is substantial and must be addressed before an economical full
+replay. The 12-case policy run has started; no policy-suite score is claimed yet.
+
+
+The model-only adapter now uses the documented
+[`model_instructions_file`, tool feature flags, and `web_search` configuration](https://developers.openai.com/codex/config-reference/)
+to replace general coding instructions and omit shell, collaboration and web
+search tools for that invocation. It still supplies the unmodified production
+memory instructions, history, and tool schemas. Global configuration and saved
+authentication are unchanged.
+
+On the same development smoke input, `extraction-smoke-v3` completed extraction
+and consolidation with one active memory, no failed work, and preserved the
+contractual reason, rejected cloud embeddings and staging exemption. Six requests
+used 81,270 input tokens, compared with 124,732 for v2 (34.84% fewer). This is an
+observed single-run adapter comparison, not a general quality or latency claim.
+The remaining approximately 13,000 input tokens per request still include CLI
+context; include them in the actual cost accounting.
+
+Full development-conversation extraction is running separately for `conv-26`
+(419 receipts) and `conv-30` (369 receipts), with one isolated database per
+conversation. The executable is pinned in the external artifact directory before
+launch. These are whole conversations, not a sampled subset of their turns.
+Held-out extraction and all final quality comparisons remain outstanding.
+
+After a replay, audit receipt coverage and source provenance from a read-only
+SQLite snapshot:
+
+```sh
+python3 scripts/memory_benchmark.py audit-extraction /path/to/sources.json /path/to/run/memory.sqlite3 /path/to/new-audit-directory
+```
+
+The command always writes `audit.json` and exits unsuccessfully for missing or
+changed receipts, messages without completed extraction work, unfinished work, or
+invalid evidence in currently retrievable memories. Only a successful audit
+exports `memories.json`. This is a structural coverage and provenance check, not
+a semantic quality score; required and forbidden policy facts still need grading.

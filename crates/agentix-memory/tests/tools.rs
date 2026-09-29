@@ -163,3 +163,25 @@ async fn tools_are_project_scoped_and_repository_reads_are_bounded() {
     assert_eq!(found["matches"][0]["path"], "README.md");
     assert!(tools.repository_checked());
 }
+
+#[tokio::test]
+async fn repository_search_schema_exposes_nonempty_query_contract() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(&dir.path().join("memory.db"))
+        .await
+        .unwrap();
+    let tools = ProjectTools::new(store, "p".into(), Some(dir.path().to_owned())).unwrap();
+    let search = tools
+        .definitions()
+        .into_iter()
+        .find(|tool| tool.name == "repo_search")
+        .unwrap();
+    assert_eq!(search.parameters["properties"]["query"]["minLength"], 1);
+    assert!(search.description.contains("512 UTF-8 bytes"));
+    assert!(
+        tools
+            .execute("repo_search", json!({"query":""}))
+            .await
+            .is_err()
+    );
+}
