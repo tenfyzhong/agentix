@@ -603,8 +603,8 @@ expiry for a dated historical assertion. It failed on the frozen baseline becaus
 no active memory cited the source. The candidate extraction/consolidation prompts
 clarify that supported experiences with lasting significance are historical
 knowledge; they still exclude task progress, tool errors and repository facts.
-This candidate requires live replay and exclusion-policy validation before any
-claim of improved quality.
+This candidate requires complete development and held-out evaluation before any
+claim of improved overall quality.
 
 The candidate passed this source-level regression on the completed 16-source
 development replay. All 23 work items completed, with no missing/changed sources,
@@ -613,6 +613,13 @@ messages; one work item required retries. The [candidate audit](benchmarks/memor
 records input, binary and worker-source hashes. This is evidence for the specific
 historical-fact fix, not full-dataset recall, exclusion-policy acceptance or an
 answer score.
+The same candidate also completed the frozen project-policy regression: all 12
+cases passed, with all 12 required facts retained and none of the 15 forbidden
+facts present in retrievable memory. All 15 receipts and 21 work items completed
+without retries or invalid evidence. The [policy artifact](benchmarks/memory/development-retention-policy-v1.json)
+contains explicit per-case labels, explanations, audit counters and fingerprints.
+These labels come from main-agent inspection, not an independent blind judge;
+the small synthetic suite does not establish general exclusion accuracy.
 Concurrent local compilation caused substantial host memory pressure during these
 runs; interrupted comparator replays preserve their checkpoints. Do not use these
 wall-clock timings to compare native system throughput.
@@ -649,3 +656,47 @@ Full category/project aggregates are in the [score artifact](benchmarks/memory/d
 with [input and scorer hashes](benchmarks/memory/development-raw-answer-baseline-v1-manifest.json).
 Do not compare these token F1 values directly with published semantic-accuracy
 headlines or label them as extracted-memory results.
+
+The completed raw-source reader runs also have [audited model usage](benchmarks/memory/development-raw-reader-usage-v1.json).
+Each has 304 completed model calls, no failed attempt logs and no event logs
+missing completion usage. Input totals include the Codex bootstrap instructions
+as well as the retrieved context; cached input is a subset of input tokens.
+
+| Reader mode | Input tokens | Cached input tokens | Output tokens |
+| --- | ---: | ---: | ---: |
+| FTS | 3,962,465 | 2,700,288 | 15,870 |
+| FTS + BGE-M3 | 3,958,086 | 2,635,008 | 15,941 |
+
+These totals exclude extraction, retrieval/embedding and judge calls. They are
+not the size of the retrieved memories or a monetary cost estimate. The artifact
+also retains nearest-rank p50/p95 invocation wall times and event-file hashes;
+those timings include CLI startup, network and the contended host, so they must
+not be used to rank native memory-system retrieval performance.
+
+### Development context-depth diagnostic
+
+The same saved rankings were passed through the frozen reader's 24,000-byte
+ranked-prefix budget at depths 10 and 20. The [complete diagnostic](benchmarks/memory/development-context-depth-v1.json)
+covers all 230 development questions with valid non-adversarial evidence labels.
+No answer labels or held-out measurements were used to choose the next depth
+experiment. These are original-source evidence recalls, not answer accuracy.
+
+| Retrieval variant | Recall at depth 10 | Recall at depth 20 | Mean bytes at depth 20 |
+| --- | ---: | ---: | ---: |
+| Baseline FTS | 58.38% | 64.94% | 4,274 |
+| Baseline hybrid | 63.25% | 69.99% | 4,182 |
+| Porter + stopword FTS | 64.98% | 70.41% | 4,199 |
+| Porter hybrid | 66.62% | 72.75% | 4,261 |
+
+None of these contexts hit the byte limit; the largest was 6,018 bytes. The
+remaining budget justifies investigating deeper candidate lists before choosing
+an answer configuration. More evidence can also introduce distractors, so recall
+alone does not justify changing production defaults or claiming better answers.
+
+The raw retrieval adapter accepts an optional final `DEPTH` argument after the
+lexical variant, bounded to 1–100 (default 20). Results record `retrieval_depth`.
+For example, run the development questions with `porter 100`, then use the
+reader's `--top-k` and `--context-bytes` to measure the supplied-context budget.
+Increasing the production hybrid search limit can also enlarge its candidate
+pool (up to the existing cap), so a fresh deeper retrieval run must not be
+presented as simply extending the original top-20 ranking. Keep both artifacts.

@@ -186,13 +186,23 @@ async fn import_documents(
     Ok(mapping)
 }
 
+fn retrieval_depth(value: Option<&str>) -> Result<i64> {
+    let depth = value.unwrap_or("20").parse::<i64>()?;
+    ensure!(
+        (1..=100).contains(&depth),
+        "retrieval depth must be 1..=100"
+    );
+    Ok(depth)
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args: Vec<_> = std::env::args().collect();
     ensure!(
-        (5..=6).contains(&args.len()),
-        "usage: retrieval_benchmark CORPUS QUESTIONS VECTORS_JSONL_OR_DASH OUTPUT_JSONL [baseline|porter|baseline-stop|porter-stop]"
+        (5..=7).contains(&args.len()),
+        "usage: retrieval_benchmark CORPUS QUESTIONS VECTORS_JSONL_OR_DASH OUTPUT_JSONL [baseline|porter|baseline-stop|porter-stop] [DEPTH]"
     );
+    let depth = retrieval_depth(args.get(6).map(String::as_str))?;
     let documents: Vec<Document> = serde_json::from_reader(File::open(&args[1])?)?;
     let questions: Vec<Query> = serde_json::from_reader(File::open(&args[2])?)?;
     let mut vectors = HashMap::new();
@@ -227,13 +237,13 @@ async fn main() -> Result<()> {
             }
             let start = Instant::now();
             let results = if mode == "fts" {
-                store.search(&question.project, &lexical, 20).await?
+                store.search(&question.project, &lexical, depth).await?
             } else {
                 let vector = vectors
                     .get(&digest(&question.question))
                     .context("missing query vector")?;
                 store
-                    .hybrid_search(&question.project, &lexical, 1, vector, 20)
+                    .hybrid_search(&question.project, &lexical, 1, vector, depth)
                     .await?
             };
             let elapsed = start.elapsed().as_secs_f64() * 1000.0;
@@ -241,7 +251,7 @@ async fn main() -> Result<()> {
             writeln!(
                 output,
                 "{}",
-                json!({"id":question.id,"mode":mode,"ids":ids,"retrieval_ms":elapsed,"lexical_variant":variant})
+                json!({"id":question.id,"mode":mode,"ids":ids,"retrieval_ms":elapsed,"lexical_variant":variant,"retrieval_depth":depth})
             )?;
         }
         output.flush()?;
@@ -252,6 +262,16 @@ async fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn retrieval_depth_defaults_and_bounds_preserve_existing_runs() {
+        assert_eq!(retrieval_depth(None).unwrap(), 20);
+        assert_eq!(retrieval_depth(Some("50")).unwrap(), 50);
+        assert_eq!(retrieval_depth(Some("100")).unwrap(), 100);
+        for invalid in ["0", "101", "-1", "bad"] {
+            assert!(retrieval_depth(Some(invalid)).is_err());
+        }
+    }
 
     #[test]
     fn stopword_experiment_preserves_identifiers_negation_and_nonempty_queries() {

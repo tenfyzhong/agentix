@@ -1,0 +1,113 @@
+{
+  "scope": "Development raw-source evidence coverage after applying the reader byte budget, not answer correctness or extracted-memory quality.",
+  "eligible_questions": 230,
+  "all_development_questions": 304,
+  "context_bytes": 24000,
+  "method": "Frozen memory_reader.reader_payload applies a ranked prefix, no partial document; memory_benchmark.retrieval_metrics scores all annotated source evidence. Category 5 and invalid/missing annotations excluded.",
+  "sha256": {
+    "hybrid-baseline.jsonl": "314c98e040101fdd327712c2f94886c05c3bf78c9f348fae13c205e197bfdb7e",
+    "lexical-ablation-v1/porter-stop.jsonl": "03d6505163d802c138207d7bc73ec6283d39c11f3dee1d316d702adb5e3b92ca",
+    "development-porter.jsonl": "a126c52ab504f3867f31c0a9c49bc63362e59bebca3a3518e2b1b9d9f7ebfc5e",
+    "scripts/memory_reader.py": "33051d304542b1b99dd84a09cb41dc4b9d609e1723e51dcc4b08edee034129ee",
+    "scripts/memory_benchmark.py": "35b1747a7c8ab4793c05385cdb2654d9cb07d6f6e1e818ac4c01a0ba3e3bcdb2",
+    "questions.json": "c0c5183a48a67b56d43a5adc6ad867171bcc14f2021aa5babf64aa5a9c6dea33"
+  },
+  "results": {
+    "baseline-fts/10": {
+      "n": 230,
+      "recall": 0.5838405797101449,
+      "hit": 0.6347826086956522,
+      "all_evidence": 0.5434782608695652,
+      "mrr": 0.41719461697722565,
+      "ndcg": 0.4462989036749014,
+      "mean_context_bytes": 2166.886956521739,
+      "max_context_bytes": 3087,
+      "mean_records": 10,
+      "budget_truncated_questions": 0
+    },
+    "baseline-fts/20": {
+      "n": 230,
+      "recall": 0.6494202898550725,
+      "hit": 0.7,
+      "all_evidence": 0.6043478260869565,
+      "mrr": 0.42180908773552467,
+      "ndcg": 0.4645320607025689,
+      "mean_context_bytes": 4274.373913043478,
+      "max_context_bytes": 5886,
+      "mean_records": 20,
+      "budget_truncated_questions": 0
+    },
+    "baseline-hybrid/10": {
+      "n": 230,
+      "recall": 0.6325362318840579,
+      "hit": 0.6869565217391305,
+      "all_evidence": 0.5826086956521739,
+      "mrr": 0.44024327122153206,
+      "ndcg": 0.476684994939691,
+      "mean_context_bytes": 2112.191304347826,
+      "max_context_bytes": 3056,
+      "mean_records": 10,
+      "budget_truncated_questions": 0
+    },
+    "baseline-hybrid/20": {
+      "n": 230,
+      "recall": 0.6999275362318841,
+      "hit": 0.7608695652173914,
+      "all_evidence": 0.6391304347826087,
+      "mrr": 0.44531757493714014,
+      "ndcg": 0.49542336222447547,
+      "mean_context_bytes": 4182.417391304348,
+      "max_context_bytes": 5897,
+      "mean_records": 20,
+      "budget_truncated_questions": 0
+    },
+    "porter-stop-fts/10": {
+      "n": 230,
+      "recall": 0.6497826086956522,
+      "hit": 0.7043478260869566,
+      "all_evidence": 0.6043478260869565,
+      "mrr": 0.4854813664596273,
+      "ndcg": 0.5105261704102362,
+      "mean_context_bytes": 2187.5913043478263,
+      "max_context_bytes": 3286,
+      "mean_records": 9.947826086956521,
+      "budget_truncated_questions": 0
+    },
+    "porter-stop-fts/20": {
+      "n": 230,
+      "recall": 0.7041304347826087,
+      "hit": 0.7565217391304347,
+      "all_evidence": 0.6521739130434783,
+      "mrr": 0.48900261084841784,
+      "ndcg": 0.5257260597887766,
+      "mean_context_bytes": 4199.204347826087,
+      "max_context_bytes": 5961,
+      "mean_records": 19.77391304347826,
+      "budget_truncated_questions": 0
+    },
+    "porter-hybrid/10": {
+      "n": 230,
+      "recall": 0.6662318840579711,
+      "hit": 0.7130434782608696,
+      "all_evidence": 0.6217391304347826,
+      "mrr": 0.4792667356797792,
+      "ndcg": 0.5129345067893899,
+      "mean_context_bytes": 2186.8739130434783,
+      "max_context_bytes": 3117,
+      "mean_records": 10,
+      "budget_truncated_questions": 0
+    },
+    "porter-hybrid/20": {
+      "n": 230,
+      "recall": 0.727463768115942,
+      "hit": 0.7739130434782608,
+      "all_evidence": 0.6782608695652174,
+      "mrr": 0.48344443155369926,
+      "ndcg": 0.5297152429783866,
+      "mean_context_bytes": 4261.404347826087,
+      "max_context_bytes": 6018,
+      "mean_records": 20,
+      "budget_truncated_questions": 0
+    }
+  }
+}
