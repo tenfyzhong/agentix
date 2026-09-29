@@ -177,12 +177,14 @@ async fn model_loops_run_in_parallel_without_holding_database_transactions() {
     let a = tokio::spawn(async move { a.run_once("a").await });
     let b = worker.clone();
     let b = tokio::spawn(async move { b.run_once("b").await });
-    tokio::time::timeout(Duration::from_secs(2), model.entered.acquire_many(2))
+    // These are deadlock watchdogs, not host performance thresholds. Both
+    // requests stay blocked until after the independent ingestion succeeds.
+    tokio::time::timeout(Duration::from_secs(30), model.entered.acquire_many(2))
         .await
         .unwrap()
         .unwrap()
         .forget();
-    tokio::time::timeout(Duration::from_millis(500), store.ingest(&source("c")))
+    tokio::time::timeout(Duration::from_secs(30), store.ingest(&source("c")))
         .await
         .unwrap()
         .unwrap();
@@ -496,7 +498,9 @@ async fn screening_cannot_skip_a_newer_source_revision() {
         Arc::new(Repositories(temp.path().to_owned())),
     )
     .with_extraction_gate(Arc::new(SupersedingGate(store.clone())));
-    assert!(worker.run_once("worker").await.is_err());
+    // Either the cancellation monitor or the guarded completion can win.
+    // Both must leave the new revision pending without calling the model.
+    assert!(!matches!(worker.run_once("worker").await, Ok(false)));
     assert_eq!(store.work_details(1).await.unwrap()["state"], "cancelled");
     assert_eq!(store.work_counts().await.unwrap().pending, 1);
     assert_eq!(model.0.load(std::sync::atomic::Ordering::SeqCst), 0);
@@ -519,6 +523,14 @@ async fn rapid_source_revisions_coalesce_before_calling_model() {
         AgentConfig::default(),
         Arc::new(Repositories(temp.path().into())),
     ));
+    // Keep virtual time fixed while SQLite commits the replacement. A runnable
+    // task prevents automatic clock advancement during database I/O.
+    tokio::time::pause();
+    let clock_guard = tokio::spawn(async {
+        loop {
+            tokio::task::yield_now().await;
+        }
+    });
     let child = worker.clone();
     let running = tokio::spawn(async move { child.run_once("worker").await });
     tokio::time::timeout(Duration::from_secs(2), async {
@@ -528,7 +540,7 @@ async fn rapid_source_revisions_coalesce_before_calling_model() {
     })
     .await
     .unwrap();
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    tokio::time::advance(Duration::from_millis(50)).await;
     assert_eq!(
         model.entered.available_permits(),
         0,
@@ -540,8 +552,10 @@ async fn rapid_source_revisions_coalesce_before_calling_model() {
     revised.sequence = 2;
     revised.messages[0].text.push_str(" with new context");
     store.ingest(&revised).await.unwrap();
+    clock_guard.abort();
+    tokio::time::resume();
     assert!(
-        tokio::time::timeout(Duration::from_secs(1), running)
+        tokio::time::timeout(Duration::from_secs(30), running)
             .await
             .unwrap()
             .unwrap()

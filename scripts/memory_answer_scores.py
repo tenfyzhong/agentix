@@ -85,7 +85,8 @@ def score_answers(questions, answers, modes, grades=None, *, official_f1=False):
             grade = grade_map[(identity, mode)]
             if any(type(grade.get(field)) is not bool for field in ('correct', 'faithful')):
                 raise ValueError('semantic grades must be explicit booleans')
-            values.update(semantic_accuracy=float(grade['correct']), faithfulness=float(grade['faithful']))
+            values.update(semantic_accuracy=float(grade['correct']), faithfulness=float(grade['faithful']),
+                          grounded_accuracy=float(grade['correct'] and grade['faithful']))
         partition = 'adversarial' if category == 5 else 'non_adversarial'
         for group in (partition, f'category/{category}', f'project/{question["project"]}/{partition}'):
             groups[mode].setdefault(group, []).append(values)

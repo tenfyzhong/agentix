@@ -9,6 +9,29 @@ scores = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(scores)
 
 class AnswerScoreTests(unittest.TestCase):
+    def test_grounded_accuracy_requires_both_labels_on_the_same_answer(self):
+        labels = [(True, True), (True, False), (False, True), (False, False)]
+        questions = [{'id': str(i), 'project': 'p', 'category': 4, 'answer': 'blue'}
+                     for i in range(4)]
+        answers = [{'id': str(i), 'mode': 'fts',
+                    'answer': {'answer': 'blue', 'abstained': False}} for i in range(4)]
+        grades = [{'id': str(i), 'mode': 'fts', 'correct': correct, 'faithful': faithful}
+                  for i, (correct, faithful) in enumerate(labels)]
+        report = scores.score_answers(questions, answers, ['fts'], grades)['fts']
+        for group in ('non_adversarial', 'category/4', 'project/p/non_adversarial'):
+            self.assertEqual(report[group]['semantic_accuracy'], 0.5)
+            self.assertEqual(report[group]['faithfulness'], 0.5)
+            self.assertEqual(report[group]['grounded_accuracy'], 0.25)
+        # Equal marginal rates do not imply equal joint success.
+        grades[2]['correct'], grades[0]['correct'] = True, False
+        report = scores.score_answers(questions, answers, ['fts'], grades)['fts']
+        self.assertEqual(report['non_adversarial']['grounded_accuracy'], 0.25)
+        grades[2]['correct'], grades[3]['correct'] = False, True
+        report = scores.score_answers(questions, answers, ['fts'], grades)['fts']
+        self.assertEqual(report['non_adversarial']['grounded_accuracy'], 0)
+        ungraded = scores.score_answers(questions, answers, ['fts'])['fts']
+        self.assertNotIn('grounded_accuracy', ungraded['non_adversarial'])
+
     @unittest.skipUnless(importlib.util.find_spec('nltk'), 'optional LoCoMo scoring dependency')
     def test_locomo_stemming_and_category_specific_reference_rules(self):
         self.assertEqual(scores.locomo_score('camped and hikes', 'camping hike', 4), 1)

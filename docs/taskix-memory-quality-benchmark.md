@@ -268,6 +268,13 @@ a semantic quality score; required and forbidden policy facts still need grading
 
 ## Project-policy development results
 
+Semantic answer reports also include `grounded_accuracy`: the fraction of
+answers graded both correct and faithful on the same question. This is computed
+per answer, not by multiplying aggregate correctness and faithfulness rates.
+It uses the same complete denominator and category/project partitions; it is
+absent when semantic grades have not been supplied. Adversarial refusal remains
+separate from non-adversarial answer accuracy.
+
 The frozen 12-case suite completed all 15 receipts and 21 extraction/consolidation
 work items, with zero failed or retried work items. The final store has five
 active memories and one superseded memory. All currently retrievable evidence
@@ -599,7 +606,46 @@ knowledge; they still exclude task progress, tool errors and repository facts.
 This candidate requires live replay and exclusion-policy validation before any
 claim of improved quality.
 
+The candidate passed this source-level regression on the completed 16-source
+development replay. All 23 work items completed, with no missing/changed sources,
+failed work or invalid evidence. Three retrievable memories cite nine source
+messages; one work item required retries. The [candidate audit](benchmarks/memory/development-retention-candidate-v1.json)
+records input, binary and worker-source hashes. This is evidence for the specific
+historical-fact fix, not full-dataset recall, exclusion-policy acceptance or an
+answer score.
+Concurrent local compilation caused substantial host memory pressure during these
+runs; interrupted comparator replays preserve their checkpoints. Do not use these
+wall-clock timings to compare native system throughput.
+
 ```sh
 TASKIX_BENCH_RETENTION_DB=/path/to/replay/memory.sqlite3 \
 python3 -m unittest discover -s scripts/tests -p test_memory_retention.py
 ```
+
+### Complete development raw-source answer baseline
+
+Both baseline readers completed all 304 development questions: 233 answerable
+and 71 adversarial. These runs retrieve original attributed source turns, not
+extracted memories. They measure the retrieval/reader baseline separately from
+the extraction pipeline. The identical reader uses the ranked top-ten prefix
+within 24,000 UTF-8 bytes. No held-out answers were inspected for this comparison.
+
+| Mode | Answerable LoCoMo-compatible F1 | Diagnostic token F1 | Answerable abstention | Adversarial abstention |
+| --- | ---: | ---: | ---: | ---: |
+| FTS | 27.25% | 25.44% | 24.03% | 85.92% |
+| FTS + BGE-M3 | 30.13% | 28.77% | 18.45% | 83.10% |
+
+The hybrid run improves compatible F1 by 2.88 percentage points, while abstaining
+less often on both answerable and adversarial questions. These are single-run
+development observations, not evidence of statistical significance or strict
+semantic correctness. The strict mode-blind judge is still running. In particular,
+an abstention flag alone does not establish a correct refusal without unsupported
+claims. The upstream adversarial phrase metric is zero in both runs because the
+reader does not use its two required literal phrases; this must not be reported
+as zero semantic refusal accuracy. Preserve the raw reader output rather than
+rewriting it to satisfy that metric.
+
+Full category/project aggregates are in the [score artifact](benchmarks/memory/development-raw-answer-baseline-v1.json),
+with [input and scorer hashes](benchmarks/memory/development-raw-answer-baseline-v1-manifest.json).
+Do not compare these token F1 values directly with published semantic-accuracy
+headlines or label them as extracted-memory results.

@@ -1,0 +1,138 @@
+{
+  "metric_note": "Diagnostic unstemmed token F1; not official LoCoMo F1",
+  "locomo_compatibility": {
+    "enabled": true,
+    "upstream_commit": "3eb6f2c585f5e1699204e3c3bdf7adc5c28cb376",
+    "raw_answer_text": true
+  },
+  "scores": {
+    "fts": {
+      "non_adversarial": {
+        "n": 233,
+        "abstention_rate": 0.24034334763948498,
+        "token_f1": 0.2544047275838772,
+        "locomo_f1": 0.2725277449617515
+      },
+      "category/2": {
+        "n": 63,
+        "abstention_rate": 0.1111111111111111,
+        "token_f1": 0.3834718739465581,
+        "locomo_f1": 0.3898577376337634
+      },
+      "project/conv-26/non_adversarial": {
+        "n": 152,
+        "abstention_rate": 0.26973684210526316,
+        "token_f1": 0.26586697683434035,
+        "locomo_f1": 0.286110977611394
+      },
+      "category/3": {
+        "n": 13,
+        "abstention_rate": 0.6153846153846154,
+        "token_f1": 0.04662583074493744,
+        "locomo_f1": 0.11919844861021332
+      },
+      "category/1": {
+        "n": 43,
+        "abstention_rate": 0.37209302325581395,
+        "token_f1": 0.11325387178170541,
+        "locomo_f1": 0.12719197532467028
+      },
+      "category/4": {
+        "n": 114,
+        "abstention_rate": 0.21929824561403508,
+        "token_f1": 0.2600133437027431,
+        "locomo_f1": 0.27999203801988953
+      },
+      "adversarial": {
+        "n": 71,
+        "abstention_rate": 0.8591549295774648,
+        "locomo_phrase_accuracy": 0.0
+      },
+      "category/5": {
+        "n": 71,
+        "abstention_rate": 0.8591549295774648,
+        "locomo_phrase_accuracy": 0.0
+      },
+      "project/conv-26/adversarial": {
+        "n": 47,
+        "abstention_rate": 0.851063829787234,
+        "locomo_phrase_accuracy": 0.0
+      },
+      "project/conv-30/non_adversarial": {
+        "n": 81,
+        "abstention_rate": 0.18518518518518517,
+        "token_f1": 0.23289532158300805,
+        "locomo_f1": 0.24703822196489142
+      },
+      "project/conv-30/adversarial": {
+        "n": 24,
+        "abstention_rate": 0.875,
+        "locomo_phrase_accuracy": 0.0
+      }
+    },
+    "hybrid": {
+      "non_adversarial": {
+        "n": 233,
+        "abstention_rate": 0.18454935622317598,
+        "token_f1": 0.2877303129028672,
+        "locomo_f1": 0.3012928888144261
+      },
+      "category/2": {
+        "n": 63,
+        "abstention_rate": 0.07936507936507936,
+        "token_f1": 0.4147122182140995,
+        "locomo_f1": 0.41601727386698123
+      },
+      "project/conv-26/non_adversarial": {
+        "n": 152,
+        "abstention_rate": 0.2236842105263158,
+        "token_f1": 0.30071102465634075,
+        "locomo_f1": 0.31793911986939666
+      },
+      "category/3": {
+        "n": 13,
+        "abstention_rate": 0.5384615384615384,
+        "token_f1": 0.07393939393939394,
+        "locomo_f1": 0.11430814729165553
+      },
+      "category/1": {
+        "n": 43,
+        "abstention_rate": 0.3023255813953488,
+        "token_f1": 0.12764884116314656,
+        "locomo_f1": 0.14319829195322625
+      },
+      "category/4": {
+        "n": 114,
+        "abstention_rate": 0.15789473684210525,
+        "token_f1": 0.3023173760320383,
+        "locomo_f1": 0.3188475646610634
+      },
+      "adversarial": {
+        "n": 71,
+        "abstention_rate": 0.8309859154929577,
+        "locomo_phrase_accuracy": 0.0
+      },
+      "category/5": {
+        "n": 71,
+        "abstention_rate": 0.8309859154929577,
+        "locomo_phrase_accuracy": 0.0
+      },
+      "project/conv-26/adversarial": {
+        "n": 47,
+        "abstention_rate": 0.8297872340425532,
+        "locomo_phrase_accuracy": 0.0
+      },
+      "project/conv-30/non_adversarial": {
+        "n": 81,
+        "abstention_rate": 0.1111111111111111,
+        "token_f1": 0.2633714464025218,
+        "locomo_f1": 0.27005551695818525
+      },
+      "project/conv-30/adversarial": {
+        "n": 24,
+        "abstention_rate": 0.8333333333333334,
+        "locomo_phrase_accuracy": 0.0
+      }
+    }
+  }
+}
