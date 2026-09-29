@@ -114,7 +114,32 @@ CREATE TABLE IF NOT EXISTS project_lookup (
 );
 CREATE INDEX IF NOT EXISTS project_lookup_by_root ON project_lookup(canonical_root);
 CREATE INDEX IF NOT EXISTS project_lookup_by_key ON project_lookup(folded_key);
-PRAGMA user_version = 14;
+CREATE TABLE IF NOT EXISTS memory_source_identity (
+    singleton INTEGER PRIMARY KEY CHECK(singleton=1),
+    instance_id TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS memory_source_heads (
+    session_id TEXT NOT NULL,
+    turn_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    content_hash TEXT NOT NULL,
+    PRIMARY KEY(session_id,turn_id)
+);
+CREATE TABLE IF NOT EXISTS memory_source_outbox (
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+    receipt_id TEXT NOT NULL UNIQUE,
+    project_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    turn_id TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    snapshot TEXT NOT NULL CHECK(json_valid(snapshot)),
+    acknowledged INTEGER NOT NULL DEFAULT 0 CHECK(acknowledged IN (0,1)),
+    UNIQUE(session_id,turn_id,revision)
+);
+CREATE INDEX IF NOT EXISTS memory_source_pending ON memory_source_outbox(sequence) WHERE acknowledged=0;
+CREATE INDEX IF NOT EXISTS memory_source_project ON memory_source_outbox(project_id,sequence);
+PRAGMA user_version = 15;
 PRAGMA application_id = 0x4158544b;
 CREATE INDEX IF NOT EXISTS jobs_by_followup_session ON jobs(json_extract(data, '$.followup_session_id'));
 CREATE INDEX IF NOT EXISTS inbox_by_lease_session ON inbox_entries(json_extract(data, '$.lease.session_ref'));

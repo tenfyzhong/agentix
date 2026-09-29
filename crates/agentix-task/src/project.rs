@@ -17,6 +17,11 @@ pub struct ProjectDirectory {
 }
 
 impl ProjectDirectory {
+    #[must_use]
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
     pub fn discover(path: &Path) -> Result<Self> {
         let root = path.canonicalize()?;
         let output = Command::new("git")

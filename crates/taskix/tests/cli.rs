@@ -24,6 +24,43 @@ mod project_resolution;
 struct Cli {
     dir: TempDir,
 }
+
+#[test]
+fn hook_record_assigns_registered_directory_to_unbound_memory_source() {
+    let cli = Cli::new();
+    let project = cli.ok(&[
+        "project",
+        "register",
+        "--root",
+        cli.dir.path().to_str().unwrap(),
+    ]);
+    let file = cli.dir.path().join("capture.json");
+    std::fs::write(
+        &file,
+        json!({"turn_id":"memory-turn","messages":[
+            {"id":"decision","role":"user","text":"Offline use is a project constraint"}
+        ]})
+        .to_string(),
+    )
+    .unwrap();
+    cli.ok(&[
+        "hook",
+        "record",
+        "--session",
+        "memory-session",
+        "--file",
+        file.to_str().unwrap(),
+    ]);
+    tokio::runtime::Runtime::new().unwrap().block_on(async {
+        let store = agentix_task::Store::open(&cli.dir.path().join("state.sqlite3"))
+            .await
+            .unwrap();
+        let page = store.memory_sources(0, 10).await.unwrap();
+        assert_eq!(page.len(), 1);
+        assert_eq!(page[0].project_id, project["id"].as_str().unwrap());
+        assert!(page[0].job_id.is_none());
+    });
+}
 impl Cli {
     fn new() -> Self {
         let dir = TempDir::new().unwrap();
@@ -1412,3 +1449,7 @@ fn non_git_job_creation_registers_directory_without_context() {
     );
     assert_eq!(project["name"], "directory-work");
 }
+
+#[cfg(unix)]
+#[path = "support/memory.rs"]
+mod memory;

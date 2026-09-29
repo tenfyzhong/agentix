@@ -205,3 +205,32 @@ or `transition: "submit"` without `task_id` for an already ready ACTIVE Job.
 Both use the same `--review-policy` and mandatory `--expect-job-revision` pair.
 Older CLIs reject these flags; upgrade Taskix and the plugin together. Missing
 completed-scope metadata also causes a safe main-agent fallback.
+
+## Project memory (optional, macOS/Linux)
+
+```sh
+taskix memory status --project PROJECT_ID --json
+taskix memory doctor --json
+taskix memory search 'decision keywords' --project PROJECT_ID --json
+taskix memory show mem_ID --project PROJECT_ID --json
+taskix memory source receipt_ID --message MESSAGE_ID --offset 0 --project PROJECT_ID --json
+taskix memory context 'current task' --session HOST_SESSION --turn TURN_ID --project PROJECT_ID --json
+taskix memory work 42 --project PROJECT_ID --json
+taskix memory receipt receipt_ID --wait-seconds 10 --project PROJECT_ID --json
+```
+
+Reads do not require a Job/lease or change task ownership. Use the current
+Project and actual session/turn identity. Inspect evidence on demand instead of
+loading the entire memory database. `fts_fallback`/`offline_fts` indicate degraded
+retrieval. Current user instructions and repository evidence take precedence.
+The host already injects a bounded packet when memory is enabled; do not request
+another full context packet just to duplicate it.
+
+Memory writes, historical `backfill`, `reindex`, projection `sync`, `reload` and
+optional `ask` require the separately running `taskix memory serve`. Manual
+`create`/`update` take a JSON document; updates and `forget` require `--revision`.
+Preserve the host executor identity for provenance. Do not create a Job solely
+to retrieve memory. See the repository's `docs/taskix-memory.md` for configuration,
+read-only projection recovery, provider budgets and dual-database recovery.
+Obsidian memory notes are read-only; file edits are never imported and are
+replaced from SQLite on synchronization. Use the memory CLI to change content.

@@ -432,3 +432,23 @@ With the existing `TASKIX_JEV_ENABLED` configuration, prompt routing also classi
 All assessments reuse the existing filtered Job/Task facts and visible conversation excerpts, 30,000-byte request ceiling, eight-second deadline, score gates and current-Job revision check. No raw tool results, source files, lease credentials or reasoning are collected. Explicit terminal Task recovery reads only that named Task and projects the same title/status/reason fields within existing bounds; normal prompt candidate discovery is unchanged. Shared instructions are sent once rather than repeated for every Job. Each assessment makes one provider request; disabled configuration makes no CLI or HTTP calls.
 
 Results contain guarded command arguments, never execute them, and defer to the main Agent on uncertainty, failure, oversize or stale evidence. Actual CLI lease, dependency, Plan and transition guards remain authoritative. `ready` is not `done` and never authorizes self-approval. Prompt metrics include the work-scope question when it can change the selected policy; lifecycle checkpoints have separate request-kind statistics. See [command examples](skills/taskix-manager/references/commands.md#optional-lifecycle-classification).
+
+## Project memory
+
+An updated Taskix CLI and plugin can retrieve project decisions from the optional
+[Taskix memory service](https://github.com/tenfyzhong/agentix/blob/main/docs/taskix-memory.md). Enable `[memory].enabled`
+in the shared Taskix configuration and start `taskix memory serve` separately.
+The memory worker uses independent API credentials; it does not reuse the main
+agent's login or context. No additional memory config file is needed.
+
+Codex/Claude prompt hooks and Pi/OMP `before_agent_start` retrieve at most 6,400
+bytes with a 1.5-second deadline, independently of Jev routing. Missing/disabled
+memory does not start the memory CLI; unavailable queries fail soft. Session
+receipts deduplicate unchanged revisions, including offline FTS fallback. Main
+agents can use `taskix memory search`, `show` and `source` on demand. Memory is
+historical evidence, not permission or task ownership. Normal task capture also
+records Project-owned discussions without requiring a Job.
+
+Obsidian memory notes are read-only projections. Local file edits are never
+imported; synchronization restores SQLite content. Use memory CLI commands for
+changes and `forget` for removal.

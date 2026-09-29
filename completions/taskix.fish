@@ -36,6 +36,7 @@ complete -c taskix -n "__fish_taskix_needs_command" -l idempotency-key -r
 complete -c taskix -n "__fish_taskix_needs_command" -l json
 complete -c taskix -n "__fish_taskix_needs_command" -s h -l help -d 'Print help'
 complete -c taskix -n "__fish_taskix_needs_command" -s V -l version -d 'Print version'
+complete -c taskix -n "__fish_taskix_needs_command" -f -a "memory" -d 'Maintain and retrieve project memory through a local service'
 complete -c taskix -n "__fish_taskix_needs_command" -f -a "conversation" -d 'Inspect and attach session discussion turns'
 complete -c taskix -n "__fish_taskix_needs_command" -f -a "inbox" -d 'Submit, inspect, claim, or cancel human requirements in a Project Inbox'
 complete -c taskix -n "__fish_taskix_needs_command" -f -a "completions" -d 'Print a shell completion script without loading task configuration'
@@ -52,6 +53,328 @@ complete -c taskix -n "__fish_taskix_needs_command" -f -a "context" -d 'Show Tas
 complete -c taskix -n "__fish_taskix_needs_command" -f -a "routing" -d 'Read bounded routing facts for host-side classifiers'
 complete -c taskix -n "__fish_taskix_needs_command" -f -a "hook" -d 'Handle agent session lifecycle events and maintain Task leases'
 complete -c taskix -n "__fish_taskix_needs_command" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and not __fish_seen_subcommand_from serve status doctor sync document projection-status reload search show list context source create update forget set-status reindex work retry receipt backfill ask help" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and not __fish_seen_subcommand_from serve status doctor sync document projection-status reload search show list context source create update forget set-status reindex work retry receipt backfill ask help" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and not __fish_seen_subcommand_from serve status doctor sync document projection-status reload search show list context source create update forget set-status reindex work retry receipt backfill ask help" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and not __fish_seen_subcommand_from serve status doctor sync document projection-status reload search show list context source create update forget set-status reindex work retry receipt backfill ask help" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and not __fish_seen_subcommand_from serve status doctor sync document projection-status reload search show list context source create update forget set-status reindex work retry receipt backfill ask help" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and not __fish_seen_subcommand_from serve status doctor sync document projection-status reload search show list context source create update forget set-status reindex work retry receipt backfill ask help" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and not __fish_seen_subcommand_from serve status doctor sync document projection-status reload search show list context source create update forget set-status reindex work retry receipt backfill ask help" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and not __fish_seen_subcommand_from serve status doctor sync document projection-status reload search show list context source create update forget set-status reindex work retry receipt backfill ask help" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and not __fish_seen_subcommand_from serve status doctor sync document projection-status reload search show list context source create update forget set-status reindex work retry receipt backfill ask help" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and not __fish_seen_subcommand_from serve status doctor sync document projection-status reload search show list context source create update forget set-status reindex work retry receipt backfill ask help" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and not __fish_seen_subcommand_from serve status doctor sync document projection-status reload search show list context source create update forget set-status reindex work retry receipt backfill ask help" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and not __fish_seen_subcommand_from serve status doctor sync document projection-status reload search show list context source create update forget set-status reindex work retry receipt backfill ask help" -f -a "serve" -d 'Run the independent local memory service until interrupted'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and not __fish_seen_subcommand_from serve status doctor sync document projection-status reload search show list context source create update forget set-status reindex work retry receipt backfill ask help" -f -a "status" -d 'Inspect queue, index coverage and provider availability'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and not __fish_seen_subcommand_from serve status doctor sync document projection-status reload search show list context source create update forget set-status reindex work retry receipt backfill ask help" -f -a "doctor" -d 'Inspect service configuration and local availability without a model request'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and not __fish_seen_subcommand_from serve status doctor sync document projection-status reload search show list context source create update forget set-status reindex work retry receipt backfill ask help" -f -a "sync" -d 'Restore one page of read-only project memory notes from the database'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and not __fish_seen_subcommand_from serve status doctor sync document projection-status reload search show list context source create update forget set-status reindex work retry receipt backfill ask help" -f -a "document" -d 'Read the authoritative Markdown for a managed vault-relative memory path'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and not __fish_seen_subcommand_from serve status doctor sync document projection-status reload search show list context source create update forget set-status reindex work retry receipt backfill ask help" -f -a "projection-status" -d 'Inspect pending publication and preserved edit conflicts'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and not __fish_seen_subcommand_from serve status doctor sync document projection-status reload search show list context source create update forget set-status reindex work retry receipt backfill ask help" -f -a "reload" -d 'Reload service configuration for future work'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and not __fish_seen_subcommand_from serve status doctor sync document projection-status reload search show list context source create update forget set-status reindex work retry receipt backfill ask help" -f -a "search" -d 'Search project memory (offline FTS fallback is available)'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and not __fish_seen_subcommand_from serve status doctor sync document projection-status reload search show list context source create update forget set-status reindex work retry receipt backfill ask help" -f -a "show" -d 'Read one current or historical memory'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and not __fish_seen_subcommand_from serve status doctor sync document projection-status reload search show list context source create update forget set-status reindex work retry receipt backfill ask help" -f -a "list" -d 'List a bounded memory page'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and not __fish_seen_subcommand_from serve status doctor sync document projection-status reload search show list context source create update forget set-status reindex work retry receipt backfill ask help" -f -a "context" -d 'Retrieve a small context, deduplicated within a session'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and not __fish_seen_subcommand_from serve status doctor sync document projection-status reload search show list context source create update forget set-status reindex work retry receipt backfill ask help" -f -a "source" -d 'Inspect original evidence; use --message to read a bounded text page'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and not __fish_seen_subcommand_from serve status doctor sync document projection-status reload search show list context source create update forget set-status reindex work retry receipt backfill ask help" -f -a "create" -d 'Add a memory from a JSON `MemoryInput` document through the service'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and not __fish_seen_subcommand_from serve status doctor sync document projection-status reload search show list context source create update forget set-status reindex work retry receipt backfill ask help" -f -a "update" -d 'Update a memory with an explicit expected revision'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and not __fish_seen_subcommand_from serve status doctor sync document projection-status reload search show list context source create update forget set-status reindex work retry receipt backfill ask help" -f -a "forget" -d 'Remove a memory from retrieval and suppress replay of its evidence'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and not __fish_seen_subcommand_from serve status doctor sync document projection-status reload search show list context source create update forget set-status reindex work retry receipt backfill ask help" -f -a "set-status" -d 'Change lifecycle status while preserving history'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and not __fish_seen_subcommand_from serve status doctor sync document projection-status reload search show list context source create update forget set-status reindex work retry receipt backfill ask help" -f -a "reindex" -d 'Rebuild a bounded FTS page without changing memory content'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and not __fish_seen_subcommand_from serve status doctor sync document projection-status reload search show list context source create update forget set-status reindex work retry receipt backfill ask help" -f -a "work" -d 'Inspect one durable maintenance task and its audit'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and not __fish_seen_subcommand_from serve status doctor sync document projection-status reload search show list context source create update forget set-status reindex work retry receipt backfill ask help" -f -a "retry" -d 'Retry failed work against its current source revision'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and not __fish_seen_subcommand_from serve status doctor sync document projection-status reload search show list context source create update forget set-status reindex work retry receipt backfill ask help" -f -a "receipt" -d 'Inspect receipt coverage; optionally wait with a deadline'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and not __fish_seen_subcommand_from serve status doctor sync document projection-status reload search show list context source create update forget set-status reindex work retry receipt backfill ask help" -f -a "backfill" -d 'Explicitly backfill a bounded page of a historical Job'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and not __fish_seen_subcommand_from serve status doctor sync document projection-status reload search show list context source create update forget set-status reindex work retry receipt backfill ask help" -f -a "ask" -d 'Run a separately limited, read-only Agent query with citations'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and not __fish_seen_subcommand_from serve status doctor sync document projection-status reload search show list context source create update forget set-status reindex work retry receipt backfill ask help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from serve" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from serve" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from serve" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from serve" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from serve" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from serve" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from serve" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from serve" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from serve" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from serve" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from serve" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from status" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from status" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from status" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from status" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from status" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from status" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from status" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from status" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from status" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from status" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from status" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from doctor" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from doctor" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from doctor" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from doctor" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from doctor" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from doctor" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from doctor" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from doctor" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from doctor" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from doctor" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from doctor" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from sync" -l after -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from sync" -l limit -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from sync" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from sync" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from sync" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from sync" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from sync" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from sync" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from sync" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from sync" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from sync" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from sync" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from sync" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from document" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from document" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from document" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from document" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from document" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from document" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from document" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from document" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from document" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from document" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from document" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from projection-status" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from projection-status" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from projection-status" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from projection-status" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from projection-status" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from projection-status" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from projection-status" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from projection-status" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from projection-status" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from projection-status" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from projection-status" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from reload" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from reload" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from reload" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from reload" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from reload" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from reload" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from reload" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from reload" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from reload" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from reload" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from reload" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from search" -l limit -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from search" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from search" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from search" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from search" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from search" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from search" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from search" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from search" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from search" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from search" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from search" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from show" -l revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from show" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from show" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from show" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from show" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from show" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from show" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from show" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from show" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from show" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from show" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from show" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from list" -l after -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from list" -l limit -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from list" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from list" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from list" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from list" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from list" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from list" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from list" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from list" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from list" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from list" -l all
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from list" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from list" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from context" -l turn -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from context" -l budget -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from context" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from context" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from context" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from context" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from context" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from context" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from context" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from context" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from context" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from context" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from context" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from source" -l message -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from source" -l offset -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from source" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from source" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from source" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from source" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from source" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from source" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from source" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from source" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from source" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from source" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from source" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from create" -l file -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from create" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from create" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from create" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from create" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from create" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from create" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from create" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from create" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from create" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from create" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from create" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from update" -l revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from update" -l file -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from update" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from update" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from update" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from update" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from update" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from update" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from update" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from update" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from update" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from update" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from update" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from forget" -l revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from forget" -l reason -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from forget" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from forget" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from forget" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from forget" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from forget" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from forget" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from forget" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from forget" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from forget" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from forget" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from forget" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from set-status" -l revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from set-status" -l reason -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from set-status" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from set-status" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from set-status" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from set-status" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from set-status" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from set-status" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from set-status" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from set-status" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from set-status" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from set-status" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from set-status" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from reindex" -l after -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from reindex" -l limit -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from reindex" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from reindex" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from reindex" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from reindex" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from reindex" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from reindex" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from reindex" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from reindex" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from reindex" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from reindex" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from reindex" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from work" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from work" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from work" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from work" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from work" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from work" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from work" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from work" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from work" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from work" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from work" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from retry" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from retry" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from retry" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from retry" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from retry" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from retry" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from retry" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from retry" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from retry" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from retry" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from retry" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from receipt" -l wait-seconds -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from receipt" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from receipt" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from receipt" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from receipt" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from receipt" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from receipt" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from receipt" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from receipt" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from receipt" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from receipt" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from receipt" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from backfill" -l offset -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from backfill" -l limit -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from backfill" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from backfill" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from backfill" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from backfill" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from backfill" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from backfill" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from backfill" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from backfill" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from backfill" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from backfill" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from backfill" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from ask" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from ask" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from ask" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from ask" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from ask" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from ask" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from ask" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from ask" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from ask" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from ask" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from ask" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from help" -f -a "serve" -d 'Run the independent local memory service until interrupted'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from help" -f -a "status" -d 'Inspect queue, index coverage and provider availability'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from help" -f -a "doctor" -d 'Inspect service configuration and local availability without a model request'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from help" -f -a "sync" -d 'Restore one page of read-only project memory notes from the database'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from help" -f -a "document" -d 'Read the authoritative Markdown for a managed vault-relative memory path'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from help" -f -a "projection-status" -d 'Inspect pending publication and preserved edit conflicts'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from help" -f -a "reload" -d 'Reload service configuration for future work'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from help" -f -a "search" -d 'Search project memory (offline FTS fallback is available)'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from help" -f -a "show" -d 'Read one current or historical memory'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from help" -f -a "list" -d 'List a bounded memory page'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from help" -f -a "context" -d 'Retrieve a small context, deduplicated within a session'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from help" -f -a "source" -d 'Inspect original evidence; use --message to read a bounded text page'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from help" -f -a "create" -d 'Add a memory from a JSON `MemoryInput` document through the service'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from help" -f -a "update" -d 'Update a memory with an explicit expected revision'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from help" -f -a "forget" -d 'Remove a memory from retrieval and suppress replay of its evidence'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from help" -f -a "set-status" -d 'Change lifecycle status while preserving history'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from help" -f -a "reindex" -d 'Rebuild a bounded FTS page without changing memory content'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from help" -f -a "work" -d 'Inspect one durable maintenance task and its audit'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from help" -f -a "retry" -d 'Retry failed work against its current source revision'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from help" -f -a "receipt" -d 'Inspect receipt coverage; optionally wait with a deadline'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from help" -f -a "backfill" -d 'Explicitly backfill a bounded page of a historical Job'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from help" -f -a "ask" -d 'Run a separately limited, read-only Agent query with citations'
+complete -c taskix -n "__fish_taskix_using_subcommand memory; and __fish_seen_subcommand_from help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
 complete -c taskix -n "__fish_taskix_using_subcommand conversation; and not __fish_seen_subcommand_from list show attach help" -l config -r -F
 complete -c taskix -n "__fish_taskix_using_subcommand conversation; and not __fish_seen_subcommand_from list show attach help" -l project -r
 complete -c taskix -n "__fish_taskix_using_subcommand conversation; and not __fish_seen_subcommand_from list show attach help" -l actor -r
@@ -1146,22 +1469,45 @@ complete -c taskix -n "__fish_taskix_using_subcommand hook; and __fish_seen_subc
 complete -c taskix -n "__fish_taskix_using_subcommand hook; and __fish_seen_subcommand_from help" -f -a "interrupt" -d 'Release an interrupted session\'s Task leases while preserving its Plans'
 complete -c taskix -n "__fish_taskix_using_subcommand hook; and __fish_seen_subcommand_from help" -f -a "heartbeat" -d 'Renew all active Task leases owned by the session'
 complete -c taskix -n "__fish_taskix_using_subcommand hook; and __fish_seen_subcommand_from help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from conversation inbox completions init obsidian doctor sync project job task plan event context routing hook help" -f -a "conversation" -d 'Inspect and attach session discussion turns'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from conversation inbox completions init obsidian doctor sync project job task plan event context routing hook help" -f -a "inbox" -d 'Submit, inspect, claim, or cancel human requirements in a Project Inbox'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from conversation inbox completions init obsidian doctor sync project job task plan event context routing hook help" -f -a "completions" -d 'Print a shell completion script without loading task configuration'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from conversation inbox completions init obsidian doctor sync project job task plan event context routing hook help" -f -a "init" -d 'Create configuration, initialize `SQLite` storage, and generate task documents'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from conversation inbox completions init obsidian doctor sync project job task plan event context routing hook help" -f -a "obsidian" -d 'Install and configure Obsidian task views in the configured vault'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from conversation inbox completions init obsidian doctor sync project job task plan event context routing hook help" -f -a "doctor" -d 'Check for missing Plan files and documents that are behind the event log'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from conversation inbox completions init obsidian doctor sync project job task plan event context routing hook help" -f -a "sync" -d 'Regenerate task documents from the current database state'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from conversation inbox completions init obsidian doctor sync project job task plan event context routing hook help" -f -a "project" -d 'Register, inspect, archive, or delete Projects shared across worktrees'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from conversation inbox completions init obsidian doctor sync project job task plan event context routing hook help" -f -a "job" -d 'Manage Jobs that group Tasks for an independently deliverable requirement'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from conversation inbox completions init obsidian doctor sync project job task plan event context routing hook help" -f -a "task" -d 'Manage Task dependencies, ownership leases, and execution status'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from conversation inbox completions init obsidian doctor sync project job task plan event context routing hook help" -f -a "plan" -d 'Publish, revise, or inspect the execution Plan in a Task note'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from conversation inbox completions init obsidian doctor sync project job task plan event context routing hook help" -f -a "event" -d 'Inspect the ordered audit log of task coordination events'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from conversation inbox completions init obsidian doctor sync project job task plan event context routing hook help" -f -a "context" -d 'Show Task, Job, lease, Plan, and document context for a session or explicit IDs'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from conversation inbox completions init obsidian doctor sync project job task plan event context routing hook help" -f -a "routing" -d 'Read bounded routing facts for host-side classifiers'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from conversation inbox completions init obsidian doctor sync project job task plan event context routing hook help" -f -a "hook" -d 'Handle agent session lifecycle events and maintain Task leases'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from conversation inbox completions init obsidian doctor sync project job task plan event context routing hook help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from memory conversation inbox completions init obsidian doctor sync project job task plan event context routing hook help" -f -a "memory" -d 'Maintain and retrieve project memory through a local service'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from memory conversation inbox completions init obsidian doctor sync project job task plan event context routing hook help" -f -a "conversation" -d 'Inspect and attach session discussion turns'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from memory conversation inbox completions init obsidian doctor sync project job task plan event context routing hook help" -f -a "inbox" -d 'Submit, inspect, claim, or cancel human requirements in a Project Inbox'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from memory conversation inbox completions init obsidian doctor sync project job task plan event context routing hook help" -f -a "completions" -d 'Print a shell completion script without loading task configuration'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from memory conversation inbox completions init obsidian doctor sync project job task plan event context routing hook help" -f -a "init" -d 'Create configuration, initialize `SQLite` storage, and generate task documents'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from memory conversation inbox completions init obsidian doctor sync project job task plan event context routing hook help" -f -a "obsidian" -d 'Install and configure Obsidian task views in the configured vault'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from memory conversation inbox completions init obsidian doctor sync project job task plan event context routing hook help" -f -a "doctor" -d 'Check for missing Plan files and documents that are behind the event log'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from memory conversation inbox completions init obsidian doctor sync project job task plan event context routing hook help" -f -a "sync" -d 'Regenerate task documents from the current database state'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from memory conversation inbox completions init obsidian doctor sync project job task plan event context routing hook help" -f -a "project" -d 'Register, inspect, archive, or delete Projects shared across worktrees'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from memory conversation inbox completions init obsidian doctor sync project job task plan event context routing hook help" -f -a "job" -d 'Manage Jobs that group Tasks for an independently deliverable requirement'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from memory conversation inbox completions init obsidian doctor sync project job task plan event context routing hook help" -f -a "task" -d 'Manage Task dependencies, ownership leases, and execution status'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from memory conversation inbox completions init obsidian doctor sync project job task plan event context routing hook help" -f -a "plan" -d 'Publish, revise, or inspect the execution Plan in a Task note'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from memory conversation inbox completions init obsidian doctor sync project job task plan event context routing hook help" -f -a "event" -d 'Inspect the ordered audit log of task coordination events'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from memory conversation inbox completions init obsidian doctor sync project job task plan event context routing hook help" -f -a "context" -d 'Show Task, Job, lease, Plan, and document context for a session or explicit IDs'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from memory conversation inbox completions init obsidian doctor sync project job task plan event context routing hook help" -f -a "routing" -d 'Read bounded routing facts for host-side classifiers'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from memory conversation inbox completions init obsidian doctor sync project job task plan event context routing hook help" -f -a "hook" -d 'Handle agent session lifecycle events and maintain Task leases'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from memory conversation inbox completions init obsidian doctor sync project job task plan event context routing hook help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from memory" -f -a "serve" -d 'Run the independent local memory service until interrupted'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from memory" -f -a "status" -d 'Inspect queue, index coverage and provider availability'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from memory" -f -a "doctor" -d 'Inspect service configuration and local availability without a model request'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from memory" -f -a "sync" -d 'Restore one page of read-only project memory notes from the database'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from memory" -f -a "document" -d 'Read the authoritative Markdown for a managed vault-relative memory path'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from memory" -f -a "projection-status" -d 'Inspect pending publication and preserved edit conflicts'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from memory" -f -a "reload" -d 'Reload service configuration for future work'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from memory" -f -a "search" -d 'Search project memory (offline FTS fallback is available)'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from memory" -f -a "show" -d 'Read one current or historical memory'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from memory" -f -a "list" -d 'List a bounded memory page'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from memory" -f -a "context" -d 'Retrieve a small context, deduplicated within a session'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from memory" -f -a "source" -d 'Inspect original evidence; use --message to read a bounded text page'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from memory" -f -a "create" -d 'Add a memory from a JSON `MemoryInput` document through the service'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from memory" -f -a "update" -d 'Update a memory with an explicit expected revision'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from memory" -f -a "forget" -d 'Remove a memory from retrieval and suppress replay of its evidence'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from memory" -f -a "set-status" -d 'Change lifecycle status while preserving history'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from memory" -f -a "reindex" -d 'Rebuild a bounded FTS page without changing memory content'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from memory" -f -a "work" -d 'Inspect one durable maintenance task and its audit'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from memory" -f -a "retry" -d 'Retry failed work against its current source revision'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from memory" -f -a "receipt" -d 'Inspect receipt coverage; optionally wait with a deadline'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from memory" -f -a "backfill" -d 'Explicitly backfill a bounded page of a historical Job'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from memory" -f -a "ask" -d 'Run a separately limited, read-only Agent query with citations'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from conversation" -f -a "list" -d 'Read pending turns in source order, including their selection revision'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from conversation" -f -a "show" -d 'Read a turn\'s original messages and current binding'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from conversation" -f -a "attach" -d 'Attach selected discussion turns to an ACTIVE session Job'

@@ -431,3 +431,31 @@ Unbound capture does not deserialize a previous Job or acquire an Obsidian outpu
 Conversation merging indexes existing message identities, computes insertion anchors in one reverse pass, and assembles inserted batches once. This avoids repeated history searches and vector shifts while preserving late replies, session-scoped identities, and follow-up prompt adoption. Merging is linear in the existing history plus incoming batch size; changing a bound Job still serializes its full stored Job and regenerates its document, so this is not constant-time end-to-end capture. Bound source copies remain available for subsequent updates and are deleted transactionally with their Job. Unassigned copies expire after 30 days of session inactivity.
 
 The bounded Jev request contains original messages rather than summaries. Exceeding its context budget triggers explicit agent fallback; it never silently truncates evidence to obtain a selection. See [integration coverage](integration-coverage.md#discussion-attachment-and-scaling) for reproducible checks and measurement boundaries.
+
+## Project memory service
+
+`agentix-task` captures immutable conversation revisions and an outbox alongside
+task state. The independent `agentix-memory` crate owns evidence, memory versions,
+FTS/vector retrieval, durable workers, API adapters and read-only projections.
+Neither library depends on the other. `taskix memory serve` composes them using
+an explicit source adapter, while `agentix-core` and host plugins keep capture
+outside internal memory model conversations.
+
+```mermaid
+flowchart LR
+    Host[Host hooks and Agentix events] --> TaskDB[(tasks.sqlite3 outbox)]
+    TaskDB --> Intake[Receipt ingestion and recovery validation]
+    Intake --> MemoryDB[(memory.sqlite3)]
+    MemoryDB --> Workers[Fair extraction and per-project consolidation/review]
+    Workers <--> Models[Independent API models]
+    Workers --> MemoryDB
+    MemoryDB <--> API[Private local IPC and bounded retrieval]
+    API --> Host
+    MemoryDB --> Notes[Read-only Obsidian memory notes]
+```
+
+Queries have independent concurrency limits. Provider calls hold no database
+transaction. Source acknowledgements follow durable receipt/work persistence;
+recovery can replay acknowledged inputs from a newer task snapshot. A separate
+configuration snapshot governs each model loop. See the [memory design](taskix-memory-design.md),
+[operating guide](taskix-memory.md) and [dual-database backup protocol](taskix-backup.md).

@@ -551,9 +551,28 @@ impl TaskBoardView<'_> {
 }
 
 impl TaskBoardService {
-    pub(in crate::engine) async fn record_job_message(&self, event: &crate::AgentEvent) {
+    pub(in crate::engine) async fn record_job_message(
+        &self,
+        event: &crate::AgentEvent,
+        cwd: Option<&str>,
+    ) {
         let Some(service) = &self.backend else {
             return;
+        };
+        let needs_source = matches!(event, crate::AgentEvent::TurnCompleted { .. })
+            || matches!(event, crate::AgentEvent::ItemCompleted { item, .. } if item.kind == "userMessage");
+        let project = if let Some(cwd) = cwd.filter(|_| needs_source) {
+            match agentix_task::ProjectDirectory::discover(std::path::Path::new(cwd)) {
+                Ok(directory) => service
+                    .project_for_directory(&directory)
+                    .await
+                    .ok()
+                    .flatten()
+                    .map(|p| p.id),
+                Err(_) => None,
+            }
+        } else {
+            None
         };
         match event {
             crate::AgentEvent::ItemCompleted {
@@ -590,7 +609,7 @@ impl TaskBoardService {
                     let messages = messages.clone();
                     drop(conversations);
                     let native = SessionId::new(session_id);
-                    if let Err(error) = service.execute(json!({"command":"session.record","session":native.native_str(),"turn_id":turn_id,"source":"agentix","messages":messages}), WriteOptions {session_ref:Some(native.native_str().to_owned()), ..WriteOptions::default()}).await {
+                    if let Err(error) = service.execute(json!({"command":"session.record","project_hint":project,"session":native.native_str(),"turn_id":turn_id,"source":"agentix","messages":messages}), WriteOptions {session_ref:Some(native.native_str().to_owned()), ..WriteOptions::default()}).await {
                         tracing::warn!(%error, "Discussion prompt staging failed");
                     }
                 }
@@ -612,7 +631,7 @@ impl TaskBoardService {
                     return;
                 }
                 let native = SessionId::new(session_id);
-                let result = service.execute(json!({"command":"session.record","session":native.native_str(),"turn_id":turn_id,"source":"agentix","messages":messages}), WriteOptions {session_ref:Some(native.native_str().to_owned()), ..WriteOptions::default()}).await;
+                let result = service.execute(json!({"command":"session.record","project_hint":project,"session":native.native_str(),"turn_id":turn_id,"source":"agentix","messages":messages}), WriteOptions {session_ref:Some(native.native_str().to_owned()), ..WriteOptions::default()}).await;
                 match result {
                     Ok(result) => {
                         self.conversations.lock().await.remove(&key);

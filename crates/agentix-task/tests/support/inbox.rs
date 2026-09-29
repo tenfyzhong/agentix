@@ -271,7 +271,7 @@ async fn inbox_aligned_schema_migrates_legacy_states_and_pending_review_idempote
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(version, 14);
+    assert_eq!(version, 15);
 }
 
 #[tokio::test]

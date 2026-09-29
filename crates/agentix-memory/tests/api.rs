@@ -1,0 +1,110 @@
+// Unix-only memory service integration tests.
+#![cfg(unix)]
+use agentix_memory::{MemoryApi, MemoryStore, RequestHandler, RetrievalConfig, ServiceConfig};
+use serde_json::json;
+#[tokio::test]
+async fn api_supports_scoped_reads_and_revision_guarded_writes_without_model_credentials() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(&temp.path().join("memory.db"))
+        .await
+        .unwrap();
+    let api = MemoryApi::new(store, RetrievalConfig::default(), ServiceConfig::default());
+    let content = json!({"title":"外部约束","conclusion":"离线可用","rationale":"用户要求","scope":"project","tags":[],"kind":"user_decision","evidence":[]});
+    let memory = api
+        .handle(json!({"op":"create","project":"a","content":content,"actor":"human"}))
+        .await
+        .unwrap();
+    let id = memory["id"].as_str().unwrap();
+    let found = api
+        .handle(json!({"op":"search","project":"a","query":"离线","limit":5}))
+        .await
+        .unwrap();
+    assert_eq!(found["memories"][0]["id"], id);
+    assert!(
+        api.handle(json!({"op":"show","project":"b","id":id}))
+            .await
+            .is_err()
+    );
+    assert!(api.handle(json!({"op":"update","project":"a","id":id,"revision":0,"content":content,"actor":"human"})).await.is_err());
+    api.handle(json!({"op":"set_status","project":"a","id":id,"revision":1,"status":"forgotten","reason":"Explicit user request","actor":"human"})).await.unwrap();
+    let found = api
+        .handle(json!({"op":"search","project":"a","query":"离线","limit":5}))
+        .await
+        .unwrap();
+    assert!(found["memories"].as_array().unwrap().is_empty());
+    assert!(
+        api.handle(json!({"op":"ask","project":"a","query":"why?"}))
+            .await
+            .is_err()
+    );
+}
+
+struct NoRepository;
+#[async_trait::async_trait]
+impl agentix_memory::ProjectRepository for NoRepository {
+    async fn root(&self, _project: &str) -> anyhow::Result<Option<std::path::PathBuf>> {
+        Ok(None)
+    }
+}
+struct AnswerModel(String);
+#[async_trait::async_trait]
+impl agentix_memory::Model for AnswerModel {
+    async fn complete(
+        &self,
+        request: &agentix_memory::ModelRequest,
+    ) -> anyhow::Result<agentix_memory::ModelReply> {
+        let call = if request.history.len() == 1 {
+            agentix_memory::ToolCall {
+                id: "search".into(),
+                name: "memory_search".into(),
+                arguments: json!({"query":"离线"}),
+            }
+        } else {
+            agentix_memory::ToolCall {
+                id: "finish".into(),
+                name: "submit_answer".into(),
+                arguments: json!({"answer":"用户要求离线可用","insufficient_evidence":false,"memories":[{"id":self.0,"revision":1}],"sources":[]}),
+            }
+        };
+        Ok(agentix_memory::ModelReply {
+            continuation: json!([]),
+            calls: vec![call],
+            text: String::new(),
+            usage: agentix_memory::TokenUsage::default(),
+        })
+    }
+}
+#[tokio::test]
+async fn deep_queries_are_read_only_and_reject_fabricated_citations() {
+    use std::sync::Arc;
+    let temp = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(&temp.path().join("memory.db"))
+        .await
+        .unwrap();
+    let content=serde_json::from_value(json!({"title":"离线约束","conclusion":"离线可用","rationale":"用户要求","scope":"project","tags":[],"kind":"user_decision","evidence":[]})).unwrap();
+    let memory = store
+        .create("a", content, agentix_memory::Actor::Human)
+        .await
+        .unwrap();
+    for (id, valid) in [(memory.id.clone(), true), ("fabricated".into(), false)] {
+        let deep = agentix_memory::DeepQuery::new(
+            store.clone(),
+            Arc::new(AnswerModel(id)),
+            agentix_memory::AgentConfig::default(),
+            Arc::new(NoRepository),
+            1,
+        );
+        let api = MemoryApi::new(
+            store.clone(),
+            RetrievalConfig::default(),
+            ServiceConfig::default(),
+        )
+        .with_deep_query(deep);
+        let answer = api
+            .handle(json!({"op":"ask","project":"a","query":"为什么离线？"}))
+            .await;
+        assert_eq!(answer.is_ok(), valid);
+    }
+    assert_eq!(store.show("a", &memory.id, None).await.unwrap(), memory);
+    assert_eq!(store.work_counts().await.unwrap().pending, 0);
+}

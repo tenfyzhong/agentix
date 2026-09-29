@@ -32,6 +32,33 @@ impl Store {
         .await
     }
 
+    /// Read-only consumers never migrate, initialize files, or acquire a writer lock.
+    pub async fn open_read_only(path: &Path) -> Result<Self> {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(2)
+            .connect_with(
+                SqliteConnectOptions::new()
+                    .filename(path)
+                    .read_only(true)
+                    .busy_timeout(Duration::from_secs(1)),
+            )
+            .await?;
+        let identity: i64 = sqlx::query_scalar("PRAGMA application_id")
+            .fetch_one(&pool)
+            .await?;
+        let version: i64 = sqlx::query_scalar("PRAGMA user_version")
+            .fetch_one(&pool)
+            .await?;
+        ensure!(
+            identity == 0x4158_544b && (14..=15).contains(&version),
+            "unsupported task database identity or schema for read-only lookup"
+        );
+        Ok(Self {
+            pool,
+            clock: Arc::new(|| time::OffsetDateTime::now_utc().unix_timestamp()),
+        })
+    }
+
     pub async fn open_with_clock(
         path: &Path,
         clock: Arc<dyn Fn() -> i64 + Send + Sync>,
@@ -77,12 +104,18 @@ impl Store {
             .fetch_one(&mut *tx)
             .await?;
         ensure!(
-            version <= 14,
+            version <= 15,
             "unsupported task database schema version {version}"
         );
         sqlx::raw_sql(include_str!("schema.sql"))
             .execute(&mut *tx)
             .await?;
+        sqlx::query(
+            "INSERT OR IGNORE INTO memory_source_identity(singleton,instance_id) VALUES (1,?)",
+        )
+        .bind(new_id("source"))
+        .execute(&mut *tx)
+        .await?;
         if version == 1 {
             sqlx::query("UPDATE tasks SET data = json_set(data, '$.phase', CASE WHEN json_extract(data, '$.status') = 'IN_PROGRESS' THEN 'EXECUTING' ELSE NULL END)")
                 .execute(&mut *tx)

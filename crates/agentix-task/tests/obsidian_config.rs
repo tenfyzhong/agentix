@@ -55,3 +55,41 @@ fn obsidian_config_discards_legacy_format_and_language() {
         assert!(documents.get("language").is_none());
     }
 }
+
+#[test]
+fn task_config_does_not_validate_memory_capabilities() {
+    let dir = TempDir::new().unwrap();
+    std::fs::create_dir(dir.path().join(".obsidian")).unwrap();
+    let path = config_file(&dir, "");
+    let mut text = std::fs::read_to_string(&path).unwrap();
+    text.push_str(
+        "\n[memory]\nenabled = true\n[memory.agent]\nmodel = 42\nprovider = 'not-configured'\n",
+    );
+    std::fs::write(&path, text).unwrap();
+    assert!(
+        Config::load(&path).is_ok(),
+        "memory validation belongs to its capability"
+    );
+}
+
+#[test]
+fn source_storage_configuration_is_independent_of_documents_and_models() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("config.toml");
+    std::fs::write(
+        &path,
+        format!(
+            "schema_version=1\n[storage]\npath={:?}\n[memory.agent]\nmodel=42\n",
+            dir.path().join("tasks.sqlite3")
+        ),
+    )
+    .unwrap();
+    let storage = agentix_task::StorageConfig::load(&path).unwrap();
+    assert_eq!(storage.path, dir.path().join("tasks.sqlite3"));
+    std::fs::write(
+        &path,
+        "schema_version=1\n[storage]\npath='relative.sqlite3'\n",
+    )
+    .unwrap();
+    assert!(agentix_task::StorageConfig::load(&path).is_err());
+}

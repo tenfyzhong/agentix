@@ -13,6 +13,7 @@ members = [
   "crates/agentix-tmux",
   "crates/agentix-telegram",
   "crates/agentix-task",
+  "crates/agentix-memory",
   "crates/taskix",
 ]
 resolver = "3"

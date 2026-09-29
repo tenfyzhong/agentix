@@ -38,7 +38,532 @@ _taskix() {
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:taskix-command-$line[1]:"
         case $line[1] in
-            (conversation)
+            (memory)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_taskix__subcmd__memory_commands" \
+"*::: :->memory" \
+&& ret=0
+
+    case $state in
+    (memory)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskix-memory-command-$line[1]:"
+        case $line[1] in
+            (serve)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(status)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(doctor)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(sync)
+_arguments "${_arguments_options[@]}" : \
+'--after=[]:AFTER:_default' \
+'--limit=[]:LIMIT:_default' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(document)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':path:_files' \
+&& ret=0
+;;
+(projection-status)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(reload)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(search)
+_arguments "${_arguments_options[@]}" : \
+'--limit=[]:LIMIT:_default' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':query:_default' \
+&& ret=0
+;;
+(show)
+_arguments "${_arguments_options[@]}" : \
+'--revision=[]:REVISION:_default' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+'--after=[]:AFTER:_default' \
+'--limit=[]:LIMIT:_default' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--all[]' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(context)
+_arguments "${_arguments_options[@]}" : \
+'--turn=[]:TURN:_default' \
+'--budget=[]:BUDGET:_default' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':query:_default' \
+&& ret=0
+;;
+(source)
+_arguments "${_arguments_options[@]}" : \
+'--message=[]:MESSAGE:_default' \
+'--offset=[]:OFFSET:_default' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':receipt_id:_default' \
+&& ret=0
+;;
+(create)
+_arguments "${_arguments_options[@]}" : \
+'--file=[]:FILE:_files' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(update)
+_arguments "${_arguments_options[@]}" : \
+'--revision=[]:REVISION:_default' \
+'--file=[]:FILE:_files' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(forget)
+_arguments "${_arguments_options[@]}" : \
+'--revision=[]:REVISION:_default' \
+'--reason=[]:REASON:_default' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(set-status)
+_arguments "${_arguments_options[@]}" : \
+'--revision=[]:REVISION:_default' \
+'--reason=[]:REASON:_default' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+':status:_default' \
+&& ret=0
+;;
+(reindex)
+_arguments "${_arguments_options[@]}" : \
+'--after=[]:AFTER:_default' \
+'--limit=[]:LIMIT:_default' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(work)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(retry)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(receipt)
+_arguments "${_arguments_options[@]}" : \
+'--wait-seconds=[]:WAIT_SECONDS:_default' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':receipt_id:_default' \
+&& ret=0
+;;
+(backfill)
+_arguments "${_arguments_options[@]}" : \
+'--offset=[]:OFFSET:_default' \
+'--limit=[]:LIMIT:_default' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':job:_default' \
+&& ret=0
+;;
+(ask)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':query:_default' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_taskix__subcmd__memory__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskix-memory-help-command-$line[1]:"
+        case $line[1] in
+            (serve)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(status)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(doctor)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(sync)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(document)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(projection-status)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(reload)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(search)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(show)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(context)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(source)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(create)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(update)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(forget)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(set-status)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(reindex)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(work)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(retry)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(receipt)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(backfill)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(ask)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(conversation)
 _arguments "${_arguments_options[@]}" : \
 '--config=[]:CONFIG:_files' \
 '--project=[]:PROJECT:_default' \
@@ -2107,7 +2632,111 @@ _arguments "${_arguments_options[@]}" : \
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:taskix-help-command-$line[1]:"
         case $line[1] in
-            (conversation)
+            (memory)
+_arguments "${_arguments_options[@]}" : \
+":: :_taskix__subcmd__help__subcmd__memory_commands" \
+"*::: :->memory" \
+&& ret=0
+
+    case $state in
+    (memory)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskix-help-memory-command-$line[1]:"
+        case $line[1] in
+            (serve)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(status)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(doctor)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(sync)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(document)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(projection-status)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(reload)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(search)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(show)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(context)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(source)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(create)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(update)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(forget)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(set-status)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(reindex)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(work)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(retry)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(receipt)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(backfill)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(ask)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(conversation)
 _arguments "${_arguments_options[@]}" : \
 ":: :_taskix__subcmd__help__subcmd__conversation_commands" \
 "*::: :->conversation" \
@@ -2579,6 +3208,7 @@ esac
 (( $+functions[_taskix_commands] )) ||
 _taskix_commands() {
     local commands; commands=(
+'memory:Maintain and retrieve project memory through a local service' \
 'conversation:Inspect and attach session discussion turns' \
 'inbox:Submit, inspect, claim, or cancel human requirements in a Project Inbox' \
 'completions:Print a shell completion script without loading task configuration' \
@@ -2702,6 +3332,7 @@ _taskix__subcmd__event__subcmd__list_commands() {
 (( $+functions[_taskix__subcmd__help_commands] )) ||
 _taskix__subcmd__help_commands() {
     local commands; commands=(
+'memory:Maintain and retrieve project memory through a local service' \
 'conversation:Inspect and attach session discussion turns' \
 'inbox:Submit, inspect, claim, or cancel human requirements in a Project Inbox' \
 'completions:Print a shell completion script without loading task configuration' \
@@ -2949,6 +3580,144 @@ _taskix__subcmd__help__subcmd__job__subcmd__unarchive_commands() {
 _taskix__subcmd__help__subcmd__job__subcmd__update_commands() {
     local commands; commands=()
     _describe -t commands 'taskix help job update commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__memory_commands] )) ||
+_taskix__subcmd__help__subcmd__memory_commands() {
+    local commands; commands=(
+'serve:Run the independent local memory service until interrupted' \
+'status:Inspect queue, index coverage and provider availability' \
+'doctor:Inspect service configuration and local availability without a model request' \
+'sync:Restore one page of read-only project memory notes from the database' \
+'document:Read the authoritative Markdown for a managed vault-relative memory path' \
+'projection-status:Inspect pending publication and preserved edit conflicts' \
+'reload:Reload service configuration for future work' \
+'search:Search project memory (offline FTS fallback is available)' \
+'show:Read one current or historical memory' \
+'list:List a bounded memory page' \
+'context:Retrieve a small context, deduplicated within a session' \
+'source:Inspect original evidence; use --message to read a bounded text page' \
+'create:Add a memory from a JSON \`MemoryInput\` document through the service' \
+'update:Update a memory with an explicit expected revision' \
+'forget:Remove a memory from retrieval and suppress replay of its evidence' \
+'set-status:Change lifecycle status while preserving history' \
+'reindex:Rebuild a bounded FTS page without changing memory content' \
+'work:Inspect one durable maintenance task and its audit' \
+'retry:Retry failed work against its current source revision' \
+'receipt:Inspect receipt coverage; optionally wait with a deadline' \
+'backfill:Explicitly backfill a bounded page of a historical Job' \
+'ask:Run a separately limited, read-only Agent query with citations' \
+    )
+    _describe -t commands 'taskix help memory commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__memory__subcmd__ask_commands] )) ||
+_taskix__subcmd__help__subcmd__memory__subcmd__ask_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help memory ask commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__memory__subcmd__backfill_commands] )) ||
+_taskix__subcmd__help__subcmd__memory__subcmd__backfill_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help memory backfill commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__memory__subcmd__context_commands] )) ||
+_taskix__subcmd__help__subcmd__memory__subcmd__context_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help memory context commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__memory__subcmd__create_commands] )) ||
+_taskix__subcmd__help__subcmd__memory__subcmd__create_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help memory create commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__memory__subcmd__doctor_commands] )) ||
+_taskix__subcmd__help__subcmd__memory__subcmd__doctor_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help memory doctor commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__memory__subcmd__document_commands] )) ||
+_taskix__subcmd__help__subcmd__memory__subcmd__document_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help memory document commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__memory__subcmd__forget_commands] )) ||
+_taskix__subcmd__help__subcmd__memory__subcmd__forget_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help memory forget commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__memory__subcmd__list_commands] )) ||
+_taskix__subcmd__help__subcmd__memory__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help memory list commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__memory__subcmd__projection-status_commands] )) ||
+_taskix__subcmd__help__subcmd__memory__subcmd__projection-status_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help memory projection-status commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__memory__subcmd__receipt_commands] )) ||
+_taskix__subcmd__help__subcmd__memory__subcmd__receipt_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help memory receipt commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__memory__subcmd__reindex_commands] )) ||
+_taskix__subcmd__help__subcmd__memory__subcmd__reindex_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help memory reindex commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__memory__subcmd__reload_commands] )) ||
+_taskix__subcmd__help__subcmd__memory__subcmd__reload_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help memory reload commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__memory__subcmd__retry_commands] )) ||
+_taskix__subcmd__help__subcmd__memory__subcmd__retry_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help memory retry commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__memory__subcmd__search_commands] )) ||
+_taskix__subcmd__help__subcmd__memory__subcmd__search_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help memory search commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__memory__subcmd__serve_commands] )) ||
+_taskix__subcmd__help__subcmd__memory__subcmd__serve_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help memory serve commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__memory__subcmd__set-status_commands] )) ||
+_taskix__subcmd__help__subcmd__memory__subcmd__set-status_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help memory set-status commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__memory__subcmd__show_commands] )) ||
+_taskix__subcmd__help__subcmd__memory__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help memory show commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__memory__subcmd__source_commands] )) ||
+_taskix__subcmd__help__subcmd__memory__subcmd__source_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help memory source commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__memory__subcmd__status_commands] )) ||
+_taskix__subcmd__help__subcmd__memory__subcmd__status_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help memory status commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__memory__subcmd__sync_commands] )) ||
+_taskix__subcmd__help__subcmd__memory__subcmd__sync_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help memory sync commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__memory__subcmd__update_commands] )) ||
+_taskix__subcmd__help__subcmd__memory__subcmd__update_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help memory update commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__memory__subcmd__work_commands] )) ||
+_taskix__subcmd__help__subcmd__memory__subcmd__work_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help memory work commands' commands "$@"
 }
 (( $+functions[_taskix__subcmd__help__subcmd__obsidian_commands] )) ||
 _taskix__subcmd__help__subcmd__obsidian_commands() {
@@ -3569,6 +4338,289 @@ _taskix__subcmd__job__subcmd__unarchive_commands() {
 _taskix__subcmd__job__subcmd__update_commands() {
     local commands; commands=()
     _describe -t commands 'taskix job update commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__memory_commands] )) ||
+_taskix__subcmd__memory_commands() {
+    local commands; commands=(
+'serve:Run the independent local memory service until interrupted' \
+'status:Inspect queue, index coverage and provider availability' \
+'doctor:Inspect service configuration and local availability without a model request' \
+'sync:Restore one page of read-only project memory notes from the database' \
+'document:Read the authoritative Markdown for a managed vault-relative memory path' \
+'projection-status:Inspect pending publication and preserved edit conflicts' \
+'reload:Reload service configuration for future work' \
+'search:Search project memory (offline FTS fallback is available)' \
+'show:Read one current or historical memory' \
+'list:List a bounded memory page' \
+'context:Retrieve a small context, deduplicated within a session' \
+'source:Inspect original evidence; use --message to read a bounded text page' \
+'create:Add a memory from a JSON \`MemoryInput\` document through the service' \
+'update:Update a memory with an explicit expected revision' \
+'forget:Remove a memory from retrieval and suppress replay of its evidence' \
+'set-status:Change lifecycle status while preserving history' \
+'reindex:Rebuild a bounded FTS page without changing memory content' \
+'work:Inspect one durable maintenance task and its audit' \
+'retry:Retry failed work against its current source revision' \
+'receipt:Inspect receipt coverage; optionally wait with a deadline' \
+'backfill:Explicitly backfill a bounded page of a historical Job' \
+'ask:Run a separately limited, read-only Agent query with citations' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'taskix memory commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__memory__subcmd__ask_commands] )) ||
+_taskix__subcmd__memory__subcmd__ask_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix memory ask commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__memory__subcmd__backfill_commands] )) ||
+_taskix__subcmd__memory__subcmd__backfill_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix memory backfill commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__memory__subcmd__context_commands] )) ||
+_taskix__subcmd__memory__subcmd__context_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix memory context commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__memory__subcmd__create_commands] )) ||
+_taskix__subcmd__memory__subcmd__create_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix memory create commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__memory__subcmd__doctor_commands] )) ||
+_taskix__subcmd__memory__subcmd__doctor_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix memory doctor commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__memory__subcmd__document_commands] )) ||
+_taskix__subcmd__memory__subcmd__document_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix memory document commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__memory__subcmd__forget_commands] )) ||
+_taskix__subcmd__memory__subcmd__forget_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix memory forget commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__memory__subcmd__help_commands] )) ||
+_taskix__subcmd__memory__subcmd__help_commands() {
+    local commands; commands=(
+'serve:Run the independent local memory service until interrupted' \
+'status:Inspect queue, index coverage and provider availability' \
+'doctor:Inspect service configuration and local availability without a model request' \
+'sync:Restore one page of read-only project memory notes from the database' \
+'document:Read the authoritative Markdown for a managed vault-relative memory path' \
+'projection-status:Inspect pending publication and preserved edit conflicts' \
+'reload:Reload service configuration for future work' \
+'search:Search project memory (offline FTS fallback is available)' \
+'show:Read one current or historical memory' \
+'list:List a bounded memory page' \
+'context:Retrieve a small context, deduplicated within a session' \
+'source:Inspect original evidence; use --message to read a bounded text page' \
+'create:Add a memory from a JSON \`MemoryInput\` document through the service' \
+'update:Update a memory with an explicit expected revision' \
+'forget:Remove a memory from retrieval and suppress replay of its evidence' \
+'set-status:Change lifecycle status while preserving history' \
+'reindex:Rebuild a bounded FTS page without changing memory content' \
+'work:Inspect one durable maintenance task and its audit' \
+'retry:Retry failed work against its current source revision' \
+'receipt:Inspect receipt coverage; optionally wait with a deadline' \
+'backfill:Explicitly backfill a bounded page of a historical Job' \
+'ask:Run a separately limited, read-only Agent query with citations' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'taskix memory help commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__memory__subcmd__help__subcmd__ask_commands] )) ||
+_taskix__subcmd__memory__subcmd__help__subcmd__ask_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix memory help ask commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__memory__subcmd__help__subcmd__backfill_commands] )) ||
+_taskix__subcmd__memory__subcmd__help__subcmd__backfill_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix memory help backfill commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__memory__subcmd__help__subcmd__context_commands] )) ||
+_taskix__subcmd__memory__subcmd__help__subcmd__context_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix memory help context commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__memory__subcmd__help__subcmd__create_commands] )) ||
+_taskix__subcmd__memory__subcmd__help__subcmd__create_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix memory help create commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__memory__subcmd__help__subcmd__doctor_commands] )) ||
+_taskix__subcmd__memory__subcmd__help__subcmd__doctor_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix memory help doctor commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__memory__subcmd__help__subcmd__document_commands] )) ||
+_taskix__subcmd__memory__subcmd__help__subcmd__document_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix memory help document commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__memory__subcmd__help__subcmd__forget_commands] )) ||
+_taskix__subcmd__memory__subcmd__help__subcmd__forget_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix memory help forget commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__memory__subcmd__help__subcmd__help_commands] )) ||
+_taskix__subcmd__memory__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix memory help help commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__memory__subcmd__help__subcmd__list_commands] )) ||
+_taskix__subcmd__memory__subcmd__help__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix memory help list commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__memory__subcmd__help__subcmd__projection-status_commands] )) ||
+_taskix__subcmd__memory__subcmd__help__subcmd__projection-status_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix memory help projection-status commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__memory__subcmd__help__subcmd__receipt_commands] )) ||
+_taskix__subcmd__memory__subcmd__help__subcmd__receipt_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix memory help receipt commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__memory__subcmd__help__subcmd__reindex_commands] )) ||
+_taskix__subcmd__memory__subcmd__help__subcmd__reindex_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix memory help reindex commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__memory__subcmd__help__subcmd__reload_commands] )) ||
+_taskix__subcmd__memory__subcmd__help__subcmd__reload_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix memory help reload commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__memory__subcmd__help__subcmd__retry_commands] )) ||
+_taskix__subcmd__memory__subcmd__help__subcmd__retry_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix memory help retry commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__memory__subcmd__help__subcmd__search_commands] )) ||
+_taskix__subcmd__memory__subcmd__help__subcmd__search_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix memory help search commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__memory__subcmd__help__subcmd__serve_commands] )) ||
+_taskix__subcmd__memory__subcmd__help__subcmd__serve_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix memory help serve commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__memory__subcmd__help__subcmd__set-status_commands] )) ||
+_taskix__subcmd__memory__subcmd__help__subcmd__set-status_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix memory help set-status commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__memory__subcmd__help__subcmd__show_commands] )) ||
+_taskix__subcmd__memory__subcmd__help__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix memory help show commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__memory__subcmd__help__subcmd__source_commands] )) ||
+_taskix__subcmd__memory__subcmd__help__subcmd__source_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix memory help source commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__memory__subcmd__help__subcmd__status_commands] )) ||
+_taskix__subcmd__memory__subcmd__help__subcmd__status_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix memory help status commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__memory__subcmd__help__subcmd__sync_commands] )) ||
+_taskix__subcmd__memory__subcmd__help__subcmd__sync_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix memory help sync commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__memory__subcmd__help__subcmd__update_commands] )) ||
+_taskix__subcmd__memory__subcmd__help__subcmd__update_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix memory help update commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__memory__subcmd__help__subcmd__work_commands] )) ||
+_taskix__subcmd__memory__subcmd__help__subcmd__work_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix memory help work commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__memory__subcmd__list_commands] )) ||
+_taskix__subcmd__memory__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix memory list commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__memory__subcmd__projection-status_commands] )) ||
+_taskix__subcmd__memory__subcmd__projection-status_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix memory projection-status commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__memory__subcmd__receipt_commands] )) ||
+_taskix__subcmd__memory__subcmd__receipt_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix memory receipt commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__memory__subcmd__reindex_commands] )) ||
+_taskix__subcmd__memory__subcmd__reindex_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix memory reindex commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__memory__subcmd__reload_commands] )) ||
+_taskix__subcmd__memory__subcmd__reload_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix memory reload commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__memory__subcmd__retry_commands] )) ||
+_taskix__subcmd__memory__subcmd__retry_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix memory retry commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__memory__subcmd__search_commands] )) ||
+_taskix__subcmd__memory__subcmd__search_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix memory search commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__memory__subcmd__serve_commands] )) ||
+_taskix__subcmd__memory__subcmd__serve_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix memory serve commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__memory__subcmd__set-status_commands] )) ||
+_taskix__subcmd__memory__subcmd__set-status_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix memory set-status commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__memory__subcmd__show_commands] )) ||
+_taskix__subcmd__memory__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix memory show commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__memory__subcmd__source_commands] )) ||
+_taskix__subcmd__memory__subcmd__source_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix memory source commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__memory__subcmd__status_commands] )) ||
+_taskix__subcmd__memory__subcmd__status_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix memory status commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__memory__subcmd__sync_commands] )) ||
+_taskix__subcmd__memory__subcmd__sync_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix memory sync commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__memory__subcmd__update_commands] )) ||
+_taskix__subcmd__memory__subcmd__update_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix memory update commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__memory__subcmd__work_commands] )) ||
+_taskix__subcmd__memory__subcmd__work_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix memory work commands' commands "$@"
 }
 (( $+functions[_taskix__subcmd__obsidian_commands] )) ||
 _taskix__subcmd__obsidian_commands() {

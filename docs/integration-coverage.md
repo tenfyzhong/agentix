@@ -508,3 +508,14 @@ The actual service's semantic quality requires opt-in historical replay. Determi
 Historical replay methods, observed outcomes and local performance measurements are recorded in [Jev lifecycle decisions](jev-lifecycle-decisions.md).
 
 Completion checkpoint integration cases verify ACTIVE -> COMPLETED and ACTIVE -> PENDING_REVIEW after the final Task, including replacement of an earlier required default, disabled/uncertain fallback, read-only classification and stale policy writes. Already PENDING_REVIEW Jobs reject completion assessment.
+
+## Project memory
+
+The independent memory domain, service and host delivery have a dedicated
+[acceptance matrix and scale fixture](taskix-memory-acceptance.md). Coverage uses
+real source/outbox and memory databases, durable workers, Unix IPC, CLI and Node
+host entrypoints, read-only filesystem projections and standalone dual-database
+backup/restore. Only external model/embedding and rclone responses are mocked.
+Live model quality, desktop Obsidian rendering and cloud credentials remain
+outside those fixtures. See [operations](taskix-memory.md) for configuration and
+failure semantics.

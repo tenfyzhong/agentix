@@ -1,10 +1,9 @@
 # Taskix database backups with rclone
 
-[`scripts/taskix-backup.py`](../scripts/taskix-backup.py) creates one SQLite
-snapshot on every run, packages it as `taskix-YYYY-MM-DD-HHMMSS-ffffff.tar.gz`, and uploads
-it with rclone. It is a standalone script: no `taskix backup` command, new
-Taskix configuration fields, Rust dependencies, or running Taskix service are
-required. Scheduling is provided by launchd or cron.
+[`scripts/taskix-backup.py`](../scripts/taskix-backup.py) creates SQLite
+snapshots on every run, packages it as `taskix-YYYY-MM-DD-HHMMSS-ffffff.tar.gz`, and uploads
+it with rclone. It is a standalone script: no `taskix backup` command, backup-specific
+configuration, Rust dependencies, or running Taskix service are required. Scheduling is provided by launchd or cron.
 
 ## Requirements and scope
 
@@ -17,13 +16,32 @@ required. Scheduling is provided by launchd or cron.
   Provision any required bucket, container, share or directory first. Give each
   machine/database its own remote directory and local archive directory.
 
-The archive contains only `tasks.sqlite3` and `manifest.json`. The manifest
-records the source path, UTC creation time, backup date, SQLite schema version,
-and SHA-256 of the snapshot. Configuration, credentials, Obsidian documents,
-attachments, and the separate Jev metrics database are **not included**. For a
-matched database-and-vault recovery point, also follow the
-[full backup procedure](task-board.md#data-coverage-and-recovery): pause writers
-and note edits while capturing both.
+Without a memory database, the archive remains the version-1 pair of
+`tasks.sqlite3` and `manifest.json`. When a memory database exists, version 2
+also contains `memory.sqlite3`, its schema version and SHA-256, and source
+coverage metadata. The memory path comes from `[memory.storage].path`, or
+`memory.sqlite3` beside `[storage].path`. Existing memory is included even when
+`[memory].enabled` is false. An explicitly configured or enabled memory database
+that is missing is an error; initialize it before backing up. Both paths must be
+distinct absolute paths. Old single-database archives remain valid for upload
+retry and restore in the same output directory.
+
+The memory snapshot is taken **before** the task snapshot. Every source receipt
+in memory is compared with the later task snapshot, including source instance,
+sequence, ownership, revision and message content. A mismatched pair fails before
+publication. This is a recoverable ordered pair, not a cross-database transaction:
+later task receipts are replayed by the memory service, including acknowledged
+ones. Source outbox records are retained for this recovery protocol. Startup
+also validates existing memory receipts in bounded pages and rejects a task
+history that is older than or incompatible with its memory history.
+
+Configuration, credentials, Obsidian documents, attachments, and the separate Jev
+metrics database are **not included**. For a matched database-and-vault recovery
+point, follow the [full backup procedure](task-board.md#data-coverage-and-recovery):
+pause writers and note edits while capturing both. Restoring an old memory
+snapshot also restores its historical human edits and forgotten-memory markers;
+edits or forget operations made after that snapshot cannot be recovered from
+task conversation receipts alone.
 
 The script uses Python's [SQLite online backup API](https://docs.python.org/3/library/sqlite3.html#sqlite3.Connection.backup)
 and checks `PRAGMA integrity_check`. Committed WAL data is included without
@@ -230,34 +248,40 @@ rclone copyto r2:my-bucket/taskix/macbook/taskix-2026-09-29-030000-123456.tar.gz
 tar -tzf taskix-2026-09-29-030000-123456.tar.gz
 ```
 
-For a trusted archive containing only `tasks.sqlite3` and `manifest.json`, extract
-and check it before touching the active database:
+Restore into a new directory using the same script (no config, rclone or remote
+is needed for this mode):
 
 ```sh
-mkdir restore
-tar -xzf taskix-2026-09-29-030000-123456.tar.gz -C restore tasks.sqlite3 manifest.json
-python3 - <<'PY'
-import hashlib, json, sqlite3
-from pathlib import Path
-database = Path('restore/tasks.sqlite3').resolve()
-manifest = json.loads(Path('restore/manifest.json').read_text())
-with database.open('rb') as stream:
-    assert hashlib.file_digest(stream, 'sha256').hexdigest() == manifest['sha256']
-with sqlite3.connect(database.as_uri() + '?mode=ro', uri=True) as connection:
-    assert connection.execute('PRAGMA integrity_check').fetchall() == [('ok',)]
-print('Snapshot checksum and integrity check passed')
-PY
+python3 scripts/taskix-backup.py \
+  --restore ./taskix-2026-09-29-030000-123456.tar.gz \
+  --restore-dir ./restored-taskix
 ```
 
-Stop all Taskix/Agentix writers, host hooks, and backup schedules before replacing
-the database. Preserve the old database and any `-wal`/`-shm` files together in a
-separate rollback directory; never pair an old WAL with the restored snapshot.
-Install the verified snapshot at the configured storage path with permissions
-restricted to its owner. Use a compatible Taskix version and inspect the restored
-state before resuming writers. Old task leases are historical; do not reuse their
-tokens. `taskix doctor` and `taskix sync` can inspect and rebuild projections, but
-cannot recover omitted manual vault edits. Restore separately saved documents
-when those edits matter.
+The script rejects unexpected members, symbolic links, duplicates, invalid
+manifests, checksum failures and incompatible source histories. It streams files
+into private staging, checks SQLite integrity and coverage, then atomically
+publishes the whole directory without replacing an existing path. macOS uses
+`renamex_np(RENAME_EXCL)`; Linux requires libc/filesystem `renameat2` support.
+The archive must keep its original timestamped filename. SHA-256 detects damage;
+it does not authenticate an archive obtained from an untrusted party.
+
+Stop Taskix/Agentix writers, the memory service, host hooks, projection imports
+and backup schedules before switching databases. Preserve existing databases and
+their `-wal`/`-shm` files together in a separate rollback directory. Point
+`[storage].path` and `[memory.storage].path` at the verified restored files, or
+install both snapshots while every writer is stopped; never combine an old WAL
+with a restored main file. The script does not change configuration or live data.
+Restart memory service and inspect `taskix memory status`, `work` and `source`.
+It validates the pair before starting workers and resumes durable queue entries
+after lease expiry. A restored older memory snapshot can replay newer retained
+task sources; incompatible/forked task histories are rejected, not silently reset.
+
+Use a compatible Taskix version and inspect state before resuming normal work.
+Historical Task leases must not be reused. `taskix doctor` and `taskix sync`
+inspect and rebuild board projections. For memory notes, preserve any newer
+manual edits first: stale revision imports remain conflicts rather than
+silently replacing restored state. Restore separately saved documents when
+those edits matter.
 
 For transfer failures, the script reports the rclone exit status, a recognized
 access-denied category and HTTP status when available, and retains local archives.

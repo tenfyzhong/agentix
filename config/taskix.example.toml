@@ -7,3 +7,63 @@ path = "~/.local/share/taskix/tasks.sqlite3"
 # Replace with an existing absolute Obsidian vault root containing .obsidian.
 root = "/absolute/path/to/vault"
 directory = "Agent Tasks"
+
+# Optional project memory; one config and release, independent resident process.
+# Run `taskix memory serve` separately. See docs/taskix-memory.md.
+[memory]
+enabled = false
+
+[memory.storage]
+# Defaults to memory.sqlite3 beside storage.path; never use the task database.
+path = "~/.local/share/taskix/memory.sqlite3"
+
+[memory.providers.openai]
+protocol = "openai"
+base_url = "https://api.openai.com/v1"
+api_key_env = "OPENAI_API_KEY"
+max_in_flight = 8
+
+[memory.agent]
+provider = "openai"
+api = "responses"
+model = "gpt-6-astra"
+max_concurrent_loops = 4
+max_extraction_loops_per_project = 2
+max_steps = 12
+max_tool_calls = 24
+max_context_bytes = 131072
+max_output_tokens = 8192
+request_timeout_seconds = 90
+task_timeout_seconds = 240
+lease_seconds = 300
+max_attempts = 3
+# Review agent-authored memories after repository changes and at this interval.
+# Set to zero to disable automatic repository reviews.
+repository_review_interval_seconds = 86400
+
+[memory.embedding]
+enabled = false
+provider = "openai"
+model = "text-embedding-3-small"
+# dimensions = 1536 # Omit to discover dimensions on the first successful batch.
+batch_size = 16
+request_timeout_seconds = 10
+query_prefix = ""
+document_prefix = ""
+
+[memory.service]
+poll_interval_ms = 500
+max_query_concurrency = 16
+max_deep_queries = 2
+max_request_bytes = 262144
+max_response_bytes = 2097152
+
+[memory.retrieval]
+max_items = 8
+max_context_bytes = 6400
+query_timeout_ms = 1500
+
+[memory.projection]
+enabled = true
+poll_interval_ms = 5000
+batch_size = 20

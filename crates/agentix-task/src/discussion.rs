@@ -54,6 +54,17 @@ pub(crate) async fn prepare(
         .unwrap_or_default();
     let changed = merge_turn_messages(&mut messages, incoming)?;
     let bound: Option<String> = existing.as_ref().and_then(|r| r.get("job_id"));
+    crate::memory_source::capture(
+        conn,
+        &session,
+        &turn,
+        request["project"].as_str(),
+        request["project_hint"].as_str(),
+        bound.as_deref(),
+        &messages,
+        now,
+    )
+    .await?;
     if changed || existing.is_none() {
         sqlx::query("INSERT INTO discussion_turns(session_id,turn_id,source,messages) VALUES (?,?,?,?) ON CONFLICT(session_id,turn_id) DO UPDATE SET messages=excluded.messages")
             .bind(&session).bind(&turn).bind(request["source"].as_str().unwrap_or("host")).bind(json!(messages).to_string()).execute(&mut *conn).await?;
@@ -244,6 +255,15 @@ pub(crate) async fn attach(
             bound.as_deref().is_none_or(|id| id == job_id),
             "conflict: turn belongs to another Job"
         );
+        crate::memory_source::capture_attached_turn(
+            conn,
+            session,
+            turn,
+            &state.jobs[index].project_id,
+            &job_id,
+            now,
+        )
+        .await?;
         sqlx::query("UPDATE discussion_turns SET job_id=? WHERE session_id=? AND turn_id=? AND job_id IS NULL")
             .bind(&job_id).bind(session).bind(turn).execute(&mut *conn).await?;
     }

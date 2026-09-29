@@ -8,6 +8,8 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+agentix-memory = { path = "../agentix-memory" }
+async-trait.workspace = true
 agentix-task = { path = "../agentix-task" }
 anyhow.workspace = true
 clap.workspace = true

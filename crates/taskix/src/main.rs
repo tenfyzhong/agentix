@@ -13,6 +13,8 @@ use clap::{Args, CommandFactory, Parser, Subcommand};
 use clap_complete::Shell;
 use serde_json::{Value, json};
 
+#[cfg(unix)]
+mod memory;
 mod metrics;
 mod obsidian;
 
@@ -48,6 +50,12 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Maintain and retrieve project memory through a local service.
+    #[cfg(unix)]
+    Memory {
+        #[command(subcommand)]
+        action: memory::MemoryCommand,
+    },
     /// Inspect and attach session discussion turns.
     Conversation {
         #[command(subcommand)]
@@ -598,6 +606,10 @@ async fn setup_obsidian(
 }
 
 async fn run(cli: &Cli) -> Result<Value> {
+    #[cfg(unix)]
+    if let Command::Memory { action } = &cli.command {
+        return Ok(response(memory::run(cli, action).await?));
+    }
     if let Command::Routing {
         action: RoutingCommand::Metrics { action },
     } = &cli.command
@@ -648,6 +660,8 @@ async fn run_task_command(cli: &Cli) -> Result<Value> {
     }
     service.store().reap_expired().await?;
     match &cli.command {
+        #[cfg(unix)]
+        Command::Memory { .. } => unreachable!(),
         Command::Conversation { action } => conversation(cli, &service, action).await,
         Command::Inbox { action } => inbox(cli, &service, action).await,
         Command::Doctor => {
@@ -1233,6 +1247,14 @@ async fn hook(cli: &Cli, service: &Service, action: &HookCommand) -> Result<Valu
             };
             let mut request =
                 json!({"command":"session.record","session":session,"messages":messages});
+            if let Some(project) = &cli.project {
+                request["project"] = json!(service.store().project_result(project).await?.id);
+            } else {
+                let directory = ProjectDirectory::discover(&std::env::current_dir()?)?;
+                if let Some(project) = service.project_for_directory(&directory).await? {
+                    request["project_hint"] = json!(project.id);
+                }
+            }
             for key in ["turn_id", "source"] {
                 if let Some(value) = capture.get(key) {
                     request[key] = value.clone();

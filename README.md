@@ -9,6 +9,7 @@ Agentix connects local Codex, Pi, Oh My Pi, and Claude Code sessions to Telegram
 - Restore session bindings after restarts and receive background completion notifications.
 - Create Codex, Pi, OMP, and Claude Code sessions from chat with optional rmux integration.
 - Coordinate work with standalone `taskix` and browse project, Job, and Task boards in IM or Obsidian.
+- Retain evidenced project decisions with optional [Taskix memory](docs/taskix-memory.md), background extraction and bounded agent context.
 - Verify Jobs before completion and synchronize Obsidian status edits with automatic rollback on failure.
 
 Install Taskix Manager from GitHub using the [host-specific installation guide](plugins/taskix-manager/README.md#prerequisites-and-activation). Codex, Claude Code, and OMP use the `agentix` marketplace. Pi installs the repository as an extension package; all hosts share the plugin skills and runtime.
