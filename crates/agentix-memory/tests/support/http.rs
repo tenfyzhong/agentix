@@ -15,6 +15,10 @@ pub struct MockHttp {
 
 impl MockHttp {
     pub async fn start(replies: Vec<(u16, Value)>) -> Self {
+        Self::start_delayed(replies, std::time::Duration::ZERO).await
+    }
+
+    pub async fn start_delayed(replies: Vec<(u16, Value)>, delay: std::time::Duration) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         let requests = Arc::new(Mutex::new(Vec::new()));
@@ -53,12 +57,13 @@ impl MockHttp {
                 seen.lock()
                     .unwrap()
                     .push((header.lines().next().unwrap().into(), request));
+                tokio::time::sleep(delay).await;
                 let body = reply.to_string();
                 let response = format!(
                     "HTTP/1.1 {status} Mock\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
                     body.len()
                 );
-                socket.write_all(response.as_bytes()).await.unwrap();
+                let _ = socket.write_all(response.as_bytes()).await;
             }
         });
         Self {

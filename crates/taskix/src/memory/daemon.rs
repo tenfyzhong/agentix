@@ -7,7 +7,7 @@ use anyhow::{Context, Result, ensure};
 use async_trait::async_trait;
 use serde_json::{Value, json};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
@@ -266,6 +266,16 @@ pub async fn serve(path: &Path, location: MemoryLocation) -> Result<Value> {
     background.spawn(async move { run_embeddings(embeddings).await });
     let projection = app.clone();
     background.spawn(async move { run_projection(projection).await });
+    let maintenance = app.store.clone();
+    background.spawn(async move {
+        loop {
+            maintenance.cleanup_context().await?;
+            maintenance.cleanup_derived().await?;
+            tokio::time::sleep(Duration::from_mins(1)).await;
+        }
+        #[allow(unreachable_code)]
+        Ok::<(), anyhow::Error>(())
+    });
     let (stop, rx) = watch::channel(false);
     eprintln!("memory service listening at {}", server.path().display());
     let mut serving = tokio::spawn(server.serve(app, rx));
@@ -354,58 +364,231 @@ async fn ingest_source(app: &Application, source: &agentix_task::MemorySource) -
         .await?;
     Ok(input)
 }
+struct WorkerIdle {
+    next: tokio::time::Instant,
+    misses: u32,
+}
+impl WorkerIdle {
+    fn new(now: tokio::time::Instant) -> Self {
+        Self {
+            next: now,
+            misses: 0,
+        }
+    }
+    fn ready(&self, now: tokio::time::Instant) -> bool {
+        now >= self.next
+    }
+    fn wake(&mut self, now: tokio::time::Instant) {
+        self.next = now;
+        self.misses = 0;
+    }
+    fn empty(&mut self, now: tokio::time::Instant, interval: Duration) {
+        self.misses = (self.misses + 1).min(6);
+        self.next = now
+            + interval
+                .saturating_mul(1 << self.misses)
+                .min(Duration::from_secs(5));
+    }
+}
 async fn run_workers(app: Arc<Application>) -> Result<()> {
     let mut workers = JoinSet::new();
     let mut sequence = 0_u64;
+    let mut work = app.store.subscribe_work();
+    let mut idle = WorkerIdle::new(tokio::time::Instant::now());
+    let mut installed = app.runtime.read().await.clone();
     loop {
         let runtime = app.runtime.read().await.clone();
-        if let Some(worker) = &runtime.worker {
+        if !Arc::ptr_eq(&installed, &runtime) {
+            idle.wake(tokio::time::Instant::now());
+            installed = runtime.clone();
+        }
+        let interval = Duration::from_millis(runtime.config.service.poll_interval_ms);
+        if let Some(worker) = &runtime.worker
+            && idle.ready(tokio::time::Instant::now())
+        {
             while workers.len() < runtime.config.agent.max_concurrent_loops {
                 sequence += 1;
                 let owner = format!("{}:{sequence}", std::process::id());
                 let worker = worker.clone();
-                workers.spawn(async move { worker.run_once(&owner).await });
+                let epoch = *work.borrow();
+                workers.spawn(async move { (epoch, worker.run_once(&owner).await) });
             }
         }
         tokio::select! {
             Some(result)=workers.join_next(),if !workers.is_empty()=>{
-                match result? {Ok(true)=>{},Ok(false)=>tokio::time::sleep(Duration::from_millis(runtime.config.service.poll_interval_ms)).await,Err(error)=>app.report("worker",Some(error.to_string())).await}
+                let (epoch, result) = result?;
+                if matches!(result, Ok(true)) || epoch != *work.borrow() {
+                    idle.wake(tokio::time::Instant::now());
+                } else {
+                    idle.empty(tokio::time::Instant::now(), interval);
+                }
+                if let Err(error) = result { app.report("worker",Some(error.to_string())).await; }
             },
-            ()=tokio::time::sleep(Duration::from_millis(runtime.config.service.poll_interval_ms))=>{},
+            changed=work.changed()=>{
+                if changed.is_err() { return Ok(()); }
+                idle.wake(tokio::time::Instant::now());
+            },
+            ()=tokio::time::sleep(interval.min(Duration::from_secs(5)))=>{},
         }
     }
 }
+#[derive(Default)]
+struct EmbeddingSchedule {
+    due: BTreeMap<String, tokio::time::Instant>,
+    idle: BTreeMap<String, u32>,
+}
+impl EmbeddingSchedule {
+    fn ready(&self, project: &str, now: tokio::time::Instant) -> bool {
+        self.due.get(project).is_none_or(|due| *due <= now)
+    }
+    fn wake(&mut self, project: &str) {
+        self.due.remove(project);
+        self.idle.remove(project);
+    }
+    fn complete(
+        &mut self,
+        project: &str,
+        empty: bool,
+        now: tokio::time::Instant,
+        interval: Duration,
+    ) {
+        let delay = if empty {
+            let count = self.idle.entry(project.into()).or_default();
+            *count = (*count + 1).min(5);
+            interval
+                .saturating_mul(1 << *count)
+                .min(Duration::from_secs(30))
+        } else {
+            self.idle.remove(project);
+            interval
+        };
+        self.due.insert(project.into(), now + delay);
+    }
+}
+
+async fn embedding_project_ids(tasks: &agentix_task::Store) -> Result<Vec<String>> {
+    let mut ids: Vec<_> = tasks
+        .projects()
+        .await?
+        .into_iter()
+        .filter(|project| project.archived_at.is_none())
+        .map(|project| project.id)
+        .collect();
+    ids.sort();
+    Ok(ids)
+}
+
 async fn run_embeddings(app: Arc<Application>) -> Result<()> {
+    let mut workers = JoinSet::<(String, Result<usize>)>::new();
+    let mut active = BTreeSet::new();
+    let mut schedule = EmbeddingSchedule::default();
+    let mut changes = app.store.subscribe_changes();
+    let mut dirty = BTreeSet::new();
+    let mut project_ids = Vec::<String>::new();
+    let mut refresh_at = tokio::time::Instant::now();
+    let mut last = String::new();
+    let mut installed = app.runtime.read().await.clone();
     loop {
         let runtime = app.runtime.read().await.clone();
+        if !Arc::ptr_eq(&installed, &runtime) {
+            workers.abort_all();
+            while workers.join_next().await.is_some() {}
+            active.clear();
+            schedule = EmbeddingSchedule::default();
+            dirty.clear();
+            refresh_at = tokio::time::Instant::now();
+            installed = runtime.clone();
+        }
+        let interval = Duration::from_millis(runtime.config.service.poll_interval_ms.max(1000));
         if let Some(index) = &runtime.embedding {
-            for project in app.tasks.projects().await? {
-                if project.archived_at.is_some() {
-                    continue;
-                }
-                let active = app.runtime.read().await;
-                if !Arc::ptr_eq(&active, &runtime) {
+            if tokio::time::Instant::now() >= refresh_at {
+                project_ids = embedding_project_ids(&app.tasks).await?;
+                schedule
+                    .due
+                    .retain(|id, _| project_ids.binary_search(id).is_ok());
+                schedule
+                    .idle
+                    .retain(|id, _| project_ids.binary_search(id).is_ok());
+                refresh_at = tokio::time::Instant::now() + Duration::from_secs(5);
+            }
+            let mut projects = project_ids.clone();
+            // Rotate admission independently of completion order. A slow Project
+            // occupies one slot, not an entire scheduling round.
+            let pivot = projects.partition_point(|id| id <= &last);
+            projects.rotate_left(pivot);
+            for project in projects {
+                if workers.len() >= runtime.config.embedding.max_concurrent_projects {
                     break;
                 }
-                let generation = index.activate(&project.id).await?;
-                drop(active);
-                let result = index.step(&project.id, generation).await;
-                app.report(
-                    &format!("embedding:{}", project.id),
-                    result.err().map(|e| e.to_string()),
-                )
-                .await;
+                if active.contains(&project)
+                    || !schedule.ready(&project, tokio::time::Instant::now())
+                {
+                    continue;
+                }
+                active.insert(project.clone());
+                last.clone_from(&project);
+                let index = index.clone();
+                let app = app.clone();
+                let runtime = runtime.clone();
+                workers.spawn(async move {
+                    let result = async {
+                        let current = app.runtime.read().await;
+                        if !Arc::ptr_eq(&current, &runtime) {
+                            return Ok(0);
+                        }
+                        let generation = index.activate(&project).await?;
+                        drop(current);
+                        index.step(&project, generation).await
+                    }
+                    .await;
+                    (project, result)
+                });
             }
         }
-        tokio::time::sleep(Duration::from_millis(
-            runtime.config.service.poll_interval_ms.max(1000),
-        ))
-        .await;
+        tokio::select! {
+            Some(result) = workers.join_next(), if !workers.is_empty() => {
+                let (project, result) = result?;
+                active.remove(&project);
+                if dirty.remove(&project) {
+                    schedule.wake(&project);
+                } else {
+                    schedule.complete(&project, matches!(&result, Ok(0)), tokio::time::Instant::now(), interval);
+                }
+                app.report(&format!("embedding:{project}"),result.err().map(|e|e.to_string())).await;
+            },
+            change = changes.recv() => {
+                match change {
+                    Ok(project) => {
+                        schedule.wake(&project);
+                        if active.contains(&project) { dirty.insert(project.clone()); }
+                        if project_ids.binary_search(&project).is_err() { refresh_at = tokio::time::Instant::now(); }
+                    },
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                        schedule = EmbeddingSchedule::default();
+                        dirty.extend(active.iter().cloned());
+                        refresh_at = tokio::time::Instant::now();
+                    },
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => return Ok(()),
+                }
+            },
+            () = tokio::time::sleep(Duration::from_millis(runtime.config.service.poll_interval_ms)) => {},
+        }
     }
 }
 
 impl Application {
     async fn sync_projection(&self, project: &str, after: &str, limit: i64) -> Result<Value> {
+        self.sync_projection_page(project, after, limit, false)
+            .await
+    }
+
+    async fn sync_projection_page(
+        &self,
+        project: &str,
+        after: &str,
+        limit: i64,
+        pending: bool,
+    ) -> Result<Value> {
         let _guard = self.projection.lock().await;
         ensure!(
             self.runtime.read().await.config.projection.enabled,
@@ -421,28 +604,66 @@ impl Application {
             .join("Memory");
         let projection =
             MemoryProjection::new(self.store.clone(), &config.documents.root, &directory)?;
-        Ok(serde_json::to_value(
-            projection.sync(&project.id, after, limit).await?,
-        )?)
+        Ok(serde_json::to_value(if pending {
+            projection.sync_pending(&project.id, after, limit).await?
+        } else {
+            projection.sync(&project.id, after, limit).await?
+        })?)
     }
 }
 async fn run_projection(app: Arc<Application>) -> Result<()> {
     let mut cursors = BTreeMap::<String, String>::new();
+    let mut pending_cursors = BTreeMap::<String, String>::new();
+    let mut reconciled = BTreeMap::<String, tokio::time::Instant>::new();
     loop {
         let config = app.runtime.read().await.config.projection;
         if config.enabled {
             let projects = app.tasks.projects().await?;
             cursors.retain(|id, _| projects.iter().any(|p| &p.id == id));
+            pending_cursors.retain(|id, _| projects.iter().any(|p| &p.id == id));
+            reconciled.retain(|id, _| projects.iter().any(|p| &p.id == id));
             for project in projects {
                 if project.archived_at.is_some() {
                     continue;
                 }
+                let pending_cursor = pending_cursors.entry(project.id.clone()).or_default();
+                match app
+                    .sync_projection_page(&project.id, pending_cursor, config.batch_size, true)
+                    .await
+                {
+                    Ok(page) => {
+                        *pending_cursor = if page["complete"] == true {
+                            String::new()
+                        } else {
+                            page["next_cursor"].as_str().unwrap_or("").into()
+                        };
+                        app.report(&format!("projection_pending:{}", project.id), None)
+                            .await;
+                    }
+                    Err(error) => {
+                        app.report(
+                            &format!("projection_pending:{}", project.id),
+                            Some(error.to_string()),
+                        )
+                        .await;
+                    }
+                }
                 let cursor = cursors.entry(project.id.clone()).or_default();
+                if cursor.is_empty()
+                    && reconciled.get(&project.id).is_some_and(|last| {
+                        last.elapsed() < Duration::from_secs(config.reconcile_interval_seconds)
+                    })
+                {
+                    continue;
+                }
                 match app
                     .sync_projection(&project.id, cursor, config.batch_size)
                     .await
                 {
                     Ok(page) => {
+                        if page["complete"] == true {
+                            reconciled.insert(project.id.clone(), tokio::time::Instant::now());
+                        }
                         *cursor = if page["complete"] == true {
                             String::new()
                         } else {
@@ -509,3 +730,7 @@ async fn run_reviews(app: Arc<Application>) -> Result<()> {
         tokio::time::sleep(Duration::from_mins(1)).await;
     }
 }
+
+#[cfg(test)]
+#[path = "daemon_tests.rs"]
+mod tests;

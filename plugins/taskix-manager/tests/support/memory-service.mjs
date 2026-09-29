@@ -3,6 +3,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { runHook, runTaskix } from "../../runtime.mjs";
 
+test("long identifier-rich prompts retain memory through the real CLI and host", async () => {
+    const prompt = `Offline recovery ${Array.from({ length: 140 }, (_, i) => `t${String(i).padStart(3, "0")}`).join(" ")}`;
+    const output = await runHook({ hook_event_name: "UserPromptSubmit", session_id: "acceptance-long-prompt",
+        cwd: process.cwd(), prompt, turn_id: "long-prompt" }, runTaskix, { env: { TASKIX_JEV_ENABLED: "false" } });
+    assert.match(output.hookSpecificOutput.additionalContext, /Offline recovery/);
+});
+
 test("real prompt hook consumes extracted memory and deduplicates later turns", async () => {
     const event = { hook_event_name: "UserPromptSubmit", session_id: "acceptance-host", cwd: process.cwd(), prompt: "Offline recovery", turn_id: "first" };
     const routing = { env: { TASKIX_JEV_ENABLED: "false" } };

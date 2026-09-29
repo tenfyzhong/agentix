@@ -1,4 +1,7 @@
-use std::collections::HashMap;
+use std::{
+    cmp::Ordering,
+    collections::{BinaryHeap, HashMap},
+};
 
 use anyhow::{Result, ensure};
 use sqlx::Row;
@@ -6,6 +9,57 @@ use sqlx::Row;
 use crate::{Memory, MemoryStore};
 
 const VECTOR_PAGE_SQL: &str = "SELECT v.memory_id,v.vector FROM memory_vectors v JOIN memories m ON m.id=v.memory_id JOIN embedding_profiles p ON p.project_id=v.project_id AND p.generation=v.generation WHERE v.project_id=? AND v.generation=? AND v.memory_id>? AND v.revision=m.revision AND m.status IN ('active','conflicted') AND (m.valid_until IS NULL OR m.valid_until>unixepoch()) ORDER BY v.memory_id LIMIT 256";
+
+// The greatest heap entry is the worst retained candidate.
+struct Candidate(String, f64);
+impl PartialEq for Candidate {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+impl Eq for Candidate {}
+impl PartialOrd for Candidate {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for Candidate {
+    fn cmp(&self, other: &Self) -> Ordering {
+        other
+            .1
+            .total_cmp(&self.1)
+            .then_with(|| self.0.cmp(&other.0))
+    }
+}
+struct TopCandidates {
+    heap: BinaryHeap<Candidate>,
+    limit: usize,
+}
+impl TopCandidates {
+    fn new(limit: usize) -> Self {
+        Self {
+            heap: BinaryHeap::with_capacity(limit),
+            limit,
+        }
+    }
+    fn push(&mut self, id: String, score: f64) {
+        let candidate = Candidate(id, score);
+        if self.heap.len() < self.limit {
+            self.heap.push(candidate);
+        } else if let Some(mut worst) = self.heap.peek_mut()
+            && candidate < *worst
+        {
+            *worst = candidate;
+        }
+    }
+    fn finish(self) -> Vec<String> {
+        self.heap
+            .into_sorted_vec()
+            .into_iter()
+            .map(|entry| entry.0)
+            .collect()
+    }
+}
 
 fn normalize(vector: &[f32]) -> Result<Vec<f64>> {
     ensure!(
@@ -80,7 +134,7 @@ impl MemoryStore {
         limit: i64,
     ) -> Result<Vec<Memory>> {
         ensure!((1..=100).contains(&limit), "invalid: embedding page size");
-        let rows:Vec<String>=sqlx::query_scalar("SELECT m.data FROM memories m JOIN embedding_profiles p ON p.project_id=m.project_id WHERE m.project_id=? AND p.generation=? AND m.id>? AND m.status IN ('active','conflicted') AND (m.valid_until IS NULL OR m.valid_until>unixepoch()) AND NOT EXISTS(SELECT 1 FROM memory_vectors v WHERE v.memory_id=m.id AND v.generation=p.generation AND v.revision=m.revision) ORDER BY m.id LIMIT ?")
+        let rows:Vec<String>=sqlx::query_scalar("SELECT m.data FROM memories m JOIN embedding_profiles p ON p.project_id=m.project_id WHERE m.project_id=? AND p.generation=? AND m.id>? AND m.status IN ('active','conflicted') AND (m.valid_until IS NULL OR m.valid_until>unixepoch()) AND NOT EXISTS(SELECT 1 FROM memory_vectors v WHERE v.memory_id=m.id AND v.generation=p.generation AND v.revision=m.revision) AND NOT EXISTS(SELECT 1 FROM embedding_failures f WHERE f.memory_id=m.id AND f.generation=p.generation AND f.revision=m.revision AND (f.attempts>=3 OR f.available_at>unixepoch())) ORDER BY m.id LIMIT ?")
             .bind(project).bind(generation).bind(after).bind(limit).fetch_all(&self.pool).await?;
         rows.into_iter()
             .map(|v| Ok(serde_json::from_str(&v)?))
@@ -109,6 +163,14 @@ impl MemoryStore {
         let bytes: Vec<u8> = normalized.iter().flat_map(|v| v.to_le_bytes()).collect();
         sqlx::query("INSERT INTO memory_vectors(memory_id,project_id,generation,revision,vector) VALUES (?,?,?,?,?) ON CONFLICT(memory_id,generation) DO UPDATE SET revision=excluded.revision,vector=excluded.vector")
             .bind(id).bind(project).bind(generation).bind(revision).bind(bytes).execute(&mut *tx).await?;
+        sqlx::query(
+            "DELETE FROM embedding_failures WHERE memory_id=? AND generation=? AND revision=?",
+        )
+        .bind(id)
+        .bind(generation)
+        .bind(revision)
+        .execute(&mut *tx)
+        .await?;
         tx.commit().await?;
         Ok(true)
     }
@@ -178,7 +240,7 @@ impl MemoryStore {
         );
         let vector = normalize(vector)?;
         let mut after = String::new();
-        let mut top = Vec::<(String, f64)>::new();
+        let mut top = TopCandidates::new(limit);
         loop {
             // Short pages release the connection, including while the worker pool is active.
             let rows = sqlx::query(VECTOR_PAGE_SQL)
@@ -207,18 +269,43 @@ impl MemoryStore {
                 if similarity <= 0.0 {
                     continue;
                 }
-                top.push((id, similarity));
-                top.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
-                top.truncate(limit);
+                top.push(id, similarity);
             }
         }
-        Ok(top.into_iter().map(|(id, _)| id).collect())
+        Ok(top.finish())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn bounded_top_k_matches_full_sort_with_ties_and_reverse_arrival() {
+        let values: Vec<_> = (0..1000)
+            .map(|i| (format!("m{i:04}"), f64::from(i % 13) / 13.0))
+            .collect();
+        for limit in [1, 8, 100, 2000] {
+            for reverse in [false, true] {
+                let mut expected = values.clone();
+                expected.sort_by(|a, b| b.1.total_cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+                expected.truncate(limit);
+                let mut input = values.clone();
+                if reverse {
+                    input.reverse();
+                }
+                let mut top = TopCandidates::new(limit);
+                for (id, score) in input {
+                    top.push(id, score);
+                    assert!(top.heap.len() <= limit);
+                }
+                assert_eq!(
+                    top.finish(),
+                    expected.into_iter().map(|v| v.0).collect::<Vec<_>>()
+                );
+            }
+        }
+    }
+
     #[tokio::test]
     async fn vector_page_uses_project_generation_range_index() {
         let dir = tempfile::tempdir().unwrap();

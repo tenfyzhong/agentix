@@ -48,6 +48,9 @@ impl MemoryStore {
                 .bind(&memory.id).bind(memory.revision).bind(fingerprint).bind(result.last_insert_rowid()).execute(&mut *tx).await?;
         }
         tx.commit().await?;
+        if !rows.is_empty() {
+            self.notify_work();
+        }
         Ok(rows.len())
     }
 

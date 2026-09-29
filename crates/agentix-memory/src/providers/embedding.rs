@@ -32,6 +32,10 @@ impl HttpEmbedding {
     }
 
     pub async fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        self.embed_classified(texts, false).await
+    }
+
+    async fn embed_classified(&self, texts: &[String], query: bool) -> Result<Vec<Vec<f32>>> {
         ensure!(
             !texts.is_empty()
                 && texts.len() <= 64
@@ -53,7 +57,7 @@ impl HttpEmbedding {
         }
         let response = self
             .provider
-            .post(endpoint, body, self.config.request_timeout_seconds)
+            .post_classified(endpoint, body, self.config.request_timeout_seconds, query)
             .await?;
         let vectors: Vec<Vec<f32>> = if self.provider.protocol == ProviderProtocol::Openai {
             let mut ordered = vec![None; texts.len()];
@@ -96,7 +100,7 @@ impl HttpEmbedding {
 
     pub async fn query(&self, text: &str) -> Result<Vec<f32>> {
         Ok(self
-            .embed(&[format!("{}{text}", self.config.query_prefix)])
+            .embed_classified(&[format!("{}{text}", self.config.query_prefix)], true)
             .await?
             .remove(0))
     }

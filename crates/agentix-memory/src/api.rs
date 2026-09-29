@@ -170,6 +170,19 @@ impl MemoryApi {
                 query,
                 budget,
             } => {
+                crate::retrieval::query(&project, &query)?;
+                let budget = budget
+                    .unwrap_or(self.config.max_context_bytes)
+                    .min(self.config.max_context_bytes);
+                if let Some(packet) = self
+                    .store
+                    .cached_context(&project, &session, &turn, budget)
+                    .await?
+                {
+                    let mut value = serde_json::to_value(packet)?;
+                    value["mode"] = json!("context_cache");
+                    return Ok(value);
+                }
                 let results = self
                     .retrieval
                     // Hosts have a 1500 ms budget including CLI/IPC and FTS.
@@ -182,15 +195,7 @@ impl MemoryApi {
                     .await?;
                 let packet = self
                     .store
-                    .context(
-                        &project,
-                        &session,
-                        &turn,
-                        results.memories,
-                        budget
-                            .unwrap_or(self.config.max_context_bytes)
-                            .min(self.config.max_context_bytes),
-                    )
+                    .context(&project, &session, &turn, results.memories, budget)
                     .await?;
                 let mut value = serde_json::to_value(packet)?;
                 value["mode"] = json!(results.mode);
@@ -323,8 +328,25 @@ impl MemoryStore {
             None
         };
         let indexed:i64=sqlx::query_scalar("SELECT count(*) FROM memory_vectors v JOIN embedding_profiles p ON p.project_id=v.project_id AND p.generation=v.generation JOIN memories m ON m.id=v.memory_id AND m.revision=v.revision WHERE (? IS NULL OR v.project_id=?) AND m.status IN ('active','conflicted') AND (m.valid_until IS NULL OR m.valid_until>unixepoch())").bind(project).bind(project).fetch_one(&self.pool).await?;
+        // Offline readers may open a v1 snapshot before the daemon has installed
+        // the additive retry-state table. Reads must not migrate that snapshot.
+        let has_failures: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE name='embedding_failures')",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        let failures: Vec<String> = if has_failures {
+            sqlx::query_scalar("SELECT json_object('memory_id',f.memory_id,'revision',f.revision,'generation',f.generation,'attempts',f.attempts,'available_at',f.available_at,'error',f.error) FROM embedding_failures f JOIN memories m ON m.id=f.memory_id AND m.revision=f.revision JOIN embedding_profiles p ON p.project_id=m.project_id AND p.generation=f.generation WHERE (? IS NULL OR m.project_id=?) AND m.status IN ('active','conflicted') AND (m.valid_until IS NULL OR m.valid_until>unixepoch()) ORDER BY f.memory_id LIMIT 20")
+            .bind(project).bind(project).fetch_all(&self.pool).await?
+        } else {
+            Vec::new()
+        };
+        let failures: Vec<Value> = failures
+            .iter()
+            .map(|data| serde_json::from_str(data))
+            .collect::<Result<_, _>>()?;
         Ok(
-            json!({"project":project,"memories":memories,"sources":sources,"work":work,"embedding_profile":profile,"indexed":indexed}),
+            json!({"project":project,"memories":memories,"sources":sources,"work":work,"embedding_profile":profile,"indexed":indexed,"embedding_failures":failures}),
         )
     }
     pub async fn receipt_status(&self, project: &str, receipt: &str) -> Result<Value> {
@@ -342,6 +364,7 @@ impl MemoryStore {
             result.rows_affected() == 1,
             "conflict: only failed work with a current source can retry"
         );
+        self.notify_work();
         Ok(())
     }
 }

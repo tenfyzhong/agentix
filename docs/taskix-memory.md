@@ -134,6 +134,21 @@ Extraction, consolidation and repository review share `[memory.agent]`; each
 work item and retry starts a fresh Agent context. Clients and connection pools
 are reused, conversations are not. Models are called through explicit APIs,
 with structured tool responses and application-side evidence validation.
+The loop can page through preceding turns in the same Project and session, then
+read original messages to resolve references such as "use the second option."
+Each task still starts with fresh model context; history is retrieved on demand.
+Turn ordering and current source metadata are indexed, including a transactional
+backfill when opening an older database. Neighbor lookup returns summaries;
+message bodies are read separately when needed.
+
+`[memory.agent].extraction_debounce_ms` defaults to `1000` (range `0..60000`);
+zero disables the wait. Claimed extraction waits before Jev or model execution
+so rapid revisions can supersede it without paying for a request. Every source
+snapshot remains durable. Lease validity is checked approximately every 200 ms;
+superseded or expired work drops its running model/tool future. Provider-side
+billing may already have occurred. An unchanged message is not treated as a
+permanent cache hit: new context can require a new decision. The lease must
+exceed the task timeout plus the debounce rounded up to seconds.
 `api = "responses"` and `api = "chat_completions"` are supported for compatible
 models/providers. GPT-6 Astra requires Responses. There is no automatic model
 fallback or login-session subprocess.
@@ -148,6 +163,7 @@ provider = "openai"
 model = "text-embedding-3-small"
 # dimensions = 1536
 batch_size = 16
+max_concurrent_projects = 4
 request_timeout_seconds = 10
 ```
 
@@ -181,10 +197,43 @@ or `offline_fts`. `status --project PROJECT_ID` reports the active profile and
 indexed count. `reindex` rebuilds FTS in bounded pages; changing the embedding
 profile triggers its own rebuild. Old vector generations are not used for recall.
 
+Background embedding runs at most one batch per Project and up to
+`max_concurrent_projects` Projects concurrently (default `4`, range `1..32`).
+Admission rotates fairly and completed Projects cool down independently, so
+one slow Project does not hold an entire round. Provider `max_in_flight` still
+applies to all requests together. With a provider limit of two or more, background
+model/embedding work leaves one slot for online query embeddings. With a limit of
+one, active requests are not preempted; a queued query precedes subsequent
+background batches. Reserving capacity reduces peak background throughput.
+Reload cancels old batches; generation/revision fences remain active.
+The Project list refreshes every five seconds instead of on each completion.
+Empty Projects back off exponentially to a maximum of 30 seconds. Committed
+memory changes in this service wake their Project immediately; changes from
+another process are discovered by periodic scans. Lost notifications trigger a
+recovery scan. Nonempty batches and errors retain the normal polling interval,
+and per-record failure backoff still applies.
+
+Embedding failures are persisted per memory revision and index generation, with
+backoff and at most three automatic attempts. Input-related HTTP 400/413/422
+batch failures are retried individually so one rejected document cannot block
+later valid records. Outages, authentication errors and rate limits do not fan
+out into individual requests. `status` includes up to 20 current
+`embedding_failures` with attempts, retry time and error. `memory reindex` clears
+failure state for the records on its page, permitting an explicit retry; it does
+not discard already valid vectors. A memory edit or new model generation also
+permits fresh attempts. Responses incompatible with the current profile's resolved
+dimensions also enter failure backoff; results from superseded generations are
+simply discarded. Retry state survives daemon restarts and paired backups.
+
 Query vectors have a 64-entry, one-minute, project/generation-scoped cache;
-results themselves are not cached, so forgetting and revisions take effect on
-subsequent reads. Provider failures/timeouts fall back to FTS. Exact vector
-scanning uses 256-row pages and bounded top-k storage. Its CPU/I/O cost still
+up to 64 distinct in-flight queries are shared by Project, generation and exact
+query text. Each caller keeps its own wait deadline. One caller timing out does
+not cancel another caller's request; shared work has the configured query timeout.
+Failures are not cached. Dropping the old runtime cache cancels its pending work.
+Retrieved memory results themselves are not cached, so forgetting and revisions
+take effect on subsequent reads. Provider failures/timeouts fall back to FTS. Exact vector
+scanning uses 256-row pages and a fixed-capacity top-k heap, sorted once at the
+end with deterministic score/ID ordering. Its CPU/I/O cost still
 grows with the number and dimensions of vectors in the selected Project.
 
 ## Source delivery, concurrency and cost
@@ -221,7 +270,12 @@ Sources are split at UTF-8 boundaries into 16 KiB chunks. Candidate consolidatio
 is split into bounded batches; each atomic memory document is limited to 60 KiB.
 Default loop budgets are 12 steps, 24 tool calls, 128 KiB serialized context,
 8,192 output tokens, 90 seconds per request and 240 seconds per work item, with
-three attempts. Lowering the context limit below a work item's needs causes a
+three attempts. Empty extraction workers back off up to five seconds, with
+post-commit notifications for intake, consolidation work, scheduled reviews and
+explicit retries. A work-generation check prevents a stale empty result from
+overriding a newer notification. Periodic probes recover cross-process writes
+and expired leases; existing retry availability and concurrency gates still apply.
+Lowering the context limit below a work item's needs causes a
 reported failure rather than truncating evidence. `work` exposes attempts,
 configuration, usage, repository inspection digests and inspected HEAD.
 
@@ -234,12 +288,24 @@ count. A slow or unavailable query yields no injected memory and host work
 continues. Context injection caps semantic retrieval at the smaller of the
 configured query timeout and 750 ms, reserving time within the host deadline for
 FTS fallback and CLI/IPC. Ordinary search retains its configured semantic timeout.
+The host uses the first 1,000 prompt characters. FTS builds an OR query from at
+most 128 deterministically ordered unique terms instead of rejecting longer
+prompts; semantic embedding still receives the complete bounded query. The
+4,096-byte query input limit remains in force.
 Agentix captures session events and uses the installed host integration
 for injection; it does not duplicate the packet inside Engine prompts.
 
 The receiving host deduplicates memory ID/revision per session, both online and
 offline. The service caches prepared packets for same-turn retry but does not
-record their generation as delivery. A timeout or discarded response therefore
+record their generation as delivery. A same-turn receipt is checked before
+retrieval using a read-only existence probe; a miss does not acquire a SQLite
+writer lock. Hits and final receipt creation are still checked inside the
+transaction to resolve races. Empty receipts are hits; a hit reports `context_cache`. Referenced
+memories are batch-revalidated for Project, revision, status and expiry before
+rendering within the current byte budget. Unchanged receipts refresh their
+timestamp at most hourly. Background maintenance removes receipts older than
+30 days every minute, at most 1,000 rows per receipt table per pass.
+A timeout or discarded response therefore
 cannot suppress memory in the next turn; old service-side delivery markers are
 ignored. Direct `memory context` CLI reads can return the same entries on later
 turns because they do not confirm host injection. Host receipts persist only
@@ -304,11 +370,19 @@ taskix memory set-status mem_ID archived --revision 2 --reason 'Documented in re
 Direct human input may omit evidence. Agent-attributed writes require valid,
 literal same-Project evidence. The host passes its executor identity; do not
 impersonate a human to bypass evidence checks. Updates are revision guarded.
+User decisions and assertions require at least one user quotation when evidence
+is supplied. Assistant quotations can supply separately attributed proposal
+context, but cannot establish a user decision alone. The extraction model must
+still verify that the user actually selected or confirmed the quoted proposal.
 Conflicts remain marked and searchable; superseded, archived, forgotten and
 expired items are excluded from default recall. `list --all` and historical
 `show` preserve inspection. Forget is a logical lifecycle operation with evidence
 suppression, not physical erasure of source conversations or old versions.
-Suppression prevents replay/backfill from recreating the same evidence.
+Suppression includes evidence from every historical version of the memory, so
+merges and edits cannot make older evidence eligible for replay/backfill again.
+This applies when forgetting an existing memory, including versions saved by
+older builds; it does not retroactively rebuild suppression records for memories
+already forgotten by an older build.
 
 Repository review periodically checks agent-authored active memories using the
 same bounded worker pool. It schedules at most ten per Project per minute after
@@ -346,12 +420,19 @@ still operates while repeated notices are suppressed. Opening an
 edited note also checks it. Normal generated updates do not trigger errors;
 lookup or write failures are reported without discarding the file. The plugin
 uses the read-only `taskix memory document <vault-relative-path>` command, which
-works without the memory service and validates the Project path. The service repairs changed or missing files on its next
-projection pass; removing a note does not forget memory. If the vault itself is
+works without the memory service and validates the Project path. The service
+prioritizes changed database revisions on each projection poll (default 5 s).
+A full repair scan runs at startup and repeats after
+`[memory.projection].reconcile_interval_seconds` (default `300`, range `1..86400`)
+from the end of its last pass. Full scans advance in bounded pages on projection
+polls, so larger vaults take additional time. They repair externally changed or
+missing files even without the plugin. `taskix memory sync` still performs full
+repair for its requested page; removing a note does not forget memory. If the vault itself is
 removed, recreate a valid vault and configure its path before synchronizing.
 
 Projection runs independently of extraction/search and retries missing-vault or
-filesystem failures. `Recovery/` retains displaced file versions, including
+filesystem failures. Unchanged publication receipts are not rewritten; file I/O
+runs in blocking tasks rather than on async runtime threads. `Recovery/` retains displaced file versions, including
 unsupported local edits, and is not automatically pruned. Concurrent file changes
 are preserved and retried rather than silently overwritten during publication.
 Publication receipts survive restart, including a file installed before its
@@ -384,3 +465,26 @@ The positive-gate experiment was rolled back because it missed reference memorie
 The memory command definitions and shell completions are shared across platforms.
 The memory runtime remains Unix-only; other platforms return `memory commands
 require Unix` before loading configuration or creating local state.
+
+
+## Derived-data retention and performance checks
+
+Background maintenance runs every minute. It scans at most 1,000 rows per derived
+table per pass using persisted keyset cursors, so large backlogs drain over
+multiple passes and resume after restart. It removes vectors and failure records
+that no longer match a searchable memory revision and the current embedding
+generation. Current retry state is retained.
+
+Cancelled work without a work audit or repository-review reference is eligible
+for deletion 30 days after maintenance first observes it. Upgrades start this
+observation period instead of immediately deleting historical cancellations.
+Pruned work IDs no longer appear in work diagnostics or queue counts. Original
+sources, source heads, memory versions, suppressions, decisions, work audits,
+and reviewed work are retained. Done/failed work is not automatically pruned.
+SQLite reuses freed pages; this does not promise immediate file-size reduction
+and does not run automatic VACUUM.
+
+See [performance measurements](taskix-memory-performance.md) for repeatable
+local benchmarks and their scope. Exact vector retrieval remains enabled;
+the measured 10,000-record, 384-dimensional Project does not justify adding an
+approximate index. Higher dimensions and larger datasets require fresh profiling.

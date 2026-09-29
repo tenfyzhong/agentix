@@ -560,3 +560,31 @@ async fn atomic_memory_document_has_a_serialized_size_budget() {
     content.conditions = vec!["\0".repeat(1024); 16];
     assert!(store.create("p", content, Actor::Human).await.is_err());
 }
+
+#[tokio::test]
+async fn user_choice_can_cite_the_proposal_it_explicitly_accepts() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(&temp.path().join("memory.db"))
+        .await
+        .unwrap();
+    let source: Source = serde_json::from_value(json!({"instance_id":"db","receipt_id":"receipt","sequence":1,"project_id":"p","session_id":"s","turn_id":"t","revision":1,"job_id":null,"recorded_at":1,"messages":[{"id":"proposal","role":"assistant","text":"Option B keeps all customer data offline."},{"id":"choice","role":"user","text":"Choose option B."}]})).unwrap();
+    store.ingest(&source).await.unwrap();
+    let mut decision = input("receipt");
+    decision.evidence = vec![
+        agentix_memory::Evidence {
+            receipt_id: "receipt".into(),
+            message_id: "choice".into(),
+            quote: "Choose option B.".into(),
+        },
+        agentix_memory::Evidence {
+            receipt_id: "receipt".into(),
+            message_id: "proposal".into(),
+            quote: "Option B keeps all customer data offline.".into(),
+        },
+    ];
+    let result = store.create("p", decision, Actor::Agent).await;
+    assert!(
+        result.is_ok(),
+        "explicit user selection plus its proposal must be valid evidence: {result:?}"
+    );
+}

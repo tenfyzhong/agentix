@@ -261,3 +261,19 @@ async fn large_candidate_sets_are_split_into_bounded_consolidation_inputs() {
     }
     assert_eq!(count, 16);
 }
+
+#[tokio::test]
+async fn queue_notifications_follow_commits_and_ignore_duplicate_ingest() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(&dir.path().join("memory.db"))
+        .await
+        .unwrap();
+    let mut work = store.subscribe_work();
+    let input = source("p", "receipt", "turn", 1);
+    store.ingest(&input).await.unwrap();
+    assert!(work.has_changed().unwrap());
+    work.borrow_and_update();
+    assert_eq!(store.work_counts().await.unwrap().pending, 1);
+    store.ingest(&input).await.unwrap();
+    assert!(!work.has_changed().unwrap());
+}

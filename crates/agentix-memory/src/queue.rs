@@ -100,6 +100,11 @@ async fn insert_work(
 }
 
 impl MemoryStore {
+    pub async fn work_is_current(&self, lease: &WorkLease, now: i64) -> Result<bool> {
+        Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM work_items WHERE id=? AND project_id=? AND receipt_id=? AND state='running' AND generation=? AND owner=? AND lease_until>?)")
+            .bind(lease.id).bind(&lease.project_id).bind(&lease.receipt_id).bind(lease.generation).bind(&lease.owner).bind(now).fetch_one(&self.pool).await?)
+    }
+
     pub async fn work_details(&self, id: i64) -> Result<Value> {
         let data:String=sqlx::query_scalar("SELECT json_object('id',w.id,'project_id',w.project_id,'receipt_id',w.receipt_id,'kind',w.kind,'state',w.state,'attempts',w.attempts,'generation',w.generation,'error',w.error,'audit',json(a.data)) FROM work_items w LEFT JOIN work_audits a ON a.work_id=w.id AND a.generation=w.generation WHERE w.id=?").bind(id).fetch_optional(&self.pool).await?.context("not_found: memory work")?;
         Ok(serde_json::from_str(&data)?)
@@ -224,6 +229,7 @@ impl MemoryStore {
         }
         finish(&mut tx, lease, &serde_json::to_value(candidates)?).await?;
         tx.commit().await?;
+        self.notify_work();
         Ok(())
     }
 
@@ -234,6 +240,7 @@ impl MemoryStore {
         sqlx::query("UPDATE work_items SET state=CASE WHEN attempts>=max_attempts THEN 'failed' ELSE 'pending' END,available_at=?+min(300,1 << min(attempts,8)),owner=NULL,lease_until=NULL,error=? WHERE id=?")
             .bind(now).bind(error).bind(lease.id).execute(&mut *tx).await?;
         tx.commit().await?;
+        self.notify_work();
         Ok(())
     }
 

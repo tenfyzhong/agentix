@@ -53,6 +53,7 @@ pub struct AgentConfig {
     pub task_timeout_seconds: u64,
     pub lease_seconds: u64,
     pub max_attempts: u32,
+    pub extraction_debounce_ms: u64,
     pub repository_review_interval_seconds: u64,
 }
 impl Default for AgentConfig {
@@ -71,6 +72,7 @@ impl Default for AgentConfig {
             task_timeout_seconds: 240,
             lease_seconds: 300,
             max_attempts: 3,
+            extraction_debounce_ms: 1000,
             repository_review_interval_seconds: 86400,
         }
     }
@@ -80,6 +82,7 @@ impl Default for AgentConfig {
 #[serde(default, deny_unknown_fields)]
 pub struct EmbeddingConfig {
     pub enabled: bool,
+    pub max_concurrent_projects: usize,
     pub provider: String,
     pub model: String,
     pub dimensions: Option<usize>,
@@ -94,6 +97,7 @@ impl Default for EmbeddingConfig {
             enabled: false,
             provider: "openai".into(),
             model: "text-embedding-3-small".into(),
+            max_concurrent_projects: 4,
             dimensions: None,
             query_prefix: String::new(),
             document_prefix: String::new(),
@@ -151,6 +155,7 @@ pub struct MemoryStorage {
 #[serde(default, deny_unknown_fields)]
 pub struct ProjectionConfig {
     pub enabled: bool,
+    pub reconcile_interval_seconds: u64,
     pub poll_interval_ms: u64,
     pub batch_size: i64,
 }
@@ -160,6 +165,7 @@ impl Default for ProjectionConfig {
             enabled: true,
             poll_interval_ms: 5000,
             batch_size: 20,
+            reconcile_interval_seconds: 300,
         }
     }
 }
@@ -330,7 +336,10 @@ impl MemoryConfig {
         ensure!(
             (1..=600).contains(&self.agent.request_timeout_seconds)
                 && (1..=1800).contains(&self.agent.task_timeout_seconds)
-                && self.agent.lease_seconds > self.agent.task_timeout_seconds
+                && self.agent.extraction_debounce_ms <= 60000
+                && self.agent.lease_seconds
+                    > self.agent.task_timeout_seconds
+                        + self.agent.extraction_debounce_ms.div_ceil(1000)
                 && self.agent.lease_seconds <= 3600
                 && (1..=10).contains(&self.agent.max_attempts),
             "invalid: Agent timeouts or retries"
@@ -345,6 +354,7 @@ impl MemoryConfig {
         );
         ensure!(
             (100..=60000).contains(&self.projection.poll_interval_ms)
+                && (1..=86400).contains(&self.projection.reconcile_interval_seconds)
                 && (1..=100).contains(&self.projection.batch_size),
             "invalid projection limits"
         );
@@ -360,6 +370,7 @@ impl MemoryConfig {
                         .dimensions
                         .is_none_or(|n| (1..=16384).contains(&n))
                     && (1..=64).contains(&self.embedding.batch_size)
+                    && (1..=32).contains(&self.embedding.max_concurrent_projects)
                     && (1..=120).contains(&self.embedding.request_timeout_seconds),
                 "invalid: embedding settings"
             );

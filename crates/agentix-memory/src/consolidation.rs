@@ -134,6 +134,9 @@ impl MemoryStore {
         }
         queue::finish(&mut tx, lease, &serde_json::to_value(decisions)?).await?;
         tx.commit().await?;
+        if !changed.is_empty() {
+            self.notify_change(&lease.project_id);
+        }
         Ok(changed)
     }
 }

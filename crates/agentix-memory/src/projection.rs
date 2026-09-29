@@ -53,6 +53,32 @@ impl MemoryProjection {
     /// The service serializes publishers; database writers remain independent.
     pub async fn sync(&self, project: &str, after: &str, limit: i64) -> Result<ProjectionPage> {
         let memories = self.store.list(project, after, limit, true).await?;
+        self.sync_memories(memories, after, limit).await
+    }
+
+    /// Publish changed revisions first; full sync remains the repair path for file edits.
+    pub async fn sync_pending(
+        &self,
+        project: &str,
+        after: &str,
+        limit: i64,
+    ) -> Result<ProjectionPage> {
+        ensure!((1..=100).contains(&limit), "invalid projection page");
+        let rows: Vec<String> = sqlx::query_scalar("SELECT m.data FROM memories m JOIN memory_projection p ON p.memory_id=m.id WHERE m.project_id=? AND m.id>? AND (p.published_revision<m.revision OR p.prepared_revision<>0 OR p.error IS NOT NULL) ORDER BY m.id LIMIT ?")
+            .bind(project).bind(after).bind(limit).fetch_all(&self.store.pool).await?;
+        let memories = rows
+            .into_iter()
+            .map(|s| serde_json::from_str(&s))
+            .collect::<std::result::Result<Vec<Memory>, _>>()?;
+        self.sync_memories(memories, after, limit).await
+    }
+
+    async fn sync_memories(
+        &self,
+        memories: Vec<Memory>,
+        after: &str,
+        limit: i64,
+    ) -> Result<ProjectionPage> {
         let mut result = ProjectionPage {
             next_cursor: after.into(),
             complete: memories.len() < usize::try_from(limit)?,
@@ -82,8 +108,14 @@ impl MemoryProjection {
     }
     async fn sync_one(&self, initial: &Memory) -> Result<(bool, bool)> {
         let path = self.path(&initial.id)?;
-        files::prepare_directory(&self.root, &self.directory)?;
-        let text = files::read(&path)?;
+        let root = self.root.clone();
+        let directory = self.directory.clone();
+        let read_path = path.clone();
+        let text = tokio::task::spawn_blocking(move || {
+            files::prepare_directory(&root, &directory)?;
+            files::read(&read_path)
+        })
+        .await??;
         let current = self
             .store
             .show(&initial.project_id, &initial.id, None)
@@ -103,14 +135,15 @@ impl MemoryProjection {
         .bind(&current.id)
         .execute(&self.store.pool)
         .await?;
-        files::publish(&path, text.as_deref(), &output)?;
+        tokio::task::spawn_blocking(move || files::publish(&path, text.as_deref(), &output))
+            .await??;
         self.acknowledge(&current.id, current.revision, &output_hash)
             .await?;
         Ok((false, true))
     }
     async fn acknowledge(&self, id: &str, revision: i64, hash: &str) -> Result<()> {
-        sqlx::query("UPDATE memory_projection SET published_revision=?,published_hash=?,imported_hash='',prepared_revision=0,prepared_hash='',error=NULL WHERE memory_id=? AND published_revision<=?")
-            .bind(revision).bind(hash).bind(id).bind(revision).execute(&self.store.pool).await?;
+        sqlx::query("UPDATE memory_projection SET published_revision=?,published_hash=?,imported_hash='',prepared_revision=0,prepared_hash='',error=NULL WHERE memory_id=? AND published_revision<=? AND (published_revision<>? OR published_hash<>? OR imported_hash<>'' OR prepared_revision<>0 OR prepared_hash<>'' OR error IS NOT NULL)")
+            .bind(revision).bind(hash).bind(id).bind(revision).bind(revision).bind(hash).execute(&self.store.pool).await?;
         Ok(())
     }
 }

@@ -60,9 +60,11 @@ pub(crate) fn query(project: &str, text: &str) -> Result<Option<String>> {
     if terms.is_empty() {
         return Ok(None);
     }
-    ensure!(terms.len() <= 128, "invalid: too many memory query terms");
+    // Host prompts have a character budget, not a term budget. Keep recall
+    // bounded without disabling lexical and semantic retrieval for long prompts.
     let quoted: Vec<_> = terms
         .iter()
+        .take(128)
         .map(|t| format!("\"{}\"", t.replace('"', "\"\"")))
         .collect();
     Ok(Some(format!(

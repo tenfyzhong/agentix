@@ -80,3 +80,61 @@ fn shipped_example_loads_for_service_and_can_enable_embedding_without_credential
     assert_eq!(config.agent.repository_review_interval_seconds, 86400);
     assert_eq!(config.retrieval.max_context_bytes, 6400);
 }
+
+#[test]
+fn maintenance_limits_are_validated_and_defaults_are_backward_compatible() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.toml");
+    let example = include_str!("../../../config/taskix.example.toml")
+        .replace("enabled = false", "enabled = true");
+    std::fs::write(&path, &example).unwrap();
+    let config = MemoryConfig::load(&path).unwrap();
+    assert_eq!(config.agent.extraction_debounce_ms, 1000);
+    assert_eq!(config.embedding.max_concurrent_projects, 4);
+    assert_eq!(config.projection.reconcile_interval_seconds, 300);
+    for (from, to) in [
+        (
+            "extraction_debounce_ms = 1000",
+            "extraction_debounce_ms = 60001",
+        ),
+        ("max_concurrent_projects = 4", "max_concurrent_projects = 0"),
+        (
+            "reconcile_interval_seconds = 300",
+            "reconcile_interval_seconds = 0",
+        ),
+        ("lease_seconds = 300", "lease_seconds = 241"),
+    ] {
+        std::fs::write(&path, example.replace(from, to)).unwrap();
+        assert!(
+            MemoryConfig::load(&path).is_err(),
+            "invalid setting accepted: {to}"
+        );
+    }
+    let legacy = example
+        .replace("extraction_debounce_ms = 1000", "")
+        .replace("max_concurrent_projects = 4", "")
+        .replace("reconcile_interval_seconds = 300", "");
+    std::fs::write(&path, legacy).unwrap();
+    assert_eq!(
+        MemoryConfig::load(&path)
+            .unwrap()
+            .agent
+            .extraction_debounce_ms,
+        1000
+    );
+    std::fs::write(
+        &path,
+        example.replace(
+            "extraction_debounce_ms = 1000",
+            "extraction_debounce_ms = 0",
+        ),
+    )
+    .unwrap();
+    assert_eq!(
+        MemoryConfig::load(&path)
+            .unwrap()
+            .agent
+            .extraction_debounce_ms,
+        0
+    );
+}

@@ -33,6 +33,8 @@ is unaffected, but memory IPC is not implemented there.
 | Discussion and Job capture, immutable revision snapshots, unknown ownership, directory hints, attachment, legacy backfill, v14 migration, individual acknowledgements and restore forks | `agentix-task/tests/memory_sources.rs`, `agentix-core/src/engine/task_board/tests.rs`, `taskix/tests/cli.rs` |
 | Chinese and identifier recall, project isolation, evidence validation, revisions, human edits, supersession, expiry and forget suppression | `agentix-memory/tests/store.rs` |
 | Independent vector recall, generation/revision fences, invalid dimensions/values, partial indexing and query degradation | `tests/store.rs`, `tests/embedding_index.rs`, `tests/providers.rs` in `agentix-memory` |
+| Historical evidence suppression after merge and reopen; discovered-dimension mismatch backoff and continued progress through split batches | `agentix-memory/tests/lifecycle_regressions.rs` |
+| Long host prompts, per-record embedding failure isolation, persisted retry limits, explicit retry and revision/generation reset | `agentix-memory/tests/retrieval_failures.rs` |
 | Fair claims, parallel extraction, serial project consolidation, lease expiry/retry, stale-source cancellation, atomic result application and bounded candidate batches | `agentix-memory/tests/queue.rs` |
 | Fresh contexts, bounded steps/tools/context/time, strict model protocol, read-only scoped tools, repository audit and database availability during blocked model calls | `agentix-memory/tests/agent_loop.rs`, `tests/tools.rs`, `tests/providers.rs`, `tests/worker.rs` |
 | Repository reviews retire documented agent memories; fabricated citations fail and concurrent human edits win | `agentix-memory/tests/worker.rs` |
@@ -57,6 +59,64 @@ rejects foreign Project paths. Desktop Obsidian itself is not exercised.
 The real daemon/CLI/Node hook fixture also discards a prepared context packet,
 then verifies the next host turn still receives it and subsequent host turns
 deduplicate it. Packet preparation itself never establishes host delivery.
+
+## Maintenance optimization coverage
+
+- `agentix-memory/tests/worker.rs` verifies rapid source revisions make no model
+  request during the settling window, and supersession cancels a blocked model
+  future while preserving the replacement work and original source.
+- `taskix/src/memory/daemon_tests.rs` holds one Project's HTTP request open while
+  two other Projects make progress, checks concurrency limits of one and two,
+  and verifies reload prevents the old batch from publishing vectors.
+- `agentix-memory/tests/projection.rs` uses an update trigger to prove unchanged
+  publication receipts receive no writes. Pending-only publication handles new
+  revisions; full sync still repairs external edits, missing files and crashes.
+- `agentix-memory/tests/source_index.rs` rebuilds the derived turn index from an
+  older schema, preserves order across revisions, and checks indexed pagination
+  without a temporary sort. Existing tool tests retain paging and scope checks.
+
+- `agentix-memory/tests/api.rs` removes the FTS table after preparing a packet
+  to prove same-turn retries bypass retrieval, including expired/empty packets.
+- `agentix-memory/tests/context.rs` verifies unchanged receipts do not fire an
+  update trigger, bounded background cleanup preserves recent receipts, and
+  committed changes notify subscribers sharing a cloned store. The context module
+  also checks that batch validation uses an ID lookup instead of a Project scan.
+- `agentix-memory/tests/query_coalescing.rs` counts mock HTTP calls for overlapping
+  queries, independent short/long deadlines, failures and Project/generation keys.
+- `taskix/src/memory/daemon_tests.rs` also checks bounded idle backoff and an
+  idle Project receiving a committed update while another Project remains slow.
+- `agentix-memory/src/vectors.rs` compares heap results against full sorting
+  across capacities, ties and arrival orders, checking the retained size bound.
+
+These are behavioral and query-plan checks, not a new wall-clock benchmark or a
+measured provider-cost reduction. The scale numbers below predate these changes.
+
+## Memory regression coverage
+
+Source-context regressions cover cross-turn source discovery and pagination,
+session/Project isolation, stable order after a prior turn is revised, and a
+worker resolving a user choice against a preceding legacy proposal. Store tests
+accept user selection plus assistant supporting evidence while retaining the
+assistant-only rejection. `retrieval_failures.rs` covers long prompts, failed
+embedding batch isolation, durable backoff/retry limits, explicit reindex and
+revision/generation changes. A real CLI/Node fixture verifies a long
+identifier-rich prompt still receives memory. Offline status also reads older
+v1 snapshots without the additive embedding retry table.
+
+`agentix-memory/tests/lifecycle_regressions.rs` adds three regression cases:
+
+- Forgetting a merged memory suppresses both its original and current evidence;
+  reopening the database preserves both suppressions.
+- With dimensions omitted, a response inconsistent with the resolved profile
+  reports a failure, records retry state, and lets a later valid memory proceed.
+- After an input-rejected batch is split, one individual dimension mismatch
+  enters backoff without preventing the remaining valid record from being indexed.
+
+These tests exercise existing stored version history and deterministic HTTP
+responses. They do not claim that upgrading retroactively repairs suppression
+records for memories already forgotten by an older build. Review-only tests
+archived outside the checkout are not part of the reproducible suite or coverage
+matrix; the normal suite is defined by the repository test files.
 
 ## Measured scale
 
@@ -111,3 +171,20 @@ Restored negative Jev gating covers low-confidence `extract`, low-confidence
 `skip`, valid `uncertain`, malformed answers and service failures. All continue
 to the model; only confident `skip` suppresses extraction. The calibration report
 records the negative-gate backtest and why the positive experiment was rolled back.
+
+
+## Query admission, idle workers and retention
+
+- `tests/context.rs` holds an unrelated SQLite writer while a cache miss returns
+  through the read-only path; invalid identities and budgets remain rejected.
+- `providers/http.rs` verifies reserved query admission, the shared total cap,
+  and a waiting query preceding the next batch when concurrency is one.
+- `tests/queue.rs` verifies post-commit queue notifications and duplicate-intake
+  silence; daemon tests verify idle deadlines and notification reset.
+- `tests/maintenance.rs` verifies obsolete-data cleanup, the first-observed
+  retention clock, source/version/audit preservation, indexed review references,
+  per-pass bounds and continued cleanup after reopening.
+
+[Current performance measurements](taskix-memory-performance.md) include debug
+and release results, provider request counts and scheduler CPU scope. These
+manual benchmarks supplement deterministic tests; they are not production SLOs.

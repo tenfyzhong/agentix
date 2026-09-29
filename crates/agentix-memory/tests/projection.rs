@@ -228,3 +228,82 @@ async fn prepared_receipt_recovers_a_file_installed_before_database_acknowledgem
         0
     );
 }
+
+#[tokio::test]
+async fn unchanged_projection_does_not_update_publication_receipt() {
+    let (dir, _store, projection, _id) = fixture().await;
+    projection.sync("project", "", 20).await.unwrap();
+    let pool = sqlx::SqlitePool::connect_with(
+        sqlx::sqlite::SqliteConnectOptions::new().filename(dir.path().join("memory.db")),
+    )
+    .await
+    .unwrap();
+    sqlx::raw_sql("CREATE TABLE receipt_updates(n INTEGER); CREATE TRIGGER count_receipt_updates AFTER UPDATE ON memory_projection BEGIN INSERT INTO receipt_updates VALUES(1); END;").execute(&pool).await.unwrap();
+    let page = projection.sync("project", "", 20).await.unwrap();
+    assert_eq!(page.published, 0);
+    let updates: i64 = sqlx::query_scalar("SELECT count(*) FROM receipt_updates")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        updates, 0,
+        "unchanged notes must not dirty the receipt table"
+    );
+}
+
+#[tokio::test]
+async fn pending_projection_prioritizes_changes_and_full_sync_repairs_external_edits() {
+    let (_dir, store, projection, id) = fixture().await;
+    assert_eq!(
+        projection
+            .sync_pending("project", "", 20)
+            .await
+            .unwrap()
+            .published,
+        1
+    );
+    let path = projection.path(&id).unwrap();
+    std::fs::write(&path, "External edit").unwrap();
+    assert_eq!(
+        projection
+            .sync_pending("project", "", 20)
+            .await
+            .unwrap()
+            .published,
+        0
+    );
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "External edit");
+    projection.sync("project", "", 20).await.unwrap();
+    assert!(
+        std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("Use the regional endpoint")
+    );
+    let mut changed = input();
+    changed.conclusion = "Updated constraint".into();
+    store
+        .update("project", &id, 1, changed, Actor::Human)
+        .await
+        .unwrap();
+    assert_eq!(
+        projection
+            .sync_pending("project", "", 20)
+            .await
+            .unwrap()
+            .published,
+        1
+    );
+    assert!(
+        std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("Updated constraint")
+    );
+    assert_eq!(
+        projection
+            .sync_pending("other", "", 20)
+            .await
+            .unwrap()
+            .published,
+        0
+    );
+}

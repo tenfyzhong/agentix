@@ -2,6 +2,24 @@
 #![cfg(unix)]
 use agentix_memory::{MemoryApi, MemoryStore, RequestHandler, RetrievalConfig, ServiceConfig};
 use serde_json::json;
+
+#[tokio::test]
+async fn offline_status_accepts_legacy_database_without_embedding_failures() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("memory.db");
+    let store = MemoryStore::open(&path).await.unwrap();
+    drop(store);
+    let pool =
+        sqlx::SqlitePool::connect_with(sqlx::sqlite::SqliteConnectOptions::new().filename(&path))
+            .await
+            .unwrap();
+    sqlx::query("DROP TABLE embedding_failures")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let old = MemoryStore::open_read_only(&path).await.unwrap();
+    assert!(old.memory_status(None).await.is_ok());
+}
 #[tokio::test]
 async fn api_supports_scoped_reads_and_revision_guarded_writes_without_model_credentials() {
     let temp = tempfile::tempdir().unwrap();
@@ -107,4 +125,54 @@ async fn deep_queries_are_read_only_and_reject_fabricated_citations() {
     }
     assert_eq!(store.show("a", &memory.id, None).await.unwrap(), memory);
     assert_eq!(store.work_counts().await.unwrap().pending, 0);
+}
+
+#[tokio::test]
+async fn context_retry_skips_retrieval_and_revalidates_even_empty_receipts() {
+    use agentix_memory::{Actor, MemoryInput};
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("memory.db");
+    let store = MemoryStore::open(&path).await.unwrap();
+    let input: MemoryInput = serde_json::from_value(json!({"title":"constraint","conclusion":"offline","rationale":"user","scope":"project","tags":[],"kind":"user_decision","evidence":[]})).unwrap();
+    let memory = store.create("p", input, Actor::Human).await.unwrap();
+    let api = MemoryApi::new(
+        store.clone(),
+        RetrievalConfig::default(),
+        ServiceConfig::default(),
+    );
+    let request = json!({"op":"context","project":"p","session":"s","turn":"t","query":"offline"});
+    let first = api.handle(request.clone()).await.unwrap();
+    assert_eq!(first["items"][0]["id"], memory.id);
+    let pool =
+        sqlx::SqlitePool::connect_with(sqlx::sqlite::SqliteConnectOptions::new().filename(&path))
+            .await
+            .unwrap();
+    // A retry must not touch lexical retrieval, even after the embedding cache expires.
+    sqlx::query("DROP TABLE memory_fts")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let repeat = api.handle(request.clone()).await.unwrap();
+    assert_eq!(repeat["text"], first["text"]);
+    // Expiry can change visibility without needing an FTS write.
+    sqlx::query("UPDATE memories SET data=json_set(data,'$.content.valid_until',0) WHERE id=?")
+        .bind(&memory.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let expired = api.handle(request.clone()).await.unwrap();
+    assert!(expired["items"].as_array().unwrap().is_empty());
+    assert!(
+        api.handle(request).await.unwrap()["items"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        api.handle(
+            json!({"op":"context","project":"other","session":"s","turn":"t","query":"offline"})
+        )
+        .await
+        .is_err()
+    );
 }

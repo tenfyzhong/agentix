@@ -116,8 +116,13 @@ struct ReadFile {
 #[serde(deny_unknown_fields)]
 struct ReadSource {
     receipt_id: String,
-    message_id: String,
+    message_id: Option<String>,
     offset: usize,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SourceAnchor {
+    receipt_id: String,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -140,9 +145,14 @@ impl ToolSet for ProjectTools {
                 &json!({"id":{"type":"string"}}),
             ),
             definition(
+                "source_neighbors",
+                "Discover up to eight preceding receipts in the same Project and session. Use next_receipt_id as the anchor to page farther back; source_read lists and reads their messages.",
+                &json!({"receipt_id":{"type":"string"}}),
+            ),
+            definition(
                 "source_read",
-                "Read a bounded original evidence message; offsets are UTF-8 byte offsets",
-                &json!({"receipt_id":{"type":"string"},"message_id":{"type":"string"},"offset":{"type":"integer","minimum":0}}),
+                "Read original evidence. Null message_id lists 32 message IDs with a message-index offset; otherwise offset is a UTF-8 byte offset into that message.",
+                &json!({"receipt_id":{"type":"string"},"message_id":{"type":["string","null"]},"offset":{"type":"integer","minimum":0}}),
             ),
             definition(
                 "repo_read",
@@ -171,13 +181,32 @@ impl ToolSet for ProjectTools {
                     self.store.show(&self.project, &args.id, None).await?,
                 )?)
             }
+            "source_neighbors" => {
+                let args: SourceAnchor = serde_json::from_value(arguments)?;
+                let sources = self
+                    .store
+                    .source_neighbors(&self.project, &args.receipt_id)
+                    .await?;
+                Ok(
+                    json!({"sources":sources,"next_receipt_id":if sources.len()==8 {sources.last().map(|s|&s.receipt_id)} else {None}}),
+                )
+            }
             "source_read" => {
                 let args: ReadSource = serde_json::from_value(arguments)?;
                 let source = self.store.source(&self.project, &args.receipt_id).await?;
+                let Some(message_id) = args.message_id else {
+                    ensure!(
+                        args.offset <= source.messages.len(),
+                        "invalid source message offset"
+                    );
+                    return Ok(
+                        json!({"receipt_id":source.receipt_id,"messages":source.messages.iter().skip(args.offset).take(32).map(|m|json!({"id":m.id,"role":m.role,"bytes":m.text.len()})).collect::<Vec<_>>(),"next_offset":if source.messages.len()-args.offset>32 {Some(args.offset+32)} else {None}}),
+                    );
+                };
                 let message = source
                     .messages
                     .iter()
-                    .find(|m| m.id == args.message_id)
+                    .find(|m| m.id == message_id)
                     .context("source message absent")?;
                 ensure!(
                     message.text.is_char_boundary(args.offset),

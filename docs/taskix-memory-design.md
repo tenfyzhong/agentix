@@ -75,8 +75,14 @@ Use a bounded persistent queue with fair Project scheduling, retries, deadlines
 and generation-fenced leases. Parallel extraction produces candidates. One
 consolidation loop per Project resolves candidates against existing memories;
 different Projects consolidate concurrently. Model requests never hold database
-transactions or connection leases. Obsidian and CLI edits advance revisions and
-fence stale model results.
+transactions or connection leases. CLI edits advance revisions and fence stale
+model results; Obsidian is a read-only projection.
+
+Extraction waits for a configurable short settling window after claim; rapid
+source revisions cancel superseded derived work while all original receipts
+remain durable. Poll lease validity during execution to drop obsolete model/tool
+futures promptly. Do not deduplicate solely by message text: added context can
+change the interpretation of an unchanged selection.
 
 Every task and retry creates a fresh Agent context. Workers may reuse clients and
 connections, but never another task's conversation. Bound source input, tool
@@ -85,8 +91,23 @@ repository files; they do not expose arbitrary SQL, shell execution, repository
 writes or task lifecycle mutations. Record the repository revision inspected.
 Do not capture internal memory Agent conversations into the task outbox.
 
+An extraction loop can discover preceding sources with `source_neighbors`,
+anchored at its current receipt. Pages contain at most eight current turn
+revisions in the same Project, source instance and session. Turns retain their
+first receipt sequence ordering across later edits or Job attachments. Persist
+that order and current source summary in a scoped index, transactionally backfill
+older databases once, and read message bodies only on demand.
+`source_read` with a null message ID lists up to 32 message identifiers per page;
+with a message ID it reads bounded text. This also recovers adjacent context for
+legacy backfill receipts containing one message each. Context-dependent choices
+must inspect the proposal rather than guess what a short approval refers to.
+Jev's unresolved-reference fallback remains conservative; Jev does not gain a
+separate conversation or repository access path.
+
 Support explicit Responses and Chat Completions API adapters where applicable.
 Validate structured proposals and their source references in application code.
+User-decision evidence requires a user quote, while allowing assistant quotes as
+supporting context; assistant-only decisions remain invalid.
 Do not let the model assign stronger evidence than the source supports. Normal
 queries do not run an Agent; optional deep queries run a separately limited,
 read-only loop and return traceable sources.
@@ -97,15 +118,38 @@ Each atomic memory carries conclusion, rationale, scope, conditions, type, tags,
 evidence, revision and timestamps. Preserve versions and relationships for
 conflicts and supersession. Default retrieval excludes forgotten, superseded and
 archived content. Explicit historical inspection remains possible. Forgetting
-removes search visibility and creates suppression records so replay/backfill
-cannot resurrect the same evidence. Retire material that becomes documented in
-the repository from regular injection.
+removes search visibility and atomically creates suppression records from every
+historical version of that memory. Merges and edits can replace current evidence,
+so suppressing only the latest version would let replay/backfill resurrect the
+original decision. Read existing version history when forgetting, including
+versions written by older builds; no new extraction is required. This operation
+does not retroactively rebuild suppressions for records already forgotten by an
+older build. Retire material that becomes documented in the repository from
+regular injection.
+
+Embedding batches use a bounded, rotating cross-Project scheduler, with one
+active batch per Project and independent cooldowns. Slow Projects occupy only
+their own slots. Provider concurrency limits still apply; hot reload cancels old
+batches before admitting the replacement runtime.
+
+Embedding maintenance isolates input-rejected batches and persists per-record,
+revision/generation-fenced retry state. Three failed attempts suspend automatic
+retries until an explicit reindex, memory edit or model-generation change.
+Other failures back off without multiplying provider requests. When dimensions
+are discovered from the first response, a later response incompatible with the
+current generation's resolved dimension is a failure, not a successful empty
+write. Persist its retry state and expose the error through status. Individual
+failures during a split batch do not abort the remaining records. A delayed
+response for a superseded generation is discarded without changing the new
+profile, vectors or retry state. FTS remains available, and excessive lexical
+query terms are bounded rather than disabling an otherwise valid context request.
 
 FTS5 is usable without embedding. Index and query share versioned Chinese word
 segmentation and English identifier handling; use weighted BM25. SQL scopes
 Project and lifecycle before retrieval. Vector recall is independent of FTS;
 combine ranks with RRF. Initially use SQLite vector storage and scoped exact
-cosine search in Rust, measured against realistic Project sizes.
+cosine search in Rust, measured against realistic Project sizes. Maintain exact
+top-k with a bounded worst-first heap and one final deterministic score/ID sort.
 
 Embedding has independent provider configuration, including OpenAI-compatible
 embeddings and Ollama. Generate asynchronously. Fence writes by memory ID,
@@ -117,6 +161,15 @@ leave FTS usable with explicit degradation and index progress.
 Use bounded pages, scoped indexes and bounded caches. Online queries have
 independent resource limits from maintenance and historical backfill. Return
 pending work and coverage; optional receipt-based waits have a deadline.
+Coalesce at most 64 in-flight query embeddings per runtime by Project, generation
+and query. Keep caller deadlines independent and bound shared work by the query
+timeout; cache only successful vectors. Dropping an old runtime cache cancels its pending work.
+Cache the Project list for five seconds; idle indexing backs off to 30 seconds.
+Post-commit notifications wake affected Projects, with periodic recovery for
+other processes and notification loss. Extraction workers similarly back off to
+five seconds; a queue watch generation prevents lost wakeups from stale empty
+claim results. Provider-wide background admission leaves one online embedding
+query slot when total concurrency is at least two; the total limit remains fixed.
 
 ## User and host interfaces
 
@@ -131,6 +184,13 @@ paths and consume a small relevant context plus on-demand search. Enforce byte
 or conservative token budgets and deduplicate memory ID plus revision within a
 session at the receiving host. Packet generation is not delivery: service-side
 same-turn caching must not suppress a later turn after a timeout or disconnect.
+Check same-turn receipts with a read-only probe before retrieval, including empty
+packets. A miss avoids a writer lock; the final transaction still checks for a
+concurrent winning receipt. Batch-check
+referenced revisions and lifecycle under the receipt transaction, preserving
+rank order and the current byte budget. Avoid unchanged receipt writes except
+for hourly timestamp refresh. Perform bounded 30-day receipt cleanup separately
+every minute (up to 1,000 rows per table), including while queries are idle.
 Reserve time for lexical fallback within the host deadline.
 Do not delay the main Agent for extraction. Queries and maintenance do
 not change Job ownership or Jev routing semantics.
@@ -170,3 +230,29 @@ service-failure results use the model. The
 source stays durable and completion remains fenced. The existing v2 Jev metrics
 file records `memory_triage`, including scores and fallback reasons, without
 storing conversation content. No separate triage config section is introduced.
+
+## Incremental projection maintenance
+
+Publish pending database revisions on the regular projection poll. Skip receipt
+updates when the published revision/hash and recovery state already match.
+Run a separate lower-frequency, paginated full reconciliation to detect file
+edits and deletion; dirty database tracking alone cannot detect these changes.
+Keep explicit CLI synchronization as a full repair of its requested page. Perform
+blocking file operations outside async runtime threads, while preserving the
+publisher lock and prepared/publication receipts for crash recovery.
+
+
+## Derived-data maintenance
+
+Use persisted keyset cursors to bound candidate scans and deletions to 1,000 rows
+per table per minute. Remove obsolete vector generations/revisions and stale
+embedding failure records. Retain original sources and all decision/version
+history. Cancelled work may be removed after a 30-day first-observed retention
+period only if no work audit or repository review references it. Keep done,
+failed and audited/reviewed work. This frees reusable SQLite pages without an
+automatic VACUUM. Index review lookups by work ID.
+
+Keep exact vector search for the currently measured scale; see
+[performance evidence](taskix-memory-performance.md). An approximate index
+requires evidence that exact scanning dominates the latency budget and explicit
+recall/lifecycle validation.

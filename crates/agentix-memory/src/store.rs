@@ -8,12 +8,42 @@ use sqlx::{
 
 use crate::{Actor, Kind, Memory, MemoryInput, Source, Status, retrieval};
 
+#[derive(Debug, serde::Serialize)]
+pub struct SourceSummary {
+    pub receipt_id: String,
+    pub turn_id: String,
+    pub revision: i64,
+    pub recorded_at: i64,
+    pub message_count: i64,
+}
+
 #[derive(Clone)]
 pub struct MemoryStore {
     pub(crate) pool: SqlitePool,
+    changes: tokio::sync::broadcast::Sender<String>,
+    work_changes: tokio::sync::watch::Sender<u64>,
 }
 
 impl MemoryStore {
+    #[must_use]
+    pub fn subscribe_work(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.work_changes.subscribe()
+    }
+
+    pub(crate) fn notify_work(&self) {
+        self.work_changes
+            .send_modify(|epoch| *epoch = epoch.wrapping_add(1));
+    }
+
+    #[must_use]
+    pub fn subscribe_changes(&self) -> tokio::sync::broadcast::Receiver<String> {
+        self.changes.subscribe()
+    }
+
+    pub(crate) fn notify_change(&self, project: &str) {
+        let _ = self.changes.send(project.to_owned());
+    }
+
     /// Offline fallback opens an existing database without creating or migrating it.
     pub async fn open_read_only(path: &Path) -> Result<Self> {
         let pool = SqlitePoolOptions::new()
@@ -36,7 +66,11 @@ impl MemoryStore {
             app == 0x4158_4d4d && version == 1,
             "unsupported memory database identity or schema"
         );
-        Ok(Self { pool })
+        Ok(Self {
+            pool,
+            changes: tokio::sync::broadcast::channel(256).0,
+            work_changes: tokio::sync::watch::channel(0).0,
+        })
     }
 
     pub async fn open(path: &Path) -> Result<Self> {
@@ -73,8 +107,26 @@ impl MemoryStore {
         sqlx::raw_sql(include_str!("schema.sql"))
             .execute(&mut *tx)
             .await?;
+        let indexed: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM memory_metadata WHERE key='source_turn_index_version')",
+        )
+        .fetch_one(&mut *tx)
+        .await?;
+        if !indexed {
+            sqlx::query("INSERT OR REPLACE INTO source_turns(project_id,instance_id,session_id,turn_id,first_sequence,receipt_id,revision,recorded_at,message_count) SELECT h.project_id,h.instance_id,h.session_id,h.turn_id,history.first_sequence,h.receipt_id,h.revision,json_extract(current.data,'$.recorded_at'),json_array_length(current.data,'$.messages') FROM (SELECT project_id,instance_id,json_extract(data,'$.session_id') session_id,json_extract(data,'$.turn_id') turn_id,min(json_extract(data,'$.sequence')) first_sequence FROM sources GROUP BY project_id,instance_id,json_extract(data,'$.session_id'),json_extract(data,'$.turn_id')) history JOIN source_heads h ON h.project_id=history.project_id AND h.instance_id=history.instance_id AND h.session_id=history.session_id AND h.turn_id=history.turn_id JOIN sources current ON current.receipt_id=h.receipt_id")
+                .execute(&mut *tx).await?;
+            sqlx::query(
+                "INSERT INTO memory_metadata(key,value) VALUES('source_turn_index_version','1')",
+            )
+            .execute(&mut *tx)
+            .await?;
+        }
         tx.commit().await?;
-        Ok(Self { pool })
+        Ok(Self {
+            pool,
+            changes: tokio::sync::broadcast::channel(256).0,
+            work_changes: tokio::sync::watch::channel(0).0,
+        })
     }
 
     /// Bind once to a source database and resume its ordered replay checkpoint.
@@ -206,7 +258,10 @@ impl MemoryStore {
             .execute(&mut *tx)
             .await?;
         crate::queue::enqueue_source(&mut tx, source).await?;
+        sqlx::query("INSERT INTO source_turns(project_id,instance_id,session_id,turn_id,first_sequence,receipt_id,revision,recorded_at,message_count) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(instance_id,session_id,turn_id) DO UPDATE SET first_sequence=min(first_sequence,excluded.first_sequence),receipt_id=CASE WHEN excluded.revision>revision THEN excluded.receipt_id ELSE receipt_id END,recorded_at=CASE WHEN excluded.revision>revision THEN excluded.recorded_at ELSE recorded_at END,message_count=CASE WHEN excluded.revision>revision THEN excluded.message_count ELSE message_count END,revision=max(revision,excluded.revision)")
+            .bind(&source.project_id).bind(&source.instance_id).bind(&source.session_id).bind(&source.turn_id).bind(source.sequence).bind(&source.receipt_id).bind(source.revision).bind(source.recorded_at).bind(i64::try_from(source.messages.len())?).execute(&mut *tx).await?;
         tx.commit().await?;
+        self.notify_work();
         Ok(true)
     }
 
@@ -219,6 +274,38 @@ impl MemoryStore {
                 .await?
                 .context("not_found: memory source")?;
         Ok(serde_json::from_str(&data)?)
+    }
+
+    /// Walk preceding receipts in the anchor's conversation, never another session
+    /// or Project. Turn order follows first receipt sequence, so later attachment or
+    /// edits do not move a prior turn past the anchor. Return current revisions.
+    pub async fn source_neighbors(
+        &self,
+        project: &str,
+        receipt: &str,
+    ) -> Result<Vec<SourceSummary>> {
+        let rows = sqlx::query_as::<_, (String,String,i64,i64,i64)>("SELECT t.receipt_id,t.turn_id,t.revision,t.recorded_at,t.message_count FROM sources anchor JOIN source_turns a ON a.project_id=anchor.project_id AND a.instance_id=anchor.instance_id AND a.session_id=json_extract(anchor.data,'$.session_id') AND a.turn_id=json_extract(anchor.data,'$.turn_id') JOIN source_turns t ON t.project_id=a.project_id AND t.instance_id=a.instance_id AND t.session_id=a.session_id AND t.first_sequence<a.first_sequence WHERE anchor.project_id=? AND anchor.receipt_id=? ORDER BY t.first_sequence DESC LIMIT 8")
+            .bind(project).bind(receipt).fetch_all(&self.pool).await?;
+        let exists: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM sources WHERE project_id=? AND receipt_id=?)",
+        )
+        .bind(project)
+        .bind(receipt)
+        .fetch_one(&self.pool)
+        .await?;
+        ensure!(exists, "not_found: memory source");
+        Ok(rows
+            .into_iter()
+            .map(
+                |(receipt_id, turn_id, revision, recorded_at, message_count)| SourceSummary {
+                    receipt_id,
+                    turn_id,
+                    revision,
+                    recorded_at,
+                    message_count,
+                },
+            )
+            .collect())
     }
 
     pub async fn create(
@@ -247,6 +334,7 @@ impl MemoryStore {
         };
         save(&mut tx, &memory).await?;
         tx.commit().await?;
+        self.notify_change(project);
         Ok(memory)
     }
 
@@ -295,6 +383,7 @@ impl MemoryStore {
         save(&mut tx, &memory).await?;
         save(&mut tx, &prior).await?;
         tx.commit().await?;
+        self.notify_change(project);
         Ok(memory)
     }
 
@@ -324,6 +413,7 @@ impl MemoryStore {
         memory.updated_at = time::OffsetDateTime::now_utc().unix_timestamp();
         save(&mut tx, &memory).await?;
         tx.commit().await?;
+        self.notify_change(project);
         Ok(memory)
     }
 
@@ -352,9 +442,20 @@ impl MemoryStore {
             "conflict: memory was forgotten"
         );
         if status == Status::Forgotten {
-            for key in evidence_keys(&mut tx, project, &memory.content).await? {
-                sqlx::query("INSERT OR IGNORE INTO suppressions(project_id,evidence_key,memory_id) VALUES (?,?,?)")
-                    .bind(project).bind(key).bind(id).execute(&mut *tx).await?;
+            // Merges and edits can replace evidence. Suppress every historical
+            // source of this memory, including versions written by older builds.
+            let versions: Vec<String> = sqlx::query_scalar(
+                "SELECT data FROM memory_versions WHERE memory_id=? ORDER BY revision",
+            )
+            .bind(id)
+            .fetch_all(&mut *tx)
+            .await?;
+            for data in versions {
+                let version: Memory = serde_json::from_str(&data)?;
+                for key in evidence_keys(&mut tx, project, &version.content).await? {
+                    sqlx::query("INSERT OR IGNORE INTO suppressions(project_id,evidence_key,memory_id) VALUES (?,?,?)")
+                        .bind(project).bind(key).bind(id).execute(&mut *tx).await?;
+                }
             }
         }
         memory.revision += 1;
@@ -364,6 +465,7 @@ impl MemoryStore {
         memory.updated_at = time::OffsetDateTime::now_utc().unix_timestamp();
         save(&mut tx, &memory).await?;
         tx.commit().await?;
+        self.notify_change(project);
         Ok(memory)
     }
 
@@ -433,8 +535,13 @@ impl MemoryStore {
             let memory: Memory = serde_json::from_str(&row)?;
             page.next_cursor.clone_from(&memory.id);
             index_memory(&mut tx, &memory).await?;
+            sqlx::query("DELETE FROM embedding_failures WHERE memory_id=?")
+                .bind(&memory.id)
+                .execute(&mut *tx)
+                .await?;
         }
         tx.commit().await?;
+        self.notify_change(project);
         Ok(page)
     }
 }
@@ -455,6 +562,7 @@ async fn evidence_keys(
     content: &MemoryInput,
 ) -> Result<Vec<String>> {
     let mut keys = Vec::new();
+    let mut user_evidence = false;
     for evidence in &content.evidence {
         let data: String =
             sqlx::query_scalar("SELECT data FROM sources WHERE receipt_id=? AND project_id=?")
@@ -473,11 +581,7 @@ async fn evidence_keys(
             message.text.contains(&evidence.quote),
             "invalid: evidence quote is not in source"
         );
-        ensure!(
-            !matches!(content.kind, Kind::UserDecision | Kind::UserAssertion)
-                || message.role == "user",
-            "invalid: assistant text cannot establish a user decision"
-        );
+        user_evidence |= message.role == "user";
         keys.push(retrieval::digest(&serde_json::to_string(&(
             &source.instance_id,
             &source.session_id,
@@ -485,6 +589,12 @@ async fn evidence_keys(
             &message.text,
         ))?));
     }
+    ensure!(
+        content.evidence.is_empty()
+            || !matches!(content.kind, Kind::UserDecision | Kind::UserAssertion)
+            || user_evidence,
+        "invalid: assistant text alone cannot establish a user decision"
+    );
     Ok(keys)
 }
 
@@ -521,6 +631,10 @@ pub(crate) async fn save(conn: &mut SqliteConnection, memory: &Memory) -> Result
         .execute(&mut *conn)
         .await?;
     sqlx::query("DELETE FROM memory_vectors WHERE memory_id=?")
+        .bind(&memory.id)
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query("DELETE FROM embedding_failures WHERE memory_id=?")
         .bind(&memory.id)
         .execute(&mut *conn)
         .await?;

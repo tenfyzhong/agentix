@@ -46,6 +46,15 @@ CREATE TABLE IF NOT EXISTS memory_vectors (
     PRIMARY KEY(memory_id,generation)
 );
 CREATE INDEX IF NOT EXISTS vectors_by_project ON memory_vectors(project_id,generation,memory_id);
+CREATE TABLE IF NOT EXISTS embedding_failures (
+    memory_id TEXT NOT NULL REFERENCES memories(id),
+    generation INTEGER NOT NULL,
+    revision INTEGER NOT NULL,
+    attempts INTEGER NOT NULL,
+    available_at INTEGER NOT NULL,
+    error TEXT NOT NULL,
+    PRIMARY KEY(memory_id,generation,revision)
+);
 INSERT OR IGNORE INTO memory_metadata(key,value) VALUES ('tokenizer_version','1');
 PRAGMA application_id=0x41584d4d;
 PRAGMA user_version=1;
@@ -116,6 +125,7 @@ CREATE TABLE IF NOT EXISTS memory_projection (
 INSERT OR IGNORE INTO memory_projection(memory_id) SELECT id FROM memories;
 
 CREATE INDEX IF NOT EXISTS sources_by_sequence ON sources(json_extract(data,'$.sequence'));
+CREATE INDEX IF NOT EXISTS sources_by_conversation ON sources(project_id,instance_id,json_extract(data,'$.session_id'),json_extract(data,'$.sequence'));
 
 CREATE TABLE IF NOT EXISTS memory_reviews (
     memory_id TEXT PRIMARY KEY REFERENCES memories(id),
@@ -123,3 +133,24 @@ CREATE TABLE IF NOT EXISTS memory_reviews (
     fingerprint TEXT NOT NULL,
     work_id INTEGER NOT NULL REFERENCES work_items(id)
 );
+
+CREATE TABLE IF NOT EXISTS source_turns (
+    project_id TEXT NOT NULL,
+    instance_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    turn_id TEXT NOT NULL,
+    first_sequence INTEGER NOT NULL,
+    receipt_id TEXT NOT NULL REFERENCES sources(receipt_id),
+    revision INTEGER NOT NULL,
+    recorded_at INTEGER NOT NULL,
+    message_count INTEGER NOT NULL,
+    PRIMARY KEY(instance_id,session_id,turn_id)
+);
+CREATE INDEX IF NOT EXISTS source_turns_by_order ON source_turns(project_id,instance_id,session_id,first_sequence);
+CREATE TABLE IF NOT EXISTS work_retention (
+    work_id INTEGER PRIMARY KEY REFERENCES work_items(id) ON DELETE CASCADE,
+    observed_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS work_retention_age ON work_retention(observed_at,work_id);
+CREATE INDEX IF NOT EXISTS work_cancelled ON work_items(id) WHERE state='cancelled';
+CREATE INDEX IF NOT EXISTS memory_reviews_by_work ON memory_reviews(work_id);

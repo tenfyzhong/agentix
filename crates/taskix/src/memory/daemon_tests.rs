@@ -1,0 +1,311 @@
+use super::*;
+use agentix_memory::{Actor, MemoryInput, ProviderConfig, ProviderProtocol};
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::TcpListener,
+    sync::Semaphore,
+};
+
+#[tokio::test]
+async fn slow_project_embedding_does_not_block_another_project() {
+    check_project_concurrency(2, true).await;
+}
+
+#[tokio::test]
+async fn embedding_project_concurrency_limit_is_respected() {
+    check_project_concurrency(1, false).await;
+}
+
+#[allow(clippy::too_many_lines)] // Keep the blocked-provider and reload scenario together.
+async fn check_project_concurrency(limit: usize, parallel: bool) {
+    let dir = tempfile::tempdir().unwrap();
+    let tasks = agentix_task::Store::open(&dir.path().join("tasks.db"))
+        .await
+        .unwrap();
+    let store = MemoryStore::open(&dir.path().join("memory.db"))
+        .await
+        .unwrap();
+    let mut ids = Vec::new();
+    for name in ["a_slow", "b_fast", "c_fast"] {
+        let root = dir.path().join(name);
+        std::fs::create_dir(&root).unwrap();
+        let id = tasks
+            .execute(
+                json!({"command":"project.register","name":name,"root":root}),
+                agentix_task::WriteOptions::default(),
+            )
+            .await
+            .unwrap()
+            .result["id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let input: MemoryInput=serde_json::from_value(json!({"title":name,"conclusion":"Offline constraint","rationale":"External decision","scope":"project","tags":[],"kind":"user_decision","evidence":[]})).unwrap();
+        store.create(&id, input, Actor::Human).await.unwrap();
+        ids.push(id);
+    }
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let blocked = Arc::new(Semaphore::new(0));
+    let release = Arc::new(Semaphore::new(0));
+    let entered = blocked.clone();
+    let released = release.clone();
+    let server = tokio::spawn(async move {
+        let mut requests = JoinSet::new();
+        loop {
+            tokio::select! {
+                result=listener.accept()=>{
+                    let (mut socket,_)=result.unwrap(); let entered=entered.clone();let released=released.clone();
+                    requests.spawn(async move {
+                        let mut bytes=Vec::new();
+                        loop {
+                            let mut buffer=[0;4096]; let n=socket.read(&mut buffer).await.unwrap(); if n==0 {return;} bytes.extend_from_slice(&buffer[..n]);
+                            if let Some(end)=bytes.windows(4).position(|w|w==b"\r\n\r\n") {
+                                let head=String::from_utf8_lossy(&bytes[..end]);
+                                let len:usize=head.lines().find_map(|l|l.to_ascii_lowercase().strip_prefix("content-length:").map(|v|v.trim().parse().unwrap())).unwrap();
+                                if bytes.len()>=end+4+len {break;}
+                            }
+                        }
+                        if String::from_utf8_lossy(&bytes).contains("a_slow") {
+                            entered.add_permits(1); released.acquire().await.unwrap().forget();
+                        }
+                        let body=json!({"data":[{"index":0,"embedding":[1.0,0.0]}]}).to_string();
+                        let reply=format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",body.len());
+                        let _=socket.write_all(reply.as_bytes()).await;
+                    });
+                },
+                _=requests.join_next(),if !requests.is_empty()=>{},
+            }
+        }
+    });
+    let mut config = MemoryConfig::default();
+    config.embedding.enabled = true;
+    config.embedding.max_concurrent_projects = limit;
+    config.service.poll_interval_ms = 20;
+    config.providers.insert(
+        "openai".into(),
+        ProviderConfig {
+            base_url: url,
+            api_key_env: None,
+            protocol: ProviderProtocol::Openai,
+            max_in_flight: 3,
+        },
+    );
+    let repositories = Arc::new(Repositories(tasks.clone()));
+    let runtime = Arc::new(Runtime::build(config.clone(), &store, repositories.clone()));
+    let app = Arc::new(Application {
+        path: dir.path().join("config.toml"),
+        location: MemoryLocation {
+            enabled: true,
+            path: dir.path().join("memory.db"),
+            task_path: dir.path().join("tasks.db"),
+            service: config.service,
+            retrieval: config.retrieval.clone(),
+        },
+        store: store.clone(),
+        tasks,
+        repositories,
+        runtime: RwLock::new(runtime),
+        errors: Mutex::new(BTreeMap::new()),
+        projection: Mutex::new(()),
+    });
+    let background = tokio::spawn(run_embeddings(app.clone()));
+    tokio::time::timeout(Duration::from_secs(2), blocked.acquire())
+        .await
+        .unwrap()
+        .unwrap()
+        .forget();
+    let fast = tokio::time::timeout(Duration::from_secs(1), async {
+        loop {
+            if store.memory_status(Some(&ids[1])).await.unwrap()["indexed"] == 1
+                && store.memory_status(Some(&ids[2])).await.unwrap()["indexed"] == 1
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    if parallel {
+        // Let fast Projects become idle, then ensure a commit bypasses their backoff.
+        tokio::time::sleep(Duration::from_millis(2200)).await;
+        let memory = store.list(&ids[1], "", 1, false).await.unwrap().remove(0);
+        store
+            .update(
+                &ids[1],
+                &memory.id,
+                memory.revision,
+                memory.content,
+                Actor::Human,
+            )
+            .await
+            .unwrap();
+        let pool = sqlx::SqlitePool::connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new().filename(dir.path().join("memory.db")),
+        )
+        .await
+        .unwrap();
+        tokio::time::timeout(Duration::from_millis(700), async {
+            loop {
+                let revision: i64 =
+                    sqlx::query_scalar("SELECT revision FROM memory_vectors WHERE memory_id=?")
+                        .bind(&memory.id)
+                        .fetch_optional(&pool)
+                        .await
+                        .unwrap()
+                        .unwrap_or(0);
+                if revision == 2 {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("new work must wake an idle Project");
+        config.embedding.enabled = false;
+        *app.runtime.write().await =
+            Arc::new(Runtime::build(config, &store, app.repositories.clone()));
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        release.add_permits(1);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert_eq!(
+            store.memory_status(Some(&ids[0])).await.unwrap()["indexed"],
+            0,
+            "reload must cancel old batches"
+        );
+    }
+    background.abort();
+    let _ = background.await;
+    server.abort();
+    let _ = server.await;
+    assert_eq!(
+        fast.is_ok(),
+        parallel,
+        "cross-Project progress must respect the configured bound"
+    );
+}
+
+#[test]
+fn embedding_idle_backoff_wakes_on_changes_and_recovers_periodically() {
+    let mut schedule = EmbeddingSchedule::default();
+    let now = tokio::time::Instant::now();
+    let interval = Duration::from_secs(1);
+    assert!(schedule.ready("p", now));
+    schedule.complete("p", true, now, interval);
+    assert!(!schedule.ready("p", now + interval));
+    schedule.wake("p");
+    assert!(schedule.ready("p", now));
+    for _ in 0..20 {
+        schedule.complete("p", true, now, interval);
+    }
+    assert!(!schedule.ready("p", now + Duration::from_secs(29)));
+    assert!(schedule.ready("p", now + Duration::from_secs(30)));
+    schedule.complete("p", false, now, interval);
+    assert!(schedule.ready("p", now + interval));
+}
+
+#[test]
+fn idle_workers_back_off_and_work_notification_resets_the_probe_deadline() {
+    let now = tokio::time::Instant::now();
+    let mut idle = WorkerIdle::new(now);
+    let interval = Duration::from_millis(100);
+    for _ in 0..20 {
+        idle.empty(now, interval);
+    }
+    assert!(!idle.ready(now + Duration::from_secs(4)));
+    assert!(idle.ready(now + Duration::from_secs(5)));
+    idle.wake(now);
+    assert!(idle.ready(now));
+    idle.empty(now, interval);
+    assert!(idle.ready(now + Duration::from_millis(200)));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "idle daemon benchmark; run alone with --test-threads=1"]
+async fn idle_daemon_cpu_with_many_projects() {
+    let dir = tempfile::tempdir().unwrap();
+    let tasks = agentix_task::Store::open(&dir.path().join("tasks.db"))
+        .await
+        .unwrap();
+    let store = MemoryStore::open(&dir.path().join("memory.db"))
+        .await
+        .unwrap();
+    for n in 0..200 {
+        let root = dir.path().join(format!("p{n}"));
+        std::fs::create_dir(&root).unwrap();
+        tasks
+            .execute(
+                json!({"command":"project.register","name":format!("p{n}"),"root":root}),
+                agentix_task::WriteOptions::default(),
+            )
+            .await
+            .unwrap();
+    }
+    let mut config = MemoryConfig::default();
+    config.embedding.enabled = true;
+    config.providers.insert(
+        "openai".into(),
+        ProviderConfig {
+            base_url: "http://127.0.0.1:1".into(),
+            api_key_env: None,
+            protocol: ProviderProtocol::Openai,
+            max_in_flight: 4,
+        },
+    );
+    let repositories = Arc::new(Repositories(tasks.clone()));
+    let runtime = Arc::new(Runtime::build(config.clone(), &store, repositories.clone()));
+    assert!(runtime.worker.is_some());
+    assert!(runtime.embedding.is_some());
+    let app = Arc::new(Application {
+        path: dir.path().join("config.toml"),
+        location: MemoryLocation {
+            enabled: true,
+            path: dir.path().join("memory.db"),
+            task_path: dir.path().join("tasks.db"),
+            service: config.service,
+            retrieval: config.retrieval.clone(),
+        },
+        store,
+        tasks,
+        repositories,
+        runtime: RwLock::new(runtime),
+        errors: Mutex::new(BTreeMap::new()),
+        projection: Mutex::new(()),
+    });
+    let workers = tokio::spawn(run_workers(app.clone()));
+    let embeddings = tokio::spawn(run_embeddings(app.clone()));
+    tokio::time::sleep(Duration::from_secs(10)).await;
+    let before = process_cpu_seconds();
+    let start = std::time::Instant::now();
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    let elapsed = start.elapsed().as_secs_f64();
+    let after = process_cpu_seconds();
+    workers.abort();
+    embeddings.abort();
+    let _ = workers.await;
+    let _ = embeddings.await;
+    assert!(app.errors.lock().await.is_empty());
+    if let (Some(before), Some(after)) = (before, after) {
+        println!(
+            "200 idle Projects, extraction+embedding loops, 10s warmup: wall={elapsed:.3}s process_cpu={:.3}s one_core_utilization={:.2}%",
+            after - before,
+            100.0 * (after - before) / elapsed
+        );
+    } else {
+        println!("CPU sampling unavailable: ps time field unsupported");
+    }
+}
+
+fn process_cpu_seconds() -> Option<f64> {
+    let output = std::process::Command::new("ps")
+        .args(["-o", "time=", "-p", &std::process::id().to_string()])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let text = String::from_utf8(output.stdout).ok()?;
+    text.trim().split(':').try_fold(0.0, |seconds, part| {
+        Some(seconds * 60.0 + part.parse::<f64>().ok()?)
+    })
+}

@@ -19,7 +19,7 @@ pub use config::{
 pub use domain::{
     Actor, Evidence, IndexPage, Kind, Memory, MemoryInput, Source, SourceMessage, Status,
 };
-pub use store::MemoryStore;
+pub use store::{MemoryStore, SourceSummary};
 
 mod tools;
 pub use tools::ProjectTools;
@@ -42,6 +42,7 @@ mod ipc;
 pub use ipc::{IpcClient, IpcServer, RequestHandler};
 
 mod context;
+mod maintenance;
 pub use context::{ContextPacket, MemoryRef, context_preview};
 
 #[cfg(unix)]

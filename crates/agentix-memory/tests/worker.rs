@@ -9,6 +9,110 @@ use std::{path::PathBuf, sync::Arc, time::Duration};
 use tokio::sync::Semaphore;
 
 struct Repositories(PathBuf);
+
+struct CrossTurnModel;
+#[async_trait]
+impl Model for CrossTurnModel {
+    async fn complete(&self, request: &ModelRequest) -> Result<ModelReply> {
+        let outputs = request
+            .history
+            .iter()
+            .filter_map(|m| match m {
+                agentix_memory::Message::Tool { output, .. } => {
+                    Some(serde_json::from_str::<serde_json::Value>(output).unwrap())
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let (name, arguments) = match outputs.len() {
+            0 => ("source_neighbors", json!({"receipt_id":"choice"})),
+            1 => {
+                assert_eq!(outputs[0]["sources"][0]["receipt_id"], "proposal");
+                (
+                    "source_read",
+                    json!({"receipt_id":"proposal","message_id":null,"offset":0}),
+                )
+            }
+            2 => (
+                "source_read",
+                json!({"receipt_id":"proposal","message_id":outputs[1]["messages"][0]["id"],"offset":0}),
+            ),
+            3 => {
+                assert_eq!(outputs[2]["page"]["text"], "Option B keeps data offline.");
+                ("repo_search", json!({"query":"offline"}))
+            }
+            _ => (
+                "submit_candidates",
+                json!({"candidates":[{"title":"Offline storage chosen","conclusion":"Keep data offline","rationale":"User selected option B","scope":"project","conditions":[],"valid_until":null,"tags":[],"kind":"user_decision","evidence":[{"receipt_id":"choice","message_id":"message","quote":"Choose option B."},{"receipt_id":"proposal","message_id":"message","quote":"Option B keeps data offline."}]}]}),
+            ),
+        };
+        Ok(ModelReply {
+            continuation: json!([]),
+            calls: vec![ToolCall {
+                id: format!("call-{}", outputs.len()),
+                name: name.into(),
+                arguments,
+            }],
+            text: String::new(),
+            usage: TokenUsage::default(),
+        })
+    }
+}
+
+#[tokio::test]
+async fn extraction_resolves_a_choice_using_a_prior_legacy_message() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(&temp.path().join("memory.db"))
+        .await
+        .unwrap();
+    let mut proposal = source("p");
+    proposal.receipt_id = "proposal".into();
+    proposal.turn_id = "legacy:job:proposal".into();
+    proposal.messages[0].role = "assistant".into();
+    proposal.messages[0].text = "Option B keeps data offline.".into();
+    store.ingest(&proposal).await.unwrap();
+    let now = time::OffsetDateTime::now_utc().unix_timestamp();
+    let prior = store
+        .claim_work("prior", &AgentConfig::default(), now)
+        .await
+        .unwrap()
+        .unwrap();
+    store
+        .complete_extraction(&prior, vec![], now)
+        .await
+        .unwrap();
+    let mut choice = source("p");
+    choice.receipt_id = "choice".into();
+    choice.sequence = 2;
+    choice.messages[0].text = "Choose option B.".into();
+    store.ingest(&choice).await.unwrap();
+    let worker = MemoryWorker::new(
+        store.clone(),
+        Arc::new(CrossTurnModel),
+        AgentConfig::default(),
+        Arc::new(Repositories(temp.path().into())),
+    );
+    assert!(worker.run_once("extract").await.unwrap());
+    let consolidation = store
+        .claim_work("consolidate", &AgentConfig::default(), now)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(consolidation.kind, agentix_memory::WorkKind::Consolidate);
+    assert_eq!(
+        consolidation.payload[0]["evidence"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    let decisions = serde_json::from_value(json!([{"candidate":0,"action":"create","target":null,"expected_revision":null,"content":null,"reason":"Explicit choice with supporting proposal"}])).unwrap();
+    let memories = store
+        .complete_consolidation(&consolidation, decisions, now)
+        .await
+        .unwrap();
+    assert_eq!(memories[0].content.kind, agentix_memory::Kind::UserDecision);
+}
 #[async_trait]
 impl ProjectRepository for Repositories {
     async fn root(&self, _project: &str) -> Result<Option<PathBuf>> {
@@ -396,4 +500,97 @@ async fn screening_cannot_skip_a_newer_source_revision() {
     assert_eq!(store.work_details(1).await.unwrap()["state"], "cancelled");
     assert_eq!(store.work_counts().await.unwrap().pending, 1);
     assert_eq!(model.0.load(std::sync::atomic::Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn rapid_source_revisions_coalesce_before_calling_model() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(&temp.path().join("memory.db"))
+        .await
+        .unwrap();
+    store.ingest(&source("p")).await.unwrap();
+    let model = Arc::new(BlockingModel {
+        entered: Semaphore::new(0),
+        release: Semaphore::new(0),
+    });
+    let worker = Arc::new(MemoryWorker::new(
+        store.clone(),
+        model.clone(),
+        AgentConfig::default(),
+        Arc::new(Repositories(temp.path().into())),
+    ));
+    let child = worker.clone();
+    let running = tokio::spawn(async move { child.run_once("worker").await });
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while store.work_counts().await.unwrap().running == 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(
+        model.entered.available_permits(),
+        0,
+        "rapid updates should settle before a paid request"
+    );
+    let mut revised = source("p");
+    revised.receipt_id = "new".into();
+    revised.revision = 2;
+    revised.sequence = 2;
+    revised.messages[0].text.push_str(" with new context");
+    store.ingest(&revised).await.unwrap();
+    assert!(
+        tokio::time::timeout(Duration::from_secs(1), running)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap()
+    );
+    assert_eq!(model.entered.available_permits(), 0);
+    assert_eq!(store.work_counts().await.unwrap().pending, 1);
+    assert!(store.source("p", "p").await.is_ok());
+    model.release.add_permits(1);
+    assert!(worker.run_once("replacement").await.unwrap());
+    assert_eq!(store.work_counts().await.unwrap().done, 1);
+    assert_eq!(model.entered.available_permits(), 1);
+}
+
+#[tokio::test]
+async fn superseded_source_cancels_a_blocked_model_request() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(&temp.path().join("memory.db"))
+        .await
+        .unwrap();
+    store.ingest(&source("p")).await.unwrap();
+    let model = Arc::new(BlockingModel {
+        entered: Semaphore::new(0),
+        release: Semaphore::new(0),
+    });
+    let worker = Arc::new(MemoryWorker::new(
+        store.clone(),
+        model.clone(),
+        AgentConfig::default(),
+        Arc::new(Repositories(temp.path().into())),
+    ));
+    let running = tokio::spawn(async move { worker.run_once("worker").await });
+    tokio::time::timeout(Duration::from_secs(3), model.entered.acquire())
+        .await
+        .unwrap()
+        .unwrap()
+        .forget();
+    let mut revised = source("p");
+    revised.receipt_id = "new".into();
+    revised.revision = 2;
+    revised.sequence = 2;
+    store.ingest(&revised).await.unwrap();
+    assert!(
+        tokio::time::timeout(Duration::from_secs(1), running)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap()
+    );
+    assert_eq!(store.work_counts().await.unwrap().cancelled, 1);
+    assert_eq!(store.work_counts().await.unwrap().pending, 1);
 }
