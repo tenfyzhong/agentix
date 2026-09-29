@@ -1,6 +1,7 @@
 SHELL := /bin/sh
 
 CARGO ?= cargo
+PYTHON ?= python3
 BREW ?= brew
 CODEX ?= codex
 PI ?= pi
@@ -15,7 +16,7 @@ DEBUG_TARGET_DIR = $(if $(CARGO_TARGET_DIR),$(CARGO_TARGET_DIR),target)
 
 .DEFAULT_GOAL := build
 
-.PHONY: build release completions check fmt clippy test plugin-deps clean help remove-plugin link-debug install update switch plugin
+.PHONY: build release completions check fmt clippy test test-backup plugin-deps clean help remove-plugin link-debug install update switch plugin
 
 build:
 	$(CARGO) build --workspace --all-features
@@ -55,9 +56,12 @@ clippy:
 plugin-deps:
 	npm ci --ignore-scripts --prefix plugins/taskix-manager
 
-test: plugin-deps
+test: plugin-deps test-backup
 	$(CARGO) test --workspace --all-features
 	node --test plugins/taskix-manager/tests/*.test.mjs plugins/agentix-bridge/tests/*.test.mjs
+
+test-backup:
+	$(PYTHON) -m unittest discover -s scripts/tests -v
 
 # Explicit install specs avoid inheriting HEAD from an existing installation.
 install update:
