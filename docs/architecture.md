@@ -456,6 +456,9 @@ flowchart LR
 
 Queries have independent concurrency limits. Provider calls hold no database
 transaction. Source acknowledgements follow durable receipt/work persistence;
-recovery can replay acknowledged inputs from a newer task snapshot. A separate
+recovery replays acknowledged inputs from a newer task snapshot using a durable
+ordered checkpoint, never the maximum stored source sequence. Context packets
+are prepared independently of delivery; receiving hosts own cross-turn deduplication.
+A separate
 configuration snapshot governs each model loop. See the [memory design](taskix-memory-design.md),
 [operating guide](taskix-memory.md) and [dual-database backup protocol](taskix-backup.md).

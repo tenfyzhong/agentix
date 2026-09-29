@@ -292,33 +292,15 @@ async fn poll_sources(app: Arc<Application>, mut replay_cursor: i64) -> Result<(
     loop {
         let runtime = app.runtime.read().await.clone();
         let pending = app.tasks.memory_sources(cursor, 100).await;
-        let replay = app.tasks.replay_memory_sources(replay_cursor, 100).await;
-        match pending.and_then(|mut sources| {
-            let replay = replay?;
-            if let Some(last) = replay.last() {
-                replay_cursor = last.sequence;
-            }
-            if sources.len() < 100 {
-                cursor = 0;
-            } else if let Some(last) = sources.last() {
-                cursor = last.sequence;
-            }
-            sources.extend(replay);
-            sources.sort_by_key(|source| source.sequence);
-            sources.dedup_by_key(|source| source.sequence);
-            Ok(sources)
-        }) {
+        match pending {
             Ok(sources) => {
+                cursor = if sources.len() < 100 {
+                    0
+                } else {
+                    sources.last().expect("full source page").sequence
+                };
                 for source in sources {
-                    let result = async {
-                        let input: Source = serde_json::from_value(serde_json::to_value(&source)?)?;
-                        app.store.ingest(&input).await?;
-                        app.tasks
-                            .acknowledge_memory_source(&source.instance_id, &source.receipt_id)
-                            .await?;
-                        Ok::<_, anyhow::Error>(())
-                    }
-                    .await;
+                    let result = ingest_source(&app, &source).await;
                     app.report(
                         &format!("source:{}", source.receipt_id),
                         result.err().map(|e| e.to_string()),
@@ -331,11 +313,46 @@ async fn poll_sources(app: Arc<Application>, mut replay_cursor: i64) -> Result<(
                 cursor = 0;
             }
         }
+        // Replay includes already acknowledged inputs after restore. Unlike pending
+        // intake, it must stop at a failed source and persist only ordered progress.
+        match app.tasks.replay_memory_sources(replay_cursor, 100).await {
+            Ok(sources) => {
+                for source in sources {
+                    let result = async {
+                        let input = ingest_source(&app, &source).await?;
+                        app.store.checkpoint_replay(replay_cursor, &input).await?;
+                        Ok::<_, anyhow::Error>(())
+                    }
+                    .await;
+                    let failed = result.is_err();
+                    app.report(
+                        &format!("replay:{}", source.receipt_id),
+                        result.err().map(|e| e.to_string()),
+                    )
+                    .await;
+                    if failed {
+                        break;
+                    }
+                    replay_cursor = source.sequence;
+                }
+                app.report("replay_poll", None).await;
+            }
+            Err(error) => app.report("replay_poll", Some(error.to_string())).await,
+        }
         tokio::time::sleep(Duration::from_millis(
             runtime.config.service.poll_interval_ms,
         ))
         .await;
     }
+}
+
+async fn ingest_source(app: &Application, source: &agentix_task::MemorySource) -> Result<Source> {
+    let input: Source = serde_json::from_value(serde_json::to_value(source)?)?;
+    app.store.ingest(&input).await?;
+    app.tasks
+        .acknowledge_memory_source(&source.instance_id, &source.receipt_id)
+        .await?;
+    Ok(input)
 }
 async fn run_workers(app: Arc<Application>) -> Result<()> {
     let mut workers = JoinSet::new();

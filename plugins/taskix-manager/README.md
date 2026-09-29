@@ -444,7 +444,10 @@ agent's login or context. No additional memory config file is needed.
 Codex/Claude prompt hooks and Pi/OMP `before_agent_start` retrieve at most 6,400
 bytes with a 1.5-second deadline, independently of Jev routing. Missing/disabled
 memory does not start the memory CLI; unavailable queries fail soft. Session
-receipts deduplicate unchanged revisions, including offline FTS fallback. Main
+receipts are recorded by the receiving host and deduplicate unchanged revisions,
+including offline FTS fallback. Service-side packet generation does not imply
+delivery, so a timed-out response cannot suppress the next turn. Context semantic
+retrieval uses at most 750 ms, leaving part of the host deadline for FTS and IPC. Main
 agents can use `taskix memory search`, `show` and `source` on demand. Memory is
 historical evidence, not permission or task ownership. Normal task capture also
 records Project-owned discussions without requiring a Job.

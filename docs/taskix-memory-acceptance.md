@@ -36,12 +36,14 @@ is unaffected, but memory IPC is not implemented there.
 | Fair claims, parallel extraction, serial project consolidation, lease expiry/retry, stale-source cancellation, atomic result application and bounded candidate batches | `agentix-memory/tests/queue.rs` |
 | Fresh contexts, bounded steps/tools/context/time, strict model protocol, read-only scoped tools, repository audit and database availability during blocked model calls | `agentix-memory/tests/agent_loop.rs`, `tests/tools.rs`, `tests/providers.rs`, `tests/worker.rs` |
 | Repository reviews retire documented agent memories; fabricated citations fail and concurrent human edits win | `agentix-memory/tests/worker.rs` |
-| Session/revision deduplication, same-turn retry, stale/forgotten packet filtering, offline host receipts and fail-soft deadlines | `agentix-memory/tests/context.rs`, `plugins/taskix-manager/tests/memory.test.mjs` |
+| Host session/revision deduplication, same-turn packet retry, stale/forgotten filtering, legacy marker compatibility, late-response cancellation and fail-soft deadlines | `agentix-memory/tests/context.rs`, `plugins/taskix-manager/tests/memory.test.mjs` |
+| Slow embedding falls back within the host deadline; a timed-out real IPC request does not suppress the next turn | `agentix-memory/tests/ipc.rs` |
 | Private IPC permissions, single-instance ownership, concurrent requests, size limits, offline reads, config reload, deep-query citations and diagnostics | `agentix-memory/tests/ipc.rs`, `tests/api.rs`, `taskix/tests/support/memory.rs` |
 | Full visible-turn → outbox → mocked Responses tools → consolidation → FTS → real CLI → Node prompt hook, with fresh consolidation context | `memory_visible_turn_to_mock_model_to_real_host_hook_end_to_end` in `taskix/tests/support/memory.rs` |
 | Read-only note repair, body/metadata edit rejection, missing files, filesystem failure, symlink rejection and crash between file publication and receipt acknowledgement | `agentix-memory/tests/projection.rs`, CLI projection test |
 | Ordered SQLite WAL snapshots, source-content coverage, single-format compatibility, retained upload retries, archive validation, atomic no-overwrite restore and no secret-bearing upload logs | `scripts/tests/test_taskix_backup.py` |
 | Actual daemon restart from older memory, replay of already acknowledged receipts, real-schema archive/restore and fork rejection | CLI `memory_restore_replays_acknowledged_sources_and_rejects_a_forked_task_history` |
+| Failed acknowledged replay input remains recoverable after restart; legacy gaps, persisted-source checks and stale checkpoint guards | CLI `memory_replay_retries_a_failed_acknowledged_receipt_after_later_receipts_succeed`, `agentix-memory/tests/store.rs` |
 | Read-only Project lookup during an active writer, actual vector query-plan index, realistic scoped search during intake | `agentix-task/tests/memory_sources.rs`, `agentix-memory/src/vectors.rs`, `tests/performance.rs` |
 
 The Obsidian memory guard is covered by
@@ -51,6 +53,10 @@ are rechecked, and lookup failure/unload prevents unsafe writes. Fake-clock test
 verify typing debounce, per-file notice cooldown and pending timer cancellation. The CLI
 projection test verifies canonical document reads with the daemon stopped and
 rejects foreign Project paths. Desktop Obsidian itself is not exercised.
+
+The real daemon/CLI/Node hook fixture also discards a prepared context packet,
+then verifies the next host turn still receives it and subsequent host turns
+deduplicate it. Packet preparation itself never establishes host delivery.
 
 ## Measured scale
 

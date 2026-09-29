@@ -172,7 +172,13 @@ impl MemoryApi {
             } => {
                 let results = self
                     .retrieval
-                    .search(&project, &query, i64::try_from(self.config.max_items)?)
+                    // Hosts have a 1500 ms budget including CLI/IPC and FTS.
+                    .search_with_timeout(
+                        &project,
+                        &query,
+                        i64::try_from(self.config.max_items)?,
+                        750,
+                    )
                     .await?;
                 let packet = self
                     .store

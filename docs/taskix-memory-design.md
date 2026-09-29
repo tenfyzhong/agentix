@@ -50,6 +50,11 @@ Acknowledgement is per receipt, not a maximum completed sequence: parallel worke
 can finish out of order. Pending snapshots survive discussion retention, and
 ingested evidence remains available after the original discussion expires.
 
+Ordered replay has a separate durable checkpoint; the maximum stored sequence
+does not prove that earlier inputs arrived. Advance only after a successful
+ingest, stop on failure, and resume from that checkpoint after restart. Legacy
+databases without a checkpoint replay idempotently from zero to fill old gaps.
+
 Late replies and corrections create new versions. Source attachment, deletion,
 archival and Project path changes need explicit behavior. Historical extraction
 is manually triggered, bounded, resumable and lower priority; enabling memory
@@ -124,7 +129,10 @@ single-instance ownership and bounded versioned requests.
 Codex, Claude, Pi, OMP and Agentix capture visible conversation through existing
 paths and consume a small relevant context plus on-demand search. Enforce byte
 or conservative token budgets and deduplicate memory ID plus revision within a
-session. Do not delay the main Agent for extraction. Queries and maintenance do
+session at the receiving host. Packet generation is not delivery: service-side
+same-turn caching must not suppress a later turn after a timeout or disconnect.
+Reserve time for lexical fallback within the host deadline.
+Do not delay the main Agent for extraction. Queries and maintenance do
 not change Job ownership or Jev routing semantics.
 
 Obsidian memory notes are read-only projections of SQLite. Never import file

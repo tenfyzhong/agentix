@@ -153,6 +153,19 @@ impl SemanticRetrieval {
         }
     }
     pub async fn search(&self, project: &str, query: &str, limit: i64) -> Result<SearchResult> {
+        self.search_with_timeout(project, query, limit, self.timeout_ms)
+            .await
+    }
+
+    /// A caller may reserve part of its end-to-end budget for lexical fallback
+    /// and transport without extending the configured semantic deadline.
+    pub async fn search_with_timeout(
+        &self,
+        project: &str,
+        query: &str,
+        limit: i64,
+        timeout_ms: u64,
+    ) -> Result<SearchResult> {
         // Validate the query before paying for an embedding.
         crate::retrieval::query(project, query)?;
         ensure!((1..=100).contains(&limit), "invalid memory search limit");
@@ -202,8 +215,11 @@ impl SemanticRetrieval {
                         .await?,
                 ))
             };
-            if let Ok(Ok(Some(memories))) =
-                tokio::time::timeout(Duration::from_millis(self.timeout_ms), semantic).await
+            if let Ok(Ok(Some(memories))) = tokio::time::timeout(
+                Duration::from_millis(self.timeout_ms.min(timeout_ms)),
+                semantic,
+            )
+            .await
             {
                 return Ok(SearchResult {
                     mode: "hybrid".into(),

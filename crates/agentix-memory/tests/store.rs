@@ -510,11 +510,43 @@ async fn recovery_binding_and_cursor_survive_restart_and_fence_foreign_sources()
     assert!(store.ingest(&other).await.is_err());
     drop(store);
     let store = MemoryStore::open(&path).await.unwrap();
+    assert_eq!(store.bind_source("task-source").await.unwrap(), 0);
+    store
+        .checkpoint_replay(0, &source("p1", "r1"))
+        .await
+        .unwrap();
     assert_eq!(store.bind_source("task-source").await.unwrap(), 1);
     assert_eq!(
         store.recovery_sources("", 100).await.unwrap(),
         vec![source("p1", "r1")]
     );
+}
+
+#[tokio::test]
+async fn replay_checkpoint_requires_persisted_source_and_survives_out_of_order_intake() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("memory.sqlite3");
+    let store = MemoryStore::open(&path).await.unwrap();
+    let first = source("p1", "r1");
+    let mut later = source("p2", "r3");
+    later.sequence = 3;
+    // Simulate an older database with persisted receipts beyond an unfilled hole.
+    store.ingest(&later).await.unwrap();
+    assert_eq!(store.bind_source("task-source").await.unwrap(), 0);
+    assert!(store.checkpoint_replay(0, &first).await.is_err());
+    store.ingest(&first).await.unwrap();
+    let mut forged = first.clone();
+    forged.messages[0].text = "Changed receipt".into();
+    assert!(store.checkpoint_replay(0, &forged).await.is_err());
+    store.checkpoint_replay(0, &first).await.unwrap();
+    assert!(store.checkpoint_replay(0, &later).await.is_err());
+    assert!(store.checkpoint_replay(1, &first).await.is_err());
+    drop(store);
+    let store = MemoryStore::open(&path).await.unwrap();
+    assert_eq!(store.bind_source("task-source").await.unwrap(), 1);
+    // Numeric sequence gaps are valid; only the task database defines next-in-order.
+    store.checkpoint_replay(1, &later).await.unwrap();
+    assert_eq!(store.bind_source("task-source").await.unwrap(), 3);
 }
 
 #[tokio::test]

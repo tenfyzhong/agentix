@@ -111,7 +111,11 @@ fn memory_daemon_cli_and_offline_fallback_do_not_require_a_vault_or_model_creden
         "--turn",
         "t2",
     ]);
-    assert!(context["items"].as_array().unwrap().is_empty());
+    assert_eq!(
+        context["items"].as_array().unwrap().len(),
+        1,
+        "CLI reads do not imply host delivery"
+    );
     daemon.0.kill().unwrap();
     daemon.0.wait().unwrap();
     std::fs::write(
@@ -305,6 +309,108 @@ fn recovery_capture(cli: &Cli, turn: &str) {
         "--file",
         path.to_str().unwrap(),
     ]);
+}
+
+#[test]
+fn memory_replay_retries_a_failed_acknowledged_receipt_after_later_receipts_succeed() {
+    let cli = Cli::new();
+    cli.ok(&[
+        "project",
+        "register",
+        "--root",
+        cli.dir.path().to_str().unwrap(),
+    ]);
+    let path = cli.dir.path().join("config.toml");
+    let config = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(&path, format!("{config}\n[memory]\nenabled=true\n[memory.providers.openai]\nbase_url='http://127.0.0.1:9/v1'\n[memory.service]\npoll_interval_ms=20\n")).unwrap();
+    for turn in ["first", "second", "third"] {
+        recovery_capture(&cli, turn);
+    }
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let memory_path = cli.dir.path().join("memory.sqlite3");
+    runtime.block_on(async {
+        let tasks = agentix_task::Store::open(&cli.dir.path().join("state.sqlite3")).await.unwrap();
+        // A restored older memory database must replay receipts already acknowledged
+        // by the newer task database. Fail only the second replay insertion.
+        for source in tasks.memory_sources(0, 100).await.unwrap() {
+            tasks.acknowledge_memory_source(&source.instance_id, &source.receipt_id).await.unwrap();
+        }
+        let _memory = agentix_memory::MemoryStore::open(&memory_path).await.unwrap();
+        let pool = sqlx::SqlitePool::connect_with(sqlx::sqlite::SqliteConnectOptions::new().filename(&memory_path)).await.unwrap();
+        sqlx::query("CREATE TRIGGER fail_replay BEFORE INSERT ON sources WHEN json_extract(NEW.data,'$.sequence')=2 BEGIN SELECT RAISE(FAIL,'injected transient replay failure'); END").execute(&pool).await.unwrap();
+        pool.close().await;
+    });
+    let daemon = Daemon(
+        cli.command(&["memory", "serve"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let status = cli.ok(&["memory", "status"]);
+        if status["background_errors"]
+            .to_string()
+            .contains("injected transient replay failure")
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "injected replay failure was not observed"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    // Keep the failure installed until the daemon stops, so recovery must cross restart.
+    drop(daemon);
+    runtime.block_on(async {
+        let tasks = agentix_task::Store::open(&cli.dir.path().join("state.sqlite3"))
+            .await
+            .unwrap();
+        let later = tasks.replay_memory_sources(2, 1).await.unwrap().remove(0);
+        let memory = agentix_memory::MemoryStore::open(&memory_path)
+            .await
+            .unwrap();
+        // Independent intake may have persisted a later source beyond the checkpoint.
+        memory
+            .ingest(&serde_json::from_value(serde_json::to_value(later).unwrap()).unwrap())
+            .await
+            .unwrap();
+        let pool = sqlx::SqlitePool::connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new().filename(&memory_path),
+        )
+        .await
+        .unwrap();
+        sqlx::query("DROP TRIGGER fail_replay")
+            .execute(&pool)
+            .await
+            .unwrap();
+        pool.close().await;
+    });
+    // Restart also must not treat MAX(sequence)=3 as proof that receipt 2 exists.
+    let _daemon = Daemon(
+        cli.command(&["memory", "serve"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut count;
+    loop {
+        count = cli.ok(&["memory", "status"])["sources"]
+            .as_i64()
+            .unwrap_or(0);
+        if count == 3 || Instant::now() >= deadline {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(
+        count, 3,
+        "a failed replay receipt must remain recoverable after later successes and restart"
+    );
 }
 
 fn database_snapshot(source: &std::path::Path, destination: &std::path::Path) {
@@ -589,7 +695,11 @@ async fn memory_jev_triage_uses_existing_environment_and_reports_skip_extract_an
                 .unwrap(),
         );
         let deadline = Instant::now() + Duration::from_secs(10);
-        while cli.ok(&["memory", "status"])["online"] != true {
+        loop {
+            let status = cli.ok(&["memory", "status"]);
+            if status["online"] == true && status["sources"] == 1 {
+                break;
+            }
             assert!(Instant::now() < deadline);
             tokio::time::sleep(Duration::from_millis(20)).await;
         }

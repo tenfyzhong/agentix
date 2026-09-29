@@ -16,6 +16,8 @@ pub struct ContextPacket {
 }
 
 impl MemoryStore {
+    /// Prepare a retryable packet, not a delivery acknowledgement. Only the host
+    /// knows whether it received this packet and may deduplicate later turns.
     pub async fn context(
         &self,
         project: &str,
@@ -46,7 +48,6 @@ impl MemoryStore {
         .bind(turn)
         .fetch_optional(&mut *tx)
         .await?;
-        let retry = cached.is_some();
         let references = if let Some(cached) = cached {
             serde_json::from_str::<ContextPacket>(&cached)?.items
         } else {
@@ -66,20 +67,9 @@ impl MemoryStore {
             let Some(data) = data else {
                 continue;
             };
-            if !retry {
-                let seen:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM context_deliveries WHERE project_id=? AND session_id=? AND memory_id=? AND revision>=?)")
-                    .bind(project).bind(session).bind(&reference.id).bind(reference.revision).fetch_one(&mut *tx).await?;
-                if seen {
-                    continue;
-                }
-            }
             valid.push(serde_json::from_str(&data)?);
         }
         let packet = context_preview(project, &valid, budget)?;
-        for item in &packet.items {
-            sqlx::query("INSERT INTO context_deliveries(project_id,session_id,memory_id,revision,updated_at) VALUES(?,?,?,?,unixepoch()) ON CONFLICT(project_id,session_id,memory_id) DO UPDATE SET revision=excluded.revision,updated_at=excluded.updated_at")
-                .bind(project).bind(session).bind(&item.id).bind(item.revision).execute(&mut *tx).await?;
-        }
         sqlx::query("INSERT INTO context_receipts(project_id,session_id,turn_id,data,updated_at) VALUES(?,?,?,?,unixepoch()) ON CONFLICT(project_id,session_id,turn_id) DO UPDATE SET data=excluded.data,updated_at=excluded.updated_at")
             .bind(project).bind(session).bind(turn).bind(serde_json::to_string(&packet)?).execute(&mut *tx).await?;
         sqlx::query("DELETE FROM context_deliveries WHERE updated_at<unixepoch()-2592000")

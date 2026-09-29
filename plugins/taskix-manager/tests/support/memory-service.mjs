@@ -11,3 +11,17 @@ test("real prompt hook consumes extracted memory and deduplicates later turns", 
     const next = await runHook({ ...event, turn_id: "second" }, runTaskix, routing);
     assert.ok(!next?.hookSpecificOutput?.additionalContext?.includes("Offline recovery"));
 });
+
+test("a packet prepared by the real service but not injected remains available to the host", async () => {
+    const options = { session: "acceptance-undelivered-host", cwd: process.cwd() };
+    const prepared = await runTaskix(["memory", "context", "Offline recovery", "--turn", "discarded"], options);
+    assert.match(prepared.result.text, /Offline recovery/);
+    // Discard the generated packet without running the host delivery path.
+    const event = { hook_event_name: "UserPromptSubmit", session_id: options.session, cwd: options.cwd,
+        prompt: "Offline recovery", turn_id: "received" };
+    const routing = { env: { TASKIX_JEV_ENABLED: "false" } };
+    const received = await runHook(event, runTaskix, routing);
+    assert.match(received.hookSpecificOutput.additionalContext, /Offline recovery/);
+    const later = await runHook({ ...event, turn_id: "later" }, runTaskix, routing);
+    assert.ok(!later?.hookSpecificOutput?.additionalContext?.includes("Offline recovery"));
+});

@@ -275,13 +275,18 @@ Restart memory service and inspect `taskix memory status`, `work` and `source`.
 It validates the pair before starting workers and resumes durable queue entries
 after lease expiry. A restored older memory snapshot can replay newer retained
 task sources; incompatible/forked task histories are rejected, not silently reset.
+Replay resumes from the memory database's durable ordered checkpoint. A failed
+input keeps that checkpoint in place even when later sources have already arrived.
+Older snapshots without a checkpoint replay idempotently from zero to repair
+possible gaps. The archive's `coverage.replay_after` is the maximum sequence
+observed during pair validation, not the service's recovery checkpoint.
 
 Use a compatible Taskix version and inspect state before resuming normal work.
 Historical Task leases must not be reused. `taskix doctor` and `taskix sync`
-inspect and rebuild board projections. For memory notes, preserve any newer
-manual edits first: stale revision imports remain conflicts rather than
-silently replacing restored state. Restore separately saved documents when
-those edits matter.
+inspect and rebuild board projections. Memory notes are read-only projections:
+`taskix memory sync` rebuilds them from the restored memory database. Preserve
+any local edits separately before synchronization; they are not imported as
+memory revisions.
 
 For transfer failures, the script reports the rclone exit status, a recognized
 access-denied category and HTTP status when available, and retains local archives.

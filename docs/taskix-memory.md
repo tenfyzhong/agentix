@@ -200,10 +200,15 @@ archival stops new background maintenance; history remains explicitly readable.
 The service commits receipt, evidence and queue entries before acknowledging the
 outbox. Acknowledgement means **received**, not extracted. No model work runs
 inside the main agent or task transaction. Intake failures are retried separately
-from the forward replay scan. Durable retries, leases and source revisions fence
-stale workers. Startup checks stored sources against the task history and replays
-newer retained receipts, including acknowledged inputs after an older memory
-restore. Source snapshots are deliberately retained; there is no automatic prune.
+from the forward replay scan. Replay has its own durable checkpoint, advanced
+only after each input has been persisted. It stops at a failed input and retries
+without skipping it, even when later inputs arrived through pending intake.
+The maximum stored source sequence is not a recovery checkpoint. Databases from
+before checkpoint support perform one idempotent replay from zero to repair gaps.
+Durable retries, leases and source revisions fence stale workers. Startup checks
+stored sources against the task history and resumes ordered replay, including
+acknowledged inputs after an older memory restore. Source snapshots are
+deliberately retained; there is no automatic prune.
 
 The default worker budget is four concurrent loops, at most two extraction loops
 per Project, and one consolidation/review loop per Project. Different Projects
@@ -226,13 +231,19 @@ prompt hooks and Pi/OMP extension request a relevant packet, normally at most
 whole-entry JSONL with a historical/untrusted-context notice. The actual token
 count depends on language/tokenizer; the bound is bytes, not a promised token
 count. A slow or unavailable query yields no injected memory and host work
-continues. The service's optional embedding timeout does not extend that host
-deadline. Agentix captures session events and uses the installed host integration
+continues. Context injection caps semantic retrieval at the smaller of the
+configured query timeout and 750 ms, reserving time within the host deadline for
+FTS fallback and CLI/IPC. Ordinary search retains its configured semantic timeout.
+Agentix captures session events and uses the installed host integration
 for injection; it does not duplicate the packet inside Engine prompts.
 
-Memory ID/revision is deduplicated per session. Same-turn retries can replay their
-packet; later turns do not repeatedly inject unchanged entries. Offline hooks
-persist only receipt metadata, not memory content. Current user instructions and
+The receiving host deduplicates memory ID/revision per session, both online and
+offline. The service caches prepared packets for same-turn retry but does not
+record their generation as delivery. A timeout or discarded response therefore
+cannot suppress memory in the next turn; old service-side delivery markers are
+ignored. Direct `memory context` CLI reads can return the same entries on later
+turns because they do not confirm host injection. Host receipts persist only
+metadata, not memory content. Current user instructions and
 current repository evidence always take precedence; memory is not authorization.
 
 ## Inspect, correct and forget

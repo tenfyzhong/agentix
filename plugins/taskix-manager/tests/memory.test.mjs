@@ -29,6 +29,21 @@ test("memory errors, oversized responses and deadlines never block the main agen
     assert.equal(await memoryContext("query", "turn", options, async (_args, opts) => { signal = opts.signal; return new Promise(() => {}); }, { timeoutMs: 20 }), "");
     assert.equal(signal.aborted, true);
 });
+test("a response arriving after the host deadline cannot suppress the next turn", async t => {
+    const directory = await mkdtemp(join(tmpdir(), "memory-late-response-"));
+    t.after(() => rm(directory, { recursive: true, force: true }));
+    const options = { session: "late-response", cwd: directory };
+    let complete;
+    const late = new Promise(resolve => { complete = resolve; });
+    assert.equal(await memoryContext("regional endpoints", "lost", options, () => late,
+        { cacheDir: directory, timeoutMs: 20 }), "");
+    complete(packet());
+    await new Promise(resolve => setImmediate(resolve));
+    assert.match(await memoryContext("regional endpoints", "received", options, async () => packet(),
+        { cacheDir: directory }), /regional endpoints/);
+    assert.equal(await memoryContext("regional endpoints", "later", options, async () => packet(),
+        { cacheDir: directory }), "");
+});
 test("Codex and Claude prompt hooks retrieve memory independently of Jev routing", async t => {
     const memoryConfigPath = await enabledConfig(t);
     const calls = [];

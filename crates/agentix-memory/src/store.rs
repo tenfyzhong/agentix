@@ -77,8 +77,8 @@ impl MemoryStore {
         Ok(Self { pool })
     }
 
-    /// Bind once to a source database. The indexed highest persisted sequence is
-    /// the replay cursor; pending unacknowledged inputs cover gaps below it.
+    /// Bind once to a source database and resume its ordered replay checkpoint.
+    /// Older databases have no checkpoint and replay from zero to repair possible gaps.
     pub async fn bind_source(&self, instance: &str) -> Result<i64> {
         ensure!(!instance.is_empty(), "invalid: source instance");
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
@@ -101,13 +101,51 @@ impl MemoryStore {
             bound == instance && !foreign,
             "conflict: memory belongs to another task database; restore a compatible pair"
         );
-        let cursor: i64 = sqlx::query_scalar(
-            "SELECT COALESCE(MAX(json_extract(data,'$.sequence')),0) FROM sources",
+        sqlx::query(
+            "INSERT OR IGNORE INTO memory_metadata(key,value) VALUES ('replay_cursor','0')",
         )
-        .fetch_one(&mut *tx)
+        .execute(&mut *tx)
         .await?;
+        let cursor: String =
+            sqlx::query_scalar("SELECT value FROM memory_metadata WHERE key='replay_cursor'")
+                .fetch_one(&mut *tx)
+                .await?;
+        let cursor: i64 = cursor.parse().context("invalid replay checkpoint")?;
+        ensure!(cursor >= 0, "invalid replay checkpoint");
         tx.commit().await?;
         Ok(cursor)
+    }
+
+    /// Advance after the next source in task-outbox order has been committed.
+    /// Intake may commit later sources independently; it must never advance this cursor.
+    /// A crash before this transaction only repeats the idempotent ingest.
+    pub async fn checkpoint_replay(&self, after: i64, source: &Source) -> Result<()> {
+        ensure!(
+            after >= 0 && source.sequence > after,
+            "invalid replay progress"
+        );
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        let data: Option<String> =
+            sqlx::query_scalar("SELECT data FROM sources WHERE receipt_id=?")
+                .bind(&source.receipt_id)
+                .fetch_optional(&mut *tx)
+                .await?;
+        ensure!(
+            data.as_deref() == Some(serde_json::to_string(source)?.as_str()),
+            "replay source must be persisted before checkpointing"
+        );
+        let result =
+            sqlx::query("UPDATE memory_metadata SET value=? WHERE key='replay_cursor' AND value=?")
+                .bind(source.sequence.to_string())
+                .bind(after.to_string())
+                .execute(&mut *tx)
+                .await?;
+        ensure!(
+            result.rows_affected() == 1,
+            "conflict: replay checkpoint changed or source is unbound"
+        );
+        tx.commit().await?;
+        Ok(())
     }
 
     pub async fn recovery_sources(&self, after: &str, limit: i64) -> Result<Vec<Source>> {
