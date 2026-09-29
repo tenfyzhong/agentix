@@ -385,7 +385,86 @@ exemption into permission to use cloud embeddings. An exemption from one
 restriction does not establish unconditional permission. Retain this baseline
 failure for the semantic rubric; valid citations alone do not prove correctness.
 
-Two reader-v1 runs now cover the complete 304-question development split over
+Two reader-v1 runs are processing the complete 304-question development split over
 raw FTS and raw hybrid retrieval respectively. Both use the same pinned script,
 model, question order and context limits. These are full development answer runs,
 not held-out evaluation or substitutes for the extracted-memory runs.
+
+### Answer scoring and semantic grading
+
+After a reader run completes, run the mode-blind judge and aggregate its labels:
+
+```sh
+python3 scripts/memory_judge.py /path/to/questions.json /path/to/reader-run /path/to/new-judge-run
+python3 scripts/memory_answer_scores.py /path/to/questions.json /path/to/new-answer-scores.json --run /path/to/reader-run --split development --grades /path/to/new-judge-run/grades.json
+```
+
+The judge uses a fresh `gpt-6-astra` low-reasoning request per answer, with no
+native tools. It receives the question, reference answer, adversarial flag,
+candidate answer and the exact context supplied to the reader. It does not
+receive the retrieval mode. Correctness requires the full requested meaning,
+including dates, list items, attribution and scope. Faithfulness is assessed
+against retrieved context only: a correct guess unsupported by that context
+fails faithfulness. All labels include an explanation. This remains a
+same-model automated judgment, not an independent human evaluation.
+
+Judge resumption requires unchanged question, reader, answer and script
+fingerprints. Inputs, responses, events, errors and usage are retained. A
+completion marker and combined grades are written only after all answers have
+been graded. The scorer requires exactly one answer and, when supplied, one
+grade for every question/mode pair; partial sets cannot produce full scores.
+
+Report non-adversarial semantic accuracy and faithfulness separately from
+adversarial abstention, with category and conversation breakdowns. The scorer's
+additional token F1 is a diagnostic unstemmed word-overlap measure. It is **not
+the official LoCoMo category-aware, Porter-stemmed F1**, and must not be compared
+to published official F1 results. No semantic grade is inferred from that metric.
+
+The five-question policy reader diagnostic completed grading: four answers were
+correct and faithful; the Chinese internal-test answer failed both checks for
+expanding an exemption into permission. See the
+[grades](benchmarks/memory/policy-reader-v1/grades.json),
+[scores](benchmarks/memory/policy-reader-v1/scores.json), and
+[provenance](benchmarks/memory/policy-reader-v1/metadata.json).
+These references were authored after inspecting the reader outputs, so this is
+a grading integration diagnostic, not a blinded quality benchmark. One earlier
+diagnostic run was discarded after its Cedar reference incorrectly introduced
+an onsite security officer; the corrected reference uses only the procurement
+committee requirement in the source fixture. The invalid run remains retained
+outside the repository and is excluded from reported results.
+
+## Published comparison references
+
+The following are vendor-reported LoCoMo scores checked on September 30, 2026.
+They are reference points, not matched local runs or a ranking against Taskix.
+
+| System / protocol | Reported answer score | Reported context | Source |
+| --- | --- | --- | --- |
+| Mem0 current platform | 92.5%, 1,425/1,540 | Mean 6,956 tokens | [Research](https://mem0.ai/research), [pinned harness](https://github.com/mem0ai/memory-benchmarks/blob/4b61c5d31b9c668a12b4f5e78064248a02c82d2b/README.md) |
+| Zep multi-scope retrieval | 94.7%, 1,459/1,540 | Median 5,760 tokens | [Research](https://www.getzep.com/research/) |
+| Zep auto search | 86.5% | Median 2,680 tokens | [Research](https://www.getzep.com/research/) |
+| Taskix FTS / BGE-M3 hybrid | Pending complete answer generation and grading | Same local reader limits for both modes | This report |
+
+Zep identifies its reader as GPT-5.4 with medium reasoning and its judge as
+GPT-5.4. Its published category counts sum to 1,436/1,539, inconsistent with
+the headline 1,459/1,540; the category distribution also differs from our pinned
+dataset. Do not derive matched category comparisons from that table.
+
+The pinned Mem0 [judge prompt](https://github.com/mem0ai/memory-benchmarks/blob/4b61c5d31b9c668a12b4f5e78064248a02c82d2b/benchmarks/locomo/prompts.py)
+accepts partial list overlap and permits date differences up to 14 days and
+duration differences up to 50%. Our primary rubric requires all requested facts
+and correct dates. Those grades measure different acceptance criteria. A future
+compatibility-grade column must be explicitly separate from strict correctness;
+published percentages cannot establish superiority under our rubric. Context
+budgets, model choices, dataset revisions and commercial versus OSS system
+versions also need matching before attributing score differences to memory.
+
+### Isolated lexical experiments
+
+The raw retrieval example accepts an optional final argument: `baseline`
+(default), `porter`, `baseline-stop`, or `porter-stop`. Porter uses SQLite's
+English stemming tokenizer in a fresh temporary benchmark database; `-stop`
+filters common English function words from the lexical query only. Query
+embeddings retain the original question. These switches do not alter production
+indexes or migrate existing stores. Run experiments on development questions
+with the same complete corpus and vector cache before freezing a held-out run.

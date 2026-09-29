@@ -1,0 +1,7 @@
+{
+  "scope": "Five-question diagnostic integration smoke; reference answers authored after inspecting reader outputs, not a blinded quality benchmark",
+  "invalid_prior_run": "policy-smoke discarded: external-constraint reference introduced a security officer absent from the source fixture; retained outside repository with INVALID.txt",
+  "reference_basis": "crates/agentix-memory/tests/fixtures/quality/policy-cases.json",
+  "grader": "gpt-6-astra low, fresh mode-blind Codex requests",
+  "result": "4/5 correct and faithful; offline-zh overstates the internal-test exemption"
+}

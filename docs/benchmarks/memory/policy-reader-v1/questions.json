@@ -1,0 +1,42 @@
+[
+  {
+    "id": "offline-en",
+    "project": "policy-offline-en",
+    "question": "What restrictions apply to Acorn production and staging?",
+    "split": "development",
+    "answer": "Acorn production must be offline and cannot use cloud embeddings because the procurement contract prohibits external network calls. Internal staging is exempt from that restriction.",
+    "category": 4
+  },
+  {
+    "id": "offline-zh",
+    "project": "policy-offline-zh",
+    "question": "榆树生产环境为什么不能使用云端 embedding，内部测试呢？",
+    "split": "development",
+    "answer": "榆树生产集群因采购合同禁止访问外网，只能离线部署，不能使用云端 embedding；内部测试环境不受此限制，但这不等于无条件获准使用云端服务。",
+    "category": 4
+  },
+  {
+    "id": "explicit-approval",
+    "project": "policy-explicit-approval",
+    "question": "How long must Beacon audit receipts and debug logs be retained?",
+    "split": "development",
+    "answer": "Beacon audit receipts must be retained for seven years. Debug log retention is not specified.",
+    "category": 4
+  },
+  {
+    "id": "correction",
+    "project": "policy-correction",
+    "question": "Where must Orion production run under the current contract?",
+    "split": "development",
+    "answer": "Orion production must run in Ireland under the corrected current contract; the earlier Germany requirement was superseded.",
+    "category": 4
+  },
+  {
+    "id": "external-constraint",
+    "project": "policy-external-constraint",
+    "question": "When does Cedar accept deliveries and why?",
+    "split": "development",
+    "answer": "Cedar accepts deliveries only on Tuesdays because of a standing procurement committee requirement, not a scheduler limitation.",
+    "category": 4
+  }
+]

@@ -1,0 +1,16 @@
+{
+  "questions_sha256": "cb2652e7fe7af71db488948e83241ee3cfbbfa902bc0b152734976504dfb2401",
+  "script_sha256": "e076f98704d9f82e2409c48e5d9c7c6b0f2455dd03ef2f89afc08353057fdf6c",
+  "reader_module_sha256": "33051d304542b1b99dd84a09cb41dc4b9d609e1723e51dcc4b08edee034129ee",
+  "reader_manifest_sha256": "9fba8e47b902b2136038f13a769525313203c1defba96dc8e6f9ac6bca325ec3",
+  "answers_sha256": [
+    "8f39a52e7bb4cc60780e84c1a2373472607341b28224c6ec60b9fbb3c9cb3e63",
+    "721eedfcfdc5c5a5bce1f7d93f0140932b27a5f98cc6c127570d74937edeb5cd",
+    "f2b0aa5210dea3d5738c72d90b180b444333b7dbc88881c1bb0c56edcc0e7b0f",
+    "206378292e5080e1dd1b1eb6c5c82513edaeb7392ecee64d7aa4767cb591a79e",
+    "57bb27dc44c1f228de6d1cd6591cf36e94dd9f4b4338839fdf8c792f8b58ddf1"
+  ],
+  "model": "gpt-6-astra",
+  "reasoning": "low",
+  "codex_version": "codex-cli 0.159.0"
+}

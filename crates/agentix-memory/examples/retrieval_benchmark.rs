@@ -4,10 +4,12 @@ use anyhow::{Context, Result, ensure};
 use serde::Deserialize;
 use serde_json::json;
 use sha2::{Digest, Sha256};
+use sqlx::{Connection, SqliteConnection, sqlite::SqliteConnectOptions};
 use std::{
     collections::HashMap,
     fs::File,
     io::{BufRead, BufReader, BufWriter, Write},
+    path::Path,
     time::Instant,
 };
 
@@ -33,6 +35,110 @@ struct Embedding {
 
 fn digest(text: &str) -> String {
     format!("{:x}", Sha256::digest(text.as_bytes()))
+}
+
+fn lexical_query(query: &str, variant: &str) -> String {
+    if !variant.ends_with("-stop") {
+        return query.to_owned();
+    }
+    let words: Vec<_> = query
+        .split(|c: char| !c.is_alphanumeric() && c != '_')
+        .filter(|word| !word.is_empty())
+        .filter(|word| {
+            !matches!(
+                word.to_ascii_lowercase().as_str(),
+                "a" | "an"
+                    | "the"
+                    | "what"
+                    | "which"
+                    | "who"
+                    | "whom"
+                    | "whose"
+                    | "when"
+                    | "where"
+                    | "why"
+                    | "how"
+                    | "is"
+                    | "are"
+                    | "was"
+                    | "were"
+                    | "be"
+                    | "been"
+                    | "being"
+                    | "do"
+                    | "does"
+                    | "did"
+                    | "has"
+                    | "have"
+                    | "had"
+                    | "would"
+                    | "could"
+                    | "should"
+                    | "can"
+                    | "will"
+                    | "shall"
+                    | "of"
+                    | "to"
+                    | "in"
+                    | "on"
+                    | "at"
+                    | "for"
+                    | "from"
+                    | "with"
+                    | "by"
+                    | "about"
+                    | "and"
+                    | "or"
+                    | "it"
+                    | "its"
+                    | "he"
+                    | "his"
+                    | "she"
+                    | "her"
+                    | "they"
+                    | "their"
+                    | "them"
+                    | "you"
+                    | "your"
+                    | "i"
+                    | "my"
+                    | "we"
+                    | "our"
+                    | "s"
+            )
+        })
+        .collect();
+    if words.is_empty() {
+        query.to_owned()
+    } else {
+        words.join(" ")
+    }
+}
+
+// Experiment only: the caller creates an empty temporary store for this run.
+async fn configure_lexical_experiment(path: &Path, variant: &str) -> Result<()> {
+    ensure!(
+        matches!(
+            variant,
+            "baseline" | "porter" | "baseline-stop" | "porter-stop"
+        ),
+        "unknown lexical experiment"
+    );
+    if variant.starts_with("baseline") {
+        return Ok(());
+    }
+    let mut connection =
+        SqliteConnection::connect_with(&SqliteConnectOptions::new().filename(path)).await?;
+    let mut tx = connection.begin().await?;
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM memories")
+        .fetch_one(&mut *tx)
+        .await?;
+    ensure!(count == 0, "lexical experiment requires an empty store");
+    sqlx::raw_sql("DROP TABLE memory_fts; CREATE VIRTUAL TABLE memory_fts USING fts5(project_token,title,body,tags,scope,tokenize='porter unicode61');")
+        .execute(&mut *tx).await?;
+    tx.commit().await?;
+    connection.close().await?;
+    Ok(())
 }
 
 async fn import_documents(
@@ -84,8 +190,8 @@ async fn import_documents(
 async fn main() -> Result<()> {
     let args: Vec<_> = std::env::args().collect();
     ensure!(
-        args.len() == 5,
-        "usage: retrieval_benchmark CORPUS QUESTIONS VECTORS_JSONL_OR_DASH OUTPUT_JSONL"
+        (5..=6).contains(&args.len()),
+        "usage: retrieval_benchmark CORPUS QUESTIONS VECTORS_JSONL_OR_DASH OUTPUT_JSONL [baseline|porter|baseline-stop|porter-stop]"
     );
     let documents: Vec<Document> = serde_json::from_reader(File::open(&args[1])?)?;
     let questions: Vec<Query> = serde_json::from_reader(File::open(&args[2])?)?;
@@ -104,6 +210,8 @@ async fn main() -> Result<()> {
     let mut output = BufWriter::new(output);
     let dir = tempfile::tempdir()?;
     let store = MemoryStore::open(&dir.path().join("memory.db")).await?;
+    let variant = args.get(5).map_or("baseline", String::as_str);
+    configure_lexical_experiment(&dir.path().join("memory.db"), variant).await?;
     let start = Instant::now();
     let mapping = import_documents(&store, &documents, &vectors).await?;
     eprintln!(
@@ -112,21 +220,20 @@ async fn main() -> Result<()> {
         start.elapsed().as_secs_f64()
     );
     for question in questions {
+        let lexical = lexical_query(&question.question, variant);
         for mode in ["fts", "hybrid"] {
             if mode == "hybrid" && vectors.is_empty() {
                 continue;
             }
             let start = Instant::now();
             let results = if mode == "fts" {
-                store
-                    .search(&question.project, &question.question, 20)
-                    .await?
+                store.search(&question.project, &lexical, 20).await?
             } else {
                 let vector = vectors
                     .get(&digest(&question.question))
                     .context("missing query vector")?;
                 store
-                    .hybrid_search(&question.project, &question.question, 1, vector, 20)
+                    .hybrid_search(&question.project, &lexical, 1, vector, 20)
                     .await?
             };
             let elapsed = start.elapsed().as_secs_f64() * 1000.0;
@@ -134,7 +241,7 @@ async fn main() -> Result<()> {
             writeln!(
                 output,
                 "{}",
-                json!({"id":question.id,"mode":mode,"ids":ids,"retrieval_ms":elapsed})
+                json!({"id":question.id,"mode":mode,"ids":ids,"retrieval_ms":elapsed,"lexical_variant":variant})
             )?;
         }
         output.flush()?;
@@ -145,6 +252,49 @@ async fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stopword_experiment_preserves_identifiers_negation_and_nonempty_queries() {
+        assert_eq!(
+            lexical_query("Where has Melanie camped?", "porter-stop"),
+            "Melanie camped"
+        );
+        assert_eq!(
+            lexical_query("Why not use cloud_embedding?", "baseline-stop"),
+            "not use cloud_embedding"
+        );
+        assert_eq!(lexical_query("why", "porter-stop"), "why");
+        assert_eq!(lexical_query("中文决定", "porter-stop"), "中文决定");
+        assert_eq!(
+            lexical_query("Where has Melanie camped?", "porter"),
+            "Where has Melanie camped?"
+        );
+    }
+
+    #[tokio::test]
+    async fn porter_experiment_matches_inflections_without_cross_project_results() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("memory.db");
+        let store = MemoryStore::open(&path).await.unwrap();
+        configure_lexical_experiment(&path, "porter").await.unwrap();
+        let documents = vec![Document {
+            id: "camp".into(),
+            project: "p".into(),
+            text: "We enjoy camping".into(),
+        }];
+        import_documents(&store, &documents, &HashMap::new())
+            .await
+            .unwrap();
+        assert_eq!(store.search("p", "camped", 10).await.unwrap().len(), 1);
+        assert!(
+            store
+                .search("other", "camped", 10)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(configure_lexical_experiment(&path, "porter").await.is_err());
+    }
 
     #[tokio::test]
     async fn adapter_preserves_ids_and_project_boundaries() {

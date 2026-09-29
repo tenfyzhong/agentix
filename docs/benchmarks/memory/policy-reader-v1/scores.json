@@ -1,0 +1,56 @@
+{
+  "metric_note": "Diagnostic unstemmed token F1; not official LoCoMo F1",
+  "scores": {
+    "hybrid": {
+      "non_adversarial": {
+        "n": 5,
+        "abstention_rate": 0.0,
+        "token_f1": 0.5626588465298143,
+        "semantic_accuracy": 0.8,
+        "faithfulness": 0.8
+      },
+      "category/4": {
+        "n": 5,
+        "abstention_rate": 0.0,
+        "token_f1": 0.5626588465298143,
+        "semantic_accuracy": 0.8,
+        "faithfulness": 0.8
+      },
+      "project/policy-offline-en/non_adversarial": {
+        "n": 1,
+        "abstention_rate": 0.0,
+        "token_f1": 0.6666666666666666,
+        "semantic_accuracy": 1.0,
+        "faithfulness": 1.0
+      },
+      "project/policy-offline-zh/non_adversarial": {
+        "n": 1,
+        "abstention_rate": 0.0,
+        "token_f1": 0.0,
+        "semantic_accuracy": 0.0,
+        "faithfulness": 0.0
+      },
+      "project/policy-explicit-approval/non_adversarial": {
+        "n": 1,
+        "abstention_rate": 0.0,
+        "token_f1": 0.7272727272727273,
+        "semantic_accuracy": 1.0,
+        "faithfulness": 1.0
+      },
+      "project/policy-correction/non_adversarial": {
+        "n": 1,
+        "abstention_rate": 0.0,
+        "token_f1": 0.5161290322580645,
+        "semantic_accuracy": 1.0,
+        "faithfulness": 1.0
+      },
+      "project/policy-external-constraint/non_adversarial": {
+        "n": 1,
+        "abstention_rate": 0.0,
+        "token_f1": 0.9032258064516129,
+        "semantic_accuracy": 1.0,
+        "faithfulness": 1.0
+      }
+    }
+  }
+}

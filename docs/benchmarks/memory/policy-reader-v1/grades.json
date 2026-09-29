@@ -1,0 +1,77 @@
+[
+  {
+    "correct": true,
+    "faithful": true,
+    "explanation": "The answer fully matches the reference and retrieved context, including production’s offline requirement, contractual ban on external calls and cloud embeddings, and staging’s narrowly scoped exemption.",
+    "id": "offline-en",
+    "mode": "hybrid",
+    "usage": {
+      "input_tokens": 12673,
+      "cached_input_tokens": 0,
+      "cache_write_input_tokens": 0,
+      "output_tokens": 56,
+      "reasoning_output_tokens": 0
+    },
+    "payload_sha256": "379fbecf4b7d4bdb2d4025e17ef2cada3bdafb1445e58aac42aa029d3f66af23"
+  },
+  {
+    "correct": false,
+    "faithful": false,
+    "explanation": "生产环境的原因和限制描述正确，但将内部测试不受该限制推断为可以使用云端 embedding，属于无依据的许可结论；参考答案及检索内容均未给予无条件许可。",
+    "id": "offline-zh",
+    "mode": "hybrid",
+    "usage": {
+      "input_tokens": 12735,
+      "cached_input_tokens": 0,
+      "cache_write_input_tokens": 0,
+      "output_tokens": 70,
+      "reasoning_output_tokens": 0
+    },
+    "payload_sha256": "a15f3359efe1dd32f29d5bd526616764dd4208a472adc1118a6e2e1e3bf51744"
+  },
+  {
+    "correct": true,
+    "faithful": true,
+    "explanation": "The answer gives the required seven-year retention for audit receipts and correctly notes that debug-log retention is unspecified and excluded from this approval, as supported by the context.",
+    "id": "explicit-approval",
+    "mode": "hybrid",
+    "usage": {
+      "input_tokens": 12646,
+      "cached_input_tokens": 0,
+      "cache_write_input_tokens": 0,
+      "output_tokens": 56,
+      "reasoning_output_tokens": 0
+    },
+    "payload_sha256": "3566bcb50242a6e9e424b20ffa0c201a5e6f0c44afdf7107f8e8778b5683ff26"
+  },
+  {
+    "correct": true,
+    "faithful": true,
+    "explanation": "The answer identifies Ireland-only production and the superseded Germany requirement, matching the reference. It also preserves the context’s attribution to the user-reported signed amendment.",
+    "id": "correction",
+    "mode": "hybrid",
+    "usage": {
+      "input_tokens": 12698,
+      "cached_input_tokens": 0,
+      "cache_write_input_tokens": 0,
+      "output_tokens": 56,
+      "reasoning_output_tokens": 0
+    },
+    "payload_sha256": "a2407d56500405a062afe7de7a28c2852160bbdeabdb1e61a717ada0b71ff36f"
+  },
+  {
+    "correct": true,
+    "faithful": true,
+    "explanation": "The answer gives Tuesday-only acceptance and attributes it to a standing procurement/customer requirement rather than a scheduler limitation, matching the reference and retrieved context.",
+    "id": "external-constraint",
+    "mode": "hybrid",
+    "usage": {
+      "input_tokens": 12628,
+      "cached_input_tokens": 0,
+      "cache_write_input_tokens": 0,
+      "output_tokens": 52,
+      "reasoning_output_tokens": 0
+    },
+    "payload_sha256": "b507662acd1fec45698929b283917e36c4c1be83903bb10235a72ae29fff0018"
+  }
+]
