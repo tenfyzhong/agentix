@@ -1,4 +1,4 @@
-use agentix_task::{BrowseScope, JobStatus, TaskListItem, TaskStatus};
+use agentix_task::{BrowseScope, InboxStatus, JobStatus, TaskListItem, TaskStatus};
 
 use super::{
     ActionButton, ActionStyle, ConversationRef, EngineError, OutboundView, SessionId,
@@ -27,10 +27,12 @@ pub(crate) enum TaskBrowse {
     },
     Inboxes {
         project: String,
+        status: Option<InboxStatus>,
         page: usize,
     },
     Inbox {
         id: String,
+        status: Option<InboxStatus>,
         page: usize,
     },
     Job {
@@ -114,10 +116,18 @@ impl TaskBoardView<'_> {
                     .await
             }
             TaskBrowse::Jobs(page) => self.show_session_jobs(conversation, owner, page).await,
-            TaskBrowse::Inboxes { project, page } => {
-                self.show_inboxes(conversation, owner, &project, page).await
+            TaskBrowse::Inboxes {
+                project,
+                status,
+                page,
+            } => {
+                self.show_inboxes(conversation, owner, &project, status, page)
+                    .await
             }
-            TaskBrowse::Inbox { id, page } => self.show_inbox(conversation, owner, &id, page).await,
+            TaskBrowse::Inbox { id, status, page } => {
+                self.show_inbox(conversation, owner, &id, status, page)
+                    .await
+            }
             TaskBrowse::Job { id, page } => self.show_job(conversation, owner, &id, page).await,
             TaskBrowse::Task { id, page } => {
                 self.show_task_page(conversation, owner, &id, page).await
@@ -445,6 +455,7 @@ impl TaskBoardView<'_> {
                 "Project inbox".into(),
                 TaskBrowse::Inboxes {
                     project: project.id.clone(),
+                    status: None,
                     page: 0,
                 },
             ),

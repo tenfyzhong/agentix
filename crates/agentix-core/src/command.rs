@@ -8,7 +8,7 @@ pub enum AgentCommand {
     Dashboard,
     Board,
     Jobs,
-    Inboxes,
+    Inboxes(Option<agentix_task::InboxStatus>),
     Inbox(String),
     Tasks(Option<String>),
     Task(String),
@@ -53,6 +53,10 @@ pub enum InputParseError {
     InvalidPlanMode(String),
     #[error("invalid fast mode: {0}")]
     InvalidFastMode(String),
+    #[error(
+        "usage: /inboxes [STATUS]; use ALL, TODO, ACTIVE, PENDING_REVIEW, COMPLETED or CANCELLED"
+    )]
+    InvalidInboxStatus,
 }
 
 pub fn parse_input(input: &str) -> Result<ParsedInput, InputParseError> {
@@ -74,7 +78,7 @@ pub fn parse_input(input: &str) -> Result<ParsedInput, InputParseError> {
         "/dashboard" => AgentCommand::Dashboard,
         "/board" => AgentCommand::Board,
         "/jobs" => AgentCommand::Jobs,
-        "/inboxes" => AgentCommand::Inboxes,
+        "/inboxes" => parse_inboxes(parts)?,
         "/inbox" => {
             let content = input[raw_command.len()..].trim();
             if content.is_empty() {
@@ -155,6 +159,25 @@ pub fn parse_input(input: &str) -> Result<ParsedInput, InputParseError> {
         _ => return Err(InputParseError::UnknownCommand(raw_command.to_owned())),
     };
     Ok(ParsedInput::Command(parsed))
+}
+
+fn parse_inboxes<'a>(
+    mut parts: impl Iterator<Item = &'a str>,
+) -> Result<AgentCommand, InputParseError> {
+    use agentix_task::InboxStatus;
+    let status = match parts.next().map(str::to_ascii_uppercase).as_deref() {
+        None | Some("ALL") => None,
+        Some("TODO") => Some(InboxStatus::Todo),
+        Some("ACTIVE") => Some(InboxStatus::Active),
+        Some("PENDING_REVIEW") => Some(InboxStatus::PendingReview),
+        Some("COMPLETED") => Some(InboxStatus::Completed),
+        Some("CANCELLED") => Some(InboxStatus::Cancelled),
+        _ => return Err(InputParseError::InvalidInboxStatus),
+    };
+    if parts.next().is_some() {
+        return Err(InputParseError::InvalidInboxStatus);
+    }
+    Ok(AgentCommand::Inboxes(status))
 }
 
 fn optional_remainder<'a>(parts: impl Iterator<Item = &'a str>) -> Option<String> {

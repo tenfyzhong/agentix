@@ -458,7 +458,7 @@ async fn configured_menus_have_dashboard_and_attached_secondary_commands() {
         "/jobs",
         "/tasks [job-id]",
         "/task <id>",
-        "/inboxes",
+        "/inboxes [STATUS]",
         "/inbox <content>",
     ] {
         assert!(
