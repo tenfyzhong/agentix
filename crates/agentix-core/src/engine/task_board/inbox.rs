@@ -1,11 +1,12 @@
 use std::{collections::HashSet, path::Path};
 
-use agentix_task::{InboxEntry, Project, WriteOptions};
+use agentix_task::{InboxEntry, InboxStatus, Project, WriteOptions};
 use serde_json::json;
 
 use super::browse::{PAGE_SIZE, escape, markdown_pages, page_count, short};
 use super::{
-    ConversationRef, EngineError, OutboundView, SessionId, TaskBoardView, TaskBrowse, error,
+    ActionStyle, ConversationRef, EngineError, OutboundView, SessionId, TaskBoardView, TaskBrowse,
+    error,
 };
 
 impl TaskBoardView<'_> {
@@ -13,9 +14,10 @@ impl TaskBoardView<'_> {
         &self,
         conversation: &ConversationRef,
         owner: &str,
+        status: Option<InboxStatus>,
     ) -> Result<(), EngineError> {
         if let Some((_, project)) = self.inbox_project(conversation).await? {
-            self.show_inboxes(conversation, owner, &project.id, 0)
+            self.show_inboxes(conversation, owner, &project.id, status, 0)
                 .await?;
         }
         Ok(())
@@ -107,6 +109,7 @@ impl TaskBoardView<'_> {
             &mut view,
             TaskBrowse::Inbox {
                 id: entry.id.clone(),
+                status: None,
                 page: 0,
             },
             1,
@@ -115,6 +118,7 @@ impl TaskBoardView<'_> {
                     "View inbox entry".into(),
                     TaskBrowse::Inbox {
                         id: entry.id,
+                        status: None,
                         page: 0,
                     },
                 ),
@@ -122,6 +126,7 @@ impl TaskBoardView<'_> {
                     "Project inbox".into(),
                     TaskBrowse::Inboxes {
                         project: project.id,
+                        status: None,
                         page: 0,
                     },
                 ),
@@ -137,6 +142,7 @@ impl TaskBoardView<'_> {
         conversation: &ConversationRef,
         owner: &str,
         project: &str,
+        status: Option<InboxStatus>,
         page: usize,
     ) -> Result<(), EngineError> {
         let service = self.tasks_service()?;
@@ -147,7 +153,8 @@ impl TaskBoardView<'_> {
             )
             .await
             .map_err(error)?;
-        let entries: Vec<InboxEntry> = serde_json::from_value(result.result).map_err(error)?;
+        let mut entries: Vec<InboxEntry> = serde_json::from_value(result.result).map_err(error)?;
+        entries.retain(|entry| status.is_none_or(|filter| entry.status == filter));
         let project = service
             .store()
             .project_result(project)
@@ -158,9 +165,10 @@ impl TaskBoardView<'_> {
         let mut view = OutboundView::text(
             "Project inbox",
             format!(
-                "**Project:** {}\n**Entries ({})**\n\nUse /inbox <content> to append a requirement.",
+                "**Project:** {}\n**Entries ({})**\nStatus: {}\n\nUse /inbox <content> to append a requirement.",
                 escape(&short(&project.name)),
-                entries.len()
+                entries.len(),
+                status.map_or_else(|| "ALL".into(), |status| status.to_string())
             ),
         );
         for entry in entries.iter().skip(page * PAGE_SIZE).take(PAGE_SIZE) {
@@ -172,6 +180,7 @@ impl TaskBoardView<'_> {
                 entry.title().into(),
                 TaskBrowse::Inbox {
                     id: entry.id.clone(),
+                    status,
                     page: 0,
                 },
             )
@@ -189,7 +198,7 @@ impl TaskBoardView<'_> {
             ("Dashboard".into(), TaskBrowse::Dashboard(0)),
         ];
         if entries.is_empty() {
-            super::browse::append_section(&mut view, "", "No inbox entries. Use /inbox <content> from an attached session to add a requirement.".into());
+            super::browse::append_section(&mut view, "", "No matching inbox entries. Choose another status below or use /inbox <content> to add a requirement.".into());
         }
         if let Some(warning) = result.projection_pending {
             super::browse::append_section(
@@ -204,10 +213,19 @@ impl TaskBoardView<'_> {
             &mut view,
             TaskBrowse::Inboxes {
                 project: project.id.clone(),
+                status,
                 page,
             },
             pages,
             buttons,
+        )
+        .await;
+        self.add_action_section(
+            conversation,
+            owner,
+            &mut view,
+            "Filter by status",
+            inbox_status_buttons(&project.id),
         )
         .await;
         self.ui.send_view(conversation, &view).await?;
@@ -219,6 +237,7 @@ impl TaskBoardView<'_> {
         conversation: &ConversationRef,
         owner: &str,
         id: &str,
+        status: Option<InboxStatus>,
         page: usize,
     ) -> Result<(), EngineError> {
         let service = self.tasks_service()?;
@@ -263,6 +282,7 @@ impl TaskBoardView<'_> {
             "Project inbox".into(),
             TaskBrowse::Inboxes {
                 project: entry.project_id.clone(),
+                status,
                 page: 0,
             },
         )];
@@ -281,6 +301,7 @@ impl TaskBoardView<'_> {
             &mut view,
             TaskBrowse::Inbox {
                 id: id.into(),
+                status,
                 page,
             },
             content.len(),
@@ -357,4 +378,32 @@ impl TaskBoardView<'_> {
         }
         Ok(edits)
     }
+}
+
+fn inbox_status_buttons(project: &str) -> Vec<(String, TaskBrowse, ActionStyle)> {
+    [
+        None,
+        Some(InboxStatus::Todo),
+        Some(InboxStatus::Active),
+        Some(InboxStatus::PendingReview),
+        Some(InboxStatus::Completed),
+        Some(InboxStatus::Cancelled),
+    ]
+    .into_iter()
+    .map(|filter| {
+        (
+            filter.map_or_else(|| "All statuses".into(), |status| status.to_string()),
+            TaskBrowse::Inboxes {
+                project: project.to_owned(),
+                status: filter,
+                page: 0,
+            },
+            if filter == Some(InboxStatus::Cancelled) {
+                ActionStyle::Danger
+            } else {
+                ActionStyle::Primary
+            },
+        )
+    })
+    .collect()
 }

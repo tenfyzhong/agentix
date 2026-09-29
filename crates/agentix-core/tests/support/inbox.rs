@@ -1,6 +1,107 @@
 use super::*;
 
 #[tokio::test]
+async fn inbox_status_filter_preserves_pagination_and_detail_navigation() {
+    let (_dir, service, _) = task_fixture().await;
+    let project = service.store().snapshot().await.unwrap().projects[0]
+        .id
+        .clone();
+    for n in 0..8 {
+        for status in ["TODO", "ACTIVE", "PENDING_REVIEW", "COMPLETED", "CANCELLED"] {
+            let entry = write(
+                &service,
+                json!({"command":"inbox.add", "project":project,
+                "content":format!("{status} request {n}")}),
+            )
+            .await;
+            if status != "TODO" {
+                write(
+                    &service,
+                    json!({"command":"inbox.set-status", "inbox":entry["id"], "status":status}),
+                )
+                .await;
+            }
+        }
+    }
+    let (engine, channel) = engine(service).await;
+    engine.handle_inbound(input("/attach thr_a")).await.unwrap();
+    for status in ["TODO", "ACTIVE", "PENDING_REVIEW", "COMPLETED", "CANCELLED"] {
+        engine
+            .handle_inbound(input(&format!(
+                "/inboxes@agentix_bot {}",
+                status.to_lowercase()
+            )))
+            .await
+            .unwrap();
+        let first = last(&channel);
+        assert!(first.body.contains("Entries (8)"), "{first:?}");
+        assert_eq!(first.subtitle.as_deref(), Some("Page 1 / 2"));
+        assert!(
+            first
+                .actions
+                .iter()
+                .any(|a| a.label == format!("{status} request 0"))
+        );
+        for other in ["TODO", "ACTIVE", "PENDING_REVIEW", "COMPLETED", "CANCELLED"] {
+            if other != status {
+                assert!(
+                    !first
+                        .actions
+                        .iter()
+                        .any(|a| a.label == format!("{other} request 0"))
+                );
+            }
+        }
+        click(&engine, button(&first, "Next")).await;
+        let second = last(&channel);
+        assert_eq!(second.subtitle.as_deref(), Some("Page 2 / 2"));
+        assert!(second.body.contains("Entries (8)"));
+        click(&engine, button(&second, &format!("{status} request 7"))).await;
+        click(&engine, button(&last(&channel), "Project inbox")).await;
+        assert!(last(&channel).body.contains("Entries (8)"));
+        click(&engine, button(&last(&channel), "All statuses")).await;
+        assert!(last(&channel).body.contains("Entries (40)"));
+        click(&engine, button(&last(&channel), status)).await;
+        assert!(last(&channel).body.contains("Entries (8)"));
+        assert_eq!(last(&channel).subtitle.as_deref(), Some("Page 1 / 2"));
+    }
+    for command in ["/inboxes", "/inboxes ALL"] {
+        engine.handle_inbound(input(command)).await.unwrap();
+        assert!(last(&channel).body.contains("Entries (40)"));
+    }
+}
+
+#[tokio::test]
+async fn inbox_status_filter_handles_empty_results_and_invalid_arguments() {
+    let (_dir, service, _) = task_fixture().await;
+    let (engine, channel) = engine(service).await;
+    engine.handle_inbound(input("/attach thr_a")).await.unwrap();
+    engine
+        .handle_inbound(input("/inbox Pending request"))
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(input("/inboxes completed"))
+        .await
+        .unwrap();
+    let empty = last(&channel);
+    assert!(empty.body.contains("Entries (0)"));
+    assert!(
+        !empty
+            .actions
+            .iter()
+            .any(|a| a.label == "Next" || a.label == "Pending request")
+    );
+    click(&engine, button(&empty, "TODO")).await;
+    assert!(last(&channel).body.contains("Entries (1)"));
+    for command in ["/inboxes typo", "/inboxes TODO extra", "/inboxes --status"] {
+        assert!(agentix_core::parse_input(command).is_err(), "{command}");
+        engine.handle_inbound(input(command)).await.unwrap();
+        assert!(last(&channel).body.contains("/inboxes [STATUS]"));
+    }
+}
+
+#[tokio::test]
 async fn inbox_views_edits_and_polling_ignore_unrelated_entity_bodies() {
     use sqlx::Connection;
     let (_dir, service, _) = task_fixture().await;

@@ -172,7 +172,10 @@ impl Engine {
                         "List tasks for the current session or a job.",
                     ),
                     ("/task <id>", "Read a task and its Markdown details."),
-                    ("/inboxes", "Current project's human queue"),
+                    (
+                        "/inboxes [STATUS]",
+                        "Current project's human queue; filter by status",
+                    ),
                     ("/inbox <content>", "Append a human requirement"),
                 ]);
             }

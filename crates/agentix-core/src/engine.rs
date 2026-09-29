@@ -626,8 +626,10 @@ impl Engine {
     ) -> Result<(), EngineError> {
         let tasks = self.tasks.view(self);
         match command {
-            AgentCommand::Inboxes => {
-                tasks.show_current_inboxes(conversation, owner_id).await?;
+            AgentCommand::Inboxes(status) => {
+                tasks
+                    .show_current_inboxes(conversation, owner_id, status)
+                    .await?;
             }
             AgentCommand::Inbox(content) => {
                 tasks
