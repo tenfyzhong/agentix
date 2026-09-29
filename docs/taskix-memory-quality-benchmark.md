@@ -546,3 +546,60 @@ but logged missing fastembed and spaCy dependencies. Its keyword search was
 disabled. Treat it strictly as model/storage wiring evidence; it must not become
 the scored Mem0 comparator. Install and verify the lexical/NLP dependencies,
 then repeat the smoke with a fresh store before full replay.
+
+The repeated smoke with fastembed 0.8.1, spaCy 3.8.16 and en_core_web_sm 3.8.0
+passed all three tests, including a nonempty BM25 result. Local Qdrant warns that
+payload indexes are ineffective in embedded mode; this affects performance, not
+the tested project filter. This remains wiring validation, not a LoCoMo score.
+
+`scripts/memory_mem0_replay.py` runs complete per-project source replay and native
+Mem0 hybrid retrieval. Each source is applied to a private copy of the last
+closed Qdrant/history store. Only a successful, closed attempt advances the atomic
+checkpoint; failed attempts retain their call logs and cannot enter later
+results. `--resume` checks ordered source, question, code, dependency, model and
+embedding fingerprints. A POSIX lock excludes concurrent writers to one run.
+Successful old store copies are removed while receipts and model calls remain.
+The checkpoint protocol covers process interruption, not power-loss durability.
+
+```sh
+MEM0_TELEMETRY=false MEM0_DIR=/path/to/isolated-runtime \
+python3 scripts/memory_mem0_replay.py corpus.json questions.json /path/to/new-run \
+  --project conv-26 --mem0-source /path/to/pinned-mem0
+```
+
+Use separate run directories for each project. The runner requires the pinned
+BGE-M3 digest and complete NLP/BM25 initialization, rejects malformed extraction
+responses and logged extraction degradation, and uses upstream inference rather
+than direct fact insertion. Original dates and speaker attribution remain in the
+source text. OSS rejects the hosted platform's historical `timestamp` argument,
+so no such argument is supplied. Query export contains only stored memory text,
+with a project check and no raw-source fallback. Extraction and query completion
+are recorded separately; combine only complete project exports before using the
+same answer reader and rubric. Per-source timings include store reopen/close and
+checkpoint overhead and are not native Mem0 throughput measurements.
+
+### Development extraction diagnostic
+
+A partial source-level inspection found that `conv-26/D1:3`, an explicitly
+dated historical experience, completed extraction with zero candidates. Other
+inspected memories retained career intentions and long-term preferences, including
+compatible merges. See the [diagnostic receipt](benchmarks/memory/development-retention-audit-v1.json).
+This identifies a retention-policy hypothesis: the extractor may treat useful
+historical facts as transient updates. It does not prove final recall or answer
+accuracy, and later sources may reintroduce the same information. Preserve the
+frozen baseline and test any retention change on development data together with
+project-policy exclusions before evaluating held-out conversations.
+
+The opt-in regression below checks the original development failure against a
+real replay store. It verifies direct evidence, speaker/date retention and no
+expiry for a dated historical assertion. It failed on the frozen baseline because
+no active memory cited the source. The candidate extraction/consolidation prompts
+clarify that supported experiences with lasting significance are historical
+knowledge; they still exclude task progress, tool errors and repository facts.
+This candidate requires live replay and exclusion-policy validation before any
+claim of improved quality.
+
+```sh
+TASKIX_BENCH_RETENTION_DB=/path/to/replay/memory.sqlite3 \
+python3 -m unittest discover -s scripts/tests -p test_memory_retention.py
+```

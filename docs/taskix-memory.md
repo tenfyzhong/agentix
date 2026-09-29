@@ -7,6 +7,11 @@ assertions, observations and inferences, and does not treat brainstorming as a
 confirmed decision. Repository facts, progress reports and internal tool chatter
 are not useful memory candidates.
 
+Supported historical experiences and events with lasting significance can be
+external facts. Keep their source attribution and date, and distinguish them
+from claims about current status. A dated historical assertion does not expire
+merely because the event ended; ongoing external conditions may still need expiry.
+
 Memory maintenance runs in **`taskix memory serve`**, a separate process shipped
 in the same executable and release as the task board. It uses the same Taskix
 configuration file. The service is available on macOS/Linux; the existing task
