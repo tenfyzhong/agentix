@@ -52,6 +52,10 @@ fn completions_skip_configuration_and_task_state_and_match_checked_in_files() {
                 "{shell}: missing registration"
             );
             for command in [
+                "memory",
+                "projection-status",
+                "backfill",
+                "reindex",
                 "init",
                 "obsidian",
                 "setup",
@@ -155,4 +159,24 @@ printf '%s\n' "${COMPREPLY[@]}""#,
             "{words}: expected {expected:?}, got {candidates:?}"
         );
     }
+}
+
+#[cfg(not(unix))]
+#[test]
+fn memory_commands_report_unsupported_platform_before_loading_configuration() {
+    let directory = tempfile::tempdir().unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_taskix"))
+        .args(["--json", "memory", "status"])
+        .env("TASKIX_CONFIG", directory.path().join("missing.toml"))
+        .current_dir(directory.path())
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let output = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.contains("memory commands require Unix"), "{output}");
+    assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 0);
 }

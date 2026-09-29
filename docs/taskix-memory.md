@@ -369,3 +369,7 @@ For a real Job-data comparison against frozen Codex reference labels, see the
 recommendation is independent of routing confidence. The revised screening
 context uses a `0.75` default; explicit service environment settings still override it.
 The positive-gate experiment was rolled back because it missed reference memories.
+
+The memory command definitions and shell completions are shared across platforms.
+The memory runtime remains Unix-only; other platforms return `memory commands
+require Unix` before loading configuration or creating local state.

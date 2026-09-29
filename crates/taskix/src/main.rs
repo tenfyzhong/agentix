@@ -15,6 +15,7 @@ use serde_json::{Value, json};
 
 #[cfg(unix)]
 mod memory;
+mod memory_command;
 mod metrics;
 mod obsidian;
 
@@ -51,10 +52,9 @@ struct Cli {
 #[derive(Subcommand)]
 enum Command {
     /// Maintain and retrieve project memory through a local service.
-    #[cfg(unix)]
     Memory {
         #[command(subcommand)]
-        action: memory::MemoryCommand,
+        action: memory_command::MemoryCommand,
     },
     /// Inspect and attach session discussion turns.
     Conversation {
@@ -606,9 +606,14 @@ async fn setup_obsidian(
 }
 
 async fn run(cli: &Cli) -> Result<Value> {
-    #[cfg(unix)]
     if let Command::Memory { action } = &cli.command {
+        #[cfg(unix)]
         return Ok(response(memory::run(cli, action).await?));
+        #[cfg(not(unix))]
+        {
+            let _ = action;
+            bail!("memory commands require Unix");
+        }
     }
     if let Command::Routing {
         action: RoutingCommand::Metrics { action },
@@ -660,8 +665,6 @@ async fn run_task_command(cli: &Cli) -> Result<Value> {
     }
     service.store().reap_expired().await?;
     match &cli.command {
-        #[cfg(unix)]
-        Command::Memory { .. } => unreachable!(),
         Command::Conversation { action } => conversation(cli, &service, action).await,
         Command::Inbox { action } => inbox(cli, &service, action).await,
         Command::Doctor => {
@@ -716,7 +719,10 @@ async fn run_task_command(cli: &Cli) -> Result<Value> {
         Command::Obsidian {
             action: ObsidianCommand::Snapshot,
         } => Ok(response(service.obsidian_snapshot().await?)),
-        Command::Init(_) | Command::Completions { .. } | Command::Obsidian { .. } => unreachable!(),
+        Command::Memory { .. }
+        | Command::Init(_)
+        | Command::Completions { .. }
+        | Command::Obsidian { .. } => unreachable!(),
     }
 }
 
