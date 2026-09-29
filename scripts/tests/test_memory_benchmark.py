@@ -93,6 +93,20 @@ class BenchmarkTests(unittest.TestCase):
             self.assertFalse(report['complete'])
             self.assertEqual(report['invalid_evidence'][0]['memory_id'], 'm')
 
+    def test_policy_grading_requires_complete_unique_fact_labels(self):
+        cases = [{'id': 'a', 'required': ['scope', 'reason'], 'forbidden': ['global']}]
+        grades = [{'id': 'a', 'required_present': [True, False],
+                   'forbidden_present': [False], 'explanation': 'Reason missing'}]
+        score = benchmark.score_policy_grades(cases, grades)
+        self.assertEqual(score['required_fact_recall'], .5)
+        self.assertEqual(score['case_pass_rate'], 0)
+        self.assertEqual(score['forbidden_fact_count'], 0)
+        for invalid in [[], grades + grades,
+                        [dict(grades[0], required_present=[True])],
+                        [dict(grades[0], required_present=[1, False])]]:
+            with self.assertRaises(ValueError):
+                benchmark.score_policy_grades(cases, invalid)
+
     def test_duplicate_evidence_does_not_inflate_recall(self):
         score = benchmark.retrieval_metrics([['a'], ['a'], ['b']], ['a', 'b'], 2)
         self.assertEqual(score['recall'], .5)
@@ -114,6 +128,19 @@ class BenchmarkTests(unittest.TestCase):
         report = benchmark.score_rows(questions, [result], ['fts'])
         self.assertEqual(report['fts/development/10']['recall'], 1)
         self.assertEqual(report['fts/development/10']['n'], 1)
+
+    def test_extracted_ranking_scores_evidence_bundles_and_rejects_fallback(self):
+        questions = [{'id': 'q', 'project': 'p', 'split': 'development', 'category': 1,
+                      'evidence': ['a', 'b'], 'invalid_evidence': []}]
+        result = {'id': 'q', 'project': 'p', 'mode': 'hybrid', 'actual_mode': 'hybrid',
+                  'evidence': [['a', 'b'], ['a']]}
+        report = benchmark.score_rows(questions, [result], ['hybrid'])
+        self.assertEqual(report['hybrid/development/5']['recall'], 1)
+        self.assertEqual(report['hybrid/development/5']['all_evidence'], 1)
+        self.assertNotIn('ndcg', report['hybrid/development/5'])
+        for invalid in [dict(result, actual_mode='fts_fallback'), dict(result, project='other')]:
+            with self.assertRaises(ValueError):
+                benchmark.score_rows(questions, [invalid], ['hybrid'])
 
     def test_empty_ranking_has_zero_scores(self):
         self.assertEqual(set(benchmark.retrieval_metrics([], ['a'], 5).values()), {0})

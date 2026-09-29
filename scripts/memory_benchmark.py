@@ -119,6 +119,32 @@ def audit_extraction(sources, database):
     return report, eligible
 
 
+def score_policy_grades(cases, grades):
+    """Aggregate explicit semantic labels; never infer them from substring matches."""
+    expected = {case['id']: case for case in cases}
+    observed = {grade['id']: grade for grade in grades}
+    if not expected or len(expected) != len(cases) or len(observed) != len(grades) or expected.keys() != observed.keys():
+        raise ValueError('policy case coverage mismatch')
+    required_total = required_found = forbidden_total = forbidden_found = passed = 0
+    for identity, case in expected.items():
+        grade = observed[identity]
+        for field, gold in [('required_present', 'required'), ('forbidden_present', 'forbidden')]:
+            labels = grade.get(field)
+            if not isinstance(labels, list) or len(labels) != len(case[gold]) or any(type(label) is not bool for label in labels):
+                raise ValueError('missing or invalid policy fact labels')
+        if not isinstance(grade.get('explanation'), str) or not grade['explanation'].strip():
+            raise ValueError('policy grading explanation required')
+        required_total += len(case['required'])
+        required_found += sum(grade['required_present'])
+        forbidden_total += len(case['forbidden'])
+        forbidden_found += sum(grade['forbidden_present'])
+        passed += all(grade['required_present']) and not any(grade['forbidden_present'])
+    return {'cases': len(cases), 'passed_cases': passed, 'case_pass_rate': passed / len(cases),
+            'required_facts': required_total, 'required_facts_found': required_found,
+            'required_fact_recall': required_found / required_total if required_total else None,
+            'forbidden_facts': forbidden_total, 'forbidden_fact_count': forbidden_found}
+
+
 def retrieval_metrics(ranked_evidence, gold, k):
     gold = set(gold)
     if not gold:
@@ -212,13 +238,25 @@ def score_rows(questions, results, modes):
     if len(actual) != len(results) or actual != expected:
         raise ValueError('incomplete, duplicate, or unexpected question results')
     gold = {q['id']: q for q in questions}
+    if len(gold) != len(questions):
+        raise ValueError('duplicate question IDs')
+    bundled = any('evidence' in result for result in results)
+    if bundled and not all('evidence' in result for result in results):
+        raise ValueError('mixed raw and extracted rankings')
     groups = {}
     for result in results:
         question = gold[result['id']]
+        if bundled and (result.get('project') != question['project'] or
+                        result.get('actual_mode') != result['mode']):
+            raise ValueError('project mismatch or retrieval fallback')
         if question['category'] == 5 or question['invalid_evidence'] or not question['evidence']:
             continue
         for k in (5, 10, 20):
-            score = retrieval_metrics([[identity] for identity in result['ids']], question['evidence'], k)
+            ranked = result['evidence'] if bundled else [[identity] for identity in result['ids']]
+            score = retrieval_metrics(ranked, question['evidence'], k)
+            if bundled:
+                # Source-level gold does not define ideal memory-level ranking.
+                score.pop('ndcg')
             for split in (question['split'], 'all'):
                 key = f"{result['mode']}/{split}/{k}"
                 groups.setdefault(key, []).append(score)
@@ -230,6 +268,10 @@ def score_rows(questions, results, modes):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     commands = parser.add_subparsers(dest='command', required=True)
+    policy_score = commands.add_parser('score-policy')
+    policy_score.add_argument('cases')
+    policy_score.add_argument('grades')
+    policy_score.add_argument('output')
     audit_parser = commands.add_parser('audit-extraction')
     audit_parser.add_argument('sources')
     audit_parser.add_argument('database')
@@ -251,7 +293,13 @@ def main():
     score_parser.add_argument('output')
     score_parser.add_argument('--modes', default='fts,hybrid')
     args = parser.parse_args()
-    if args.command == 'audit-extraction':
+    if args.command == 'score-policy':
+        report = score_policy_grades(json.loads(Path(args.cases).read_text()),
+                                     json.loads(Path(args.grades).read_text()))
+        with Path(args.output).open('x') as output:
+            json.dump(report, output, indent=2)
+        print(json.dumps(report, indent=2))
+    elif args.command == 'audit-extraction':
         sources = json.loads(Path(args.sources).read_text())
         report, memories = audit_extraction(sources, args.database)
         output = Path(args.output)

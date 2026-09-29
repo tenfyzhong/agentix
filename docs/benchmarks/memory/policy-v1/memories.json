@@ -1,0 +1,194 @@
+[
+  {
+    "id": "mem_01a0ee5812e37393afcad1f3b8cd4d0e",
+    "project_id": "policy-offline-en",
+    "revision": 1,
+    "status": "active",
+    "actor": "agent",
+    "created_at": 1790705144,
+    "updated_at": 1790705144,
+    "reason": "Original user evidence confirms a durable production deployment decision, its procurement rationale, rejection of cloud embeddings, and staging exemption. Current memory search found no matches, and complete repository search found no Acorn documentation. Preserve all candidate evidence as new Project memory.",
+    "supersedes": null,
+    "superseded_by": null,
+    "content": {
+      "title": "Acorn production requires offline deployment; staging is exempt",
+      "conclusion": "Use offline deployment for Acorn production; cloud embeddings are rejected because its procurement contract forbids external network calls. Internal staging is exempt.",
+      "rationale": "The user explicitly selected offline deployment and rejected cloud embeddings to comply with the procurement contract. The inspected repository README does not document this decision or its rationale.",
+      "scope": "Acorn production deployment",
+      "conditions": [
+        "Applies to Acorn production.",
+        "Internal staging is exempt from the external-network restriction."
+      ],
+      "valid_until": null,
+      "tags": [
+        "deployment",
+        "offline",
+        "procurement",
+        "cloud-embeddings"
+      ],
+      "kind": "user_decision",
+      "evidence": [
+        {
+          "receipt_id": "policy-offline-en/1",
+          "message_id": "turn-1-message-1",
+          "quote": "We choose offline deployment for Acorn production because its procurement contract forbids external network calls. Cloud embeddings are rejected for that reason. Internal staging is exempt."
+        }
+      ]
+    }
+  },
+  {
+    "id": "mem_01a0ee5924e27781b843c44d82bd8605",
+    "project_id": "policy-offline-zh",
+    "revision": 1,
+    "status": "active",
+    "actor": "agent",
+    "created_at": 1790705214,
+    "updated_at": 1790705214,
+    "reason": "当前 Project 记忆检索无匹配；原始用户消息明确确认榆树生产环境因合同约束必须离线部署、拒绝云端 embedding，并明确内部测试例外。仓库完整检索及 README 检查未发现该约束，属于有直接证据支持的新增长期项目决策，保留全部候选证据。",
+    "supersedes": null,
+    "superseded_by": null,
+    "content": {
+      "title": "榆树生产环境须离线部署，内部测试除外",
+      "conclusion": "榆树客户的生产环境只能离线部署，拒绝使用云端 embedding；公司内部测试环境不受此限制。",
+      "rationale": "用户明确选择离线部署并拒绝云端 embedding，理由是采购合同禁止生产集群访问外网。已检索仓库并读取 README.md，该客户约束未记录在当前仓库中。",
+      "scope": "policy-offline-zh 项目中榆树客户的生产部署",
+      "conditions": [
+        "适用于榆树客户的生产环境",
+        "公司内部测试环境不受此限制"
+      ],
+      "valid_until": null,
+      "tags": [
+        "榆树",
+        "生产环境",
+        "离线部署",
+        "合同约束",
+        "embedding"
+      ],
+      "kind": "user_decision",
+      "evidence": [
+        {
+          "receipt_id": "policy-offline-zh/1",
+          "message_id": "turn-1-message-1",
+          "quote": "决定榆树客户的生产环境只能离线部署，因为采购合同禁止生产集群访问外网。拒绝云端 embedding。公司内部测试环境不受此限制。"
+        }
+      ]
+    }
+  },
+  {
+    "id": "mem_01a0ee5cfa147360825fd1cd04598eda",
+    "project_id": "policy-explicit-approval",
+    "revision": 1,
+    "status": "active",
+    "actor": "agent",
+    "created_at": 1790705465,
+    "updated_at": 1790705465,
+    "reason": "No current memory matches. Original user evidence explicitly approves seven-year retention only for Beacon audit receipts and excludes debug logs. Complete repository search and README inspection found no corresponding policy. Preserve both evidence receipts while treating the assistant's contract rationale as unverified proposal context, not an established contractual fact.",
+    "supersedes": null,
+    "superseded_by": null,
+    "content": {
+      "title": "Beacon audit receipt retention approved for seven years",
+      "conclusion": "Retain Beacon audit receipts for seven years. This approval does not apply to debug logs.",
+      "rationale": "The user explicitly approved the proposed seven-year retention with a narrower scope. The assistant's stated rationale was a purchasing-contract requirement; that contractual claim is supporting proposal context, not independently verified fact. Repository searches and inspection of README.md found no corresponding policy.",
+      "scope": "Beacon audit receipt retention",
+      "conditions": [
+        "Applies only to Beacon audit receipts; excludes debug logs."
+      ],
+      "valid_until": null,
+      "tags": [
+        "Beacon",
+        "retention",
+        "audit-receipts"
+      ],
+      "kind": "user_decision",
+      "evidence": [
+        {
+          "receipt_id": "policy-explicit-approval/2",
+          "message_id": "turn-2-message-1",
+          "quote": "Approve that seven-year retention for Beacon audit receipts only. Do not apply it to debug logs."
+        },
+        {
+          "receipt_id": "policy-explicit-approval/1",
+          "message_id": "turn-1-message-1",
+          "quote": "For Beacon, I propose retaining audit receipts for seven years because their purchasing contract requires that retention."
+        }
+      ]
+    }
+  },
+  {
+    "id": "mem_01a0ee5ff03876a2ab5f0404040c560f",
+    "project_id": "policy-correction",
+    "revision": 1,
+    "status": "active",
+    "actor": "agent",
+    "created_at": 1790705659,
+    "updated_at": 1790705659,
+    "reason": "The current memory and both original user messages were inspected. The user explicitly states that the signed amendment replaces the original Germany requirement with Ireland-only production, establishing an actual replacement rather than unresolved disagreement. Preserve both evidence receipts and the user-assertion qualification because the amendment has not been independently verified. Complete repository search and README inspection found no corresponding documentation.",
+    "supersedes": "mem_01a0ee5e120a7862bbec710263bed54e",
+    "superseded_by": null,
+    "content": {
+      "title": "Signed amendment requires Ireland-only Orion production",
+      "conclusion": "Orion production is required to be deployed in Ireland only. According to the user, the signed amendment supersedes the original-contract Germany requirement.",
+      "rationale": "The user explicitly corrects the earlier contractual constraint and identifies the signed amendment as the reason. The amendment itself has not been independently verified. This supersedes the Germany constraint in memory mem_01a0ee5e120a7862bbec710263bed54e rather than creating an unresolved conflict. Repository search for Orion and inspection of README.md found no corresponding documentation.",
+      "scope": "Orion production deployment under the signed amendment",
+      "conditions": [
+        "Applies to Orion production under the signed amendment; replaces the original-contract Germany requirement."
+      ],
+      "valid_until": null,
+      "tags": [
+        "Orion",
+        "deployment",
+        "contract",
+        "Ireland",
+        "superseding-amendment"
+      ],
+      "kind": "user_assertion",
+      "evidence": [
+        {
+          "receipt_id": "policy-correction/2",
+          "message_id": "turn-2-message-1",
+          "quote": "Correction: the signed amendment supersedes the Germany requirement. We now require Orion production in Ireland only."
+        },
+        {
+          "receipt_id": "policy-correction/1",
+          "message_id": "turn-1-message-1",
+          "quote": "Orion production must be deployed in Germany under the original contract."
+        }
+      ]
+    }
+  },
+  {
+    "id": "mem_01a0ee611e26761090a3630438067dee",
+    "project_id": "policy-external-constraint",
+    "revision": 1,
+    "status": "active",
+    "actor": "agent",
+    "created_at": 1790705737,
+    "updated_at": 1790705737,
+    "reason": "Original user evidence explicitly establishes a durable customer requirement. Current Project memory search returned no matches, and the complete repository search found no Cedar documentation. Preserve the delivery restriction and its distinction from a software limitation with all candidate evidence.",
+    "supersedes": null,
+    "superseded_by": null,
+    "content": {
+      "title": "Cedar accepts deliveries only on Tuesdays",
+      "conclusion": "The Cedar procurement committee accepts deliveries only on Tuesdays, a standing customer requirement rather than a scheduler limitation.",
+      "rationale": "Explicitly stated standing customer constraint; repository searches and inspection of README.md found no corresponding documentation. Retain to inform delivery scheduling without misattributing the restriction to software.",
+      "scope": "Cedar procurement committee delivery acceptance",
+      "conditions": [
+        "Applies to deliveries accepted by the Cedar procurement committee."
+      ],
+      "valid_until": null,
+      "tags": [
+        "Cedar",
+        "customer-requirement",
+        "delivery-scheduling"
+      ],
+      "kind": "user_assertion",
+      "evidence": [
+        {
+          "receipt_id": "policy-external-constraint/1",
+          "message_id": "turn-1-message-1",
+          "quote": "The Cedar procurement committee accepts deliveries only on Tuesdays. This is a standing customer requirement, not a scheduler limitation in our code."
+        }
+      ]
+    }
+  }
+]

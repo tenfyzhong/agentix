@@ -229,7 +229,7 @@ literal source evidence. All six model event streams contained no CLI-native
 tool actions. Their aggregate usage was 124,732 input tokens (30,464 cached) and
 627 output tokens. This verifies the pipeline on one development example only;
 CLI overhead is substantial and must be addressed before an economical full
-replay. The 12-case policy run has started; no policy-suite score is claimed yet.
+replay. The subsequent completed policy-suite results are recorded below.
 
 
 The model-only adapter now uses the documented
@@ -265,3 +265,127 @@ changed receipts, messages without completed extraction work, unfinished work, o
 invalid evidence in currently retrievable memories. Only a successful audit
 exports `memories.json`. This is a structural coverage and provenance check, not
 a semantic quality score; required and forbidden policy facts still need grading.
+
+## Project-policy development results
+
+The frozen 12-case suite completed all 15 receipts and 21 extraction/consolidation
+work items, with zero failed or retried work items. The final store has five
+active memories and one superseded memory. All currently retrievable evidence
+passed the exact-source audit.
+
+Direct semantic inspection by the current Codex main agent found all 12 required
+facts preserved and none of the 15 forbidden claims asserted as current memory;
+12/12 cases pass. This is a single run on a small authored development suite,
+not a blinded independent judge result or a general accuracy estimate. In
+particular, historical evidence can quote the superseded Germany requirement
+without asserting it as the current region. The retained Beacon rationale
+attributes the contractual claim to the assistant and labels it unverified.
+
+The repository contains the [per-case grades](benchmarks/memory/policy-v1/grades.json),
+[actual memory snapshot](benchmarks/memory/policy-v1/memories.json),
+[coverage audit](benchmarks/memory/policy-v1/audit.json),
+[aggregate scores](benchmarks/memory/policy-v1/scores.json),
+[usage](benchmarks/memory/policy-v1/usage.json), and
+[grading provenance](benchmarks/memory/policy-v1/metadata.json). These artifacts
+contain only the authored policy fixture, not third-party LoCoMo conversations.
+
+```sh
+python3 scripts/memory_benchmark.py score-policy crates/agentix-memory/tests/fixtures/quality/policy-cases.json docs/benchmarks/memory/policy-v1/grades.json /path/to/new-policy-scores.json
+```
+
+The scorer requires exactly one grade per case and one boolean per required and
+forbidden fact. It aggregates supplied semantic judgments; it does not replace
+them with keyword matching. Empty-output negative cases pass only when no
+forbidden claim is stored, and positive cases additionally require every fact.
+These policy scores do not replace full LoCoMo extraction, retrieval, answer
+quality, or matched competitor evaluation, which remain incomplete.
+
+## Querying the extracted store
+
+Use the extracted-store adapter after a successful full-source audit:
+
+```sh
+cargo run -p agentix-memory --example extracted_retrieval_benchmark -- /path/to/run/memory.sqlite3 /path/to/questions.json http://127.0.0.1:11435 /path/to/new-query-run
+```
+
+Use `-` instead of the endpoint for FTS only. Questions contain `id`, `project`,
+and `question`. The adapter takes a consistent SQLite snapshot with `VACUUM INTO`
+through a read-only source connection; embedding writes affect only the snapshot.
+It preserves memory IDs, revisions, rationale, conditions, tags and evidence.
+Production `EmbeddingIndex` constructs document embeddings and
+`SemanticRetrieval` performs both query modes. All current memories must have
+current-generation vectors before queries begin. Any semantic fallback makes
+the run fail after saving its actual mode for diagnosis.
+
+`results.jsonl` retains ranked full memories, per-memory source-message IDs,
+actual mode, and retrieval latency including query embedding. The
+`completion.json` marker is written only after all queries finish. An empty
+queue alone is insufficient to prove full input coverage; retain the separate
+source audit. Timings use a 120-second benchmark semantic deadline, not the
+shorter production latency budget. Queries run once in supplied order with the
+production embedding cache; repeated identical queries may reuse that cache.
+
+The first integration smoke queried five positive policy projects, each with one
+active memory. FTS and real Ollama BGE-M3 hybrid both returned the expected
+memory for all five, with no fallback. This checks adapter wiring only, not
+ranking quality against distractors. The run used the local Rust 1.98 build;
+the adapter is additionally tested with the repository-pinned Rust 1.95 toolchain.
+The first FTS call included cold tokenizer initialization (262 ms); subsequent
+FTS calls were below 1 ms and hybrid calls were 20–58 ms. These five observations
+are not a performance distribution or evidence that hybrid is faster than FTS.
+
+The existing `score` command also accepts extracted result files. It computes
+source-evidence recall, hit rate, complete-evidence rate and reciprocal rank
+across the top 5/10/20 memories. Multiple memories citing the same source cannot
+inflate recall. Memory-level nDCG is omitted: source annotations do not define
+an ideal ranking over memories that bundle several evidence turns. These
+metrics establish evidence retrieval only, not whether the stored conclusion
+contains an answer faithfully; the reader evaluation must assess that separately.
+
+## Fixed answer-reader protocol
+
+`scripts/memory_reader.py` runs `gpt-6-astra` with low reasoning effort, fresh
+ephemeral CLI requests and no native tools. Each request contains only its
+question and a ranked context prefix: at most 10 records and 24,000 UTF-8 bytes
+for the serialized context array. A record that would exceed the budget and all
+following records are omitted; claims are never truncated midway. The model
+returns a concise answer, an abstention flag and supporting context IDs. Native
+tool events, missing completed usage, and citations outside context fail the
+attempt. Three attempts are allowed; all attempt artifacts are retained.
+
+Raw retrieval passes original attributed dialogue text. Extracted-memory
+retrieval passes title, conclusion, rationale, scope and conditions, excluding
+original evidence quotes. Otherwise raw source quotes could conceal information
+lost during extraction. Neither path passes gold answers, evidence annotations,
+category labels or retrieval mode to the reader. Dates present in retrieved
+text remain available, and the reader must abstain on unsupported questions.
+
+```sh
+python3 scripts/memory_reader.py /path/to/questions.json /path/to/results.jsonl /path/to/corpus.json /path/to/new-reader-run --mode fts --split development
+```
+
+Use `--mode hybrid` for the matched hybrid run, and `-` for corpus when results
+contain extracted memories. The runner supports `--resume` with an exclusive
+POSIX process lock and matching input/script/model/CLI fingerprints. It saves
+per-attempt payloads, responses, events, errors, usage and latency. It writes a
+completion marker only after every selected question has a validated response.
+The development split includes all 304 questions, including 71 adversarial
+questions and three with invalid source-evidence annotations; invalid evidence
+affects retrieval scoring, not whether an answer should be evaluated.
+
+This local reader is a fixed experimental protocol, not the official LoCoMo or
+Mem0 reader. Semantic correctness and token F1 must be reported separately, with
+judge provenance and adversarial abstention. No answer-quality score is claimed
+until generation and grading cover the complete selected set.
+
+Reader v1 completed the five-query policy integration smoke. All outputs had
+valid citation IDs and no native tool activity. Semantic inspection identified
+a scope-inference concern: the Chinese response expanded an internal-test
+exemption into permission to use cloud embeddings. An exemption from one
+restriction does not establish unconditional permission. Retain this baseline
+failure for the semantic rubric; valid citations alone do not prove correctness.
+
+Two reader-v1 runs now cover the complete 304-question development split over
+raw FTS and raw hybrid retrieval respectively. Both use the same pinned script,
+model, question order and context limits. These are full development answer runs,
+not held-out evaluation or substitutes for the extracted-memory runs.
