@@ -8,6 +8,10 @@ Agentix is a Rust workspace. Install the toolchain pinned in `rust-toolchain.tom
 
 CI uses Rust 1.95.0. Ensure `cargo`, `rustc`, `cargo-clippy`, and `rustfmt` all come from that toolchain rather than mixing Homebrew and rustup installations.
 
+On macOS and Linux, Python 3.11+ runs the standalone Taskix backup tests included
+in `make test`. Run them separately with `make test-backup`; they use a fake
+rclone executable and require no cloud credentials or installed rclone.
+
 Clone the repository and verify the workspace before making changes:
 
 ```sh
@@ -168,6 +172,7 @@ cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
 node --test plugins/taskix-manager/tests/*.test.mjs
+python3 -m unittest discover -s scripts/tests -v
 ```
 
 `make check` installs the locked plugin dependencies automatically. When running Cargo directly, run the npm command above first: the taskix integration suite imports the actual Pi/OMP TypeScript entrypoints. Node is required; these checks never silently skip missing dependencies.

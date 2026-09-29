@@ -367,6 +367,12 @@ The vault is not a complete database export:
 
 There is no general vault import or database rebuild command; Inbox import only handles the human queue. `sync` projects the database into documents; it does not reconstruct database records from existing frontmatter. Notes could support a future partial reconstruction of current work after validation, but cannot reproduce missing history, ownership, or retry records. Restored work would need fresh claims rather than recovered lease tokens.
 
+For timestamped database-only `.tar.gz` archives uploaded through rclone to a
+writable named remote (including S3, R2, WebDAV, cloud drives and SFTP), use the
+[standalone backup script](taskix-backup.md). It does not add a
+Taskix command or change Taskix configuration. Follow the steps below when a
+matched database and document-tree backup is required.
+
 For a restorable backup:
 
 1. Pause agent/CLI writers and note edits, run `taskix sync`, and confirm `taskix doctor --json` reports a healthy projection.
