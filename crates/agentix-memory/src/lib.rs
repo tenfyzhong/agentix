@@ -31,7 +31,7 @@ mod consolidation;
 pub use consolidation::{ConsolidationDecision, DecisionAction};
 
 mod worker;
-pub use worker::{MemoryWorker, ProjectRepository};
+pub use worker::{ExtractionGate, MemoryWorker, ProjectRepository, TriageDecision};
 
 mod embedding_index;
 pub use embedding_index::{EmbeddingIndex, EmbeddingProfile, SearchResult, SemanticRetrieval};

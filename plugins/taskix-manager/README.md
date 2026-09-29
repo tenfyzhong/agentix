@@ -452,3 +452,11 @@ records Project-owned discussions without requiring a Job.
 Obsidian memory notes are read-only projections. Local file edits are never
 imported; synchronization restores SQLite content. Use memory CLI commands for
 changes and `forget` for removal.
+
+The memory service also reuses `TASKIX_JEV_ENABLED`, `TASKIX_JEV_URL`,
+`TASKIX_JEV_API_KEY` and `TASKIX_JEV_MODEL` to screen extraction. Memory uses its
+own `TASKIX_MEMORY_JEV_MIN_CONFIDENCE` (default `0.75`, range `0.5`–`1`), with no
+fallback to the routing threshold `TASKIX_JEV_MIN_CONFIDENCE`. Disabled Jev goes directly to the extraction model. Only a valid high-confidence
+`skip` bypasses extraction. Extract, uncertain, low-score, malformed and failed
+screening results continue to the extraction model. With the existing metrics environment enabled,
+`taskix routing metrics report` includes `memory_triage` decisions.

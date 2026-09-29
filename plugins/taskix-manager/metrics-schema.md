@@ -40,7 +40,7 @@ Project references are nullable when unavailable. Model and configured threshold
 are captured per request. `called` and `accepted` are integer booleans; accepted
 means the host accepted Jev's decision after applicable guards, not that a human
 confirmed it was correct. `kind` is routing, discussion (turn ownership), recovery,
-outcome, review_policy, or completion. Unrecognized kinds are stored as unknown.
+outcome, review_policy, completion, or memory_triage (extraction screening). Unrecognized kinds are stored as unknown.
 One event covers one assessment, including preparation/network/revision fallbacks;
 nested helper calls do not create duplicate events. Deterministic discussion
 selection without a Jev evaluation is omitted. Disabled collection performs no I/O.
@@ -91,3 +91,16 @@ requests termination without waiting for a blocked OS operation. SQLite retains
 its 25 ms per-operation busy timeout. Termination or contention may drop a sample;
 a committed request must always have its complete answer set. These limits do
 not redefine `duration_ms`: the CLI displays it as `PREP_MS`, not end-to-end time.
+
+The memory service writes `memory_triage` using the same v2 schema and environment
+variables. `action` is `skip`, `extract`, or `agent` (fallback). The question is
+`memory_triage`; its `subject_id` identifies source receipt and work item. Confident
+skip and extract results have `accepted=1`; uncertain, low-score, malformed and
+service-failure results produce `agent` (fallback). Answers preserve Jev's
+original choice, scores and validation issue. A temporary positive-gate experiment
+used the same kind but was rolled back; compare historical metrics within their
+policy/time window. These are screening policy
+outcomes, not completed work or model-call savings. Retries/chunks are separate
+evaluations. Disabled Jev does not emit requests. The compact report adds one
+skip/extract/fallback summary when such records exist. The Rust writer performs
+the same transactional v1 migration; a failed append rolls back migration too.

@@ -29,7 +29,7 @@ pub enum MetricsCommand {
     },
 }
 
-fn database_path() -> Result<PathBuf> {
+pub(crate) fn database_path() -> Result<PathBuf> {
     if let Ok(path) = std::env::var("TASKIX_JEV_METRICS_DB")
         && !path.trim().is_empty()
     {
@@ -151,6 +151,19 @@ async fn report(db: &mut SqliteConnection, path: &std::path::Path) -> Result<Val
         SUM(CASE WHEN accepted=1 AND review IS NOT NULL THEN 1 ELSE 0 END) AS reviewed_accepted,
         AVG(CASE WHEN accepted=1 AND review IS NOT NULL THEN review='correct' END) AS reviewed_accuracy
         FROM requests GROUP BY {kind} ORDER BY kind")).await?;
+    let memory_triage = rows(
+        db,
+        &format!(
+            "SELECT COUNT(*) AS requests,
+        coalesce(SUM(action='skip' AND accepted=1),0) AS skipped,
+        coalesce(SUM(action='extract' AND accepted=1),0) AS extract,
+        coalesce(SUM(accepted=0),0) AS fallback FROM requests WHERE {kind}='memory_triage'"
+        ),
+    )
+    .await?
+    .into_iter()
+    .next()
+    .unwrap_or(Value::Null);
     let by_question = rows(
         db,
         "SELECT
@@ -191,8 +204,8 @@ async fn report(db: &mut SqliteConnection, path: &std::path::Path) -> Result<Val
             AND EXISTS (SELECT 1 FROM answers a WHERE a.request_id=r.id AND issue='low_confidence') THEN 1 ELSE 0 END) AS responses_with_low_confidence
         FROM requests r GROUP BY model").await?;
     Ok(
-        json!({"path":path,"totals":totals,"by_kind":by_kind,"by_question":by_question,"reasons":reasons,"issues":issues,"response_quality":response_quality,"score_gates":score_gates,
-        "note":"Score gates are not predicted adoption: assignment/revision checks may still reject. Accuracy includes only manually reviewed accepted requests. mean_duration_ms measures preparation and Jev; it excludes metrics writing and subsequent Agent handling. Metrics writes are best-effort."}),
+        json!({"path":path,"memory_triage":memory_triage,"totals":totals,"by_kind":by_kind,"by_question":by_question,"reasons":reasons,"issues":issues,"response_quality":response_quality,"score_gates":score_gates,
+        "note":"Score gates are not predicted adoption: assignment/revision checks may still reject. Accuracy includes only manually reviewed accepted requests. mean_duration_ms measures preparation and Jev; it excludes metrics writing and subsequent Agent handling. Metrics writes are best-effort. Memory triage counts classification decisions, not committed work outcomes or saved model calls."}),
     )
 }
 
@@ -282,6 +295,14 @@ fn print_summary(value: &Value) {
             row["mean_duration_ms"].as_f64().unwrap_or(0.0)
         );
     }
+    if value["memory_triage"]["requests"].as_u64().unwrap_or(0) > 0 {
+        println!(
+            "Memory triage: skipped {}, extract {}, fallback {}",
+            value["memory_triage"]["skipped"],
+            value["memory_triage"]["extract"],
+            value["memory_triage"]["fallback"]
+        );
+    }
     println!(
         "Total: {accepted}/{requests} accepted ({})",
         percent(&ratio(&json!(accepted), &json!(requests)))
@@ -309,5 +330,160 @@ fn ratio(numerator: &Value, denominator: &Value) -> Value {
     match (numerator.as_f64(), denominator.as_f64()) {
         (Some(n), Some(d)) if d > 0.0 => json!(n / d),
         _ => Value::Null,
+    }
+}
+
+// Share the plugin's v2 protocol and atomic v1 migration. No source text is stored.
+#[cfg(any(unix, test))]
+pub(crate) async fn append_memory_metric(path: &std::path::Path, event: &Value) -> Result<()> {
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(std::path::Path::new("."));
+    let mut directories = tokio::fs::DirBuilder::new();
+    directories.recursive(true);
+    #[cfg(unix)]
+    directories.mode(0o700);
+    directories.create(parent).await?;
+    let mut file = tokio::fs::OpenOptions::new();
+    file.create(true).append(true);
+    #[cfg(unix)]
+    file.mode(0o600);
+    drop(file.open(path).await?);
+    let mut db = SqliteConnection::connect_with(
+        &SqliteConnectOptions::new()
+            .filename(path)
+            .busy_timeout(Duration::from_millis(25)),
+    )
+    .await?;
+    let mut tx = db.begin_with("BEGIN IMMEDIATE").await?;
+    let version: i64 = sqlx::query_scalar("PRAGMA user_version")
+        .fetch_one(&mut *tx)
+        .await?;
+    let application: i64 = sqlx::query_scalar("PRAGMA application_id")
+        .fetch_one(&mut *tx)
+        .await?;
+    let tables: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM sqlite_master WHERE name NOT LIKE 'sqlite_%'")
+            .fetch_one(&mut *tx)
+            .await?;
+    if version == 0 && application == 0 && tables == 0 {
+        for statement in include_str!("../../../plugins/taskix-manager/metrics-schema.sql")
+            .split(';')
+            .filter(|s| !s.trim().is_empty())
+        {
+            sqlx::query(statement).execute(&mut *tx).await?;
+        }
+    } else if !matches!(version, 1 | 2) || application != 0x544A_4556 {
+        bail!("unsupported Jev metrics schema");
+    }
+    if version == 1 {
+        sqlx::query("ALTER TABLE requests ADD COLUMN kind TEXT NOT NULL DEFAULT 'routing'")
+            .execute(&mut *tx)
+            .await?;
+        sqlx::query("PRAGMA user_version=2")
+            .execute(&mut *tx)
+            .await?;
+    }
+    let id: String = sqlx::query_scalar("SELECT lower(hex(randomblob(16)))")
+        .fetch_one(&mut *tx)
+        .await?;
+    let action = event["action"].as_str().unwrap_or("agent");
+    let called = event["called"].as_bool().unwrap_or(false);
+    let answer = &event["answer"];
+    sqlx::query("INSERT INTO requests (id,started_at,session_id,turn_id,project_id,model,threshold,duration_ms,called,accepted,action,reason,answer_count,kind) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,'memory_triage')")
+        .bind(&id).bind(event["started_at"].as_i64().unwrap_or(0))
+        .bind(event["session_id"].as_str()).bind(event["turn_id"].as_str()).bind(event["project_id"].as_str())
+        .bind(event["model"].as_str().unwrap_or("jev-latest")).bind(event["threshold"].as_f64().unwrap_or(0.65))
+        .bind(event["duration_ms"].as_f64().unwrap_or(0.0)).bind(called).bind(called && action!="agent")
+        .bind(action).bind(event["reason"].as_str()).bind(i64::from(answer.is_object())).execute(&mut *tx).await?;
+    if answer.is_object() {
+        sqlx::query("INSERT INTO answers VALUES (?,'memory_triage',?,?,?,?,?,?,?)")
+            .bind(&id)
+            .bind(event["subject_id"].as_str())
+            .bind(answer["choice"].as_str())
+            .bind(answer["confidence"].as_f64())
+            .bind(answer["probability"].as_f64())
+            .bind(answer["margin"].as_f64())
+            .bind(answer["valid"].as_i64().unwrap_or(0))
+            .bind(answer["issue"].as_str())
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    db.close().await?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod memory_writer_tests {
+    use super::*;
+    #[tokio::test]
+    async fn memory_metrics_writer_migrates_v1_and_refuses_foreign_databases() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("metrics.db");
+        let mut db = SqliteConnection::connect_with(
+            &SqliteConnectOptions::new()
+                .filename(&path)
+                .create_if_missing(true),
+        )
+        .await
+        .unwrap();
+        let schema = include_str!("../../../plugins/taskix-manager/metrics-schema.sql")
+            .replace("user_version=2", "user_version=1")
+            .replace(", kind TEXT NOT NULL DEFAULT 'routing'", "");
+        sqlx::raw_sql(&schema).execute(&mut db).await.unwrap();
+        db.close().await.unwrap();
+        let event = json!({"started_at":1,"model":"jev-test","threshold":0.65,"duration_ms":1,"called":true,"action":"skip","reason":null,"answer":null});
+        append_memory_metric(&path, &event).await.unwrap();
+        let mut db = SqliteConnection::connect_with(&SqliteConnectOptions::new().filename(&path))
+            .await
+            .unwrap();
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("PRAGMA user_version")
+                .fetch_one(&mut db)
+                .await
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, String>("SELECT kind FROM requests")
+                .fetch_one(&mut db)
+                .await
+                .unwrap(),
+            "memory_triage"
+        );
+        sqlx::query("PRAGMA application_id=42")
+            .execute(&mut db)
+            .await
+            .unwrap();
+        db.close().await.unwrap();
+        assert!(append_memory_metric(&path, &event).await.is_err());
+    }
+    #[tokio::test]
+    async fn memory_metrics_failed_append_rolls_back_v1_migration() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("metrics.db");
+        let mut db = SqliteConnection::connect_with(
+            &SqliteConnectOptions::new()
+                .filename(&path)
+                .create_if_missing(true),
+        )
+        .await
+        .unwrap();
+        let schema = include_str!("../../../plugins/taskix-manager/metrics-schema.sql")
+            .replace("user_version=2", "user_version=1")
+            .replace(", kind TEXT NOT NULL DEFAULT 'routing'", "");
+        sqlx::raw_sql(&schema).execute(&mut db).await.unwrap();
+        sqlx::query("CREATE TRIGGER reject_append BEFORE INSERT ON requests BEGIN SELECT RAISE(FAIL,'fixture'); END").execute(&mut db).await.unwrap();
+        assert!(append_memory_metric(&path, &json!({})).await.is_err());
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("PRAGMA user_version")
+                .fetch_one(&mut db)
+                .await
+                .unwrap(),
+            1
+        );
+        db.close().await.unwrap();
     }
 }

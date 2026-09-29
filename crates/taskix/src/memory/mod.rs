@@ -7,6 +7,7 @@ use clap::Subcommand;
 use serde_json::{Value, json};
 use std::{path::PathBuf, time::Duration};
 mod daemon;
+mod triage;
 
 #[derive(Subcommand)]
 pub enum MemoryCommand {

@@ -297,3 +297,103 @@ async fn repository_review_archives_documented_memory_and_preserves_human_edits(
         Status::Active
     );
 }
+
+struct EmptyModel(std::sync::atomic::AtomicUsize);
+#[async_trait]
+impl Model for EmptyModel {
+    async fn complete(&self, _request: &ModelRequest) -> Result<ModelReply> {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(ModelReply {
+            continuation: json!([]),
+            calls: vec![ToolCall {
+                id: "done".into(),
+                name: "submit_candidates".into(),
+                arguments: json!({"candidates":[]}),
+            }],
+            text: String::new(),
+            usage: TokenUsage::default(),
+        })
+    }
+}
+struct Gate(Option<bool>);
+#[async_trait]
+impl agentix_memory::ExtractionGate for Gate {
+    async fn evaluate(
+        &self,
+        source: &Source,
+        lease: &agentix_memory::WorkLease,
+    ) -> Result<agentix_memory::TriageDecision> {
+        assert_eq!(source.receipt_id, lease.receipt_id);
+        let skip = self.0.ok_or_else(|| anyhow::anyhow!("unavailable"))?;
+        Ok(agentix_memory::TriageDecision {
+            skip,
+            audit: json!({"action":if skip {"skip"} else {"extract"}}),
+        })
+    }
+}
+#[tokio::test]
+async fn extraction_gate_skips_only_explicit_skip_and_falls_back_on_error() {
+    for decision in [Some(true), Some(false), None] {
+        let temp = tempfile::tempdir().unwrap();
+        let store = MemoryStore::open(&temp.path().join("memory.db"))
+            .await
+            .unwrap();
+        store.ingest(&source("project")).await.unwrap();
+        let model = Arc::new(EmptyModel(std::sync::atomic::AtomicUsize::new(0)));
+        let worker = MemoryWorker::new(
+            store.clone(),
+            model.clone(),
+            AgentConfig::default(),
+            Arc::new(Repositories(temp.path().to_owned())),
+        )
+        .with_extraction_gate(Arc::new(Gate(decision)));
+        assert!(worker.run_once("worker").await.unwrap());
+        assert_eq!(
+            model.0.load(std::sync::atomic::Ordering::SeqCst),
+            usize::from(decision != Some(true))
+        );
+        assert_eq!(store.work_counts().await.unwrap().done, 1);
+        assert!(store.work_details(1).await.unwrap()["audit"]["triage"].is_object());
+    }
+}
+
+struct SupersedingGate(MemoryStore);
+#[async_trait]
+impl agentix_memory::ExtractionGate for SupersedingGate {
+    async fn evaluate(
+        &self,
+        source: &Source,
+        _lease: &agentix_memory::WorkLease,
+    ) -> Result<agentix_memory::TriageDecision> {
+        let mut newer = source.clone();
+        newer.revision += 1;
+        newer.sequence += 1;
+        newer.receipt_id = "newer-receipt".into();
+        newer.messages[0].text = "New decision supersedes the pending snapshot".into();
+        self.0.ingest(&newer).await?;
+        Ok(agentix_memory::TriageDecision {
+            skip: true,
+            audit: json!({"action":"skip"}),
+        })
+    }
+}
+#[tokio::test]
+async fn screening_cannot_skip_a_newer_source_revision() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(&temp.path().join("memory.db"))
+        .await
+        .unwrap();
+    store.ingest(&source("project")).await.unwrap();
+    let model = Arc::new(EmptyModel(std::sync::atomic::AtomicUsize::new(0)));
+    let worker = MemoryWorker::new(
+        store.clone(),
+        model.clone(),
+        AgentConfig::default(),
+        Arc::new(Repositories(temp.path().to_owned())),
+    )
+    .with_extraction_gate(Arc::new(SupersedingGate(store.clone())));
+    assert!(worker.run_once("worker").await.is_err());
+    assert_eq!(store.work_details(1).await.unwrap()["state"], "cancelled");
+    assert_eq!(store.work_counts().await.unwrap().pending, 1);
+    assert_eq!(model.0.load(std::sync::atomic::Ordering::SeqCst), 0);
+}

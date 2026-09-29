@@ -149,3 +149,16 @@ does not establish live provider behavior or semantic extraction quality. Before
 delivery, audit every requirement above against current code and passing tests,
 publish configuration/operation/recovery documentation, and regenerate CLI
 completions. Partial green tests do not establish full implementation.
+
+## Jev preflight
+
+Extraction reuses `TASKIX_JEV_ENABLED`, URL, API key and model from the host
+integration. Its independent `TASKIX_MEMORY_JEV_MIN_CONFIDENCE` threshold defaults
+to `0.75` and never inherits `TASKIX_JEV_MIN_CONFIDENCE`.
+A disabled or invalid configuration uses
+the model directly. Screening runs inside the service, never in the main agent;
+only confident `skip` bypasses extraction. Uncertain, low-score, malformed and
+service-failure results use the model. The
+source stays durable and completion remains fenced. The existing v2 Jev metrics
+file records `memory_triage`, including scores and fallback reasons, without
+storing conversation content. No separate triage config section is introduced.

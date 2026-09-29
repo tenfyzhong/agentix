@@ -58,12 +58,14 @@ impl Runtime {
                     repositories.clone(),
                     config.service.max_deep_queries,
                 ));
-                Some(Arc::new(MemoryWorker::new(
-                    store.clone(),
-                    model,
-                    config.agent.clone(),
-                    repositories,
-                )))
+                let worker =
+                    MemoryWorker::new(store.clone(), model, config.agent.clone(), repositories);
+                let worker = if let Some(gate) = super::triage::JevTriage::from_env() {
+                    worker.with_extraction_gate(gate)
+                } else {
+                    worker
+                };
+                Some(Arc::new(worker))
             }
             Err(error) => {
                 errors.push(format!("Agent unavailable: {error}"));

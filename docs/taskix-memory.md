@@ -71,6 +71,63 @@ credential availability, database identity and service availability without a
 model request. Credential availability in doctor refers to the CLI environment;
 `service.provider_errors` describes the running process.
 
+## Optional Jev extraction screening
+
+The memory service reuses the existing Jev connection, enable and metrics
+environment variables, with an independent memory confidence threshold. There is no
+separate memory triage configuration section. Supply these to the **service
+process**, just as for the host plugin:
+
+| Variable | Behavior |
+| --- | --- |
+| `TASKIX_JEV_ENABLED` | `true` or `1` enables screening, case-insensitive; otherwise extraction goes directly to the model |
+| `TASKIX_JEV_URL` | Existing Jev evaluation URL, used directly |
+| `TASKIX_JEV_API_KEY` | Existing Bearer credential |
+| `TASKIX_JEV_MODEL` | Defaults to `jev-latest` |
+| `TASKIX_MEMORY_JEV_MIN_CONFIDENCE` | Memory-only threshold, defaults to `0.75`, range `0.5..1`; never reads or falls back to `TASKIX_JEV_MIN_CONFIDENCE` |
+| `TASKIX_JEV_METRICS_ENABLED` | `true` or `1` enables best-effort metrics |
+| `TASKIX_JEV_METRICS_DB` | Existing metrics database override; otherwise the usual XDG state path |
+
+Missing or invalid Jev settings bypass screening without blocking extraction.
+Changing a service process's environment requires restarting it with the new
+environment; changing a shell or the main agent's environment does not update an
+already running service.
+
+Each extraction work item is screened before repository tools or the extraction
+model run. Jev receives the full source snapshot and the current chunk; source
+text is treated as data. Only a valid `skip` with confidence and selected
+probability at least the configured threshold and a margin of at least `0.2`
+suppresses the model call. `extract` continues normally. Uncertain, malformed,
+low-confidence or small-margin answers, HTTP errors and the eight-second deadline
+all use model extraction. Requests
+above 30,000 UTF-8 bytes bypass Jev without truncating decision context; responses
+are capped at 1 MiB. Consolidation, repository reviews and queries are not gated.
+Screening concurrency is bounded by the existing worker pool.
+
+The screening question distinguishes memory value from task progress. Pure CI
+updates, delivery receipts, routine operations, injected execution boilerplate,
+raw tool output and repository-visible implementation descriptions may be skipped.
+Substantive choices, rationale, external limits, incidents and measurements remain
+eligible even inside progress updates. The current chunk is the decision target;
+other source messages only resolve context. Unresolved approvals or missing
+incident evidence remain eligible for conservative extraction.
+
+Skipping finishes that extraction item with zero candidates. Its source remains
+stored, and its decision is visible in the work audit. Lease and source-revision
+checks prevent an old screening result from completing superseded work. This
+classifier can still make semantic mistakes; score thresholds are not an
+accuracy guarantee. No observation-only mode is enabled implicitly.
+
+`taskix routing metrics report` adds the `memory_triage` request and question
+category, plus counts of skip, extract and fallback decisions. `--details`,
+`--json` and `routing metrics list` retain confidence, score gates and fallback
+reasons. Counts are per work-item evaluation, including retries and chunks, not
+unique turns. `accepted` means the classifier result passed validation; both
+skip and extract can be accepted. It does not mean a memory was created or that
+a fenced work completion succeeded. Disabled/misconfigured Jev produces no Jev
+metric, matching host behavior. Metrics failures never change extraction;
+metrics contain identifiers and scores, not conversation text or credentials.
+
 ## Models and embeddings
 
 Extraction, consolidation and repository review share `[memory.agent]`; each
@@ -306,3 +363,9 @@ semantic extraction quality or a production latency guarantee. Repository search
 is bounded and reports incomplete coverage. Secret filename filtering and model
 instructions reduce accidental capture but are not a content-classification
 security boundary; only enable providers approved for the source material.
+
+For a real Job-data comparison against frozen Codex reference labels, see the
+[memory screening calibration](taskix-memory-calibration.md). Its empirical
+recommendation is independent of routing confidence. The revised screening
+context uses a `0.75` default; explicit service environment settings still override it.
+The positive-gate experiment was rolled back because it missed reference memories.

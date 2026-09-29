@@ -311,3 +311,36 @@ fn assert_compact_report(dir: &TempDir) {
     assert!(compact.lines().count() <= 20);
     assert!(!compact.contains("Score gates"));
 }
+
+#[tokio::test]
+async fn memory_triage_report_distinguishes_skip_extract_and_fallback() {
+    let dir = TempDir::new().unwrap();
+    let mut db = sqlx::SqliteConnection::connect_with(
+        &SqliteConnectOptions::new()
+            .filename(dir.path().join("metrics.sqlite"))
+            .create_if_missing(true),
+    )
+    .await
+    .unwrap();
+    sqlx::raw_sql(include_str!(
+        "../../../plugins/taskix-manager/metrics-schema.sql"
+    ))
+    .execute(&mut db)
+    .await
+    .unwrap();
+    for (id, action, accepted) in [("s", "skip", 1), ("e", "extract", 1), ("f", "agent", 0)] {
+        sqlx::query("INSERT INTO requests VALUES (?,1,'session','turn','project','jev-test',0.65,5,1,?,?,NULL,NULL,0,'memory_triage')")
+            .bind(id).bind(accepted).bind(action).execute(&mut db).await.unwrap();
+    }
+    db.close().await.unwrap();
+    let output = command(&dir, &["routing", "metrics", "report", "--json"]);
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["result"]["memory_triage"]["skipped"], 1);
+    assert_eq!(report["result"]["memory_triage"]["extract"], 1);
+    assert_eq!(report["result"]["memory_triage"]["fallback"], 1);
+    let output = command(&dir, &["routing", "metrics", "report"]);
+    assert!(
+        String::from_utf8_lossy(&output.stdout)
+            .contains("Memory triage: skipped 1, extract 1, fallback 1")
+    );
+}

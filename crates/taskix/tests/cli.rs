@@ -84,6 +84,8 @@ impl Cli {
     fn command(&self, args: &[&str]) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_taskix"));
         command
+            .env_remove("TASKIX_JEV_ENABLED")
+            .env_remove("TASKIX_JEV_METRICS_ENABLED")
             .arg("--config")
             .arg(self.dir.path().join("config.toml"))
             .arg("--json")

@@ -539,3 +539,99 @@ async fn memory_visible_turn_to_mock_model_to_real_host_hook_end_to_end() {
         "consolidation must start with fresh context"
     );
 }
+
+#[allow(clippy::too_many_lines)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn memory_jev_triage_uses_existing_environment_and_reports_skip_extract_and_fallback() {
+    for (enabled, choice, confidence, status, expected_calls, action) in [
+        ("true", "skip", 0.99, 200, 0, "skip"),
+        ("false", "skip", 0.99, 200, 1, "disabled"),
+        ("1", "extract", 0.99, 200, 1, "extract"),
+        ("true", "skip", 0.5, 200, 1, "agent"),
+        ("true", "uncertain", 0.99, 200, 1, "agent"),
+        ("true", "extract", 0.5, 200, 1, "agent"),
+        ("true", "invalid", 0.99, 200, 1, "agent"),
+        ("true", "skip", 0.99, 500, 1, "agent"),
+    ] {
+        let cli = Cli::new();
+        cli.ok(&[
+            "project",
+            "register",
+            "--root",
+            cli.dir.path().to_str().unwrap(),
+        ]);
+        recovery_capture(&cli, "first");
+        let tasks = agentix_task::Store::open(&cli.dir.path().join("state.sqlite3"))
+            .await
+            .unwrap();
+        let source = tasks.memory_sources(0, 1).await.unwrap().remove(0);
+        let mut probabilities = json!({"skip":0.005,"extract":0.005,"uncertain":0.005});
+        probabilities[choice] = json!(0.99);
+        let jev = provider_http::MockHttp::start(vec![(status, json!({"answers":{"memory_triage":{"type":"choice","choice":choice,"confidence":confidence,"probabilities":probabilities}}}))]).await;
+        let model = provider_http::MockHttp::start(vec![(200, json!({"status":"completed","output":[{"type":"function_call","call_id":"finish","name":"submit_candidates","arguments":"{\"candidates\":[]}"}]}))]).await;
+        let path = cli.dir.path().join("config.toml");
+        let config = std::fs::read_to_string(&path).unwrap();
+        std::fs::write(&path, format!("{config}\n[memory]\nenabled=true\n[memory.providers.mock]\nbase_url='{}'\n[memory.agent]\nprovider='mock'\n[memory.service]\npoll_interval_ms=20\n",model.url)).unwrap();
+        let metrics_path = cli.dir.path().join("jev-metrics.db");
+        let _daemon = Daemon(
+            cli.command(&["memory", "serve"])
+                .env("TASKIX_JEV_ENABLED", enabled)
+                .env("TASKIX_JEV_URL", format!("{}/evaluate", jev.url))
+                .env("TASKIX_JEV_API_KEY", "mock-key")
+                .env("TASKIX_JEV_MODEL", "jev-fixture")
+                .env("TASKIX_JEV_MIN_CONFIDENCE", "NaN")
+                .env("TASKIX_MEMORY_JEV_MIN_CONFIDENCE", "0.8")
+                .env("TASKIX_JEV_METRICS_ENABLED", "true")
+                .env("TASKIX_JEV_METRICS_DB", &metrics_path)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap(),
+        );
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while cli.ok(&["memory", "status"])["online"] != true {
+            assert!(Instant::now() < deadline);
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let receipt = cli.ok(&[
+            "memory",
+            "receipt",
+            &source.receipt_id,
+            "--wait-seconds",
+            "10",
+        ]);
+        assert_eq!(receipt["complete"], true, "{action}: {receipt}");
+        assert_eq!(
+            model.requests.lock().unwrap().len(),
+            expected_calls,
+            "{action}"
+        );
+        if enabled == "false" {
+            assert!(jev.requests.lock().unwrap().is_empty());
+            assert!(!metrics_path.exists());
+        } else {
+            let requests = jev.requests.lock().unwrap();
+            assert_eq!(requests.len(), 1);
+            assert_eq!(requests[0].1["model"], "jev-fixture");
+            assert_eq!(
+                requests[0].1["state"]["messages"][0]["text"],
+                "Offline recovery is required"
+            );
+            drop(requests);
+            let output = cli
+                .command(&["routing", "metrics", "report"])
+                .env("TASKIX_JEV_METRICS_DB", &metrics_path)
+                .output()
+                .unwrap();
+            let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(report["result"]["by_kind"][0]["kind"], "memory_triage");
+            assert_eq!(report["result"]["memory_triage"]["requests"], 1);
+            let field = match action {
+                "skip" => "skipped",
+                "extract" => "extract",
+                _ => "fallback",
+            };
+            assert_eq!(report["result"]["memory_triage"][field], 1);
+        }
+    }
+}
