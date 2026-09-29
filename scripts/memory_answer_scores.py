@@ -1,4 +1,4 @@
-"""Score complete answer runs; token F1 is diagnostic, not official LoCoMo F1."""
+"""Score complete answer runs with diagnostic and optional LoCoMo-compatible metrics."""
 import argparse
 from collections import Counter
 import json
@@ -16,7 +16,41 @@ def token_f1(prediction, reference):
     return 2 * overlap / (len(predicted) + len(gold)) if overlap else 0.0
 
 
-def score_answers(questions, answers, modes, grades=None):
+def locomo_score(prediction, reference, category):
+    """Match the pinned LoCoMo evaluator, including its permissive list scoring."""
+    if category not in (1, 2, 3, 4, 5):
+        raise ValueError('unknown question category')
+    if category == 5:
+        return float(any(phrase in prediction.lower()
+                         for phrase in ('no information available', 'not mentioned')))
+    from nltk.stem import PorterStemmer
+    import regex
+    stemmer = PorterStemmer()
+
+    def tokens(value):
+        plain = value.lower().translate(str.maketrans('', '', string.punctuation))
+        plain = regex.sub(r'\b(a|an|the|and)\b', ' ', plain)
+        return [stemmer.stem(word) for word in plain.split()]
+
+    def overlap(left, right):
+        left, right = tokens(left), tokens(right)
+        count = sum((Counter(left) & Counter(right)).values())
+        if not count:
+            return 0.0
+        precision, recall = count / len(left), count / len(right)
+        return 2 * precision * recall / (precision + recall)
+
+    reference = str(reference)
+    if category == 3:
+        reference = reference.split(';')[0].strip()
+    if category == 1:
+        references = reference.split(',')
+        return sum(max(overlap(part.strip(), gold.strip())
+                       for part in prediction.split(',')) for gold in references) / len(references)
+    return overlap(prediction, reference)
+
+
+def score_answers(questions, answers, modes, grades=None, *, official_f1=False):
     questions_by_id = {q['id']: q for q in questions}
     if not questions or len(questions_by_id) != len(questions) or not modes or len(set(modes)) != len(modes):
         raise ValueError('empty or duplicate evaluation inputs')
@@ -44,6 +78,9 @@ def score_answers(questions, answers, modes, grades=None):
             if question.get('answer') is None:
                 raise ValueError('missing reference answer')
             values['token_f1'] = 0.0 if answer['abstained'] else token_f1(answer['answer'], question['answer'])
+        if official_f1:
+            key = 'locomo_phrase_accuracy' if category == 5 else 'locomo_f1'
+            values[key] = locomo_score(answer['answer'], question.get('answer'), category)
         if grade_map is not None:
             grade = grade_map[(identity, mode)]
             if any(type(grade.get(field)) is not bool for field in ('correct', 'faithful')):
@@ -64,6 +101,7 @@ def main():
     parser.add_argument('--run', action='append', required=True, help='reader output directory; repeat for matched modes')
     parser.add_argument('--split', choices=['development', 'held_out', 'all'], required=True)
     parser.add_argument('--grades', help='complete JSON list of semantic labels')
+    parser.add_argument('--official-f1', action='store_true', help='add LoCoMo-compatible scores; requires nltk==3.9.2')
     args = parser.parse_args()
     questions = [q for q in json.loads(Path(args.questions).read_text())
                  if args.split == 'all' or q['split'] == args.split]
@@ -76,10 +114,12 @@ def main():
         modes.append(completion['mode'])
         answers.extend(json.loads(path.read_text()) for path in sorted(directory.glob('answer-*.json')))
     grades = None if args.grades is None else json.loads(Path(args.grades).read_text())
-    report = score_answers(questions, answers, modes, grades)
+    report = score_answers(questions, answers, modes, grades, official_f1=args.official_f1)
     with Path(args.output).open('x') as output:
         json.dump({'metric_note': 'Diagnostic unstemmed token F1; not official LoCoMo F1',
-                   'scores': report}, output, indent=2)
+                   'locomo_compatibility': {'enabled': args.official_f1,
+                       'upstream_commit': '3eb6f2c585f5e1699204e3c3bdf7adc5c28cb376',
+                       'raw_answer_text': True}, 'scores': report}, output, indent=2)
         output.write('\n')
 
 

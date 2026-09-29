@@ -420,6 +420,30 @@ additional token F1 is a diagnostic unstemmed word-overlap measure. It is **not
 the official LoCoMo category-aware, Porter-stemmed F1**, and must not be compared
 to published official F1 results. No semantic grade is inferred from that metric.
 
+For an additional upstream-compatible column, install `nltk==3.9.2` in an
+isolated Python environment and add `--official-f1` to the scorer. This adds
+`locomo_f1` for categories 1–4 and `locomo_phrase_accuracy` for category 5.
+It follows the pinned [LoCoMo evaluator](https://github.com/snap-research/locomo/blob/3eb6f2c585f5e1699204e3c3bdf7adc5c28cb376/task_eval/evaluation.py):
+Porter stemming, article/conjunction removal, per-reference best matching for
+comma-separated category-1 items, and only the first semicolon-separated
+category-3 reference. Category 5 recognizes two literal refusal phrases.
+The original answer text is scored without rewriting it from the structured
+abstention flag. Consequently, a valid differently worded refusal can fail this
+compatibility metric, and an answer listing extra alternatives may get full
+category-1 credit. Strict semantic correctness remains the primary answer metric.
+
+The reusable upstream parity check requires `numpy==2.4.3` and the pinned clone:
+
+```sh
+LOCOMO_EVALUATOR=/path/to/locomo/task_eval/evaluation.py python3 -m unittest discover -s scripts/tests -p test_memory_answer_scores.py
+```
+
+This verifies the upstream file hash before loading only its scoring functions,
+then compares all five categories on 405 synthetic input/reference combinations.
+It excludes unrelated BERTScore imports and does not download model weights.
+The optional dependency and parity tests are skipped in the ordinary dependency-free
+suite; run the command above in the scoring environment before reporting this column.
+
 The five-question policy reader diagnostic completed grading: four answers were
 correct and faithful; the Chinese internal-test answer failed both checks for
 expanding an exemption into permission. See the
@@ -468,3 +492,57 @@ filters common English function words from the lexical query only. Query
 embeddings retain the original question. These switches do not alter production
 indexes or migrate existing stores. Run experiments on development questions
 with the same complete corpus and vector cache before freezing a held-out run.
+
+Development-only evidence Recall@10 (230 answerable questions with valid
+evidence annotations; all 304 development questions queried in both modes):
+
+| Lexical variant | FTS | BGE-M3 hybrid |
+| --- | ---: | ---: |
+| baseline | 58.38% | 63.25% |
+| porter | 62.04% | 66.62% |
+| baseline-stop | 60.23% | 63.75% |
+| porter-stop | 64.98% | 66.39% |
+
+All runs index the same 5,882 attributed source turns and reuse the same BGE-M3
+vector cache. See [aggregate scores](benchmarks/memory/lexical-ablation-v1/scores.json)
+and [artifact fingerprints](benchmarks/memory/lexical-ablation-v1/manifest.json).
+Porter improves both modes. Removing function words further improves FTS, but
+slightly reduces hybrid Recall@10 and complete-evidence coverage versus Porter
+alone. The combined variant is therefore not uniformly best. These development
+results nominate candidates for answer evaluation; they do not establish held-out
+quality or justify a production tokenizer migration by themselves.
+
+### Matched Mem0 OSS adapter
+
+The local comparator uses Mem0 OSS 2.2.1 at commit
+`94c3fe9f238f3dbf29c9ce98643bd71eb13077cd`, installed in an isolated environment.
+`scripts/memory_mem0_codex.py` implements its synchronous model-provider interface
+using the same `gpt-6-astra` low-reasoning Codex execution settings. It preserves
+Mem0's system prompt and conversation messages, records usage and raw responses,
+and rejects native tool activity or unsupported provider options. Mem0's fixed
+provider-name validation requires registering this adapter under `openai` in the
+benchmark process's factory; it does not call the OpenAI SDK or modify Mem0 source.
+The extraction, update and retrieval logic remains upstream code. This local
+adapter is distinct from the vendor's hosted platform and published scores.
+
+The optional live wiring test uses local Qdrant, Ollama BGE-M3 (1,024 dimensions),
+an isolated history database, and a synthetic procurement decision. It checks
+extraction, retrieval and project isolation; it is not a quality benchmark:
+
+```sh
+MEM0_TELEMETRY=false MEM0_DIR=/path/to/isolated-runtime \
+TASKIX_BENCH_MEM0_CALLS=/path/to/calls \
+TASKIX_BENCH_MEM0_SMOKE=/path/to/new-smoke-directory \
+python3 -m unittest discover -s scripts/tests -p test_memory_mem0_codex.py
+```
+
+Install the pinned Mem0 source and `ollama` in that environment first, and run
+BGE-M3 at `http://127.0.0.1:11435`. Use a new smoke directory for each invocation;
+retain configuration, call receipts and results. The full LoCoMo comparator
+requires source coverage and immutable replay manifests before reporting scores.
+
+The first live smoke passed extraction, BGE-M3 retrieval and project isolation,
+but logged missing fastembed and spaCy dependencies. Its keyword search was
+disabled. Treat it strictly as model/storage wiring evidence; it must not become
+the scored Mem0 comparator. Install and verify the lexical/NLP dependencies,
+then repeat the smoke with a fresh store before full replay.
