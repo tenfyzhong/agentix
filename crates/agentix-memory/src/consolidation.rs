@@ -71,10 +71,13 @@ impl MemoryStore {
             let content = decision.content.as_ref().unwrap_or(candidate);
             content.validate(Actor::Agent)?;
             ensure!(
-                candidate
-                    .evidence
-                    .iter()
-                    .all(|e| content.evidence.contains(e)),
+                candidate.evidence.iter().all(|original| {
+                    content.evidence.iter().any(|retained| {
+                        retained.receipt_id == original.receipt_id
+                            && retained.message_id == original.message_id
+                            && retained.quote.contains(&original.quote)
+                    })
+                }),
                 "consolidation must retain candidate evidence"
             );
             store::validate_evidence(&mut tx, &lease.project_id, content).await?;

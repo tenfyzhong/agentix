@@ -208,6 +208,7 @@ impl RequestHandler for Application {
             result["provider_errors"] = json!(runtime.errors);
             result["background_errors"] = json!(*self.errors.lock().await);
             result["model"] = json!(runtime.config.agent.model);
+            result["reasoning_effort"] = json!(runtime.config.agent.reasoning_effort);
             result["embedding_enabled"] = json!(runtime.config.embedding.enabled);
         }
         Ok(result)
@@ -279,11 +280,10 @@ pub async fn serve(path: &Path, location: MemoryLocation) -> Result<Value> {
     let (stop, rx) = watch::channel(false);
     eprintln!("memory service listening at {}", server.path().display());
     let mut serving = tokio::spawn(server.serve(app, rx));
-    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    let shutdown = shutdown_signal();
     let result = tokio::select! {
         result=&mut serving=>Some(result),
-        result=tokio::signal::ctrl_c()=>{result?;None},
-        _=terminate.recv()=>None,
+        result=shutdown=>{result?;None},
         result=background.join_next()=>{if let Some(result)=result {result??;}None},
     };
     let _ = stop.send(true);
@@ -734,3 +734,15 @@ async fn run_reviews(app: Arc<Application>) -> Result<()> {
 #[cfg(test)]
 #[path = "daemon_tests.rs"]
 mod tests;
+
+async fn shutdown_signal() -> Result<()> {
+    #[cfg(unix)]
+    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    #[cfg(windows)]
+    let mut terminate = tokio::signal::windows::ctrl_break()?;
+    tokio::select! {
+        result = tokio::signal::ctrl_c() => result?,
+        _ = terminate.recv() => {},
+    }
+    Ok(())
+}

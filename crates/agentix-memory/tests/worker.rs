@@ -608,3 +608,60 @@ async fn superseded_source_cancels_a_blocked_model_request() {
     assert_eq!(store.work_counts().await.unwrap().cancelled, 1);
     assert_eq!(store.work_counts().await.unwrap().pending, 1);
 }
+
+#[tokio::test]
+async fn worker_corrects_unanchored_candidates_and_oversized_consolidation_evidence() {
+    fn response(name: &str, args: &serde_json::Value) -> (u16, serde_json::Value) {
+        (
+            200,
+            json!({"status":"completed","output":[{"type":"function_call","call_id":name,"name":name,"arguments":args.to_string()}]}),
+        )
+    }
+
+    let candidate = json!({"title":"External decision","conclusion":"external decision","rationale":"User instruction","scope":"project","conditions":[],"valid_until":null,"tags":[],"kind":"user_decision","evidence":[{"receipt_id":"a","message_id":"message","quote":"external decision"}]});
+    let mut unanchored = candidate.clone();
+    unanchored["evidence"][0]["receipt_id"] = json!("neighbor");
+    let mut oversized = candidate.clone();
+    oversized["evidence"] = json!(vec![candidate["evidence"][0].clone(); 17]);
+    let decision = |content| json!({"decisions":[{"candidate":0,"action":"create","target":null,"expected_revision":null,"content":content,"reason":"New external constraint"}]});
+    let server = http::MockHttp::start(vec![
+        response("repo_search", &json!({"query":"external decision"})),
+        response("submit_candidates", &json!({"candidates":[unanchored]})),
+        response("submit_candidates", &json!({"candidates":[candidate]})),
+        response("memory_search", &json!({"query":"external decision"})),
+        response("submit_decisions", &decision(oversized)),
+        response("submit_decisions", &decision(serde_json::Value::Null)),
+    ])
+    .await;
+    let temp = tempfile::tempdir().unwrap();
+    let repo = temp.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    let store = MemoryStore::open(&temp.path().join("memory.db"))
+        .await
+        .unwrap();
+    store.ingest(&source("a")).await.unwrap();
+    let provider = agentix_memory::HttpProvider::new(agentix_memory::ProviderConfig {
+        base_url: server.url.clone(),
+        protocol: agentix_memory::ProviderProtocol::Openai,
+        api_key_env: None,
+        max_in_flight: 4,
+    })
+    .unwrap();
+    let model = agentix_memory::HttpModel::new(Arc::new(provider), AgentConfig::default()).unwrap();
+    let worker = MemoryWorker::new(
+        store.clone(),
+        Arc::new(model),
+        AgentConfig::default(),
+        Arc::new(Repositories(repo)),
+    );
+    assert!(worker.run_once("extract").await.unwrap());
+    assert!(worker.run_once("consolidate").await.unwrap());
+    assert_eq!(store.work_counts().await.unwrap().done, 2);
+    let memories = store.search("a", "external", 10).await.unwrap();
+    assert_eq!(memories.len(), 1);
+    assert_eq!(memories[0].content.evidence.len(), 1);
+    let requests = server.requests.lock().unwrap();
+    assert_eq!(requests.len(), 6);
+    assert!(requests[2].1.to_string().contains("source message"));
+    assert!(requests[5].1.to_string().contains("evidence"));
+}

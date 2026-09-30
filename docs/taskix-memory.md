@@ -14,8 +14,7 @@ merely because the event ended; ongoing external conditions may still need expir
 
 Memory maintenance runs in **`taskix memory serve`**, a separate process shipped
 in the same executable and release as the task board. It uses the same Taskix
-configuration file. The service is available on macOS/Linux; the existing task
-board remains available on Windows. This delivery does not install or launch a
+configuration file. The service is available on macOS, Linux and Windows. This delivery does not install or launch a
 background service automatically.
 
 ## Enable and operate
@@ -37,7 +36,17 @@ api_key_env = "OPENAI_API_KEY"
 provider = "openai"
 api = "responses"
 model = "gpt-6-astra"
+# Optional: omit to use the provider default.
+reasoning_effort = "low"
 ```
+
+`memory.agent.reasoning_effort` accepts `none`, `minimal`, `low`, `medium`,
+`high` and `xhigh`. The selected model/provider must support the requested level;
+unsupported levels produce a provider error without silently changing the model
+or effort. Omission sends no effort setting. Responses receives `reasoning.effort`;
+Chat Completions receives `reasoning_effort`. This setting applies to extraction,
+consolidation, repository review and deep queries. `taskix memory reload` applies
+changes to new work; running loops retain their configuration snapshot.
 
 Provide the named environment variable to the **service process**, then run:
 
@@ -52,8 +61,9 @@ taskix memory search 'offline deployment'
 Use a process manager such as launchd or a systemd user unit to run the same
 foreground command if desired. Give it an absolute executable/config path and
 the required environment; shell login state and the main agent's subscription
-are not inherited authentication. SIGTERM/Ctrl-C stops service background loops;
-unfinished work resumes after its durable lease expires. One service can manage
+are not inherited authentication. Ctrl-C stops service background loops; Unix
+also accepts SIGTERM and Windows accepts Ctrl-Break.
+Unfinished work resumes after its durable lease expires. One service can manage
 many Projects; a second process for the same database is rejected.
 
 The default memory path is `memory.sqlite3` beside `[storage].path`. Override
@@ -275,7 +285,17 @@ Sources are split at UTF-8 boundaries into 16 KiB chunks. Candidate consolidatio
 is split into bounded batches; each atomic memory document is limited to 60 KiB.
 Default loop budgets are 12 steps, 24 tool calls, 128 KiB serialized context,
 8,192 output tokens, 90 seconds per request and 240 seconds per work item, with
-three attempts. Empty extraction workers back off up to five seconds, with
+three attempts. Invalid `repo_search` arguments return corrective feedback to the
+model within the same loop and consume the normal call budget. They do not count
+as repository inspection. Storage and other operational failures still fail the
+work attempt. Empty model replies receive a reminder to submit through a tool.
+Extraction and consolidation submissions receive pure structural validation before
+acceptance; invalid fields or missing current-source evidence return bounded
+feedback in the same loop. These corrections consume the original step, call,
+context and timeout budgets. Database fencing and literal-source validation still
+run atomically at commit and are not bypassed. Each memory permits one to sixteen
+evidence quotations; an oversized merge should become a separate scoped memory
+instead of discarding prior evidence. Empty extraction workers back off up to five seconds, with
 post-commit notifications for intake, consolidation work, scheduled reviews and
 explicit retries. A work-generation check prevents a stale empty result from
 overriding a newer notification. Periodic probes recover cross-process writes
@@ -374,7 +394,11 @@ taskix memory set-status mem_ID archived --revision 2 --reason 'Documented in re
 
 Direct human input may omit evidence. Agent-attributed writes require valid,
 literal same-Project evidence. The host passes its executor identity; do not
-impersonate a human to bypass evidence checks. Updates are revision guarded.
+impersonate a human to bypass evidence checks. Consolidation retains every
+candidate quotation, either verbatim or inside a longer literal quotation from
+the same receipt and message. Longer quotations still require source validation;
+changed attribution, omitted text and fabricated extensions are rejected.
+Updates are revision guarded.
 User decisions and assertions require at least one user quotation when evidence
 is supplied. Assistant quotations can supply separately attributed proposal
 context, but cannot establish a user decision alone. The extraction model must
@@ -468,8 +492,25 @@ context uses a `0.75` default; explicit service environment settings still overr
 The positive-gate experiment was rolled back because it missed reference memories.
 
 The memory command definitions and shell completions are shared across platforms.
-The memory runtime remains Unix-only; other platforms return `memory commands
-require Unix` before loading configuration or creating local state.
+Unix uses a private Unix domain socket. Like Agentix's control socket, Windows
+uses loopback-only TCP. The service binds `127.0.0.1` with an automatically
+assigned port and publishes `tcp://127.0.0.1:<port>` in `<memory database>.tcp`.
+Clients resolve that file and reject non-loopback addresses. A stable
+`<memory database>.lock` file stays locked for the service lifetime, rejecting
+another service for the same database. Shutdown removes the endpoint; a restart
+replaces stale endpoint data left by a crash. Do not remove the lock file while
+services are running. Each database receives its own port.
+
+TCP follows Agentix's local-machine trust boundary: it has no per-user peer
+credentials or authentication, so other local users can access a known port.
+Both transports share bounded JSON framing, concurrency limits and request
+timeouts. Stalled clients are cancelled without blocking service shutdown.
+
+On Windows, run `taskix memory serve` in a console or configure Task Scheduler to
+launch it under the same user as the CLI/plugins. This command does not register a
+Windows Service Control Manager service. Use the same absolute `--config` path
+for the service and clients. The standalone Python/rclone backup script still
+requires Unix; Windows IPC support does not change that script's platform scope.
 
 
 ## Derived-data retention and performance checks

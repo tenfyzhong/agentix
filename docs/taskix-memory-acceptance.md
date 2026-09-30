@@ -1,6 +1,6 @@
 # Project memory acceptance
 
-The memory delivery is tested with real databases, files, Unix IPC, CLI processes
+The memory delivery is tested with real databases, files, local IPC, CLI processes
 and host entrypoints. Model and embedding network responses use deterministic
 mocks. No developer session, live API key or paid provider is needed.
 
@@ -23,13 +23,18 @@ cargo test -p agentix-memory --test performance -- --ignored --nocapture
 The scale test is explicitly ignored in the ordinary suite to keep feedback
 short. The CLI end-to-end test launches a real daemon, a local mock HTTP model,
 and the Node prompt-hook fixture; plugin dependencies must be installed before
-that Rust test. Memory service tests are Unix-only. Windows task-board support
-is unaffected, but memory IPC is not implemented there.
+that Rust test. Shared memory and CLI tests run on Unix and Windows. Windows CI
+also runs TCP exclusivity, concurrent-client, shutdown/rebind and unavailable
+service tests. Platform-independent TCP tests also exercise endpoint discovery,
+loopback enforcement, concurrent clients and stale endpoint recovery on Unix. Unix permission checks remain Unix-specific. Cross-compilation
+checks types and platform gates; it does not replace native Windows execution.
 
 ## Coverage matrix
 
 | Contract | Verification |
 | --- | --- |
+| Optional reasoning configuration, invalid values and Responses/Chat Completions field mapping | `agentix-memory/tests/providers.rs` |
+| Windows local TCP exclusivity, concurrent clients and service absence | `agentix-memory/tests/windows_ipc.rs`, shared `ipc.rs` and CLI daemon tests; Windows CI |
 | Discussion and Job capture, immutable revision snapshots, unknown ownership, directory hints, attachment, legacy backfill, v14 migration, individual acknowledgements and restore forks | `agentix-task/tests/memory_sources.rs`, `agentix-core/src/engine/task_board/tests.rs`, `taskix/tests/cli.rs` |
 | Chinese and identifier recall, project isolation, evidence validation, revisions, human edits, supersession, expiry and forget suppression | `agentix-memory/tests/store.rs` |
 | Independent vector recall, generation/revision fences, invalid dimensions/values, partial indexing and query degradation | `tests/store.rs`, `tests/embedding_index.rs`, `tests/providers.rs` in `agentix-memory` |

@@ -14,7 +14,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-use crate::{MemoryStore, ToolDefinition, ToolSet};
+use crate::{MemoryStore, ToolDefinition, ToolInputError, ToolSet};
 
 pub struct ProjectTools {
     store: MemoryStore,
@@ -225,11 +225,14 @@ impl ToolSet for ProjectTools {
                 Ok(value)
             }
             "repo_search" => {
-                let args: Query = serde_json::from_value(arguments)?;
-                ensure!(
-                    !args.query.is_empty() && args.query.len() <= 512,
-                    "invalid repository query"
-                );
+                let args: Query = serde_json::from_value(arguments).map_err(|_| {
+                    ToolInputError("repo_search requires an object with one string query".into())
+                })?;
+                if args.query.is_empty() || args.query.len() > 512 {
+                    return Err(ToolInputError(
+                        "invalid repository query: use a nonempty literal of at most 512 UTF-8 bytes; empty queries cannot list files".into(),
+                    ).into());
+                }
                 let root = self.root()?;
                 let value =
                     tokio::task::spawn_blocking(move || search_files(&root, &args.query)).await??;

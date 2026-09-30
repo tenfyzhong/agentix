@@ -3,18 +3,22 @@ use anyhow::{Context, Result, ensure};
 use async_trait::async_trait;
 use serde_json::{Value, json};
 use std::{
-    fs::{File, OpenOptions},
-    os::unix::fs::{DirBuilderExt, FileTypeExt, MetadataExt, OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
 };
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::{UnixListener, UnixStream},
+    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     sync::{Semaphore, watch},
     task::JoinSet,
 };
+
+#[cfg(unix)]
+#[path = "ipc/unix.rs"]
+mod transport;
+#[cfg(windows)]
+#[path = "ipc/tcp.rs"]
+mod transport;
 
 #[async_trait]
 pub trait RequestHandler: Send + Sync {
@@ -22,9 +26,7 @@ pub trait RequestHandler: Send + Sync {
 }
 
 pub struct IpcServer {
-    listener: UnixListener,
-    path: PathBuf,
-    _lock: File,
+    listener: transport::Listener,
     config: ServiceConfig,
 }
 impl IpcServer {
@@ -35,47 +37,13 @@ impl IpcServer {
                 && (128..=8 * 1024 * 1024).contains(&config.max_response_bytes),
             "invalid IPC budgets"
         );
-        let path = socket_path(database)?;
-        let parent = path.parent().context("missing socket parent")?;
-        match std::fs::DirBuilder::new().mode(0o700).create(parent) {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
-            Err(e) => return Err(e.into()),
-        }
-        check_private(parent, true)?;
-        let lock = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .mode(0o600)
-            .custom_flags(i32::try_from(rustix::fs::OFlags::NOFOLLOW.bits())?)
-            .open(path.with_extension("lock"))?;
-        ensure!(
-            lock.metadata()?.uid() == uid(),
-            "foreign memory service lock"
-        );
-        lock.try_lock()
-            .context("conflict: memory service already running")?;
-        if path.exists() {
-            check_private(&path, false)?;
-            ensure!(
-                std::fs::symlink_metadata(&path)?.file_type().is_socket(),
-                "refusing to replace a non-socket path"
-            );
-            std::fs::remove_file(&path)?;
-        }
-        let listener = UnixListener::bind(&path)?;
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
         Ok(Self {
-            listener,
-            path,
-            _lock: lock,
+            listener: transport::Listener::bind(database)?,
             config,
         })
     }
     pub fn path(&self) -> &Path {
-        &self.path
+        self.listener.path()
     }
     pub async fn serve(
         self,
@@ -94,8 +62,7 @@ impl IpcServer {
                 changed=stop.changed()=>{if changed.is_err() || *stop.borrow(){break;}},
                 Some(_)=tasks.join_next(),if !tasks.is_empty()=>{},
                 accepted=self.listener.accept()=>{
-                    let (stream,_)=accepted?;
-                    if !stream.peer_cred().is_ok_and(|credentials| credentials.uid()==uid()){continue;}
+                    let stream=accepted?;
                     let Ok(permit)=permits.clone().try_acquire_owned() else {continue;};
                     let handler=handler.clone();let config=self.config;
                     tasks.spawn(async move {let _permit=permit;let _=handle_connection(stream,handler,config).await;});
@@ -107,12 +74,6 @@ impl IpcServer {
         Ok(())
     }
 }
-impl Drop for IpcServer {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.path);
-    }
-}
-
 pub struct IpcClient {
     path: PathBuf,
     config: ServiceConfig,
@@ -120,7 +81,7 @@ pub struct IpcClient {
 impl IpcClient {
     pub fn new(database: &Path, config: ServiceConfig) -> Result<Self> {
         Ok(Self {
-            path: socket_path(database)?,
+            path: transport::socket_path(database)?,
             config,
         })
     }
@@ -134,15 +95,7 @@ impl IpcClient {
             .context("memory service request timeout")?
     }
     async fn call_inner(&self, request: Value) -> Result<Value> {
-        check_private(self.path.parent().context("missing socket parent")?, true)?;
-        check_private(&self.path, false)?;
-        let mut stream = UnixStream::connect(&self.path)
-            .await
-            .context("memory service unavailable")?;
-        ensure!(
-            stream.peer_cred()?.uid() == uid(),
-            "foreign memory service peer"
-        );
+        let mut stream = transport::connect(&self.path).await?;
         write_frame(
             &mut stream,
             &json!({"version":1,"request":request}),
@@ -161,35 +114,8 @@ impl IpcClient {
         Ok(reply["result"].clone())
     }
 }
-fn uid() -> u32 {
-    rustix::process::geteuid().as_raw()
-}
-fn socket_path(database: &Path) -> Result<PathBuf> {
-    let canonical = if database.exists() {
-        database.canonicalize()?
-    } else {
-        database
-            .parent()
-            .context("missing database parent")?
-            .canonicalize()?
-            .join(database.file_name().context("missing database filename")?)
-    };
-    let key = crate::retrieval::digest(&canonical.to_string_lossy());
-    Ok(PathBuf::from(format!("/tmp/taskix-memory-{}", uid())).join(format!("{}.sock", &key[..24])))
-}
-fn check_private(path: &Path, directory: bool) -> Result<()> {
-    let meta = std::fs::symlink_metadata(path)?;
-    ensure!(
-        meta.uid() == uid()
-            && !meta.file_type().is_symlink()
-            && (!directory || meta.is_dir())
-            && meta.permissions().mode().trailing_zeros() >= 6,
-        "memory IPC path must be private and owned by the current user"
-    );
-    Ok(())
-}
 async fn handle_connection(
-    mut stream: UnixStream,
+    mut stream: impl AsyncRead + AsyncWrite + Unpin,
     handler: Arc<dyn RequestHandler>,
     config: ServiceConfig,
 ) -> Result<()> {
@@ -217,7 +143,7 @@ async fn handle_connection(
     .await??;
     Ok(())
 }
-async fn read_frame(stream: &mut UnixStream, limit: usize) -> Result<Value> {
+async fn read_frame(stream: &mut (impl AsyncRead + Unpin), limit: usize) -> Result<Value> {
     let length = usize::try_from(stream.read_u32().await?)?;
     ensure!(
         length > 0 && length <= limit,
@@ -227,7 +153,11 @@ async fn read_frame(stream: &mut UnixStream, limit: usize) -> Result<Value> {
     stream.read_exact(&mut bytes).await?;
     Ok(serde_json::from_slice(&bytes)?)
 }
-async fn write_frame(stream: &mut UnixStream, value: &Value, limit: usize) -> Result<()> {
+async fn write_frame(
+    stream: &mut (impl AsyncWrite + Unpin),
+    value: &Value,
+    limit: usize,
+) -> Result<()> {
     let bytes = serde_json::to_vec(value)?;
     ensure!(
         bytes.len() <= limit,
@@ -235,5 +165,99 @@ async fn write_frame(stream: &mut UnixStream, value: &Value, limit: usize) -> Re
     );
     stream.write_u32(u32::try_from(bytes.len())?).await?;
     stream.write_all(&bytes).await?;
+    stream.flush().await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    struct Echo;
+    #[async_trait]
+    impl RequestHandler for Echo {
+        async fn handle(&self, request: Value) -> Result<Value> {
+            Ok(request)
+        }
+    }
+    #[tokio::test]
+    async fn framing_is_transport_independent_and_rejects_unknown_versions() {
+        let (mut client, server) = tokio::io::duplex(1024);
+        let serving = tokio::spawn(handle_connection(
+            server,
+            Arc::new(Echo),
+            ServiceConfig::default(),
+        ));
+        write_frame(&mut client, &json!({"version":99,"request":{}}), 1024)
+            .await
+            .unwrap();
+        let reply = read_frame(&mut client, 1024).await.unwrap();
+        assert_eq!(reply["ok"], false);
+        assert!(reply["error"].as_str().unwrap().contains("unsupported"));
+        serving.await.unwrap().unwrap();
+    }
+}
+
+#[cfg(all(test, not(windows)))]
+#[path = "ipc/tcp.rs"]
+mod tcp_test_transport;
+
+#[cfg(test)]
+mod tcp_tests {
+    #[cfg(not(windows))]
+    use super::tcp_test_transport as tcp;
+    #[cfg(windows)]
+    use super::transport as tcp;
+    use super::*;
+    #[tokio::test]
+    async fn tcp_transport_is_exclusive_concurrent_and_recovers_stale_endpoint() {
+        let dir = tempfile::tempdir().unwrap();
+        let database = dir.path().join("memory.sqlite3");
+        let server = tcp::Listener::bind(&database).unwrap();
+        let endpoint = server.path().to_path_buf();
+        assert!(
+            std::fs::read_to_string(&endpoint)
+                .unwrap()
+                .starts_with("tcp://127.0.0.1:")
+        );
+        assert!(tcp::Listener::bind(&database).is_err());
+        let mut clients = JoinSet::new();
+        for i in 0..8 {
+            let endpoint = endpoint.clone();
+            clients.spawn(async move {
+                let mut client = tcp::connect(&endpoint).await.unwrap();
+                write_frame(&mut client, &json!({"i":i}), 1024)
+                    .await
+                    .unwrap();
+                assert_eq!(read_frame(&mut client, 1024).await.unwrap()["i"], i);
+            });
+        }
+        for _ in 0..8 {
+            let mut stream = server.accept().await.unwrap();
+            let value = read_frame(&mut stream, 1024).await.unwrap();
+            write_frame(&mut stream, &value, 1024).await.unwrap();
+        }
+        while let Some(result) = clients.join_next().await {
+            result.unwrap();
+        }
+        drop(server);
+        assert!(!endpoint.exists());
+        std::fs::write(&endpoint, "tcp://127.0.0.1:1").unwrap();
+        assert!(tcp::Listener::bind(&database).is_ok());
+    }
+    #[tokio::test]
+    async fn tcp_transport_rejects_remote_invalid_and_missing_endpoints() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("endpoint");
+        assert!(tcp::connect(&path).await.is_err());
+        for value in [
+            "tcp://192.0.2.1:1",
+            "tcp://0.0.0.0:1",
+            "tcp://127.0.0.1:0",
+            "unix://x",
+            "invalid",
+        ] {
+            std::fs::write(&path, value).unwrap();
+            assert!(tcp::connect(&path).await.is_err());
+        }
+    }
 }

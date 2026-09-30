@@ -137,3 +137,49 @@ async fn provider_errors_and_partial_generation_do_not_become_success() {
     assert!(!error.contains("sensitive-provider-detail"));
     assert!(model.complete(&request()).await.is_err());
 }
+
+#[tokio::test]
+async fn reasoning_effort_is_optional_and_mapped_to_each_api() {
+    for api in ["responses", "chat_completions"] {
+        for effort in [None, Some("low"), Some("high")] {
+            let mut value = json!({"api":api,"model":"configured-model"});
+            if let Some(effort) = effort {
+                value["reasoning_effort"] = json!(effort);
+            }
+            let config: AgentConfig = serde_json::from_value(value).unwrap();
+            let reply = if api == "responses" {
+                json!({"status":"completed","output":[]})
+            } else {
+                json!({"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"done"}}]})
+            };
+            let server = http::MockHttp::start(vec![(200, reply)]).await;
+            HttpModel::new(connection(&server.url, ProviderProtocol::Openai), config)
+                .unwrap()
+                .complete(&request())
+                .await
+                .unwrap();
+            let seen = server.requests.lock().unwrap();
+            let body = &seen[0].1;
+            if api == "responses" {
+                assert_eq!(body["reasoning"]["effort"], json!(effort));
+                assert!(body.get("reasoning_effort").is_none());
+                if effort.is_none() {
+                    assert!(body.get("reasoning").is_none());
+                }
+            } else {
+                assert_eq!(body["reasoning_effort"], json!(effort));
+                assert!(body.get("reasoning").is_none());
+                if effort.is_none() {
+                    assert!(body.get("reasoning_effort").is_none());
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn reasoning_effort_rejects_invalid_configuration() {
+    for value in [json!(""), json!("loow"), json!(42)] {
+        assert!(serde_json::from_value::<AgentConfig>(json!({"reasoning_effort":value})).is_err());
+    }
+}

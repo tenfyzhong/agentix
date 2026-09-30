@@ -2,9 +2,21 @@ use std::{collections::HashSet, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result, bail, ensure};
 use async_trait::async_trait;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::{AgentConfig, Message, Model, ModelRequest, TokenUsage, ToolDefinition};
+
+/// A bounded, model-correctable argument error, never an operational failure.
+#[derive(Debug)]
+pub struct ToolInputError(pub String);
+
+impl std::fmt::Display for ToolInputError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for ToolInputError {}
 
 /// Tools are scoped by the caller. A loop cannot acquire new capabilities.
 #[async_trait]
@@ -38,9 +50,23 @@ impl AgentLoop {
         tools: &dyn ToolSet,
         finish: ToolDefinition,
     ) -> Result<LoopResult> {
+        self.run_validated(instructions, input, tools, finish, &|_| Ok(()))
+            .await
+    }
+
+    /// Validate a proposal without side effects before accepting it. Invalid
+    /// proposals receive feedback within the same time, step and token budgets.
+    pub async fn run_validated(
+        &self,
+        instructions: &str,
+        input: &str,
+        tools: &dyn ToolSet,
+        finish: ToolDefinition,
+        validate: &(dyn Fn(&Value) -> Result<()> + Send + Sync),
+    ) -> Result<LoopResult> {
         tokio::time::timeout(
             Duration::from_secs(self.config.task_timeout_seconds),
-            self.run_inner(instructions, input, tools, finish),
+            self.run_inner(instructions, input, tools, finish, validate),
         )
         .await
         .context("memory Agent task timeout")?
@@ -52,6 +78,7 @@ impl AgentLoop {
         input: &str,
         tools: &dyn ToolSet,
         finish: ToolDefinition,
+        validate: &(dyn Fn(&Value) -> Result<()> + Send + Sync),
     ) -> Result<LoopResult> {
         let mut definitions = tools.definitions();
         definitions.push(finish.clone());
@@ -74,10 +101,13 @@ impl AgentLoop {
             usage.output_tokens = usage
                 .output_tokens
                 .saturating_add(reply.usage.output_tokens);
-            ensure!(
-                !reply.calls.is_empty(),
-                "Agent must finish with the submission tool"
-            );
+            if reply.calls.is_empty() {
+                request.history.push(Message::Model(reply.continuation));
+                request.history.push(Message::User(
+                    "No tool call was returned. Continue with the supplied tools and finish with the submission tool; a submission must satisfy the supplied task and schema.".into(),
+                ));
+                continue;
+            }
             tool_calls += reply.calls.len();
             ensure!(
                 tool_calls <= self.config.max_tool_calls,
@@ -100,6 +130,22 @@ impl AgentLoop {
                     serde_json::to_vec(&call.arguments)?.len() <= self.config.max_context_bytes,
                     "Agent submission budget exceeded"
                 );
+                if let Err(error) = validate(&call.arguments) {
+                    let mut message = error.to_string();
+                    let mut end = message.len().min(2048);
+                    while !message.is_char_boundary(end) {
+                        end -= 1;
+                    }
+                    message.truncate(end);
+                    request
+                        .history
+                        .push(Message::Model(reply.continuation.clone()));
+                    request.history.push(Message::Tool {
+                        id: call.id.clone(),
+                        output: serde_json::to_string(&json!({"error": message}))?,
+                    });
+                    continue;
+                }
                 return Ok(LoopResult {
                     value: call.arguments.clone(),
                     usage,
@@ -110,7 +156,13 @@ impl AgentLoop {
             request.history.push(Message::Model(reply.continuation));
             self.check_context(&request)?;
             for call in reply.calls {
-                let output = tools.execute(&call.name, call.arguments).await?;
+                let output = match tools.execute(&call.name, call.arguments).await {
+                    Ok(output) => output,
+                    Err(error) => match error.downcast_ref::<ToolInputError>() {
+                        Some(input) => json!({"error": input.to_string()}),
+                        None => return Err(error),
+                    },
+                };
                 request.history.push(Message::Tool {
                     id: call.id,
                     output: serde_json::to_string(&output)?,

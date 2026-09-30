@@ -1,5 +1,5 @@
 // Unix-only memory service regression tests.
-#![cfg(unix)]
+#![cfg(any(unix, windows))]
 #[path = "support/http.rs"]
 mod http;
 use agentix_memory::*;

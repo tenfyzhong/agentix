@@ -120,6 +120,7 @@ async fn doctor(path: &std::path::Path, location: &MemoryLocation) -> Result<Val
                     .is_none_or(|key| std::env::var(key).is_ok_and(|value| !value.trim().is_empty()))})
             }).collect::<Vec<_>>();
             json!({"valid":true,"model":config.agent.model,"api":config.agent.api,
+                "reasoning_effort":config.agent.reasoning_effort,
                 "embedding_enabled":config.embedding.enabled,"providers":providers})
         }
         // Do not echo TOML parse excerpts, which can contain sensitive configuration.

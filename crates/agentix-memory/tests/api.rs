@@ -1,5 +1,5 @@
-// Unix-only memory service integration tests.
-#![cfg(unix)]
+// Local memory service integration tests.
+#![cfg(any(unix, windows))]
 use agentix_memory::{MemoryApi, MemoryStore, RequestHandler, RetrievalConfig, ServiceConfig};
 use serde_json::json;
 

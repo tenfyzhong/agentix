@@ -1,5 +1,5 @@
-// Unix-only memory service integration tests.
-#![cfg(unix)]
+// Local memory service integration tests.
+#![cfg(any(unix, windows))]
 use agentix_memory::{IpcClient, IpcServer, RequestHandler, ServiceConfig};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -120,11 +120,14 @@ async fn local_ipc_is_single_instance_bounded_and_recovers_after_shutdown() {
     let server = IpcServer::bind(&database, config).unwrap();
     assert!(IpcServer::bind(&database, config).is_err());
     let path = server.path().to_owned();
-    use std::os::unix::fs::PermissionsExt;
-    assert_eq!(
-        std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
-        0o600
-    );
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        assert_eq!(
+            std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+    }
     let (stop, rx) = watch::channel(false);
     let serving = tokio::spawn(server.serve(Arc::new(Echo), rx));
     let client = IpcClient::new(&database, config).unwrap();

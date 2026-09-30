@@ -186,6 +186,16 @@ fn memory_reload_rejects_ipc_limits_without_changing_the_running_configuration()
     std::fs::write(&path, config.replace("gpt-6-astra", "gpt-6-sol")).unwrap();
     assert_eq!(cli.ok(&["memory", "reload"])["reloaded"], true);
     assert_eq!(cli.ok(&["memory", "status"])["model"], "gpt-6-sol");
+    std::fs::write(&path, format!("{config}reasoning_effort='low'\n")).unwrap();
+    assert_eq!(cli.ok(&["memory", "reload"])["reloaded"], true);
+    assert_eq!(cli.ok(&["memory", "status"])["reasoning_effort"], "low");
+    assert_eq!(
+        cli.ok(&["memory", "doctor"])["configuration"]["reasoning_effort"],
+        "low"
+    );
+    std::fs::write(&path, format!("{config}reasoning_effort='loow'\n")).unwrap();
+    assert!(!cli.run(&["memory", "reload"]).status.success());
+    assert_eq!(cli.ok(&["memory", "status"])["reasoning_effort"], "low");
 }
 
 #[allow(clippy::too_many_lines)]

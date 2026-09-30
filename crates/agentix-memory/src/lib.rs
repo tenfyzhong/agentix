@@ -1,6 +1,6 @@
 //! Independent project memory domain, persistence and retrieval.
 mod agent_loop;
-pub use agent_loop::{AgentLoop, LoopResult, ToolSet};
+pub use agent_loop::{AgentLoop, LoopResult, ToolInputError, ToolSet};
 mod config;
 mod domain;
 mod providers;
@@ -14,7 +14,7 @@ pub use providers::{
 
 pub use config::{
     AgentConfig, EmbeddingConfig, MemoryConfig, MemoryLocation, ModelApi, ProjectionConfig,
-    ProviderConfig, ProviderProtocol, RetrievalConfig, ServiceConfig,
+    ProviderConfig, ProviderProtocol, ReasoningEffort, RetrievalConfig, ServiceConfig,
 };
 pub use domain::{
     Actor, Evidence, IndexPage, Kind, Memory, MemoryInput, Source, SourceMessage, Status,
@@ -36,18 +36,18 @@ pub use worker::{ExtractionGate, MemoryWorker, ProjectRepository, TriageDecision
 mod embedding_index;
 pub use embedding_index::{EmbeddingIndex, EmbeddingProfile, SearchResult, SemanticRetrieval};
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 mod ipc;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub use ipc::{IpcClient, IpcServer, RequestHandler};
 
 mod context;
 mod maintenance;
 pub use context::{ContextPacket, MemoryRef, context_preview};
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 mod api;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub use api::{MemoryApi, MemoryRequest};
 
 mod deep_query;

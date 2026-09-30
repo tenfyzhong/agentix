@@ -22,6 +22,18 @@ pub enum ModelApi {
     ChatCompletions,
 }
 
+/// Forwarded to the configured provider; supported levels depend on its model.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ReasoningEffort {
+    None,
+    Minimal,
+    Low,
+    Medium,
+    High,
+    Xhigh,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProviderConfig {
@@ -43,6 +55,8 @@ pub struct AgentConfig {
     pub provider: String,
     pub api: ModelApi,
     pub model: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<ReasoningEffort>,
     pub max_concurrent_loops: usize,
     pub max_extraction_loops_per_project: usize,
     pub max_steps: usize,
@@ -62,6 +76,7 @@ impl Default for AgentConfig {
             provider: "openai".into(),
             api: ModelApi::Responses,
             model: "gpt-6-astra".into(),
+            reasoning_effort: None,
             max_concurrent_loops: 4,
             max_extraction_loops_per_project: 2,
             max_steps: 12,

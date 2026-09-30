@@ -28,6 +28,8 @@ max_in_flight = 8
 provider = "openai"
 api = "responses"
 model = "gpt-6-astra"
+# Optional; omit for provider default. Levels depend on the selected model.
+# reasoning_effort = "low"
 max_concurrent_loops = 4
 max_extraction_loops_per_project = 2
 max_steps = 12

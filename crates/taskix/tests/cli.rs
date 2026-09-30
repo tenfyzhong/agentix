@@ -1452,6 +1452,6 @@ fn non_git_job_creation_registers_directory_without_context() {
     assert_eq!(project["name"], "directory-work");
 }
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 #[path = "support/memory.rs"]
 mod memory;

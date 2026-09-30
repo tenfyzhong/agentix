@@ -1,5 +1,5 @@
 // Unix-only memory service regression tests.
-#![cfg(unix)]
+#![cfg(any(unix, windows))]
 #[path = "support/http.rs"]
 mod http;
 use agentix_memory::*;
@@ -172,4 +172,57 @@ async fn individual_dimension_failure_does_not_abort_remaining_batch() {
         requests[2].1["input"], requests[3].1["input"],
         "a dimension mismatch must back off rather than repeatedly occupying the head batch"
     );
+}
+
+#[tokio::test]
+async fn consolidation_accepts_covering_quotes_only_from_the_same_source() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(&temp.path().join("memory.db"))
+        .await
+        .unwrap();
+    let config = AgentConfig::default();
+    let mut receipt = source("a", 1);
+    receipt.messages[0].text = "Decision: Backups must work offline for remote sites.".into();
+    store.ingest(&receipt).await.unwrap();
+    let extract = store.claim_work("w", &config, 100).await.unwrap().unwrap();
+    store
+        .complete_extraction(&extract, vec![input("a")], 101)
+        .await
+        .unwrap();
+    let lease = store.claim_work("w", &config, 102).await.unwrap().unwrap();
+    let mut content = input("a");
+    content.evidence[0]
+        .quote
+        .clone_from(&receipt.messages[0].text);
+    let decision = ConsolidationDecision {
+        candidate: 0,
+        action: DecisionAction::Create,
+        target: None,
+        expected_revision: None,
+        content: Some(content.clone()),
+        reason: "Keep full source context".into(),
+    };
+    for invalid in ["receipt", "message", "shortened", "invented"] {
+        let mut bad = decision.clone();
+        let evidence = &mut bad.content.as_mut().unwrap().evidence[0];
+        match invalid {
+            "receipt" => evidence.receipt_id = "other".into(),
+            "message" => evidence.message_id = "other".into(),
+            "shortened" => evidence.quote = "Backups".into(),
+            _ => evidence.quote.push_str(" Invented extension."),
+        }
+        assert!(
+            store
+                .complete_consolidation(&lease, vec![bad], 103)
+                .await
+                .is_err(),
+            "{invalid}"
+        );
+    }
+    let memories = store
+        .complete_consolidation(&lease, vec![decision], 104)
+        .await
+        .unwrap();
+    assert_eq!(memories.len(), 1);
+    assert_eq!(memories[0].content.evidence, content.evidence);
 }

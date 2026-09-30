@@ -112,12 +112,20 @@ impl HttpModel {
                 let mut function=function;function["type"]=json!("function");function
             } else {json!({"type":"function","function":function})}
         }).collect();
-        Ok(if self.config.api == ModelApi::Responses {
+        let mut body = if self.config.api == ModelApi::Responses {
             json!({"model":self.config.model,"instructions":request.instructions,"input":input,"tools":tools,
                 "store":false,"include":["reasoning.encrypted_content"],"max_output_tokens":self.config.max_output_tokens})
         } else {
             json!({"model":self.config.model,"messages":input,"tools":tools,"max_completion_tokens":self.config.max_output_tokens})
-        })
+        };
+        if let Some(effort) = self.config.reasoning_effort {
+            if self.config.api == ModelApi::Responses {
+                body["reasoning"] = json!({"effort": effort});
+            } else {
+                body["reasoning_effort"] = json!(effort);
+            }
+        }
+        Ok(body)
     }
 }
 

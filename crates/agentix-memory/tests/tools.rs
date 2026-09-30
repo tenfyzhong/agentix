@@ -185,3 +185,33 @@ async fn repository_search_schema_exposes_nonempty_query_contract() {
             .is_err()
     );
 }
+
+#[tokio::test]
+async fn invalid_repository_query_is_correctable_but_not_an_inspection() {
+    let temp = tempfile::tempdir().unwrap();
+    let repo = temp.path().join("repo");
+    std::fs::create_dir(&repo).unwrap();
+    let store = MemoryStore::open(&temp.path().join("memory.db"))
+        .await
+        .unwrap();
+    let tools = ProjectTools::new(store, "p".into(), Some(repo)).unwrap();
+    for args in [
+        json!({"query":""}),
+        json!({"query":"x".repeat(513)}),
+        json!({"query":null}),
+    ] {
+        let error = tools.execute("repo_search", args).await.unwrap_err();
+        assert!(
+            error
+                .downcast_ref::<agentix_memory::ToolInputError>()
+                .is_some()
+        );
+        assert!(!tools.repository_checked());
+        assert!(tools.inspection_audit().is_empty());
+    }
+    tools
+        .execute("repo_search", json!({"query":"decision"}))
+        .await
+        .unwrap();
+    assert!(tools.repository_checked());
+}

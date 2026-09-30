@@ -13,7 +13,7 @@ use clap::{Args, CommandFactory, Parser, Subcommand};
 use clap_complete::Shell;
 use serde_json::{Value, json};
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 mod memory;
 mod memory_command;
 mod metrics;
@@ -607,12 +607,12 @@ async fn setup_obsidian(
 
 async fn run(cli: &Cli) -> Result<Value> {
     if let Command::Memory { action } = &cli.command {
-        #[cfg(unix)]
+        #[cfg(any(unix, windows))]
         return Ok(response(memory::run(cli, action).await?));
-        #[cfg(not(unix))]
+        #[cfg(not(any(unix, windows)))]
         {
             let _ = action;
-            bail!("memory commands require Unix");
+            bail!("memory commands require Unix or Windows");
         }
     }
     if let Command::Routing {
