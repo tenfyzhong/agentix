@@ -439,6 +439,49 @@ fn database_snapshot(source: &std::path::Path, destination: &std::path::Path) {
     });
 }
 
+#[cfg(unix)]
+fn backup_and_restore_with_script(
+    cli: &Cli,
+    config_path: &std::path::Path,
+    restored: &std::path::Path,
+) {
+    let script =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/taskix-backup.py");
+    let archives = cli.dir.path().join("backups");
+    let backup = Command::new("python3")
+        .arg(&script)
+        .arg("--config")
+        .arg(config_path)
+        .arg("--output-dir")
+        .arg(&archives)
+        .args(["--remote", "mock:archive", "--rclone", "/usr/bin/true"])
+        .output()
+        .unwrap();
+    assert!(
+        backup.status.success(),
+        "{}",
+        String::from_utf8_lossy(&backup.stderr)
+    );
+    let archive = std::fs::read_dir(&archives)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .find(|path| path.to_string_lossy().ends_with(".tar.gz"))
+        .unwrap();
+    let restore = Command::new("python3")
+        .arg(script)
+        .arg("--restore")
+        .arg(archive)
+        .arg("--restore-dir")
+        .arg(restored)
+        .output()
+        .unwrap();
+    assert!(
+        restore.status.success(),
+        "{}",
+        String::from_utf8_lossy(&restore.stderr)
+    );
+}
+
 #[test]
 #[allow(clippy::too_many_lines)]
 fn memory_restore_replays_acknowledged_sources_and_rejects_a_forked_task_history() {
@@ -480,42 +523,19 @@ fn memory_restore_replays_acknowledged_sources_and_rejects_a_forked_task_history
     }
     std::fs::copy(old_memory, &memory_path).unwrap();
     let daemon = start_memory(&cli, 2);
-    let script =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/taskix-backup.py");
-    let archives = cli.dir.path().join("backups");
-    let backup = Command::new("python3")
-        .arg(&script)
-        .arg("--config")
-        .arg(&config_path)
-        .arg("--output-dir")
-        .arg(&archives)
-        .args(["--remote", "mock:archive", "--rclone", "/usr/bin/true"])
-        .output()
-        .unwrap();
-    assert!(
-        backup.status.success(),
-        "{}",
-        String::from_utf8_lossy(&backup.stderr)
-    );
-    let archive = std::fs::read_dir(&archives)
-        .unwrap()
-        .map(|entry| entry.unwrap().path())
-        .find(|path| path.to_string_lossy().ends_with(".tar.gz"))
-        .unwrap();
     let restored = cli.dir.path().join("restored");
-    let restore = Command::new("python3")
-        .arg(script)
-        .arg("--restore")
-        .arg(archive)
-        .arg("--restore-dir")
-        .arg(&restored)
-        .output()
-        .unwrap();
-    assert!(
-        restore.status.success(),
-        "{}",
-        String::from_utf8_lossy(&restore.stderr)
-    );
+    #[cfg(unix)]
+    backup_and_restore_with_script(&cli, &config_path, &restored);
+    #[cfg(not(unix))]
+    {
+        // The backup script requires fcntl; exercise SQLite recovery on every platform.
+        std::fs::create_dir(&restored).unwrap();
+        database_snapshot(
+            &cli.dir.path().join("state.sqlite3"),
+            &restored.join("tasks.sqlite3"),
+        );
+        database_snapshot(&memory_path, &restored.join("memory.sqlite3"));
+    }
     tokio::runtime::Runtime::new().unwrap().block_on(async {
         let memory = agentix_memory::MemoryStore::open_read_only(&restored.join("memory.sqlite3"))
             .await
