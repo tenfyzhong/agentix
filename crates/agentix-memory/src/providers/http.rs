@@ -1,8 +1,8 @@
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
+use super::limits::{Permit, ProviderLimits};
 use anyhow::{Context, Result, ensure};
 use serde_json::Value;
-use tokio::sync::Semaphore;
 
 use crate::{ProviderConfig, ProviderProtocol};
 
@@ -21,12 +21,16 @@ pub struct HttpProvider {
     base_url: String,
     authorization: Option<reqwest::header::HeaderValue>,
     pub(crate) protocol: ProviderProtocol,
-    permits: Semaphore,
-    background: Semaphore,
+    limits: Arc<ProviderLimits>,
 }
 
 impl HttpProvider {
     pub fn new(config: ProviderConfig) -> Result<Self> {
+        let limits = Arc::new(ProviderLimits::new(config.max_in_flight)?);
+        Self::with_limits(config, limits)
+    }
+
+    pub fn with_limits(config: ProviderConfig, limits: Arc<ProviderLimits>) -> Result<Self> {
         let url = reqwest::Url::parse(&config.base_url)?;
         ensure!(
             matches!(url.scheme(), "http" | "https")
@@ -62,8 +66,7 @@ impl HttpProvider {
             base_url: config.base_url.trim_end_matches('/').into(),
             authorization,
             protocol: config.protocol,
-            permits: Semaphore::new(config.max_in_flight),
-            background: Semaphore::new(config.max_in_flight.saturating_sub(1).max(1)),
+            limits,
         })
     }
 
@@ -71,20 +74,14 @@ impl HttpProvider {
         format!("{:?}:{}", self.protocol, self.base_url)
     }
 
-    async fn acquire(
-        &self,
-        query: bool,
-    ) -> Result<(
-        Option<tokio::sync::SemaphorePermit<'_>>,
-        tokio::sync::SemaphorePermit<'_>,
-    )> {
+    async fn acquire(&self, query: bool) -> Result<(Option<Permit<'_>>, Permit<'_>)> {
         // Acquire the background cap first so queued batches cannot occupy query capacity.
         let background = if query {
             None
         } else {
-            Some(self.background.acquire().await?)
+            Some(self.limits.background.acquire().await?)
         };
-        Ok((background, self.permits.acquire().await?))
+        Ok((background, self.limits.total.acquire().await?))
     }
 
     pub(crate) async fn post(&self, endpoint: &str, body: Value, timeout: u64) -> Result<Value> {
@@ -135,6 +132,49 @@ impl HttpProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn reloaded_providers_share_capacity_and_live_limit_changes() {
+        let limits = std::sync::Arc::new(ProviderLimits::new(2).unwrap());
+        let make = || {
+            HttpProvider::with_limits(
+                ProviderConfig {
+                    base_url: "http://127.0.0.1:1".into(),
+                    api_key_env: None,
+                    protocol: ProviderProtocol::Openai,
+                    max_in_flight: 2,
+                },
+                limits.clone(),
+            )
+            .unwrap()
+        };
+        let old = make();
+        let new = make();
+        let first = old.acquire(true).await.unwrap();
+        let second = new.acquire(true).await.unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), new.acquire(true))
+                .await
+                .is_err()
+        );
+        limits.set_limit(1).unwrap();
+        drop(first);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), new.acquire(true))
+                .await
+                .is_err()
+        );
+        drop(second);
+        let last = new.acquire(true).await.unwrap();
+        limits.set_limit(2).unwrap();
+        let extra = old.acquire(true).await.unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), new.acquire(true))
+                .await
+                .is_err()
+        );
+        drop((last, extra));
+    }
 
     fn provider(capacity: usize) -> HttpProvider {
         HttpProvider::new(ProviderConfig {

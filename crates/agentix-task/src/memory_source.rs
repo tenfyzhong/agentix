@@ -193,25 +193,7 @@ impl Store {
             .bind(limit)
             .fetch_all(&self.pool)
             .await?;
-        rows.into_iter()
-            .map(|r| {
-                let snapshot: Value = serde_json::from_str(&r.get::<String, _>("snapshot"))?;
-                Ok(MemorySource {
-                    instance_id: r.get("instance_id"),
-                    receipt_id: r.get("receipt_id"),
-                    sequence: r.get("sequence"),
-                    project_id: r.get("project_id"),
-                    session_id: r.get("session_id"),
-                    turn_id: r.get("turn_id"),
-                    revision: r.get("revision"),
-                    job_id: snapshot["job_id"].as_str().map(str::to_owned),
-                    recorded_at: snapshot["recorded_at"]
-                        .as_i64()
-                        .context("invalid source timestamp")?,
-                    messages: serde_json::from_value(snapshot["messages"].clone())?,
-                })
-            })
-            .collect()
+        rows.iter().map(source_from_row).collect()
     }
 
     pub async fn memory_source_instance(&self) -> Result<String> {
@@ -225,21 +207,30 @@ impl Store {
     /// Validate a bounded recovery page, including content, against retained receipts.
     pub async fn verify_memory_sources(&self, sources: &[MemorySource]) -> Result<()> {
         ensure!(sources.len() <= 100, "invalid: recovery page");
-        for source in sources {
-            ensure!(source.sequence > 0, "invalid: source sequence");
-            let mut current = self.replay_memory_sources(source.sequence - 1, 1).await?;
-            for message in current
-                .iter_mut()
-                .flat_map(|source| source.messages.iter_mut())
-            {
+        let sequences: std::collections::BTreeSet<_> = sources.iter().map(|s| s.sequence).collect();
+        ensure!(
+            sequences.len() == sources.len() && sequences.iter().all(|s| *s > 0),
+            "invalid: duplicate or nonpositive source sequence"
+        );
+        // One bounded primary-key batch; preserve full content comparison on every restart.
+        let rows = sqlx::query("SELECT o.*,i.instance_id FROM json_each(?) requested CROSS JOIN memory_source_outbox o ON o.sequence=requested.value CROSS JOIN memory_source_identity i")
+            .bind(serde_json::to_string(&sequences)?)
+            .fetch_all(&self.pool).await?;
+        let mut current = std::collections::BTreeMap::new();
+        for row in rows {
+            let mut source = source_from_row(&row)?;
+            for message in &mut source.messages {
                 if let Some(object) = message.as_object_mut() {
                     object.retain(|key, value| {
                         !matches!(key.as_str(), "session_id" | "recorded_at") || !value.is_null()
                     });
                 }
             }
+            current.insert(source.sequence, source);
+        }
+        for source in sources {
             ensure!(
-                current.first() == Some(source),
+                current.get(&source.sequence) == Some(source),
                 "conflict: tasks and memory histories differ; restore a compatible database pair"
             );
         }
@@ -257,4 +248,22 @@ impl Store {
         );
         Ok(())
     }
+}
+
+fn source_from_row(r: &sqlx::sqlite::SqliteRow) -> Result<MemorySource> {
+    let snapshot: Value = serde_json::from_str(&r.get::<String, _>("snapshot"))?;
+    Ok(MemorySource {
+        instance_id: r.get("instance_id"),
+        receipt_id: r.get("receipt_id"),
+        sequence: r.get("sequence"),
+        project_id: r.get("project_id"),
+        session_id: r.get("session_id"),
+        turn_id: r.get("turn_id"),
+        revision: r.get("revision"),
+        job_id: snapshot["job_id"].as_str().map(str::to_owned),
+        recorded_at: snapshot["recorded_at"]
+            .as_i64()
+            .context("invalid source timestamp")?,
+        messages: serde_json::from_value(snapshot["messages"].clone())?,
+    })
 }

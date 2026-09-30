@@ -562,6 +562,30 @@ fn memory_restore_replays_acknowledged_sources_and_rejects_a_forked_task_history
 }
 
 #[test]
+fn memory_diagnostics_handle_a_missing_database_directory_without_creating_it() {
+    let cli = Cli::new();
+    let path = cli.dir.path().join("config.toml");
+    let config = std::fs::read_to_string(&path).unwrap();
+    let directory = cli.dir.path().join("uninitialized");
+    let database = directory.join("memory.sqlite3");
+    std::fs::write(
+        &path,
+        format!(
+            "{config}\n[memory]\nenabled=true\n[memory.storage]\npath={}\n",
+            serde_json::to_string(&database).unwrap()
+        ),
+    )
+    .unwrap();
+    let doctor = cli.ok(&["memory", "doctor"]);
+    assert_eq!(doctor["online"], false);
+    assert_eq!(doctor["database"]["exists"], false);
+    let status = cli.ok(&["memory", "status"]);
+    assert_eq!(status["initialized"], false);
+    assert_eq!(status["online"], false);
+    assert!(!directory.exists());
+}
+
+#[test]
 fn memory_doctor_reports_invalid_model_configuration_without_a_provider_request() {
     let cli = Cli::new();
     let path = cli.dir.path().join("config.toml");

@@ -87,9 +87,37 @@ pub(super) fn publish(path: &Path, expected: Option<&str>, text: &str) -> Result
             }
             return Err(error.into());
         }
-        File::open(parent)?.sync_all()?;
+        sync_directory(parent)?;
         Ok(())
     })();
     let _ = std::fs::remove_file(temporary);
     result
+}
+
+// Unix can fsync a directory. Windows File::open cannot open a directory,
+// and a directory handle is not a portable FlushFileBuffers target. The file
+// contents are synced before publication on every platform; SQLite remains
+// authoritative and repairs a missing note after an interrupted publication.
+#[cfg_attr(not(unix), allow(clippy::unnecessary_wraps))] // Uniform fallible platform interface.
+fn sync_directory(parent: &Path) -> Result<()> {
+    #[cfg(unix)]
+    File::open(parent)?.sync_all()?;
+    #[cfg(not(unix))]
+    let _ = parent;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn publication_directory_sync_works_on_the_current_platform() {
+        let dir = tempfile::tempdir().unwrap();
+        super::sync_directory(dir.path()).unwrap();
+        let note = dir.path().join("memory.md");
+        super::publish(&note, None, "authoritative memory").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(note).unwrap(),
+            "authoritative memory"
+        );
+    }
 }

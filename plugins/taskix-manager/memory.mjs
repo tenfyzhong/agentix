@@ -4,6 +4,8 @@ import { mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 
+const pendingReceipts = new Map();
+
 // Independent of routing and extraction. Failures must never interrupt host work.
 export async function memoryContext(prompt, turn, options, runner, { cacheDir, timeoutMs = 1500, requireConfig = false, memoryConfigPath } = {}) {
     if (typeof prompt !== "string" || !prompt.trim() || !options.session) return "";
@@ -11,7 +13,7 @@ export async function memoryContext(prompt, turn, options, runner, { cacheDir, t
     const signal = options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal;
     let timer;
     try {
-        return await Promise.race([
+        const prepared = await Promise.race([
             new Promise(resolve => { timer = setTimeout(() => { controller.abort(); resolve(""); }, timeoutMs); }),
             (async () => {
                 if (requireConfig && !await memoryConfigured(memoryConfigPath)) return "";
@@ -26,6 +28,12 @@ export async function memoryContext(prompt, turn, options, runner, { cacheDir, t
                 return await deduplicate(packet, turnId, options, cacheDir, signal);
             })(),
         ]);
+        if (!prepared) return "";
+        signal.throwIfAborted();
+        // Accept the delivery before publishing its receipt. There is no await
+        // between this decision and returning text, so a timer cannot discard it.
+        prepared.commit();
+        return prepared.text;
     } catch { return ""; }
     finally { clearTimeout(timer); controller.abort(); }
 }
@@ -33,6 +41,7 @@ export async function memoryContext(prompt, turn, options, runner, { cacheDir, t
 async function deduplicate(packet, turn, options, directory = join(tmpdir(), `taskix-memory-context-${process.getuid?.() ?? "user"}`), signal) {
     const key = createHash("sha256").update(JSON.stringify([options.session, options.cwd || "", process.env.TASKIX_CONFIG || ""])).digest("hex");
     const path = join(directory, `memory-${key}.json`);
+    await pendingReceipts.get(path);
     let seen = {};
     try {
         const value = JSON.parse(await readFile(path, "utf8"));
@@ -46,14 +55,25 @@ async function deduplicate(packet, turn, options, directory = join(tmpdir(), `ta
     for (const item of packet.items) if (included.has(item.id)) seen[item.id] = { revision: item.revision, turn };
     seen = Object.fromEntries(Object.entries(seen).slice(-2048));
     signal.throwIfAborted();
-    await mkdir(directory, { recursive: true, mode: 0o700 });
-    const temporary = `${path}.${randomUUID()}`;
-    try {
-        await writeFile(temporary, JSON.stringify({ expires: Date.now() + 30 * 86400000, items: seen }), { mode: 0o600, flag: "wx" });
-        signal.throwIfAborted();
-        await rename(temporary, path);
-    } finally { await rm(temporary, { force: true }); }
-    return `${lines[0]}\n${body.join("\n")}\n`;
+    return {
+        text: `${lines[0]}\n${body.join("\n")}\n`,
+        commit() {
+            // Failed or dropped persistence can only cause duplicate delivery.
+            if (pendingReceipts.size >= 64 && !pendingReceipts.has(path)) return;
+            const pending = (async () => {
+                await pendingReceipts.get(path);
+                await mkdir(directory, { recursive: true, mode: 0o700 });
+                const temporary = `${path}.${randomUUID()}`;
+                try {
+                    await writeFile(temporary, JSON.stringify({ expires: Date.now() + 30 * 86400000, items: seen }), { mode: 0o600, flag: "wx" });
+                    await rename(temporary, path);
+                } finally { await rm(temporary, { force: true }); }
+            })().catch(() => {}).finally(() => {
+                if (pendingReceipts.get(path) === pending) pendingReceipts.delete(path);
+            });
+            pendingReceipts.set(path, pending);
+        },
+    };
 }
 
 export async function memoryConfigured(path = process.env.TASKIX_CONFIG || join(homedir(), ".config", "taskix", "config.toml")) {

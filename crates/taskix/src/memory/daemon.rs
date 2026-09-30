@@ -1,7 +1,7 @@
 use agentix_memory::{
     DeepQuery, EmbeddingIndex, HttpEmbedding, HttpModel, HttpProvider, IpcServer, MemoryApi,
     MemoryConfig, MemoryLocation, MemoryProjection, MemoryStore, MemoryWorker, ProjectRepository,
-    RequestHandler, Source,
+    ProviderLimits, RequestHandler, ServiceConfig, Source,
 };
 use anyhow::{Context, Result, ensure};
 use async_trait::async_trait;
@@ -13,7 +13,7 @@ use std::{
     time::Duration,
 };
 use tokio::{
-    sync::{Mutex, RwLock, watch},
+    sync::{Mutex, RwLock, Semaphore, watch},
     task::JoinSet,
 };
 
@@ -34,9 +34,50 @@ struct Runtime {
     embedding: Option<Arc<EmbeddingIndex>>,
     config: MemoryConfig,
     errors: Vec<String>,
+    limits: Arc<RuntimeLimits>,
+}
+struct RuntimeLimits {
+    queries: Semaphore,
+    deep: Semaphore,
+    providers: std::sync::Mutex<BTreeMap<String, Arc<ProviderLimits>>>,
+}
+impl RuntimeLimits {
+    fn new(service: ServiceConfig) -> Self {
+        Self {
+            queries: Semaphore::new(service.max_query_concurrency),
+            deep: Semaphore::new(service.max_deep_queries),
+            providers: std::sync::Mutex::new(BTreeMap::new()),
+        }
+    }
+
+    fn provider(&self, name: &str, capacity: usize) -> Result<Arc<ProviderLimits>> {
+        let mut providers = self
+            .providers
+            .lock()
+            .expect("provider admission state poisoned");
+        let limits = if let Some(limits) = providers.get(name) {
+            limits.clone()
+        } else {
+            let limits = Arc::new(ProviderLimits::new(capacity)?);
+            providers.insert(name.into(), limits.clone());
+            limits
+        };
+        limits.set_limit(capacity)?;
+        Ok(limits)
+    }
 }
 impl Runtime {
     fn build(config: MemoryConfig, store: &MemoryStore, repositories: Arc<Repositories>) -> Self {
+        let limits = Arc::new(RuntimeLimits::new(config.service));
+        Self::with_limits(config, store, repositories, limits)
+    }
+
+    fn with_limits(
+        config: MemoryConfig,
+        store: &MemoryStore,
+        repositories: Arc<Repositories>,
+        limits: Arc<RuntimeLimits>,
+    ) -> Self {
         let mut providers = BTreeMap::new();
         let mut errors = Vec::new();
         let mut api = MemoryApi::new(store.clone(), config.retrieval.clone(), config.service);
@@ -45,7 +86,10 @@ impl Runtime {
                 .providers
                 .get(&config.agent.provider)
                 .context("missing Agent provider")?;
-            let provider = Arc::new(HttpProvider::new(connection.clone())?);
+            let provider = Arc::new(HttpProvider::with_limits(
+                connection.clone(),
+                limits.provider(&config.agent.provider, connection.max_in_flight)?,
+            )?);
             providers.insert(config.agent.provider.clone(), provider.clone());
             Ok::<_, anyhow::Error>(Arc::new(HttpModel::new(provider, config.agent.clone())?))
         })();
@@ -77,12 +121,14 @@ impl Runtime {
                 let provider = if let Some(provider) = providers.get(&config.embedding.provider) {
                     provider.clone()
                 } else {
-                    Arc::new(HttpProvider::new(
-                        config
-                            .providers
-                            .get(&config.embedding.provider)
-                            .context("missing embedding provider")?
-                            .clone(),
+                    let connection = config
+                        .providers
+                        .get(&config.embedding.provider)
+                        .context("missing embedding provider")?
+                        .clone();
+                    Arc::new(HttpProvider::with_limits(
+                        connection.clone(),
+                        limits.provider(&config.embedding.provider, connection.max_in_flight)?,
                     )?)
                 };
                 Ok::<_, anyhow::Error>(Arc::new(HttpEmbedding::new(
@@ -113,6 +159,7 @@ impl Runtime {
             embedding,
             config,
             errors,
+            limits,
         }
     }
 }
@@ -146,6 +193,8 @@ impl Application {
         }
     }
     async fn reload(&self) -> Result<Value> {
+        // Serialize configuration snapshots and admission-limit updates.
+        let mut installed = self.runtime.write().await;
         let location = MemoryLocation::load(&self.path)?;
         ensure!(
             location.enabled
@@ -161,9 +210,14 @@ impl Application {
                 && config.service.max_response_bytes == self.location.service.max_response_bytes,
             "IPC limits changed; restart the memory service"
         );
-        let runtime = Runtime::build(config, &self.store, self.repositories.clone());
+        let runtime = Runtime::with_limits(
+            config,
+            &self.store,
+            self.repositories.clone(),
+            installed.limits.clone(),
+        );
         let result = json!({"reloaded":true,"errors":runtime.errors});
-        *self.runtime.write().await = Arc::new(runtime);
+        *installed = Arc::new(runtime);
         Ok(result)
     }
 }
@@ -201,6 +255,19 @@ impl RequestHandler for Application {
             return Ok(serde_json::to_value(result)?);
         }
         let runtime = self.runtime.read().await.clone();
+        let _permit = if request["op"] == "ask" {
+            runtime
+                .limits
+                .deep
+                .try_acquire()
+                .context("busy: deep memory query limit reached")?
+        } else {
+            runtime
+                .limits
+                .queries
+                .try_acquire()
+                .context("busy: memory query limit reached")?
+        };
         let status = request["op"] == "status";
         let mut result = runtime.api.handle(request).await?;
         if status {

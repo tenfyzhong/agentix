@@ -8,8 +8,8 @@ mod retrieval;
 mod store;
 mod vectors;
 pub use providers::{
-    HttpEmbedding, HttpModel, HttpProvider, Message, Model, ModelReply, ModelRequest, TokenUsage,
-    ToolCall, ToolDefinition,
+    HttpEmbedding, HttpModel, HttpProvider, Message, Model, ModelReply, ModelRequest,
+    ProviderLimits, TokenUsage, ToolCall, ToolDefinition,
 };
 
 pub use config::{

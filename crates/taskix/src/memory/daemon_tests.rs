@@ -309,3 +309,113 @@ fn process_cpu_seconds() -> Option<f64> {
         Some(seconds * 60.0 + part.parse::<f64>().ok()?)
     })
 }
+
+#[tokio::test]
+async fn reload_preserves_admission_for_an_active_deep_query() {
+    check_reload_admission(true).await;
+}
+
+#[tokio::test]
+async fn reload_preserves_provider_admission_and_releases_cancelled_requests() {
+    check_reload_admission(false).await;
+}
+
+#[allow(clippy::too_many_lines)] // Exercise reload while the original HTTP request is live.
+async fn check_reload_admission(deep_limit: bool) {
+    let dir = tempfile::tempdir().unwrap();
+    let task_path = dir.path().join("tasks.db");
+    let memory_path = dir.path().join("memory.db");
+    let tasks = agentix_task::Store::open(&task_path).await.unwrap();
+    let project = tasks
+        .execute(
+            json!({"command":"project.register","name":"reload","root":dir.path()}),
+            agentix_task::WriteOptions::default(),
+        )
+        .await
+        .unwrap()
+        .result["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let store = MemoryStore::open(&memory_path).await.unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mut config = MemoryConfig {
+        enabled: true,
+        ..MemoryConfig::default()
+    };
+    config.storage.path = Some(memory_path.clone());
+    config.service.max_deep_queries = if deep_limit { 1 } else { 2 };
+    config.agent.model = "gpt-6-astra".into();
+    config.providers.insert(
+        "openai".into(),
+        ProviderConfig {
+            base_url: format!("http://{}", listener.local_addr().unwrap()),
+            api_key_env: None,
+            protocol: ProviderProtocol::Openai,
+            max_in_flight: if deep_limit { 2 } else { 1 },
+        },
+    );
+    let path = dir.path().join("config.toml");
+    let mut document = toml::Table::new();
+    document.insert("schema_version".into(), toml::Value::Integer(1));
+    document.insert(
+        "storage".into(),
+        toml::Value::Table(toml::Table::from_iter([(
+            "path".into(),
+            toml::Value::String(task_path.to_string_lossy().into_owned()),
+        )])),
+    );
+    document.insert("memory".into(), toml::Value::try_from(&config).unwrap());
+    std::fs::write(&path, toml::to_string(&document).unwrap()).unwrap();
+    let repositories = Arc::new(Repositories(tasks.clone()));
+    let runtime = Arc::new(Runtime::build(config.clone(), &store, repositories.clone()));
+    let app = Arc::new(Application {
+        path,
+        location: MemoryLocation {
+            enabled: true,
+            path: memory_path,
+            task_path,
+            service: config.service,
+            retrieval: config.retrieval.clone(),
+        },
+        store,
+        tasks,
+        repositories,
+        runtime: RwLock::new(runtime),
+        errors: Mutex::new(BTreeMap::new()),
+        projection: Mutex::new(()),
+    });
+    let request = json!({"op":"ask","project":project,"query":"external decision"});
+    let first_app = app.clone();
+    let first_request = request.clone();
+    let first = tokio::spawn(async move { first_app.handle(first_request).await });
+    let (socket, _) = tokio::time::timeout(Duration::from_secs(2), listener.accept())
+        .await
+        .unwrap()
+        .unwrap();
+    app.reload().await.unwrap();
+    if !deep_limit {
+        let second = tokio::spawn(async move { app.handle(request).await });
+        let admitted = tokio::time::timeout(Duration::from_millis(100), listener.accept()).await;
+        first.abort();
+        let _ = first.await;
+        assert!(
+            admitted.is_err(),
+            "reload admitted a second provider request"
+        );
+        // Cancellation must release the shared permit for the new generation.
+        let resumed = tokio::time::timeout(Duration::from_secs(2), listener.accept()).await;
+        second.abort();
+        let _ = second.await;
+        assert!(resumed.is_ok(), "provider permit leaked after cancellation");
+        return;
+    }
+    let second = tokio::time::timeout(Duration::from_millis(200), app.handle(request)).await;
+    first.abort();
+    let _ = first.await;
+    drop(socket);
+    let error = second
+        .expect("reload must reject excess queries without contacting the model")
+        .unwrap_err();
+    assert!(error.to_string().contains("busy:"), "{error}");
+}

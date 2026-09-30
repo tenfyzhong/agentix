@@ -79,12 +79,17 @@ leave the service available for FTS and manual edits; maintenance reports its
 provider error. Invalid full service configuration prevents startup or reload.
 
 `taskix memory reload` applies a validated snapshot to future work. In-flight
-loops finish with their original model/settings. Database paths, enabled state
-and IPC connection/size limits require a restart; an incompatible reload keeps
+loops finish with their original model/settings. Query admission limits retain
+process-wide accounting across reloads. Named providers also share admission across old and new model instances; changing
+`max_in_flight` updates this shared budget. Lowering it lets active requests
+finish and withholds new requests until usage falls below the new limit.
+Database paths, enabled state and IPC connection/size limits require a restart; an incompatible reload keeps
 the running configuration intact. `memory doctor` checks configuration,
 credential availability, database identity and service availability without a
 model request. Credential availability in doctor refers to the CLI environment;
-`service.provider_errors` describes the running process.
+`service.provider_errors` describes the running process. `doctor` and `status`
+also report an uninitialized database when its parent directory is missing,
+without creating that directory.
 
 ## Optional Jev extraction screening
 
@@ -330,12 +335,15 @@ memories are batch-revalidated for Project, revision, status and expiry before
 rendering within the current byte budget. Unchanged receipts refresh their
 timestamp at most hourly. Background maintenance removes receipts older than
 30 days every minute, at most 1,000 rows per receipt table per pass.
-A timeout or discarded response therefore
-cannot suppress memory in the next turn; old service-side delivery markers are
-ignored. Direct `memory context` CLI reads can return the same entries on later
+A context request that times out before the hook accepts its text cannot
+suppress memory in the next turn; old service-side delivery markers are ignored. Direct `memory context` CLI reads can return the same entries on later
 turns because they do not confirm host injection. Host receipts persist only
-metadata, not memory content. Current user instructions and
-current repository evidence always take precedence; memory is not authorization.
+metadata, not memory content. The hook accepts the text before asynchronously
+publishing its receipt, without another deadline race between those two actions.
+Receipt write failures or a host crash can cause a safe duplicate on a later turn.
+Host delivery and receipt persistence are not an atomic transaction across a
+process crash. Current user instructions and current repository evidence always
+take precedence; memory is not authorization.
 
 ## Inspect, correct and forget
 
@@ -420,6 +428,9 @@ unversioned/dirty repositories). It requires a literal repository citation befor
 archiving documented content and preserves human edits. Set
 `memory.agent.repository_review_interval_seconds = 0` to disable this additional
 model workload. Human memories are never automatically archived by this loop.
+Consolidation cannot archive existing memories; automatic archival is exclusive
+to this citation-validated review path. Legacy archive proposals are rejected
+without changing the target memory.
 
 `taskix memory ask 'Why was the hosted approach rejected?'` runs a separately
 limited, read-only Agent query with validated memory/source citations. Ordinary
@@ -494,13 +505,17 @@ The positive-gate experiment was rolled back because it missed reference memorie
 The memory command definitions and shell completions are shared across platforms.
 Unix uses a private Unix domain socket. Like Agentix's control socket, Windows
 uses loopback-only TCP. The service binds `127.0.0.1` with an automatically
-assigned port and publishes `tcp://127.0.0.1:<port>` in `<memory database>.tcp`.
-Clients resolve that file and reject non-loopback addresses. A stable
+assigned port and publishes `tcp://127.0.0.1:<port>` plus a new instance UUID on
+the second line of `<memory database>.tcp`. Clients reject non-loopback addresses
+and verify the server's 16-byte instance greeting before sending any business
+request. A stale file pointing at a reused port therefore fails closed. The
+handshake is covered by the normal request timeout. A stable
 `<memory database>.lock` file stays locked for the service lifetime, rejecting
 another service for the same database. Shutdown removes the endpoint; a restart
 replaces stale endpoint data left by a crash. Do not remove the lock file while
 services are running. Each database receives its own port.
 
+The instance greeting prevents accidental endpoint reuse; it is not user authentication.
 TCP follows Agentix's local-machine trust boundary: it has no per-user peer
 credentials or authentication, so other local users can access a known port.
 Both transports share bounded JSON framing, concurrency limits and request
@@ -512,6 +527,10 @@ Windows Service Control Manager service. Use the same absolute `--config` path
 for the service and clients. The standalone Python/rclone backup script still
 requires Unix; Windows IPC support does not change that script's platform scope.
 
+
+Projection sync flushes note contents on all platforms. Unix also syncs the
+parent directory; Windows does not apply Unix directory-fsync semantics.
+SQLite remains authoritative for repairing interrupted or missing projections.
 
 ## Derived-data retention and performance checks
 
@@ -534,3 +553,9 @@ See [performance measurements](taskix-memory-performance.md) for repeatable
 local benchmarks and their scope. Exact vector retrieval remains enabled;
 the measured 10,000-record, 384-dimensional Project does not justify adding an
 approximate index. Higher dimensions and larger datasets require fresh profiling.
+
+Startup validates every retained source against the task database, using one
+bounded primary-key query per page of at most 100 receipts. Full content and
+instance checks remain mandatory; total startup work still grows with retained
+history size. This reduces query round trips without claiming a measured speedup
+or changing exact vector retrieval into approximate nearest-neighbor search.

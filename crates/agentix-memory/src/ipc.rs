@@ -261,3 +261,64 @@ mod tcp_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod tcp_identity_tests {
+    #[cfg(not(windows))]
+    use super::tcp_test_transport as tcp;
+    #[cfg(windows)]
+    use super::transport as tcp;
+    use super::*;
+    #[tokio::test]
+    async fn silent_tcp_peer_can_be_cancelled_without_sending_business_data() {
+        let dir = tempfile::tempdir().unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let path = dir.path().join("endpoint");
+        std::fs::write(
+            &path,
+            format!(
+                "tcp://{}\n{}",
+                listener.local_addr().unwrap(),
+                uuid::Uuid::now_v7()
+            ),
+        )
+        .unwrap();
+        let client = tokio::spawn(async move {
+            tokio::time::timeout(Duration::from_millis(50), tcp::connect(&path)).await
+        });
+        let (mut peer, _) = listener.accept().await.unwrap();
+        assert!(client.await.unwrap().is_err());
+        let mut byte = [0];
+        assert_eq!(peer.read(&mut byte).await.unwrap(), 0);
+    }
+    #[tokio::test]
+    async fn stale_endpoint_cannot_send_business_data_to_another_service() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = tcp::Listener::bind(&dir.path().join("a.db")).unwrap();
+        let b = tcp::Listener::bind(&dir.path().join("b.db")).unwrap();
+        let a_descriptor = std::fs::read_to_string(a.path()).unwrap();
+        let b_descriptor = std::fs::read_to_string(b.path()).unwrap();
+        let stale = format!(
+            "{}\n{}",
+            b_descriptor.lines().next().unwrap(),
+            a_descriptor.lines().nth(1).unwrap_or("")
+        );
+        std::fs::write(a.path(), stale.trim_end()).unwrap();
+        let path = a.path().to_owned();
+        let client = tokio::spawn(async move { tcp::connect(&path).await });
+        let mut stream = b.accept().await.unwrap();
+        let server = tokio::spawn(async move {
+            let mut byte = [0];
+            stream.read(&mut byte).await.unwrap_or(0)
+        });
+        let result = tokio::time::timeout(Duration::from_secs(2), client)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            result.is_err(),
+            "stale endpoint connected to a different service instance"
+        );
+        assert_eq!(server.await.unwrap(), 0, "business bytes must not be sent");
+    }
+}

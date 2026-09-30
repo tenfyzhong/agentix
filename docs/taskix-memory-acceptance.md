@@ -26,15 +26,21 @@ and the Node prompt-hook fixture; plugin dependencies must be installed before
 that Rust test. Shared memory and CLI tests run on Unix and Windows. Windows CI
 also runs TCP exclusivity, concurrent-client, shutdown/rebind and unavailable
 service tests. Platform-independent TCP tests also exercise endpoint discovery,
-loopback enforcement, concurrent clients and stale endpoint recovery on Unix. Unix permission checks remain Unix-specific. Cross-compilation
+loopback enforcement, concurrent clients, stale endpoint recovery and refusal
+to send business data to a different service instance on Unix. Unix permission checks remain Unix-specific. Cross-compilation
 checks types and platform gates; it does not replace native Windows execution.
+
+The projection file tests cover platform-specific directory sync and successful
+initial publication. Recovery verification tests cover a full unordered page of
+100 receipts, duplicate sequences and changed historical content. Native Windows
+execution is still required to validate filesystem behavior beyond type checks.
 
 ## Coverage matrix
 
 | Contract | Verification |
 | --- | --- |
 | Optional reasoning configuration, invalid values and Responses/Chat Completions field mapping | `agentix-memory/tests/providers.rs` |
-| Windows local TCP exclusivity, concurrent clients and service absence | `agentix-memory/tests/windows_ipc.rs`, shared `ipc.rs` and CLI daemon tests; Windows CI |
+| Windows local TCP exclusivity, concurrent clients, service absence and instance greeting | `agentix-memory/tests/windows_ipc.rs`, shared `ipc.rs` and CLI daemon tests; Windows CI |
 | Discussion and Job capture, immutable revision snapshots, unknown ownership, directory hints, attachment, legacy backfill, v14 migration, individual acknowledgements and restore forks | `agentix-task/tests/memory_sources.rs`, `agentix-core/src/engine/task_board/tests.rs`, `taskix/tests/cli.rs` |
 | Chinese and identifier recall, project isolation, evidence validation, revisions, human edits, supersession, expiry and forget suppression | `agentix-memory/tests/store.rs` |
 | Independent vector recall, generation/revision fences, invalid dimensions/values, partial indexing and query degradation | `tests/store.rs`, `tests/embedding_index.rs`, `tests/providers.rs` in `agentix-memory` |
@@ -46,6 +52,9 @@ checks types and platform gates; it does not replace native Windows execution.
 | Host session/revision deduplication, same-turn packet retry, stale/forgotten filtering, legacy marker compatibility, late-response cancellation and fail-soft deadlines | `agentix-memory/tests/context.rs`, `plugins/taskix-manager/tests/memory.test.mjs` |
 | Slow embedding falls back within the host deadline; a timed-out real IPC request does not suppress the next turn | `agentix-memory/tests/ipc.rs` |
 | Private IPC permissions, single-instance ownership, concurrent requests, size limits, offline reads, config reload, deep-query citations and diagnostics | `agentix-memory/tests/ipc.rs`, `tests/api.rs`, `taskix/tests/support/memory.rs` |
+| Reload preserves deep-query and provider admission across live requests; cancellation releases capacity and live limit reductions retire permits | `taskix/src/memory/daemon_tests.rs`, `agentix-memory/src/providers/http.rs` |
+| Missing database parent directories remain untouched while doctor/status report uninitialized state | `memory_diagnostics_handle_a_missing_database_directory_without_creating_it` in `taskix/tests/support/memory.rs` |
+| Paused receipt publication cannot both discard the current injection and suppress the next turn | `plugins/taskix-manager/tests/memory.test.mjs` with controlled filesystem completion and mocked deadline |
 | Full visible-turn → outbox → mocked Responses tools → consolidation → FTS → real CLI → Node prompt hook, with fresh consolidation context | `memory_visible_turn_to_mock_model_to_real_host_hook_end_to_end` in `taskix/tests/support/memory.rs` |
 | Read-only note repair, body/metadata edit rejection, missing files, filesystem failure, symlink rejection and crash between file publication and receipt acknowledgement | `agentix-memory/tests/projection.rs`, CLI projection test |
 | Ordered SQLite WAL snapshots, source-content coverage, single-format compatibility, retained upload retries, archive validation, atomic no-overwrite restore and no secret-bearing upload logs | `scripts/tests/test_taskix_backup.py` |
@@ -108,7 +117,7 @@ revision/generation changes. A real CLI/Node fixture verifies a long
 identifier-rich prompt still receives memory. Offline status also reads older
 v1 snapshots without the additive embedding retry table.
 
-`agentix-memory/tests/lifecycle_regressions.rs` adds three regression cases:
+`agentix-memory/tests/lifecycle_regressions.rs` covers:
 
 - Forgetting a merged memory suppresses both its original and current evidence;
   reopening the database preserves both suppressions.
@@ -116,6 +125,10 @@ v1 snapshots without the additive embedding retry table.
   reports a failure, records retry state, and lets a later valid memory proceed.
 - After an input-rejected batch is split, one individual dimension mismatch
   enters backoff without preventing the remaining valid record from being indexed.
+- Consolidation retains literal candidate quotations, including valid covering
+  quotations from the same source, and rejects fabricated extensions.
+- Direct consolidation archival is rejected without mutating the target; the
+  dedicated repository-review tests retain valid and invalid citation coverage.
 
 These tests exercise existing stored version history and deterministic HTTP
 responses. They do not claim that upgrading retroactively repairs suppression

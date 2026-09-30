@@ -72,11 +72,26 @@ async fn windows_stalled_reply_reader_does_not_block_shutdown() {
     let config = ServiceConfig::default();
     let server = IpcServer::bind(&database, config).unwrap();
     let endpoint = std::fs::read_to_string(server.path()).unwrap();
-    let mut client = TcpStream::connect(endpoint.strip_prefix("tcp://").unwrap())
-        .await
-        .unwrap();
+    let mut client = TcpStream::connect(
+        endpoint
+            .lines()
+            .next()
+            .unwrap()
+            .strip_prefix("tcp://")
+            .unwrap(),
+    )
+    .await
+    .unwrap();
     let (stop, rx) = watch::channel(false);
     let serving = tokio::spawn(server.serve(Arc::new(Echo), rx));
+    let mut identity = [0; 16];
+    client.read_exact(&mut identity).await.unwrap();
+    assert_eq!(
+        &identity,
+        uuid::Uuid::parse_str(endpoint.lines().nth(1).unwrap())
+            .unwrap()
+            .as_bytes()
+    );
     let request =
         serde_json::to_vec(&json!({"version":1,"request":{"body":"x".repeat(64*1024)}})).unwrap();
     tokio::time::timeout(Duration::from_secs(5), async {

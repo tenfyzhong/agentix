@@ -51,6 +51,10 @@ impl MemoryStore {
         queue::fence(&mut tx, lease, now).await?;
         for decision in &decisions {
             ensure!(
+                decision.action != DecisionAction::Archive,
+                "automatic archival requires repository review with a validated citation"
+            );
+            ensure!(
                 indices.insert(decision.candidate),
                 "duplicate candidate decision"
             );

@@ -454,3 +454,26 @@ async fn read_only_project_lookup_does_not_migrate_or_wait_for_a_writer() {
             .is_err()
     );
 }
+
+#[tokio::test]
+async fn recovery_verifies_an_unordered_page_and_rejects_duplicate_sequences() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(&dir.path().join("tasks.sqlite3"))
+        .await
+        .unwrap();
+    let p = project(&store, dir.path()).await;
+    for i in 0..100 {
+        store
+            .execute(capture(&p, &format!("Decision revision {i}")), options())
+            .await
+            .unwrap();
+    }
+    let mut sources = store.replay_memory_sources(0, 100).await.unwrap();
+    assert_eq!(sources.len(), 100);
+    sources.reverse();
+    store.verify_memory_sources(&sources).await.unwrap();
+    let duplicate = vec![sources[0].clone(), sources[0].clone()];
+    assert!(store.verify_memory_sources(&duplicate).await.is_err());
+    sources[99].messages[0]["text"] = json!("Forged historical decision");
+    assert!(store.verify_memory_sources(&sources).await.is_err());
+}

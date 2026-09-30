@@ -226,3 +226,42 @@ async fn consolidation_accepts_covering_quotes_only_from_the_same_source() {
     assert_eq!(memories.len(), 1);
     assert_eq!(memories[0].content.evidence, content.evidence);
 }
+
+#[tokio::test]
+async fn consolidation_cannot_archive_without_repository_review() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(&temp.path().join("memory.db"))
+        .await
+        .unwrap();
+    let config = AgentConfig::default();
+    store.ingest(&source("a", 1)).await.unwrap();
+    let prior = store.create("p", input("a"), Actor::Agent).await.unwrap();
+    let extract = store.claim_work("w", &config, 100).await.unwrap().unwrap();
+    store
+        .complete_extraction(&extract, vec![input("a")], 101)
+        .await
+        .unwrap();
+    let lease = store.claim_work("w", &config, 102).await.unwrap().unwrap();
+    let result = store
+        .complete_consolidation(
+            &lease,
+            vec![ConsolidationDecision {
+                candidate: 0,
+                action: DecisionAction::Archive,
+                target: Some(prior.id.clone()),
+                expected_revision: Some(prior.revision),
+                content: None,
+                reason: "Claimed documented without a repository citation".into(),
+            }],
+            103,
+        )
+        .await;
+    assert!(
+        result.is_err(),
+        "only repository review may automatically archive memory"
+    );
+    assert_eq!(
+        store.show("p", &prior.id, None).await.unwrap().status,
+        Status::Active
+    );
+}

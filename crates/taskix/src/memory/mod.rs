@@ -31,7 +31,6 @@ pub async fn run(cli: &Cli, action: &MemoryCommand) -> Result<Value> {
     }
     let project = resolve_project(cli, &location, action).await?;
     let request = make_request(cli, action, project.as_deref())?;
-    let client = IpcClient::new(&location.path, location.service)?;
     let timeout = if matches!(action, MemoryCommand::Ask { .. }) {
         Duration::from_secs(65)
     } else if matches!(action, MemoryCommand::Context { .. }) {
@@ -39,7 +38,11 @@ pub async fn run(cli: &Cli, action: &MemoryCommand) -> Result<Value> {
     } else {
         Duration::from_secs(10)
     };
-    let result = client.call_with_timeout(request.clone(), timeout).await;
+    let result = async {
+        let client = IpcClient::new(&location.path, location.service)?;
+        client.call_with_timeout(request.clone(), timeout).await
+    }
+    .await;
     match result {
         Ok(mut result) => {
             if let MemoryCommand::Receipt { wait_seconds, .. } = action {
@@ -54,7 +57,9 @@ pub async fn run(cli: &Cli, action: &MemoryCommand) -> Result<Value> {
                     && tokio::time::Instant::now() < until
                 {
                     tokio::time::sleep(Duration::from_millis(200)).await;
-                    result = client.call(request.clone()).await?;
+                    result = IpcClient::new(&location.path, location.service)?
+                        .call(request.clone())
+                        .await?;
                 }
             }
             Ok(result)
@@ -138,13 +143,16 @@ async fn doctor(path: &std::path::Path, location: &MemoryLocation) -> Result<Val
     } else {
         json!({"exists":false,"readable":false})
     };
-    let client = IpcClient::new(&location.path, location.service)?;
-    let status = client
-        .call_with_timeout(
-            json!({"op":"status","project":null}),
-            Duration::from_secs(2),
-        )
-        .await;
+    let status = async {
+        let client = IpcClient::new(&location.path, location.service)?;
+        client
+            .call_with_timeout(
+                json!({"op":"status","project":null}),
+                Duration::from_secs(2),
+            )
+            .await
+    }
+    .await;
     Ok(
         json!({"enabled":location.enabled,"online":status.is_ok(),"configuration":configuration,
         "database":database,"service":status.ok(),"task_database_exists":location.task_path.exists()}),
