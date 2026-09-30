@@ -334,7 +334,6 @@ fn ratio(numerator: &Value, denominator: &Value) -> Value {
 }
 
 // Share the plugin's v2 protocol and atomic v1 migration. No source text is stored.
-#[cfg(any(unix, test))]
 pub(crate) async fn append_memory_metric(path: &std::path::Path, event: &Value) -> Result<()> {
     let parent = path
         .parent()
