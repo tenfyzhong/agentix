@@ -87,6 +87,10 @@ fn completions_skip_configuration_and_task_state_and_match_checked_in_files() {
             ] {
                 assert!(script.contains(option), "{shell}: missing {option}");
             }
+            assert!(
+                !script.contains("worker"),
+                "internal worker must not be suggested to users"
+            );
             assert_eq!(
                 script,
                 std::fs::read_to_string(&checked_in).unwrap(),

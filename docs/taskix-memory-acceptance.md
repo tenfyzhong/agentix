@@ -43,6 +43,7 @@ execution is still required to validate filesystem behavior beyond type checks.
 | Windows local TCP exclusivity, concurrent clients, service absence and instance greeting | `agentix-memory/tests/windows_ipc.rs`, shared `ipc.rs` and CLI daemon tests; Windows CI |
 | Discussion and Job capture, immutable revision snapshots, unknown ownership, directory hints, attachment, legacy backfill, v14 migration, individual acknowledgements and restore forks | `agentix-task/tests/memory_sources.rs`, `agentix-core/src/engine/task_board/tests.rs`, `taskix/tests/cli.rs` |
 | Chinese and identifier recall, project isolation, evidence validation, revisions, human edits, supersession, expiry and forget suppression | `agentix-memory/tests/store.rs` |
+| Upgrade either schema 15 layout to schema 16 while preserving existing Jobs, memory source identity and pending receipts, and backfilling event watermarks | `schema_fifteen_*` in `agentix-task/src/persist_tests.rs` |
 | Independent vector recall, generation/revision fences, invalid dimensions/values, partial indexing and query degradation | `tests/store.rs`, `tests/embedding_index.rs`, `tests/providers.rs` in `agentix-memory` |
 | Historical evidence suppression after merge and reopen; discovered-dimension mismatch backoff and continued progress through split batches | `agentix-memory/tests/lifecycle_regressions.rs` |
 | Long host prompts, per-record embedding failure isolation, persisted retry limits, explicit retry and revision/generation reset | `agentix-memory/tests/retrieval_failures.rs` |

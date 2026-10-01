@@ -93,12 +93,15 @@ Directory resolution requires an exact canonical root match for non-Git director
 
 Schema 14 adds transactionally maintained `project_lookup` indexes for canonical roots and Unicode-lowercased document keys. Existing roots are resolved once during migration without rewriting Project IDs, authored names, stored roots, or document paths. If legacy records resolve to the same root, the earliest record retains lookup precedence. Paths unavailable during migration retain their stored identity. Registration and later directory discovery use canonical identities; retargeting a symlink does not move an existing Project to the new target. Upgrade Agentix and Taskix together: older binaries reject schema 14 rather than writing stale indexes.
 
-Schema 15 adds immutable, versioned conversation source snapshots for project
-memory. Source writes share the conversation transaction, including explicit
+Schema 16 adds immutable, versioned conversation source snapshots for project
+memory alongside event retention tables and watermarks. It upgrades both earlier
+schema 15 layouts (event retention on main and memory on the feature branch),
+preserving source identity, pending memory receipts and existing event sequences.
+Source writes share the conversation transaction, including explicit
 discussion attachment. Pending evidence survives draft expiry. Individual receipt
 IDs distinguish events even if a restored database reuses a sequence number.
 Migration does not backfill existing conversations. Upgrade Agentix and Taskix
-together; previous binaries reject schema 15. Memory provider configuration is
+together; previous binaries reject schema 16. Memory provider configuration is
 validated by memory capabilities rather than ordinary board commands. See the
 [memory implementation contract](taskix-memory-design.md) for the remaining
 service and recovery requirements.
@@ -447,6 +450,107 @@ Task-board commands use a consistent layout: overview, each entry description im
 `/projects` and `/sessionboard` are replaced by `/dashboard` and `/board`; `/board` and `/jobs` always use the current attachment. Legacy `/tasks [job-or-project]` and `/task <id>` remain direct shortcuts; the legacy task list is capped at 50 entries. An attached session can claim an unplanned Task or operate its own lease. Start is offered in PLANNING when Plan metadata and dependencies are ready; the service verifies the file at execution time. Done is offered only in EXECUTING. Block/Wait/Fail request a reason; `/cancel` clears pending input. Buttons use existing owner/conversation, generation, and binding-epoch checks plus the Task revision. IM can append human requirements to the Project Inbox; agents create the formal Job and Tasks on intake. IM does not edit Plan bodies.
 
 Agentix incrementally consumes SQLite events during its existing runtime tick. WAITING_USER, BLOCKED, FAILED, and Job pending-review, rejection, and completion notifications go only to the matching bound session's conversation. Events without a matching binding are skipped. Agentix atomically writes notifications and its ingestion cursor to its runtime database before sending. Existing taskix consumer cursors are imported once. Up to 32 independent workers deliver the oldest pending notice per conversation, each with a 20-second deadline. Failed sends retry after exponential delays of 1–256 seconds; interrupted deliveries become available when their 60-second leases expire. A slow conversation does not hold the ingestion cursor or another conversation’s delivery. Delivery is at least once: a crash after IM accepts a send but before its local acknowledgment can duplicate the notice. Acknowledged notices are removed, and replaying their event IDs cannot recreate them. CLI-only usage does not require Agentix to run.
+
+### Event storage maintenance
+
+Taskix owns event retention independently of Agentix. No consumer registration,
+acknowledgement protocol, cron job, or service installation is required. Automatic
+maintenance is enabled by default, retaining 30 days with a 24-hour cycle.
+Successful metadata writes schedule work without awaiting cleanup. Library hosts
+use a background task; the CLI hands work to a detached, short-lived Taskix process
+so command exit does not cancel cleanup. A per-database OS file lock permits only
+one worker and releases automatically on exit or crash. The worker drains its
+backlog without further commands, then exits. An idle database starts its next
+cycle on the next write; there is no continuously running daily timer.
+
+Maintenance uses a separate SQLite connection with zero busy timeout, yielding to
+foreground writers. Each transaction deletes at most 64 expired events through the
+age index and processes at most 2 MiB of legacy JSON per deletion or compaction
+phase. Legacy records are loaded one at a time. One oversized record is allowed to
+make progress, so this is not a hard memory ceiling. A 10 ms elapsed-time budget is
+checked between records, not inside SQLite operations, JSON parsing or disk I/O.
+Expiry takes priority over compaction. The captured migration boundary prevents
+repeated scans of new summaries. Workers pause 10 ms between batches, retry busy
+attempts after a short delay, and yield for one second after each 30 seconds of
+work. Disabled policies stop the worker. Progress commits atomically; restart
+resumes on the next write. Cleanup errors never fail an already committed business
+write. CLI worker failures appear in the database's `.maintenance.log` sibling;
+library hosts use tracing. Later writes retry failed work.
+
+```sh
+# Inspect the policy and progress (read-only).
+taskix event policy --json
+# Optional tuning; defaults need no setup.
+taskix event policy --retain-days 30 --interval-seconds 86400 --json
+# Disable or re-enable automatic work.
+taskix event policy --enabled false --json
+taskix event policy --enabled true --json
+# Preview a full historical compaction, optionally including expiry deletion.
+taskix event maintain --json
+taskix event maintain --prune --retain-days 30 --json
+# Optional manual maintenance and immediate physical space reclamation.
+taskix event maintain --prune --retain-days 30 --apply --vacuum --json
+```
+
+Policies are stored in the Taskix database. Retention accepts 1–36500 days and the
+cycle interval accepts 60–31536000 seconds. Policy changes become eligible on the
+next write. Manual maintenance uses its explicitly supplied retention (default 30)
+and does not change the automatic policy. Both commands apply to the whole database
+and reject `--project`. Preview and policy reads do not reap leases or perform
+cleanup; normal database opening can still migrate the schema.
+
+Retention is based only on event age, strictly before the cutoff. It does not depend
+on Job status or consumers being online. Current Jobs, Tasks, conversations, Plans,
+dependencies and document state remain intact. Consumers offline longer than the
+retention window cannot replay expired history or recover notifications that were
+never staged. Existing durable notification outboxes continue their own retries.
+`event list` reports `pruned_through` and `history_truncated`; the latter conservatively
+indicates that events beyond the requested cursor have been removed anywhere in the
+database, including when filtering by Job. Sequence gaps are valid. Global and
+per-Project receipts remain monotonic even when every event has been pruned.
+
+Schema 16 adds independent event watermarks, a timestamp index and the retention
+policy/progress row. Payload version 1 is a notification summary with
+`schema_version` and `entity_type`:
+
+| Entity | Summary fields |
+| --- | --- |
+| Project | `id`, `name`, `archived_at` |
+| Job | `id`, `title`, `name`, `status`, `review_reason`, `archived_at`, `completed_at`, `cancelled_at`, `pending_review_at` |
+| Task | `id`, `title`, `name`, `status`, `phase`, `reason`, `completed_at` |
+| Inbox | `id`, `status`, `deleted` |
+| Deletion | `id`, `deleted` |
+
+Producers build these summaries directly from typed entities, without serializing
+whole conversations first. Adding a business field does not implicitly add it to
+the event contract: update the summary constructor and contract tests when a
+consumer needs a new field. Each string is limited to 4096 UTF-8 bytes and
+`truncated_fields` identifies shortened values. Unknown legacy identities are
+marked `entity_type: "unknown"`; non-object payloads or invalid nested values are
+marked `unsupported_payload: true` and their unbounded content is omitted. Legacy
+snapshots retain available summary fields through the compatibility projection.
+Event headers keep identity, actor/session, type, revision, time and sequence.
+Canonical Jobs, Tasks and conversations retain their full contents.
+
+Automatic space reclamation uses SQLite incremental auto-vacuum, reclaiming at
+most 256 pages per batch. Workers keep draining when at least 256 free pages
+remain. Passive WAL checkpoints do not wait for readers; a long-lived reader can
+delay physical shrinkage. Incremental vacuum does not repack partially filled
+pages. Manual `--vacuum` remains available for deliberate full compaction.
+
+**First upgrade:** existing databases with auto-vacuum disabled require a one-time
+full SQLite `VACUUM` to enable incremental reclamation. This runs during schema
+initialization, before building the age index, and needs spare disk space and an
+exclusive writer window. It is separate from steady-state write latency. Opening
+any CLI command, including preview/policy reads, can perform this migration; those
+commands do not otherwise perform lifecycle or event cleanup. Upgrade all writers
+together and back up first; older binaries reject schema 16. See
+[SQLite auto-vacuum](https://www.sqlite.org/pragma.html#pragma_auto_vacuum) and
+[Taskix backups](taskix-backup.md). Normal daily cleanup never executes full VACUUM.
+If manual `--vacuum` fails, the preceding maintenance has already committed.
+
+[Retention validation](taskix-event-retention-validation.md) documents the
+reproducible offline-backup benchmark and its measurement boundaries.
 
 ## Validation
 

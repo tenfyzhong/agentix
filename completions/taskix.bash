@@ -97,11 +97,23 @@ _taskix() {
             taskix__subcmd__event,list)
                 cmd="taskix__subcmd__event__subcmd__list"
                 ;;
+            taskix__subcmd__event,maintain)
+                cmd="taskix__subcmd__event__subcmd__maintain"
+                ;;
+            taskix__subcmd__event,policy)
+                cmd="taskix__subcmd__event__subcmd__policy"
+                ;;
             taskix__subcmd__event__subcmd__help,help)
                 cmd="taskix__subcmd__event__subcmd__help__subcmd__help"
                 ;;
             taskix__subcmd__event__subcmd__help,list)
                 cmd="taskix__subcmd__event__subcmd__help__subcmd__list"
+                ;;
+            taskix__subcmd__event__subcmd__help,maintain)
+                cmd="taskix__subcmd__event__subcmd__help__subcmd__maintain"
+                ;;
+            taskix__subcmd__event__subcmd__help,policy)
+                cmd="taskix__subcmd__event__subcmd__help__subcmd__policy"
                 ;;
             taskix__subcmd__help,completions)
                 cmd="taskix__subcmd__help__subcmd__completions"
@@ -165,6 +177,12 @@ _taskix() {
                 ;;
             taskix__subcmd__help__subcmd__event,list)
                 cmd="taskix__subcmd__help__subcmd__event__subcmd__list"
+                ;;
+            taskix__subcmd__help__subcmd__event,maintain)
+                cmd="taskix__subcmd__help__subcmd__event__subcmd__maintain"
+                ;;
+            taskix__subcmd__help__subcmd__event,policy)
+                cmd="taskix__subcmd__help__subcmd__event__subcmd__policy"
                 ;;
             taskix__subcmd__help__subcmd__hook,heartbeat)
                 cmd="taskix__subcmd__help__subcmd__hook__subcmd__heartbeat"
@@ -998,7 +1016,7 @@ _taskix() {
 
     case "${cmd}" in
         taskix)
-            opts="-h -V --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help --version memory conversation inbox completions init obsidian doctor sync project job task plan event context routing hook help"
+            opts="-h -V --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help --version memory conversation inbox completions init obsidian doctor sync project job task plan context routing hook event help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 1 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1584,7 +1602,7 @@ _taskix() {
             return 0
             ;;
         taskix__subcmd__event)
-            opts="-h --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help list help"
+            opts="-h --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help policy maintain list help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1645,7 +1663,7 @@ _taskix() {
             return 0
             ;;
         taskix__subcmd__event__subcmd__help)
-            opts="list help"
+            opts="policy maintain list help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1673,6 +1691,34 @@ _taskix() {
             return 0
             ;;
         taskix__subcmd__event__subcmd__help__subcmd__list)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        taskix__subcmd__event__subcmd__help__subcmd__maintain)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        taskix__subcmd__event__subcmd__help__subcmd__policy)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -1759,8 +1805,146 @@ _taskix() {
             COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
             return 0
             ;;
+        taskix__subcmd__event__subcmd__maintain)
+            opts="-h --retain-days --prune --apply --vacuum --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --retain-days)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --config)
+                    local oldifs
+                    if [ -n "${IFS+x}" ]; then
+                        oldifs="$IFS"
+                    fi
+                    IFS=$'\n'
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    if [ -n "${oldifs+x}" ]; then
+                        IFS="$oldifs"
+                    fi
+                    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+                        compopt -o filenames
+                    fi
+                    return 0
+                    ;;
+                --project)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --actor)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --executor)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --session)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --delegated-by)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --lease-token)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --expect-revision)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --idempotency-key)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        taskix__subcmd__event__subcmd__policy)
+            opts="-h --enabled --retain-days --interval-seconds --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --enabled)
+                    COMPREPLY=($(compgen -W "true false" -- "${cur}"))
+                    return 0
+                    ;;
+                --retain-days)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --interval-seconds)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --config)
+                    local oldifs
+                    if [ -n "${IFS+x}" ]; then
+                        oldifs="$IFS"
+                    fi
+                    IFS=$'\n'
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    if [ -n "${oldifs+x}" ]; then
+                        IFS="$oldifs"
+                    fi
+                    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+                        compopt -o filenames
+                    fi
+                    return 0
+                    ;;
+                --project)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --actor)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --executor)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --session)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --delegated-by)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --lease-token)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --expect-revision)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --idempotency-key)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
         taskix__subcmd__help)
-            opts="memory conversation inbox completions init obsidian doctor sync project job task plan event context routing hook help"
+            opts="memory conversation inbox completions init obsidian doctor sync project job task plan context routing hook event help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1872,7 +2056,7 @@ _taskix() {
             return 0
             ;;
         taskix__subcmd__help__subcmd__event)
-            opts="list"
+            opts="policy maintain list"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -1886,6 +2070,34 @@ _taskix() {
             return 0
             ;;
         taskix__subcmd__help__subcmd__event__subcmd__list)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        taskix__subcmd__help__subcmd__event__subcmd__maintain)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        taskix__subcmd__help__subcmd__event__subcmd__policy)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )

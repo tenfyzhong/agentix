@@ -266,8 +266,12 @@ impl Store {
     }
 
     pub(crate) async fn project_receipt(&self, project: &crate::Project) -> Result<(i64, i64)> {
-        let sequence: i64=sqlx::query_scalar("SELECT COALESCE(MAX(sequence),0) FROM task_events WHERE json_extract(data,'$.project_id')=?")
-            .bind(&project.id).fetch_one(&self.pool).await?;
+        let sequence: i64 = sqlx::query_scalar(
+            "SELECT COALESCE((SELECT sequence FROM event_watermarks WHERE scope=?),0)",
+        )
+        .bind(&project.id)
+        .fetch_one(&self.pool)
+        .await?;
         let jobs: Option<i64> = sqlx::query_scalar(
             "SELECT MAX(json_extract(data,'$.updated_at')) FROM jobs WHERE project_id=?",
         )
