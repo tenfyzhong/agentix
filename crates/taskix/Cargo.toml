@@ -23,6 +23,9 @@ tokio.workspace = true
 toml.workspace = true
 time = { workspace = true, features = ["formatting", "parsing"] }
 
+[target.'cfg(unix)'.dependencies]
+nix = { version = "0.31", default-features = false, features = ["user"] }
+
 [dev-dependencies]
 serde_yaml.workspace = true
 

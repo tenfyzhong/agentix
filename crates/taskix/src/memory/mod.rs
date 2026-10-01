@@ -6,9 +6,15 @@ use anyhow::{Context, Result, bail, ensure};
 use serde_json::{Value, json};
 use std::{path::PathBuf, time::Duration};
 mod daemon;
+#[cfg(unix)]
+mod login_environment;
 mod triage;
 
 pub async fn run(cli: &Cli, action: &MemoryCommand) -> Result<Value> {
+    #[cfg(unix)]
+    if matches!(action, MemoryCommand::Serve) {
+        login_environment::reexec().await?;
+    }
     let path = cli.config_path()?;
     let location = MemoryLocation::load(&path)?;
     if !location.enabled {

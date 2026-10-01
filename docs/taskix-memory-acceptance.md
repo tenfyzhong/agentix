@@ -39,6 +39,7 @@ execution is still required to validate filesystem behavior beyond type checks.
 
 | Contract | Verification |
 | --- | --- |
+| Unix service login credentials, shell unset, startup noise, malformed/missing framing, failed lookup, three-second timeout, one lookup across reload and SIGTERM shutdown of the original PID | `taskix/tests/support/memory_login.rs`; parser byte-preservation tests in `taskix/src/memory/login_environment.rs`. CLI fixtures use isolated mock shells; Windows retains its launcher environment |
 | Optional reasoning configuration, invalid values and Responses/Chat Completions field mapping | `agentix-memory/tests/providers.rs` |
 | Windows local TCP exclusivity, concurrent clients, service absence and instance greeting | `agentix-memory/tests/windows_ipc.rs`, shared `ipc.rs` and CLI daemon tests; Windows CI |
 | Discussion and Job capture, immutable revision snapshots, unknown ownership, directory hints, attachment, legacy backfill, v14 migration, individual acknowledgements and restore forks | `agentix-task/tests/memory_sources.rs`, `agentix-core/src/engine/task_board/tests.rs`, `taskix/tests/cli.rs` |
