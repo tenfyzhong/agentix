@@ -47,10 +47,10 @@ complete -c taskix -n "__fish_taskix_needs_command" -f -a "project" -d 'Register
 complete -c taskix -n "__fish_taskix_needs_command" -f -a "job" -d 'Manage Jobs that group Tasks for an independently deliverable requirement'
 complete -c taskix -n "__fish_taskix_needs_command" -f -a "task" -d 'Manage Task dependencies, ownership leases, and execution status'
 complete -c taskix -n "__fish_taskix_needs_command" -f -a "plan" -d 'Publish, revise, or inspect the execution Plan in a Task note'
-complete -c taskix -n "__fish_taskix_needs_command" -f -a "event" -d 'Inspect the ordered audit log of task coordination events'
 complete -c taskix -n "__fish_taskix_needs_command" -f -a "context" -d 'Show Task, Job, lease, Plan, and document context for a session or explicit IDs'
 complete -c taskix -n "__fish_taskix_needs_command" -f -a "routing" -d 'Read bounded routing facts for host-side classifiers'
 complete -c taskix -n "__fish_taskix_needs_command" -f -a "hook" -d 'Handle agent session lifecycle events and maintain Task leases'
+complete -c taskix -n "__fish_taskix_needs_command" -f -a "event" -d 'Inspect the ordered audit log of task coordination events'
 complete -c taskix -n "__fish_taskix_needs_command" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
 complete -c taskix -n "__fish_taskix_using_subcommand conversation; and not __fish_seen_subcommand_from list show attach help" -l config -r -F
 complete -c taskix -n "__fish_taskix_using_subcommand conversation; and not __fish_seen_subcommand_from list show attach help" -l project -r
@@ -942,35 +942,6 @@ complete -c taskix -n "__fish_taskix_using_subcommand plan; and __fish_seen_subc
 complete -c taskix -n "__fish_taskix_using_subcommand plan; and __fish_seen_subcommand_from help" -f -a "revise" -d 'Replace the Plan body in the same Task note while holding its lease'
 complete -c taskix -n "__fish_taskix_using_subcommand plan; and __fish_seen_subcommand_from help" -f -a "show" -d 'Show the current Plan\'s metadata and absolute file path for a Task'
 complete -c taskix -n "__fish_taskix_using_subcommand plan; and __fish_seen_subcommand_from help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
-complete -c taskix -n "__fish_taskix_using_subcommand event; and not __fish_seen_subcommand_from list help" -l config -r -F
-complete -c taskix -n "__fish_taskix_using_subcommand event; and not __fish_seen_subcommand_from list help" -l project -r
-complete -c taskix -n "__fish_taskix_using_subcommand event; and not __fish_seen_subcommand_from list help" -l actor -r
-complete -c taskix -n "__fish_taskix_using_subcommand event; and not __fish_seen_subcommand_from list help" -l executor -r
-complete -c taskix -n "__fish_taskix_using_subcommand event; and not __fish_seen_subcommand_from list help" -l session -r
-complete -c taskix -n "__fish_taskix_using_subcommand event; and not __fish_seen_subcommand_from list help" -l delegated-by -r
-complete -c taskix -n "__fish_taskix_using_subcommand event; and not __fish_seen_subcommand_from list help" -l lease-token -r
-complete -c taskix -n "__fish_taskix_using_subcommand event; and not __fish_seen_subcommand_from list help" -l expect-revision -r
-complete -c taskix -n "__fish_taskix_using_subcommand event; and not __fish_seen_subcommand_from list help" -l idempotency-key -r
-complete -c taskix -n "__fish_taskix_using_subcommand event; and not __fish_seen_subcommand_from list help" -l json
-complete -c taskix -n "__fish_taskix_using_subcommand event; and not __fish_seen_subcommand_from list help" -s h -l help -d 'Print help'
-complete -c taskix -n "__fish_taskix_using_subcommand event; and not __fish_seen_subcommand_from list help" -f -a "list" -d 'List events after a sequence cursor, optionally filtered by Job and limited in count'
-complete -c taskix -n "__fish_taskix_using_subcommand event; and not __fish_seen_subcommand_from list help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
-complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from list" -l job -r
-complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from list" -l after -r
-complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from list" -l limit -r
-complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from list" -l config -r -F
-complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from list" -l project -r
-complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from list" -l actor -r
-complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from list" -l executor -r
-complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from list" -l session -r
-complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from list" -l delegated-by -r
-complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from list" -l lease-token -r
-complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from list" -l expect-revision -r
-complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from list" -l idempotency-key -r
-complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from list" -l json
-complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from list" -s h -l help -d 'Print help'
-complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from help" -f -a "list" -d 'List events after a sequence cursor, optionally filtered by Job and limited in count'
-complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
 complete -c taskix -n "__fish_taskix_using_subcommand context" -l task -r
 complete -c taskix -n "__fish_taskix_using_subcommand context" -l job -r
 complete -c taskix -n "__fish_taskix_using_subcommand context" -l config -r -F
@@ -1146,22 +1117,85 @@ complete -c taskix -n "__fish_taskix_using_subcommand hook; and __fish_seen_subc
 complete -c taskix -n "__fish_taskix_using_subcommand hook; and __fish_seen_subcommand_from help" -f -a "interrupt" -d 'Release an interrupted session\'s Task leases while preserving its Plans'
 complete -c taskix -n "__fish_taskix_using_subcommand hook; and __fish_seen_subcommand_from help" -f -a "heartbeat" -d 'Renew all active Task leases owned by the session'
 complete -c taskix -n "__fish_taskix_using_subcommand hook; and __fish_seen_subcommand_from help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from conversation inbox completions init obsidian doctor sync project job task plan event context routing hook help" -f -a "conversation" -d 'Inspect and attach session discussion turns'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from conversation inbox completions init obsidian doctor sync project job task plan event context routing hook help" -f -a "inbox" -d 'Submit, inspect, claim, or cancel human requirements in a Project Inbox'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from conversation inbox completions init obsidian doctor sync project job task plan event context routing hook help" -f -a "completions" -d 'Print a shell completion script without loading task configuration'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from conversation inbox completions init obsidian doctor sync project job task plan event context routing hook help" -f -a "init" -d 'Create configuration, initialize `SQLite` storage, and generate task documents'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from conversation inbox completions init obsidian doctor sync project job task plan event context routing hook help" -f -a "obsidian" -d 'Install and configure Obsidian task views in the configured vault'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from conversation inbox completions init obsidian doctor sync project job task plan event context routing hook help" -f -a "doctor" -d 'Check for missing Plan files and documents that are behind the event log'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from conversation inbox completions init obsidian doctor sync project job task plan event context routing hook help" -f -a "sync" -d 'Regenerate task documents from the current database state'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from conversation inbox completions init obsidian doctor sync project job task plan event context routing hook help" -f -a "project" -d 'Register, inspect, archive, or delete Projects shared across worktrees'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from conversation inbox completions init obsidian doctor sync project job task plan event context routing hook help" -f -a "job" -d 'Manage Jobs that group Tasks for an independently deliverable requirement'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from conversation inbox completions init obsidian doctor sync project job task plan event context routing hook help" -f -a "task" -d 'Manage Task dependencies, ownership leases, and execution status'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from conversation inbox completions init obsidian doctor sync project job task plan event context routing hook help" -f -a "plan" -d 'Publish, revise, or inspect the execution Plan in a Task note'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from conversation inbox completions init obsidian doctor sync project job task plan event context routing hook help" -f -a "event" -d 'Inspect the ordered audit log of task coordination events'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from conversation inbox completions init obsidian doctor sync project job task plan event context routing hook help" -f -a "context" -d 'Show Task, Job, lease, Plan, and document context for a session or explicit IDs'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from conversation inbox completions init obsidian doctor sync project job task plan event context routing hook help" -f -a "routing" -d 'Read bounded routing facts for host-side classifiers'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from conversation inbox completions init obsidian doctor sync project job task plan event context routing hook help" -f -a "hook" -d 'Handle agent session lifecycle events and maintain Task leases'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from conversation inbox completions init obsidian doctor sync project job task plan event context routing hook help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c taskix -n "__fish_taskix_using_subcommand event; and not __fish_seen_subcommand_from policy maintain list help" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand event; and not __fish_seen_subcommand_from policy maintain list help" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand event; and not __fish_seen_subcommand_from policy maintain list help" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand event; and not __fish_seen_subcommand_from policy maintain list help" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand event; and not __fish_seen_subcommand_from policy maintain list help" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand event; and not __fish_seen_subcommand_from policy maintain list help" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand event; and not __fish_seen_subcommand_from policy maintain list help" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand event; and not __fish_seen_subcommand_from policy maintain list help" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand event; and not __fish_seen_subcommand_from policy maintain list help" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand event; and not __fish_seen_subcommand_from policy maintain list help" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand event; and not __fish_seen_subcommand_from policy maintain list help" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand event; and not __fish_seen_subcommand_from policy maintain list help" -f -a "policy" -d 'Inspect or configure automatic Taskix-owned event retention'
+complete -c taskix -n "__fish_taskix_using_subcommand event; and not __fish_seen_subcommand_from policy maintain list help" -f -a "maintain" -d 'Preview historical payload compaction and optional age-based pruning'
+complete -c taskix -n "__fish_taskix_using_subcommand event; and not __fish_seen_subcommand_from policy maintain list help" -f -a "list" -d 'List events after a sequence cursor, optionally filtered by Job and limited in count'
+complete -c taskix -n "__fish_taskix_using_subcommand event; and not __fish_seen_subcommand_from policy maintain list help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from policy" -l enabled -r -f -a "true\t''
+false\t''"
+complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from policy" -l retain-days -r
+complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from policy" -l interval-seconds -r
+complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from policy" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from policy" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from policy" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from policy" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from policy" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from policy" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from policy" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from policy" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from policy" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from policy" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from policy" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from maintain" -l retain-days -r
+complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from maintain" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from maintain" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from maintain" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from maintain" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from maintain" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from maintain" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from maintain" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from maintain" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from maintain" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from maintain" -l prune -d 'Also delete events older than the retention period'
+complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from maintain" -l apply -d 'Apply the previewed policy instead of reporting candidates only'
+complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from maintain" -l vacuum -d 'Reclaim freed database pages after applying maintenance'
+complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from maintain" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from maintain" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from list" -l job -r
+complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from list" -l after -r
+complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from list" -l limit -r
+complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from list" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from list" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from list" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from list" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from list" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from list" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from list" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from list" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from list" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from list" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from list" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from help" -f -a "policy" -d 'Inspect or configure automatic Taskix-owned event retention'
+complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from help" -f -a "maintain" -d 'Preview historical payload compaction and optional age-based pruning'
+complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from help" -f -a "list" -d 'List events after a sequence cursor, optionally filtered by Job and limited in count'
+complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from conversation inbox completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "conversation" -d 'Inspect and attach session discussion turns'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from conversation inbox completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "inbox" -d 'Submit, inspect, claim, or cancel human requirements in a Project Inbox'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from conversation inbox completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "completions" -d 'Print a shell completion script without loading task configuration'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from conversation inbox completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "init" -d 'Create configuration, initialize `SQLite` storage, and generate task documents'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from conversation inbox completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "obsidian" -d 'Install and configure Obsidian task views in the configured vault'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from conversation inbox completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "doctor" -d 'Check for missing Plan files and documents that are behind the event log'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from conversation inbox completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "sync" -d 'Regenerate task documents from the current database state'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from conversation inbox completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "project" -d 'Register, inspect, archive, or delete Projects shared across worktrees'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from conversation inbox completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "job" -d 'Manage Jobs that group Tasks for an independently deliverable requirement'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from conversation inbox completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "task" -d 'Manage Task dependencies, ownership leases, and execution status'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from conversation inbox completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "plan" -d 'Publish, revise, or inspect the execution Plan in a Task note'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from conversation inbox completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "context" -d 'Show Task, Job, lease, Plan, and document context for a session or explicit IDs'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from conversation inbox completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "routing" -d 'Read bounded routing facts for host-side classifiers'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from conversation inbox completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "hook" -d 'Handle agent session lifecycle events and maintain Task leases'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from conversation inbox completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "event" -d 'Inspect the ordered audit log of task coordination events'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from conversation inbox completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from conversation" -f -a "list" -d 'Read pending turns in source order, including their selection revision'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from conversation" -f -a "show" -d 'Read a turn\'s original messages and current binding'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from conversation" -f -a "attach" -d 'Attach selected discussion turns to an ACTIVE session Job'
@@ -1214,7 +1248,6 @@ complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subc
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from plan" -f -a "create" -d 'Publish a Plan from --body or --file while holding the Task lease'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from plan" -f -a "revise" -d 'Replace the Plan body in the same Task note while holding its lease'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from plan" -f -a "show" -d 'Show the current Plan\'s metadata and absolute file path for a Task'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from event" -f -a "list" -d 'List events after a sequence cursor, optionally filtered by Job and limited in count'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from routing" -f -a "metrics" -d 'Inspect optional Jev statistics without loading the task database'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from routing" -f -a "snapshot" -d 'Refresh leases and Inbox edits and return bounded prompt routing context'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from routing" -f -a "candidates" -d 'Read bounded ACTIVE and `PENDING_REVIEW` Jobs and their Tasks by exact Project ID'
@@ -1225,3 +1258,6 @@ complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subc
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from hook" -f -a "session-end" -d 'Record session shutdown and release its active Task leases'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from hook" -f -a "interrupt" -d 'Release an interrupted session\'s Task leases while preserving its Plans'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from hook" -f -a "heartbeat" -d 'Renew all active Task leases owned by the session'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from event" -f -a "policy" -d 'Inspect or configure automatic Taskix-owned event retention'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from event" -f -a "maintain" -d 'Preview historical payload compaction and optional age-based pruning'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from event" -f -a "list" -d 'List events after a sequence cursor, optionally filtered by Job and limited in count'

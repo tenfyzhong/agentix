@@ -1,4 +1,8 @@
-use std::{path::Path, sync::Arc, time::Duration};
+use std::{
+    path::{Path, PathBuf},
+    sync::{Arc, atomic::AtomicBool},
+    time::Duration,
+};
 
 use anyhow::{Context, Result, ensure};
 use serde::{Serialize, de::DeserializeOwned};
@@ -21,6 +25,11 @@ const JOB_EVENTS_QUERY: &str = "SELECT sequence,data FROM task_events WHERE job_
 pub struct Store {
     pub(crate) pool: SqlitePool,
     clock: Arc<dyn Fn() -> i64 + Send + Sync>,
+    pub(crate) maintenance_pool: SqlitePool,
+    pub(crate) database_path: PathBuf,
+    pub(crate) background_enabled: Arc<AtomicBool>,
+    pub(crate) background_running: Arc<AtomicBool>,
+    pub(crate) wrote: Arc<AtomicBool>,
 }
 
 impl Store {
@@ -50,8 +59,39 @@ impl Store {
                     .busy_timeout(Duration::from_secs(10)),
             )
             .await?;
-        let store = Self { pool, clock };
-        store.migrate().await?;
+        let maintenance_pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .acquire_timeout(Duration::from_millis(100))
+            .connect_lazy_with(
+                SqliteConnectOptions::new()
+                    .filename(path)
+                    .foreign_keys(true)
+                    .busy_timeout(Duration::ZERO),
+            );
+        let mut store = Self {
+            pool,
+            clock,
+            maintenance_pool,
+            database_path: std::fs::canonicalize(path)?,
+            background_enabled: Arc::new(AtomicBool::new(true)),
+            background_running: Arc::new(AtomicBool::new(false)),
+            wrote: Arc::new(AtomicBool::new(false)),
+        };
+        if store.migrate().await? {
+            // Reopen connections after VACUUM changes the file format; old connections
+            // may retain their pre-conversion auto-vacuum setting.
+            store.pool.close().await;
+            store.pool = SqlitePoolOptions::new()
+                .max_connections(4)
+                .connect_with(
+                    SqliteConnectOptions::new()
+                        .filename(path)
+                        .foreign_keys(true)
+                        .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+                        .busy_timeout(Duration::from_secs(10)),
+                )
+                .await?;
+        }
         Ok(store)
     }
 
@@ -60,7 +100,30 @@ impl Store {
         (self.clock)()
     }
 
-    async fn migrate(&self) -> Result<()> {
+    async fn migrate(&self) -> Result<bool> {
+        let current: (i64, i64, i64) = sqlx::query_as("SELECT (SELECT application_id FROM pragma_application_id), (SELECT user_version FROM pragma_user_version), (SELECT auto_vacuum FROM pragma_auto_vacuum)")
+            .fetch_one(&self.pool).await?;
+        if current == (0x4158_544b, 15, 2) {
+            return Ok(false);
+        }
+        if current.2 != 2 {
+            let tables: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%'",
+            )
+            .fetch_one(&self.pool)
+            .await?;
+            ensure!(
+                current.0 == 0x4158_544b || (current.0 == 0 && tables == 0),
+                "invalid: task database must be a dedicated taskix database"
+            );
+            ensure!(
+                current.1 <= 15,
+                "unsupported task database schema version {}",
+                current.1
+            );
+            // Convert before building the JSON age index, avoiding its second rebuild in VACUUM.
+            self.enable_incremental_vacuum().await?;
+        }
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         let application_id: i64 = sqlx::query_scalar("PRAGMA application_id")
             .fetch_one(&mut *tx)
@@ -77,7 +140,7 @@ impl Store {
             .fetch_one(&mut *tx)
             .await?;
         ensure!(
-            version <= 14,
+            version <= 15,
             "unsupported task database schema version {version}"
         );
         sqlx::raw_sql(include_str!("schema.sql"))
@@ -127,8 +190,11 @@ impl Store {
         if version < 14 {
             crate::project_lookup::migrate(&mut tx).await?;
         }
+        if version < 15 {
+            crate::event_maintenance::migrate(&mut tx).await?;
+        }
         tx.commit().await?;
-        Ok(())
+        Ok(true)
     }
 
     pub async fn snapshot(&self) -> Result<Snapshot> {
@@ -338,6 +404,7 @@ impl Store {
                 .await?;
         }
         tx.commit().await?;
+        self.schedule_event_maintenance();
         Ok(outcome)
     }
 
@@ -421,11 +488,11 @@ impl Store {
     }
 
     pub async fn latest_sequence(&self) -> Result<i64> {
-        Ok(
-            sqlx::query_scalar("SELECT COALESCE(MAX(sequence),0) FROM task_events")
-                .fetch_one(&self.pool)
-                .await?,
+        Ok(sqlx::query_scalar(
+            "SELECT COALESCE((SELECT sequence FROM event_watermarks WHERE scope=''),0)",
         )
+        .fetch_one(&self.pool)
+        .await?)
     }
 
     pub async fn metadata(&self, key: &str) -> Result<Option<Value>> {
@@ -822,7 +889,7 @@ async fn persist(
             TaskEvent {
                 project_id: Some(project.id.clone()),
                 revision: project.revision,
-                payload: serde_json::to_value(project)?,
+                payload: crate::event_payload::project(project),
                 ..event(command, options, now)
             },
         )
@@ -866,7 +933,7 @@ async fn persist(
                     .session_ref
                     .clone()
                     .or_else(|| related.and_then(|t| t.last_session.clone())),
-                payload: serde_json::to_value(job)?,
+                payload: crate::event_payload::job(job),
                 ..event(event_type, options, now)
             },
         )
@@ -901,7 +968,7 @@ async fn persist(
                     .delegated_by
                     .clone()
                     .or_else(|| options.delegated_by.clone()),
-                payload: serde_json::to_value(task)?,
+                payload: crate::event_payload::task(task),
                 ..event(&event_type, options, now)
             },
         )
@@ -957,7 +1024,7 @@ async fn persist(
                 project_id: Some(entry.project_id.clone()),
                 job_id: entry.job_id.clone(),
                 revision: entry.revision,
-                payload: serde_json::to_value(entry)?,
+                payload: crate::event_payload::inbox(entry),
                 ..event(command, options, now)
             },
         )
@@ -1013,7 +1080,8 @@ pub(crate) fn event(command: &str, options: &WriteOptions, now: i64) -> TaskEven
     }
 }
 
-pub(crate) async fn append_event(conn: &mut SqliteConnection, event: TaskEvent) -> Result<()> {
+pub(crate) async fn append_event(conn: &mut SqliteConnection, mut event: TaskEvent) -> Result<()> {
+    event.payload = crate::event_maintenance::compact_payload(&event.payload);
     sqlx::query("INSERT INTO task_events(event_id,job_id,data) VALUES (?,?,?)")
         .bind(&event.event_id)
         .bind(&event.job_id)
@@ -1024,11 +1092,11 @@ pub(crate) async fn append_event(conn: &mut SqliteConnection, event: TaskEvent) 
 }
 
 async fn max_sequence(conn: &mut SqliteConnection) -> Result<i64> {
-    Ok(
-        sqlx::query_scalar("SELECT COALESCE(MAX(sequence),0) FROM task_events")
-            .fetch_one(conn)
-            .await?,
+    Ok(sqlx::query_scalar(
+        "SELECT COALESCE((SELECT sequence FROM event_watermarks WHERE scope=''),0)",
     )
+    .fetch_one(conn)
+    .await?)
 }
 
 pub(crate) fn hash_bytes(bytes: &[u8]) -> String {

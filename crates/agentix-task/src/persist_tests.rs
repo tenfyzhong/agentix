@@ -127,3 +127,44 @@ async fn indexed_changes_keep_event_order_and_latest_session_ties() {
         assert_eq!(events[1].session_ref.as_deref(), explicit);
     }
 }
+
+#[tokio::test]
+async fn events_do_not_duplicate_job_bodies_and_keep_notification_fields() {
+    let (_dir, store, state) = fixture().await;
+    let job = &state.jobs[0];
+    store.execute(json!({"command":"job.update","job":job.id,"prompt":"large prompt".repeat(1000),"title":"Notice title"}), WriteOptions::default()).await.unwrap();
+    let events = store.events(Some(&job.id), 0, 100).await.unwrap();
+    let event = events.last().unwrap();
+    assert_eq!(event.payload["title"], "Notice title");
+    assert!(
+        event.payload.get("prompt").is_none(),
+        "events must not duplicate authored bodies"
+    );
+    assert!(event.payload.get("conversation").is_none());
+    assert!(serde_json::to_vec(event).unwrap().len() < 2048);
+    assert_eq!(store.snapshot().await.unwrap().jobs[0].prompt.len(), 12000);
+}
+
+#[tokio::test]
+async fn deleting_retained_events_does_not_regress_global_or_project_receipts() {
+    let (_dir, store, state) = fixture().await;
+    let latest = store.latest_sequence().await.unwrap();
+    let receipt = store.project_receipt(&state.projects[0]).await.unwrap();
+    sqlx::query("DELETE FROM task_events")
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    assert_eq!(store.latest_sequence().await.unwrap(), latest);
+    assert_eq!(
+        store.project_receipt(&state.projects[0]).await.unwrap(),
+        receipt
+    );
+    let outcome = store
+        .execute(
+            json!({"command":"job.update","job":state.jobs[0].id,"title":"Later"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    assert!(outcome.sequence > latest);
+}

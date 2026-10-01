@@ -114,7 +114,33 @@ CREATE TABLE IF NOT EXISTS project_lookup (
 );
 CREATE INDEX IF NOT EXISTS project_lookup_by_root ON project_lookup(canonical_root);
 CREATE INDEX IF NOT EXISTS project_lookup_by_key ON project_lookup(folded_key);
-PRAGMA user_version = 14;
+CREATE TABLE IF NOT EXISTS event_watermarks (
+    scope TEXT PRIMARY KEY,
+    sequence INTEGER NOT NULL CHECK(sequence >= 0)
+);
+CREATE INDEX IF NOT EXISTS events_by_age ON task_events(json_extract(data,'$.occurred_at'),sequence);
+CREATE TABLE IF NOT EXISTS event_retention (
+    id INTEGER PRIMARY KEY CHECK(id=1),
+    enabled INTEGER NOT NULL DEFAULT 1,
+    retain_days INTEGER NOT NULL DEFAULT 30,
+    interval_seconds INTEGER NOT NULL DEFAULT 86400,
+    next_run_at INTEGER NOT NULL DEFAULT 0,
+    compact_after INTEGER NOT NULL DEFAULT 0,
+    compact_through INTEGER NOT NULL DEFAULT 0,
+    pruned_through INTEGER NOT NULL DEFAULT 0,
+    runs INTEGER NOT NULL DEFAULT 0
+);
+INSERT OR IGNORE INTO event_retention(id,compact_through)
+    VALUES (1,COALESCE((SELECT MAX(sequence) FROM task_events),0));
+CREATE TRIGGER IF NOT EXISTS event_watermark_insert AFTER INSERT ON task_events BEGIN
+    INSERT INTO event_watermarks(scope,sequence) VALUES ('',NEW.sequence)
+        ON CONFLICT(scope) DO UPDATE SET sequence=MAX(sequence,excluded.sequence);
+    INSERT INTO event_watermarks(scope,sequence)
+        SELECT json_extract(NEW.data,'$.project_id'),NEW.sequence
+        WHERE json_extract(NEW.data,'$.project_id') IS NOT NULL
+        ON CONFLICT(scope) DO UPDATE SET sequence=MAX(sequence,excluded.sequence);
+END;
+PRAGMA user_version = 15;
 PRAGMA application_id = 0x4158544b;
 CREATE INDEX IF NOT EXISTS jobs_by_followup_session ON jobs(json_extract(data, '$.followup_session_id'));
 CREATE INDEX IF NOT EXISTS inbox_by_lease_session ON inbox_entries(json_extract(data, '$.lease.session_ref'));

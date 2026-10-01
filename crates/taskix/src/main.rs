@@ -451,8 +451,43 @@ enum PlanCommand {
     /// Show the current Plan's metadata and absolute file path for a Task.
     Show { task: String },
 }
+#[derive(Args)]
+struct EventMaintenanceArgs {
+    #[arg(long, default_value_t = 30, value_parser = clap::value_parser!(i64).range(1..=36500))]
+    retain_days: i64,
+    /// Also delete events older than the retention period.
+    #[arg(long)]
+    prune: bool,
+    /// Apply the previewed policy instead of reporting candidates only.
+    #[arg(long)]
+    apply: bool,
+    /// Reclaim freed database pages after applying maintenance.
+    #[arg(long, requires = "apply")]
+    vacuum: bool,
+}
+
+#[derive(Args)]
+struct EventPolicyArgs {
+    #[arg(long)]
+    enabled: Option<bool>,
+    #[arg(long, value_parser = clap::value_parser!(i64).range(1..=36500))]
+    retain_days: Option<i64>,
+    #[arg(long, value_parser = clap::value_parser!(i64).range(60..=31_536_000))]
+    interval_seconds: Option<i64>,
+}
+
 #[derive(Subcommand)]
 enum EventCommand {
+    /// Drain pending maintenance in a detached Taskix process.
+    #[command(hide = true)]
+    Worker {
+        #[arg(long)]
+        database: PathBuf,
+    },
+    /// Inspect or configure automatic Taskix-owned event retention.
+    Policy(EventPolicyArgs),
+    /// Preview historical payload compaction and optional age-based pruning.
+    Maintain(EventMaintenanceArgs),
     /// List events after a sequence cursor, optionally filtered by Job and limited in count.
     List {
         #[arg(long)]
@@ -484,13 +519,29 @@ enum HookCommand {
     Heartbeat,
 }
 
+fn completion_command() -> clap::Command {
+    // clap_complete includes hidden subcommands in suggestions; expose only the public event API.
+    Cli::command().mut_subcommand("event", |event| {
+        clap::Command::new("event")
+            .about(event.get_about().cloned().unwrap_or_default())
+            .subcommand_required(true)
+            .arg_required_else_help(true)
+            .subcommands(
+                event
+                    .get_subcommands()
+                    .filter(|command| !command.is_hide_set())
+                    .cloned(),
+            )
+    })
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
     let cli = Cli::parse();
     if let Command::Completions { shell } = &cli.command {
         clap_complete::generate(
             *shell,
-            &mut Cli::command(),
+            &mut completion_command(),
             "taskix",
             &mut std::io::stdout(),
         );
@@ -598,6 +649,15 @@ async fn setup_obsidian(
 }
 
 async fn run(cli: &Cli) -> Result<Value> {
+    if let Command::Event {
+        action: EventCommand::Worker { database },
+    } = &cli.command
+    {
+        let store = agentix_task::Store::open(database).await?;
+        store.set_background_maintenance(false);
+        store.run_event_maintenance().await?;
+        return Ok(response(json!({"maintained":true})));
+    }
     if let Command::Routing {
         action: RoutingCommand::Metrics { action },
     } = &cli.command
@@ -632,6 +692,52 @@ async fn run_task_command(cli: &Cli) -> Result<Value> {
         ));
     }
     let service = Service::open(config).await?;
+    service.store().set_background_maintenance(false);
+    let result = dispatch_task_command(cli, &service).await;
+    match service.store().maintenance_requested().await {
+        Ok(true) => {
+            if let Err(error) = spawn_maintenance(&service) {
+                eprintln!("taskix: maintenance launch will retry: {error}");
+            }
+        }
+        Err(error) => eprintln!("taskix: maintenance check will retry: {error}"),
+        Ok(false) => {}
+    }
+    result
+}
+
+fn spawn_maintenance(service: &Service) -> Result<()> {
+    use std::process::{Command, Stdio};
+    if service.store().try_maintenance_lock()?.is_none() {
+        return Ok(());
+    }
+    let database = std::fs::canonicalize(&service.config().storage.path)?;
+    let log = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(database.with_extension("maintenance.log"))?;
+    let mut command = Command::new(std::env::current_exe()?);
+    command
+        .arg("event")
+        .arg("worker")
+        .arg("--database")
+        .arg(database)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(log);
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    let mut child = command.spawn()?;
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
+}
+
+async fn dispatch_task_command(cli: &Cli, service: &Service) -> Result<Value> {
     // Point reads must not load all entities through global lease maintenance.
     match &cli.command {
         Command::Task {
@@ -644,34 +750,36 @@ async fn run_task_command(cli: &Cli) -> Result<Value> {
         } => {
             return Ok(response(service.obsidian_note(id).await?));
         }
+        Command::Event {
+            action: EventCommand::Policy(args),
+        } => {
+            ensure!(
+                cli.project.is_none(),
+                "invalid: event policy applies to the whole database"
+            );
+            return Ok(response(
+                service
+                    .store()
+                    .event_policy(args.enabled, args.retain_days, args.interval_seconds)
+                    .await?,
+            ));
+        }
+        Command::Event {
+            action: EventCommand::Maintain(args),
+        } => {
+            ensure!(
+                cli.project.is_none(),
+                "invalid: event maintenance applies to the whole database; --project is not supported"
+            );
+            return maintain_events(service, args).await;
+        }
         _ => (),
     }
     service.store().reap_expired().await?;
     match &cli.command {
-        Command::Conversation { action } => conversation(cli, &service, action).await,
-        Command::Inbox { action } => inbox(cli, &service, action).await,
-        Command::Doctor => {
-            let state = service.store().snapshot().await?;
-            let missing: Vec<_> = state
-                .plans
-                .iter()
-                .filter(|p| !service.config().output_dir().join(&p.path).is_file())
-                .map(|p| p.path.clone())
-                .collect();
-            let sequence = service.store().latest_sequence().await?;
-            let rendered = service
-                .store()
-                .metadata("sequence")
-                .await?
-                .and_then(|v| v.as_i64())
-                .unwrap_or(0);
-            let healthy = missing.is_empty()
-                && rendered >= sequence
-                && !service.store().has_pending_documents().await?;
-            Ok(response(
-                json!({"healthy":healthy,"missing_plans":missing,"sequence":sequence,"rendered_sequence":rendered,"documents":service.config().documents}),
-            ))
-        }
+        Command::Conversation { action } => conversation(cli, service, action).await,
+        Command::Inbox { action } => inbox(cli, service, action).await,
+        Command::Doctor => doctor(service).await,
         Command::Sync { pending } => {
             if *pending {
                 service.sync_pending_documents().await?;
@@ -680,30 +788,79 @@ async fn run_task_command(cli: &Cli) -> Result<Value> {
             }
             Ok(response(json!({"synced":true})))
         }
-        Command::Project { action } => project(cli, &service, action).await,
-        Command::Job { action } => job(cli, &service, action).await,
-        Command::Task { action } => task(cli, &service, action).await,
-        Command::Plan { action } => plan(cli, &service, action).await,
+        Command::Project { action } => project(cli, service, action).await,
+        Command::Job { action } => job(cli, service, action).await,
+        Command::Task { action } => task(cli, service, action).await,
+        Command::Plan { action } => plan(cli, service, action).await,
         Command::Event {
             action: EventCommand::List { job, after, limit },
-        } => {
-            let events = service
-                .store()
-                .events(job.as_deref(), *after, *limit)
-                .await?;
-            let next = events.last().map_or(*after, |e| e.sequence);
-            Ok(response(json!({"events":events,"next_cursor":next})))
-        }
+        } => list_events(service, job.as_deref(), *after, *limit).await,
         Command::Context { task, job } => {
-            context(cli, &service, task.as_deref(), job.as_deref()).await
+            context(cli, service, task.as_deref(), job.as_deref()).await
         }
-        Command::Routing { action } => routing(cli, &service, action).await,
-        Command::Hook { action } => hook(cli, &service, action).await,
+        Command::Routing { action } => routing(cli, service, action).await,
+        Command::Hook { action } => hook(cli, service, action).await,
         Command::Obsidian {
             action: ObsidianCommand::Snapshot,
         } => Ok(response(service.obsidian_snapshot().await?)),
-        Command::Init(_) | Command::Completions { .. } | Command::Obsidian { .. } => unreachable!(),
+        Command::Event {
+            action:
+                EventCommand::Maintain(_) | EventCommand::Policy(_) | EventCommand::Worker { .. },
+        }
+        | Command::Init(_)
+        | Command::Completions { .. }
+        | Command::Obsidian { .. } => unreachable!(),
     }
+}
+
+async fn list_events(
+    service: &Service,
+    job: Option<&str>,
+    after: i64,
+    limit: i64,
+) -> Result<Value> {
+    let events = service.store().events(job, after, limit).await?;
+    let policy = service.store().event_policy(None, None, None).await?;
+    let pruned = policy["pruned_through"].as_i64().unwrap_or(0);
+    let next = events.last().map_or(after.max(pruned), |e| e.sequence);
+    Ok(response(
+        json!({"events":events,"next_cursor":next,"pruned_through":pruned,"history_truncated":after < pruned}),
+    ))
+}
+
+async fn doctor(service: &Service) -> Result<Value> {
+    let state = service.store().snapshot().await?;
+    let missing: Vec<_> = state
+        .plans
+        .iter()
+        .filter(|p| !service.config().output_dir().join(&p.path).is_file())
+        .map(|p| p.path.clone())
+        .collect();
+    let sequence = service.store().latest_sequence().await?;
+    let rendered = service
+        .store()
+        .metadata("sequence")
+        .await?
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    let healthy = missing.is_empty()
+        && rendered >= sequence
+        && !service.store().has_pending_documents().await?;
+    Ok(response(
+        json!({"healthy":healthy,"missing_plans":missing,"sequence":sequence,"rendered_sequence":rendered,"documents":service.config().documents}),
+    ))
+}
+
+async fn maintain_events(service: &Service, args: &EventMaintenanceArgs) -> Result<Value> {
+    let mut result = service
+        .store()
+        .maintain_events(args.retain_days, args.prune, args.apply)
+        .await?;
+    if args.vacuum {
+        service.store().vacuum_events().await?;
+    }
+    result["vacuumed"] = json!(args.vacuum);
+    Ok(response(result))
 }
 
 async fn conversation(cli: &Cli, service: &Service, action: &ConversationCommand) -> Result<Value> {
