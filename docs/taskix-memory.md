@@ -505,7 +505,10 @@ still operates while repeated notices are suppressed. Opening an
 edited note also checks it. Normal generated updates do not trigger errors;
 lookup or write failures are reported without discarding the file. The plugin
 uses the read-only `taskix memory document <vault-relative-path>` command, which
-works without the memory service and validates the Project path. The service
+works without the memory service and validates the Project path. Taskix Sync passes
+`TASKIX_MEMORY_ENABLED=true` only to the document lookup child process, allowing
+existing notes to be protected without exporting the switch to Obsidian. Other
+plugin commands retain the inherited environment. The service
 prioritizes changed database revisions on each projection poll (default 5 s).
 A full repair scan runs at startup and repeats after
 `[memory.projection].reconcile_interval_seconds` (default `300`, range `1..86400`)

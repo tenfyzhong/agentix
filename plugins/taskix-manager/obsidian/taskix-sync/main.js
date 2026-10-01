@@ -436,9 +436,12 @@ function runCli(settings, args, children = new Set()) {
         const argv = ["--json", "--actor", "user:obsidian"];
         if (settings.configPath) argv.push("--config", settings.configPath);
         argv.push(...args);
+        // Protect existing notes even when the desktop app has no memory environment.
+        const memoryDocument = args.length === 3 && args[0] === "memory" && args[1] === "document";
         const child = execFile(settings.cliPath || "taskix", argv, {
             cwd: settings.vaultPath, timeout: 30000, maxBuffer: 8 * 1024 * 1024,
             encoding: "utf8", windowsHide: true,
+            ...(memoryDocument ? { env: { ...process.env, TASKIX_MEMORY_ENABLED: "true" } } : {}),
         }, (error, stdout, stderr) => {
             children.delete(child);
             let response;

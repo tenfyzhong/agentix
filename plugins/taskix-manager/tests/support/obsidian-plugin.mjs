@@ -7,7 +7,7 @@ export function loadPlugin(obsidian = {}, globals = {}, modules = {}) {
     const require = createRequire(import.meta.url);
     const filename = new URL("../../obsidian/taskix-sync/main.js", import.meta.url);
     vm.runInNewContext(readFileSync(filename, "utf8"), {
-        module, exports: module.exports, console, setTimeout, clearTimeout,
+        module, exports: module.exports, console, process, setTimeout, clearTimeout,
         require: (id) => id === "obsidian" ? {
             Plugin: class {}, PluginSettingTab: class {}, ...obsidian,
         } : modules[id] || require(id),

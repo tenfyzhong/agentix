@@ -208,6 +208,9 @@ produce an error, and Recovery copies and ordinary notes are excluded.
 The plugin uses `taskix memory document <vault-relative-path>` with the configured
 CLI and vault configuration. This read-only command works without the memory
 service or model credentials and validates the path against the database Project.
+For this command only, the plugin passes `TASKIX_MEMORY_ENABLED=true` to the
+child process, so existing notes remain protected when the desktop app does not
+inherit the shell's memory switch. Other commands use the inherited environment.
 The database is never updated from the note. If lookup or rollback fails, the
 plugin reports the failure and leaves the file intact for retry on the next save,
 open or connection refresh. Changes racing with a lookup are checked again.
