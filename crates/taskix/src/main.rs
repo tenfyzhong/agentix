@@ -13,6 +13,9 @@ use clap::{Args, CommandFactory, Parser, Subcommand};
 use clap_complete::Shell;
 use serde_json::{Value, json};
 
+#[cfg(any(unix, windows))]
+mod memory;
+mod memory_command;
 mod metrics;
 mod obsidian;
 
@@ -48,6 +51,11 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Maintain and retrieve project memory through a local service.
+    Memory {
+        #[command(subcommand)]
+        action: memory_command::MemoryCommand,
+    },
     /// Inspect and attach session discussion turns.
     Conversation {
         #[command(subcommand)]
@@ -649,6 +657,15 @@ async fn setup_obsidian(
 }
 
 async fn run(cli: &Cli) -> Result<Value> {
+    if let Command::Memory { action } = &cli.command {
+        #[cfg(any(unix, windows))]
+        return Ok(response(memory::run(cli, action).await?));
+        #[cfg(not(any(unix, windows)))]
+        {
+            let _ = action;
+            bail!("memory commands require Unix or Windows");
+        }
+    }
     if let Command::Event {
         action: EventCommand::Worker { database },
     } = &cli.command
@@ -803,7 +820,8 @@ async fn dispatch_task_command(cli: &Cli, service: &Service) -> Result<Value> {
         Command::Obsidian {
             action: ObsidianCommand::Snapshot,
         } => Ok(response(service.obsidian_snapshot().await?)),
-        Command::Event {
+        Command::Memory { .. }
+        | Command::Event {
             action:
                 EventCommand::Maintain(_) | EventCommand::Policy(_) | EventCommand::Worker { .. },
         }
@@ -1390,6 +1408,14 @@ async fn hook(cli: &Cli, service: &Service, action: &HookCommand) -> Result<Valu
             };
             let mut request =
                 json!({"command":"session.record","session":session,"messages":messages});
+            if let Some(project) = &cli.project {
+                request["project"] = json!(service.store().project_result(project).await?.id);
+            } else {
+                let directory = ProjectDirectory::discover(&std::env::current_dir()?)?;
+                if let Some(project) = service.project_for_directory(&directory).await? {
+                    request["project_hint"] = json!(project.id);
+                }
+            }
             for key in ["turn_id", "source"] {
                 if let Some(value) = capture.get(key) {
                     request[key] = value.clone();

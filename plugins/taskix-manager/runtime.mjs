@@ -1,3 +1,4 @@
+import { memoryContext } from "./memory.mjs";
 import { withDeadline } from "./jev-io.mjs";
 import { assessLifecycle, lifecycleNotice } from "./lifecycle.mjs";
 import { randomUUID } from "node:crypto";
@@ -107,11 +108,15 @@ export async function runHook(event, runner = runTaskix, routing = {}) {
     const options = { cwd: event.cwd, session: event.session_id };
     const enabled = !!jevConfig(routing.env);
     if (event.hook_event_name === "UserPromptSubmit") {
-        if (!enabled) return {};
+        const memory = memoryContext(event.prompt, event.turn_id, options, runner, { ...routing, requireConfig: true });
+        if (!enabled) {
+            const content = await memory;
+            return content ? { hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: content } } : {};
+        }
         const prepared = await preparePrompt(event.prompt, options, runner, routing, [], event);
         if (prepared.ready) await routingReceipt(event, "write", routing.cacheDir);
         const notice = cancellationContext(prepared.context);
-        return { hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: `${notice ? notice + "\n" : ""}${prepared.content}` } };
+        return { hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: `${notice ? notice + "\n" : ""}${[prepared.content, await memory].filter(Boolean).join("\n")}` } };
     }
     if (["SessionStart", "SessionEnd", "Interrupt", "PostToolUseFailure", "Stop", "UserPromptSubmit"].includes(event.hook_event_name))
         await routingReceipt(event, "clear", routing.cacheDir);
@@ -308,6 +313,7 @@ export function registerExtension(
             if (state.prompt) await recordMessages([state.prompt], runner, state.options, undefined, {turn_id:state.turn,source:host});
         }
         const options = optionsFor(ctx);
+        const memory = memoryContext(event.prompt, state?.turn || event.turnId || event.turn_id, options, runner, { ...routing, requireConfig: true });
         let content;
         if (jevConfig(routing.env)) {
             const prepared = await preparePrompt(event.prompt, options, runner, routing, state?.history);
@@ -320,7 +326,7 @@ export function registerExtension(
         return {
             message: {
                 customType: "taskix-context",
-                content: `${state?.turn ? discussionNotice(state.turn) + "\n" : ""}${content}`,
+                content: `${state?.turn ? discussionNotice(state.turn) + "\n" : ""}${[content, await memory].filter(Boolean).join("\n")}`,
                 display: false,
             },
         };

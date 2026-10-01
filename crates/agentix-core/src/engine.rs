@@ -747,7 +747,17 @@ impl Engine {
 
     pub async fn handle_agent_event(&self, event: AgentEvent) -> Result<(), EngineError> {
         let event = self.output.project_event(event);
-        self.tasks.record_job_message(&event).await;
+        let cwd = if let Some(session) = event.session_id() {
+            self.sessions
+                .cache
+                .lock()
+                .await
+                .get(&SessionId::new(session))
+                .and_then(|s| s.cwd.clone())
+        } else {
+            None
+        };
+        self.tasks.record_job_message(&event, cwd.as_deref()).await;
         self.sessions.cleanup.observe(&event);
         if let AgentEvent::InteractionRequested(request) = &event
             && request.kind == InteractionKind::UserInput

@@ -334,3 +334,11 @@ test("metrics_failed_v1_append_rolls_back_migration", async t => {
     assert.equal((await rows(f.path, "PRAGMA table_info(requests)")).some(row => row.name === "kind"), false);
     assert.deepEqual(await rows(f.path, "SELECT * FROM requests"), []);
 });
+
+test("metrics_writer_preserves_memory_triage_kind", async t => {
+    const f = await fixture(t);
+    const { writeMetric } = await import("../jev-metrics.mjs");
+    assert.equal(await writeMetric({path:f.path, config:{model:"jev-test",threshold:.65},
+        metric:{id:"memory",started_at:1,duration_ms:1,called:true,kind:"memory_triage",answers:[],outcome:{action:"skip"}}}),true);
+    assert.equal((await rows(f.path,"SELECT kind FROM requests"))[0].kind,"memory_triage");
+});

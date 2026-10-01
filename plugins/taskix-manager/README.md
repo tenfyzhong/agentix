@@ -432,3 +432,34 @@ With the existing `TASKIX_JEV_ENABLED` configuration, prompt routing also classi
 All assessments reuse the existing filtered Job/Task facts and visible conversation excerpts, 30,000-byte request ceiling, eight-second deadline, score gates and current-Job revision check. No raw tool results, source files, lease credentials or reasoning are collected. Explicit terminal Task recovery reads only that named Task and projects the same title/status/reason fields within existing bounds; normal prompt candidate discovery is unchanged. Shared instructions are sent once rather than repeated for every Job. Each assessment makes one provider request; disabled configuration makes no CLI or HTTP calls.
 
 Results contain guarded command arguments, never execute them, and defer to the main Agent on uncertainty, failure, oversize or stale evidence. Actual CLI lease, dependency, Plan and transition guards remain authoritative. `ready` is not `done` and never authorizes self-approval. Prompt metrics include the work-scope question when it can change the selected policy; lifecycle checkpoints have separate request-kind statistics. See [command examples](skills/taskix-manager/references/commands.md#optional-lifecycle-classification).
+
+## Project memory
+
+An updated Taskix CLI and plugin can retrieve project decisions from the optional
+[Taskix memory service](https://github.com/tenfyzhong/agentix/blob/main/docs/taskix-memory.md). Enable `[memory].enabled`
+in the shared Taskix configuration and start `taskix memory serve` separately.
+The memory worker uses independent API credentials; it does not reuse the main
+agent's login or context. No additional memory config file is needed.
+
+Codex/Claude prompt hooks and Pi/OMP `before_agent_start` retrieve at most 6,400
+bytes with a 1.5-second deadline, independently of Jev routing. Missing/disabled
+memory does not start the memory CLI; unavailable queries fail soft. Session
+receipts are recorded by the receiving host and deduplicate unchanged revisions,
+including offline FTS fallback. Service-side packet generation does not imply
+delivery, so a timed-out response cannot suppress the next turn. Context semantic
+retrieval uses at most 750 ms, leaving part of the host deadline for FTS and IPC. Main
+agents can use `taskix memory search`, `show` and `source` on demand. Memory is
+historical evidence, not permission or task ownership. Normal task capture also
+records Project-owned discussions without requiring a Job.
+
+Obsidian memory notes are read-only projections. Local file edits are never
+imported; synchronization restores SQLite content. Use memory CLI commands for
+changes and `forget` for removal.
+
+The memory service also reuses `TASKIX_JEV_ENABLED`, `TASKIX_JEV_URL`,
+`TASKIX_JEV_API_KEY` and `TASKIX_JEV_MODEL` to screen extraction. Memory uses its
+own `TASKIX_MEMORY_JEV_MIN_CONFIDENCE` (default `0.75`, range `0.5`–`1`), with no
+fallback to the routing threshold `TASKIX_JEV_MIN_CONFIDENCE`. Disabled Jev goes directly to the extraction model. Only a valid high-confidence
+`skip` bypasses extraction. Extract, uncertain, low-score, malformed and failed
+screening results continue to the extraction model. With the existing metrics environment enabled,
+`taskix routing metrics report` includes `memory_triage` decisions.

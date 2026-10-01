@@ -1,0 +1,20 @@
+[
+  {
+    "instance_id": "quality-fixture-v1",
+    "receipt_id": "offline-choice",
+    "sequence": 1,
+    "project_id": "quality-offline",
+    "session_id": "quality-offline",
+    "turn_id": "choice-1",
+    "revision": 1,
+    "job_id": null,
+    "recorded_at": 1735689600,
+    "messages": [
+      {
+        "id": "decision",
+        "role": "user",
+        "text": "We have decided to deploy the Acorn customer installation entirely offline. Their procurement contract prohibits external network calls from the production cluster. This restriction applies only to Acorn; our internal staging environment may access the internet. We rejected cloud-hosted embeddings because they would violate that contract."
+      }
+    ]
+  }
+]

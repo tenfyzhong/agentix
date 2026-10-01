@@ -1,6 +1,6 @@
 {
   "name": "taskix-manager",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Shared taskix workflow for Codex, Claude, Pi, and OMP",
   "type": "module",
   "license": "MIT",
@@ -27,10 +27,12 @@
     "jev-metrics.mjs",
     "jev-metrics-worker.mjs",
     "metrics-schema.sql",
-    "metrics-schema.md"
+    "metrics-schema.md",
+    "memory.mjs"
   ],
   "dependencies": {
-    "@sinclair/typebox": "^0.34.0"
+    "@sinclair/typebox": "^0.34.0",
+    "smol-toml": "^1.9.0"
   },
   "scripts": {
     "test": "node --test tests/*.test.mjs"

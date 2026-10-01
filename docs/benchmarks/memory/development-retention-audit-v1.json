@@ -1,0 +1,16 @@
+{
+  "scope": "Partial development diagnostic; not a complete quality score",
+  "project": "conv-26",
+  "receipt_id": "conv-26/D1:3",
+  "message_id": "D1:3",
+  "work_state": "done",
+  "candidate_count": 0,
+  "source_payload_sha256": "a9f727fd478bd87b6b39f33f78ce71a95507c1ccde6ea8064f5f6adb35418cef",
+  "finding": "An explicitly dated historical experience produced no extraction candidate. Other inspected memories retain career intentions and durable preferences. This warrants testing the distinction between useful historical facts and transient progress.",
+  "limitations": [
+    "The complete corpus is still being replayed.",
+    "This observation does not establish final answer accuracy or corpus-wide recall.",
+    "Later sources can independently reintroduce information.",
+    "Held-out questions were not inspected."
+  ]
+}

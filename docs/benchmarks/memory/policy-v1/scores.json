@@ -1,0 +1,10 @@
+{
+  "cases": 12,
+  "passed_cases": 12,
+  "case_pass_rate": 1.0,
+  "required_facts": 12,
+  "required_facts_found": 12,
+  "required_fact_recall": 1.0,
+  "forbidden_facts": 15,
+  "forbidden_fact_count": 0
+}

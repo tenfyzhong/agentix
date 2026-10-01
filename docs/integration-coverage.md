@@ -79,7 +79,7 @@ The normal suite needs no live account, model, host installation, or desktop. To
 
 Host installer discovery/trust, real model behavior, host events on actual terminal interruption/exit, live IM credentials/permissions, and a live external rmux daemon require environment acceptance. A mock event test establishes what the adapter does when the event arrives; it cannot establish that every host version emits it. Force-kill and missed-hook recovery retain the lease-expiry fallback. Multi-machine or network-filesystem coordination is outside the supported concurrency model.
 
-CI runs the full workspace suite on Linux/macOS. Windows checks the workspace and runs native TCP control plus task library/CLI/plugin tests. Timestamp tests verify the system-local offset on all platforms. Unix additionally tests process `TZ` overrides; Windows switches the runner system time zone through Tokyo (UTC+09:00), SA Pacific (UTC-05:00), and UTC, with explicit expected offsets and restoration in `finally`. Native Obsidian rendering is opt-in and is not run in CI. When adding a feature, extend the boundary tests and this map; do not describe an unexecuted live check as covered by its mock.
+CI runs the full workspace suite on Linux/macOS. Windows checks the workspace and runs native TCP control plus memory and task library/CLI/plugin tests. Timestamp tests verify the system-local offset on all platforms. Unix additionally tests process `TZ` overrides; Windows switches the runner system time zone through Tokyo (UTC+09:00), SA Pacific (UTC-05:00), and UTC, with explicit expected offsets and restoration in `finally`. Native Obsidian rendering is opt-in and is not run in CI. When adding a feature, extend the boundary tests and this map; do not describe an unexecuted live check as covered by its mock.
 
 ### Job verification and Obsidian status editing
 
@@ -508,3 +508,15 @@ The actual service's semantic quality requires opt-in historical replay. Determi
 Historical replay methods, observed outcomes and local performance measurements are recorded in [Jev lifecycle decisions](jev-lifecycle-decisions.md).
 
 Completion checkpoint integration cases verify ACTIVE -> COMPLETED and ACTIVE -> PENDING_REVIEW after the final Task, including replacement of an earlier required default, disabled/uncertain fallback, read-only classification and stale policy writes. Already PENDING_REVIEW Jobs reject completion assessment.
+
+## Project memory
+
+The independent memory domain, service and host delivery have a dedicated
+[acceptance matrix and scale fixture](taskix-memory-acceptance.md). Coverage uses
+real source/outbox and memory databases, durable workers, Unix sockets and Windows
+loopback TCP, CLI and Node
+host entrypoints, read-only filesystem projections and standalone dual-database
+backup/restore. Only external model/embedding and rclone responses are mocked.
+Live model quality, desktop Obsidian rendering and cloud credentials remain
+outside those fixtures. See [operations](taskix-memory.md) for configuration and
+failure semantics.

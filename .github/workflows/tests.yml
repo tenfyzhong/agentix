@@ -128,6 +128,9 @@ jobs:
       - name: Run Windows TCP control tests
         if: runner.os == 'Windows'
         run: cargo test -p agentix --all-features --bin agentix control::tests::tcp_control_server
+      - name: Run Windows memory tests
+        if: runner.os == 'Windows'
+        run: cargo test -p agentix-memory --all-features
       - name: Run Windows task board tests
         if: runner.os == 'Windows'
         run: cargo test -p agentix-task -p taskix --all-features

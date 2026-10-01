@@ -67,7 +67,7 @@ export async function fixture(overrides = {}) {
     };
 }
 
-export async function connectionFixture(directory = "11-Agents") {
+export async function connectionFixture(directory = "11-Agents", globals = {}) {
     const notices = [], requests = [], commands = [], buttons = [];
     const vaultEvents = new Map(), metadataEvents = new Map();
     class TFile {}
@@ -97,7 +97,7 @@ export async function connectionFixture(directory = "11-Agents") {
                 buttons.push(button); callback(button); return this;
             }
         },
-    }, {}, {
+    }, globals, {
         "node:fs": { realpathSync: (path) => path },
         "node:child_process": {
             execFile(binary, args, options, callback) {

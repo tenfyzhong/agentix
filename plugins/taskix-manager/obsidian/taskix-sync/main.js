@@ -458,6 +458,9 @@ class TaskixSyncPlugin extends Plugin {
     async onload() {
         this.settings = { cliPath: "taskix", configPath: "", ...await this.loadData() };
         this.children = new Set();
+        this.memoryChecks = new Map();
+        this.memoryTimers = new Map();
+        this.memoryNotices = new Map();
         this.registerBasesView("taskixRecentJobs", {
             name: "Recent Jobs", icon: "columns-3",
             factory: (controller, container) => recentJobsView(this.app, controller, container),
@@ -473,6 +476,7 @@ class TaskixSyncPlugin extends Plugin {
             this.engine.observe(file.path, cache.frontmatter);
             this.engine.observeInbox(file.path, data);
         }));
+        this.registerEvent(this.app.vault.on("modify", (file) => this.queueMemory(file)));
         this.registerEvent(this.app.vault.on("delete", (file) => {
             if (this.engine?.watches(file.path)) this.engine.forget(file.path);
         }));
@@ -486,6 +490,80 @@ class TaskixSyncPlugin extends Plugin {
         }));
         this.registerEvent(this.app.workspace.on("file-open", (file) => { void this.inspectFile(file); }));
         this.app.workspace.onLayoutReady(() => { if (!this.stopped) void this.connect(); });
+    }
+
+    isMemoryPath(filePath) {
+        if (!this.engine?.watches(filePath)) return false;
+        const relative = path.posix.relative(this.engine.directory, filePath);
+        return /^Projects\/[^/]+\/Memory\/mem_[0-9a-f]{32}\.md$/.test(relative);
+    }
+
+    queueMemory(file) {
+        if (!(file instanceof TFile) || !this.isMemoryPath(file.path)) return;
+        const filePath = file.path;
+        const engine = this.engine;
+        clearTimeout(this.memoryTimers.get(filePath));
+        this.memoryTimers.delete(filePath);
+        this.memoryTimers.set(filePath, setTimeout(() => {
+            this.memoryTimers.delete(filePath);
+            if (this.engine === engine && !engine.disposed && file.path === filePath) void this.checkMemory(file);
+        }, 750));
+        while (this.memoryTimers.size > 128) {
+            const oldest = this.memoryTimers.keys().next().value;
+            clearTimeout(this.memoryTimers.get(oldest));
+            this.memoryTimers.delete(oldest);
+        }
+    }
+
+    memoryNotice(engine, filePath, message) {
+        if (engine.disposed || this.engine !== engine) return;
+        const now = Date.now();
+        const previous = this.memoryNotices.get(filePath);
+        if (previous !== undefined && now - previous < 30000) return;
+        this.memoryNotices.delete(filePath);
+        this.memoryNotices.set(filePath, now);
+        while (this.memoryNotices.size > 128) this.memoryNotices.delete(this.memoryNotices.keys().next().value);
+        engine.notify(message);
+    }
+
+    clearMemoryTimers() {
+        for (const timer of this.memoryTimers?.values() || []) clearTimeout(timer);
+        this.memoryTimers?.clear();
+    }
+
+    async checkMemory(file) {
+        const engine = this.engine;
+        if (!(file instanceof TFile) || !this.isMemoryPath(file.path)) return;
+        const filePath = file.path;
+        const existing = this.memoryChecks.get(filePath);
+        if (existing) { existing.pending = true; return existing.promise; }
+        const state = { pending: true };
+        this.memoryChecks.set(filePath, state);
+        state.promise = (async () => {
+            while (state.pending && !engine.disposed && this.engine === engine) {
+                state.pending = false;
+                try {
+                    const observed = await this.app.vault.read(file);
+                    const { result } = await engine.io.execute(["memory", "document", filePath]);
+                    if (engine.disposed || this.engine !== engine || file.path !== filePath) return;
+                    if (result?.path !== filePath || typeof result.text !== "string") {
+                        throw new Error("Invalid authoritative memory document");
+                    }
+                    if (observed === result.text) continue;
+                    let restored = false;
+                    await this.app.vault.process(file, current => {
+                        if (engine.disposed || this.engine !== engine || file.path !== filePath) return current;
+                        if (current !== observed) { state.pending = true; return current; }
+                        restored = true;
+                        return result.text;
+                    });
+                    if (restored && !engine.disposed) this.memoryNotice(engine, filePath, "Taskix memory is read-only. Your edit was rejected and the database content was restored.");
+                } catch (error) {
+                    this.memoryNotice(engine, filePath, `Could not restore read-only memory ${filePath}: ${error.message}`);
+                }
+            }
+        })().finally(() => { if (this.memoryChecks.get(filePath) === state) this.memoryChecks.delete(filePath); });
+        return state.promise;
     }
 
     async renameProjectFolder(oldPath) {
@@ -510,6 +588,7 @@ class TaskixSyncPlugin extends Plugin {
     async inspectFile(file) {
         const engine = this.engine;
         if (!(file instanceof TFile) || !engine?.watches(file.path)) return;
+        if (this.isMemoryPath(file.path)) return this.checkMemory(file);
         try {
             const source = await this.app.vault.read(file);
             const match = /^(?:\uFEFF)?---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(source);
@@ -521,6 +600,7 @@ class TaskixSyncPlugin extends Plugin {
     }
 
     async connect() {
+        this.clearMemoryTimers();
         this.engine?.dispose();
         for (const child of this.children) child.kill();
         const settings = { ...this.settings, vaultPath: this.app.vault.adapter.getBasePath() };
@@ -613,6 +693,8 @@ class TaskixSyncPlugin extends Plugin {
 
     onunload() {
         this.stopped = true;
+        this.clearMemoryTimers();
+        this.memoryNotices?.clear();
         this.engine?.dispose();
         for (const child of this.children || []) child.kill();
     }

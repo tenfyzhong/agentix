@@ -41,6 +41,38 @@ impl Store {
         .await
     }
 
+    /// Read-only consumers never migrate, initialize files, or acquire a writer lock.
+    pub async fn open_read_only(path: &Path) -> Result<Self> {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(2)
+            .connect_with(
+                SqliteConnectOptions::new()
+                    .filename(path)
+                    .read_only(true)
+                    .busy_timeout(Duration::from_secs(1)),
+            )
+            .await?;
+        let identity: i64 = sqlx::query_scalar("PRAGMA application_id")
+            .fetch_one(&pool)
+            .await?;
+        let version: i64 = sqlx::query_scalar("PRAGMA user_version")
+            .fetch_one(&pool)
+            .await?;
+        ensure!(
+            identity == 0x4158_544b && (14..=16).contains(&version),
+            "unsupported task database identity or schema for read-only lookup"
+        );
+        Ok(Self {
+            maintenance_pool: pool.clone(),
+            pool,
+            clock: Arc::new(|| time::OffsetDateTime::now_utc().unix_timestamp()),
+            database_path: path.to_owned(),
+            background_enabled: Arc::new(AtomicBool::new(false)),
+            background_running: Arc::new(AtomicBool::new(false)),
+            wrote: Arc::new(AtomicBool::new(false)),
+        })
+    }
+
     pub async fn open_with_clock(
         path: &Path,
         clock: Arc<dyn Fn() -> i64 + Send + Sync>,
@@ -103,7 +135,7 @@ impl Store {
     async fn migrate(&self) -> Result<bool> {
         let current: (i64, i64, i64) = sqlx::query_as("SELECT (SELECT application_id FROM pragma_application_id), (SELECT user_version FROM pragma_user_version), (SELECT auto_vacuum FROM pragma_auto_vacuum)")
             .fetch_one(&self.pool).await?;
-        if current == (0x4158_544b, 15, 2) {
+        if current == (0x4158_544b, 16, 2) {
             return Ok(false);
         }
         if current.2 != 2 {
@@ -117,7 +149,7 @@ impl Store {
                 "invalid: task database must be a dedicated taskix database"
             );
             ensure!(
-                current.1 <= 15,
+                current.1 <= 16,
                 "unsupported task database schema version {}",
                 current.1
             );
@@ -140,12 +172,18 @@ impl Store {
             .fetch_one(&mut *tx)
             .await?;
         ensure!(
-            version <= 15,
+            version <= 16,
             "unsupported task database schema version {version}"
         );
         sqlx::raw_sql(include_str!("schema.sql"))
             .execute(&mut *tx)
             .await?;
+        sqlx::query(
+            "INSERT OR IGNORE INTO memory_source_identity(singleton,instance_id) VALUES (1,?)",
+        )
+        .bind(new_id("source"))
+        .execute(&mut *tx)
+        .await?;
         if version == 1 {
             sqlx::query("UPDATE tasks SET data = json_set(data, '$.phase', CASE WHEN json_extract(data, '$.status') = 'IN_PROGRESS' THEN 'EXECUTING' ELSE NULL END)")
                 .execute(&mut *tx)
@@ -190,7 +228,7 @@ impl Store {
         if version < 14 {
             crate::project_lookup::migrate(&mut tx).await?;
         }
-        if version < 15 {
+        if version < 16 {
             crate::event_maintenance::migrate(&mut tx).await?;
         }
         tx.commit().await?;

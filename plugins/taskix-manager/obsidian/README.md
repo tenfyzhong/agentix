@@ -192,3 +192,24 @@ Job notes include the stored original **Prompt** and a generated **Conversation*
 Inbox items render consecutively without an extra blank line. Telegram message edits and Feishu source refreshes (every 30 seconds) update the same registered Inbox item and document while preserving its state and Job link.
 
 Investigation-only, document-only, and simple git commit/push Jobs use `review_policy: none` and complete directly when ready. The default `required` retains review for code changes and mixed Jobs. Related supplements to pending Jobs use `job followup` to return the same Job to ACTIVE, retain existing Tasks, and automatically add them as prerequisites of new Tasks; the dependency graph displays these edges.
+
+## Read-only project memory
+
+Taskix Sync checks saved changes to `Projects/<project key>/Memory/mem_<ID>.md`.
+Saved events are debounced until 750 ms without another change. Notifications
+are limited to once per file per 30 seconds (including restore failures);
+subsequent edits are still rolled back during that interval. Unload and
+reconnection cancel pending timers.
+If a note differs from SQLite, it displays a read-only error and restores the
+complete authoritative Markdown, including body and frontmatter. Opening a
+modified note also performs this check. Normal database projections do not
+produce an error, and Recovery copies and ordinary notes are excluded.
+
+The plugin uses `taskix memory document <vault-relative-path>` with the configured
+CLI and vault configuration. This read-only command works without the memory
+service or model credentials and validates the path against the database Project.
+The database is never updated from the note. If lookup or rollback fails, the
+plugin reports the failure and leaves the file intact for retry on the next save,
+open or connection refresh. Changes racing with a lookup are checked again.
+This requires the matching CLI and Taskix Sync plugin. Tests mock Obsidian's event
+and file APIs; live desktop behavior still needs acceptance after installation.

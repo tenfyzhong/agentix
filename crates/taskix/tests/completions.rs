@@ -52,6 +52,10 @@ fn completions_skip_configuration_and_task_state_and_match_checked_in_files() {
                 "{shell}: missing registration"
             );
             for command in [
+                "memory",
+                "projection-status",
+                "backfill",
+                "reindex",
                 "init",
                 "obsidian",
                 "setup",
@@ -159,4 +163,33 @@ printf '%s\n' "${COMPREPLY[@]}""#,
             "{words}: expected {expected:?}, got {candidates:?}"
         );
     }
+}
+
+#[cfg(any(unix, windows))]
+#[test]
+fn memory_commands_load_configuration_on_supported_platforms() {
+    let directory = tempfile::tempdir().unwrap();
+    let config = directory.path().join("config.toml");
+    let task_config = agentix_task::Config {
+        schema_version: 1,
+        storage: agentix_task::StorageConfig {
+            path: directory.path().join("tasks.sqlite3"),
+        },
+        documents: agentix_task::DocumentConfig {
+            root: directory.path().to_owned(),
+            directory: "documents".into(),
+        },
+    };
+    std::fs::write(&config, toml::to_string(&task_config).unwrap()).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_taskix"))
+        .args(["--json", "memory", "status"])
+        .env("TASKIX_CONFIG", &config)
+        .current_dir(directory.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{:?}", output.stderr);
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["result"]["enabled"], false);
+    assert_eq!(value["result"]["online"], false);
+    assert_eq!(std::fs::read_dir(directory.path()).unwrap().count(), 1);
 }

@@ -1,0 +1,22 @@
+{
+  "complete": true,
+  "snapshot_at": 1790706084,
+  "expected_receipts": 15,
+  "received_receipts": 15,
+  "missing_receipts": [],
+  "unexpected_receipts": [],
+  "changed_receipts": [],
+  "missing_completed_messages": [],
+  "work_states": {
+    "done": 21
+  },
+  "failed_work": [],
+  "retried_work": 0,
+  "memory_states": {
+    "active": 5,
+    "superseded": 1
+  },
+  "retrievable_memories": 5,
+  "invalid_evidence": [],
+  "cited_source_messages": 7
+}

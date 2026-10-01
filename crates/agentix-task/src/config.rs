@@ -17,6 +17,32 @@ pub struct StorageConfig {
     pub path: PathBuf,
 }
 
+impl StorageConfig {
+    /// Load only the task source connection, without opening a document vault.
+    pub fn load(path: &Path) -> Result<Self> {
+        #[derive(Deserialize)]
+        struct SourceConfig {
+            schema_version: u32,
+            storage: StorageConfig,
+        }
+        let path = expand_home(path)?;
+        let mut config: SourceConfig = toml::from_str(
+            &std::fs::read_to_string(&path)
+                .with_context(|| format!("read task config {}", path.display()))?,
+        )?;
+        ensure!(
+            config.schema_version == 1,
+            "unsupported task config schema_version"
+        );
+        config.storage.path = expand_home(&config.storage.path)?;
+        ensure!(
+            config.storage.path.is_absolute() && config.storage.path.file_name().is_some(),
+            "storage.path must be an absolute file path"
+        );
+        Ok(config.storage)
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DocumentConfig {
@@ -31,6 +57,11 @@ impl Config {
             &std::fs::read_to_string(&path)
                 .with_context(|| format!("read task config {}", path.display()))?,
         )?;
+        // Memory owns its capability configuration and validates it at its entrypoint.
+        // In particular, unavailable providers must not prevent board operations.
+        if let Some(table) = value.as_table_mut() {
+            table.remove("memory");
+        }
         // Older releases stored a template locale and output format here.
         // Tolerate obsolete keys without exposing them; all output is Obsidian.
         if let Some(documents) = value

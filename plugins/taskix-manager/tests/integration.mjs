@@ -5,7 +5,7 @@ import { spawn } from "node:child_process";
 import { cp, mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { runHook, runTaskix } from "../runtime.mjs";
 import { loadPlugin, copy } from "./support/obsidian-plugin.mjs";
 
@@ -454,9 +454,11 @@ for (const host of ["codex", "claude"]) {
             const f = await fixture(t);
             const root = join(f.dir, "installed plugin \u{2603}");
             await mkdir(root);
-            for (const path of ["hooks", "runtime.mjs", "taskix-cli.mjs", "routing-context.mjs", "conversation.mjs", "discussion.mjs", "lifecycle.mjs", "jev.mjs", "jev-io.mjs", "routing-state.mjs", "jev-metrics.mjs", "jev-metrics-worker.mjs", "metrics-schema.sql", `.${host}-plugin`]) {
+            for (const path of ["hooks", "runtime.mjs", "memory.mjs", "taskix-cli.mjs", "routing-context.mjs", "conversation.mjs", "discussion.mjs", "lifecycle.mjs", "jev.mjs", "jev-io.mjs", "routing-state.mjs", "jev-metrics.mjs", "jev-metrics-worker.mjs", "metrics-schema.sql", `.${host}-plugin`]) {
                 await cp(resolve(path), join(root, path), { recursive: true });
             }
+            await cp(fileURLToPath(new URL("../", import.meta.resolve("smol-toml"))),
+                join(root, "node_modules", "smol-toml"), { recursive: true });
             const task = await f.run([
                 "task",
                 "add",

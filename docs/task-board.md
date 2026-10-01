@@ -93,6 +93,19 @@ Directory resolution requires an exact canonical root match for non-Git director
 
 Schema 14 adds transactionally maintained `project_lookup` indexes for canonical roots and Unicode-lowercased document keys. Existing roots are resolved once during migration without rewriting Project IDs, authored names, stored roots, or document paths. If legacy records resolve to the same root, the earliest record retains lookup precedence. Paths unavailable during migration retain their stored identity. Registration and later directory discovery use canonical identities; retargeting a symlink does not move an existing Project to the new target. Upgrade Agentix and Taskix together: older binaries reject schema 14 rather than writing stale indexes.
 
+Schema 16 adds immutable, versioned conversation source snapshots for project
+memory alongside event retention tables and watermarks. It upgrades both earlier
+schema 15 layouts (event retention on main and memory on the feature branch),
+preserving source identity, pending memory receipts and existing event sequences.
+Source writes share the conversation transaction, including explicit
+discussion attachment. Pending evidence survives draft expiry. Individual receipt
+IDs distinguish events even if a restored database reuses a sequence number.
+Migration does not backfill existing conversations. Upgrade Agentix and Taskix
+together; previous binaries reject schema 16. Memory provider configuration is
+validated by memory capabilities rather than ordinary board commands. See the
+[memory implementation contract](taskix-memory-design.md) for the remaining
+service and recovery requirements.
+
 Rename a project's immediate folder under the vault's `Projects/` directory to change its Taskix name. Taskix Sync detects the folder rename and runs incremental synchronization. Taskix matches the moved `Board.md` by its stable Project ID and workspace root before reading Inbox or publishing notes. It updates the Project name/key, Board title, generated links and Base filters, Job/Plan paths, and document registry. Project IDs, workspace roots, Job/Task IDs, dependencies, leases, statuses, and archive state stay unchanged, so agents working in the original directory continue tracking the same Project. Authored Goal/Notes, Plan bodies, Inbox content, and attachments remain in the renamed folder.
 
 Keep the complete folder directly under `Projects/` and retain Board's managed identity properties. Names follow the existing portable-name rules (up to 48 characters, including Chinese and spaces); names already registered to another Project, ambiguous duplicate Boards, and invalid names reject synchronization. A copied Board does not rename a Project while its original folder remains. Repair the folder name or duplicate before retrying `taskix sync --pending`. Renames made while the plugin is inactive are also detected by the next synchronization or document write. Install the matching CLI and Taskix Sync bundle with `taskix obsidian setup` after upgrading; existing older clients do not support importing these folder renames. This operation does not rename the repository or ChatGPT working directory, and editing Board's `name` property alone is not a rename operation.
@@ -496,7 +509,7 @@ indicates that events beyond the requested cursor have been removed anywhere in 
 database, including when filtering by Job. Sequence gaps are valid. Global and
 per-Project receipts remain monotonic even when every event has been pruned.
 
-Schema 15 adds independent event watermarks, a timestamp index and the retention
+Schema 16 adds independent event watermarks, a timestamp index and the retention
 policy/progress row. Payload version 1 is a notification summary with
 `schema_version` and `entity_type`:
 
@@ -531,7 +544,7 @@ initialization, before building the age index, and needs spare disk space and an
 exclusive writer window. It is separate from steady-state write latency. Opening
 any CLI command, including preview/policy reads, can perform this migration; those
 commands do not otherwise perform lifecycle or event cleanup. Upgrade all writers
-together and back up first; older binaries reject schema 15. See
+together and back up first; older binaries reject schema 16. See
 [SQLite auto-vacuum](https://www.sqlite.org/pragma.html#pragma_auto_vacuum) and
 [Taskix backups](taskix-backup.md). Normal daily cleanup never executes full VACUUM.
 If manual `--vacuum` fails, the preceding maintenance has already committed.
@@ -591,3 +604,11 @@ Git and gh delivery requests such as `git commit`, `git push`, `gh pr create`, a
 ### Optional semantic lifecycle decisions
 
 The taskix-manager host plugin can classify review policy and explicit user acceptance, rejection or cancellation with Jev in the existing prompt request. A separate shared read-only lifecycle helper assesses Task recovery and execution outcomes using the same bounded context projection. It returns revision-bound advice; the agent invokes normal CLI commands. Disabled or uncertain Jev retains the existing Agent workflow. Early scope assessment preserves required review. At Job completion, the host invokes the `completion` checkpoint to choose PENDING_REVIEW or COMPLETED from the whole delivery and saves that policy atomically with the final Task transition. A wholly non-code Job may replace an earlier required default; earlier implementation still requires review. Direct standalone CLI calls use the saved policy. Readiness still needs actual acceptance evidence, and automatic Job aggregation, leases, dependencies and Plan gates stay deterministic. See the [plugin lifecycle contract](../plugins/taskix-manager/README.md#optional-lifecycle-assessment).
+
+## Project memory
+
+The same Taskix release provides an optional independent [project memory service](taskix-memory.md).
+It captures reusable decisions from visible turns, including unbound discussions,
+and retrieves bounded historical context without changing Job routing or ownership.
+Memory uses a separate SQLite database and the existing configuration file.
+See [dual-database backups](taskix-backup.md) before migrating or restoring its data.

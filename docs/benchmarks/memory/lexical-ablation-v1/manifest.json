@@ -1,0 +1,16 @@
+{
+  "scope": "Development only; raw-turn retrieval, not extracted-memory answer quality",
+  "questions": 304,
+  "documents": 5882,
+  "sha256": {
+    "baseline_results": "314c98e040101fdd327712c2f94886c05c3bf78c9f348fae13c205e197bfdb7e",
+    "porter_results": "a126c52ab504f3867f31c0a9c49bc63362e59bebca3a3518e2b1b9d9f7ebfc5e",
+    "baseline-stop_results": "9701dff5fe60d5656d414a88b14fb2c528b50dcad504791ec27da4f362368a87",
+    "porter-stop_results": "03d6505163d802c138207d7bc73ec6283d39c11f3dee1d316d702adb5e3b92ca",
+    "corpus.json": "beadb282574b9cc0de1aaf7363561c8808763bd1000241652e51c1c8c8bb10df",
+    "development-questions.json": "a27cbbb1a0bde20ea66da7ff470d386a502ddb238f3b1b282714537558712f1f",
+    "vectors.jsonl": "e8f229eeb478f9b2c9bb3983e228881cd50a4d938f4ffef77339773bcce86d5a",
+    "retrieval_benchmark": "03b5665c1cf9920c1be49258d2cfaf4edd4f49d6ed02d0ddf3af30617607d6f7",
+    "retrieval_benchmark.rs": "4d3d773bf5cf9543190f8051e9a2604f2e3550c4fdb82c175368a699299ca6c8"
+  }
+}

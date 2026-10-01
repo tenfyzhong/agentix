@@ -1,0 +1,30 @@
+{
+  "experiment": "development historical retention candidate v1",
+  "scope": "First 16 chronological conv-26 sources; not full LoCoMo or held-out evaluation",
+  "inputs_sha256": "6cf2964d4237fdaf658ff8407973952d2a68d2a789ffaf2b31f2d48ca276da35",
+  "binary_sha256": "a90d0cff72e1df2809d6becd18366dfcefb160dd828a1b6322e8a4e72387e98a",
+  "worker_source_sha256": "db258402035233fff86577328761d6dc4ba25ac4f90d43f2701154ab5f849466",
+  "historical_regression": "passed on completed replay",
+  "exclusion_policy": "passed 12 frozen development cases; see development-retention-policy-v1.json",
+  "audit": {
+    "complete": true,
+    "snapshot_at": 1790716621,
+    "expected_receipts": 16,
+    "received_receipts": 16,
+    "missing_receipts": [],
+    "unexpected_receipts": [],
+    "changed_receipts": [],
+    "missing_completed_messages": [],
+    "work_states": {
+      "done": 23
+    },
+    "failed_work": [],
+    "retried_work": 1,
+    "memory_states": {
+      "active": 3
+    },
+    "retrievable_memories": 3,
+    "invalid_evidence": [],
+    "cited_source_messages": 9
+  }
+}

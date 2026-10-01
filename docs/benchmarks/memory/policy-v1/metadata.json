@@ -1,0 +1,9 @@
+{
+  "grader": "Current Codex main agent, direct semantic inspection; not an independent blinded judge",
+  "scope": "Current retrievable memory content; historical evidence may quote superseded claims",
+  "case_sha256": "1e6e040bd4303d5e125ca3b0116f504d9f883b493beba3e775982d92f1baefaf",
+  "memories_sha256": "fb2dcbbed3fafcb84dc39c78fe0ded31dd49eafb65f0ee57cf43eda585eac437",
+  "run": "policy-run-v1",
+  "extractor": "gpt-6-astra low reasoning via Codex CLI, original bridge instructions",
+  "limitation": "Small authored development suite, single run, no population accuracy inference"
+}

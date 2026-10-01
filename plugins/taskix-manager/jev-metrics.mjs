@@ -58,7 +58,7 @@ export async function writeMetric({ path, options, config, metric }) {
         if (version === 1) {
             db.exec("ALTER TABLE requests ADD COLUMN kind TEXT NOT NULL DEFAULT 'routing'; PRAGMA user_version=2");
         }
-        const kind = ["routing", "discussion", "recovery", "outcome", "review_policy", "completion"].includes(metric.kind)
+        const kind = ["routing", "discussion", "recovery", "outcome", "review_policy", "completion", "memory_triage"].includes(metric.kind)
             ? metric.kind : metric.kind == null ? "routing" : "unknown";
         db.prepare("INSERT INTO requests (id, started_at, session_id, turn_id, project_id, model, threshold, duration_ms, called, accepted, action, reason, review, answer_count, kind) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)").run(
             metric.id, metric.started_at, options?.session ?? null, options?.turn_id ?? null, metric.project_id ?? null,
