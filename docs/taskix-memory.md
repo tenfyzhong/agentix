@@ -60,8 +60,31 @@ taskix memory search 'offline deployment'
 
 Use a process manager such as launchd or a systemd user unit to run the same
 foreground command if desired. Give it an absolute executable/config path and
-the required environment; shell login state and the main agent's subscription
-are not inherited authentication. Ctrl-C stops service background loops; Unix
+configure the required provider credentials. On macOS/Linux, `memory serve`
+loads a complete exported environment snapshot from the user's account login
+shell using `-lc`, following Agentix's Codex startup approach. Override the shell
+with `TASKIX_LOGIN_SHELL`, an absolute executable path supplied to the service.
+The lookup has a three-second deadline. Failure, missing/malformed framing or a
+timeout emits a diagnostic and retains the inherited environment; environment
+values and shell output are not logged. Successful snapshots honor shell `unset`
+operations and preserve whitespace and non-UTF-8 environment bytes.
+
+The service then uses `exec` to restart itself once with the snapshot before
+loading configuration or initializing providers. The executable, arguments,
+working directory, PID and standard streams are preserved, so launchd/systemd
+continue supervising the same process. No global process environment is mutated.
+Only `memory serve` performs this lookup; ordinary commands, diagnostics and
+configuration reload do not. Windows uses the environment supplied by its
+launcher and does not invoke a Unix login shell.
+
+If Fish is your account login shell, export service API keys, proxy settings and
+Jev variables in its configuration with `set -gx`, outside `status is-interactive`
+guards. Variables set only in an existing terminal are not available to a new
+login shell started by a service manager. The main agent's subscription is not
+provider authentication. Homebrew formulae can invoke `taskix memory serve`
+directly without a Fish dependency or a shell wrapper.
+
+Ctrl-C stops service background loops; Unix
 also accepts SIGTERM and Windows accepts Ctrl-Break.
 Unfinished work resumes after its durable lease expires. One service can manage
 many Projects; a second process for the same database is rejected.
@@ -109,9 +132,10 @@ process**, just as for the host plugin:
 | `TASKIX_JEV_METRICS_DB` | Existing metrics database override; otherwise the usual XDG state path |
 
 Missing or invalid Jev settings bypass screening without blocking extraction.
-Changing a service process's environment requires restarting it with the new
-environment; changing a shell or the main agent's environment does not update an
-already running service.
+Changing a service process's environment requires restarting it. On macOS/Linux,
+the restart reads a fresh login-shell snapshot; `memory reload` updates only the
+configuration. Changing a shell or the main agent's environment does not update
+an already running service.
 
 Each extraction work item is screened before repository tools or the extraction
 model run. Jev receives the full source snapshot and the current chunk; source

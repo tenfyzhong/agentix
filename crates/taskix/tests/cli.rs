@@ -64,6 +64,13 @@ fn hook_record_assigns_registered_directory_to_unbound_memory_source() {
 impl Cli {
     fn new() -> Self {
         let dir = TempDir::new().unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let shell = dir.path().join("test-login-shell");
+            std::fs::write(&shell, "#!/bin/sh\nexec /bin/sh -c \"$2\"\n").unwrap();
+            std::fs::set_permissions(shell, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
         std::fs::create_dir_all(dir.path().join("vault")).unwrap();
         std::fs::create_dir_all(dir.path().join("vault/.obsidian")).unwrap();
         let cli = Self { dir };
@@ -83,6 +90,11 @@ impl Cli {
     }
     fn command(&self, args: &[&str]) -> Command {
         let mut command = Command::new(env!("CARGO_BIN_EXE_taskix"));
+        #[cfg(unix)]
+        command.env(
+            "TASKIX_LOGIN_SHELL",
+            self.dir.path().join("test-login-shell"),
+        );
         command
             .env_remove("TASKIX_JEV_ENABLED")
             .env_remove("TASKIX_JEV_METRICS_ENABLED")
@@ -1455,6 +1467,10 @@ fn non_git_job_creation_registers_directory_without_context() {
 #[cfg(any(unix, windows))]
 #[path = "support/memory.rs"]
 mod memory;
+
+#[cfg(unix)]
+#[path = "support/memory_login.rs"]
+mod memory_login;
 
 #[test]
 fn event_maintenance_defaults_to_preview_and_requires_explicit_apply() {
