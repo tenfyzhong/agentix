@@ -118,22 +118,9 @@ jobs:
         with:
           shared-key: tests-${{ matrix.os }}
       - name: Run workspace tests
-        if: runner.os != 'Windows'
         env:
-          TASKIX_TEST_HOOK_SHELL: fish
+          TASKIX_TEST_HOOK_SHELL: ${{ runner.os != 'Windows' && 'fish' || '' }}
         run: cargo test --workspace --all-features
-      - name: Check the Windows workspace
-        if: runner.os == 'Windows'
-        run: cargo check --workspace --all-features
-      - name: Run Windows TCP control tests
-        if: runner.os == 'Windows'
-        run: cargo test -p agentix --all-features --bin agentix control::tests::tcp_control_server
-      - name: Run Windows memory tests
-        if: runner.os == 'Windows'
-        run: cargo test -p agentix-memory --all-features
-      - name: Run Windows task board tests
-        if: runner.os == 'Windows'
-        run: cargo test -p agentix-task -p taskix --all-features
       - name: Verify Windows system time zones
         if: runner.os == 'Windows'
         shell: pwsh
