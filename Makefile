@@ -55,6 +55,7 @@ clippy:
 
 plugin-deps:
 	npm ci --ignore-scripts --prefix plugins/taskix-manager
+	npm run check:vendor --prefix plugins/taskix-manager
 
 test: plugin-deps test-backup
 	$(CARGO) test --workspace --all-features

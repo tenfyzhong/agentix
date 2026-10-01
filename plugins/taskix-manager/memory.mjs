@@ -1,4 +1,4 @@
-import { parse } from "smol-toml";
+import { parse } from "./vendor/smol-toml.mjs";
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir, homedir } from "node:os";

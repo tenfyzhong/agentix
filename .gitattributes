@@ -4,3 +4,6 @@ completions/* text eol=lf
 # Generated protocol contracts are compared byte-for-byte on every platform.
 crates/agentix-bridge/src/wire.rs text eol=lf
 plugins/agentix-bridge/protocol/wire.ts text eol=lf
+
+# Vendored JavaScript and licenses are rebuilt and compared on every platform.
+plugins/taskix-manager/vendor/* text eol=lf

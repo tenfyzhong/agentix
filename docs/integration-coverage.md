@@ -20,6 +20,16 @@ node --test plugins/taskix-manager/tests/*.test.mjs
 
 Cargo's `plugin_entrypoints_execute_the_compiled_taskix` test runs [integration.mjs](../plugins/taskix-manager/tests/integration.mjs) with the freshly compiled binary. It must not fall back to an installed taskix or the user's database. Set `TASKIX_TEST_HOOK_SHELL=fish` to additionally check hook commands through fish; Linux/macOS CI does this. Windows runs commands through `cmd.exe`.
 
+Plugin installation does not require npm dependency installation. The
+[cold-install tests](../plugins/taskix-manager/tests/cold-install.test.mjs)
+execute hooks and load helpers and Pi/OMP adapters from directory copies and
+unpacked npm tarballs without `node_modules`. The real CLI hook fixture includes
+the same `vendor/` files without injecting npm dependencies. The
+[vendor checks](../plugins/taskix-manager/tests/vendor.test.mjs) verify reproducible
+JavaScript and license files, and reject stale files without rewriting them.
+These cover distributable contents and host entrypoints; native host installation
+and hook trust remain separate acceptance boundaries.
+
 ## Tasks, projections, and host lifecycle
 
 | Behavior | Executable coverage |

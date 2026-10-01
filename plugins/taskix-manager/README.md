@@ -237,6 +237,12 @@ performed; disable collection when finished. The query tool adds no model calls.
 
 Install Node.js 24+ and put `taskix` on PATH. Initialize taskix with your chosen document directory before enabling the plugin. Set `TASKIX_CONFIG` if its configuration is not in the default location.
 
+The plugin includes its JavaScript runtime dependencies and their licenses in
+`vendor/`. Directory, Git marketplace, and npm package installations run without
+installing npm dependencies or executing lifecycle scripts. Codex and Claude
+hooks, the discussion/lifecycle helpers, and Pi/OMP adapters use these packaged
+files. Node.js and the `taskix` executable remain external prerequisites.
+
 ### Codex: marketplace
 
 The repository provides the `agentix` marketplace in `.agents/plugins/marketplace.json`. Add the GitHub repository, then install the plugin:
@@ -363,7 +369,38 @@ PENDING_REVIEW Jobs allow an explicitly requested next Inbox entry while awaitin
 
 ## Validation
 
-The remote-package installation test starts with an isolated empty npm cache and downloads missing locked dependencies from the npm registry. It verifies both Pi checkout installs and OMP package-consumer installs without relying on the host's existing cache, including the canonical plugin skill directory and its contained reference links in the installed tarball.
+The remote-package installation test uses an empty npm cache and offline
+installation with development dependencies omitted. It verifies Pi checkout
+installs and OMP package-consumer installs, including the canonical plugin skill
+directory and its contained reference links. The cold-install tests additionally
+copy the plugin directory and unpack its npm tarball into isolated directories
+without `node_modules`, then execute the hook, check its error handler and TOML
+configuration parsing, load both command helpers, and register Pi/OMP adapters.
+
+### Updating vendored dependencies
+
+Only third-party libraries are bundled; host entrypoints, command helpers,
+metrics workers, and SQL resources retain their existing relative paths.
+`smol-toml` and TypeBox are development dependencies used to regenerate the
+checked-in distributable JavaScript. The build preserves their licenses and
+normalizes package paths so npm workspace hoisting does not change the output.
+
+After updating a dependency, synchronize the repository and plugin lockfiles,
+then run from the repository root:
+
+```sh
+npm ci --ignore-scripts --prefix plugins/taskix-manager
+npm run build:vendor --prefix plugins/taskix-manager
+npm run check:vendor --prefix plugins/taskix-manager
+node --test plugins/taskix-manager/tests/cold-install.test.mjs plugins/taskix-manager/tests/vendor.test.mjs
+```
+
+Commit the updated `vendor/` JavaScript and license files with the lockfiles.
+Git marketplace installs need these distributable files in the source tree;
+the npm file list includes the same files. `make plugin-deps` and plugin CI
+verify that rebuilding produces the committed files. Missing or stale files
+fail the check without rewriting them; no build or dependency download occurs
+when a user runs a hook.
 
 From the repository root, run `make check` with Node.js 24+ and npm. Tests validate both marketplace entries, inspect host-specific hook discovery, import the manifest-selected Pi/OMP extensions, and verify the npm package file list. Cargo additionally exercises the configured commands with the compiled taskix, one host root variable at a time, from an unrelated working directory and a plugin path containing spaces/Unicode. Linux/macOS CI exercises both sh and fish; Windows tests execute the configured command through `cmd.exe` rather than bypassing it.
 

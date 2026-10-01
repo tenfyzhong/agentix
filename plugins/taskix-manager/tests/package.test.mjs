@@ -39,7 +39,7 @@ test("OMP marketplace plugin uses the canonical workflow without root copies", a
     await assertOmpSkill(new URL("../../", root));
 });
 
-test("Pi and OMP remote packages discover their adapters and install runtime dependencies", async () => {
+test("Pi and OMP remote packages load vendored dependencies without installing development tools", async () => {
     const repository = new URL("../../", root);
     const pkg = await readJson("../../package.json");
     const plugin = await readJson("package.json");
@@ -74,29 +74,22 @@ test("Pi and OMP remote packages discover their adapters and install runtime dep
             {
                 cwd,
                 encoding: "utf8",
-                // A cold cache downloads dependencies on CI. Run npm directly so
-                // a timeout cannot leave a shell child holding the consumer directory.
+                // Use a cold cache and omit development tools, as runtime
+                // loading must not depend on a previous npm installation.
                 timeout: 120000,
                 env: { ...process.env, npm_config_cache: npmCache },
             },
         );
-        // Check npm consumer installs too: root workspaces alone do not
-        // install the nested extension's runtime dependencies.
+        // Check both package consumers and Git checkout installation layouts.
         const [archive] = JSON.parse(runNpm("npm pack --ignore-scripts --offline --json", directory));
         const consumer = `${directory}/consumer`;
         await mkdir(consumer);
-        const lock = await readJson("../../package-lock.json");
-        // Use exact lockfile tarballs without resolving version ranges.
-        // Overrides do not add dependencies missing from the installed package.
-        const overrides = Object.fromEntries(Object.keys(plugin.dependencies).map(name => [
-            name, lock.packages[`node_modules/${name}`].resolved,
-        ]));
-        await writeFile(`${consumer}/package.json`, `${JSON.stringify({ private: true, overrides }, null, 2)}\n`);
+        await writeFile(`${consumer}/package.json`, `${JSON.stringify({ private: true }, null, 2)}\n`);
         await cp(`${directory}/${archive.filename}`, `${consumer}/package.tgz`);
-        runNpm("npm install ./package.tgz --ignore-scripts --prefer-offline --no-audit --no-fund", consumer);
+        runNpm("npm install ./package.tgz --omit=dev --ignore-scripts --offline --no-audit --no-fund", consumer);
         for (const host of ["omp", "pi"]) {
             if (host === "pi") {
-                runNpm("npm ci --ignore-scripts --prefer-offline --no-audit --no-fund", directory);
+                runNpm("npm ci --omit=dev --ignore-scripts --offline --no-audit --no-fund", directory);
             }
             const installedRoot = host === "pi" ? directory : `${consumer}/node_modules/${pkg.name}`;
             if (host === "omp") await assertOmpSkill(pathToFileURL(`${installedRoot}/`));
@@ -148,6 +141,7 @@ test("repository marketplaces resolve the same complete host plugin", async () =
         assert.equal(source, "./plugins/taskix-manager");
         const manifest = await readJson(`../../${source}/.${host}-plugin/plugin.json`);
         assert.equal(manifest.name, entry.name);
+        assert.equal(manifest.version, (await readJson("package.json")).version);
     }
     assert.equal(codex.plugins[0].source.source, "local");
     assert.deepEqual(codex.plugins[0].policy, {
@@ -270,6 +264,10 @@ test("npm package contains all host manifests, hooks and resources but no tests"
         "metrics-schema.md",
         "extensions/pi.ts",
         "extensions/omp.ts",
+        "vendor/smol-toml.mjs",
+        "vendor/smol-toml.LICENSE",
+        "vendor/typebox.mjs",
+        "vendor/typebox.LICENSE",
         "skills/taskix-manager/SKILL.md",
         "skills/taskix-manager/references/commands.md",
         "obsidian/README.md",

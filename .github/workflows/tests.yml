@@ -51,6 +51,7 @@ jobs:
       - name: Test task host plugin
         run: |
           npm ci --ignore-scripts --prefix plugins/taskix-manager
+          npm run check:vendor --prefix plugins/taskix-manager
           # Avoid starving the bounded metrics worker during concurrent suite startup.
           node --test --test-concurrency=1 plugins/taskix-manager/tests/*.test.mjs plugins/agentix-bridge/tests/*.test.mjs
 

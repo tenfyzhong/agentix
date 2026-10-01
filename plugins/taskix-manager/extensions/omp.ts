@@ -1,4 +1,4 @@
-import { Type } from "@sinclair/typebox";
+import { Type } from "../vendor/typebox.mjs";
 import { registerExtension } from "../runtime.mjs";
 
 export default function taskManager(api) {

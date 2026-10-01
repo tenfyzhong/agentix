@@ -141,6 +141,10 @@ registered, remove it explicitly with `pi remove /path/to/old/checkout`;
 project-local registrations require `-l` in that project.
 
 The recipes do not build or replace CLI binaries or configure Obsidian.
+Taskix Manager ships its JavaScript runtime dependencies and licenses in
+`plugins/taskix-manager/vendor/`; users do not need to run npm dependency
+installation in the host cache. To update those distributable files, follow
+the [vendored dependency guide](plugins/taskix-manager/README.md#updating-vendored-dependencies).
 Installation failures stop the target and are reported; earlier host changes
 are not rolled back. Repeated installations are supported. Restart or reload
 the hosts after installation. Start a new Codex thread and review/trust hooks
