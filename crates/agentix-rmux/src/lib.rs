@@ -373,7 +373,9 @@ fn parse_pane_id(value: &str) -> Result<PaneId, RmuxManagerError> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
     use std::path::Path;
+    #[cfg(unix)]
     use std::sync::Arc;
 
     #[cfg(unix)]
@@ -392,9 +394,9 @@ mod tests {
     #[cfg(unix)]
     use tokio::sync::Mutex;
 
+    #[cfg(unix)]
     use super::{launch_in_pane, persistent_launch_argv};
 
-    #[cfg(unix)]
     #[cfg(unix)]
     #[tokio::test]
     async fn probe_verifies_native_protocol_and_never_starts_a_server() {
@@ -436,6 +438,7 @@ mod tests {
         server.await.unwrap();
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn blank_pane_disables_retention_without_respawning() {
         let directory = tempfile::tempdir().unwrap();
@@ -466,6 +469,7 @@ mod tests {
         server.abort();
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn reused_pane_clear_and_codex_launch_cross_the_rmux_sdk_wire() {
         let directory = tempfile::tempdir().unwrap();
