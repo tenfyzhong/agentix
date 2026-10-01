@@ -10,6 +10,10 @@ mod conversation;
 pub use conversation::JobMessage;
 mod deletion;
 mod discussion;
+mod event_maintenance;
+mod event_payload;
+mod event_retention;
+mod event_worker;
 mod inbox;
 mod inbox_document;
 mod inbox_read;
@@ -33,3 +37,6 @@ pub use model::*;
 pub use project::{ProjectDirectory, git_identity};
 pub use projection::Service;
 pub use store::Store;
+
+#[cfg(test)]
+mod event_retention_benchmark;

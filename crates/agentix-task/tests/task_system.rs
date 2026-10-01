@@ -637,7 +637,7 @@ async fn legacy_executing_tasks_migrate_without_losing_their_lease_or_history() 
         .fetch_one(&mut db)
         .await
         .unwrap();
-    assert_eq!(version, 14);
+    assert_eq!(version, 15);
 }
 
 #[tokio::test]

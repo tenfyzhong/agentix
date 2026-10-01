@@ -227,6 +227,7 @@ dependencies = [
  "time",
  "tokio",
  "toml",
+ "tracing",
  "uuid",
 ]
 

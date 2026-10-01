@@ -1412,3 +1412,153 @@ fn non_git_job_creation_registers_directory_without_context() {
     );
     assert_eq!(project["name"], "directory-work");
 }
+
+#[test]
+fn event_maintenance_defaults_to_preview_and_requires_explicit_apply() {
+    let cli = Cli::new();
+    cli.job("Keep my job");
+    let result = cli.ok(&["event", "maintain"]);
+    assert_eq!(result["applied"], false);
+    assert_eq!(result["deleted_events"], 0);
+    assert_eq!(cli.ok(&["event", "maintain", "--apply"])["applied"], true);
+    assert!(
+        !cli.run(&["event", "maintain", "--project", "unrelated", "--apply"])
+            .status
+            .success()
+    );
+    assert!(!cli.run(&["event", "maintain", "--vacuum"]).status.success());
+    assert!(
+        !cli.run(&["event", "maintain", "--retain-days", "0"])
+            .status
+            .success()
+    );
+}
+
+#[tokio::test]
+async fn event_maintenance_does_not_reap_leases_or_change_current_state() {
+    use sqlx::Connection;
+    let cli = Cli::new();
+    let job = cli.job("Keep state");
+    let task = cli.task(&job, "Keep lease");
+    cli.claim(&task, "maintenance");
+    let mut db = sqlx::SqliteConnection::connect_with(
+        &sqlx::sqlite::SqliteConnectOptions::new().filename(cli.dir.path().join("state.sqlite3")),
+    )
+    .await
+    .unwrap();
+    sqlx::query("UPDATE task_leases SET data=json_set(data,'$.lease_expires_at',0)")
+        .execute(&mut db)
+        .await
+        .unwrap();
+    let before: String = sqlx::query_scalar("SELECT data FROM tasks WHERE id=?")
+        .bind(&task)
+        .fetch_one(&mut db)
+        .await
+        .unwrap();
+    for args in [
+        vec!["event", "maintain"],
+        vec!["event", "maintain", "--apply"],
+    ] {
+        cli.ok(&args);
+        let after: String = sqlx::query_scalar("SELECT data FROM tasks WHERE id=?")
+            .bind(&task)
+            .fetch_one(&mut db)
+            .await
+            .unwrap();
+        assert_eq!(
+            before, after,
+            "maintenance must not run lifecycle operations"
+        );
+    }
+}
+
+#[test]
+fn event_policy_is_enabled_by_default_and_can_be_configured_without_agentix() {
+    let cli = Cli::new();
+    let policy = cli.ok(&["event", "policy"]);
+    assert_eq!(policy["enabled"], true);
+    assert_eq!(policy["retain_days"], 30);
+    assert_eq!(policy["interval_seconds"], 86400);
+    let policy = cli.ok(&[
+        "event",
+        "policy",
+        "--enabled",
+        "false",
+        "--retain-days",
+        "7",
+        "--interval-seconds",
+        "3600",
+    ]);
+    assert_eq!(policy["enabled"], false);
+    assert_eq!(policy["retain_days"], 7);
+    assert_eq!(policy["interval_seconds"], 3600);
+    assert!(
+        !cli.run(&["event", "policy", "--retain-days", "0"])
+            .status
+            .success()
+    );
+}
+
+#[tokio::test]
+async fn event_list_reports_expired_history_without_changing_current_job() {
+    use sqlx::Connection;
+    let cli = Cli::new();
+    let job = cli.job("Keep current job");
+    let mut db = sqlx::SqliteConnection::connect_with(
+        &sqlx::sqlite::SqliteConnectOptions::new().filename(cli.dir.path().join("state.sqlite3")),
+    )
+    .await
+    .unwrap();
+    sqlx::query("UPDATE task_events SET data=json_set(data,'$.occurred_at',0)")
+        .execute(&mut db)
+        .await
+        .unwrap();
+    cli.ok(&["event", "maintain", "--prune", "--apply"]);
+    let events = cli.ok(&["event", "list"]);
+    assert_eq!(events["history_truncated"], true);
+    assert!(events["pruned_through"].as_i64().unwrap() > 0);
+    assert_eq!(events["next_cursor"], events["pruned_through"]);
+    assert_eq!(cli.ok(&["job", "show", &job])["title"], "Keep current job");
+}
+
+#[tokio::test]
+async fn automatic_worker_drains_backlog_after_cli_exit() {
+    use sqlx::Connection;
+    let cli = Cli::new();
+    cli.ok(&["event", "policy", "--enabled", "false"]);
+    let mut db = sqlx::SqliteConnection::connect_with(
+        &sqlx::sqlite::SqliteConnectOptions::new().filename(cli.dir.path().join("state.sqlite3")),
+    )
+    .await
+    .unwrap();
+    for id in 0..150 {
+        sqlx::query("INSERT INTO task_events(event_id,data) VALUES (?,?)")
+            .bind(format!("expired_{id}"))
+            .bind(json!({"occurred_at":0,"payload":{"title":"old"}}).to_string())
+            .execute(&mut db)
+            .await
+            .unwrap();
+    }
+    cli.ok(&["event", "policy", "--enabled", "true"]);
+    cli.job("Trigger autonomous maintenance");
+    let drained = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        loop {
+            let count: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM task_events WHERE event_id LIKE 'expired_%'",
+            )
+            .fetch_one(&mut db)
+            .await
+            .unwrap();
+            if count == 0 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+    })
+    .await;
+    assert!(
+        drained.is_ok(),
+        "maintenance must continue without further user commands: {:?}",
+        std::fs::read_to_string(cli.dir.path().join("state.maintenance.log"))
+    );
+}
