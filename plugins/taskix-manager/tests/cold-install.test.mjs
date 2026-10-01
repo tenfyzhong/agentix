@@ -28,7 +28,11 @@ for (const distribution of ["directory", "npm_tarball"]) {
             }));
             const unpacked = join(directory, "unpacked");
             await mkdir(unpacked);
-            execFileSync("tar", ["-xzf", join(root, archive.filename), "-C", unpacked, "--strip-components=1"]);
+            // Windows tar can lose Unicode command-line paths. Node reads the
+            // archive and sets cwd with Unicode support; tar receives only bytes.
+            execFileSync("tar", ["-xzf", "-", "--strip-components=1"], {
+                cwd: unpacked, input: await readFile(join(root, archive.filename)),
+            });
             await rm(root, { recursive: true });
             await cp(unpacked, root, { recursive: true });
         }
