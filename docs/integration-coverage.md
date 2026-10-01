@@ -68,7 +68,7 @@ The projection CLI tests cross argument parsing, a new process per command, SQLi
 
 | Behavior | Executable coverage |
 | --- | --- |
-| Configuration, single selected channel, inactive credentials, Home paths, proxy validation, task-board opt-in | [configuration tests](../crates/agentix/tests/config.rs), [network tests](../crates/agentix/tests/network.rs) |
+| Configuration, single selected channel, inactive credentials, Home paths, ignored legacy proxy settings, task-board opt-in | [configuration tests](../crates/agentix/tests/config.rs), [environment proxy tests](../crates/agentix/src/proxy_tests.rs) |
 | CLI control transport, startup/shutdown, logging, argument errors, shell completions | [CLI tests](../crates/agentix/tests/cli.rs), [control tests](../crates/agentix/src/control.rs), [completions](../crates/agentix/tests/completions.rs) |
 | Attachment, routing, draining sessions, queues, approval/input flows, retry, restart recovery, notifications and menus | [Engine tests](../crates/agentix-core/tests/engine.rs), [core behavior](../crates/agentix-core/tests/core_behavior.rs), [state/render tests](../crates/agentix-core/tests/state_and_render.rs) |
 | Per-conversation FIFO, independent conversations and inbound/outbound progress, cancellation and backpressure | [message_center.rs](../crates/agentix-core/tests/message_center.rs), channel adapter suites |
@@ -532,3 +532,14 @@ backup/restore. Only external model/embedding and rclone responses are mocked.
 Live model quality, desktop Obsidian rendering and cloud credentials remain
 outside those fixtures. See [operations](taskix-memory.md) for configuration and
 failure semantics.
+
+
+### Environment proxy routing
+
+Agentix and Taskix run isolated subprocess fixtures with lowercase and uppercase
+HTTP/HTTPS proxy variables, conflicting variables for the other request scheme,
+proxy authentication, HTTPS CONNECT rejection, and separate NO_PROXY/no_proxy bypass checks. Agentix's
+Telegram fixture also covers polling, menus, sends, edits and callback
+acknowledgements with a legacy TOML proxy that must have no effect. Taskix tests
+exercise the production TaskNotes download path. All listeners are local; these
+checks do not establish live provider/IM or service-manager environment behavior.

@@ -80,6 +80,12 @@ Only `memory serve` performs this lookup; ordinary commands, diagnostics and
 configuration reload do not. Windows uses the environment supplied by its
 launcher and does not invoke a Unix login shell.
 
+Memory model, embedding and triage HTTP clients read `http_proxy`/`HTTP_PROXY`,
+`https_proxy`/`HTTPS_PROXY`, and `NO_PROXY`/`no_proxy` from this environment. There is no
+TOML proxy setting. Ordinary Taskix downloads use the inherited process environment.
+See [outbound proxies](development-and-operations.md#outbound-proxies-from-the-environment)
+for examples and bypass rules. Restart the service after changing exported variables.
+
 If Fish is your account login shell, export `TASKIX_MEMORY_ENABLED`, service API
 keys, proxy settings and Jev variables in its configuration with `set -gx`, outside `status is-interactive`
 guards. Variables set only in an existing terminal are not available to a new

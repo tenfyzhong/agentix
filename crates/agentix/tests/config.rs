@@ -71,54 +71,14 @@ fn accepts_explicit_task_board_enable_switch() {
 }
 
 #[test]
-fn accepts_global_proxy_configuration_for_either_channel() {
-    for (kind, credentials) in [
-        ("telegram", "[channel.telegram]\ntoken = 'mock-token'"),
-        (
-            "feishu",
-            "[channel.feishu]\napp_id = 'mock-app'\napp_secret = 'mock-secret'",
-        ),
-    ] {
-        for proxy in [
-            "http://127.0.0.1:7890",
-            "https://proxy.example:8443",
-            "socks5://127.0.0.1:1080",
-            "socks5h://user:password@proxy.example:1080",
-            "http://[::1]:7890",
-        ] {
-            Config::from_toml(&credential_config(
-                kind,
-                &format!("{credentials}\n[network]\nproxy = '{proxy}'"),
-            ))
-            .unwrap();
-        }
-    }
-}
-
-#[test]
-fn rejects_invalid_global_proxy_without_exposing_credentials() {
+fn legacy_network_proxy_is_ignored() {
+    let base = credential_config("telegram", "[channel.telegram]\ntoken='token'");
     for proxy in [
         "",
-        "   ",
-        "127.0.0.1:7890",
-        "ftp://user:private-password@proxy.example:7890",
-        "http://",
-        "http://user:private-password@proxy.example:99999",
-        "http://proxy.example/path",
-        "http://proxy.example?query=1",
-        "http://proxy.example#fragment",
+        "not-a-proxy",
+        "http://user:private-password@proxy.example/path",
     ] {
-        let error = Config::from_toml(&credential_config(
-            "telegram",
-            &format!("[channel.telegram]\ntoken = 'mock-token'\n[network]\nproxy = '{proxy}'"),
-        ))
-        .unwrap_err();
-        let message = format!("{error:#}");
-        assert!(
-            message.contains("network.proxy"),
-            "unexpected error: {message}"
-        );
-        assert!(!message.contains("private-password"));
+        Config::from_toml(&format!("{base}\n[network]\nproxy='{proxy}'")).unwrap();
     }
 }
 

@@ -542,12 +542,57 @@ fn apply(root: &Path, changes: &[Change]) -> Result<Option<std::path::PathBuf>> 
 }
 
 #[cfg(test)]
+#[path = "../../../tests/support/environment_proxy.rs"]
+mod environment_proxy;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use tokio::{
         io::{AsyncReadExt, AsyncWriteExt},
         net::TcpListener,
     };
+
+    #[tokio::test]
+    async fn downloads_use_environment_proxies_and_no_proxy() {
+        for (variable, https) in [
+            ("http_proxy", false),
+            ("HTTP_PROXY", false),
+            ("https_proxy", true),
+            ("HTTPS_PROXY", true),
+        ] {
+            environment_proxy::check_routing(
+                "obsidian::tests::download_proxy_fixture",
+                variable,
+                https,
+                None,
+                if https { 1 } else { 3 },
+            )
+            .await;
+        }
+        for bypass_variable in ["NO_PROXY", "no_proxy"] {
+            environment_proxy::check_routing(
+                "obsidian::tests::download_proxy_fixture",
+                "HTTP_PROXY",
+                false,
+                Some(bypass_variable),
+                3,
+            )
+            .await;
+        }
+    }
+
+    #[tokio::test]
+    #[ignore = "runs in an isolated proxy environment"]
+    async fn download_proxy_fixture() {
+        let base = std::env::var("PROXY_TEST_URL").unwrap();
+        let result = download(&base).await;
+        if base.starts_with("https:") {
+            assert!(result.is_err());
+        } else {
+            assert_eq!(result.unwrap(), vec![b"proxied".to_vec(); 3]);
+        }
+    }
 
     #[tokio::test]
     async fn downloads_release_assets_and_reports_http_failures() {
