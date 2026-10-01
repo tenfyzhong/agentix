@@ -207,14 +207,20 @@ app_secret = "your-feishu-app-secret"
 
 Credentials are read directly from this file, including when running as a Homebrew service. On macOS/Linux, restrict access with `chmod 600 ~/.config/agentix/config.toml`.
 
-To configure the global outbound proxy, add a separate top-level table:
+Agentix and Taskix read outbound proxies from exported environment variables:
 
-```toml
-[network]
-proxy = "http://127.0.0.1:7890"
+```fish
+set -gx http_proxy http://127.0.0.1:7890
+set -gx https_proxy http://127.0.0.1:7890
+set -gx NO_PROXY localhost,127.0.0.1,::1
 ```
 
-Use your proxy's actual address and port. HTTP, HTTPS, SOCKS5, and SOCKS5h proxies are supported. The setting covers all Telegram requests and Slack HTTP/Socket Mode connections and works without shell proxy variables. The Feishu SDK does not use this setting and retains its existing network behavior. After changing it, restart a running Homebrew service with `brew services restart tenfyzhong/tap/agentix`.
+Uppercase `HTTP_PROXY` and `HTTPS_PROXY` are also supported. `NO_PROXY`/`no_proxy`
+bypasses the proxy for matching destinations. Agentix uses these variables for
+Telegram and Slack; Taskix uses them for downloads and memory provider requests.
+Remove any old `[network].proxy` table; it is ignored. The Feishu SDK retains
+its existing network behavior. A service must receive the exported variables
+through its launcher; restart it after changing that environment.
 
 See [Configuration and operations](development-and-operations.md) for backend details, Feishu permissions, logging, service management, and diagnostics.
 
@@ -244,7 +250,7 @@ If the selected channel has no configured owner, keep `agentix serve` running, e
 - Native Codex app-server integration plus Pi and OMP bridges inside the original host processes
 - Telegram long polling, Feishu long connections, and Slack Socket Mode with interactive actions
 - A duplex FIFO message center for IM traffic, with ordered retries at the outbound queue head
-- A global HTTP/HTTPS/SOCKS5 proxy configured in TOML, including for Homebrew services
+- HTTP/HTTPS/SOCKS5 proxy environment variables with NO_PROXY/no_proxy bypass rules for Telegram and Slack
 - Running-session discovery, attachment, history, prompts, queues, steering, stopping, approvals, and user-input round trips
 - Codex controls for models, reasoning, Fast mode, plans, goals, reviews, diffs, forks, compaction, skills, and MCP servers
 - Interactive rmux workspace browsing and safe Codex, Pi, and OMP session creation from IM

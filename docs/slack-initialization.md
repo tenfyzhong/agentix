@@ -127,7 +127,7 @@ With the same bot, an attached session keeps its destination conversation until 
 
 For diagnosis, compare the binding's `team:channel[:thread_ts]` with the workspace returned by `auth.test` and check the channel with `conversations.info` using the configured bot token and the required read scope. A `channel_not_found` response establishes that the bot cannot access that destination; it does not identify which conversation the user intended. Keep tokens out of logs. See Slack's [message destination rules](https://docs.slack.dev/reference/methods/chat.postMessage/).
 
-Agentix's `[network].proxy` applies to its own HTTP/WebSocket requests. Slack CLI runs as a separate process and uses the environment proxy settings it supports. Agentix does not translate its TOML proxy configuration into CLI arguments.
+Agentix uses exported `http_proxy`/`HTTP_PROXY`, `https_proxy`/`HTTPS_PROXY`, and `NO_PROXY`/`no_proxy` for its Slack HTTP/WebSocket requests. Slack CLI runs as a separate process and uses the environment proxy settings it supports. There is no TOML outbound proxy setting.
 
 If an old or test app also registers `/sessions`, follow [One command owner per workspace](#one-command-owner-per-workspace) to remove the collision. Selecting a bot DM does not select its slash command registration.
 

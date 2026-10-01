@@ -1,7 +1,7 @@
 //! Decode named backend tables while retaining legacy configuration compatibility.
 use super::{
-    AgentConfig, ChannelConfig, Config, LoggingConfig, NetworkConfig, NotificationConfig,
-    ServerConfig, StorageConfig, TaskBoardConfig,
+    AgentConfig, ChannelConfig, Config, LoggingConfig, NotificationConfig, ServerConfig,
+    StorageConfig, TaskBoardConfig,
 };
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
@@ -13,8 +13,9 @@ pub(super) struct ConfigFile {
     pub(super) multiplexer: super::MultiplexerConfig,
     #[serde(default)]
     pub(super) slack_cli_path: Option<std::path::PathBuf>,
-    #[serde(default)]
-    pub(super) network: NetworkConfig,
+    // Accept old files during migration without retaining or using proxy values.
+    #[serde(default, rename = "network")]
+    _legacy_network: serde::de::IgnoredAny,
     #[serde(default)]
     pub(super) server: ServerConfig,
     #[serde(default)]
@@ -68,7 +69,6 @@ impl TryFrom<ConfigFile> for Config {
         Ok(Self {
             multiplexer: file.multiplexer,
             slack_cli_path: file.slack_cli_path,
-            network: file.network,
             server: file.server,
             logging: file.logging,
             notifications: file.notifications,

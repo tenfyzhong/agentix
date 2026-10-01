@@ -5,10 +5,7 @@ mod engine_runtime;
 mod notification_runtime;
 pub use engine_runtime::{run_engine_loop, run_engine_loop_with_config, shutdown_engine};
 mod multiplexer;
-mod network;
 pub use multiplexer::MultiplexerMode;
-
-pub use network::NetworkConfig;
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -23,8 +20,6 @@ pub struct Config {
     pub multiplexer: MultiplexerConfig,
     #[serde(default)]
     pub slack_cli_path: Option<PathBuf>,
-    #[serde(default)]
-    pub network: NetworkConfig,
     #[serde(default)]
     pub server: ServerConfig,
     #[serde(default)]
@@ -338,7 +333,6 @@ impl Config {
     }
 
     pub fn validate(&self) -> Result<()> {
-        self.network.validate()?;
         if self
             .slack_cli_path
             .as_ref()

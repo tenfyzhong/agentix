@@ -485,7 +485,7 @@ where
 
 /// Compare connection settings, excluding the authorization policy updated in place.
 pub(super) fn same_channel_connection(old: &Config, next: &Config) -> bool {
-    if old.channel.kind != next.channel.kind || old.network.proxy != next.network.proxy {
+    if old.channel.kind != next.channel.kind {
         return false;
     }
     match old.channel.kind {

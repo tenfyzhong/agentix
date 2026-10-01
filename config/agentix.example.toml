@@ -7,10 +7,8 @@
 # [server]
 # endpoint = "unix://~/.local/share/agentix/control.sock"
 
-# Global outbound proxy: covers Telegram and Slack HTTP/WebSocket requests; the Feishu SDK does not use it.
-# Supported schemes: http, https, socks5, socks5h (proxy-side DNS).
-# [network]
-# proxy = "http://127.0.0.1:7890"
+# Outbound proxies use exported http_proxy/HTTP_PROXY, https_proxy/HTTPS_PROXY,
+# and NO_PROXY/no_proxy environment variables. See docs/development-and-operations.md.
 
 [notifications]
 # Send completed turns from sessions not attached to IM. Includes the prompt and response.

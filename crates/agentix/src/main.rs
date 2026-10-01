@@ -17,8 +17,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use agentix::{
-    AgentConfig, Config, ImChannel, LogRotation, LoggingConfig, NetworkConfig, TelegramConfig,
-    add_feishu_owner, add_telegram_owner,
+    AgentConfig, Config, ImChannel, LogRotation, LoggingConfig, TelegramConfig, add_feishu_owner,
+    add_telegram_owner,
 };
 use agentix_bridge::{BridgeAdapter, BridgeHub, BridgeKind};
 use agentix_codex::{CodexClient, CodexEndpoint};
@@ -1035,9 +1035,9 @@ fn build_channels(
             let affixes =
                 agentix_slack::CommandAffixes::new(&slack.command_prefix, &slack.command_suffix)?;
             let mut adapter = agentix_slack::SlackAdapter::with_client(
-                config.network.http_client(
-                    reqwest::Client::builder().connect_timeout(std::time::Duration::from_secs(10)),
-                )?,
+                reqwest::Client::builder()
+                    .connect_timeout(std::time::Duration::from_secs(10))
+                    .build()?,
                 "https://slack.com/api/".parse()?,
                 slack.bot_token.clone(),
                 slack.app_token.clone(),
@@ -1089,7 +1089,7 @@ fn build_channels(
                 .as_ref()
                 .expect("configuration was validated");
             let mut adapter = TelegramAdapter::with_bot(
-                build_telegram_bot(telegram, &config.network)?,
+                build_telegram_bot(telegram)?,
                 TelegramPolicy::new(telegram.owner_user_ids.iter().copied()),
             )
             .with_menu_commands(telegram_menu_commands(config));
@@ -1125,8 +1125,8 @@ fn build_channels(
     Ok(vec![channel])
 }
 
-fn build_telegram_bot(telegram: &TelegramConfig, network: &NetworkConfig) -> Result<teloxide::Bot> {
-    let client = network.http_client(teloxide::net::default_reqwest_settings())?;
+fn build_telegram_bot(telegram: &TelegramConfig) -> Result<teloxide::Bot> {
+    let client = teloxide::net::default_reqwest_settings().build()?;
     Ok(teloxide::Bot::with_client(telegram.token.clone(), client))
 }
 

@@ -50,7 +50,7 @@ Agentix. Successful private enrollment saves the owner and replaces `/claim` wit
 the normal menu automatically. If that update fails, the owner stays linked and
 restarting the service retries the menu synchronization.
 
-The global `network.proxy` applies to Slack Web API requests and WebSocket upgrades, including HTTP(S) and SOCKS proxies. No signing secret or incoming port is needed for this Socket Mode implementation.
+Exported `http_proxy`/`HTTP_PROXY` and `https_proxy`/`HTTPS_PROXY` apply to Slack Web API requests and WebSocket upgrades, including HTTP(S) and SOCKS proxies. `NO_PROXY`/`no_proxy` bypasses matching destinations. No signing secret or incoming port is needed for this Socket Mode implementation.
 
 ## Use the bot
 

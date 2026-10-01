@@ -652,13 +652,16 @@ owner_user_ids = [42]
                 command.display()
             ),
         );
-        // Prevent the configured mock Telegram channel from reaching a live service.
         source.push_str(&format!(
-            "\n[network]\nproxy='http://127.0.0.1:1'\n[server]\nendpoint='unix://{}'\n",
+            "\n[server]\nendpoint='unix://{}'\n",
             d.path().join("control.sock").display()
         ));
         std::fs::write(&config, source).unwrap();
         let mut child = Command::new(env!("CARGO_BIN_EXE_agentix"))
+            // Keep the mock Telegram channel offline regardless of inherited routing.
+            .env("HTTPS_PROXY", "http://127.0.0.1:1")
+            .env_remove("NO_PROXY")
+            .env_remove("no_proxy")
             .arg("--config")
             .arg(&config)
             .arg("serve")

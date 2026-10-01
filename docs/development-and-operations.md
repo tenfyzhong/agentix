@@ -20,28 +20,48 @@ Codex launches pass the selected pane’s absolute directory through `--cd` as w
 
 Set `channel.slack.app_id` to enable startup slash-command synchronization through a logged-in Slack CLI. Run `slack login` as the service user. The global `slack_cli_path` option, placed before all TOML tables, optionally specifies an absolute executable path when `slack` is not on PATH. CLI authorization and refresh are managed by Slack CLI; Agentix does not store management tokens. Synchronization failures log a warning and allow Socket Mode to start with existing commands. See [Slack initialization and integration](slack-initialization.md).
 
-### Global outbound proxy
+### Outbound proxies from the environment
 
-Configure the global outbound proxy in a top-level table:
+Agentix and Taskix use the standard HTTP client proxy environment variables:
+`http_proxy` / `HTTP_PROXY` for HTTP destinations, `https_proxy` / `HTTPS_PROXY`
+for HTTPS destinations, and `NO_PROXY` / `no_proxy` for destinations that should
+connect directly. Prefer setting one case of each variable; if both are present,
+the current HTTP client prefers the uppercase value. For example, in Fish:
 
-```toml
-[network]
-proxy = "http://127.0.0.1:7890"
+```fish
+set -gx http_proxy http://127.0.0.1:7890
+set -gx https_proxy http://127.0.0.1:7890
+set -gx NO_PROXY localhost,127.0.0.1,::1
 ```
 
-`network.proxy` accepts `http://`, `https://`, `socks5://`, and `socks5h://` URLs. Use `socks5h://127.0.0.1:1080` when the proxy should resolve destination hostnames. Authentication can be supplied as URL-encoded user information, for example `http://username:password@127.0.0.1:7890`. Proxy URLs must have a host and may have a port; paths, query strings, fragments, and blank values are rejected during configuration validation.
+The proxy URL describes the connection to the proxy, so an HTTP proxy URL can
+be used for HTTPS destinations through CONNECT. HTTP, HTTPS, SOCKS5, and SOCKS5h
+proxy URLs are supported. Use `socks5h://127.0.0.1:1080` for proxy-side DNS.
+URL-encoded credentials are supported, for example
+`http://username:password@127.0.0.1:7890`. `NO_PROXY`/`no_proxy` supports comma-separated
+host/domain and IP/CIDR entries, or `*` to bypass all proxies.
 
-The configured proxy takes precedence over environment proxy settings, including bypass rules, for clients using this setting. It covers all Telegram requests and Slack API/WebSocket traffic. Telegram coverage includes polling, menus, messages, edits, and callback acknowledgements. Proxy failures return errors; these requests do not fall back to a direct connection. Omit `network.proxy` to retain the client's existing routing behavior.
+Agentix uses these settings for Telegram polling, menus, sends, edits and
+callback acknowledgements, and Slack API requests and Socket Mode WebSocket
+upgrades. Taskix uses them for TaskNotes downloads, memory model and embedding
+requests, and memory triage requests. The legacy Agentix `[network].proxy`
+table is ignored and can be removed; neither CLI configures outbound proxies
+through TOML. Proxy failures return errors without falling back to direct
+connections.
 
-The Feishu SDK does not use `network.proxy`. Its token requests, OpenAPI calls, WebSocket bootstrap, and WebSocket connections retain their existing network behavior.
+The Feishu SDK retains its existing transport behavior; these settings do not
+add proxy support to its HTTP or WebSocket connections. Local control
+connections, Codex Unix sockets, and Pi/Oh My Pi extension sockets remain local.
+Coding agents already running on your computer retain their own provider settings.
 
-Local control connections, Codex Unix sockets, and Pi/Oh My Pi extension sockets remain local. Coding agents already running on your computer retain their own provider-network settings.
-
-Homebrew services read the same configuration file and need no shell proxy variables. After editing the file, restart the service:
-
-```sh
-brew services restart tenfyzhong/tap/agentix
-```
+Variables must be exported into the process that makes the request.
+`agentix serve` uses its inherited environment for IM connections; loading a
+login environment for the Codex child does not change Agentix's environment.
+Taskix's ordinary commands inherit their launcher environment. On macOS/Linux,
+`taskix memory serve` loads the exported login-shell environment before
+initializing HTTP clients; see [memory service startup](taskix-memory.md).
+For a service, supply the variables through its launcher and restart it after
+changing that environment. TOML reload does not import updated shell variables.
 
 ### Local control endpoint
 
@@ -69,7 +89,7 @@ agentix reload --endpoint tcp://127.0.0.1:46783
 
 The command sends a `{"method":"reload"}` request to the local control endpoint. The server reads its own original configuration path; `--config` on the client only selects the endpoint. Explicit `--endpoint` skips loading the client's configuration. A successful command prints JSON containing `reloaded: true` and the server's configuration path. Invalid configuration, setup failures, and unsupported changes return an error and a nonzero exit status.
 
-Reload supports the selected IM channel and credentials, owner lists, Slack command names and CLI path, network proxy, output settings, background-turn notifications, task-board settings (including rereading the referenced taskix configuration), and Pi/OMP/Claude backend additions, changes, and removals. Existing unchanged agent connections and the native bridge listener are retained. CLI proxy authentication options supplied to `serve` keep their precedence after every reload.
+Reload supports the selected IM channel and credentials, owner lists, Slack command names and CLI path, output settings, background-turn notifications, task-board settings (including rereading the referenced taskix configuration), and Pi/OMP/Claude backend additions, changes, and removals. Existing unchanged agent connections and the native bridge listener are retained. CLI proxy authentication options supplied to `serve` keep their precedence after every reload.
 
 Changes to `server.endpoint`, `storage.path`, or any logging setting require restarting the service. Changing or removing an already configured Codex backend also requires a restart because its proxy owns a live listener. These changes reject the entire reload; they are never silently ignored. Adding Codex to a service that does not yet configure it is supported.
 
