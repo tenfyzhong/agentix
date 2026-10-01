@@ -141,10 +141,8 @@ registered, remove it explicitly with `pi remove /path/to/old/checkout`;
 project-local registrations require `-l` in that project.
 
 The recipes do not build or replace CLI binaries or configure Obsidian.
-Taskix Manager ships its JavaScript runtime dependencies and licenses in
-`plugins/taskix-manager/vendor/`; users do not need to run npm dependency
-installation in the host cache. To update those distributable files, follow
-the [vendored dependency guide](plugins/taskix-manager/README.md#updating-vendored-dependencies).
+Taskix Manager uses Node built-ins and plain JSON Schema for Pi/OMP tools.
+Users do not need to install npm dependencies in the host cache.
 Installation failures stop the target and are reported; earlier host changes
 are not rolled back. Repeated installations are supported. Restart or reload
 the hosts after installation. Start a new Codex thread and review/trust hooks
@@ -171,7 +169,6 @@ make check
 This is equivalent to:
 
 ```sh
-npm ci --ignore-scripts --prefix plugins/taskix-manager
 cargo fmt --all --check
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo test --workspace --all-features
@@ -179,7 +176,7 @@ node --test plugins/taskix-manager/tests/*.test.mjs
 python3 -m unittest discover -s scripts/tests -v
 ```
 
-`make check` installs the locked plugin dependencies automatically. When running Cargo directly, run the npm command above first: the taskix integration suite imports the actual Pi/OMP TypeScript entrypoints. Node is required; these checks never silently skip missing dependencies.
+Taskix Manager has no third-party npm dependencies. The taskix integration suite imports the actual Pi/OMP TypeScript entrypoints directly. Node.js 24+ and npm are required for the tests, including offline package fixtures.
 
 The optional desktop Obsidian smoke test is ignored by default and requires an explicitly selected open test vault. It creates and removes only its own temporary files and tab. Bring the selected vault window to the foreground before running it. See [task board validation](docs/task-board.md#validation) for the command and the [integration coverage map](docs/integration-coverage.md) for automated boundaries and separate live-system acceptance.
 

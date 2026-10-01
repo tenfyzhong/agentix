@@ -25,8 +25,5 @@
       "./plugins/taskix-manager/extensions/omp.ts",
       "./plugins/agentix-bridge/extensions/omp.ts"
     ]
-  },
-  "devDependencies": {
-    "@sinclair/typebox": "^0.34.0"
   }
 }

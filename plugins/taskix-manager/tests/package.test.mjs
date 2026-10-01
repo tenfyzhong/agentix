@@ -39,7 +39,7 @@ test("OMP marketplace plugin uses the canonical workflow without root copies", a
     await assertOmpSkill(new URL("../../", root));
 });
 
-test("Pi and OMP remote packages load vendored dependencies without installing development tools", async () => {
+test("Pi and OMP remote packages load without external npm dependencies", async () => {
     const repository = new URL("../../", root);
     const pkg = await readJson("../../package.json");
     const plugin = await readJson("package.json");
@@ -264,8 +264,6 @@ test("npm package contains all host manifests, hooks and resources but no tests"
         "metrics-schema.md",
         "extensions/pi.ts",
         "extensions/omp.ts",
-        "vendor/typebox.mjs",
-        "vendor/typebox.LICENSE",
         "skills/taskix-manager/SKILL.md",
         "skills/taskix-manager/references/commands.md",
         "obsidian/README.md",
@@ -275,7 +273,7 @@ test("npm package contains all host manifests, hooks and resources but no tests"
         "README.md",
     ])
         assert.ok(files.includes(path), `missing packaged file: ${path}`);
-    assert.ok(!files.some((path) => path.startsWith("tests/")));
+    assert.ok(!files.some((path) => path.startsWith("tests/") || path.startsWith("vendor/")));
     for (const obsolete of ["routing-delegation.mjs", "routing-decision.mjs", "skills/taskix-manager/references/routing-classifier.md"]) {
         assert.ok(!files.includes(obsolete), `obsolete classifier file packaged: ${obsolete}`);
     }

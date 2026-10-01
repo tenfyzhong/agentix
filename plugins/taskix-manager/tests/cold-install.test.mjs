@@ -15,7 +15,7 @@ for (const distribution of ["directory", "npm_tarball"]) {
         const root = join(directory, "installed plugin \u{2603}");
         await cp(source, root, {
             recursive: true,
-            filter: path => !/[\\/](node_modules|tests)([\\/]|$)/.test(path),
+            filter: path => !/[\\/](node_modules|tests|vendor|scripts)([\\/]|$)/.test(path),
         });
         if (distribution === "npm_tarball") {
             const command = process.platform === "win32" ? "cmd.exe" : "npm";
@@ -37,6 +37,10 @@ for (const distribution of ["directory", "npm_tarball"]) {
             await cp(unpacked, root, { recursive: true });
         }
         await assert.rejects(stat(join(root, "node_modules")), { code: "ENOENT" });
+        await assert.rejects(stat(join(root, "vendor")), { code: "ENOENT" });
+        const pkg = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
+        assert.deepEqual(pkg.dependencies ?? {}, {});
+        assert.deepEqual(pkg.devDependencies ?? {}, {});
         const env = {
             ...process.env, NODE_PATH: "", TASKIX_JEV_ENABLED: "false",
             XDG_STATE_HOME: join(directory, "state"),
@@ -69,7 +73,10 @@ for (const distribution of ["directory", "npm_tarball"]) {
                 install({ on: event => events.push(event), registerTool: tool => tools.push(tool) });
                 assert.equal(events.includes("agent_settled"), host === "pi");
                 assert.equal(tools[0].name, "taskix");
-                assert.equal(tools[0].parameters.properties.args.type, "array");
+                assert.deepEqual(tools[0].parameters, {
+                    type: "object", properties: { args: { type: "array", items: { type: "string" } } }, required: ["args"],
+                });
+                assert.deepEqual(Object.getOwnPropertySymbols(tools[0].parameters), []);
             }
         `;
         for (const host of ["pi", "omp"]) {

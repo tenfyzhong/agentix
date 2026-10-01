@@ -14,7 +14,6 @@
     "hooks/",
     "skills/",
     "obsidian/",
-    "vendor/",
     "runtime.mjs",
     "taskix-cli.mjs",
     "routing-context.mjs",
@@ -32,8 +31,6 @@
     "memory.mjs"
   ],
   "scripts": {
-    "build:vendor": "node scripts/build-vendor.mjs",
-    "check:vendor": "node scripts/build-vendor.mjs --check",
     "test": "node --test tests/*.test.mjs"
   },
   "pi": {
@@ -48,9 +45,5 @@
     "extensions": [
       "./extensions/omp.ts"
     ]
-  },
-  "devDependencies": {
-    "@sinclair/typebox": "^0.34.0",
-    "esbuild": "0.28.2"
   }
 }

@@ -1,12 +1,5 @@
-import { Type } from "../vendor/typebox.mjs";
 import { registerExtension } from "../runtime.mjs";
 
 export default function taskManager(api) {
-    registerExtension(
-        api,
-        "pi",
-        undefined,
-        undefined,
-        Type.Object({ args: Type.Array(Type.String()) }),
-    );
+    registerExtension(api, "pi");
 }
