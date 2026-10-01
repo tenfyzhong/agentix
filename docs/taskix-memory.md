@@ -24,9 +24,6 @@ existing `~/.config/taskix/config.toml` (or the file selected by `TASKIX_CONFIG`
 or `--config`):
 
 ```toml
-[memory]
-enabled = true
-
 [memory.providers.openai]
 protocol = "openai"
 base_url = "https://api.openai.com/v1"
@@ -48,9 +45,15 @@ Chat Completions receives `reasoning_effort`. This setting applies to extraction
 consolidation, repository review and deep queries. `taskix memory reload` applies
 changes to new work; running loops retain their configuration snapshot.
 
-Provide the named environment variable to the **service process**, then run:
+Export `TASKIX_MEMORY_ENABLED=true` or `1` to the CLI, agent host and memory
+service. Unset or any other value disables memory. Hooks read this variable
+directly and skip memory CLI calls when disabled; the CLI uses the same rule.
+Provider, embedding, projection and retrieval settings remain in `config.toml`.
+
+Provide the named provider credential to the **service process**, then run:
 
 ```sh
+export TASKIX_MEMORY_ENABLED=true
 taskix memory doctor
 taskix memory serve
 # From another terminal in a registered project:
@@ -77,8 +80,8 @@ Only `memory serve` performs this lookup; ordinary commands, diagnostics and
 configuration reload do not. Windows uses the environment supplied by its
 launcher and does not invoke a Unix login shell.
 
-If Fish is your account login shell, export service API keys, proxy settings and
-Jev variables in its configuration with `set -gx`, outside `status is-interactive`
+If Fish is your account login shell, export `TASKIX_MEMORY_ENABLED`, service API
+keys, proxy settings and Jev variables in its configuration with `set -gx`, outside `status is-interactive`
 guards. Variables set only in an existing terminal are not available to a new
 login shell started by a service manager. The main agent's subscription is not
 provider authentication. Homebrew formulae can invoke `taskix memory serve`

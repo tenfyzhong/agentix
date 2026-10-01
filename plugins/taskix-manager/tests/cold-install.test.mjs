@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { cp, mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { execFileSync, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -52,13 +52,11 @@ for (const distribution of ["directory", "npm_tarball"]) {
         const error = JSON.parse(await readFile(join(directory, "state", "taskix", "hooks.jsonl"), "utf8"));
         assert.equal(error.message, "Hook requires session_id");
 
-        const config = join(directory, "config.toml");
-        await writeFile(config, '[memory]\nenabled = true # TOML comment\n');
         const checks = `
             import assert from "node:assert/strict";
             const root = ${JSON.stringify(pathToFileURL(`${root}/`).href)};
             const memory = await import(new URL("memory.mjs", root));
-            assert.equal(await memory.memoryConfigured(${JSON.stringify(config)}), true);
+            assert.equal(memory.memoryEnabled({ TASKIX_MEMORY_ENABLED: "true" }), true);
             await import(new URL("discussion.mjs", root));
             await import(new URL("lifecycle.mjs", root));
             for (const host of ["pi", "omp"]) {

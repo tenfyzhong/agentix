@@ -5,7 +5,6 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const dependencies = [
-    { name: "smol-toml", exports: "parse", file: "smol-toml", license: "LICENSE" },
     { name: "@sinclair/typebox", exports: "Type", file: "typebox", license: "license" },
 ];
 

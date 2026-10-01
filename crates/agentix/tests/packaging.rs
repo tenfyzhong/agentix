@@ -80,7 +80,7 @@ mod release_archives {
     use super::*;
     use std::collections::BTreeSet;
 
-    const PLUGIN_FILES: [&str; 16] = [
+    const PLUGIN_FILES: [&str; 14] = [
         ".codex-plugin/plugin.json",
         ".claude-plugin/plugin.json",
         "package.json",
@@ -91,8 +91,6 @@ mod release_archives {
         "hooks/run.mjs",
         "extensions/pi.ts",
         "extensions/omp.ts",
-        "vendor/smol-toml.mjs",
-        "vendor/smol-toml.LICENSE",
         "vendor/typebox.mjs",
         "vendor/typebox.LICENSE",
         "skills/taskix-manager/SKILL.md",

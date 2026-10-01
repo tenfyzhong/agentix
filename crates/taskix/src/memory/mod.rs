@@ -23,7 +23,7 @@ pub async fn run(cli: &Cli, action: &MemoryCommand) -> Result<Value> {
             MemoryCommand::Status | MemoryCommand::Doctor => {
                 Ok(json!({"enabled":false,"online":false}))
             }
-            _ => bail!("memory is disabled; configure [memory].enabled"),
+            _ => bail!("memory is disabled; set TASKIX_MEMORY_ENABLED=true or 1"),
         };
     }
     if let MemoryCommand::Document { path: note_path } = action {

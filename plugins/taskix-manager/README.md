@@ -374,15 +374,15 @@ installation with development dependencies omitted. It verifies Pi checkout
 installs and OMP package-consumer installs, including the canonical plugin skill
 directory and its contained reference links. The cold-install tests additionally
 copy the plugin directory and unpack its npm tarball into isolated directories
-without `node_modules`, then execute the hook, check its error handler and TOML
-configuration parsing, load both command helpers, and register Pi/OMP adapters.
+without `node_modules`, then execute the hook, check its error handler and
+environment activation, load both command helpers, and register Pi/OMP adapters.
 
 ### Updating vendored dependencies
 
 Only third-party libraries are bundled; host entrypoints, command helpers,
 metrics workers, and SQL resources retain their existing relative paths.
-`smol-toml` and TypeBox are development dependencies used to regenerate the
-checked-in distributable JavaScript. The build preserves their licenses and
+TypeBox is a development dependency used to regenerate the
+checked-in distributable JavaScript. The build preserves its license and
 normalizes package paths so npm workspace hoisting does not change the output.
 
 After updating a dependency, synchronize the repository and plugin lockfiles,
@@ -473,15 +473,16 @@ Results contain guarded command arguments, never execute them, and defer to the 
 ## Project memory
 
 An updated Taskix CLI and plugin can retrieve project decisions from the optional
-[Taskix memory service](https://github.com/tenfyzhong/agentix/blob/main/docs/taskix-memory.md). Enable `[memory].enabled`
-in the shared Taskix configuration and start `taskix memory serve` separately.
+[Taskix memory service](https://github.com/tenfyzhong/agentix/blob/main/docs/taskix-memory.md).
+Export `TASKIX_MEMORY_ENABLED=true` or `1` to the host, CLI and service, then start `taskix memory serve` separately. Unset or any other value disables memory.
+Hooks read this environment variable directly without parsing TOML.
 The memory worker uses independent API credentials; it does not reuse the main
 agent's login or context. No additional memory config file is needed.
 
 Codex/Claude prompt hooks and Pi/OMP `before_agent_start` retrieve at most 6,400
-bytes with a 1.5-second deadline, independently of Jev routing. Missing/disabled
-memory does not start the memory CLI; unavailable queries fail soft. Session
-receipts are recorded by the receiving host and deduplicate unchanged revisions,
+bytes with a 1.5-second deadline, independently of Jev routing. Unset/disabled
+`TASKIX_MEMORY_ENABLED` does not start the memory CLI; unavailable queries fail
+soft. Session receipts are recorded by the receiving host and deduplicate unchanged revisions,
 including offline FTS fallback. Service-side packet generation does not imply
 delivery, so a timed-out response cannot suppress the next turn. Context semantic
 retrieval uses at most 750 ms, leaving part of the host deadline for FTS and IPC. Main

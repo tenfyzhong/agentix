@@ -12,9 +12,9 @@ test("vendored_dependencies_are_current_and_drift_checks_do_not_rewrite_files", 
     await assert.rejects(buildVendor({ check: true, outputDirectory }), /missing or stale/);
     await buildVendor({ outputDirectory });
     await buildVendor({ check: true, outputDirectory });
-    const path = join(outputDirectory, "smol-toml.mjs");
+    const path = join(outputDirectory, "typebox.mjs");
     await writeFile(path, "stale dependency\n");
-    await assert.rejects(buildVendor({ check: true, outputDirectory }), /missing or stale: smol-toml.mjs/);
+    await assert.rejects(buildVendor({ check: true, outputDirectory }), /missing or stale: typebox.mjs/);
     assert.equal(await readFile(path, "utf8"), "stale dependency\n");
     await buildVendor({ outputDirectory });
     const license = join(outputDirectory, "typebox.LICENSE");

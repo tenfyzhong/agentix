@@ -62,9 +62,7 @@ fn task_config_does_not_validate_memory_capabilities() {
     std::fs::create_dir(dir.path().join(".obsidian")).unwrap();
     let path = config_file(&dir, "");
     let mut text = std::fs::read_to_string(&path).unwrap();
-    text.push_str(
-        "\n[memory]\nenabled = true\n[memory.agent]\nmodel = 42\nprovider = 'not-configured'\n",
-    );
+    text.push_str("\n[memory]\n[memory.agent]\nmodel = 42\nprovider = 'not-configured'\n");
     std::fs::write(&path, text).unwrap();
     assert!(
         Config::load(&path).is_ok(),

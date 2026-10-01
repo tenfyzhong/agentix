@@ -27,7 +27,6 @@
     ]
   },
   "devDependencies": {
-    "@sinclair/typebox": "^0.34.0",
-    "smol-toml": "^1.9.0"
+    "@sinclair/typebox": "^0.34.0"
   }
 }

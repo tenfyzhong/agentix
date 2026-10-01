@@ -1,13 +1,12 @@
-import { parse } from "./vendor/smol-toml.mjs";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { tmpdir, homedir } from "node:os";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const pendingReceipts = new Map();
 
 // Independent of routing and extraction. Failures must never interrupt host work.
-export async function memoryContext(prompt, turn, options, runner, { cacheDir, timeoutMs = 1500, requireConfig = false, memoryConfigPath } = {}) {
+export async function memoryContext(prompt, turn, options, runner, { cacheDir, timeoutMs = 1500, requireEnabled = false, env = process.env } = {}) {
     if (typeof prompt !== "string" || !prompt.trim() || !options.session) return "";
     const controller = new AbortController();
     const signal = options.signal ? AbortSignal.any([options.signal, controller.signal]) : controller.signal;
@@ -16,7 +15,7 @@ export async function memoryContext(prompt, turn, options, runner, { cacheDir, t
         const prepared = await Promise.race([
             new Promise(resolve => { timer = setTimeout(() => { controller.abort(); resolve(""); }, timeoutMs); }),
             (async () => {
-                if (requireConfig && !await memoryConfigured(memoryConfigPath)) return "";
+                if (requireEnabled && !memoryEnabled(env)) return "";
                 signal.throwIfAborted();
                 // Hosts without native turn IDs get a fresh delivery, never a prompt hash
                 // that would conflate intentional repetitions across turns.
@@ -76,14 +75,6 @@ async function deduplicate(packet, turn, options, directory = join(tmpdir(), `ta
     };
 }
 
-export async function memoryConfigured(path = process.env.TASKIX_CONFIG || join(homedir(), ".config", "taskix", "config.toml")) {
-    let file;
-    try {
-        if (path.startsWith("~/")) path = join(homedir(), path.slice(2));
-        file = await open(path, "r");
-        const bytes = Buffer.alloc(256 * 1024 + 1);
-        const { bytesRead } = await file.read(bytes, 0, bytes.length, 0);
-        return bytesRead <= 256 * 1024 && parse(bytes.subarray(0, bytesRead).toString("utf8")).memory?.enabled === true;
-    } catch { return false; }
-    finally { await file?.close(); }
+export function memoryEnabled(env = process.env) {
+    return env.TASKIX_MEMORY_ENABLED === "true" || env.TASKIX_MEMORY_ENABLED === "1";
 }

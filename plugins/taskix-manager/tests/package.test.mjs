@@ -264,8 +264,6 @@ test("npm package contains all host manifests, hooks and resources but no tests"
         "metrics-schema.md",
         "extensions/pi.ts",
         "extensions/omp.ts",
-        "vendor/smol-toml.mjs",
-        "vendor/smol-toml.LICENSE",
         "vendor/typebox.mjs",
         "vendor/typebox.LICENSE",
         "skills/taskix-manager/SKILL.md",

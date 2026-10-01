@@ -108,7 +108,7 @@ export async function runHook(event, runner = runTaskix, routing = {}) {
     const options = { cwd: event.cwd, session: event.session_id };
     const enabled = !!jevConfig(routing.env);
     if (event.hook_event_name === "UserPromptSubmit") {
-        const memory = memoryContext(event.prompt, event.turn_id, options, runner, { ...routing, requireConfig: true });
+        const memory = memoryContext(event.prompt, event.turn_id, options, runner, { ...routing, requireEnabled: true });
         if (!enabled) {
             const content = await memory;
             return content ? { hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: content } } : {};
@@ -313,7 +313,7 @@ export function registerExtension(
             if (state.prompt) await recordMessages([state.prompt], runner, state.options, undefined, {turn_id:state.turn,source:host});
         }
         const options = optionsFor(ctx);
-        const memory = memoryContext(event.prompt, state?.turn || event.turnId || event.turn_id, options, runner, { ...routing, requireConfig: true });
+        const memory = memoryContext(event.prompt, state?.turn || event.turnId || event.turn_id, options, runner, { ...routing, requireEnabled: true });
         let content;
         if (jevConfig(routing.env)) {
             const prepared = await preparePrompt(event.prompt, options, runner, routing, state?.history);

@@ -188,6 +188,7 @@ impl Default for ProjectionConfig {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct MemoryConfig {
+    #[serde(skip)]
     pub enabled: bool,
     pub storage: MemoryStorage,
     pub providers: BTreeMap<String, ProviderConfig>,
@@ -222,14 +223,21 @@ fn expand(path: &Path) -> Result<PathBuf> {
 
 impl MemoryLocation {
     pub fn load(path: &Path) -> Result<Self> {
-        Self::from_value(&document(path)?)
+        Self::load_with_env(path, |key| std::env::var(key).ok())
     }
 
-    fn from_value(value: &toml::Value) -> Result<Self> {
+    /// Load using the environment supplied by the caller.
+    pub fn load_with_env(path: &Path, get: impl Fn(&str) -> Option<String>) -> Result<Self> {
+        Self::from_value(
+            &document(path)?,
+            memory_enabled(get("TASKIX_MEMORY_ENABLED").as_deref()),
+        )
+    }
+
+    fn from_value(value: &toml::Value, enabled: bool) -> Result<Self> {
         #[derive(Default, Deserialize)]
         #[serde(default)]
         struct MemorySection {
-            enabled: bool,
             storage: MemoryStorage,
             service: ServiceConfig,
             retrieval: RetrievalConfig,
@@ -276,7 +284,7 @@ impl MemoryLocation {
             "invalid: retrieval budgets"
         );
         Ok(Self {
-            enabled: memory.enabled,
+            enabled,
             path,
             task_path,
             service: memory.service,
@@ -287,13 +295,22 @@ impl MemoryLocation {
 
 impl MemoryConfig {
     pub fn load(path: &Path) -> Result<Self> {
+        Self::load_with_env(path, |key| std::env::var(key).ok())
+    }
+
+    /// Load using the environment supplied by the caller.
+    pub fn load_with_env(path: &Path, get: impl Fn(&str) -> Option<String>) -> Result<Self> {
         let value = document(path)?;
-        let location = MemoryLocation::from_value(&value)?;
+        let location = MemoryLocation::from_value(
+            &value,
+            memory_enabled(get("TASKIX_MEMORY_ENABLED").as_deref()),
+        )?;
         let mut config: Self = value
             .get("memory")
             .cloned()
             .unwrap_or_else(|| toml::Value::Table(toml::map::Map::default()))
             .try_into()?;
+        config.enabled = location.enabled;
         config.storage.path = Some(location.path);
         config.validate()?;
         Ok(config)
@@ -392,4 +409,8 @@ impl MemoryConfig {
         }
         Ok(())
     }
+}
+
+fn memory_enabled(value: Option<&str>) -> bool {
+    matches!(value, Some("true" | "1"))
 }

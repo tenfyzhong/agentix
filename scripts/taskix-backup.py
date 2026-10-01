@@ -260,7 +260,7 @@ def run(args):
     if not memory.is_absolute() or memory.resolve() == source.resolve():
         raise BackupError("memory database must use a distinct absolute path")
     if not memory.is_file():
-        if memory_path or memory_config.get("enabled", False):
+        if memory_path or os.environ.get("TASKIX_MEMORY_ENABLED") in ("true", "1"):
             raise BackupError("configured memory database is missing; initialize it before backup")
         memory = None
     else:
