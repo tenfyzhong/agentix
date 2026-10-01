@@ -32,6 +32,99 @@ async fn fixture() -> (tempfile::TempDir, MemoryStore, MemoryProjection, String)
     .unwrap();
     (dir, store, projection, memory.id)
 }
+
+#[tokio::test]
+async fn projection_keeps_complete_content_and_reason_in_body_only() {
+    let (_dir, store, projection, id) = fixture().await;
+    let mut content = input();
+    content.conditions = vec!["Customer-managed: production".into()];
+    content.valid_until = Some(4_000_000_000);
+    let memory = store
+        .supersede(
+            "project",
+            &id,
+            1,
+            content,
+            "New external constraint",
+            Actor::Human,
+        )
+        .await
+        .unwrap();
+    projection.sync("project", "", 20).await.unwrap();
+    let text = std::fs::read_to_string(projection.path(&memory.id).unwrap()).unwrap();
+    let (header, body) = text
+        .strip_prefix("---\n")
+        .unwrap()
+        .split_once("---\n")
+        .unwrap();
+    let metadata: serde_json::Value = serde_yaml::from_str(header).unwrap();
+    assert!(metadata.get("content").is_none());
+    assert!(metadata.get("reason").is_none());
+    assert_eq!(metadata["id"], memory.id);
+    assert_eq!(metadata["project_id"], "project");
+    assert_eq!(metadata["revision"], memory.revision);
+    assert_eq!(metadata["status"], "active");
+    assert!(body.contains("## content\n"));
+    let fields = serde_json::to_value(&memory.content).unwrap();
+    for (field, expected) in fields.as_object().unwrap() {
+        let start = format!("<!-- taskix-memory:{field} -->\n");
+        let end = format!("\n<!-- /taskix-memory:{field} -->");
+        let text = body
+            .split_once(&start)
+            .unwrap()
+            .1
+            .split_once(&end)
+            .unwrap()
+            .0;
+        if let Some(expected) = expected.as_str() {
+            assert_eq!(text, expected, "{field}");
+        } else {
+            let yaml = text
+                .lines()
+                .map(|line| line.strip_prefix("    ").unwrap())
+                .collect::<Vec<_>>()
+                .join("\n");
+            assert_eq!(
+                serde_yaml::from_str::<serde_json::Value>(&yaml).unwrap(),
+                *expected,
+                "{field}"
+            );
+        }
+    }
+    assert!(body.contains("## reason\n"));
+    assert!(body.contains(
+        "<!-- taskix-memory:reason -->\nNew external constraint\n<!-- /taskix-memory:reason -->"
+    ));
+}
+
+#[tokio::test]
+async fn projection_rewrites_legacy_frontmatter_without_changing_database_revision() {
+    let (_dir, store, projection, id) = fixture().await;
+    projection.sync("project", "", 20).await.unwrap();
+    let path = projection.path(&id).unwrap();
+    let canonical = std::fs::read_to_string(&path).unwrap();
+    let memory = store.show("project", &id, None).await.unwrap();
+    let legacy = format!(
+        "---\n{}---\n\nOld memory layout\n",
+        serde_yaml::to_string(&memory).unwrap()
+    );
+    std::fs::write(&path, legacy).unwrap();
+    let page = projection.sync("project", "", 20).await.unwrap();
+    assert_eq!(page.published, 1);
+    assert_eq!(page.imported, 0);
+    assert!(page.conflicts.is_empty());
+    let repaired = std::fs::read_to_string(path).unwrap();
+    assert_eq!(repaired, canonical);
+    let (header, _) = repaired
+        .strip_prefix("---\n")
+        .unwrap()
+        .split_once("---\n")
+        .unwrap();
+    let metadata: serde_json::Value = serde_yaml::from_str(header).unwrap();
+    assert!(metadata.get("content").is_none());
+    assert!(metadata.get("reason").is_none());
+    assert_eq!(store.show("project", &id, None).await.unwrap(), memory);
+}
 #[tokio::test]
 async fn projection_restores_all_file_edits_without_changing_memory() {
     let (_dir, store, projection, id) = fixture().await;

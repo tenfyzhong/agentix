@@ -22,10 +22,24 @@ struct Repositories(agentix_task::Store);
 impl ProjectRepository for Repositories {
     async fn root(&self, project: &str) -> Result<Option<PathBuf>> {
         let project = self.0.project_result(project).await?;
-        Ok(project
-            .archived_at
-            .is_none()
-            .then(|| PathBuf::from(project.root)))
+        if project.archived_at.is_some() {
+            return Ok(None);
+        }
+        let root = PathBuf::from(project.root);
+        let metadata = match tokio::fs::metadata(&root).await {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("cannot inspect Project root {}", root.display()));
+            }
+        };
+        ensure!(
+            metadata.is_dir(),
+            "Project root must be a directory: {}",
+            root.display()
+        );
+        Ok(Some(root))
     }
 }
 struct Runtime {
@@ -489,7 +503,11 @@ async fn run_workers(app: Arc<Application>) -> Result<()> {
                 } else {
                     idle.empty(tokio::time::Instant::now(), interval);
                 }
-                if let Err(error) = result { app.report("worker",Some(error.to_string())).await; }
+                match result {
+                    Ok(true) => app.report("worker", None).await,
+                    Ok(false) => {},
+                    Err(error) => app.report("worker", Some(error.to_string())).await,
+                }
             },
             changed=work.changed()=>{
                 if changed.is_err() { return Ok(()); }
@@ -763,11 +781,11 @@ async fn run_reviews(app: Arc<Application>) -> Result<()> {
                     continue;
                 }
                 let result = async {
-                    let root = app
-                        .repositories
-                        .root(&project.id)
-                        .await?
-                        .context("Project repository unavailable")?;
+                    let Some(root) = app.repositories.root(&project.id).await? else {
+                        // Removed workspaces remain registered for historical reads.
+                        // Recheck next round so restoring the directory resumes reviews.
+                        return Ok::<_, anyhow::Error>(());
+                    };
                     let tools = agentix_memory::ProjectTools::new(
                         app.store.clone(),
                         project.id.clone(),

@@ -7,6 +7,180 @@ use tokio::{
 };
 
 #[tokio::test]
+async fn repository_roots_handle_missing_restored_and_invalid_directories() {
+    let dir = tempfile::tempdir().unwrap();
+    let tasks = agentix_task::Store::open(&dir.path().join("tasks.db"))
+        .await
+        .unwrap();
+    let root = dir.path().join("repository");
+    std::fs::create_dir(&root).unwrap();
+    let project = tasks
+        .execute(
+            json!({"command":"project.register","name":"repository","root":root}),
+            agentix_task::WriteOptions::default(),
+        )
+        .await
+        .unwrap()
+        .result["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let repositories = Repositories(tasks);
+    let registered = repositories.root(&project).await.unwrap().unwrap();
+    std::fs::remove_dir(&root).unwrap();
+    assert!(repositories.root(&project).await.unwrap().is_none());
+    std::fs::create_dir(&root).unwrap();
+    assert_eq!(repositories.root(&project).await.unwrap(), Some(registered));
+    std::fs::remove_dir(&root).unwrap();
+    std::fs::write(&root, "not a directory").unwrap();
+    assert!(
+        repositories
+            .root(&project)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("directory")
+    );
+}
+
+#[tokio::test]
+async fn repository_roots_missing_projects_are_skipped_by_reviews() {
+    let (_dir, app, project) = repository_test_application().await;
+    let root = app.repositories.root(&project).await.unwrap().unwrap();
+    std::fs::remove_dir(&root).unwrap();
+    let key = format!("review:{project}");
+    app.report(&key, Some("old review failure".into())).await;
+    let background = tokio::spawn(run_reviews(app.clone()));
+    let cleared = tokio::time::timeout(Duration::from_secs(1), async {
+        while app.errors.lock().await.contains_key(&key) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    background.abort();
+    let _ = background.await;
+    assert!(cleared.is_ok(), "missing roots must not keep review errors");
+    assert_eq!(
+        app.store.memory_status(Some(&project)).await.unwrap()["work"],
+        json!({})
+    );
+}
+
+async fn repository_test_application() -> (tempfile::TempDir, Arc<Application>, String) {
+    let dir = tempfile::tempdir().unwrap();
+    let task_path = dir.path().join("tasks.db");
+    let memory_path = dir.path().join("memory.db");
+    let tasks = agentix_task::Store::open(&task_path).await.unwrap();
+    let root = dir.path().join("repository");
+    std::fs::create_dir(&root).unwrap();
+    let project = tasks
+        .execute(
+            json!({"command":"project.register","name":"repository","root":root}),
+            agentix_task::WriteOptions::default(),
+        )
+        .await
+        .unwrap()
+        .result["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let store = MemoryStore::open(&memory_path).await.unwrap();
+    let mut config = MemoryConfig::default();
+    config.providers.insert(
+        "openai".into(),
+        ProviderConfig {
+            base_url: "http://127.0.0.1:1".into(),
+            api_key_env: None,
+            protocol: ProviderProtocol::Openai,
+            max_in_flight: 1,
+        },
+    );
+    let repositories = Arc::new(Repositories(tasks.clone()));
+    let runtime = Arc::new(Runtime::build(config.clone(), &store, repositories.clone()));
+    assert!(runtime.worker.is_some());
+    let app = Arc::new(Application {
+        path: dir.path().join("config.toml"),
+        location: MemoryLocation {
+            enabled: true,
+            path: memory_path,
+            task_path,
+            service: config.service,
+            retrieval: config.retrieval.clone(),
+        },
+        store,
+        tasks,
+        repositories,
+        runtime: RwLock::new(runtime),
+        errors: Mutex::new(BTreeMap::new()),
+        projection: Mutex::new(()),
+    });
+    (dir, app, project)
+}
+
+struct EmptyExtractionModel;
+
+#[async_trait]
+impl agentix_memory::Model for EmptyExtractionModel {
+    async fn complete(
+        &self,
+        _request: &agentix_memory::ModelRequest,
+    ) -> Result<agentix_memory::ModelReply> {
+        Ok(agentix_memory::ModelReply {
+            continuation: json!([]),
+            calls: vec![agentix_memory::ToolCall {
+                id: "submit".into(),
+                name: "submit_candidates".into(),
+                arguments: json!({"candidates":[]}),
+            }],
+            text: String::new(),
+            usage: agentix_memory::TokenUsage::default(),
+        })
+    }
+}
+
+#[tokio::test]
+async fn worker_errors_clear_after_success_but_not_after_idle_probes() {
+    let (_dir, app, project) = repository_test_application().await;
+    let mut config = app.runtime.read().await.config.clone();
+    config.agent.extraction_debounce_ms = 0;
+    config.service.poll_interval_ms = 20;
+    let mut runtime = Runtime::build(config.clone(), &app.store, app.repositories.clone());
+    runtime.worker = Some(Arc::new(MemoryWorker::new(
+        app.store.clone(),
+        Arc::new(EmptyExtractionModel),
+        config.agent,
+        app.repositories.clone(),
+    )));
+    *app.runtime.write().await = Arc::new(runtime);
+    app.report("worker", Some("Agent step budget exceeded".into()))
+        .await;
+    let background = tokio::spawn(run_workers(app.clone()));
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(app.errors.lock().await.contains_key("worker"));
+    let source = serde_json::from_value(json!({
+        "instance_id":"db","receipt_id":"recovery","sequence":1,
+        "project_id":project,"session_id":"session","turn_id":"turn",
+        "revision":1,"job_id":null,"recorded_at":1,
+        "messages":[{"id":"message","role":"user","text":"Routine progress"}]
+    }))
+    .unwrap();
+    app.store.ingest(&source).await.unwrap();
+    let cleared = tokio::time::timeout(Duration::from_secs(1), async {
+        while app.errors.lock().await.contains_key("worker") {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await;
+    background.abort();
+    let _ = background.await;
+    assert_eq!(app.store.work_counts().await.unwrap().done, 1);
+    assert!(
+        cleared.is_ok(),
+        "successful work must clear the stale error"
+    );
+}
+
+#[tokio::test]
 async fn slow_project_embedding_does_not_block_another_project() {
     check_project_concurrency(2, true).await;
 }

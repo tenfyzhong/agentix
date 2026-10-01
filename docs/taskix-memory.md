@@ -265,6 +265,18 @@ share their canonical Project. Pure discussions can be sources without a Job.
 Late replies and corrections create new source revisions. Deleted/expired
 original discussion records do not remove already retained evidence. Project
 archival stops new background maintenance; history remains explicitly readable.
+Missing registered workspace directories are treated as unavailable repositories.
+Periodic repository reviews skip them and resume when the directory returns;
+existing memories and evidence remain readable. Extraction that needs an unavailable
+repository fails through the normal work retry mechanism rather than accepting
+unverified candidates. After the retry budget is exhausted, restore the directory
+and use `taskix memory retry WORK_ID`. Permission errors and roots replaced by files
+still report background errors.
+
+`background_errors.worker` records the most recent worker failure until a subsequent
+work item succeeds; empty queue probes do not clear it. Individual work errors and
+retry states remain available through `taskix memory work WORK_ID` even after the
+worker resumes successful processing.
 
 The service commits receipt, evidence and queue entries before acknowledging the
 outbox. Acknowledgement means **received**, not extracted. No model work runs
@@ -441,6 +453,12 @@ search and context requests do not run an Agent loop.
 The service projects read-only memory notes into
 `<documents.directory>/Projects/<project key>/Memory/<memory ID>.md`.
 SQLite stores the complete memory content, properties, evidence and revisions.
+Frontmatter contains identity and lifecycle metadata, such as `id`, `project_id`,
+`revision`, `status` and timestamps. The complete `content` is rendered in the
+Markdown body with subsections for each field; structured values use indented
+YAML blocks. The `reason` is a separate body section. Neither `content` nor
+`reason` is stored in frontmatter. Full synchronization repairs older note
+layouts without changing database content or memory revisions.
 Do not edit any part of these notes in Obsidian. File edits, including body text,
 properties and managed metadata, are never imported into SQLite. Synchronization
 restores the current database representation without changing the memory revision.
