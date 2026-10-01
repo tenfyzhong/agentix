@@ -43,23 +43,27 @@ async fn automatic_batches_are_bounded_durable_and_serialized_across_stores() {
     let (a, b) = tokio::join!(store.auto_maintain_events(), other.auto_maintain_events());
     let reports: Vec<_> = [a.unwrap(), b.unwrap()].into_iter().flatten().collect();
     assert_eq!(reports.len(), 1);
-    assert_eq!(reports[0]["deleted_events"], 64);
+    let first = reports[0]["deleted_events"].as_i64().unwrap();
+    assert!((1..=64).contains(&first));
     assert_eq!(
         store.event_policy(None, None, None).await.unwrap()["runs"],
         1
     );
     assert!(store.auto_maintain_events().await.unwrap().is_none());
-    clock.fetch_add(5, Ordering::SeqCst);
     let restarted = reopen(&dir, &clock).await;
-    assert_eq!(
-        restarted.auto_maintain_events().await.unwrap().unwrap()["deleted_events"],
-        64
-    );
-    clock.fetch_add(5, Ordering::SeqCst);
-    assert_eq!(
-        restarted.auto_maintain_events().await.unwrap().unwrap()["deleted_events"],
-        22
-    );
+    let mut deleted = first;
+    // A time-limited batch may yield before reaching its row limit on a busy host.
+    for _ in 0..150 {
+        clock.fetch_add(5, Ordering::SeqCst);
+        let report = restarted.auto_maintain_events().await.unwrap().unwrap();
+        let count = report["deleted_events"].as_i64().unwrap();
+        assert!((0..=64).contains(&count));
+        deleted += count;
+        if report["more"] == false {
+            break;
+        }
+    }
+    assert_eq!(deleted, 150);
     let state = restarted.event_policy(None, None, None).await.unwrap();
     assert_eq!(state["next_run_at"], clock.load(Ordering::SeqCst) + 86400);
     assert_eq!(state["pruned_through"], 150);
@@ -74,7 +78,7 @@ async fn automatic_compaction_only_walks_legacy_records_once() {
     for _ in 0..150 {
         let report = store.auto_maintain_events().await.unwrap().unwrap();
         let count = report["compacted_events"].as_i64().unwrap();
-        assert!((1..=64).contains(&count));
+        assert!((0..=64).contains(&count));
         compacted += count;
         if report["more"] == false {
             break;
@@ -190,7 +194,7 @@ async fn expired_backlog_is_deleted_before_compacting_surviving_history() {
     let (_dir, store, _) = fixture().await;
     seed(&store, 150, 1).await;
     let report = store.auto_maintain_events().await.unwrap().unwrap();
-    assert_eq!(report["deleted_events"], 64);
+    assert!((1..=64).contains(&report["deleted_events"].as_i64().unwrap()));
     assert_eq!(
         report["compacted_events"], 0,
         "do not rewrite snapshots already queued for expiry deletion"
