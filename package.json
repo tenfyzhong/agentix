@@ -7,10 +7,6 @@
   "keywords": [
     "pi-package"
   ],
-  "dependencies": {
-    "@sinclair/typebox": "^0.34.0",
-    "smol-toml": "^1.9.0"
-  },
   "workspaces": [
     "plugins/taskix-manager",
     "plugins/agentix-bridge"

@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { memoryContext, memoryConfigured } from "../memory.mjs";
+import { memoryContext } from "../memory.mjs";
 import filesystem from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
 import { runHook, registerExtension } from "../runtime.mjs";
@@ -80,40 +80,45 @@ test("a response arriving after the host deadline cannot suppress the next turn"
     assert.equal(await memoryContext("regional endpoints", "later", options, async () => packet(),
         { cacheDir: directory }), "");
 });
-test("Codex and Claude prompt hooks retrieve memory independently of Jev routing", async t => {
-    const memoryConfigPath = await enabledConfig(t);
+test("Codex and Claude prompt hooks retrieve memory independently of Jev routing", async () => {
     const calls = [];
-    const output = await runHook({ hook_event_name: "UserPromptSubmit", session_id: "s", turn_id: "t", prompt: "regional endpoints" }, async args => { calls.push(args); return packet(); }, { memoryConfigPath, env: { TASKIX_JEV_ENABLED: "false" } });
+    const output = await runHook({ hook_event_name: "UserPromptSubmit", session_id: "s", turn_id: "t", prompt: "regional endpoints" }, async args => { calls.push(args); return packet(); }, { env: { TASKIX_JEV_ENABLED: "false", TASKIX_MEMORY_ENABLED: "true" } });
     assert.match(output.hookSpecificOutput.additionalContext, /regional endpoints/);
     assert.deepEqual(calls.map(args => args.slice(0, 2)), [["memory", "context"]]);
 });
-for (const host of ["pi", "omp"]) test(`${host} retrieves memory before the agent starts`, async t => {
-    const memoryConfigPath = await enabledConfig(t);
+for (const host of ["pi", "omp"]) test(`${host} retrieves memory before the agent starts`, async () => {
     const handlers = {};
     registerExtension({ on: (name, handler) => { handlers[name] = handler; }, registerTool() {} }, host,
         async args => args[0] === "memory" ? packet() : { result: {} },
-        { setInterval: () => 1, clearInterval() {} }, undefined, { memoryConfigPath, env: { TASKIX_JEV_ENABLED: "false" } });
+        { setInterval: () => 1, clearInterval() {} }, undefined, { env: { TASKIX_JEV_ENABLED: "false", TASKIX_MEMORY_ENABLED: "1" } });
     const ctx = { cwd: tmpdir(), sessionManager: { getSessionId: () => `memory-${host}` } };
     const result = await handlers.before_agent_start({ prompt: "regional endpoints", turn_id: "native-turn" }, ctx);
     assert.match(result.message.content, /regional endpoints/);
 });
 
-test("memory activation uses the shared TOML file without starting a CLI when disabled", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "memory-config-"));
-    const path = join(dir, "config.toml");
-    try {
-        assert.equal(await memoryConfigured(path), false);
-        await writeFile(path, 'memory.enabled = true\n[memory.agent]\nmodel = 42\n');
-        assert.equal(await memoryConfigured(path), true);
-        await writeFile(path, '[memory]\nenabled = false\n');
-        assert.equal(await memoryConfigured(path), false);
-    } finally { await rm(dir, { recursive: true, force: true }); }
-});
-
-async function enabledConfig(t) {
-    const dir = await mkdtemp(join(tmpdir(), "memory-enabled-"));
-    t.after(() => rm(dir, { recursive: true, force: true }));
-    const path = join(dir, "config.toml");
-    await writeFile(path, '[memory]\nenabled=true\n');
-    return path;
+for (const value of [undefined, "", "false", "0", "TRUE", "yes", " true ", "true", "1"]) {
+    test(`memory_environment_${JSON.stringify(value)}_controls_all_hosts_without_config_io`, async t => {
+        const enabled = value === "true" || value === "1";
+        const env = { TASKIX_JEV_ENABLED: "false", ...(value === undefined ? {} : { TASKIX_MEMORY_ENABLED: value }) };
+        const directory = await mkdtemp(join(tmpdir(), "memory-env-"));
+        t.after(() => rm(directory, { recursive: true, force: true }));
+        const options = { env, cacheDir: directory };
+        const calls = [];
+        const runner = async args => { if (args[0] === "memory") calls.push(args); return args[0] === "memory" ? packet() : { result: {} }; };
+        const output = await runHook({ hook_event_name: "UserPromptSubmit", session_id: "env-hook", turn_id: "t", prompt: "regional endpoints" }, runner, options);
+        assert.equal(!!output.hookSpecificOutput?.additionalContext, enabled);
+        assert.equal(calls.length, enabled ? 1 : 0);
+        if (enabled) await memoryContext("regional endpoints", "cleanup", { session: "env-hook" }, runner, options);
+        for (const host of ["pi", "omp"]) {
+            const handlers = {};
+            calls.length = 0;
+            registerExtension({ on: (name, handler) => { handlers[name] = handler; }, registerTool() {} }, host,
+                runner, { setInterval: () => 1, clearInterval() {} }, undefined, options);
+            const result = await handlers.before_agent_start({ prompt: "regional endpoints", turn_id: "t" },
+                { cwd: directory, sessionManager: { getSessionId: () => `env-${host}` } });
+            assert.equal(!!result?.message?.content?.includes("Historical memory"), enabled);
+            assert.equal(calls.length, enabled ? 1 : 0);
+            if (enabled) await memoryContext("regional endpoints", "cleanup", { session: `env-${host}`, cwd: directory }, runner, options);
+        }
+    });
 }

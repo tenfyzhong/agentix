@@ -496,6 +496,29 @@ async fn reload_preserves_provider_admission_and_releases_cancelled_requests() {
 
 #[allow(clippy::too_many_lines)] // Exercise reload while the original HTTP request is live.
 async fn check_reload_admission(deep_limit: bool) {
+    // Reload reads the process environment. Run each fixture in an isolated
+    // process rather than mutating environment shared by parallel tests.
+    const CHILD: &str = "TASKIX_MEMORY_RELOAD_TEST_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let name = if deep_limit {
+            "memory::daemon::tests::reload_preserves_admission_for_an_active_deep_query"
+        } else {
+            "memory::daemon::tests::reload_preserves_provider_admission_and_releases_cancelled_requests"
+        };
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", name, "--nocapture"])
+            .env(CHILD, "1")
+            .env("TASKIX_MEMORY_ENABLED", "true")
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
     let dir = tempfile::tempdir().unwrap();
     let task_path = dir.path().join("tasks.db");
     let memory_path = dir.path().join("memory.db");

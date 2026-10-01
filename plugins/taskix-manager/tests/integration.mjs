@@ -457,8 +457,6 @@ for (const host of ["codex", "claude"]) {
             for (const path of ["hooks", "runtime.mjs", "memory.mjs", "taskix-cli.mjs", "routing-context.mjs", "conversation.mjs", "discussion.mjs", "lifecycle.mjs", "jev.mjs", "jev-io.mjs", "routing-state.mjs", "jev-metrics.mjs", "jev-metrics-worker.mjs", "metrics-schema.sql", `.${host}-plugin`]) {
                 await cp(resolve(path), join(root, path), { recursive: true });
             }
-            await cp(fileURLToPath(new URL("../", import.meta.resolve("smol-toml"))),
-                join(root, "node_modules", "smol-toml"), { recursive: true });
             const task = await f.run([
                 "task",
                 "add",

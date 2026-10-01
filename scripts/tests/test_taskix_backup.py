@@ -44,13 +44,13 @@ if os.environ.get("MOCK_FAIL"):
 ''')
         self.rclone.chmod(0o700)
 
-    def run_backup(self, *args, fail=False, default_output=False, error="provider-secret"):
+    def run_backup(self, *args, fail=False, default_output=False, error="provider-secret", memory_enabled="false"):
         output_args = [] if default_output else ["--output-dir", str(self.output)]
         return subprocess.run(
             [sys.executable, str(SCRIPT), "--config", str(self.config),
              *output_args, "--remote", "r2:bucket/taskix/host",
              "--rclone", str(self.rclone), *args],
-            env={**os.environ, "MOCK_ROOT": str(self.root), "MOCK_FAIL": "1" if fail else "", "MOCK_ERROR": error},
+            env={**os.environ, "TASKIX_MEMORY_ENABLED": memory_enabled, "MOCK_ROOT": str(self.root), "MOCK_FAIL": "1" if fail else "", "MOCK_ERROR": error},
             capture_output=True, text=True, timeout=15,
         )
 
@@ -145,11 +145,10 @@ if os.environ.get("MOCK_FAIL"):
         self.assertEqual(len(list(self.output.glob("*.tar.gz"))), 2)
 
     def test_missing_configured_memory_is_not_silently_omitted(self):
-        with self.config.open("a") as stream:
-            stream.write('\n[memory]\nenabled=true\n')
-        result = self.run_backup()
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("memory database is missing", result.stderr)
+        for value in ("true", "1"):
+            result = self.run_backup(memory_enabled=value)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("memory database is missing", result.stderr)
 
     def test_restore_rejects_symlink_members_without_creating_destination(self):
         archive = self.root / "taskix-2026-09-29.tar.gz"

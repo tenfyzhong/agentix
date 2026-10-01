@@ -10,15 +10,27 @@ Use the pinned Rust 1.95.0 toolchain, Node.js 24+, and npm:
 make check
 ```
 
-This runs formatting, Clippy with warnings denied, workspace tests, and the plugin's Node tests. `make check` installs locked plugin dependencies. For a focused Cargo run, install them first:
+This runs formatting, Clippy with warnings denied, workspace tests, and the plugin's Node tests. Taskix Manager has no third-party npm dependencies. For a focused run:
 
 ```sh
-npm ci --ignore-scripts --prefix plugins/taskix-manager
 cargo test -p agentix-task -p taskix
 node --test plugins/taskix-manager/tests/*.test.mjs
 ```
 
 Cargo's `plugin_entrypoints_execute_the_compiled_taskix` test runs [integration.mjs](../plugins/taskix-manager/tests/integration.mjs) with the freshly compiled binary. It must not fall back to an installed taskix or the user's database. Set `TASKIX_TEST_HOOK_SHELL=fish` to additionally check hook commands through fish; Linux/macOS CI does this. Windows runs commands through `cmd.exe`.
+
+Plugin installation does not require npm dependency installation. The
+[cold-install tests](../plugins/taskix-manager/tests/cold-install.test.mjs)
+execute hooks and load helpers and Pi/OMP adapters from directory copies and
+unpacked npm tarballs without `node_modules` or `vendor/`. They assert the exact
+plain JSON Schema exposed by both adapters. The real CLI hook fixture uses the
+same dependency-free files. Set `TASKIX_TEST_PI_VALIDATION_MODULE` to the installed
+Pi AI `utils/validation.js` module to additionally run the
+[host schema test](../plugins/taskix-manager/tests/host-schema.test.mjs), which
+checks valid and invalid arguments with Pi's real validator. This validates both
+adapter schemas with Pi's engine; it does not run an OMP model session.
+These cover distributable contents and host entrypoints; native host installation
+and hook trust remain separate acceptance boundaries.
 
 ## Tasks, projections, and host lifecycle
 

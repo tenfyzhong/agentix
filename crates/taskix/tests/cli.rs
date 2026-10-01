@@ -23,6 +23,7 @@ mod project_resolution;
 
 struct Cli {
     dir: TempDir,
+    memory_enabled: bool,
 }
 
 #[test]
@@ -73,7 +74,10 @@ impl Cli {
         }
         std::fs::create_dir_all(dir.path().join("vault")).unwrap();
         std::fs::create_dir_all(dir.path().join("vault/.obsidian")).unwrap();
-        let cli = Self { dir };
+        let cli = Self {
+            dir,
+            memory_enabled: false,
+        };
         cli.ok(&[
             "init",
             "--root",
@@ -84,6 +88,12 @@ impl Cli {
             cli.dir.path().join("state.sqlite3").to_str().unwrap(),
         ]);
         cli
+    }
+    fn with_memory() -> Self {
+        Self {
+            memory_enabled: true,
+            ..Self::new()
+        }
     }
     fn run(&self, args: &[&str]) -> Output {
         self.command(args).output().unwrap()
@@ -96,6 +106,7 @@ impl Cli {
             self.dir.path().join("test-login-shell"),
         );
         command
+            .env_remove("TASKIX_MEMORY_ENABLED")
             .env_remove("TASKIX_JEV_ENABLED")
             .env_remove("TASKIX_JEV_METRICS_ENABLED")
             .arg("--config")
@@ -103,6 +114,9 @@ impl Cli {
             .arg("--json")
             .args(args)
             .current_dir(self.dir.path());
+        if self.memory_enabled {
+            command.env("TASKIX_MEMORY_ENABLED", "true");
+        }
         command
     }
     fn job(&self, title: &str) -> String {
@@ -1055,6 +1069,7 @@ fn taskix_preserves_authored_language_without_language_configuration() {
 fn initialization_ignores_language_environment_and_omits_language_configuration() {
     let cli = Cli {
         dir: TempDir::new().unwrap(),
+        memory_enabled: false,
     };
     let root = cli.dir.path().join("documents");
     std::fs::create_dir_all(root.join(".obsidian")).unwrap();

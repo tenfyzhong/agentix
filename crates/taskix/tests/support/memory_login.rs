@@ -12,10 +12,10 @@ impl Drop for LoginDaemon {
 }
 
 fn check_login_service(shell_body: &str, inherited_key: Option<&str>, credentials_available: bool) {
-    let cli = Cli::new();
+    let cli = Cli::with_memory();
     let config = cli.dir.path().join("config.toml");
     let mut text = std::fs::read_to_string(&config).unwrap();
-    text.push_str("\n[memory]\nenabled = true\n[memory.providers.openai]\nbase_url = 'http://127.0.0.1:9/v1'\napi_key_env = 'TASKIX_LOGIN_TEST_SECRET'\n[memory.agent]\nmodel = 'gpt-6-astra'\n[memory.service]\npoll_interval_ms = 50\n");
+    text.push_str("\n[memory]\n[memory.providers.openai]\nbase_url = 'http://127.0.0.1:9/v1'\napi_key_env = 'TASKIX_LOGIN_TEST_SECRET'\n[memory.agent]\nmodel = 'gpt-6-astra'\n[memory.service]\npoll_interval_ms = 50\n");
     std::fs::write(config, text).unwrap();
     let shell = cli.dir.path().join("login shell");
     std::fs::write(&shell, format!("#!/bin/sh\n{shell_body}\n")).unwrap();
@@ -26,6 +26,7 @@ fn check_login_service(shell_body: &str, inherited_key: Option<&str>, credential
     let mut command = cli.command(&["memory", "serve"]);
     command
         .env_clear()
+        .env("TASKIX_MEMORY_ENABLED", "true")
         .env("HOME", cli.dir.path())
         .env("PATH", "/usr/bin:/bin")
         .env("TASKIX_LOGIN_SHELL", &shell)

@@ -237,6 +237,11 @@ performed; disable collection when finished. The query tool adds no model calls.
 
 Install Node.js 24+ and put `taskix` on PATH. Initialize taskix with your chosen document directory before enabling the plugin. Set `TASKIX_CONFIG` if its configuration is not in the default location.
 
+The plugin uses only Node built-ins and plain JSON Schema for Pi/OMP tools.
+Directory, Git marketplace, and npm package installations run without installing
+npm dependencies, vendored libraries, build steps or lifecycle scripts. Node.js
+and the `taskix` executable remain external prerequisites.
+
 ### Codex: marketplace
 
 The repository provides the `agentix` marketplace in `.agents/plugins/marketplace.json`. Add the GitHub repository, then install the plugin:
@@ -310,7 +315,8 @@ OMP installs the plugins from the same marketplace used by Claude. The marketpla
 
 If `skill://taskix-manager` reports `Unknown skill` while the taskix tool is available, remove the old root package with `omp plugin uninstall agentix-plugins`, install the marketplace plugins above, and restart OMP. In a new session, check `/status` for the skill and read `skill://taskix-manager` and `skill://taskix-manager/references/commands.md`. Older repository packages placed skills only below `plugins/taskix-manager/`, outside OMP's discovery root.
 
-An npm-installed copy uses `npm install --ignore-scripts` if dependencies need reinstalling: npm does not ship `package-lock.json`. Source and release copies include the lockfile and can use `npm ci`. The separate Obsidian skill is still required when an agent edits Obsidian Plan/Notes bodies.
+Taskix Manager needs no additional npm dependency installation. The separate
+Obsidian skill is still required when an agent edits Obsidian Plan/Notes bodies.
 
 ## Document layout
 
@@ -363,21 +369,14 @@ PENDING_REVIEW Jobs allow an explicitly requested next Inbox entry while awaitin
 
 ## Validation
 
-The remote-package installation test starts with an isolated empty npm cache and downloads missing locked dependencies from the npm registry. It verifies both Pi checkout installs and OMP package-consumer installs without relying on the host's existing cache, including the canonical plugin skill directory and its contained reference links in the installed tarball.
+The remote-package installation test uses an empty npm cache and offline
+installation with development dependencies omitted. It verifies Pi checkout
+installs and OMP package-consumer installs, including the canonical plugin skill
+directory and its contained reference links. The cold-install tests additionally
+copy the plugin directory and unpack its npm tarball into isolated directories
+without `node_modules`, then execute the hook, check its error handler and
+environment activation, load both command helpers, and register Pi/OMP adapters.
 
-From the repository root, run `make check` with Node.js 24+ and npm. Tests validate both marketplace entries, inspect host-specific hook discovery, import the manifest-selected Pi/OMP extensions, and verify the npm package file list. Cargo additionally exercises the configured commands with the compiled taskix, one host root variable at a time, from an unrelated working directory and a plugin path containing spaces/Unicode. Linux/macOS CI exercises both sh and fish; Windows tests execute the configured command through `cmd.exe` rather than bypassing it.
-
-To additionally exercise a Unix hook shell such as fish:
-
-```sh
-TASKIX_TEST_HOOK_SHELL=fish cargo test -p taskix --test cli plugin_entrypoints_execute_the_compiled_taskix
-```
-
-Lifecycle tests also cover interruption during planning/execution, ordinary Claude tool failures that must retain ownership, automatic continuations, deletion retries after shutdown, stopped and in-flight heartbeats, cleanup retries, old-session callbacks, and recovery with a new token. The [coverage map](https://github.com/tenfyzhong/agentix/blob/main/docs/integration-coverage.md) separates real CLI checks from host harness and desktop checks. `claude plugin validate plugins/taskix-manager` checks the Claude manifest with the installed host.
-
-Run `AGENTIX_TEST_NATIVE_HOSTS=1 node --test plugins/taskix-manager/tests/native-omp.test.mjs` from the repository root to additionally verify skill discovery with an installed OMP and taskix. This starts an isolated RPC session with the marketplace plugins and checks the host's skill list through the bridge, then uses its native Read tool on `skill://taskix-manager` and `skill://taskix-manager/references/commands.md`, without sending a model prompt or using the user's task database.
-
-These tests do not install the plugin in a user's host or invoke a live model. Native host loading, trust policy, and credentialed IM behavior remain separate acceptance checks.
 
 ## Obsidian setup
 
@@ -436,15 +435,16 @@ Results contain guarded command arguments, never execute them, and defer to the 
 ## Project memory
 
 An updated Taskix CLI and plugin can retrieve project decisions from the optional
-[Taskix memory service](https://github.com/tenfyzhong/agentix/blob/main/docs/taskix-memory.md). Enable `[memory].enabled`
-in the shared Taskix configuration and start `taskix memory serve` separately.
+[Taskix memory service](https://github.com/tenfyzhong/agentix/blob/main/docs/taskix-memory.md).
+Export `TASKIX_MEMORY_ENABLED=true` or `1` to the host, CLI and service, then start `taskix memory serve` separately. Unset or any other value disables memory.
+Hooks read this environment variable directly without parsing TOML.
 The memory worker uses independent API credentials; it does not reuse the main
 agent's login or context. No additional memory config file is needed.
 
 Codex/Claude prompt hooks and Pi/OMP `before_agent_start` retrieve at most 6,400
-bytes with a 1.5-second deadline, independently of Jev routing. Missing/disabled
-memory does not start the memory CLI; unavailable queries fail soft. Session
-receipts are recorded by the receiving host and deduplicate unchanged revisions,
+bytes with a 1.5-second deadline, independently of Jev routing. Unset/disabled
+`TASKIX_MEMORY_ENABLED` does not start the memory CLI; unavailable queries fail
+soft. Session receipts are recorded by the receiving host and deduplicate unchanged revisions,
 including offline FTS fallback. Service-side packet generation does not imply
 delivery, so a timed-out response cannot suppress the next turn. Context semantic
 retrieval uses at most 750 ms, leaving part of the host deadline for FTS and IPC. Main

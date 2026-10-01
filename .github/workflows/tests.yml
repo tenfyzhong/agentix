@@ -50,7 +50,6 @@ jobs:
           toolchain: 1.95.0
       - name: Test task host plugin
         run: |
-          npm ci --ignore-scripts --prefix plugins/taskix-manager
           # Avoid starving the bounded metrics worker during concurrent suite startup.
           node --test --test-concurrency=1 plugins/taskix-manager/tests/*.test.mjs plugins/agentix-bridge/tests/*.test.mjs
 
@@ -96,8 +95,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - name: Install task plugin dependencies for Rust integration tests
-        run: npm ci --ignore-scripts --prefix plugins/taskix-manager
       - name: Install test tools on Linux
         if: runner.os == 'Linux'
         run: |

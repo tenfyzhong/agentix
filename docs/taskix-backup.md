@@ -21,8 +21,8 @@ Without a memory database, the archive remains the version-1 pair of
 also contains `memory.sqlite3`, its schema version and SHA-256, and source
 coverage metadata. The memory path comes from `[memory.storage].path`, or
 `memory.sqlite3` beside `[storage].path`. Existing memory is included even when
-`[memory].enabled` is false. An explicitly configured or enabled memory database
-that is missing is an error; initialize it before backing up. Both paths must be
+`TASKIX_MEMORY_ENABLED` is unset or disabled. An explicitly configured or enabled
+memory database that is missing is an error; initialize it before backing up. Both paths must be
 distinct absolute paths. Old single-database archives remain valid for upload
 retry and restore in the same output directory.
 
