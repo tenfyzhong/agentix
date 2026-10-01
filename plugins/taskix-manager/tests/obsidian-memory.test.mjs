@@ -1,6 +1,48 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { connectionFixture } from "./support/obsidian-plugin.mjs";
+import { connectionFixture, loadPlugin } from "./support/obsidian-plugin.mjs";
+
+test("memory document subprocess enables existing-note protection without inherited memory enablement", async () => {
+    for (const enabled of [undefined, "false", "1"]) {
+        const env = { PATH: "/bin", TASKIX_CONFIG: "/config.toml" };
+        if (enabled !== undefined) env.TASKIX_MEMORY_ENABLED = enabled;
+        const inherited = { ...env };
+        const { runCli } = loadPlugin({}, { process: { env } }, {
+            "node:child_process": {
+                execFile(_binary, args, options, callback) {
+                    assert.equal(options.env?.TASKIX_MEMORY_ENABLED, "true");
+                    assert.equal(options.env.PATH, env.PATH);
+                    assert.equal(options.env.TASKIX_CONFIG, env.TASKIX_CONFIG);
+                    assert.equal(options.shell, undefined);
+                    queueMicrotask(() => callback(null, JSON.stringify({ schema_version: 1, ok: true,
+                        result: { path: args.at(-1), text: "Canonical database memory" } }), ""));
+                    return { kill() {} };
+                },
+            },
+        });
+        const result = await runCli({}, ["memory", "document", "11-Agents/Projects/demo/Memory/mem_a.md"]);
+        assert.equal(result.result.text, "Canonical database memory");
+        assert.deepEqual(env, inherited);
+    }
+});
+
+test("other Obsidian subprocesses preserve the inherited memory switch", async () => {
+    const env = { PATH: "/bin", TASKIX_MEMORY_ENABLED: "false" };
+    const { runCli } = loadPlugin({}, { process: { env } }, {
+        "node:child_process": {
+            execFile(_binary, _args, options, callback) {
+                assert.equal((options.env ?? env).TASKIX_MEMORY_ENABLED, "false");
+                queueMicrotask(() => callback(null, JSON.stringify({ schema_version: 1, ok: true, result: {} }), ""));
+                return { kill() {} };
+            },
+        },
+    });
+    for (const args of [["obsidian", "connection"], ["sync", "--pending"],
+        ["memory", "status"], ["memory", "serve"], ["memory", "document"]]) {
+        await runCli({}, args);
+    }
+    assert.equal(env.TASKIX_MEMORY_ENABLED, "false");
+});
 
 async function memoryFixture(t, globals = {}) {
     const f = await connectionFixture("11-Agents", globals);
@@ -18,6 +60,14 @@ async function memoryFixture(t, globals = {}) {
     };
     return f;
 }
+
+test("opening an unchanged memory note produces no read-only notice", async t => {
+    const f = await memoryFixture(t);
+    await f.plugin.inspectFile(f.file);
+    assert.equal(f.content, "Canonical database memory");
+    assert.equal(f.notices.length, 0);
+    assert.deepEqual(f.calls, [["memory", "document", f.file.path]]);
+});
 
 test("memory save reports read-only error and rolls back all text without trusting frontmatter", async t => {
     const f = await memoryFixture(t);
