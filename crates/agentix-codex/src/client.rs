@@ -1891,6 +1891,9 @@ impl CodexClient {
                 if client.session_client_id(&session).await.as_ref() != Some(&client_id) {
                     return Err(AgentError::Rejected("The original client changed".into()));
                 }
+                client
+                    .set_native_session_switch(&session, &client_id, true)
+                    .await?;
                 let outcome = client
                     .workspace
                     .new_codex_session(pid)
@@ -1907,6 +1910,9 @@ impl CodexClient {
             }
             .await;
             if let Err(error) = result {
+                let _ = client
+                    .set_native_session_switch(&session, &client_id, false)
+                    .await;
                 let _ = client.events.send(AgentEvent::SessionSwitchFailed {
                     session_id: session.to_string(),
                     client_id,
@@ -2429,6 +2435,22 @@ fn page_running_sessions(
 
 #[async_trait]
 impl AgentAdapter for CodexClient {
+    async fn set_native_session_switch(
+        &self,
+        session: &SessionId,
+        client_id: &str,
+        pending: bool,
+    ) -> Result<(), AgentError> {
+        if self.registry.as_ref().is_some_and(|registry| {
+            registry.set_requested_switch(session.as_str(), client_id, pending)
+        }) {
+            Ok(())
+        } else {
+            Err(AgentError::Rejected(
+                "The original Codex client changed".into(),
+            ))
+        }
+    }
     async fn shutdown(&self) -> Result<(), AgentError> {
         CodexClient::shutdown(self)
             .await
@@ -2610,6 +2632,11 @@ impl AgentAdapter for CodexClient {
     }
 
     async fn unsubscribe(&self, session_id: &SessionId) -> Result<(), AgentError> {
+        if let Some(client_id) = self.session_client_id(session_id).await {
+            let _ = self
+                .set_native_session_switch(session_id, &client_id, false)
+                .await;
+        }
         self.process_sessions.lock().await.remove(session_id);
         self.exited_process_sessions.lock().await.remove(session_id);
         if let Some(registry) = &self.registry {

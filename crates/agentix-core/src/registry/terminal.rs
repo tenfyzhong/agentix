@@ -280,6 +280,15 @@ impl TerminalObserver {
                         .ok_or_else(|| invalid("Select a displayed terminal choice"))?,
                 )
             };
+            if pending.switching {
+                agent
+                    .set_native_session_switch(
+                        session.native_id.adapter_id(),
+                        &pending.target.client_id,
+                        selection != TerminalInteractionResponse::Cancel,
+                    )
+                    .await?;
+            }
             port.respond(session.agent, &pending.target, &pending.prompt, selection)
                 .await
         }
@@ -289,6 +298,13 @@ impl TerminalObserver {
             request_id: token.into(),
         });
         if pending.switching && (result.is_err() || response["decision"] == "cancel") {
+            let _ = agent
+                .set_native_session_switch(
+                    session.native_id.adapter_id(),
+                    &pending.target.client_id,
+                    false,
+                )
+                .await;
             let _ = events.send(AgentEvent::SessionSwitchFailed {
                 session_id: session.encode().to_string(),
                 client_id: pending.target.client_id,

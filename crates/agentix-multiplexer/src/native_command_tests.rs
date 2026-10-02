@@ -17,7 +17,7 @@ fn check(case: &str, shell_body: &str) {
     let shell = directory.path().join("login shell");
     script(
         &shell,
-        &format!("printf invoked > \"$SHELL_MARKER\"\n{shell_body}"),
+        &format!("printf 'invoked\\n' >> \"$SHELL_MARKER\"\n{shell_body}"),
     );
     script(
         &bin.join("fake-rmux"),
@@ -123,10 +123,39 @@ fn native_command_supports_login_shell_command_name() {
     );
 }
 
+#[test]
+fn native_commands_share_one_login_path_lookup_for_concurrent_terminal_operations() {
+    check(
+        "cached",
+        "export PATH=\"$FIXTURE_BIN:/usr/bin:/bin\"; exec /bin/sh -c \"$2\"",
+    );
+}
+
 #[tokio::test]
 #[ignore = "invoked in a child process with an isolated service environment"]
 async fn command_child() {
     match std::env::var("CASE").unwrap().as_str() {
+        "cached" => {
+            let mut calls = tokio::task::JoinSet::new();
+            for _ in 0..8 {
+                calls.spawn(async {
+                    super::run(Path::new("fake-rmux"), &[], &["display-message"])
+                        .await
+                        .unwrap()
+                });
+            }
+            while let Some(output) = calls.join_next().await {
+                assert_eq!(output.unwrap(), "display-message\n");
+            }
+            assert_eq!(
+                std::fs::read_to_string(std::env::var("SHELL_MARKER").unwrap())
+                    .unwrap()
+                    .lines()
+                    .count(),
+                1,
+                "terminal polling and key submission must not repeatedly start a login shell"
+            );
+        }
         "fallback" | "relative" => {
             let result = super::run(
                 Path::new("fake-rmux"),

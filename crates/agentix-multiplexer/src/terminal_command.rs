@@ -34,12 +34,42 @@ pub async fn terminal_command_output(command: &mut Command) -> Result<Output, Mu
 
 #[cfg(unix)]
 async fn login_path() -> Option<std::ffi::OsString> {
+    use std::{ffi::OsString, path::PathBuf, time::Instant};
+    use tokio::sync::Mutex;
+
+    struct CachedPath {
+        shell: PathBuf,
+        path: OsString,
+        read_at: Instant,
+    }
+    static PATH: Mutex<Option<CachedPath>> = Mutex::const_new(None);
+
+    let shell = PathBuf::from(super::launch::login_shell());
+    // Polling and input validation issue several commands per pane. Resolve
+    // their login PATH once, including concurrent requests, then refresh it.
+    let mut cached = PATH.lock().await;
+    if let Some(entry) = cached.as_ref()
+        && entry.shell == shell
+        && entry.read_at.elapsed() < Duration::from_mins(1)
+    {
+        return Some(entry.path.clone());
+    }
+    let path = read_login_path(&shell).await?;
+    *cached = Some(CachedPath {
+        shell,
+        path: path.clone(),
+        read_at: Instant::now(),
+    });
+    Some(path)
+}
+
+#[cfg(unix)]
+async fn read_login_path(shell: &std::path::Path) -> Option<std::ffi::OsString> {
     use std::os::unix::ffi::OsStringExt;
     use std::process::Stdio;
 
     const MARKER: &[u8] = b"\0agentix-terminal-path\0";
     // Framing excludes shell startup output; env preserves spaces and newlines.
-    let shell = super::launch::login_shell();
     let output = tokio::time::timeout(
         Duration::from_secs(3),
         Command::new(shell)

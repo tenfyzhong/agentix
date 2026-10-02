@@ -295,13 +295,27 @@ async fn real_codex_submits_new_from_empty_and_confirmed_draft() {
             .await;
             wait_for_empty_codex(driver, &prefix, &pane, pid).await;
             if std::env::var_os("AGENTIX_TEST_CODEX_ENDPOINT").is_none() {
-                assert_worktree_count(root.path(), if draft.is_some() { 2 } else { 1 });
+                assert_worktree_count(root.path(), if draft.is_some() { 2 } else { 1 }).await;
             }
         }
     }
 }
 
-fn assert_worktree_count(root: &Path, expected: usize) {
+async fn assert_worktree_count(root: &Path, expected: usize) {
+    for _ in 0..100 {
+        if worktree_count(root) == expected {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!(
+        worktree_count(root),
+        expected,
+        "only the explicit New worktree choice creates a managed checkout"
+    );
+}
+
+fn worktree_count(root: &Path) -> usize {
     let worktrees = output(
         "git",
         &[
@@ -312,14 +326,10 @@ fn assert_worktree_count(root: &Path, expected: usize) {
             "--porcelain",
         ],
     );
-    assert_eq!(
-        worktrees
-            .lines()
-            .filter(|line| line.starts_with("worktree "))
-            .count(),
-        expected,
-        "only the explicit New worktree choice creates a managed checkout"
-    );
+    worktrees
+        .lines()
+        .filter(|line| line.starts_with("worktree "))
+        .count()
 }
 
 fn initialize_test_checkout(root: &Path) {
@@ -381,25 +391,36 @@ async fn submit_real_codex_new(
         .await
         .unwrap()
         .unwrap();
-        agentix_multiplexer::respond_terminal_interaction(
-            Path::new(driver),
-            prefix,
-            pane,
-            pid,
-            agentix_domain::AgentKind::Codex,
-            &expected,
-            match choice {
-                CodexCheckoutChoice::CurrentCheckout => {
-                    agentix_domain::TerminalInteractionResponse::Choice(0)
-                }
-                CodexCheckoutChoice::NewWorktree => {
-                    agentix_domain::TerminalInteractionResponse::Choice(1)
-                }
-                CodexCheckoutChoice::Cancel => agentix_domain::TerminalInteractionResponse::Cancel,
-            },
+        let selected_at = std::time::Instant::now();
+        tokio::time::timeout(
+            Duration::from_secs(2),
+            agentix_multiplexer::respond_terminal_interaction(
+                Path::new(driver),
+                prefix,
+                pane,
+                pid,
+                agentix_domain::AgentKind::Codex,
+                &expected,
+                match choice {
+                    CodexCheckoutChoice::CurrentCheckout => {
+                        agentix_domain::TerminalInteractionResponse::Choice(0)
+                    }
+                    CodexCheckoutChoice::NewWorktree => {
+                        agentix_domain::TerminalInteractionResponse::Choice(1)
+                    }
+                    CodexCheckoutChoice::Cancel => {
+                        agentix_domain::TerminalInteractionResponse::Cancel
+                    }
+                },
+            ),
         )
         .await
+        .expect("a checkout answer must not repeatedly start login shells")
         .unwrap_or_else(|error| panic!("generic response: {error}; expected={expected:?}"));
+        eprintln!(
+            "{driver}: {choice:?} submitted in {:?}",
+            selected_at.elapsed()
+        );
     }
 }
 
@@ -432,12 +453,18 @@ fn real_codex_command(binary: &Path, root: &Path) -> String {
 }
 
 async fn wait_for_empty_codex(driver: &str, prefix: &[String], pane: &str, pid: u32) {
+    let mut stable = 0;
     for _ in 0..100 {
         if matches!(
             codex_terminal_input(Path::new(driver), prefix, pane, pid, None).await,
             Ok(None)
         ) {
-            return;
+            stable += 1;
+            if stable == 3 {
+                return;
+            }
+        } else {
+            stable = 0;
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }

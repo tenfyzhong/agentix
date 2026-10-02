@@ -74,6 +74,13 @@ impl CodexClient {
         {
             Err(invalid("The original Codex client changed"))
         } else {
+            self.set_native_session_switch(
+                &pending.session,
+                &pending.client_id,
+                choice != CodexCheckoutChoice::Cancel,
+            )
+            .await
+            .map_err(|error| invalid(&error.to_string()))?;
             self.workspace
                 .select_codex_checkout(pending.pid, choice)
                 .await
@@ -84,6 +91,9 @@ impl CodexClient {
             request_id: id.to_string(),
         });
         if let Err(error) = &result {
+            let _ = self
+                .set_native_session_switch(&pending.session, &pending.client_id, false)
+                .await;
             let _ = self.events.send(AgentEvent::SessionSwitchFailed {
                 session_id: pending.session.to_string(),
                 client_id: pending.client_id,

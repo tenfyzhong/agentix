@@ -580,6 +580,16 @@ pub trait WorkspaceRuntimePort: Send + Sync {
 
 #[async_trait]
 pub trait AgentAdapter: Send + Sync {
+    /// Fence a native handoff before submitting terminal input, or revoke it
+    /// when input fails or is cancelled. Only the original client may match it.
+    async fn set_native_session_switch(
+        &self,
+        _session: &SessionId,
+        _client_id: &str,
+        _pending: bool,
+    ) -> Result<(), AgentError> {
+        Ok(())
+    }
     /// Enable the shared terminal observer instead of command-specific prompts.
     fn enable_terminal_interactions(&self) {}
 
