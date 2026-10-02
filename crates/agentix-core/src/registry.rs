@@ -147,6 +147,17 @@ impl AgentRegistry {
 
 #[async_trait]
 impl AgentAdapter for AgentRegistry {
+    async fn set_native_session_switch(
+        &self,
+        session: &SessionId,
+        client_id: &str,
+        pending: bool,
+    ) -> Result<(), AgentError> {
+        let (key, agent) = self.target(session)?;
+        agent
+            .set_native_session_switch(key.native_id.adapter_id(), client_id, pending)
+            .await
+    }
     fn display_name(&self) -> &'static str {
         "Agent"
     }

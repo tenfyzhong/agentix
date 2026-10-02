@@ -119,6 +119,9 @@ async fn check_choice(index: usize, choice: CodexCheckoutChoice, namespaced: boo
     server
         .add_thread(MockThread::new("checkout", "Checkout", "/tmp"))
         .await;
+    server
+        .add_thread(MockThread::new("replacement", "Replacement", "/tmp"))
+        .await;
     let registry = ClientRegistry::default();
     let connection = registry.connect(Some(std::process::id()));
     registry.client_message(
@@ -136,7 +139,7 @@ async fn check_choice(index: usize, choice: CodexCheckoutChoice, namespaced: boo
             std::path::Path::new("codex"),
             std::path::Path::new("/tmp"),
             false,
-            registry,
+            registry.clone(),
         )
         .await
         .unwrap()
@@ -161,7 +164,7 @@ async fn check_choice(index: usize, choice: CodexCheckoutChoice, namespaced: boo
     let mut events = agent.subscribe();
     let channel = Arc::new(RecordingChannel::default());
     let state = SqliteState::in_memory().await.unwrap();
-    let engine = Engine::new(agent, state.clone(), vec![channel.clone()]);
+    let engine = Engine::new(agent.clone(), state.clone(), vec![channel.clone()]);
     engine
         .handle_inbound(inbound(if namespaced {
             "/attach codex:checkout"
@@ -236,7 +239,7 @@ async fn check_choice(index: usize, choice: CodexCheckoutChoice, namespaced: boo
         engine
             .handle_inbound(InboundEnvelope::action(
                 "duplicate-choice",
-                chat,
+                chat.clone(),
                 "owner-e2e",
                 view.actions[index.min(1)].token.clone()
             ))
@@ -255,4 +258,65 @@ async fn check_choice(index: usize, choice: CodexCheckoutChoice, namespaced: boo
             .contains(&"turn/start".into()),
         "terminal choices must not become model prompts"
     );
+    if index < 2 {
+        engine
+            .handle_inbound(inbound("queued during checkout switch"))
+            .await
+            .unwrap();
+        // Newer CLIs keep blank threads subscribed rather than unsubscribing them.
+        registry.client_message(
+            connection,
+            &json!({"id":2,"method":"thread/start","params":{}}),
+        );
+        registry.server_message(
+            connection,
+            &json!({"id":2,"result":{"thread":{"id":"replacement"}}}),
+        );
+        let event = tokio::time::timeout(Duration::from_secs(2), async {
+            loop {
+                let event = events.recv().await.unwrap();
+                if matches!(event, AgentEvent::SessionReplaced { .. }) {
+                    break event;
+                }
+            }
+        })
+        .await
+        .expect("IM must follow a requested new thread without waiting for unsubscribe");
+        engine.handle_agent_event(event).await.unwrap();
+        let expected = SessionId::new(if namespaced {
+            "codex:replacement"
+        } else {
+            "replacement"
+        });
+        assert_eq!(
+            state.current_session(&chat).await.unwrap(),
+            Some(expected.clone())
+        );
+        let sessions = agent.list_sessions(None, 100).await.unwrap().sessions;
+        assert_eq!(
+            sessions.len(),
+            1,
+            "retired checkout must not remain in the session picker"
+        );
+        assert_eq!(sessions[0].id, expected);
+        let turns = server.thread("replacement").await.unwrap().turns;
+        assert_eq!(turns.len(), 1, "queued messages must reach the replacement");
+        assert!(server.thread("checkout").await.unwrap().turns.is_empty());
+    } else {
+        registry.client_message(
+            connection,
+            &json!({"id":2,"method":"thread/start","params":{}}),
+        );
+        registry.server_message(
+            connection,
+            &json!({"id":2,"result":{"thread":{"id":"replacement"}}}),
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        while let Ok(event) = events.try_recv() {
+            assert!(
+                !matches!(event, AgentEvent::SessionReplaced { .. }),
+                "cancel and detach must revoke the requested handoff"
+            );
+        }
+    }
 }

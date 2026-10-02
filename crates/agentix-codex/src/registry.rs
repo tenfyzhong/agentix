@@ -26,7 +26,15 @@ struct Connection {
     pid: Option<u32>,
     client_name: Option<String>,
     sessions: BTreeSet<String>,
-    pending: HashMap<String, (String, Option<String>)>,
+    switch_revision: u64,
+    requested_switch: Option<(String, Instant, u64)>,
+    pending: HashMap<String, PendingRequest>,
+}
+
+struct PendingRequest {
+    method: String,
+    thread: Option<String>,
+    switch: Option<(String, Instant, u64)>,
 }
 
 #[derive(Default)]
@@ -87,6 +95,38 @@ fn leading_method(text: &str) -> Option<String> {
 }
 
 impl ClientRegistry {
+    /// Record only a verified original-client request. A start already in
+    /// flight, another connection, a fork, or a helper thread cannot match it.
+    #[must_use]
+    pub fn set_requested_switch(&self, session: &str, client_id: &str, pending: bool) -> bool {
+        let mut state = self.state.lock().unwrap();
+        let owners = state
+            .connections
+            .values()
+            .filter(|c| {
+                c.sessions.contains(session)
+                    || c.requested_switch
+                        .as_ref()
+                        .is_some_and(|(old, ..)| old == session)
+            })
+            .count();
+        if owners != 1 {
+            return false;
+        }
+        let Some(c) = state.connections.values_mut().find(|c| {
+            c.client_id == client_id
+                && (c.sessions.contains(session)
+                    || c.requested_switch
+                        .as_ref()
+                        .is_some_and(|(old, ..)| old == session))
+        }) else {
+            return false;
+        };
+        c.switch_revision = c.switch_revision.wrapping_add(1);
+        c.requested_switch = pending.then(|| (session.into(), Instant::now(), c.switch_revision));
+        true
+    }
+
     /// Observe lifecycle requests without allocating unrelated payloads.
     pub fn client_frame(&self, connection: u64, text: &str) {
         let Ok(header) = serde_json::from_str::<FrameHeader<'_>>(text) else {
@@ -321,10 +361,13 @@ impl ClientRegistry {
             }
             c.pending.insert(
                 id.to_string(),
-                (
-                    method.to_owned(),
-                    message["params"]["threadId"].as_str().map(str::to_owned),
-                ),
+                PendingRequest {
+                    method: method.to_owned(),
+                    thread: message["params"]["threadId"].as_str().map(str::to_owned),
+                    switch: (method == "thread/start")
+                        .then(|| c.requested_switch.clone())
+                        .flatten(),
+                },
             );
         }
     }
@@ -339,7 +382,12 @@ impl ClientRegistry {
             return;
         };
         let Some(id) = message.get("id") else { return };
-        let Some((method, thread)) = c.pending.remove(&id.to_string()) else {
+        let Some(PendingRequest {
+            method,
+            thread,
+            switch,
+        }) = c.pending.remove(&id.to_string())
+        else {
             return;
         };
         let Some(result) = message.get("result") else {
@@ -359,15 +407,7 @@ impl ClientRegistry {
                     && when.elapsed() < Duration::from_mins(2)
                 {
                     c.previous = None;
-                    events.push(AgentEvent::SessionSwitchStarted {
-                        session_id: thread.clone(),
-                        client_id: c.client_id.clone(),
-                    });
-                    events.push(AgentEvent::SessionReplaced {
-                        session_id: thread,
-                        replacement_session_id: fresh,
-                        client_id: c.client_id.clone(),
-                    });
+                    events.extend(replacement_events(&c.client_id, thread, fresh));
                 }
             }
         } else if let Some(thread) = result["thread"]["id"].as_str() {
@@ -376,19 +416,22 @@ impl ClientRegistry {
             }
             c.sessions.insert(thread.to_owned());
             if method == "thread/start" && result["thread"]["source"].get("subAgent").is_none() {
-                if let Some((previous, when)) = c.previous.take()
+                let requested = switch.filter(|intent| {
+                    c.requested_switch.as_ref() == Some(intent)
+                        && intent.1.elapsed() < Duration::from_secs(30)
+                });
+                if let Some((previous, _, _)) = requested.filter(|(old, ..)| old != thread) {
+                    c.requested_switch = None;
+                    c.previous = None;
+                    c.fresh = None;
+                    c.sessions.remove(&previous);
+                    events.extend(replacement_events(&c.client_id, previous, thread.into()));
+                } else if let Some((previous, when)) = c.previous.take()
                     && when.elapsed() < Duration::from_mins(2)
                     && previous != thread
                 {
-                    events.push(AgentEvent::SessionSwitchStarted {
-                        session_id: previous.clone(),
-                        client_id: c.client_id.clone(),
-                    });
-                    events.push(AgentEvent::SessionReplaced {
-                        session_id: previous,
-                        replacement_session_id: thread.into(),
-                        client_id: c.client_id.clone(),
-                    });
+                    c.requested_switch = None;
+                    events.extend(replacement_events(&c.client_id, previous, thread.into()));
                 } else {
                     c.fresh = Some((thread.into(), Instant::now()));
                 }
@@ -412,6 +455,20 @@ impl ClientRegistry {
     }
 }
 
+fn replacement_events(client_id: &str, previous: String, replacement: String) -> [AgentEvent; 2] {
+    [
+        AgentEvent::SessionSwitchStarted {
+            session_id: previous.clone(),
+            client_id: client_id.into(),
+        },
+        AgentEvent::SessionReplaced {
+            session_id: previous,
+            replacement_session_id: replacement,
+            client_id: client_id.into(),
+        },
+    ]
+}
+
 fn prune_content_versions(state: &mut State) {
     let owned = state
         .connections
@@ -432,4 +489,42 @@ fn process_identity(pid: Option<u32>) -> Option<String> {
     let started = String::from_utf8(output.stdout).ok()?;
     let started = started.trim();
     (!started.is_empty()).then(|| format!("process:{pid}:{started}"))
+}
+
+#[cfg(test)]
+mod switch_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn expired_or_rearmed_intents_cannot_match_an_old_start_response() {
+        for expired in [true, false] {
+            let r = ClientRegistry::default();
+            let c = r.connect(None);
+            r.client_message(c, &json!({"id":1,"method":"thread/resume","params":{}}));
+            r.server_message(c, &json!({"id":1,"result":{"thread":{"id":"old"}}}));
+            let owner = r.snapshot()[0].client_id.clone();
+            assert!(r.set_requested_switch("old", &owner, true));
+            if expired {
+                r.state
+                    .lock()
+                    .unwrap()
+                    .connections
+                    .get_mut(&c)
+                    .unwrap()
+                    .requested_switch
+                    .as_mut()
+                    .unwrap()
+                    .1 -= Duration::from_secs(31);
+            }
+            r.client_message(c, &json!({"id":2,"method":"thread/start","params":{}}));
+            if !expired {
+                assert!(r.set_requested_switch("old", &owner, false));
+                assert!(r.set_requested_switch("old", &owner, true));
+            }
+            r.server_message(c, &json!({"id":2,"result":{"thread":{"id":"stale"}}}));
+            assert!(r.lifecycle_since(0).is_empty());
+            assert!(r.snapshot()[0].sessions.contains(&"old".into()));
+        }
+    }
 }

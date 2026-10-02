@@ -230,6 +230,86 @@ fn native_new_handoff_survives_coalesced_changes_and_does_not_follow_forks() {
 }
 
 #[test]
+fn requested_new_matches_only_a_fresh_primary_start_on_the_original_connection() {
+    for excluded in [
+        "inflight",
+        "fork",
+        "ephemeral",
+        "subagent",
+        "cancel",
+        "other",
+        "failed",
+    ] {
+        let r = ClientRegistry::default();
+        let c = r.connect(None);
+        r.client_message(c, &json!({"id":1,"method":"thread/resume","params":{}}));
+        r.server_message(c, &json!({"id":1,"result":{"thread":{"id":"old"}}}));
+        let owner = r.snapshot()[0].client_id.clone();
+        if excluded == "inflight" {
+            r.client_message(c, &json!({"id":2,"method":"thread/start","params":{}}));
+        }
+        assert!(r.set_requested_switch("old", &owner, true));
+        let target = if excluded == "other" {
+            r.connect(None)
+        } else {
+            c
+        };
+        if excluded != "inflight" {
+            r.client_message(target, &json!({"id":2,"method":if excluded == "fork" {"thread/fork"} else {"thread/start"},"params":{"ephemeral":excluded == "ephemeral"}}));
+        }
+        if excluded == "cancel" {
+            assert!(r.set_requested_switch("old", &owner, false));
+        }
+        let reply = if excluded == "failed" {
+            json!({"id":2,"error":{"code":-1,"message":"failed"}})
+        } else {
+            json!({"id":2,"result":{"thread":{"id":"unrelated","source":if excluded == "subagent" {json!({"subAgent":{}})} else {json!("cli")}}}})
+        };
+        r.server_message(target, &reply);
+        assert!(r.lifecycle_since(0).is_empty(), "{excluded}");
+        assert!(
+            r.snapshot()[0].sessions.contains(&"old".into()),
+            "{excluded}"
+        );
+        if excluded == "cancel" {
+            assert!(r.set_requested_switch("old", &owner, true));
+        }
+        r.client_message(c, &json!({"id":3,"method":"thread/start","params":{}}));
+        r.server_message(c, &json!({"id":3,"result":{"thread":{"id":"new"}}}));
+        assert_eq!(r.lifecycle_since(0).len(), 2, "{excluded}");
+        assert!(!r.snapshot()[0].sessions.contains(&"old".into()));
+        // A late unsubscribe for the retained blank thread cannot repeat the handoff.
+        r.client_message(
+            c,
+            &json!({"id":4,"method":"thread/unsubscribe","params":{"threadId":"old"}}),
+        );
+        r.server_message(c, &json!({"id":4,"result":{"status":"unsubscribed"}}));
+        assert_eq!(r.lifecycle_since(0).len(), 2);
+    }
+}
+
+#[test]
+fn requested_new_rejects_shared_ownership_wrong_clients_and_reconnects() {
+    let r = ClientRegistry::default();
+    let c = r.connect(None);
+    r.client_message(c, &json!({"id":1,"method":"thread/resume","params":{}}));
+    r.server_message(c, &json!({"id":1,"result":{"thread":{"id":"old"}}}));
+    let owner = r.snapshot()[0].client_id.clone();
+    assert!(!r.set_requested_switch("old", "unrelated", true));
+    let other = r.connect(None);
+    r.client_message(other, &json!({"id":1,"method":"thread/resume","params":{}}));
+    r.server_message(other, &json!({"id":1,"result":{"thread":{"id":"old"}}}));
+    assert!(!r.set_requested_switch("old", &owner, true));
+    r.disconnect(other);
+    assert!(r.set_requested_switch("old", &owner, true));
+    r.disconnect(c);
+    let new = r.connect(None);
+    r.client_message(new, &json!({"id":2,"method":"thread/start","params":{}}));
+    r.server_message(new, &json!({"id":2,"result":{"thread":{"id":"new"}}}));
+    assert!(r.lifecycle_since(0).is_empty());
+}
+
+#[test]
 fn native_new_follows_start_before_unsubscribe_but_not_closed_connections() {
     for reconnect in [true, false] {
         let r = ClientRegistry::default();
