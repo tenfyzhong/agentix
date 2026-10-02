@@ -165,6 +165,71 @@ CREATE TRIGGER IF NOT EXISTS event_watermark_insert AFTER INSERT ON task_events 
         WHERE json_extract(NEW.data,'$.project_id') IS NOT NULL
         ON CONFLICT(scope) DO UPDATE SET sequence=MAX(sequence,excluded.sequence);
 END;
+-- Protect relative locations from older processes holding open connections.
+
+CREATE TRIGGER IF NOT EXISTS relative_projects_insert BEFORE INSERT ON projects
+WHEN (SELECT user_version FROM pragma_user_version) >= 19
+    AND (substr(json_extract(NEW.data, '$.document_directory'), 1, 1) IN ('/', '\')
+        OR json_extract(NEW.data, '$.document_directory') GLOB '[A-Za-z]:*')
+BEGIN
+    SELECT RAISE(ABORT, 'relative document path required');
+END;
+
+CREATE TRIGGER IF NOT EXISTS relative_projects_update BEFORE UPDATE ON projects
+WHEN (SELECT user_version FROM pragma_user_version) >= 19
+    AND (substr(json_extract(NEW.data, '$.document_directory'), 1, 1) IN ('/', '\')
+        OR json_extract(NEW.data, '$.document_directory') GLOB '[A-Za-z]:*')
+BEGIN
+    SELECT RAISE(ABORT, 'relative document path required');
+END;
+
+CREATE TRIGGER IF NOT EXISTS relative_jobs_insert BEFORE INSERT ON jobs
+WHEN (SELECT user_version FROM pragma_user_version) >= 19
+    AND (substr(json_extract(NEW.data, '$.document_path'), 1, 1) IN ('/', '\')
+        OR json_extract(NEW.data, '$.document_path') GLOB '[A-Za-z]:*')
+BEGIN
+    SELECT RAISE(ABORT, 'relative document path required');
+END;
+
+CREATE TRIGGER IF NOT EXISTS relative_jobs_update BEFORE UPDATE ON jobs
+WHEN (SELECT user_version FROM pragma_user_version) >= 19
+    AND (substr(json_extract(NEW.data, '$.document_path'), 1, 1) IN ('/', '\')
+        OR json_extract(NEW.data, '$.document_path') GLOB '[A-Za-z]:*')
+BEGIN
+    SELECT RAISE(ABORT, 'relative document path required');
+END;
+
+CREATE TRIGGER IF NOT EXISTS relative_plans_insert BEFORE INSERT ON plans
+WHEN (SELECT user_version FROM pragma_user_version) >= 19
+    AND (substr(json_extract(NEW.data, '$.path'), 1, 1) IN ('/', '\')
+        OR json_extract(NEW.data, '$.path') GLOB '[A-Za-z]:*')
+BEGIN
+    SELECT RAISE(ABORT, 'relative document path required');
+END;
+
+CREATE TRIGGER IF NOT EXISTS relative_plans_update BEFORE UPDATE ON plans
+WHEN (SELECT user_version FROM pragma_user_version) >= 19
+    AND (substr(json_extract(NEW.data, '$.path'), 1, 1) IN ('/', '\')
+        OR json_extract(NEW.data, '$.path') GLOB '[A-Za-z]:*')
+BEGIN
+    SELECT RAISE(ABORT, 'relative document path required');
+END;
+
+CREATE TRIGGER IF NOT EXISTS relative_document_registry_insert BEFORE INSERT ON document_registry
+WHEN (SELECT user_version FROM pragma_user_version) >= 19
+    AND (substr(NEW.path, 1, 1) IN ('/', '\')
+        OR NEW.path GLOB '[A-Za-z]:*')
+BEGIN
+    SELECT RAISE(ABORT, 'relative document path required');
+END;
+
+CREATE TRIGGER IF NOT EXISTS relative_document_registry_update BEFORE UPDATE ON document_registry
+WHEN (SELECT user_version FROM pragma_user_version) >= 19
+    AND (substr(NEW.path, 1, 1) IN ('/', '\')
+        OR NEW.path GLOB '[A-Za-z]:*')
+BEGIN
+    SELECT RAISE(ABORT, 'relative document path required');
+END;
 PRAGMA user_version = 19;
 PRAGMA application_id = 0x4158544b;
 CREATE INDEX IF NOT EXISTS jobs_by_followup_session ON jobs(json_extract(data, '$.followup_session_id'));

@@ -264,7 +264,8 @@ CLI absolute-path responses are calculated from the current configuration.
 Schema 19 converts existing absolute archive paths in one database transaction,
 including pending deletions, registered files and generated event/idempotency fields.
 Invalid traversal aborts the complete migration; authored conversation is preserved.
-Upgrade both Agentix and Taskix before opening a migrated database.
+Database triggers reject absolute document paths from older processes that still hold
+open connections. Upgrade both Agentix and Taskix before opening a migrated database.
 
 Task boards require an Obsidian vault with TaskNotes and Bases enabled. Initialize against the vault with `taskix init --root /existing/vault`. SQLite retains ownership of task state, and state changes must go through taskix or Agentix.
 

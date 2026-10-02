@@ -19,7 +19,7 @@ pub(crate) async fn migrate(conn: &mut SqliteConnection) -> Result<()> {
         let mut project: Project = serde_json::from_str(&data)?;
         let old = project.document_directory();
         validate_source(&old)?;
-        if !Path::new(&old).is_absolute() {
+        if !is_absolute_document_path(&old) {
             continue;
         }
         ensure!(
@@ -110,7 +110,7 @@ async fn migrate_generated_records(
         ("idempotency_keys", "key", "result"),
         ("task_events", "sequence", "data"),
     ] {
-        let rows = sqlx::query(&format!("SELECT CAST({id} AS TEXT) AS id,{field} AS data FROM {table} WHERE instr({field},'\"path\":\"/')>0 OR instr({field},'\"document_path\":\"/')>0 OR instr({field},'\"document_directory\":\"/')>0"))
+        let rows = sqlx::query(&format!("SELECT CAST({id} AS TEXT) AS id,{field} AS data FROM {table} WHERE instr({field},'\"path\":')>0 OR instr({field},'\"document_path\":')>0 OR instr({field},'\"document_directory\":')>0"))
             .fetch_all(&mut *conn).await?;
         for row in rows {
             let mut value: Value = serde_json::from_str(&row.get::<String, _>("data"))?;
@@ -160,7 +160,7 @@ fn normalize_generated_fields(
 
 fn relative_directory(path: &str, prefixes: &BTreeMap<String, String>) -> Result<String> {
     validate_source(path)?;
-    if !Path::new(path).is_absolute() {
+    if !is_absolute_document_path(path) {
         return relative(path, prefixes);
     }
     if let Some(mapped) = prefixes.get(path) {
@@ -177,7 +177,7 @@ fn relative_directory(path: &str, prefixes: &BTreeMap<String, String>) -> Result
 
 fn relative(path: &str, prefixes: &BTreeMap<String, String>) -> Result<String> {
     validate_source(path)?;
-    if !Path::new(path).is_absolute() {
+    if !is_absolute_document_path(path) {
         validate(path)?;
         return Ok(path.to_owned());
     }
@@ -218,13 +218,21 @@ fn relative(path: &str, prefixes: &BTreeMap<String, String>) -> Result<String> {
 fn validate(path: &str) -> Result<()> {
     ensure!(
         !path.is_empty()
-            && !Path::new(path).is_absolute()
+            && !is_absolute_document_path(path)
             && Path::new(path)
                 .components()
                 .all(|c| matches!(c, Component::Normal(_) | Component::CurDir)),
         "invalid relative document path"
     );
     Ok(())
+}
+
+fn is_absolute_document_path(path: &str) -> bool {
+    Path::new(path).is_absolute()
+        || path.starts_with('/')
+        || path.starts_with('\\')
+        || (path.as_bytes().get(1) == Some(&b':')
+            && path.as_bytes().first().is_some_and(u8::is_ascii_alphabetic))
 }
 
 fn validate_source(path: &str) -> Result<()> {

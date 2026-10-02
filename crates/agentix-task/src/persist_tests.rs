@@ -37,11 +37,72 @@ async fn fixture() -> (tempfile::TempDir, Store, Snapshot) {
 }
 
 #[tokio::test]
+async fn relative_document_schema_rejects_absolute_paths_from_existing_writers() {
+    let (_dir, store, _) = fixture().await;
+    for (table, field) in [
+        ("projects", "document_directory"),
+        ("jobs", "document_path"),
+        ("plans", "path"),
+    ] {
+        for path in ["/old-vault/document.md", "C:/old-vault/document.md"] {
+            let data = json!({field: path}).to_string();
+            let error = sqlx::query(&format!(
+                "INSERT INTO {table}(id,data) VALUES ('old-writer',?)"
+            ))
+            .bind(data)
+            .execute(&store.pool)
+            .await
+            .expect_err("an already-open old writer must not persist an absolute path");
+            assert!(
+                error
+                    .to_string()
+                    .contains("relative document path required")
+            );
+        }
+    }
+    for table in ["projects", "jobs"] {
+        let field = if table == "projects" {
+            "document_directory"
+        } else {
+            "document_path"
+        };
+        assert!(
+            sqlx::query(&format!(
+                "UPDATE {table} SET data=json_set(data,'$.{field}','/old-vault/document.md')"
+            ))
+            .execute(&store.pool)
+            .await
+            .is_err()
+        );
+    }
+    assert!(
+        sqlx::query(
+            "INSERT INTO document_registry(key,path) VALUES ('old-writer','/old-vault/Board.md')"
+        )
+        .execute(&store.pool)
+        .await
+        .is_err()
+    );
+    sqlx::query("INSERT INTO document_registry(key,path) VALUES ('relative','Archived Projects/Test/Board.md')")
+        .execute(&store.pool).await.unwrap();
+    assert!(
+        sqlx::query("UPDATE document_registry SET path='/old-vault/Board.md' WHERE key='relative'")
+            .execute(&store.pool)
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
 async fn schema_eighteen_migrates_cleanup_and_replay_paths_without_changing_workspaces() {
     let (dir, store, state) = fixture().await;
     store.set_background_maintenance(false);
+    sqlx::query("PRAGMA user_version=18")
+        .execute(&store.pool)
+        .await
+        .unwrap();
     let project = &state.projects[0];
-    let old = "/old-vault/History/Projects/Test";
+    let old = "C:/old-vault/History/Projects/Test";
     sqlx::query("UPDATE projects SET data=json_set(data,'$.archived_at',1,'$.document_directory',?) WHERE id=?")
         .bind(old).bind(&project.id).execute(&store.pool).await.unwrap();
     let path = format!("{old}/Jobs/job.md");
@@ -56,7 +117,7 @@ async fn schema_eighteen_migrates_cleanup_and_replay_paths_without_changing_work
         .execute(&store.pool)
         .await
         .unwrap();
-    let orphan = "/old-vault/History/Projects/Deleted";
+    let orphan = "C:/old-vault/History/Projects/Deleted";
     let cleanup = json!({"id":"legacy-cleanup","files":[path],"directories":[orphan],"candidates":{format!("{orphan}/Tasks/task.md"): ["task_deleted"]}});
     sqlx::query("INSERT INTO document_deletions(id,data) VALUES ('legacy-cleanup',?)")
         .bind(cleanup.to_string())
@@ -124,6 +185,10 @@ async fn schema_eighteen_migrates_cleanup_and_replay_paths_without_changing_work
 async fn relative_path_migration_rolls_back_the_schema_and_entities_on_invalid_paths() {
     let (dir, store, state) = fixture().await;
     store.set_background_maintenance(false);
+    sqlx::query("PRAGMA user_version=18")
+        .execute(&store.pool)
+        .await
+        .unwrap();
     let old = "/old-vault/Archive/Test";
     sqlx::query("UPDATE projects SET data=json_set(data,'$.archived_at',1,'$.document_directory',?) WHERE id=?")
         .bind(old).bind(&state.projects[0].id).execute(&store.pool).await.unwrap();

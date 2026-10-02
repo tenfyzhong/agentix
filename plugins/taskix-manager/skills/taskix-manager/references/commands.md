@@ -102,6 +102,8 @@ After moving the vault or its active/archive folders, update the matching config
 and run `taskix sync`; stored paths remain unchanged. Schema 19 atomically converts
 old absolute archive paths, document registrations, cleanup records and replay results
 without reading the old vault. Workspace roots and authored conversation remain intact.
+Database triggers reject absolute document locations written by older processes
+that still hold open connections. Upgrade Agentix and Taskix together for schema 19.
 Obsidian's Taskix Sync context menu offers Archive project / Restore project on
 the managed Board or project folder. Resolve destination conflicts before
 running `sync` to retry a pending move.

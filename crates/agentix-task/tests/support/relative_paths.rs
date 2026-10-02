@@ -165,6 +165,10 @@ async fn relative_document_paths_migrate_schema_eighteen_absolute_archives_after
     )
     .await
     .unwrap();
+    sqlx::query("PRAGMA user_version=18")
+        .execute(&pool)
+        .await
+        .unwrap();
     sqlx::query("UPDATE projects SET data=json_set(data,'$.document_directory',?) WHERE id=?")
         .bind(&absolute)
         .bind(&f.project)
