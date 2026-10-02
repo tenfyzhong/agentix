@@ -16,7 +16,9 @@ Agentix connects local Codex, Pi, Oh My Pi, and Claude Code sessions to Telegram
 
 ### Install
 
-On macOS or Linux with Homebrew:
+#### macOS and Linux
+
+Install with Homebrew:
 
 ```sh
 brew tap tenfyzhong/tap
@@ -29,7 +31,9 @@ For Codex, install the official standalone CLI (0.153.0 or newer). The Homebrew 
 curl -fsSL https://chatgpt.com/codex/install.sh | sh
 ```
 
-On Windows (x86_64), download and extract `agentix-<version>-x86_64-pc-windows-msvc.zip` from the [latest release](https://github.com/tenfyzhong/agentix/releases/latest), then add its directory to `PATH`. Pi/OMP live bridges support loopback TCP endpoints on Windows; Codex Unix sockets and rmux/tmux terminal delivery require macOS/Linux. See [installation options](https://github.com/tenfyzhong/agentix/wiki/Installation) for checksums and source builds.
+#### Windows (x86_64)
+
+Download and extract `agentix-<version>-x86_64-pc-windows-msvc.zip` from the [latest release](https://github.com/tenfyzhong/agentix/releases/latest), then add its directory to `PATH`. Pi/OMP live bridges can use a configured loopback TCP endpoint on Windows; Codex Unix sockets and rmux/tmux terminal delivery require macOS/Linux. See [installation options](https://github.com/tenfyzhong/agentix/wiki/Installation) for checksums and source builds.
 
 ### Configure
 
@@ -39,6 +43,13 @@ For a Homebrew installation, copy the example configuration:
 mkdir -p ~/.config/agentix
 cp "$(brew --prefix agentix)/share/agentix/agentix.example.toml" ~/.config/agentix/config.toml
 chmod 600 ~/.config/agentix/config.toml
+```
+
+On Windows, assuming the archive was extracted into `agentix`:
+
+```powershell
+New-Item -ItemType Directory -Force "$HOME\.config\agentix" | Out-Null
+Copy-Item .\agentix\agentix.example.toml "$HOME\.config\agentix\config.toml"
 ```
 
 Edit `~/.config/agentix/config.toml`:
@@ -57,6 +68,8 @@ Start Agentix and keep it running:
 ```sh
 agentix serve
 ```
+
+On Windows, use `agentix.exe serve`; run `agentix.exe doctor` from another terminal for diagnostics.
 
 From another local terminal:
 
