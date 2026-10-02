@@ -37,6 +37,193 @@ async fn fixture() -> (tempfile::TempDir, Store, Snapshot) {
 }
 
 #[tokio::test]
+async fn relative_document_schema_rejects_absolute_paths_from_existing_writers() {
+    let (_dir, store, _) = fixture().await;
+    for (table, field) in [
+        ("projects", "document_directory"),
+        ("jobs", "document_path"),
+        ("plans", "path"),
+    ] {
+        for path in ["/old-vault/document.md", "C:/old-vault/document.md"] {
+            let data = json!({field: path}).to_string();
+            let error = sqlx::query(&format!(
+                "INSERT INTO {table}(id,data) VALUES ('old-writer',?)"
+            ))
+            .bind(data)
+            .execute(&store.pool)
+            .await
+            .expect_err("an already-open old writer must not persist an absolute path");
+            assert!(
+                error
+                    .to_string()
+                    .contains("relative document path required")
+            );
+        }
+    }
+    for table in ["projects", "jobs"] {
+        let field = if table == "projects" {
+            "document_directory"
+        } else {
+            "document_path"
+        };
+        assert!(
+            sqlx::query(&format!(
+                "UPDATE {table} SET data=json_set(data,'$.{field}','/old-vault/document.md')"
+            ))
+            .execute(&store.pool)
+            .await
+            .is_err()
+        );
+    }
+    assert!(
+        sqlx::query(
+            "INSERT INTO document_registry(key,path) VALUES ('old-writer','/old-vault/Board.md')"
+        )
+        .execute(&store.pool)
+        .await
+        .is_err()
+    );
+    sqlx::query("INSERT INTO document_registry(key,path) VALUES ('relative','Archived Projects/Test/Board.md')")
+        .execute(&store.pool).await.unwrap();
+    assert!(
+        sqlx::query("UPDATE document_registry SET path='/old-vault/Board.md' WHERE key='relative'")
+            .execute(&store.pool)
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn schema_eighteen_migrates_cleanup_and_replay_paths_without_changing_workspaces() {
+    let (dir, store, state) = fixture().await;
+    store.set_background_maintenance(false);
+    sqlx::query("PRAGMA user_version=18")
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    let project = &state.projects[0];
+    let old = "C:/old-vault/History/Projects/Test";
+    sqlx::query("UPDATE projects SET data=json_set(data,'$.archived_at',1,'$.document_directory',?) WHERE id=?")
+        .bind(old).bind(&project.id).execute(&store.pool).await.unwrap();
+    let path = format!("{old}/Jobs/job.md");
+    sqlx::query("UPDATE jobs SET data=json_set(data,'$.document_path',?) WHERE id=?")
+        .bind(&path)
+        .bind(&state.jobs[0].id)
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO document_registry(key,path) VALUES ('legacy-board',?)")
+        .bind(format!("{old}/Board.md"))
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    let orphan = "C:/old-vault/History/Projects/Deleted";
+    let cleanup = json!({"id":"legacy-cleanup","files":[path],"directories":[orphan],"candidates":{format!("{orphan}/Tasks/task.md"): ["task_deleted"]}});
+    sqlx::query("INSERT INTO document_deletions(id,data) VALUES ('legacy-cleanup',?)")
+        .bind(cleanup.to_string())
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    let result = json!({"result":{"document_directory":old,"root":project.root,"conversation":[{"text":old}]}});
+    sqlx::query(
+        "INSERT INTO idempotency_keys(key,fingerprint,result) VALUES ('legacy-key','unchanged',?)",
+    )
+    .bind(result.to_string())
+    .execute(&store.pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE task_events SET data=json_set(data,'$.payload.document_directory',?) WHERE sequence=1")
+        .bind(old).execute(&store.pool).await.unwrap();
+    sqlx::query("PRAGMA user_version=18")
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    store.pool.close().await;
+    store.maintenance_pool.close().await;
+    let migrated = Store::open(&dir.path().join("tasks.sqlite3"))
+        .await
+        .unwrap();
+    let after = migrated.snapshot().await.unwrap();
+    assert_eq!(after.projects[0].root, project.root);
+    assert_eq!(after.projects[0].revision, project.revision);
+    assert_eq!(after.jobs[0].revision, state.jobs[0].revision);
+    assert_eq!(
+        after.projects[0].document_directory(),
+        "Archived Projects/Test"
+    );
+    let cleanup: String = sqlx::query_scalar("SELECT data FROM document_deletions")
+        .fetch_one(&migrated.pool)
+        .await
+        .unwrap();
+    let cleanup: Value = serde_json::from_str(&cleanup).unwrap();
+    assert_eq!(cleanup["files"][0], "Archived Projects/Test/Jobs/job.md");
+    assert_eq!(cleanup["directories"][0], "Archived Projects/Deleted");
+    assert!(
+        cleanup["candidates"]
+            .get("Archived Projects/Deleted/Tasks/task.md")
+            .is_some()
+    );
+    let result: String =
+        sqlx::query_scalar("SELECT result FROM idempotency_keys WHERE key='legacy-key'")
+            .fetch_one(&migrated.pool)
+            .await
+            .unwrap();
+    let result: Value = serde_json::from_str(&result).unwrap();
+    assert_eq!(
+        result["result"]["document_directory"],
+        "Archived Projects/Test"
+    );
+    assert_eq!(result["result"]["root"], project.root);
+    assert_eq!(result["result"]["conversation"][0]["text"], old);
+    assert_eq!(
+        migrated.events(None, 0, 10).await.unwrap()[0].payload["document_directory"],
+        "Archived Projects/Test"
+    );
+}
+
+#[tokio::test]
+async fn relative_path_migration_rolls_back_the_schema_and_entities_on_invalid_paths() {
+    let (dir, store, state) = fixture().await;
+    store.set_background_maintenance(false);
+    sqlx::query("PRAGMA user_version=18")
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    let old = "/old-vault/Archive/Test";
+    sqlx::query("UPDATE projects SET data=json_set(data,'$.archived_at',1,'$.document_directory',?) WHERE id=?")
+        .bind(old).bind(&state.projects[0].id).execute(&store.pool).await.unwrap();
+    sqlx::query("UPDATE jobs SET data=json_set(data,'$.document_path','/old-vault/Archive/Test/../escape.md')")
+        .execute(&store.pool).await.unwrap();
+    sqlx::query("PRAGMA user_version=18")
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    store.pool.close().await;
+    store.maintenance_pool.close().await;
+    assert!(
+        Store::open(&dir.path().join("tasks.sqlite3"))
+            .await
+            .is_err()
+    );
+    let pool = SqlitePool::connect_with(
+        SqliteConnectOptions::new().filename(dir.path().join("tasks.sqlite3")),
+    )
+    .await
+    .unwrap();
+    let version: i64 = sqlx::query_scalar("PRAGMA user_version")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(version, 18);
+    let directory: String =
+        sqlx::query_scalar("SELECT json_extract(data,'$.document_directory') FROM projects")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(directory, old);
+}
+
+#[tokio::test]
 async fn schema_fifteen_event_retention_database_upgrades_with_memory_sources() {
     assert_schema_fifteen_upgrade(false).await;
 }
@@ -47,7 +234,7 @@ async fn schema_fifteen_memory_database_upgrades_with_event_watermarks() {
 }
 
 #[tokio::test]
-async fn schema_sixteen_and_seventeen_upgrade_to_protect_absolute_archive_paths() {
+async fn schema_sixteen_and_seventeen_upgrade_to_relative_document_paths() {
     for previous in [16, 17] {
         let (dir, store, snapshot) = fixture().await;
         sqlx::query(&format!("PRAGMA user_version={previous}"))
@@ -63,7 +250,7 @@ async fn schema_sixteen_and_seventeen_upgrade_to_protect_absolute_archive_paths(
             .fetch_one(&reopened.pool)
             .await
             .unwrap();
-        assert_eq!(version, 18);
+        assert_eq!(version, 19);
         assert_eq!(
             reopened.snapshot().await.unwrap().projects,
             snapshot.projects
@@ -109,7 +296,7 @@ async fn assert_schema_fifteen_upgrade(has_memory: bool) {
         .fetch_one(&store.pool)
         .await
         .unwrap();
-    assert_eq!(version, 18);
+    assert_eq!(version, 19);
     assert!(
         store.event_policy(None, None, None).await.unwrap()["enabled"]
             .as_bool()

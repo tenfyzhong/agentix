@@ -334,12 +334,18 @@ async fn stale_plan_receipt_preserves_the_newer_version() {
 }
 
 #[tokio::test]
-async fn archived_absolute_paths_stay_inside_vault_and_render_relative_links() {
+async fn archived_relative_paths_stay_inside_vault_and_render_relative_links() {
     let (dir, service, _) = export_fixture().await;
     let path = dir.path().join("Archived Projects/Export/Board.md");
-    assert_eq!(service.safe_path(path.to_str().unwrap()).unwrap(), path);
     assert_eq!(
-        service.link(path.to_str().unwrap(), "Board"),
+        service
+            .safe_path("Archived Projects/Export/Board.md")
+            .unwrap(),
+        path
+    );
+    assert!(service.safe_path(path.to_str().unwrap()).is_err());
+    assert_eq!(
+        service.link("Archived Projects/Export/Board.md", "Board"),
         "[[Archived Projects/Export/Board|Board]]"
     );
     assert!(

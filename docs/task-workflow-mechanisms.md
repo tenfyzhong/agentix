@@ -252,6 +252,21 @@ Obsidian uses a native `Dashboard.base` table with clickable Name, Status, and U
 
 `taskix` generates `Board.md` with a Job Base above a Task Base. Each `tasknotesKanban` view selects its exact project folder, entity tag, project ID, and unarchived notes. Pinned status columns remain visible while unrelated empty statuses are hidden. Each Task has one file under `Tasks/`, whose frontmatter records status and metadata and whose body contains the Plan. Jobs link these notes directly, so their checklists and authored Plan checklists do not duplicate task cards. Internal note links use Obsidian wikilinks. Rendering requires TaskNotes and Bases; generating notes does not modify vault settings.
 
+Document locations in SQLite are configuration-independent relative paths. Active
+`Projects/<key>/...` paths resolve under `documents.root/documents.directory`;
+logical `Archived Projects/<key>/...` paths resolve under
+`documents.root/documents.archive_directory`. Project workspace roots remain absolute
+because they identify source repositories rather than document storage. Moving the
+vault or either configured document folder requires updating that configuration,
+while Project, Job, Plan and document-registry paths remain stable. Obsidian links and
+CLI absolute-path responses are calculated from the current configuration.
+
+Schema 19 converts existing absolute archive paths in one database transaction,
+including pending deletions, registered files and generated event/idempotency fields.
+Invalid traversal aborts the complete migration; authored conversation is preserved.
+Database triggers reject absolute document paths from older processes that still hold
+open connections. Upgrade both Agentix and Taskix before opening a migrated database.
+
 Task boards require an Obsidian vault with TaskNotes and Bases enabled. Initialize against the vault with `taskix init --root /existing/vault`. SQLite retains ownership of task state, and state changes must go through taskix or Agentix.
 
 Taskix Sync debounces saved status changes, verifies the registered note identity and revision, and serializes CLI writes with idempotency keys. It never obtains or borrows leases. Unsupported transitions and ownership conflicts restore authoritative properties and show a Notice. Startup drift is reconciled without replaying offline edits. See the [supported status edits](https://github.com/tenfyzhong/agentix/wiki/Obsidian#status-edits).

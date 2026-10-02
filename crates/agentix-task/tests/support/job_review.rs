@@ -24,7 +24,7 @@ async fn job_review_migrates_schema_eight_without_reopening_historical_completed
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(version, 18);
+    assert_eq!(version, 19);
 }
 
 async fn finish(f: &Fixture, id: &str) {

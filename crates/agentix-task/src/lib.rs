@@ -10,6 +10,7 @@ mod conversation;
 pub use conversation::JobMessage;
 mod deletion;
 mod discussion;
+mod document_paths;
 mod event_maintenance;
 mod event_payload;
 mod event_retention;

@@ -138,12 +138,7 @@ pub(crate) fn rename(
     ensure!(
         std::path::Path::new(&directory)
             .components()
-            .all(|c| matches!(
-                c,
-                std::path::Component::Normal(_)
-                    | std::path::Component::RootDir
-                    | std::path::Component::Prefix(_)
-            ))
+            .all(|c| matches!(c, std::path::Component::Normal(_)))
             && directory.split('/').count() >= 2,
         "invalid: project document directory"
     );

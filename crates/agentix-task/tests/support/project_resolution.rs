@@ -99,7 +99,7 @@ async fn project_lookup_migration_builds_indexes_for_existing_projects() {
         .fetch_one(&mut conn)
         .await
         .unwrap();
-    assert_eq!(version, 18);
+    assert_eq!(version, 19);
     let root = f.dir.path().canonicalize().unwrap();
     assert_eq!(
         store

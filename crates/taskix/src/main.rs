@@ -848,12 +848,16 @@ async fn list_events(
 
 async fn doctor(service: &Service) -> Result<Value> {
     let state = service.store().snapshot().await?;
-    let missing: Vec<_> = state
-        .plans
-        .iter()
-        .filter(|p| !service.config().output_dir().join(&p.path).is_file())
-        .map(|p| p.path.clone())
-        .collect();
+    let mut missing = Vec::new();
+    for plan in &state.plans {
+        if !service
+            .config()
+            .document_path(std::path::Path::new(&plan.path))?
+            .is_file()
+        {
+            missing.push(plan.path.clone());
+        }
+    }
     let sequence = service.store().latest_sequence().await?;
     let rendered = service
         .store()
@@ -1379,8 +1383,15 @@ async fn context_snapshot(
             .find(|p| Some(&p.id) == t.current_plan.as_ref())
     });
     let lease = task.and_then(|t| state.leases.iter().find(|l| l.task_id == t.id));
+    let plan_path = plan
+        .map(|p| {
+            service
+                .config()
+                .document_path(std::path::Path::new(&p.path))
+        })
+        .transpose()?;
     Ok(response(
-        json!({"previous_job":previous_job,"project_id":project.map(|p|p.id),"job_id":job.map(|j|&j.id),"task_id":task.map(|t|&t.id),"task":task,"lease":lease,"plan_path":plan.map(|p|service.config().output_dir().join(&p.path)),"documents":service.config().documents,"context_owner":"external_agent_team","editable_regions":["Goal","Notes","Plan body"],"inbox":owned_inbox,"inbox_path":inbox_path,"inbox_cancellations":cancellations}),
+        json!({"previous_job":previous_job,"project_id":project.map(|p|p.id),"job_id":job.map(|j|&j.id),"task_id":task.map(|t|&t.id),"task":task,"lease":lease,"plan_path":plan_path,"documents":service.config().documents,"context_owner":"external_agent_team","editable_regions":["Goal","Notes","Plan body"],"inbox":owned_inbox,"inbox_path":inbox_path,"inbox_cancellations":cancellations}),
     ))
 }
 

@@ -49,6 +49,9 @@ mod project_rename;
 #[path = "support/project_archive.rs"]
 mod project_archive;
 
+#[path = "support/relative_paths.rs"]
+mod relative_paths;
+
 struct Fixture {
     dir: TempDir,
     service: Service,
@@ -643,7 +646,7 @@ async fn legacy_executing_tasks_migrate_without_losing_their_lease_or_history() 
         .fetch_one(&mut db)
         .await
         .unwrap();
-    assert_eq!(version, 18);
+    assert_eq!(version, 19);
 }
 
 #[tokio::test]

@@ -2,15 +2,15 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     fs::{File, OpenOptions},
     io::Write,
-    path::{Component, Path, PathBuf},
+    path::{Path, PathBuf},
 };
 
 use anyhow::{Context, Result, ensure};
 use serde_json::{Value, json};
 
 use crate::{
-    Config, Outcome, Plan, Snapshot, Store, Task, TaskStatus, WriteOptions, config::resolved_path,
-    mutations::required, new_id, store::hash_bytes,
+    Config, Outcome, Plan, Snapshot, Store, Task, TaskStatus, WriteOptions, mutations::required,
+    new_id, store::hash_bytes,
 };
 
 #[cfg(test)]
@@ -255,6 +255,7 @@ impl Service {
             Ok::<_, anyhow::Error>(lock)
         })
         .await??;
+        self.migrate_legacy_archive_folders_locked().await?;
         self.reconcile_project_folders_locked().await?;
         self.relocate_archived_projects_locked().await?;
         Ok(lock)
@@ -460,31 +461,7 @@ impl Service {
     }
 
     pub(crate) fn safe_path(&self, relative: &str) -> Result<PathBuf> {
-        let relative = Path::new(relative);
-        let checked = if relative.is_absolute() {
-            relative
-                .strip_prefix(&self.config.documents.root)
-                .context("document path escapes vault root")?
-        } else {
-            relative
-        };
-        ensure!(
-            checked
-                .components()
-                .all(|c| matches!(c, Component::Normal(_) | Component::CurDir)),
-            "invalid document path"
-        );
-        let path = self.config.output_dir().join(relative);
-        let boundary = if relative.is_absolute() {
-            self.config.documents.root.clone()
-        } else {
-            self.config.output_dir()
-        };
-        ensure!(
-            resolved_path(&path)?.starts_with(resolved_path(&boundary)?),
-            "document path escapes its root"
-        );
-        Ok(path)
+        self.config.document_path(Path::new(relative))
     }
 
     #[allow(clippy::too_many_lines)]
