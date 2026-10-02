@@ -63,6 +63,94 @@ after stopping any existing service. Keep the checkout and build output while
 using the links. To restore the installed commands, run
 `brew link --overwrite agentix taskix`.
 
+## Installing local binaries through Homebrew
+
+Update `tenfyzhong/tap` to a version with precompiled local installation support,
+then build once and install the resulting binaries:
+
+```sh
+make release
+make update VERSION=local
+
+make
+make update VERSION=local PROFILE=debug
+
+make update VERSION=local FORMULAE=taskix
+```
+
+`update VERSION=local` reads existing binaries from `target/<profile>/`; it does
+not run Cargo. Missing or nonexecutable selected binaries fail before invoking
+Homebrew and prompt you to run `make release` or `make` first. Only the selected
+CLI binaries are required. Rebuild explicitly after changing source; the enabled
+features and Cargo version come from the earlier build.
+
+The target passes the current checkout as `HOMEBREW_AGENTIX_LOCAL_SOURCE` and the
+build directory as `HOMEBREW_AGENTIX_LOCAL_TARGET_DIR` to
+`brew install --build-from-source --skip-link`. The tap snapshots each selected binary,
+example configuration and shell completions, then copies them into its keg.
+`--build-from-source` selects the local Formula recipe rather than an upstream
+bottle; that recipe does not compile or install Rust/LLVM or Protobuf build
+dependencies. Stable/remote HEAD builds retain their existing build dependencies.
+Configuration, completion and service installation rules remain in the tap.
+
+`PROFILE` defaults to `release` and accepts `release` or `debug`.
+`FORMULAE` defaults to `agentix taskix`. For a custom build directory, use the
+same `CARGO_TARGET_DIR` when building and installing, including paths with spaces:
+
+```sh
+make release CARGO_TARGET_DIR=/absolute/path/to/build
+make update VERSION=local CARGO_TARGET_DIR=/absolute/path/to/build
+```
+
+You can also stage binaries directly with Homebrew, then select the installed
+local kegs from the Agentix checkout:
+
+```sh
+env HOMEBREW_AGENTIX_LOCAL_SOURCE=/absolute/path/to/agentix \
+  brew install --build-from-source --skip-link tenfyzhong/tap/agentix tenfyzhong/tap/taskix
+make -C /absolute/path/to/agentix switch VERSION=local
+```
+
+Set `HOMEBREW_AGENTIX_LOCAL_PROFILE=debug` or
+`HOMEBREW_AGENTIX_LOCAL_TARGET_DIR=/absolute/path/to/build` as needed. Relative
+target paths are resolved against the checkout. For an entirely Homebrew-based
+link step without the Makefile, see the tap README
+[local installation guide](https://github.com/tenfyzhong/homebrew-tap#installing-local-agentix-binaries).
+
+Source and Formula files are never rewritten. Keep binary/resource inputs
+unchanged while the snapshot is created. Artifact/profile content determines
+the `0.0.0-local.<digest>.<profile>` Cellar version; uncompiled source changes
+are excluded. Installed metadata remains readable after removing the checkout.
+
+`install --skip-link` stages new artifacts without automatically linking them
+or replacing installed stable/HEAD kegs. Once every selected install succeeds,
+the target runs `switch VERSION=local` with the same profile and selection.
+Switch validates all local kegs before unlinking the actual linked kegs, then
+links the exact selected versions. Update passes the same artifact inputs into
+switch so it selects this snapshot even when an older snapshot is reused and
+another local version was installed more recently. A standalone switch without
+local source inputs still selects the most recently installed matching profile.
+This works even when `opt` points to a
+different version from the command links. Identical artifacts are reused;
+changed binary/resource content creates another local version. Failed installs
+do not run switch and preserve existing command links. Homebrew can still
+update `opt` paths during staging. Conflicting manual `link-debug` links may
+need to be removed before Homebrew can link the commands. This target does not restart services. Restart only the selected
+service after installation:
+
+```sh
+brew services restart tenfyzhong/tap/agentix
+brew services restart tenfyzhong/tap/taskix
+```
+
+Use `make switch VERSION=stable` or `make switch VERSION=head` to return to an
+already installed upstream version. If it is missing, run
+`make update VERSION=stable` or `make update VERSION=head` to install it again.
+Directly with Homebrew, run `brew reinstall` or
+`brew reinstall --HEAD` without `HOMEBREW_AGENTIX_LOCAL_SOURCE`, then restart
+the selected service explicitly. To rebuild the local source again, rerun
+`make update VERSION=local`.
+
 ## Installing and switching Homebrew versions
 
 The following targets manage both `agentix` and `taskix` from
@@ -75,18 +163,26 @@ one CLI. `VERSION` defaults to `stable`.
 | Update and use the latest release | `make update` |
 | Install and use HEAD | `make install VERSION=head` |
 | Update and use the latest HEAD | `make update VERSION=head` |
+| Install existing local release binaries | `make update VERSION=local` |
+| Install existing local debug binaries | `make update VERSION=local PROFILE=debug` |
 | Switch to an installed release | `make switch` |
 | Switch to an installed HEAD | `make switch VERSION=head` |
+| Switch to the latest installed local release build | `make switch VERSION=local` |
+| Switch to the latest installed local debug build | `make switch VERSION=local PROFILE=debug` |
 
-Install and update refresh Homebrew metadata, install the explicitly selected
-version with `--skip-link`, then switch command links. Release updates use
+For stable and HEAD, install and update refresh Homebrew metadata, install the
+explicitly selected version with `--skip-link`, then switch command links.
+Release updates use
 `brew install` to select the current stable formula even when HEAD is installed;
 HEAD updates additionally use `--fetch-HEAD` to check upstream commits.
 An already current installation is reusable. Switch only checks installed kegs
 and changes links; it does not download or build. Every selected CLI must have
-the requested version installed before any command is unlinked. Switching uses
-Homebrew's Ruby unlink operation on the actual linked keg, because `brew unlink`
-by formula can select the new `opt` keg while commands still link to the old one.
+the requested version installed before any command is unlinked. Local switch
+selects the most recently installed local keg for each CLI and the requested
+profile, using its Homebrew installation receipt time. It links that exact keg
+and updates `opt`; local builds do not satisfy a stable-version request.
+Switching uses Homebrew's Ruby unlink operation on the actual linked keg, because
+`brew unlink` by formula can select the new `opt` keg while commands still link to the old one.
 
 These targets do not restart services. Homebrew installation can change the
 `opt` path even with `--skip-link`; that flag only defers ordinary command

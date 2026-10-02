@@ -80,6 +80,7 @@ The projection CLI tests cross argument parsing, a new process per command, SQLi
 | Full mocked Telegram/Feishu prompt → Engine → Codex → completed channel response | [channel_codex_e2e.rs](../crates/agentix/tests/channel_codex_e2e.rs) |
 | rmux navigation, typed SDK requests, local socket exchange and process launch | [Engine tests](../crates/agentix-core/tests/engine.rs), [multiplexer tests](../crates/agentix-codex/src/multiplexer.rs) |
 | Native release archives, checksums, version alignment and Homebrew formula transformation | [packaging tests](../crates/agentix/tests/packaging.rs) |
+| Local Homebrew update artifact/profile/target selection and missing-binary preflight, exact local keg switching, stable/local distinction, preflight and failure propagation | [Make entry tests](../plugins/taskix-manager/tests/brew-local-install.test.mjs), [switch tests](../plugins/taskix-manager/tests/brew-local-switch.test.mjs), including opt-in isolated real Homebrew keg linking; artifact snapshot, dependency-free Formula and real Homebrew prebuilt-install tests live in `tenfyzhong/homebrew-tap/tests/` |
 
 ## OMP skill discovery
 

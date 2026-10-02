@@ -124,3 +124,12 @@ for (const version of ["head", "stable"]) {
         });
     }
 }
+
+for (const target of ["install", "update", "switch"]) {
+    test(`${target}_stable_rejects_local_kegs_before_unlink`, { skip: process.platform === "win32" }, async t => {
+        const f = await fixture(t, {versions: "0.0.0-local.abc.release HEAD-def", linked: "local"});
+        assert.notEqual(f.run(target, "VERSION=stable").status, 0);
+        assert.equal(await f.linked(), "local");
+        assert.deepEqual((await f.calls()).slice(-1), preflight.slice(0, 1));
+    });
+}
