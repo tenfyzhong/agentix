@@ -165,7 +165,7 @@ CREATE TRIGGER IF NOT EXISTS event_watermark_insert AFTER INSERT ON task_events 
         WHERE json_extract(NEW.data,'$.project_id') IS NOT NULL
         ON CONFLICT(scope) DO UPDATE SET sequence=MAX(sequence,excluded.sequence);
 END;
-PRAGMA user_version = 16;
+PRAGMA user_version = 17;
 PRAGMA application_id = 0x4158544b;
 CREATE INDEX IF NOT EXISTS jobs_by_followup_session ON jobs(json_extract(data, '$.followup_session_id'));
 CREATE INDEX IF NOT EXISTS inbox_by_lease_session ON inbox_entries(json_extract(data, '$.lease.session_ref'));

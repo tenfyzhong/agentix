@@ -1225,6 +1225,7 @@ async fn task_fixture() -> (tempfile::TempDir, Arc<agentix_task::Service>, Strin
             documents: DocumentConfig {
                 root: dir.path().to_owned(),
                 directory: "docs".into(),
+                archive_directory: "Archived Projects".into(),
             },
         })
         .await

@@ -110,10 +110,11 @@ async fn memory_document(
     let expected = config
         .documents
         .directory
-        .join("Projects")
-        .join(project.key)
+        .join(project.document_directory())
         .join("Memory")
-        .join(format!("{id}.md"));
+        .join(format!("{id}.md"))
+        .components()
+        .collect::<PathBuf>();
     ensure!(
         note_path == expected,
         "memory path does not match its Project"

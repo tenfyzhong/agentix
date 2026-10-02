@@ -16,6 +16,7 @@ fn completions_skip_configuration_and_task_state_and_match_checked_in_files() {
         documents: agentix_task::DocumentConfig {
             root: directory.path().to_owned(),
             directory: "documents".into(),
+            archive_directory: "Archived Projects".into(),
         },
     };
     std::fs::write(&invalid, "not valid TOML = [").unwrap();
@@ -178,6 +179,7 @@ fn memory_commands_load_configuration_on_supported_platforms() {
         documents: agentix_task::DocumentConfig {
             root: directory.path().to_owned(),
             directory: "documents".into(),
+            archive_directory: "Archived Projects".into(),
         },
     };
     std::fs::write(&config, toml::to_string(&task_config).unwrap()).unwrap();

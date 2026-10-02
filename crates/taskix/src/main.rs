@@ -935,6 +935,7 @@ async fn initialize(cli: &Cli, init: &Init) -> Result<Value> {
         documents: DocumentConfig {
             root: expand_home(&init.root)?,
             directory: init.directory.clone(),
+            archive_directory: "Archived Projects".into(),
         },
     };
     config.validate()?;

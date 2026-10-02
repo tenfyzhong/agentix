@@ -68,13 +68,13 @@ impl Service {
                         .as_u64()
                         .context("missing task sequence")?,
                 )?;
-                format!("Projects/{project_key}/Tasks/{filename}.md")
+                format!("{project_key}/Tasks/{filename}.md")
             }
             "job" => entity["document_path"]
                 .as_str()
                 .context("missing job path")?
                 .to_owned(),
-            _ => format!("Projects/{project_key}/Inbox.md"),
+            _ => format!("{project_key}/Inbox.md"),
         };
         self.safe_path(&relative)?;
         let path = self
@@ -150,6 +150,13 @@ impl Service {
             if let Err(error) = self.sync_pending(deferred).await {
                 outcome.projection_pending = Some(error.to_string());
             }
+            if matches!(command, "project.archive" | "project.unarchive") {
+                outcome.result = serde_json::to_value(
+                    self.store
+                        .project_result(required(&outcome.result, "id")?)
+                        .await?,
+                )?;
+            }
             return Ok(outcome);
         }
         let state = self.store.request_snapshot(&request).await?;
@@ -210,6 +217,7 @@ impl Service {
         }
         let inbox_status = command == "inbox.set-status";
         let recording = command == "session.record";
+        let project_archive = matches!(command, "project.archive" | "project.unarchive");
         let mut outcome = self.store.execute(request, options).await?;
         drop(lock);
         // Session drafts produce no documents and must not depend on vault access.
@@ -223,6 +231,13 @@ impl Service {
             .flatten();
         if let Err(error) = self.sync_pending(deferred).await {
             outcome.projection_pending = Some(error.to_string());
+        }
+        if project_archive {
+            outcome.result = serde_json::to_value(
+                self.store
+                    .project_result(required(&outcome.result, "id")?)
+                    .await?,
+            )?;
         }
         Ok(outcome)
     }
@@ -243,6 +258,7 @@ impl Service {
         })
         .await??;
         self.reconcile_project_folders_locked().await?;
+        self.relocate_archived_projects_locked().await?;
         Ok(lock)
     }
 
@@ -510,7 +526,7 @@ impl Service {
         let mut paths = BTreeMap::new();
         let mut files = BTreeMap::new();
         for project in &state.projects {
-            let board_path = format!("Projects/{}/Board.md", project.key);
+            let board_path = format!("{}/Board.md", project.document_directory());
             if includes(&format!("board:{}", project.id)) {
                 let (project_sequence, activity) = self.store.project_receipt(project).await?;
                 files.insert(
@@ -757,7 +773,7 @@ impl Service {
             }
             for relative in &deletion.directories {
                 ensure!(
-                    relative.starts_with("Projects/") && relative.split('/').count() == 2,
+                    relative.split('/').count() >= 2,
                     "invalid project cleanup directory"
                 );
                 let path = self.deletion_path(relative)?;
@@ -877,8 +893,10 @@ impl Service {
             json!(["agent/job"])
         };
         properties["title"] = json!(job.name);
-        properties["projects"] =
-            json!([self.link(&format!("Projects/{}/Board.md", project.key), &project.name,)]);
+        properties["projects"] = json!([self.link(
+            &format!("{}/Board.md", project.document_directory()),
+            &project.name,
+        )]);
         properties["archived"] = json!(job.archived_at.is_some() || project.archived_at.is_some());
         Ok(properties)
     }
@@ -896,7 +914,10 @@ impl Service {
         doc.push_str(&Self::header(&title));
         doc.push_str(&format!(
             "\n{}\n",
-            self.link(&format!("Projects/{}/Inbox.md", project.key), "Inbox")
+            self.link(
+                &format!("{}/Inbox.md", project.document_directory()),
+                "Inbox"
+            )
         ));
         for (kind, statuses) in [
             ("Job", json!(crate::JobStatus::ALL)),
@@ -921,7 +942,7 @@ impl Service {
             .config
             .documents
             .directory
-            .join(format!("Projects/{}/{kind}s", project.key));
+            .join(format!("{}/{kind}s", project.document_directory()));
         let folder = folder.to_string_lossy().replace('\\', "/");
         let folder = folder.trim_start_matches("./");
         let mut filters = vec![
@@ -989,7 +1010,7 @@ impl Service {
             "sequence":task.sequence,
             "agent":task.last_executor.as_deref().and_then(crate::model::agent_name),"session_id":task.last_session,
             "archived":job.archived_at.is_some() || project.archived_at.is_some(),
-            "projects":[wiki(&format!("Projects/{}/Board.md",project.key))],"job":wiki(&job.document_path)
+            "projects":[wiki(&format!("{}/Board.md",project.document_directory()))],"job":wiki(&job.document_path)
         }).as_object().unwrap().clone());
         authored.as_object_mut().unwrap().remove("version");
         if authored["title"].is_null() || authored["title"] == authored["name"] {

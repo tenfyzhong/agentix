@@ -14,6 +14,7 @@ async fn task_service_collects_job_messages_without_an_engine_or_im_connection()
             documents: DocumentConfig {
                 root: root.path().into(),
                 directory: "docs".into(),
+                archive_directory: "Archived Projects".into(),
             },
         })
         .await
@@ -71,6 +72,7 @@ async fn task_service_records_configured_process_items_without_an_im_connection(
             documents: DocumentConfig {
                 root: root.path().into(),
                 directory: "docs".into(),
+                archive_directory: "Archived Projects".into(),
             },
         })
         .await
@@ -132,6 +134,7 @@ async fn task_service_stages_discussion_before_a_job_exists() {
             documents: DocumentConfig {
                 root: root.path().into(),
                 directory: "docs".into(),
+                archive_directory: "Archived Projects".into(),
             },
         })
         .await
@@ -179,6 +182,7 @@ async fn task_service_exports_unbound_discussion_for_the_session_project() {
             documents: DocumentConfig {
                 root: root.path().into(),
                 directory: "docs".into(),
+                archive_directory: "Archived Projects".into(),
             },
         })
         .await

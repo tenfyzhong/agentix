@@ -9,7 +9,10 @@ pub(crate) fn task_path(state: &crate::Snapshot, task: &crate::Task) -> Result<S
 
 pub(crate) fn task_path_in(project: &crate::Project, task: &crate::Task) -> Result<String> {
     let filename = numbered_name(&task.name, task.created_at, task.sequence)?;
-    Ok(format!("Projects/{}/Tasks/{filename}.md", project.key))
+    Ok(format!(
+        "{}/Tasks/{filename}.md",
+        project.document_directory()
+    ))
 }
 
 /// Allocate independently for each entity type/project (filtered by the caller).

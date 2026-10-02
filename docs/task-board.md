@@ -6,6 +6,30 @@
 
 A Project identifies a Git repository or stable directory. Git worktrees share their repository's common directory and reuse one Project. Jobs represent independently acceptable requirements, while Tasks are executable steps. New requirements after delivery create new Jobs; completed and cancelled Jobs can be manually archived into `Jobs/Archived/`. Unarchived Jobs, including completed ones, remain directly in `Jobs/`. There is no milestone layer or Job-level exclusive lock.
 
+`taskix project archive PROJECT_ID` moves the entire project's note folder from
+`Projects/<project>/` into `Archived Projects/<project>/`. Configure
+`documents.archive_directory` to choose a different relative folder under
+`documents.directory`, for example `History/Projects`. It must be outside
+`Projects` and cannot contain traversal. The default applies to existing configs
+that omit this field. `project unarchive` restores the folder to `Projects`.
+Taskix Sync adds **Archive project** / **Restore project** to the Obsidian context
+menu for a managed `Board.md` or its project folder. All Jobs must be completed
+or cancelled before archival; the same CLI guards apply to menu actions.
+
+Moves preserve IDs, workspace roots, authored notes, Inbox content, and
+attachments, while updating generated links, Base filters, and registered note
+paths. Existing archived projects move on the next `taskix sync`; changing the
+archive directory also relocates existing archives on sync. A destination
+conflict leaves existing files intact and reports `projection_pending` after
+the state commit. Resolve the conflict and run `taskix sync` to finish the move.
+Interrupted moves recover from the registered Board identity. Archival moves
+only the generated project note folder, never the repository or worktree.
+
+Schema 17 stores each relocated Project's document directory and protects it
+from older writers. Upgrade Taskix, Agentix, and the Taskix Sync plugin together;
+older binaries reject schema 17. Back up the database and vault together before
+upgrading. Existing archived projects keep their identities and content.
+
 Tasks use `TODO`, `IN_PROGRESS`, `BLOCKED`, `WAITING_USER`, `DONE`, `FAILED`, and `CANCELLED`. IN_PROGRESS has two phases: claim enters `PLANNING`; explicit start enters `EXECUTING`. IN_PROGRESS Tasks can finish with done only during EXECUTING. Users can also explicitly mark an unleased BLOCKED Task DONE. Both phases can fail, block, wait, release, or cancel. TODO can be claimed, blocked, put into WAITING_USER, or cancelled. BLOCKED and WAITING_USER can switch between each other, return to PLANNING through claim, fail, or cancel. FAILED requires `retry`; DONE/CANCELLED require `reopen`. Outside IN_PROGRESS, `phase` is null. Reopening a prerequisite after a downstream Task started executing is rejected; planning alone does not freeze dependencies.
 
 Jobs with the default `review_policy: required` enter PENDING_REVIEW once at least one non-cancelled Task exists and all such Tasks are DONE; `review_policy: none` Jobs complete directly at that point. `job approve` marks verification passed and completes the Job; `job reject --reason` returns it to ACTIVE without changing Task states. `job submit` explicitly resubmits a ready rejected Job. Metadata edits and sync do not resubmit it. Cancelling every Task does not automatically complete the requirement. Users may explicitly approve an ACTIVE Job with at least one Task when every Task is DONE, FAILED, or CANCELLED; this preserves each Task outcome. Completed Jobs reject additional Tasks. Reopen corrects a Task's result and returns its Job to ACTIVE. Related supplements to pending review use `job followup` and new Tasks in the same Job; independent requirements and requests after completion belong in a new Job. ACTIVE and PENDING_REVIEW Jobs cannot be archived. Job cancellation requires its active Task leases to be released first.

@@ -48,6 +48,12 @@ impl StorageConfig {
 pub struct DocumentConfig {
     pub root: PathBuf,
     pub directory: PathBuf,
+    #[serde(default = "default_archive_directory")]
+    pub archive_directory: PathBuf,
+}
+
+fn default_archive_directory() -> PathBuf {
+    "Archived Projects".into()
 }
 
 impl Config {
@@ -98,6 +104,20 @@ impl Config {
                     .components()
                     .all(|c| matches!(c, Component::Normal(_) | Component::CurDir)),
             "documents.directory must be a relative path without traversal"
+        );
+        let archive = &self.documents.archive_directory;
+        ensure!(
+            !archive.as_os_str().is_empty()
+                && archive
+                    .components()
+                    .all(|c| matches!(c, Component::Normal(_)))
+                && !archive.starts_with("Projects"),
+            "documents.archive_directory must be a relative directory outside Projects without traversal"
+        );
+        ensure!(
+            resolved_path(&self.output_dir().join(archive))?
+                .starts_with(resolved_path(&self.output_dir())?),
+            "archive directory escapes document output"
         );
         ensure!(
             self.storage.path.is_absolute() && self.storage.path.file_name().is_some(),

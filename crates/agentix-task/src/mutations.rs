@@ -38,7 +38,9 @@ pub(crate) fn apply(
     let result = match command {
         _ if command.starts_with("inbox.") => crate::inbox::apply(state, request, options, now),
         "project.register" => register_project(state, request, now),
-        "project.rename" => crate::project_rename::rename(state, request, options),
+        "project.rename" | "project.relocate" => {
+            crate::project_rename::rename(state, request, options)
+        }
         "project.delete" | "job.delete" => crate::deletion::apply(state, request, options),
         "project.archive" | "project.unarchive" => archive_project(state, request, options, now),
         "session.record" => crate::conversation::record(state, request, options, now),
@@ -119,7 +121,7 @@ pub(crate) fn create_job(
     )?;
     let filename = numbered_name(&name, now, sequence)?;
     let job = Job {
-        document_path: format!("Projects/{}/Jobs/{filename}.md", project.key),
+        document_path: format!("{}/Jobs/{filename}.md", project.document_directory()),
         sequence,
         name,
         id,
@@ -258,6 +260,7 @@ fn register_project(state: &mut Snapshot, request: &Value, now: i64) -> Result<V
         revision: 1,
         created_at: now,
         archived_at: None,
+        document_directory: None,
     };
     let result = serde_json::to_value(&project)?;
     state.projects.push(project);
@@ -353,9 +356,8 @@ fn update_job(
     } else {
         None
     };
-    let project_key = state.projects[state.project_index(&state.jobs[i].project_id)?]
-        .key
-        .clone();
+    let project_directory =
+        state.projects[state.project_index(&state.jobs[i].project_id)?].document_directory();
     let job = &mut state.jobs[i];
     match command {
         "job.update" => {
@@ -400,13 +402,13 @@ fn update_job(
             ensure!(job.archived_at.is_none(), "conflict: Job already archived");
             job.archived_at = Some(now);
             let filename = numbered_name(&job.name, job.created_at, job.sequence)?;
-            job.document_path = format!("Projects/{project_key}/Jobs/Archived/{filename}.md");
+            job.document_path = format!("{project_directory}/Jobs/Archived/{filename}.md");
         }
         "job.unarchive" => {
             ensure!(job.archived_at.is_some(), "conflict: Job is not archived");
             job.archived_at = None;
             let filename = numbered_name(&job.name, job.created_at, job.sequence)?;
-            job.document_path = format!("Projects/{project_key}/Jobs/{filename}.md");
+            job.document_path = format!("{project_directory}/Jobs/{filename}.md");
         }
         _ => {}
     }

@@ -117,9 +117,7 @@ pub(crate) async fn check_pending_paths(
             .filter(|p| !before.projects.iter().any(|old| old.id == p.id))
         {
             ensure!(
-                !pending
-                    .directories
-                    .contains(&format!("Projects/{}", project.key)),
+                !pending.directories.contains(&project.document_directory()),
                 "conflict: project directory cleanup is pending; run sync before registering this name"
             );
         }
@@ -277,9 +275,7 @@ pub(crate) async fn persist(
         .await?;
     }
     for project in projects {
-        cleanup
-            .directories
-            .insert(format!("Projects/{}", project.key));
+        cleanup.directories.insert(project.document_directory());
         for kind in ["meta", "board", "tasks", "sync"] {
             if let Some(path) = previous.get(&format!("{kind}:{}", project.id))
                 && let Some((parent, _)) = path.rsplit_once('/')

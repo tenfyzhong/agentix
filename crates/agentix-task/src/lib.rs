@@ -24,6 +24,7 @@ pub use memory_source::{MemoryBackfillPage, MemorySource};
 mod mutations;
 mod naming;
 mod project;
+mod project_archive;
 mod project_lookup;
 mod project_rename;
 mod projection;
