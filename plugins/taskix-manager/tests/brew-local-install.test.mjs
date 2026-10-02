@@ -20,10 +20,18 @@ async function fixture(t, fail = false) {
     }
     const log = join(dir, "calls");
     const brew = join(dir, "brew");
-    await writeFile(brew, '#!/bin/sh\nprintf "%s|%s|%s|%s\\n" "$HOMEBREW_AGENTIX_LOCAL_SOURCE" "$HOMEBREW_AGENTIX_LOCAL_PROFILE" "$HOMEBREW_AGENTIX_LOCAL_TARGET_DIR" "$*" >> "$LOCAL_LOG"\n[ "$LOCAL_FAIL" != 1 ]\n');
+    await writeFile(brew, '#!/bin/sh\nif [ "$1" = ruby ]; then shift 3; set -- ruby "$@"; fi\nprintf "%s|%s|%s|%s\\n" "$HOMEBREW_AGENTIX_LOCAL_SOURCE" "$HOMEBREW_AGENTIX_LOCAL_PROFILE" "$HOMEBREW_AGENTIX_LOCAL_TARGET_DIR" "$*" >> "$LOCAL_LOG"\n[ "$LOCAL_FAIL" != 1 ]\n');
     await chmod(brew, 0o755);
+    const successfulCalls = async (checkout = root.replace(/\/$/, ""), profile = "release", names = "agentix taskix", targetDirectory = target) => {
+        const calls = (await readFile(log, "utf8")).trim().split("\n");
+        const formulae = names.split(" ").map(name => `tenfyzhong/tap/${name}`).join(" ");
+        assert.equal(calls.length, 2, "Install all artifacts before one explicit link switch");
+        assert.equal(calls[0], `${checkout}|${profile}|${targetDirectory}|install --build-from-source --skip-link ${formulae}`);
+        assert.ok(calls[1].startsWith("|||ruby "), "Switch must not inherit local snapshot environment");
+        assert.ok(calls[1].endsWith(` ${profile} ${formulae}`), "Switch must use the selected profile and formulae");
+    };
     return {
-        dir, brew, log, target,
+        dir, brew, log, target, successfulCalls,
         run: (...args) => spawnSync("make", ["update", "VERSION=local", `BREW=${brew}`, "CARGO=/nonexistent-cargo", `CARGO_TARGET_DIR=${target}`, ...args], {cwd: root, encoding: "utf8", env: {...process.env, LOCAL_LOG: log, LOCAL_FAIL: fail ? "1" : "0"}}),
         calls: async () => (await readFile(log, "utf8").catch(() => "")).trim().split("\n").filter(Boolean),
     };
@@ -33,13 +41,13 @@ for (const profile of ["release", "debug"]) {
         const f = await fixture(t);
         const result = f.run(`PROFILE=${profile}`);
         assert.equal(result.status, 0, result.stdout + result.stderr);
-        assert.deepEqual(await f.calls(), [`${root.replace(/\/$/, "")}|${profile}|${f.target}|reinstall --build-from-source tenfyzhong/tap/agentix tenfyzhong/tap/taskix`]);
+        await f.successfulCalls(undefined, profile);
     });
 }
 test("update_local_selects_single_formula", { skip: process.platform === "win32" }, async t => {
     const f = await fixture(t);
     assert.equal(f.run("FORMULAE=taskix").status, 0);
-    assert.deepEqual(await f.calls(), [`${root.replace(/\/$/, "")}|release|${f.target}|reinstall --build-from-source tenfyzhong/tap/taskix`]);
+    await f.successfulCalls(undefined, "release", "taskix");
 });
 for (const arg of ["PROFILE=bad", "FORMULAE=unknown", "FORMULAE="]) {
     test(`update_local_rejects_${arg}_before_brew`, { skip: process.platform === "win32" }, async t => {
@@ -70,13 +78,14 @@ test("update_local_does_not_require_unselected_binary", {skip: process.platform 
     const f = await fixture(t);
     await rm(join(f.target, "release/agentix"));
     assert.equal(f.run("FORMULAE=taskix").status, 0);
-    assert.equal((await f.calls()).length, 1);
+    await f.successfulCalls(undefined, "release", "taskix");
 });
 
 test("update_local_reads_default_target_relative_to_current_checkout", {skip: process.platform === "win32"}, async t => {
     const f = await fixture(t);
     await symlink(f.target, join(f.dir, "target"));
-    const result = spawnSync("make", ["-f", join(root, "Makefile"), "update", "VERSION=local", `BREW=${f.brew}`, "CARGO=/nonexistent-cargo", "CARGO_TARGET_DIR="], {cwd: f.dir, encoding: "utf8", env: {...process.env, LOCAL_LOG: f.log, LOCAL_FAIL: "0"}});
+    await writeFile(join(f.dir, "Makefile"), await readFile(join(root, "Makefile")));
+    const result = spawnSync("make", ["update", "VERSION=local", `BREW=${f.brew}`, "CARGO=/nonexistent-cargo", "CARGO_TARGET_DIR="], {cwd: f.dir, encoding: "utf8", env: {...process.env, LOCAL_LOG: f.log, LOCAL_FAIL: "0"}});
     assert.equal(result.status, 0, result.stderr);
-    assert.deepEqual(await f.calls(), [`${await realpath(f.dir)}|release|target|reinstall --build-from-source tenfyzhong/tap/agentix tenfyzhong/tap/taskix`]);
+    await f.successfulCalls(await realpath(f.dir), "release", "agentix taskix", "target");
 });

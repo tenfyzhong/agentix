@@ -83,7 +83,8 @@ ifeq ($(VERSION),local)
 	HOMEBREW_AGENTIX_LOCAL_TARGET_DIR="$(DEBUG_TARGET_DIR)" \
 	HOMEBREW_AGENTIX_LOCAL_SOURCE="$(CURDIR)" HOMEBREW_AGENTIX_LOCAL_PROFILE="$(PROFILE)" \
 	HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1 \
-	$(BREW) reinstall --build-from-source $(BREW_FORMULAE)
+	$(BREW) install --build-from-source --skip-link $(BREW_FORMULAE)
+	$(MAKE) switch VERSION=local PROFILE="$(PROFILE)" FORMULAE="$(FORMULAE)"
 else
 	@case "$(VERSION)" in stable|head) ;; *) echo 'VERSION must be stable or head' >&2; exit 2 ;; esac
 	$(BREW) update

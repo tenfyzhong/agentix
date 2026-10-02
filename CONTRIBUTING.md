@@ -86,7 +86,7 @@ features and Cargo version come from the earlier build.
 
 The target passes the current checkout as `HOMEBREW_AGENTIX_LOCAL_SOURCE` and the
 build directory as `HOMEBREW_AGENTIX_LOCAL_TARGET_DIR` to
-`brew reinstall --build-from-source`. The tap snapshots each selected binary,
+`brew install --build-from-source --skip-link`. The tap snapshots each selected binary,
 example configuration and shell completions, then copies them into its keg.
 `--build-from-source` selects the local Formula recipe rather than an upstream
 bottle; that recipe does not compile or install Rust/LLVM or Protobuf build
@@ -102,26 +102,36 @@ make release CARGO_TARGET_DIR=/absolute/path/to/build
 make update VERSION=local CARGO_TARGET_DIR=/absolute/path/to/build
 ```
 
-The operation also works directly from the tap or any directory after building:
+You can also stage binaries directly with Homebrew, then select the installed
+local kegs from the Agentix checkout:
 
 ```sh
 env HOMEBREW_AGENTIX_LOCAL_SOURCE=/absolute/path/to/agentix \
-  brew reinstall --build-from-source tenfyzhong/tap/agentix tenfyzhong/tap/taskix
+  brew install --build-from-source --skip-link tenfyzhong/tap/agentix tenfyzhong/tap/taskix
+make -C /absolute/path/to/agentix switch VERSION=local
 ```
 
 Set `HOMEBREW_AGENTIX_LOCAL_PROFILE=debug` or
 `HOMEBREW_AGENTIX_LOCAL_TARGET_DIR=/absolute/path/to/build` as needed. Relative
-target paths are resolved against the checkout.
+target paths are resolved against the checkout. For an entirely Homebrew-based
+link step without the Makefile, see the tap README
+[local installation guide](https://github.com/tenfyzhong/homebrew-tap#installing-local-agentix-binaries).
 
 Source and Formula files are never rewritten. Keep binary/resource inputs
 unchanged while the snapshot is created. Artifact/profile content determines
 the `0.0.0-local.<digest>.<profile>` Cellar version; uncompiled source changes
 are excluded. Installed metadata remains readable after removing the checkout.
 
-`reinstall` replaces the active keg using Homebrew's normal linking and failure
-recovery. It can also install a selected CLI for the first time. Conflicting
-manual `link-debug` links may need to be removed before Homebrew can link the
-commands. This target does not restart services. Restart only the selected
+`install --skip-link` stages new artifacts without automatically linking them
+or replacing installed stable/HEAD kegs. Once every selected install succeeds,
+the target runs `switch VERSION=local` with the same profile and selection.
+Switch validates all local kegs before unlinking the actual linked kegs, then
+links the exact selected versions. This works even when `opt` points to a
+different version from the command links. Identical artifacts are reused;
+changed binary/resource content creates another local version. Failed installs
+do not run switch and preserve existing command links. Homebrew can still
+update `opt` paths during staging. Conflicting manual `link-debug` links may
+need to be removed before Homebrew can link the commands. This target does not restart services. Restart only the selected
 service after installation:
 
 ```sh
@@ -130,7 +140,7 @@ brew services restart tenfyzhong/tap/taskix
 ```
 
 Use `make switch VERSION=stable` or `make switch VERSION=head` to return to an
-already installed upstream version. If it was replaced during reinstall, run
+already installed upstream version. If it is missing, run
 `make update VERSION=stable` or `make update VERSION=head` to install it again.
 Directly with Homebrew, run `brew reinstall` or
 `brew reinstall --HEAD` without `HOMEBREW_AGENTIX_LOCAL_SOURCE`, then restart
