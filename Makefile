@@ -80,11 +80,11 @@ ifeq ($(VERSION),local)
 			echo "Missing executable local binary: $$binary; run $(if $(filter release,$(PROFILE)),make release,make) first" >&2; exit 2; \
 		fi; \
 	done
-	HOMEBREW_AGENTIX_LOCAL_TARGET_DIR="$(DEBUG_TARGET_DIR)" \
+	@HOMEBREW_AGENTIX_LOCAL_TARGET_DIR="$(DEBUG_TARGET_DIR)" \
 	HOMEBREW_AGENTIX_LOCAL_SOURCE="$(CURDIR)" HOMEBREW_AGENTIX_LOCAL_PROFILE="$(PROFILE)" \
 	HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1 \
 	$(BREW) install --build-from-source --skip-link $(BREW_FORMULAE)
-	HOMEBREW_AGENTIX_LOCAL_TARGET_DIR="$(DEBUG_TARGET_DIR)" \
+	@HOMEBREW_AGENTIX_LOCAL_TARGET_DIR="$(DEBUG_TARGET_DIR)" \
 	HOMEBREW_AGENTIX_LOCAL_SOURCE="$(CURDIR)" HOMEBREW_AGENTIX_LOCAL_PROFILE="$(PROFILE)" \
 	$(MAKE) switch VERSION=local PROFILE="$(PROFILE)" FORMULAE="$(FORMULAE)"
 else
@@ -101,7 +101,7 @@ endif
 switch:
 ifeq ($(VERSION),local)
 	$(check-local-options)
-	$(BREW) ruby -e 'require "keg"; require "unlink"; profile = ARGV.shift; \
+	@$(BREW) ruby -e 'require "keg"; require "unlink"; profile = ARGV.shift; \
 	exact = !ENV.fetch("HOMEBREW_AGENTIX_LOCAL_SOURCE", "").empty?; \
 	ENV["HOMEBREW_AGENTIX_LOCAL_PROFILE"] = profile if exact; require "formulary" if exact; \
 	kegs = ARGV.map do |name|; \

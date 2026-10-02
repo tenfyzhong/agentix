@@ -49,6 +49,19 @@ test("update_local_selects_single_formula", { skip: process.platform === "win32"
     assert.equal(f.run("FORMULAE=taskix").status, 0);
     await f.successfulCalls(undefined, "release", "taskix");
 });
+test("update_local_hides_recipes_and_preserves_homebrew_output", {skip: process.platform === "win32"}, async t => {
+    const f = await fixture(t);
+    await writeFile(f.brew, (await readFile(f.brew, "utf8"))
+        .replace('[ "$LOCAL_FAIL" != 1 ]', 'echo "Homebrew output: $1"\necho "Homebrew diagnostic: $1" >&2\n[ "$LOCAL_FAIL" != 1 ]'));
+    const result = f.run();
+    assert.equal(result.status, 0, result.stderr);
+    await f.successfulCalls();
+    assert.doesNotMatch(result.stdout, /HOMEBREW_AGENTIX_LOCAL_|ruby -e|switch VERSION=local/);
+    assert.match(result.stdout, /Homebrew output: install/);
+    assert.match(result.stdout, /Homebrew output: ruby/);
+    assert.match(result.stderr, /Homebrew diagnostic: install/);
+    assert.match(result.stderr, /Homebrew diagnostic: ruby/);
+});
 for (const arg of ["PROFILE=bad", "FORMULAE=unknown", "FORMULAE="]) {
     test(`update_local_rejects_${arg}_before_brew`, { skip: process.platform === "win32" }, async t => {
         const f = await fixture(t);
