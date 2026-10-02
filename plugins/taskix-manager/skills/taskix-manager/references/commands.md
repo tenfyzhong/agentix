@@ -238,7 +238,7 @@ Memory writes, historical `backfill`, `reindex`, projection `sync`, `reload` and
 optional `ask` require the separately running `taskix memory serve`. Manual
 `create`/`update` take a JSON document; updates and `forget` require `--revision`.
 Preserve the host executor identity for provenance. Do not create a Job solely
-to retrieve memory. See the repository's `docs/taskix-memory.md` for configuration,
+to retrieve memory. See [Taskix memory in the Wiki](https://github.com/tenfyzhong/agentix/wiki/Taskix-Memory) for configuration,
 read-only projection recovery, provider budgets and dual-database recovery.
 Obsidian memory notes are read-only; file edits are never imported and are
 replaced from SQLite on synchronization. Use the memory CLI to change content.

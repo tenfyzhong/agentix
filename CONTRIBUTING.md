@@ -233,7 +233,7 @@ git commit -s -m "docs: update user guide"
 git push origin HEAD:master
 ```
 
-Keep `Home.md` and `_Sidebar.md` aligned with page names. Use full Wiki URLs for page links and full repository URLs for source files. The former guide files in the main repository retain migration links and, where applicable, developer-only sections; do not reintroduce duplicate usage instructions there. Keep these entry files available for existing links and release packaging.
+Keep `Home.md` and `_Sidebar.md` aligned with page names. Use full Wiki URLs for page links and full repository URLs for source files. Delete obsolete user-guide files after migrating their content to the Wiki; do not keep redirect-only placeholders or duplicate usage instructions. Move any remaining technical chapters into the appropriate architecture, protocol, coverage, or contribution document before deleting an old guide. Update repository links, configuration comments, and package resource expectations when removing a file.
 
 ## Commits
 
@@ -301,6 +301,10 @@ Before tagging a release:
 5. Restart Agentix during an active turn and verify that the original message recovers its Stop action and completes in place.
 6. Restart the Codex daemon and verify reconnect and subscription recovery.
 7. Attach a fresh Codex TUI before its first prompt, send that prompt from IM, and verify that the session materializes and resumes.
+
+### Release packaging
+
+The Homebrew formulae for Agentix and the standalone task manager, taskix, are maintained in [tenfyzhong/homebrew-tap](https://github.com/tenfyzhong/homebrew-tap). Release automation updates both formulae and publishes macOS arm64, Linux x86_64, and Linux arm64 bottles. Each platform compiles the CLIs once and reuses those binaries for both release archives and Homebrew bottles. Bottle packaging preserves the prepared source formula and verifies a real bottle installation; after every platform succeeds, automation merges the metadata into one pull request per formula. Install taskix with `brew install tenfyzhong/tap/taskix`. The Homebrew workflow can also be run manually for an existing release tag, selecting `agentix`, `taskix`, or `all` (the default) to download and checksum-verify the existing release binaries, package the corresponding bottles, and publish formula pull requests.
 
 ### Taskix Homebrew formula
 

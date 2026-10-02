@@ -13,7 +13,7 @@ Installation, configuration, commands, and other user guides live in the [GitHub
 - [Task workflow mechanisms](task-workflow-mechanisms.md)
 - [Taskix memory design](taskix-memory-design.md)
 - [Jev lifecycle decisions](jev-lifecycle-decisions.md)
-- [Claude bridge protocol and verification](claude-code.md#protocol-and-lifecycle)
+- [Claude bridge protocol and verification](host-protocol.md#protocol-and-lifecycle)
 
 ## Testing and measurements
 
@@ -29,8 +29,8 @@ Installation, configuration, commands, and other user guides live in the [GitHub
 - [Memory calibration](taskix-memory-calibration.md)
 - [Memory performance](taskix-memory-performance.md)
 - [Memory quality benchmark](taskix-memory-quality-benchmark.md)
-- [Backup verification](taskix-backup.md#development-verification)
-- [CI cost and Codex proxy verification](development-and-operations.md#ci-test-cost)
+- [Backup verification](integration-coverage.md#taskix-backup-verification)
+- [CI cost and Codex proxy verification](integration-coverage.md#ci-test-cost)
 
 ## Implementation reviews
 
@@ -40,4 +40,4 @@ Installation, configuration, commands, and other user guides live in the [GitHub
 - [Slack review](slack-review.md)
 - [PR 92 full review](pr-92-full-review.md)
 
-Former user-guide paths remain as links to the Wiki so existing bookmarks and release-package references still lead to the current instructions.
+Obsolete user-guide files are removed after migration. Technical chapters from mixed guides are consolidated into the documents indexed above.

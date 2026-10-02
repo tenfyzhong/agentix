@@ -1,3 +1,0 @@
-# Using Agentix
-
-The user guide has moved to the [GitHub Wiki](https://github.com/tenfyzhong/agentix/wiki/Usage). Start with the [Wiki home](https://github.com/tenfyzhong/agentix/wiki/Home) for installation, configuration, and everyday use.

@@ -1,8 +1,4 @@
-# Agentix bridge for Pi, OMP, and Claude Code
-
-The user guide has moved to the [GitHub Wiki](https://github.com/tenfyzhong/agentix/wiki/Pi-and-OMP). Start with the [Wiki home](https://github.com/tenfyzhong/agentix/wiki/Home) for installation, configuration, and everyday use.
-
-The implementation and development notes below remain in the repository.
+# Agentix bridge implementation and validation
 
 The native loader smoke tests have passed with Pi 0.84.4 and OMP 17.3.7. They exercise public extension APIs without model requests. Run them against installed hosts with:
 

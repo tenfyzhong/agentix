@@ -266,7 +266,6 @@ test("npm package contains all host manifests, hooks and resources but no tests"
         "extensions/omp.ts",
         "skills/taskix-manager/SKILL.md",
         "skills/taskix-manager/references/commands.md",
-        "obsidian/README.md",
         "obsidian/tasknotes-settings.json",
         "obsidian/taskix-sync/manifest.json",
         "obsidian/taskix-sync/main.js",
@@ -274,6 +273,10 @@ test("npm package contains all host manifests, hooks and resources but no tests"
     ])
         assert.ok(files.includes(path), `missing packaged file: ${path}`);
     assert.ok(!files.some((path) => path.startsWith("tests/") || path.startsWith("vendor/")));
+    assert.ok(
+        !files.includes("obsidian/README.md"),
+        "the Obsidian user guide belongs in the Wiki rather than the plugin package",
+    );
     for (const obsolete of ["routing-delegation.mjs", "routing-decision.mjs", "skills/taskix-manager/references/routing-classifier.md"]) {
         assert.ok(!files.includes(obsolete), `obsolete classifier file packaged: ${obsolete}`);
     }
