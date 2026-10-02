@@ -1,5 +1,48 @@
 use super::*;
 
+#[test]
+fn obsidian_completion_cascades_through_the_real_cli_and_projects_tasks() {
+    let cli = Cli::new();
+    let job = cli.job("Manual completion");
+    let todo = cli.task(&job, "Unstarted task");
+    let waiting = cli.task(&job, "Waiting task");
+    cli.ok(&["task", "wait", &waiting, "--reason", "Awaiting acceptance"]);
+    let active = cli.task(&job, "Leased task");
+    let claim = cli.claim(&active, "old-owner");
+    let revision = cli.ok(&["job", "show", &job])["revision"].to_string();
+    let completed = cli.ok(&[
+        "job",
+        "approve",
+        &job,
+        "--actor",
+        "user:obsidian",
+        "--expect-revision",
+        &revision,
+    ]);
+    assert_eq!(completed["status"], "COMPLETED");
+    for id in [&todo, &waiting, &active] {
+        let task = cli.ok(&["task", "show", id]);
+        assert_eq!(task["status"], "DONE");
+        assert!(task["lease"].is_null());
+        let note = cli.ok(&["obsidian", "show", id]);
+        assert_eq!(note["properties"]["status"], "DONE");
+    }
+    let old_token = claim["lease"]["token"].as_str().unwrap();
+    assert!(
+        !cli.run(&[
+            "task",
+            "done",
+            &active,
+            "--session",
+            "old-owner",
+            "--lease-token",
+            old_token
+        ])
+        .status
+        .success()
+    );
+}
+
 #[tokio::test]
 async fn job_list_filters_before_reading_excluded_bodies() {
     use sqlx::Connection;

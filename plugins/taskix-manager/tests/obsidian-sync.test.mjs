@@ -66,14 +66,15 @@ test("Obsidian connection requests only configuration", async (t) => {
     f.reply(); await connecting;
 });
 
-test("Obsidian mappings preserve task leases and explicitly route Job review", () => {
+test("Obsidian mappings route human completion and agent-owned execution", () => {
     const { commandFor } = loadPlugin();
     const task = { kind: "task", id: "task_one", status: "TODO" };
     assert.equal(commandFor(task, "BLOCKED")[1], "block");
     assert.match(commandFor(task, "BLOCKED").at(-1), /Obsidian.*TODO -> BLOCKED/);
     assert.equal(commandFor({ ...task, status: "FAILED" }, "TODO")[1], "retry");
     assert.equal(commandFor({ ...task, status: "DONE" }, "TODO")[1], "reopen");
-    for (const status of ["IN_PROGRESS", "DONE", "COMPLETED", "", null]) {
+    assert.equal(commandFor(task, "DONE")[1], "done");
+    for (const status of ["IN_PROGRESS", "COMPLETED", "", null]) {
         assert.throws(() => commandFor(task, status));
     }
     const job = { kind: "job", id: "job_one", status: "PENDING_REVIEW" };
@@ -548,6 +549,9 @@ test("Obsidian ignores an uncached copied note after verifying its authoritative
 test("Obsidian submits manual terminal transitions through the guarded CLI", async (t) => {
     for (const [kind, status, target, command] of [
         ["task", "BLOCKED", "DONE", "done"],
+        ["task", "TODO", "DONE", "done"],
+        ["task", "WAITING_USER", "DONE", "done"],
+        ["task", "IN_PROGRESS", "DONE", "done"],
         ["task", "BLOCKED", "CANCELLED", "cancel"],
         ["job", "ACTIVE", "COMPLETED", "approve"],
         ["job", "ACTIVE", "CANCELLED", "cancel"],
@@ -571,8 +575,8 @@ test("Obsidian submits manual terminal transitions through the guarded CLI", asy
     }
 });
 
-test("Obsidian restores ACTIVE when CLI rejects completion with unfinished Tasks", async (t) => {
-    const f = await fixture({execute: async () => {throw new Error("all Tasks must be DONE, FAILED or CANCELLED");}});
+test("Obsidian restores ACTIVE when CLI rejects a concurrent completion", async (t) => {
+    const f = await fixture({execute: async () => {throw new Error("Job revision changed");}});
     t.after(() => f.engine.dispose());
     Object.assign(f.row, {kind: "job", status: "ACTIVE", id: "job_one"});
     f.files.get(f.row.path).id = f.row.id;
@@ -582,7 +586,7 @@ test("Obsidian restores ACTIVE when CLI rejects completion with unfinished Tasks
     f.edit("COMPLETED");
     await f.engine.flush();
     assert.equal(f.files.get(f.row.path).status, "ACTIVE");
-    assert.match(f.notices[0], /all Tasks must be/);
+    assert.match(f.notices[0], /revision changed/);
 });
 
 test("Obsidian reconciles delayed task projections without reporting a user conflict", async (t) => {

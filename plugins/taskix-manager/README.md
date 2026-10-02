@@ -34,6 +34,12 @@ Jev confidence thresholds and task ownership rules are unchanged.
 
 ## Validation
 
+The Obsidian status bridge sends revision-guarded human completion commands as
+`user:obsidian`. Completing a Job finishes its unfinished Tasks and revokes their
+leases in the same transaction, while preserving terminal outcomes. Individual
+unfinished Tasks can also be completed without an agent Plan or lease. Agent
+entrypoints retain their normal ownership and execution guards.
+
 The remote-package installation test uses an empty npm cache and offline
 installation with development dependencies omitted. It verifies Pi checkout
 installs and OMP package-consumer installs, including the canonical plugin skill

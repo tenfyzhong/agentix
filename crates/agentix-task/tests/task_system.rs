@@ -28,6 +28,9 @@ mod inbox;
 #[path = "support/job_review.rs"]
 mod job_review;
 
+#[path = "support/obsidian_completion.rs"]
+mod obsidian_completion;
+
 #[path = "support/incremental.rs"]
 mod incremental;
 

@@ -459,7 +459,13 @@ fn set_status(state: &mut Snapshot, i: usize, target: &str, now: i64) -> Result<
         }
         InboxStatus::PendingReview => {
             if let Some(j) = job_index {
-                crate::mutations::review_job(state, j, &json!({"command":"job.submit"}), now)?;
+                crate::mutations::review_job(
+                    state,
+                    j,
+                    &json!({"command":"job.submit"}),
+                    now,
+                    false,
+                )?;
             }
         }
         InboxStatus::Completed => {
@@ -468,7 +474,13 @@ fn set_status(state: &mut Snapshot, i: usize, target: &str, now: i64) -> Result<
                 "conflict: reopen the cancelled entry first"
             );
             if let Some(j) = job_index {
-                crate::mutations::review_job(state, j, &json!({"command":"job.approve"}), now)?;
+                crate::mutations::review_job(
+                    state,
+                    j,
+                    &json!({"command":"job.approve"}),
+                    now,
+                    false,
+                )?;
             }
         }
         InboxStatus::Cancelled => {
@@ -494,6 +506,7 @@ fn activate_job(state: &mut Snapshot, j: usize, now: i64) -> Result<()> {
             j,
             &json!({"command":"job.reject","reason":"Inbox status changed: verification rejected"}),
             now,
+            false,
         )?;
     } else if state.jobs[j].status.terminal() {
         let job = &mut state.jobs[j];
