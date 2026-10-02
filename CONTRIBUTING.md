@@ -68,9 +68,9 @@ using the links. To restore the installed commands, run
 Update `tenfyzhong/tap` to a version with local-source support, then use:
 
 ```sh
-make install-local
-make install-local PROFILE=debug
-make install-local FORMULAE=taskix
+make update VERSION=local
+make update VERSION=local PROFILE=debug
+make update VERSION=local FORMULAE=taskix
 ```
 
 The target passes the current checkout as `HOMEBREW_AGENTIX_LOCAL_SOURCE` to
@@ -110,10 +110,13 @@ brew services restart tenfyzhong/tap/agentix
 brew services restart tenfyzhong/tap/taskix
 ```
 
-To return to the upstream release or remote HEAD, run `brew reinstall` or
+Use `make switch VERSION=stable` or `make switch VERSION=head` to return to an
+already installed upstream version. If it was replaced during reinstall, run
+`make update VERSION=stable` or `make update VERSION=head` to install it again.
+Directly with Homebrew, run `brew reinstall` or
 `brew reinstall --HEAD` without `HOMEBREW_AGENTIX_LOCAL_SOURCE`, then restart
 the selected service explicitly. To rebuild the local source again, rerun
-`make install-local`.
+`make update VERSION=local`.
 
 ## Installing and switching Homebrew versions
 
@@ -127,18 +130,26 @@ one CLI. `VERSION` defaults to `stable`.
 | Update and use the latest release | `make update` |
 | Install and use HEAD | `make install VERSION=head` |
 | Update and use the latest HEAD | `make update VERSION=head` |
+| Build and use local source | `make update VERSION=local` |
+| Build and use local debug source | `make update VERSION=local PROFILE=debug` |
 | Switch to an installed release | `make switch` |
 | Switch to an installed HEAD | `make switch VERSION=head` |
+| Switch to the latest installed local release build | `make switch VERSION=local` |
+| Switch to the latest installed local debug build | `make switch VERSION=local PROFILE=debug` |
 
-Install and update refresh Homebrew metadata, install the explicitly selected
-version with `--skip-link`, then switch command links. Release updates use
+For stable and HEAD, install and update refresh Homebrew metadata, install the
+explicitly selected version with `--skip-link`, then switch command links.
+Release updates use
 `brew install` to select the current stable formula even when HEAD is installed;
 HEAD updates additionally use `--fetch-HEAD` to check upstream commits.
 An already current installation is reusable. Switch only checks installed kegs
 and changes links; it does not download or build. Every selected CLI must have
-the requested version installed before any command is unlinked. Switching uses
-Homebrew's Ruby unlink operation on the actual linked keg, because `brew unlink`
-by formula can select the new `opt` keg while commands still link to the old one.
+the requested version installed before any command is unlinked. Local switch
+selects the most recently installed local keg for each CLI and the requested
+profile, using its Homebrew installation receipt time. It links that exact keg
+and updates `opt`; local builds do not satisfy a stable-version request.
+Switching uses Homebrew's Ruby unlink operation on the actual linked keg, because
+`brew unlink` by formula can select the new `opt` keg while commands still link to the old one.
 
 These targets do not restart services. Homebrew installation can change the
 `opt` path even with `--skip-link`; that flag only defers ordinary command

@@ -17,7 +17,7 @@ DEBUG_TARGET_DIR = $(if $(CARGO_TARGET_DIR),$(CARGO_TARGET_DIR),target)
 
 .DEFAULT_GOAL := build
 
-.PHONY: build release completions check fmt clippy test test-backup clean help remove-plugin link-debug install-local install update switch plugin
+.PHONY: build release completions check fmt clippy test test-backup clean help remove-plugin link-debug install update switch plugin
 
 build:
 	$(CARGO) build --workspace --all-features
@@ -35,16 +35,6 @@ link-debug:
 
 release:
 	$(CARGO) build --workspace --all-features --release
-
-install-local:
-	@case "$(PROFILE)" in release|debug) ;; *) echo 'PROFILE must be release or debug' >&2; exit 2 ;; esac
-	@test -n "$(strip $(FORMULAE))" || { echo 'FORMULAE must not be empty' >&2; exit 2; }
-	@for formula in $(FORMULAE); do \
-		case "$$formula" in agentix|taskix) ;; *) echo 'FORMULAE must contain only agentix or taskix' >&2; exit 2 ;; esac; \
-	done
-	HOMEBREW_AGENTIX_LOCAL_SOURCE="$(CURDIR)" HOMEBREW_AGENTIX_LOCAL_PROFILE="$(PROFILE)" \
-	HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1 \
-	$(BREW) reinstall --build-from-source $(BREW_FORMULAE)
 
 completions:
 	$(CARGO) build --package agentix --package taskix
@@ -71,30 +61,61 @@ test: test-backup
 test-backup:
 	$(PYTHON) -m unittest discover -s scripts/tests -v
 
+define check-local-options
+	@case "$(PROFILE)" in release|debug) ;; *) echo 'PROFILE must be release or debug' >&2; exit 2 ;; esac
+	@test -n "$(strip $(FORMULAE))" || { echo 'FORMULAE must not be empty' >&2; exit 2; }
+	@for formula in $(FORMULAE); do \
+		case "$$formula" in agentix|taskix) ;; *) echo 'FORMULAE must contain only agentix or taskix' >&2; exit 2 ;; esac; \
+	done
+endef
+
 # Explicit install specs avoid inheriting HEAD from an existing installation.
 install update:
+ifeq ($(VERSION),local)
+	@test "$@" = update || { echo 'Use make update VERSION=local to build local source' >&2; exit 2; }
+	$(check-local-options)
+	HOMEBREW_AGENTIX_LOCAL_SOURCE="$(CURDIR)" HOMEBREW_AGENTIX_LOCAL_PROFILE="$(PROFILE)" \
+	HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1 \
+	$(BREW) reinstall --build-from-source $(BREW_FORMULAE)
+else
 	@case "$(VERSION)" in stable|head) ;; *) echo 'VERSION must be stable or head' >&2; exit 2 ;; esac
 	$(BREW) update
 	$(BREW) install $(if $(filter head,$(VERSION)),--HEAD $(if $(filter update,$@),--fetch-HEAD)) --skip-link $(BREW_FORMULAE)
 	$(MAKE) switch VERSION="$(VERSION)" FORMULAE="$(FORMULAE)"
+endif
 
 # Validate every requested keg before unlinking any commands. In particular,
 # plain brew link can fall back to HEAD when no stable keg exists.
 # unlink by formula follows opt, which --skip-link may already have moved.
 # Use Homebrew's locked unlink operation on the actual linked keg instead.
 switch:
+ifeq ($(VERSION),local)
+	$(check-local-options)
+	$(BREW) ruby -e 'require "keg"; require "unlink"; profile = ARGV.shift; \
+	kegs = ARGV.map do |name|; \
+		rack = HOMEBREW_CELLAR/name.split("/").last; \
+		candidates = rack.directory? ? rack.subdirs.map { |path| Keg.new(path) } : []; \
+		matching = candidates.select { |keg| keg.tab.tap&.name == "tenfyzhong/tap" && keg.version.to_s.match?(/\A0\.0\.0-local\..+\.#{profile}(?:_\d+)?\z/) }; \
+		selected = matching.max_by { |keg| [keg.tab.time || 0, Pathname(keg.to_path).mtime.to_f] }; \
+		abort "#{name}: local #{profile} is not installed; run make update VERSION=local PROFILE=#{profile}" unless selected; \
+		selected; \
+	end; \
+	kegs.each { |keg| ref = HOMEBREW_LINKED_KEGS/keg.name; Homebrew::Unlink.unlink(Keg.new(ref.realpath)) if ref.symlink? }; \
+	kegs.each { |keg| keg.lock { keg.link } }' "$(PROFILE)" $(BREW_FORMULAE)
+else
 	@set -eu; \
 	case "$(VERSION)" in stable|head) ;; *) echo 'VERSION must be stable or head' >&2; exit 2 ;; esac; \
 	test -n "$(strip $(FORMULAE))"; \
 	for formula in $(BREW_FORMULAE); do \
 		versions=$$($(BREW) list --versions "$$formula"); \
-		if ! printf '%s\n' "$$versions" | awk -v version="$(VERSION)" '{ for (i = 2; i <= NF; i++) if ((version == "head") == ($$i ~ /^HEAD-/)) found = 1 } END { exit !found }'; then \
+		if ! printf '%s\n' "$$versions" | awk -v version="$(VERSION)" '{ for (i = 2; i <= NF; i++) if ((version == "head" && $$i ~ /^HEAD-/) || (version == "stable" && $$i !~ /^(HEAD-|0[.]0[.]0-local[.])/)) found = 1 } END { exit !found }'; then \
 			echo "$$formula: $(VERSION) is not installed; run make install VERSION=$(VERSION)" >&2; \
 			exit 1; \
 		fi; \
 	done; \
 	$(BREW) ruby -e 'require "keg"; require "unlink"; ARGV.each { |name| ref = HOMEBREW_LINKED_KEGS/name.split("/").last; Homebrew::Unlink.unlink(Keg.new(ref.realpath)) if ref.symlink? }' $(BREW_FORMULAE); \
 	$(BREW) link $(if $(filter head,$(VERSION)),--HEAD) $(BREW_FORMULAE)
+endif
 
 # Validate the complete selection before removing anything.
 define check-plugin-hosts
@@ -168,10 +189,10 @@ help:
 		'make completions  Regenerate bash, zsh, and fish completions for both CLIs' \
 		'make check    Run formatting, lint, and tests' \
 		'make link-debug  Build debug CLIs and replace Homebrew command links' \
-		'make install-local [PROFILE=release|debug]  Build local source through Homebrew Formulae (default: release)' \
 		'make install [VERSION=stable|head]  Install and use both Homebrew CLIs (default: stable)' \
-		'make update [VERSION=stable|head]  Update and use the selected version' \
-		'make switch [VERSION=stable|head]  Use an already installed version without downloading' \
+		'make update [VERSION=stable|head|local]  Update and use the selected version' \
+		'make switch [VERSION=stable|head|local]  Use an already installed version without downloading' \
+		'  VERSION=local uses PROFILE=release|debug (default: release)' \
 		'  FORMULAE=agentix or FORMULAE=taskix selects one CLI (default: both)' \
 		'make plugin [SOURCE=local|main]  Install plugins for all four hosts (default: main)' \
 		'  HOSTS="codex pi omp claude" selects plugin hosts (default: all four)' \
