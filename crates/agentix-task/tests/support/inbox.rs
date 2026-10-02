@@ -1,6 +1,41 @@
 use super::*;
 
 #[tokio::test]
+async fn obsidian_job_completion_updates_linked_inbox_and_releases_its_lease() {
+    let mut f = fixture().await;
+    add(&f, "Human accepted delivery").await;
+    let claimed = claim(&f, "worker").await;
+    f.job = claimed["job"]["id"].as_str().unwrap().into();
+    let task = f.task("Still leased").await;
+    f.start(&task, "worker").await;
+    let before = f.service.store().snapshot().await.unwrap();
+    let revision = before
+        .jobs
+        .iter()
+        .find(|job| job.id == f.job)
+        .unwrap()
+        .revision;
+    assert!(entries(&f).await[0]["lease"].is_object());
+    f.service
+        .execute(
+            json!({"command":"job.approve","job":f.job}),
+            WriteOptions {
+                actor_ref: "user:obsidian".into(),
+                expected_revision: Some(revision),
+                ..WriteOptions::default()
+            },
+        )
+        .await
+        .unwrap();
+    let entry = &entries(&f).await[0];
+    assert_eq!(entry["status"], "COMPLETED");
+    assert!(entry["lease"].is_null());
+    let doc = std::fs::read_to_string(path(&f)).unwrap();
+    assert!(doc.contains("- [x] Human accepted delivery"));
+    assert!(doc.contains("taskix:entry-state COMPLETED"));
+}
+
+#[tokio::test]
 async fn inbox_review_marker_migration_preserves_state_and_authored_details() {
     let mut f = fixture().await;
     add(&f, "Review\n\nKeep literal - [p] examples.").await;

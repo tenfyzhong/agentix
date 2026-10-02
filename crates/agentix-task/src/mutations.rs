@@ -312,7 +312,7 @@ fn update_job(
     );
     let command = required(request, "command")?;
     if matches!(command, "job.submit" | "job.approve" | "job.reject") {
-        return review_job(state, i, request, now);
+        return review_job(state, i, request, now, options.actor_ref == "user:obsidian");
     }
     if command == "job.followup" {
         return followup_job(state, i, request, options, now);
@@ -458,11 +458,16 @@ fn update_task(
         "conflict: Job is archived or cancelled"
     );
     let command = required(request, "command")?;
-    if command != "task.claim" {
+    let finish_human =
+        command == "task.done" && options.actor_ref == "user:obsidian" && !task.status.terminal();
+    if command != "task.claim" && !finish_human {
         authorize(state, &task, options, now)?;
     }
     let finish_blocked = command == "task.done" && task.status == TaskStatus::Blocked;
-    if matches!(command, "plan.register" | "task.start" | "task.done") && !finish_blocked {
+    if matches!(command, "plan.register" | "task.start" | "task.done")
+        && !finish_blocked
+        && !finish_human
+    {
         ensure!(
             task.status == TaskStatus::InProgress
                 && state.leases.iter().any(|l| l.task_id == task.id),
@@ -604,7 +609,7 @@ fn update_task(
             state.jobs[j].completed_at = None;
         }
         "task.block" | "task.wait" | "task.done" | "task.fail" | "task.cancel" | "task.release" => {
-            if command == "task.done" && !finish_blocked {
+            if command == "task.done" && !finish_blocked && !finish_human {
                 ensure!(
                     task.phase == Some(TaskPhase::Executing),
                     "conflict: Task must be EXECUTING before done; call start first"
@@ -618,7 +623,7 @@ fn update_task(
                 _ => TaskStatus::Blocked,
             };
             ensure!(
-                task.status.allows(next),
+                finish_human || task.status.allows(next),
                 "invalid: transition {} -> {next}",
                 task.status
             );
@@ -769,6 +774,7 @@ pub(crate) fn review_job(
     index: usize,
     request: &Value,
     now: i64,
+    obsidian: bool,
 ) -> Result<Value> {
     let command = required(request, "command")?;
     let completion = completion_policy(&state.jobs[index], request)?;
@@ -782,10 +788,31 @@ pub(crate) fn review_job(
         state.jobs[index].archived_at.is_none() && state.jobs[index].status == expected,
         "conflict: {command} requires an unarchived {expected} Job"
     );
+    let human_completion = obsidian && command == "job.approve";
+    if human_completion {
+        let job_id = &state.jobs[index].id;
+        for task in state.tasks.iter_mut().filter(|task| &task.job_id == job_id) {
+            if !task.status.terminal() {
+                task.status = TaskStatus::Done;
+                task.phase = None;
+                task.reason = None;
+                task.system_block = false;
+                task.completed_at = Some(now);
+                task.updated_at = now;
+                task.revision += 1;
+            }
+        }
+        state.leases.retain(|lease| {
+            !state
+                .tasks
+                .iter()
+                .any(|task| &task.job_id == job_id && task.id == lease.task_id)
+        });
+    }
     let reason = if command == "job.reject" {
         Some(required(request, "reason")?.to_owned())
     } else {
-        if accept_active {
+        if !human_completion && accept_active {
             let job_id = &state.jobs[index].id;
             let mut tasks = state
                 .tasks
@@ -796,7 +823,7 @@ pub(crate) fn review_job(
                 tasks.peek().is_some() && tasks.all(|task| task.status.terminal()),
                 "conflict: all Tasks must be DONE, FAILED or CANCELLED and at least one must exist"
             );
-        } else {
+        } else if !human_completion {
             ensure!(
                 job_ready(state, &state.jobs[index].id),
                 "conflict: all non-cancelled Tasks must be DONE and at least one must exist"

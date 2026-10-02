@@ -25,8 +25,8 @@ function commandFor(note, target) {
         if (target === "TODO") {
             command = note.status === "FAILED" ? "retry" : ["DONE", "CANCELLED"].includes(note.status) ? "reopen" : undefined;
         }
-        if (note.status === "BLOCKED" && target === "DONE") command = "done";
-        if (target === "IN_PROGRESS" || (target === "DONE" && command !== "done")) {
+        if (target === "DONE") command = "done";
+        if (target === "IN_PROGRESS") {
             throw new Error("Use taskix claim, plan and start/done with the owning session; this plugin does not hold task leases.");
         }
     } else if (note.kind === "job") {

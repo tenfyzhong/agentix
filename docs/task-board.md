@@ -1,5 +1,20 @@
 # Task board validation
 
+## Human completion in Obsidian
+
+Taskix Sync submits saved status edits through the CLI as `user:obsidian`, with
+the displayed revision. Moving a Job note to `COMPLETED` is human acceptance of
+the entire Job: one transaction marks its unfinished Tasks `DONE`, clears their
+phases and blocking reasons, releases their leases, and completes the Job. Existing
+`DONE`, `FAILED`, and `CANCELLED` outcomes remain unchanged. An empty Job can also
+be completed by a human. Related Inbox state and document projections follow
+the committed Job state.
+
+Moving an individual unfinished Task to `DONE` likewise needs no agent Plan or
+lease. Revoked agent tokens cannot overwrite that result. Stale revisions still
+reject the whole operation. Agent completion retains the normal Plan, execution,
+lease and readiness checks; agents must not use the Obsidian actor identity.
+
 ## Validation
 
 `make check` installs locked plugin dependencies, then runs Rust formatting, Clippy, workspace tests, and the Node built-in plugin tests. Install Node.js 24+ and npm. Direct Cargo invocations require `npm ci --ignore-scripts --prefix plugins/taskix-manager` first. Normal tests use temporary databases/directories and local mock services, not live accounts.

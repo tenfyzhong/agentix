@@ -117,6 +117,13 @@ taskix obsidian setup --json
 
 `submit`, `approve`, and `reject` support expected revisions and idempotency keys. Submit requires ACTIVE and ready Tasks; reject requires PENDING_REVIEW. Human approval also accepts an ACTIVE Job with at least one Task when every Task is DONE, FAILED, or CANCELLED, preserving their outcomes. Reject preserves all Task outcomes and records `review_reason`. Approval sets completion time for `required` Jobs; ready `none` Jobs set it when completing directly. All status changes remain subject to CLI guards when initiated by Taskix Sync in Obsidian.
 
+Taskix Sync submits human Job-note completion as `user:obsidian`: this atomically
+finishes all unfinished Tasks, releases their leases, and completes even an empty
+Job while preserving existing terminal outcomes. Human Task-note completion can
+also finish an unfinished Task without an agent Plan or lease. Both retain revision
+checks. Agents must keep their executor identity and normal lifecycle workflow;
+they must not impersonate the Obsidian actor to bypass ownership or readiness.
+
 ## Discussion capture and attachment
 
 ```sh
