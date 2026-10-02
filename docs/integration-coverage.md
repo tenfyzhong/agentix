@@ -560,7 +560,7 @@ checks do not establish live provider/IM or service-manager environment behavior
 
 Plugin tests run in parallel with Rust tests on each supported operating system.
 Rust CI uses pinned cargo-nextest 0.9.146 to schedule tests across binaries, with
-two hash partitions on Linux and macOS and four on Windows. Every partition runs
+two hash partitions on Linux and four each on macOS and Windows. Every partition runs
 on its own runner; `fail-fast: false` and `--no-fail-fast` retain results from all
 partitions and tests after a failure. Partitions share one Cargo cache per OS,
 with only partition 1 saving it to avoid redundant uploads. CI disables dev/test

@@ -89,11 +89,19 @@ jobs:
           - name: macOS
             os: macos-latest
             shard: 1
-            shards: 2
+            shards: 4
           - name: macOS
             os: macos-latest
             shard: 2
-            shards: 2
+            shards: 4
+          - name: macOS
+            os: macos-latest
+            shard: 3
+            shards: 4
+          - name: macOS
+            os: macos-latest
+            shard: 4
+            shards: 4
           - name: Windows
             os: windows-latest
             shard: 1

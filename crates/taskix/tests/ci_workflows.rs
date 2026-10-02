@@ -26,7 +26,7 @@ fn test_matrix_covers_every_partition_once_on_each_platform() {
     let entries = job["strategy"]["matrix"]["include"].as_sequence().unwrap();
     for (os, partitions) in [
         ("ubuntu-latest", 2),
-        ("macos-latest", 2),
+        ("macos-latest", 4),
         ("windows-latest", 4),
     ] {
         let platform: Vec<_> = entries
@@ -47,7 +47,7 @@ fn test_matrix_covers_every_partition_once_on_each_platform() {
             assert_eq!(entry["shards"].as_u64(), Some(partitions as u64));
         }
     }
-    assert_eq!(entries.len(), 8, "unexpected platform or partition");
+    assert_eq!(entries.len(), 10, "unexpected platform or partition");
     assert_eq!(job["strategy"]["fail-fast"].as_bool(), Some(false));
     for name in ["Run workspace tests", "Run Windows tests"] {
         let run = step(job, name)["run"].as_str().unwrap();
