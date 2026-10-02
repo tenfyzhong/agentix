@@ -72,8 +72,15 @@ endef
 # Explicit install specs avoid inheriting HEAD from an existing installation.
 install update:
 ifeq ($(VERSION),local)
-	@test "$@" = update || { echo 'Use make update VERSION=local to build local source' >&2; exit 2; }
+	@test "$@" = update || { echo 'Use make update VERSION=local to install local binaries' >&2; exit 2; }
 	$(check-local-options)
+	@for formula in $(FORMULAE); do \
+		binary="$(DEBUG_TARGET_DIR)/$(PROFILE)/$$formula"; \
+		if ! test -f "$$binary" || ! test -x "$$binary"; then \
+			echo "Missing executable local binary: $$binary; run $(if $(filter release,$(PROFILE)),make release,make) first" >&2; exit 2; \
+		fi; \
+	done
+	HOMEBREW_AGENTIX_LOCAL_TARGET_DIR="$(DEBUG_TARGET_DIR)" \
 	HOMEBREW_AGENTIX_LOCAL_SOURCE="$(CURDIR)" HOMEBREW_AGENTIX_LOCAL_PROFILE="$(PROFILE)" \
 	HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1 \
 	$(BREW) reinstall --build-from-source $(BREW_FORMULAE)
@@ -192,7 +199,8 @@ help:
 		'make install [VERSION=stable|head]  Install and use both Homebrew CLIs (default: stable)' \
 		'make update [VERSION=stable|head|local]  Update and use the selected version' \
 		'make switch [VERSION=stable|head|local]  Use an already installed version without downloading' \
-		'  VERSION=local uses PROFILE=release|debug (default: release)' \
+		'  VERSION=local installs existing binaries; build with make release or make first' \
+		'  PROFILE=release|debug (default: release), CARGO_TARGET_DIR selects build output' \
 		'  FORMULAE=agentix or FORMULAE=taskix selects one CLI (default: both)' \
 		'make plugin [SOURCE=local|main]  Install plugins for all four hosts (default: main)' \
 		'  HOSTS="codex pi omp claude" selects plugin hosts (default: all four)' \

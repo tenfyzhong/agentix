@@ -63,41 +63,60 @@ after stopping any existing service. Keep the checkout and build output while
 using the links. To restore the installed commands, run
 `brew link --overwrite agentix taskix`.
 
-## Building local source through Homebrew
+## Installing local binaries through Homebrew
 
-Update `tenfyzhong/tap` to a version with local-source support, then use:
+Update `tenfyzhong/tap` to a version with precompiled local installation support,
+then build once and install the resulting binaries:
 
 ```sh
+make release
 make update VERSION=local
+
+make
 make update VERSION=local PROFILE=debug
+
 make update VERSION=local FORMULAE=taskix
 ```
 
-The target passes the current checkout as `HOMEBREW_AGENTIX_LOCAL_SOURCE` to
-`brew reinstall --build-from-source`. The tap's Formulae snapshot the source
-and build/install the selected CLIs using Cargo. No separate Cargo build or
-installer script runs in this repository. Homebrew manages its build directory;
-`CARGO_TARGET_DIR` does not select the local installation output.
+`update VERSION=local` reads existing binaries from `target/<profile>/`; it does
+not run Cargo. Missing or nonexecutable selected binaries fail before invoking
+Homebrew and prompt you to run `make release` or `make` first. Only the selected
+CLI binaries are required. Rebuild explicitly after changing source; the enabled
+features and Cargo version come from the earlier build.
+
+The target passes the current checkout as `HOMEBREW_AGENTIX_LOCAL_SOURCE` and the
+build directory as `HOMEBREW_AGENTIX_LOCAL_TARGET_DIR` to
+`brew reinstall --build-from-source`. The tap snapshots each selected binary,
+example configuration and shell completions, then copies them into its keg.
+`--build-from-source` selects the local Formula recipe rather than an upstream
+bottle; that recipe does not compile or install Rust/LLVM or Protobuf build
+dependencies. Stable/remote HEAD builds retain their existing build dependencies.
+Configuration, completion and service installation rules remain in the tap.
 
 `PROFILE` defaults to `release` and accepts `release` or `debug`.
-`FORMULAE` defaults to `agentix taskix`; select either CLI to build and install
-only that package. Local builds enable all Cargo features. Homebrew installs
-normal build dependencies and preserves the Formula's configuration, completion
-and service installation rules.
+`FORMULAE` defaults to `agentix taskix`. For a custom build directory, use the
+same `CARGO_TARGET_DIR` when building and installing, including paths with spaces:
 
-The same operation works directly from the tap or any directory:
+```sh
+make release CARGO_TARGET_DIR=/absolute/path/to/build
+make update VERSION=local CARGO_TARGET_DIR=/absolute/path/to/build
+```
+
+The operation also works directly from the tap or any directory after building:
 
 ```sh
 env HOMEBREW_AGENTIX_LOCAL_SOURCE=/absolute/path/to/agentix \
   brew reinstall --build-from-source tenfyzhong/tap/agentix tenfyzhong/tap/taskix
 ```
 
-The snapshot includes current tracked files and nonignored untracked files;
-Git metadata, `target` and `node_modules` are excluded. Source and Formula files
-are never rewritten. Keep the checkout unchanged during installation.
-Source/profile content determines the `0.0.0-local.<digest>.<profile>` Cellar
-version; the executable retains its Cargo version. Installed snapshot metadata
-remains readable after removing the checkout.
+Set `HOMEBREW_AGENTIX_LOCAL_PROFILE=debug` or
+`HOMEBREW_AGENTIX_LOCAL_TARGET_DIR=/absolute/path/to/build` as needed. Relative
+target paths are resolved against the checkout.
+
+Source and Formula files are never rewritten. Keep binary/resource inputs
+unchanged while the snapshot is created. Artifact/profile content determines
+the `0.0.0-local.<digest>.<profile>` Cellar version; uncompiled source changes
+are excluded. Installed metadata remains readable after removing the checkout.
 
 `reinstall` replaces the active keg using Homebrew's normal linking and failure
 recovery. It can also install a selected CLI for the first time. Conflicting
@@ -130,8 +149,8 @@ one CLI. `VERSION` defaults to `stable`.
 | Update and use the latest release | `make update` |
 | Install and use HEAD | `make install VERSION=head` |
 | Update and use the latest HEAD | `make update VERSION=head` |
-| Build and use local source | `make update VERSION=local` |
-| Build and use local debug source | `make update VERSION=local PROFILE=debug` |
+| Install existing local release binaries | `make update VERSION=local` |
+| Install existing local debug binaries | `make update VERSION=local PROFILE=debug` |
 | Switch to an installed release | `make switch` |
 | Switch to an installed HEAD | `make switch VERSION=head` |
 | Switch to the latest installed local release build | `make switch VERSION=local` |

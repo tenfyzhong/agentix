@@ -62,6 +62,24 @@ test("bottle_overlay_accepts_native_local_source_formula", { skip: !rubyAvailabl
     assert.doesNotMatch(await readFile(path, "utf8"), /system "cargo"|set-release-version/);
 });
 
+test("bottle_overlay_accepts_local_prebuilt_formula_branch", { skip: !rubyAvailable }, async t => {
+    const dir = await mkdtemp(join(tmpdir(), "release-local-prebuilt-"));
+    t.after(() => rm(dir, {recursive: true, force: true}));
+    const path = join(dir, "agentix.rb");
+    const binary = join(dir, "agentix");
+    await writeFile(binary, "#!/bin/sh\necho prebuilt\n");
+    await chmod(binary, 0o755);
+    const recipe = fixture.replace('  depends_on "rust" => :build', '  unless AgentixLocalBuild.active?("agentix", __dir__)\n    depends_on "rust" => :build\n  end')
+        .replace('    system "bash", ".github/scripts/set-release-version.sh", version.to_s\n    system "cargo", "install", *std_cargo_args(path: "crates/agentix")', '    if local_build\n      bin.install "bin/agentix"\n    else\n      system "bash", ".github/scripts/set-release-version.sh", version.to_s unless build.head?\n      system "cargo", "install", *std_cargo_args(path: "crates/agentix")\n    end');
+    await writeFile(path, recipe);
+    const result = spawnSync("ruby", [overlay], {env: {...process.env, FORMULA_PATH: path, PREBUILT_BINARY: binary, FORMULA: "agentix"}, encoding: "utf8"});
+    assert.equal(result.status, 0, result.stderr);
+    const output = await readFile(path, "utf8");
+    assert.doesNotMatch(output, /system "cargo"|set-release-version|depends_on "(?:rust|protobuf)"/);
+    assert.match(output, /bin.install "bin\/agentix"/);
+    execFileSync("ruby", ["-c", path]);
+});
+
 test("bottle overlay refuses changed compiler recipes or missing binaries without modifying formula", { skip: !rubyAvailable }, async () => {
     const dir = await mkdtemp(join(tmpdir(), "release-bottle-"));
     try {
