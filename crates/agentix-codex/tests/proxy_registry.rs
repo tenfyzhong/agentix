@@ -453,6 +453,143 @@ fn async_cli_questions_are_observed_once_without_consuming_message_output() {
     ));
 }
 
+fn async_question_frame(thread: &str, item: &str) -> serde_json::Value {
+    json!({"method":"item/completed","params":{"threadId":thread,"turnId":"turn","item":{"type":"agentMessage","id":item,"text":"","questions":[{"title":"Which approach?","options":["Fast","Careful"]}]}}})
+}
+
+fn question_input(method: &str, thread: &str, text: &str) -> serde_json::Value {
+    json!({"id":42,"method":method,"params":{"threadId":thread,"expectedTurnId":"turn","input":[{"type":"text","text":text}]}})
+}
+
+fn resolved_question_count(registry: &ClientRegistry) -> usize {
+    registry
+        .lifecycle_since(0)
+        .iter()
+        .filter(|(_, event)| {
+            matches!(
+                event,
+                agentix_domain::AgentEvent::InteractionResolved { .. }
+            )
+        })
+        .count()
+}
+
+#[test]
+fn accepted_cli_async_answers_resolve_questions_and_prevent_late_replay() {
+    for method in ["turn/start", "turn/steer"] {
+        for text in [
+            "Which approach?\nFast",
+            "<send_user_message_question_reply>\n[{\"question\":\"Which approach?\",\"answer\":\"Fast\",\"questionItemId\":\"[\\\"request_user_input_async\\\",\\\"call\\\",0]\"}]\n</send_user_message_question_reply>",
+        ] {
+            let registry = ClientRegistry::default();
+            let cli = registry.connect(None);
+            let frame = async_question_frame("t", "message");
+            registry.server_frame(cli, &frame.to_string());
+            registry.client_frame(cli, &question_input(method, "t", text).to_string());
+            assert_eq!(
+                resolved_question_count(&registry),
+                0,
+                "submission is not acceptance"
+            );
+            registry.server_frame(
+                cli,
+                &json!({"id":42,"result":{"turnId":"next"}}).to_string(),
+            );
+            assert_eq!(resolved_question_count(&registry), 1, "{method}: {text}");
+            registry.server_frame(cli, &frame.to_string());
+            assert_eq!(
+                registry.lifecycle_since(0).len(),
+                2,
+                "resolved questions must not replay"
+            );
+        }
+    }
+}
+
+#[test]
+fn failed_or_unrelated_cli_inputs_preserve_async_questions() {
+    for (other_connection, thread, text, error) in [
+        (false, "t", "Which approach?\nFast", true),
+        (true, "t", "Which approach?\nFast", false),
+        (false, "other", "Which approach?\nFast", false),
+        (false, "t", "Continue with the implementation", false),
+        (false, "t", "Which approach?", false),
+        (
+            false,
+            "t",
+            "<send_user_message_question_reply>invalid</send_user_message_question_reply>",
+            false,
+        ),
+    ] {
+        let registry = ClientRegistry::default();
+        let cli = registry.connect(None);
+        let sender = if other_connection {
+            registry.connect(None)
+        } else {
+            cli
+        };
+        registry.server_frame(cli, &async_question_frame("t", "message").to_string());
+        registry.client_frame(
+            sender,
+            &question_input("turn/start", thread, text).to_string(),
+        );
+        let response = if error {
+            json!({"id":42,"error":{"code":-1,"message":"rejected"}})
+        } else {
+            json!({"id":42,"result":{}})
+        };
+        registry.server_frame(sender, &response.to_string());
+        assert_eq!(resolved_question_count(&registry), 0, "{text}");
+    }
+}
+
+#[test]
+fn cli_async_answers_preserve_rpc_questions_and_questions_arriving_after_submission() {
+    let registry = ClientRegistry::default();
+    let cli = registry.connect(None);
+    registry.server_frame(cli, &async_question_frame("t", "old").to_string());
+    registry.server_frame(cli, &json!({"id":91,"method":"item/tool/requestUserInput","params":{"threadId":"t","turnId":"turn","itemId":"rpc","questions":[]}}).to_string());
+    registry.client_frame(
+        cli,
+        &question_input("turn/start", "t", "Which approach?\nFast").to_string(),
+    );
+    registry.server_frame(cli, &async_question_frame("t", "new").to_string());
+    registry.server_frame(cli, &json!({"id":42,"result":{}}).to_string());
+    assert_eq!(resolved_question_count(&registry), 1);
+    let resolved = registry
+        .lifecycle_since(0)
+        .into_iter()
+        .find_map(|(_, event)| match event {
+            agentix_domain::AgentEvent::InteractionResolved { request_id, .. } => Some(request_id),
+            _ => None,
+        })
+        .unwrap();
+    let id: serde_json::Value = serde_json::from_str(&resolved).unwrap();
+    assert_eq!(id["agentixAsyncQuestion"]["itemId"], "old");
+}
+
+#[test]
+fn async_question_group_resolves_only_after_all_cli_answers_are_accepted() {
+    let registry = ClientRegistry::default();
+    let cli = registry.connect(None);
+    let mut frame = async_question_frame("t", "group");
+    frame["params"]["item"]["questions"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"title":"Which scope?","options":["Local","All"]}));
+    registry.server_frame(cli, &frame.to_string());
+    for (index, text) in ["Which approach?\nFast", "Which scope?\nLocal"]
+        .into_iter()
+        .enumerate()
+    {
+        registry.client_frame(cli, &question_input("turn/start", "t", text).to_string());
+        registry.server_frame(cli, &json!({"id":42,"result":{}}).to_string());
+        assert_eq!(resolved_question_count(&registry), index);
+    }
+    registry.server_frame(cli, &frame.to_string());
+    assert_eq!(registry.lifecycle_since(0).len(), 2);
+}
+
 #[test]
 fn ordinary_unsubscribe_and_exit_do_not_start_a_session_switch() {
     for method in ["thread/start", "thread/resume"] {

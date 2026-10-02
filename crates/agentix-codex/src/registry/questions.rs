@@ -2,13 +2,24 @@
 use super::{AgentEvent, BTreeSet, ClientRegistry, State, Value};
 use crate::{ServerMessage, decode_server_frame};
 
+pub(super) struct PendingQuestion {
+    request: agentix_domain::InteractionRequest,
+    connections: BTreeSet<u64>,
+    answered: BTreeSet<usize>,
+}
+
+pub(super) struct SubmittedAnswers {
+    key: String,
+    indices: BTreeSet<usize>,
+}
+
 impl ClientRegistry {
     pub(crate) fn complete_question(&self, id: &Value) {
         let mut state = self.state.lock().unwrap();
         let key = id.to_string();
         remember_resolution(&mut state, key.clone());
-        if let Some((request, _)) = state.questions.remove(&key) {
-            publish(&mut state, resolved(&request));
+        if let Some(question) = state.questions.remove(&key) {
+            publish(&mut state, resolved(&question.request));
         }
         drop(state);
         self.changed
@@ -35,12 +46,96 @@ impl ClientRegistry {
         let mut state = self.state.lock().unwrap();
         state.questions.clear();
         state.resolved_questions.clear();
+        for connection in state.connections.values_mut() {
+            connection.question_inputs.clear();
+        }
         state.lifecycle.retain(|(_, event)| {
             !matches!(
                 event,
                 AgentEvent::InteractionRequested(_) | AgentEvent::InteractionResolved { .. }
             )
         });
+    }
+
+    pub(super) fn observe_async_question_input(&self, connection: u64, value: &Value) {
+        let Some(id) = value
+            .get("id")
+            .filter(|id| id.is_string() || id.is_number())
+        else {
+            return;
+        };
+        let Some(thread) = value["params"]["threadId"].as_str() else {
+            return;
+        };
+        let Some(input) = value["params"]["input"].as_array() else {
+            return;
+        };
+        let text = input
+            .iter()
+            .filter(|part| part["type"] == "text")
+            .filter_map(|part| part["text"].as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut state = self.state.lock().unwrap();
+        let questions = state
+            .questions
+            .iter()
+            .filter(|(_, question)| {
+                question.request.session_id == thread && question.connections.contains(&connection)
+            })
+            .filter_map(|(key, question)| {
+                let indices = async_question_answers(&question.request, &text);
+                (!indices.is_empty()).then(|| SubmittedAnswers {
+                    key: key.clone(),
+                    indices,
+                })
+            })
+            .collect::<Vec<_>>();
+        if let Some(client) = state.connections.get_mut(&connection) {
+            // Snapshot only questions observed before this submission. A late
+            // response must not clear new questions emitted while it was pending.
+            if questions.is_empty() {
+                client.question_inputs.remove(&id.to_string());
+            } else {
+                client.question_inputs.insert(id.to_string(), questions);
+            }
+        }
+    }
+
+    pub(super) fn observe_async_question_acceptance(&self, connection: u64, value: &Value) {
+        let Some(id) = value.get("id") else { return };
+        let mut state = self.state.lock().unwrap();
+        let Some(questions) = state
+            .connections
+            .get_mut(&connection)
+            .and_then(|client| client.question_inputs.remove(&id.to_string()))
+        else {
+            return;
+        };
+        if value.get("result").is_none() || value.get("error").is_some() {
+            return;
+        }
+        let mut changed = false;
+        for SubmittedAnswers { key, indices } in questions {
+            let Some(question) = state.questions.get_mut(&key) else {
+                continue;
+            };
+            question.answered.extend(indices);
+            let count = question.request.rpc_id["agentixAsyncQuestion"]["questions"]
+                .as_array()
+                .map_or(0, Vec::len);
+            if count > 0 && question.answered.len() == count {
+                let question = state.questions.remove(&key).unwrap();
+                remember_resolution(&mut state, key);
+                publish(&mut state, resolved(&question.request));
+                changed = true;
+            }
+        }
+        drop(state);
+        if changed {
+            self.changed
+                .send_modify(|version| *version = version.wrapping_add(1));
+        }
     }
 
     pub(super) fn observe_question_frame(&self, connection: u64, method: &str, text: &str) {
@@ -69,13 +164,18 @@ impl ClientRegistry {
                 if state.resolved_questions.contains(&key) {
                     return;
                 }
-                if let Some((_, connections)) = state.questions.get_mut(&key) {
-                    connections.insert(connection);
+                if let Some(question) = state.questions.get_mut(&key) {
+                    question.connections.insert(connection);
                     return;
                 }
-                state
-                    .questions
-                    .insert(key, (request.clone(), BTreeSet::from([connection])));
+                state.questions.insert(
+                    key,
+                    PendingQuestion {
+                        request: request.clone(),
+                        connections: BTreeSet::from([connection]),
+                        answered: BTreeSet::new(),
+                    },
+                );
                 AgentEvent::InteractionRequested(request)
             }
             Ok(ServerMessage::Event(AgentEvent::InteractionResolved { .. })) => {
@@ -83,11 +183,11 @@ impl ClientRegistry {
                     return;
                 };
                 let key = id.to_string();
-                let Some((request, _)) = state.questions.remove(&key) else {
+                let Some(question) = state.questions.remove(&key) else {
                     return;
                 };
                 remember_resolution(&mut state, key);
-                resolved(&request)
+                resolved(&question.request)
             }
             _ => return,
         };
@@ -110,17 +210,64 @@ impl ClientRegistry {
         if !state
             .questions
             .get(&key)
-            .is_some_and(|(_, connections)| connections.contains(&connection))
+            .is_some_and(|question| question.connections.contains(&connection))
         {
             return;
         }
-        let (request, _) = state.questions.remove(&key).unwrap();
+        let question = state.questions.remove(&key).unwrap();
         remember_resolution(&mut state, key);
-        publish(&mut state, resolved(&request));
+        publish(&mut state, resolved(&question.request));
         drop(state);
         self.changed
             .send_modify(|version| *version = version.wrapping_add(1));
     }
+}
+
+fn async_question_answers(
+    request: &agentix_domain::InteractionRequest,
+    text: &str,
+) -> BTreeSet<usize> {
+    let Some(questions) = request.rpc_id["agentixAsyncQuestion"]["questions"].as_array() else {
+        return BTreeSet::new();
+    };
+    let text = text.trim();
+    if let Some(body) = text.strip_prefix("<send_user_message_question_reply>") {
+        let Some(body) = body.strip_suffix("</send_user_message_question_reply>") else {
+            return BTreeSet::new();
+        };
+        let Ok(Value::Array(answers)) = serde_json::from_str::<Value>(body) else {
+            return BTreeSet::new();
+        };
+        return questions
+            .iter()
+            .enumerate()
+            .filter(|(_, question)| {
+                answers.iter().any(|answer| {
+                    answer["question"] == question["title"]
+                        && answer["answer"]
+                            .as_str()
+                            .is_some_and(|text| !text.trim().is_empty())
+                })
+            })
+            .map(|(index, _)| index)
+            .collect();
+    }
+    // The CLI and Agentix also submit readable title/answer blocks as input.
+    questions
+        .iter()
+        .enumerate()
+        .filter(|(_, question)| {
+            question["title"].as_str().is_some_and(|title| {
+                text.split("\n\n").any(|block| {
+                    block
+                        .strip_prefix(title)
+                        .and_then(|answer| answer.strip_prefix('\n'))
+                        .is_some_and(|answer| !answer.trim().is_empty())
+                })
+            })
+        })
+        .map(|(index, _)| index)
+        .collect()
 }
 
 fn remember_resolution(state: &mut State, key: String) {

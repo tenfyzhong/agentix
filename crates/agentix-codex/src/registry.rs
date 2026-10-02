@@ -1,4 +1,4 @@
-use agentix_domain::{AgentEvent, InteractionRequest};
+use agentix_domain::AgentEvent;
 mod content;
 mod questions;
 use serde::{Deserialize, Serialize};
@@ -29,6 +29,7 @@ struct Connection {
     switch_revision: u64,
     requested_switch: Option<(String, Instant, u64)>,
     pending: HashMap<String, PendingRequest>,
+    question_inputs: HashMap<String, Vec<questions::SubmittedAnswers>>,
 }
 
 struct PendingRequest {
@@ -39,7 +40,7 @@ struct PendingRequest {
 
 #[derive(Default)]
 struct State {
-    questions: HashMap<String, (InteractionRequest, BTreeSet<u64>)>,
+    questions: HashMap<String, questions::PendingQuestion>,
     resolved_questions: std::collections::VecDeque<String>,
     content_sequence: u64,
     content_versions: HashMap<String, (u64, u64)>,
@@ -135,6 +136,11 @@ impl ClientRegistry {
         if header.method.is_none() {
             self.observe_question_answer(connection, text);
         }
+        if matches!(header.method.as_deref(), Some("turn/start" | "turn/steer"))
+            && let Ok(message) = serde_json::from_str(text)
+        {
+            self.observe_async_question_input(connection, &message);
+        }
         if matches!(
             header.method.as_deref(),
             Some(
@@ -172,8 +178,12 @@ impl ClientRegistry {
             .unwrap()
             .connections
             .get(&connection)
-            .is_some_and(|c| c.pending.contains_key(&id.to_string()));
+            .is_some_and(|c| {
+                c.pending.contains_key(&id.to_string())
+                    || c.question_inputs.contains_key(&id.to_string())
+            });
         if tracked && let Ok(message) = serde_json::from_str(text) {
+            self.observe_async_question_acceptance(connection, &message);
             self.server_message(connection, &message);
         }
     }
