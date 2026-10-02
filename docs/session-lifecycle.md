@@ -485,7 +485,7 @@ operations, not total user-visible latency.
 - Claude: [MCP server lifecycle](../plugins/agentix-bridge/claude/server.mjs),
   [hook mailbox](../plugins/agentix-bridge/claude/mailbox.mjs),
   [session and receipts](../plugins/agentix-bridge/claude/session.mjs),
-  [setup and supported operations](claude-code.md).
+  [setup and supported operations](https://github.com/tenfyzhong/agentix/wiki/Claude-Code).
 - Shared IM behavior: [session switching](../crates/agentix-core/src/engine/session_switch.rs),
   [turn and exit handling](../crates/agentix-core/src/engine/turn_flows.rs).
 

@@ -242,7 +242,7 @@ The follow-up architecture acceptance run passed `make check`: formatting, stric
 - [Codex end-to-end test](../crates/agentix/tests/support/slack_e2e.rs): real local WebSocket and HTTP transports through Engine and Codex RPC, command approval callback, and final streamed update.
 - [Core state tests](../crates/agentix-core/tests/state_and_render.rs): SQLite restart recovery, thread isolation, and cross-platform event deduplication. Critical interaction/Stop regressions also run for Slack in `engine.rs`.
 
-These fixtures require no Slack credentials. They do not prove workspace installation or permissions; follow [Slack setup](slack.md) for a live smoke test.
+These fixtures require no Slack credentials. They do not prove workspace installation or permissions; follow [Slack setup](https://github.com/tenfyzhong/agentix/wiki/Slack) for a live smoke test.
 
 ## Codex proxy lifecycle
 
@@ -530,7 +530,7 @@ loopback TCP, CLI and Node
 host entrypoints, read-only filesystem projections and standalone dual-database
 backup/restore. Only external model/embedding and rclone responses are mocked.
 Live model quality, desktop Obsidian rendering and cloud credentials remain
-outside those fixtures. See [operations](taskix-memory.md) for configuration and
+outside those fixtures. See [operations](https://github.com/tenfyzhong/agentix/wiki/Taskix-Memory) for configuration and
 failure semantics.
 
 
@@ -543,3 +543,36 @@ Telegram fixture also covers polling, menus, sends, edits and callback
 acknowledgements with a legacy TOML proxy that must have no effect. Taskix tests
 exercise the production TaskNotes download path. All listeners are local; these
 checks do not establish live provider/IM or service-manager environment behavior.
+
+## CI test cost
+
+Plugin tests run in parallel with Rust tests on each supported operating system. CI disables dev/test debug symbols to reduce Windows linker work and cache size; local Cargo profiles are unchanged. Windows retains the workspace check, native TCP control tests, task-board tests, and three system-time-zone checks. Compare GitHub Actions step timings on equivalent revisions and cache states before claiming a speedup; the baseline Windows run `34441426541` took 17m26s, including 3m43s for workspace checking, 4m31s for the TCP test step, and 5m57s for task-board tests.
+
+## Codex proxy verification
+
+The reusable test suites cover the following boundaries:
+
+| Boundary | Coverage |
+| --- | --- |
+| Actual `serve` startup | Active and stale Unix sockets, regular files, and occupied WS ports fail with error logs, preserve existing paths, and do not launch the upstream |
+| Transport | Unix and WS listeners, WS upstream, stdio JSON lines, independent client request IDs, unchanged text frames, server requests, and streamed notifications |
+| Lifecycle | Client and upstream disconnect cleanup, unsubscribe, multiple owners, socket permissions and replacement inode protection, detached upstream survival and reuse |
+| Discovery | Registry-backed listing, sessions without rollout files, stale attach rejection, and PID-to-terminal association |
+
+Run `cargo test -p agentix-codex -p agentix --lib --tests` and `cargo clippy -p agentix-codex -p agentix --all-targets -- -D warnings`. The ignored subprocess fixture is invoked by its parent integration test. Run the optional allocation-path timing comparison with `cargo test -p agentix-codex --test proxy_registry benchmark_stream_notification_observation -- --ignored --nocapture`; it has no timing threshold and is not an end-to-end throughput benchmark.
+
+## Taskix backup verification
+
+```sh
+make test-backup
+```
+
+Tests use real SQLite WAL databases, compression and restore checks, and a fake
+rclone executable. They cover multiple snapshots per day, retries, locking, invalid sources,
+corrupt archives and target isolation. They do not establish live provider
+authentication, bucket policy, WebDAV compatibility, or scheduler installation.
+
+A live upload and download comparison has been verified against one configured
+S3-compatible destination. Other backend examples describe rclone capabilities;
+they have not each been tested with this script. This is not a claim of live
+acceptance across all rclone providers.

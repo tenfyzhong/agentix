@@ -146,7 +146,7 @@ Users do not need to install npm dependencies in the host cache.
 Installation failures stop the target and are reported; earlier host changes
 are not rolled back. Repeated installations are supported. Restart or reload
 the hosts after installation. Start a new Codex thread and review/trust hooks
-with `/hooks`; see the [plugin installation guide](plugins/taskix-manager/README.md#prerequisites-and-activation).
+with `/hooks`; see the [plugin installation guide](https://github.com/tenfyzhong/agentix/wiki/Taskix-Manager#prerequisites-and-activation).
 
 ## Tests and external dependencies
 
@@ -190,7 +190,7 @@ GitHub Actions keeps formatting and Clippy in `ci.yml`. The `tests.yml` workflow
 
 ## Workspace architecture
 
-The main crates are `agentix-domain` (contracts), `agentix-storage` (runtime persistence), `agentix-core` (application services), `agentix-codex`, `agentix-bridge`, `agentix-telegram`, `agentix-feishu`, the independent `agentix-task` library, and the `agentix` / `taskix` executables. See [task board design and usage](docs/task-board.md) for the task database and document projection boundary.
+The main crates are `agentix-domain` (contracts), `agentix-storage` (runtime persistence), `agentix-core` (application services), `agentix-codex`, `agentix-bridge`, `agentix-telegram`, `agentix-feishu`, the independent `agentix-task` library, and the `agentix` / `taskix` executables. See [task board design and usage](https://github.com/tenfyzhong/agentix/wiki/Taskix) for the task database and document projection boundary.
 
 The core exposes a small common agent interface plus optional queue, attached-session control, and workspace-runtime ports. A serialized runtime loop feeds IM and agent events into coordinator-owned session, turn, interaction, and rmux state. See the [architecture document](docs/architecture.md) for the state/effect and retry boundaries.
 
@@ -213,6 +213,27 @@ source archives without Git metadata report `0.0.0-dev+unknown`.
 - Use consistent indentation and leave no trailing whitespace.
 - Use English for repository documentation, code comments, identifiers, user-facing messages, and test descriptions and fixture labels.
 - Preserve Unicode test coverage with English labels and escaped Unicode symbols rather than non-English prose. Unicode punctuation and interface icons do not need to be ASCII.
+
+## User documentation and Wiki maintenance
+
+User-facing installation, configuration, and usage guides are maintained in the [GitHub Wiki](https://github.com/tenfyzhong/agentix/wiki). Keep the repository's `docs/` directory focused on architecture, protocols, test coverage, benchmarks, and implementation reviews; update its [index](docs/README.md) when adding technical documents.
+
+When behavior changes, update the corresponding Wiki guide as well as any affected technical documents. The Wiki has a separate Git repository:
+
+```sh
+git clone git@github.com:tenfyzhong/agentix.wiki.git
+cd agentix.wiki
+git pull --ff-only
+git worktree add .git/wtm/docs/wiki-update -b docs/wiki-update
+cd .git/wtm/docs/wiki-update
+# Edit the relevant Markdown pages and check page links and anchors.
+git add -- '*.md'
+git commit -s -m "docs: update user guide"
+# Review the commit before publishing. Wiki changes go live on master.
+git push origin HEAD:master
+```
+
+Keep `Home.md` and `_Sidebar.md` aligned with page names. Use full Wiki URLs for page links and full repository URLs for source files. Delete obsolete user-guide files after migrating their content to the Wiki; do not keep redirect-only placeholders or duplicate usage instructions. Move any remaining technical chapters into the appropriate architecture, protocol, coverage, or contribution document before deleting an old guide. Update repository links, configuration comments, and package resource expectations when removing a file.
 
 ## Commits
 
@@ -280,6 +301,10 @@ Before tagging a release:
 5. Restart Agentix during an active turn and verify that the original message recovers its Stop action and completes in place.
 6. Restart the Codex daemon and verify reconnect and subscription recovery.
 7. Attach a fresh Codex TUI before its first prompt, send that prompt from IM, and verify that the session materializes and resumes.
+
+### Release packaging
+
+The Homebrew formulae for Agentix and the standalone task manager, taskix, are maintained in [tenfyzhong/homebrew-tap](https://github.com/tenfyzhong/homebrew-tap). Release automation updates both formulae and publishes macOS arm64, Linux x86_64, and Linux arm64 bottles. Each platform compiles the CLIs once and reuses those binaries for both release archives and Homebrew bottles. Bottle packaging preserves the prepared source formula and verifies a real bottle installation; after every platform succeeds, automation merges the metadata into one pull request per formula. Install taskix with `brew install tenfyzhong/tap/taskix`. The Homebrew workflow can also be run manually for an existing release tag, selecting `agentix`, `taskix`, or `all` (the default) to download and checksum-verify the existing release binaries, package the corresponding bottles, and publish formula pull requests.
 
 ### Taskix Homebrew formula
 

@@ -1,5 +1,5 @@
 # Optional absolute path to Slack CLI; otherwise resolved from PATH.
-# Global option: keep before all tables. See docs/slack-initialization.md.
+# Global option: keep before all tables. See https://github.com/tenfyzhong/agentix/wiki/Slack-Setup.
 # slack_cli_path = "/opt/homebrew/bin/slack"
 
 # Defaults to unix://~/.local/share/agentix/control.sock on macOS/Linux and
@@ -8,7 +8,7 @@
 # endpoint = "unix://~/.local/share/agentix/control.sock"
 
 # Outbound proxies use exported http_proxy/HTTP_PROXY, https_proxy/HTTPS_PROXY,
-# and NO_PROXY/no_proxy environment variables. See docs/development-and-operations.md.
+# and NO_PROXY/no_proxy environment variables. See https://github.com/tenfyzhong/agentix/wiki/Configuration-and-Operations.
 
 [notifications]
 # Send completed turns from sessions not attached to IM. Includes the prompt and response.
@@ -63,7 +63,7 @@ endpoint = "unix://~/.codex/app-server-control/app-server-control-upstream.sock"
 # command = "omp"
 # session_dir = "~/.omp/agent/sessions"
 
-# Enable Claude Code by uncommenting this table (see docs/claude-code.md):
+# Enable Claude Code by uncommenting this table (see https://github.com/tenfyzhong/agentix/wiki/Claude-Code):
 # [agent.claude]
 # command = "claude"
 # session_dir = "~/.claude/projects"
@@ -106,7 +106,7 @@ owner_user_ids = []
 # with the named backend tables.
 
 # To use Slack, set channel.kind = "slack" and configure this section.
-# See docs/slack-initialization.md for app setup and CLI login.
+# See https://github.com/tenfyzhong/agentix/wiki/Slack-Setup for app setup and CLI login.
 # [channel.slack]
 # command_prefix = "" # e.g. "ax-"
 # command_suffix = "" # e.g. "-dev"

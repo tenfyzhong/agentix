@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-Agentix is a Rust 2024 workspace under `crates/`. `agentix` and `taskix` provide the CLIs; `agentix-domain`, `agentix-core`, and `agentix-storage` separate contracts, orchestration, and persistence. Other crates implement agent, messaging, and terminal adapters. Keep unit tests beside source and integration tests in each crate's `tests/` directory. `plugins/` contains host integrations and plugin tests; `docs/` holds architecture and usage guides; `completions/` contains generated shell assets.
+Agentix is a Rust 2024 workspace under `crates/`. `agentix` and `taskix` provide the CLIs; `agentix-domain`, `agentix-core`, and `agentix-storage` separate contracts, orchestration, and persistence. Other crates implement agent, messaging, and terminal adapters. Keep unit tests beside source and integration tests in each crate's `tests/` directory. `plugins/` contains host integrations and plugin tests; `docs/` holds technical documentation, while detailed user guides live in the GitHub Wiki; `completions/` contains generated shell assets.
 
 ## Build, Test, and Development Commands
 
