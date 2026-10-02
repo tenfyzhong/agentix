@@ -8,6 +8,12 @@ priority = 100
 threads-required = 'num-test-threads'
 
 [[profile.ci.overrides]]
+# The integration asserts a metrics write bounded to 250 ms in production.
+filter = 'package(taskix) & binary(cli) & test(memory_jev_triage_uses_existing_environment_and_reports_skip_extract_and_fallback)'
+priority = 100
+threads-required = 'num-test-threads'
+
+[[profile.ci.overrides]]
 # Start the longest native integration early so ordinary tests overlap it.
 filter = 'package(taskix) & binary(cli) & test(plugin_entrypoints_execute_the_compiled_taskix)'
 priority = 100

@@ -104,6 +104,28 @@ fn ci_profile_isolates_memory_ipc_deadline_tests() {
 }
 
 #[test]
+fn ci_profile_isolates_the_bounded_memory_metrics_integration() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.config/nextest.toml");
+    let config: toml::Value = toml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let metrics = config["profile"]["ci"]["overrides"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|rule| {
+            rule["filter"].as_str().is_some_and(|filter| {
+                filter.contains("memory_jev_triage_uses_existing_environment_and_reports_skip_extract_and_fallback")
+            })
+        })
+        .expect("the bounded metrics writer needs the runner without competing tests");
+    assert_eq!(
+        metrics["threads-required"].as_str(),
+        Some("num-test-threads")
+    );
+    assert!(metrics["priority"].as_integer().unwrap() > 0);
+    assert!(metrics.get("retries").is_none());
+}
+
+#[test]
 fn partitioning_preserves_doctests_and_windows_platform_checks() {
     let config = workflow("tests.yml");
     let job = &config["jobs"]["test"];
