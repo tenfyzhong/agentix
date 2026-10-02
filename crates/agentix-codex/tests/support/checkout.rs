@@ -7,7 +7,10 @@ use agentix_multiplexer::{
 };
 
 #[derive(Debug, Default)]
-struct CheckoutDriver(Mutex<Vec<CodexCheckoutChoice>>);
+struct CheckoutDriver(
+    Mutex<Vec<CodexCheckoutChoice>>,
+    std::sync::atomic::AtomicBool,
+);
 
 #[async_trait]
 impl MultiplexerDriver for CheckoutDriver {
@@ -45,7 +48,46 @@ impl MultiplexerDriver for CheckoutDriver {
         Ok(None)
     }
     async fn new_codex_session(&self, _: u32) -> Result<CodexNewSessionOutcome, MultiplexerError> {
+        self.1.store(true, std::sync::atomic::Ordering::Release);
         Ok(CodexNewSessionOutcome::CheckoutChoice)
+    }
+    async fn inspect_interaction(
+        &self,
+        _: agentix_domain::AgentKind,
+        _: u32,
+    ) -> Result<Option<agentix_domain::TerminalInteraction>, MultiplexerError> {
+        Ok(self.1.load(std::sync::atomic::Ordering::Acquire).then(|| {
+            agentix_domain::TerminalInteraction {
+                kind: agentix_domain::TerminalInteractionKind::Choice,
+                title: "Where should the new conversation run?".into(),
+                detail: "Native checkout choices".into(),
+                choices: vec!["Current checkout".into(), "New worktree".into()],
+                selected: Some(0),
+                fingerprint: "checkout".into(),
+                pane_id: "%1".into(),
+            }
+        }))
+    }
+    async fn respond_interaction(
+        &self,
+        _: agentix_domain::AgentKind,
+        _: u32,
+        _: &agentix_domain::TerminalInteraction,
+        response: agentix_domain::TerminalInteractionResponse,
+    ) -> Result<(), MultiplexerError> {
+        let choice = match response {
+            agentix_domain::TerminalInteractionResponse::Choice(0) => {
+                CodexCheckoutChoice::CurrentCheckout
+            }
+            agentix_domain::TerminalInteractionResponse::Choice(1) => {
+                CodexCheckoutChoice::NewWorktree
+            }
+            agentix_domain::TerminalInteractionResponse::Cancel => CodexCheckoutChoice::Cancel,
+            agentix_domain::TerminalInteractionResponse::Choice(_) => panic!("unexpected choice"),
+        };
+        self.0.lock().unwrap().push(choice);
+        self.1.store(false, std::sync::atomic::Ordering::Release);
+        Ok(())
     }
     async fn select_codex_checkout(
         &self,
@@ -65,14 +107,14 @@ async fn codex_new_checkout_is_forwarded_to_im_and_requires_an_explicit_choice()
         (2, CodexCheckoutChoice::Cancel),
         (3, CodexCheckoutChoice::CurrentCheckout),
     ] {
-        for namespaced in [false, true] {
-            check_choice(index, choice, namespaced).await;
+        for (namespaced, generic) in [(false, false), (true, false), (true, true)] {
+            check_choice(index, choice, namespaced, generic).await;
         }
     }
 }
 
 #[allow(clippy::too_many_lines)]
-async fn check_choice(index: usize, choice: CodexCheckoutChoice, namespaced: bool) {
+async fn check_choice(index: usize, choice: CodexCheckoutChoice, namespaced: bool, generic: bool) {
     let server = MockCodexAppServer::start();
     server
         .add_thread(MockThread::new("checkout", "Checkout", "/tmp"))
@@ -101,13 +143,18 @@ async fn check_choice(index: usize, choice: CodexCheckoutChoice, namespaced: boo
         .with_multiplexer(driver.clone()),
     );
     let agent: Arc<dyn AgentAdapter> = if namespaced {
-        Arc::new(
-            agentix_core::AgentRegistry::new(vec![(
-                agentix_domain::AgentKind::Codex,
-                client.clone(),
-            )])
-            .unwrap(),
-        )
+        let registry = agentix_core::AgentRegistry::new(vec![(
+            agentix_domain::AgentKind::Codex,
+            client.clone(),
+        )])
+        .unwrap();
+        Arc::new(if generic {
+            registry.with_terminal_interactions(Arc::new(
+                agentix_multiplexer::TerminalInteractions::new(driver.clone()),
+            ))
+        } else {
+            registry
+        })
     } else {
         client.clone()
     };
@@ -149,7 +196,11 @@ async fn check_choice(index: usize, choice: CodexCheckoutChoice, namespaced: boo
             .iter()
             .map(|a| a.label.as_str())
             .collect::<Vec<_>>(),
-        ["Current checkout", "New worktree"]
+        if generic {
+            vec!["Current checkout", "New worktree", "Cancel"]
+        } else {
+            vec!["Current checkout", "New worktree"]
+        }
     );
     let chat = ConversationRef::new(ChannelKind::Telegram, "chat-e2e");
     let mut switch = state.session_switch(&chat).await.unwrap().unwrap();

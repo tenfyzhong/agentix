@@ -74,7 +74,7 @@ fn codex_draft(state: &str, screen: &str) -> Result<Option<String>, MultiplexerE
 // Preserve the composer's background boundary and dim placeholder information.
 type StyledLine = (String, Option<String>, bool);
 
-fn styled_lines(screen: &str) -> Result<Vec<StyledLine>, MultiplexerError> {
+pub(crate) fn styled_lines(screen: &str) -> Result<Vec<StyledLine>, MultiplexerError> {
     let mut background: Option<String> = None;
     let mut dim = false;
     let mut rows = Vec::new();
@@ -293,7 +293,11 @@ pub async fn codex_terminal_input(
     Ok(None)
 }
 
-async fn run(command: &Path, prefix: &[String], args: &[&str]) -> Result<String, MultiplexerError> {
+pub(crate) async fn run(
+    command: &Path,
+    prefix: &[String],
+    args: &[&str],
+) -> Result<String, MultiplexerError> {
     let mut process = Command::new(command);
     process
         .args(prefix)
@@ -459,7 +463,14 @@ async fn finish_codex_new(
         if codex_ansi_draft(&state, &screen).is_ok_and(|draft| draft.is_none()) {
             return Ok(CodexNewSessionOutcome::Started);
         }
-        let selected = checkout_selection(&screen)?;
+        let cursor = state
+            .trim()
+            .split('|')
+            .nth(2)
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(0);
+        let dialog = super::parse_terminal_interaction(&screen, cursor);
+        let selected = dialog.map(|dialog| dialog.fingerprint);
         if selected.is_some() && selected == previous {
             return Ok(CodexNewSessionOutcome::CheckoutChoice);
         }

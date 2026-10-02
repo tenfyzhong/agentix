@@ -25,6 +25,52 @@ pub enum RmuxManagerError {
 pub struct RmuxDriver;
 #[async_trait]
 impl MultiplexerDriver for RmuxDriver {
+    async fn inspect_interaction(
+        &self,
+        agent: agentix_domain::AgentKind,
+        pid: u32,
+    ) -> Result<Option<agentix_domain::TerminalInteraction>, MultiplexerError> {
+        let location = self
+            .process_locations()
+            .await?
+            .remove(&pid)
+            .ok_or_else(|| {
+                MultiplexerError::Backend("Original agent pane is unavailable".into())
+            })?;
+        agentix_multiplexer::inspect_terminal_interaction(
+            Path::new("rmux"),
+            &[],
+            &location.pane_id,
+            pid,
+            agent,
+        )
+        .await
+    }
+    async fn respond_interaction(
+        &self,
+        agent: agentix_domain::AgentKind,
+        pid: u32,
+        expected: &agentix_domain::TerminalInteraction,
+        response: agentix_domain::TerminalInteractionResponse,
+    ) -> Result<(), MultiplexerError> {
+        let location = self
+            .process_locations()
+            .await?
+            .remove(&pid)
+            .ok_or_else(|| {
+                MultiplexerError::Backend("Original agent pane is unavailable".into())
+            })?;
+        agentix_multiplexer::respond_terminal_interaction(
+            Path::new("rmux"),
+            &[],
+            &location.pane_id,
+            pid,
+            agent,
+            expected,
+            response,
+        )
+        .await
+    }
     async fn codex_terminal_input(
         &self,
         pid: u32,

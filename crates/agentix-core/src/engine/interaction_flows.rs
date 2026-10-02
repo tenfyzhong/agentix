@@ -51,7 +51,7 @@ impl Engine {
             .iter()
             .filter(|(_, pending)| {
                 pending.message.conversation == *conversation
-                    && pending.session_switch_client.is_some()
+                    && (pending.session_switch_client.is_some() || pending.terminal_cancelable)
             })
             .map(|(key, _)| key.clone())
             .collect::<Vec<_>>();
@@ -66,7 +66,9 @@ impl Engine {
                         response: json!({"decision":"cancel"}),
                     })
                     .await;
-                self.cancel_session_switch(conversation).await?;
+                if pending.session_switch_client.is_some() {
+                    self.cancel_session_switch(conversation).await?;
+                }
                 self.show_local_approval_resolution(conversation, pending, "cancel")
                     .await?;
                 if let Err(error) = result {
@@ -204,7 +206,11 @@ impl Engine {
             interaction,
             PendingInteractionView {
                 rpc_id: request.rpc_id.clone(),
-                session_switch_client: (request.method == "agentix/codex/checkoutChoice")
+                terminal_cancelable: request.method == "agentix/terminal/interaction"
+                    && request.payload["cancelable"] == true,
+                session_switch_client: (request.method == "agentix/codex/checkoutChoice"
+                    || request.method == "agentix/terminal/interaction"
+                        && request.payload["sessionSwitch"] == true)
                     .then(|| request.payload["clientId"].as_str().map(str::to_owned))
                     .flatten(),
                 message,

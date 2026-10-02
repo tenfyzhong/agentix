@@ -106,6 +106,56 @@ impl TmuxDriver {
 
 #[async_trait]
 impl MultiplexerDriver for TmuxDriver {
+    async fn inspect_interaction(
+        &self,
+        agent: agentix_domain::AgentKind,
+        pid: u32,
+    ) -> Result<Option<agentix_domain::TerminalInteraction>, MultiplexerError> {
+        let location = self
+            .process_locations()
+            .await?
+            .remove(&pid)
+            .ok_or_else(|| error("Original agent pane is unavailable"))?;
+        let prefix = self.socket.as_ref().map_or_else(
+            || strings(&["-L", "default"]),
+            |socket| vec!["-S".into(), socket.to_string_lossy().into_owned()],
+        );
+        agentix_multiplexer::inspect_terminal_interaction(
+            &self.command,
+            &prefix,
+            &location.pane_id,
+            pid,
+            agent,
+        )
+        .await
+    }
+    async fn respond_interaction(
+        &self,
+        agent: agentix_domain::AgentKind,
+        pid: u32,
+        expected: &agentix_domain::TerminalInteraction,
+        response: agentix_domain::TerminalInteractionResponse,
+    ) -> Result<(), MultiplexerError> {
+        let location = self
+            .process_locations()
+            .await?
+            .remove(&pid)
+            .ok_or_else(|| error("Original agent pane is unavailable"))?;
+        let prefix = self.socket.as_ref().map_or_else(
+            || strings(&["-L", "default"]),
+            |socket| vec!["-S".into(), socket.to_string_lossy().into_owned()],
+        );
+        agentix_multiplexer::respond_terminal_interaction(
+            &self.command,
+            &prefix,
+            &location.pane_id,
+            pid,
+            agent,
+            expected,
+            response,
+        )
+        .await
+    }
     async fn codex_terminal_input(
         &self,
         pid: u32,

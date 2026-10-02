@@ -16,6 +16,49 @@ use tempfile::tempdir;
 use tokio::sync::broadcast;
 
 #[tokio::test]
+async fn native_terminal_interaction_can_be_cancelled_without_a_session_switch() {
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel::default());
+    let engine = Engine::new(
+        agent.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_agent_event(AgentEvent::InteractionRequested(InteractionRequest {
+            rpc_id: serde_json::json!("terminal:fixture"),
+            method: "agentix/terminal/interaction".into(),
+            session_id: "thr_a".into(),
+            turn_id: "terminal".into(),
+            item_id: None,
+            kind: InteractionKind::CommandApproval,
+            title: "Future native picker".into(),
+            detail: "Choose".into(),
+            available_decisions: vec!["1. First".into(), "2. Second".into(), "cancel".into()],
+            payload: serde_json::json!({"terminal":true,"cancelable":true,"sessionSwitch":false}),
+            auto_resolution_ms: None,
+        }))
+        .await
+        .unwrap();
+    assert_eq!(channel.sent().last().unwrap().1.actions.len(), 3);
+    assert!(agent.interaction_decisions().is_empty());
+    engine
+        .handle_inbound(inbound("chat-a", "/cancel"))
+        .await
+        .unwrap();
+    let answers = agent.interaction_decisions();
+    assert_eq!(answers.len(), 1);
+    assert_eq!(
+        answers[0].response,
+        serde_json::json!({"decision":"cancel"})
+    );
+}
+
+#[tokio::test]
 async fn disconnect_invalidates_listed_idle_sessions_even_after_they_disappear() {
     use agentix_core::{AgentKind, AgentRegistry};
     let pi = Arc::new(FakeAgent::new());

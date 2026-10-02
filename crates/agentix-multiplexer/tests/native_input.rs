@@ -371,9 +371,35 @@ async fn submit_real_codex_new(
         assert_eq!(outcome, CodexNewSessionOutcome::CheckoutChoice);
     }
     if outcome == CodexNewSessionOutcome::CheckoutChoice {
-        select_codex_checkout(Path::new(driver), prefix, pane, pid, choice)
-            .await
-            .unwrap();
+        let expected = agentix_multiplexer::inspect_terminal_interaction(
+            Path::new(driver),
+            prefix,
+            pane,
+            pid,
+            agentix_domain::AgentKind::Codex,
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        agentix_multiplexer::respond_terminal_interaction(
+            Path::new(driver),
+            prefix,
+            pane,
+            pid,
+            agentix_domain::AgentKind::Codex,
+            &expected,
+            match choice {
+                CodexCheckoutChoice::CurrentCheckout => {
+                    agentix_domain::TerminalInteractionResponse::Choice(0)
+                }
+                CodexCheckoutChoice::NewWorktree => {
+                    agentix_domain::TerminalInteractionResponse::Choice(1)
+                }
+                CodexCheckoutChoice::Cancel => agentix_domain::TerminalInteractionResponse::Cancel,
+            },
+        )
+        .await
+        .unwrap_or_else(|error| panic!("generic response: {error}; expected={expected:?}"));
     }
 }
 

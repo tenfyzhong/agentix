@@ -2,7 +2,14 @@
 mod directories;
 mod launch;
 pub use launch::{interactive_login_shell_argv, persistent_launch_argv};
+#[cfg(all(test, unix))]
+mod interaction_tests;
+mod interactions;
 mod native_control;
+pub use interactions::{
+    TerminalInteractions, inspect_terminal_interaction, parse_terminal_interaction,
+    respond_terminal_interaction,
+};
 mod terminal_command;
 #[cfg(test)]
 use native_control::validate_codex_prompt;
@@ -49,6 +56,24 @@ pub struct MultiplexerOutcome {
 
 #[async_trait]
 pub trait MultiplexerDriver: std::fmt::Debug + Send + Sync {
+    async fn inspect_interaction(
+        &self,
+        _agent: agentix_domain::AgentKind,
+        _pid: u32,
+    ) -> Result<Option<agentix_domain::TerminalInteraction>, MultiplexerError> {
+        Ok(None)
+    }
+    async fn respond_interaction(
+        &self,
+        _agent: agentix_domain::AgentKind,
+        _pid: u32,
+        _expected: &agentix_domain::TerminalInteraction,
+        _response: agentix_domain::TerminalInteractionResponse,
+    ) -> Result<(), MultiplexerError> {
+        Err(MultiplexerError::Backend(
+            "Terminal interaction is unavailable".into(),
+        ))
+    }
     fn kind(&self) -> MultiplexerKind;
     async fn inventory(&self, start: bool) -> Result<Option<Vec<PaneState>>, MultiplexerError>;
     async fn execute(

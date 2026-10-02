@@ -10,6 +10,11 @@ mod message_center;
 mod model;
 mod render;
 mod session;
+mod terminal;
+pub use terminal::{
+    TerminalInteraction, TerminalInteractionKind, TerminalInteractionPort,
+    TerminalInteractionResponse, TerminalInteractionTarget,
+};
 
 pub use action::{ActionRegistry, ActionScope, ActionTokenError};
 pub use agent::{

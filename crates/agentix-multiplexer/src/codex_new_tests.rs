@@ -95,7 +95,7 @@ fn codex_new_does_not_confirm_either_selected_checkout() {
 }
 
 #[test]
-fn codex_new_does_not_accept_an_unrelated_dialog() {
+fn codex_new_reports_an_unfamiliar_dialog_without_selecting_it() {
     check("unrelated");
 }
 
@@ -168,7 +168,7 @@ async fn new_session_child() {
         .unwrap_or_else(|error| panic!("{error}; submission result: {result:?}"));
     let enters = keys.lines().filter(|line| line.ends_with(" Enter")).count();
     match case.as_str() {
-        "picker" | "changed" => {
+        "picker" | "changed" | "unrelated" => {
             result.unwrap();
             assert_eq!(
                 enters, 1,

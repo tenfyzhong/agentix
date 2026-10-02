@@ -249,6 +249,11 @@ startup deadline. An explicit choice revalidates the original client and picker
 before submitting that option; `/cancel` dismisses the picker and cancels the
 handoff. Detached or already answered choices are invalidated.
 
+The configured service uses the shared [terminal interaction observer](terminal-interactions.md)
+for this picker and other native dialogs across Codex, Pi, OMP, and Claude Code.
+Recognition does not depend on `/new` or checkout option text. Unknown recognizable
+dialogs stay visible in IM for local handling; they do not receive speculative input.
+
 ### Attached and background messages
 
 Lifecycle, attached-content recovery, and background completion reads run in

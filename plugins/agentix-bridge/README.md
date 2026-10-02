@@ -44,7 +44,7 @@ A disconnected client does not trigger replay. If an extension reload discovers 
 
 `/rmux pi`, `/rmux omp`, `/rmux claude`, and `/rmux codex` select a launch backend for the current chat. With multiple backends and no attachment, `/rmux` offers a picker. The service waits for a new live bridge associated with the created pane before attaching. A timeout leaves the terminal open for inspection.
 
-Third-party extension dialogs and approval prompts stay in the original terminal. Clear, fork, plan, goal, review, Fast mode, and MCP management are not exposed for Pi/OMP. Claude Code uses a hook-backed session adapter with default rmux delivery and an optional Channel adapter; see the [Claude guide](../../docs/claude-code.md) for its supported capabilities. The Taskix Manager plugin can be installed independently.
+Attached sessions use Agentix's shared [terminal interaction forwarding](../../docs/terminal-interactions.md): common choice lists and confirmations appear in IM, while recognizable unsupported dialogs show a notice for handling in the original terminal. This does not add structured approval events to the bridge protocol. Clear, fork, plan, goal, review, Fast mode, and MCP management are not exposed for Pi/OMP. Claude Code uses a hook-backed session adapter with default rmux delivery and an optional Channel adapter; see the [Claude guide](../../docs/claude-code.md) for its supported capabilities. The Taskix Manager plugin can be installed independently.
 
 ## Transport and troubleshooting
 

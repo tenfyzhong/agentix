@@ -287,6 +287,15 @@ Non-final event rendering uses the channel update interval: five seconds for Tel
 
 ## 6. Agent transports
 
+Native terminal fallback is shared by all configured backends through
+`TerminalInteractionPort`. Native adapters provide original PID/client identity;
+`AgentRegistry` continuously observes attached sessions, normalizes supported
+dialog shapes into `InteractionRequested`, and routes explicit responses to the
+configured multiplexer. Structured requests take priority. Terminal observation
+and response validation remain in the multiplexer adapter rather than the IM
+engine. See [terminal interactions](terminal-interactions.md) for recognition,
+deduplication, invalidation, and unknown-dialog boundaries.
+
 ### Codex
 
 Agentix exposes a per-client proxy at `[agent.codex].proxy_endpoint`, defaulting to `~/.codex/app-server-control/app-server-control.sock`. The configured `endpoint` is the upstream, defaulting to `~/.codex/app-server-control/app-server-control-upstream.sock`. Defaults honor `CODEX_HOME`. Unix and WS frontends preserve each client's independent upstream connection, initialization, request IDs, and subscription. The stdio frontend translates JSON lines to one upstream WebSocket; shared upstreams use Unix or WS. Agentix's own initialized connection goes directly to the upstream.

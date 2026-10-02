@@ -580,6 +580,17 @@ pub trait WorkspaceRuntimePort: Send + Sync {
 
 #[async_trait]
 pub trait AgentAdapter: Send + Sync {
+    /// Enable the shared terminal observer instead of command-specific prompts.
+    fn enable_terminal_interactions(&self) {}
+
+    /// Identity supplied by the original live native client, never terminal text.
+    async fn terminal_interaction_target(
+        &self,
+        _session: &SessionId,
+    ) -> Option<crate::TerminalInteractionTarget> {
+        None
+    }
+
     /// Stop resources owned by this backend at service exit, not during reload.
     /// External runtimes must be left untouched. Repeated calls must be safe.
     async fn shutdown(&self) -> Result<(), AgentError> {
