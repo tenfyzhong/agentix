@@ -242,7 +242,7 @@ The follow-up architecture acceptance run passed `make check`: formatting, stric
 - [Codex end-to-end test](../crates/agentix/tests/support/slack_e2e.rs): real local WebSocket and HTTP transports through Engine and Codex RPC, command approval callback, and final streamed update.
 - [Core state tests](../crates/agentix-core/tests/state_and_render.rs): SQLite restart recovery, thread isolation, and cross-platform event deduplication. Critical interaction/Stop regressions also run for Slack in `engine.rs`.
 
-These fixtures require no Slack credentials. They do not prove workspace installation or permissions; follow [Slack setup](slack.md) for a live smoke test.
+These fixtures require no Slack credentials. They do not prove workspace installation or permissions; follow [Slack setup](https://github.com/tenfyzhong/agentix/wiki/Slack) for a live smoke test.
 
 ## Codex proxy lifecycle
 
@@ -530,7 +530,7 @@ loopback TCP, CLI and Node
 host entrypoints, read-only filesystem projections and standalone dual-database
 backup/restore. Only external model/embedding and rclone responses are mocked.
 Live model quality, desktop Obsidian rendering and cloud credentials remain
-outside those fixtures. See [operations](taskix-memory.md) for configuration and
+outside those fixtures. See [operations](https://github.com/tenfyzhong/agentix/wiki/Taskix-Memory) for configuration and
 failure semantics.
 
 

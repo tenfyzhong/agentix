@@ -146,7 +146,7 @@ Users do not need to install npm dependencies in the host cache.
 Installation failures stop the target and are reported; earlier host changes
 are not rolled back. Repeated installations are supported. Restart or reload
 the hosts after installation. Start a new Codex thread and review/trust hooks
-with `/hooks`; see the [plugin installation guide](plugins/taskix-manager/README.md#prerequisites-and-activation).
+with `/hooks`; see the [plugin installation guide](https://github.com/tenfyzhong/agentix/wiki/Taskix-Manager#prerequisites-and-activation).
 
 ## Tests and external dependencies
 
@@ -190,7 +190,7 @@ GitHub Actions keeps formatting and Clippy in `ci.yml`. The `tests.yml` workflow
 
 ## Workspace architecture
 
-The main crates are `agentix-domain` (contracts), `agentix-storage` (runtime persistence), `agentix-core` (application services), `agentix-codex`, `agentix-bridge`, `agentix-telegram`, `agentix-feishu`, the independent `agentix-task` library, and the `agentix` / `taskix` executables. See [task board design and usage](docs/task-board.md) for the task database and document projection boundary.
+The main crates are `agentix-domain` (contracts), `agentix-storage` (runtime persistence), `agentix-core` (application services), `agentix-codex`, `agentix-bridge`, `agentix-telegram`, `agentix-feishu`, the independent `agentix-task` library, and the `agentix` / `taskix` executables. See [task board design and usage](https://github.com/tenfyzhong/agentix/wiki/Taskix) for the task database and document projection boundary.
 
 The core exposes a small common agent interface plus optional queue, attached-session control, and workspace-runtime ports. A serialized runtime loop feeds IM and agent events into coordinator-owned session, turn, interaction, and rmux state. See the [architecture document](docs/architecture.md) for the state/effect and retry boundaries.
 
@@ -213,6 +213,27 @@ source archives without Git metadata report `0.0.0-dev+unknown`.
 - Use consistent indentation and leave no trailing whitespace.
 - Use English for repository documentation, code comments, identifiers, user-facing messages, and test descriptions and fixture labels.
 - Preserve Unicode test coverage with English labels and escaped Unicode symbols rather than non-English prose. Unicode punctuation and interface icons do not need to be ASCII.
+
+## User documentation and Wiki maintenance
+
+User-facing installation, configuration, and usage guides are maintained in the [GitHub Wiki](https://github.com/tenfyzhong/agentix/wiki). Keep the repository's `docs/` directory focused on architecture, protocols, test coverage, benchmarks, and implementation reviews; update its [index](docs/README.md) when adding technical documents.
+
+When behavior changes, update the corresponding Wiki guide as well as any affected technical documents. The Wiki has a separate Git repository:
+
+```sh
+git clone git@github.com:tenfyzhong/agentix.wiki.git
+cd agentix.wiki
+git pull --ff-only
+git worktree add .git/wtm/docs/wiki-update -b docs/wiki-update
+cd .git/wtm/docs/wiki-update
+# Edit the relevant Markdown pages and check page links and anchors.
+git add -- '*.md'
+git commit -s -m "docs: update user guide"
+# Review the commit before publishing. Wiki changes go live on master.
+git push origin HEAD:master
+```
+
+Keep `Home.md` and `_Sidebar.md` aligned with page names. Use full Wiki URLs for page links and full repository URLs for source files. The former guide files in the main repository retain migration links and, where applicable, developer-only sections; do not reintroduce duplicate usage instructions there. Keep these entry files available for existing links and release packaging.
 
 ## Commits
 

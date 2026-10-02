@@ -1,6 +1,6 @@
 # Project memory architecture and contract
 
-This document records the implementation contract. See [operations and configuration](taskix-memory.md)
+This document records the implementation contract. See [operations and configuration](https://github.com/tenfyzhong/agentix/wiki/Taskix-Memory)
 and [acceptance evidence](taskix-memory-acceptance.md) for commands, limits and verification.
 
 ## Product boundary

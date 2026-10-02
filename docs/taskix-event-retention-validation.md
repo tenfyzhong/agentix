@@ -7,7 +7,7 @@ accepts `TASKIX_BENCHMARK_BACKUP`, an **offline SQLite online-backup artifact**.
 It copies that file into a fresh temporary directory before opening Store. It
 never opens or mutates the live database, and uses Store rather than Service, so
 it cannot publish to the real document vault. Do not supply a raw copy of a live
-WAL database: use the backup procedure in [Taskix backups](taskix-backup.md).
+WAL database: use the backup procedure in [Taskix backups](https://github.com/tenfyzhong/agentix/wiki/Backup-and-Recovery).
 
 ```sh
 TASKIX_BENCHMARK_BACKUP=/path/to/offline/tasks.sqlite3 \
