@@ -112,7 +112,9 @@ async fn memory_document(
         .directory
         .join(project.document_directory())
         .join("Memory")
-        .join(format!("{id}.md"));
+        .join(format!("{id}.md"))
+        .components()
+        .collect::<PathBuf>();
     ensure!(
         note_path == expected,
         "memory path does not match its Project"
