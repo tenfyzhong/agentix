@@ -59,7 +59,7 @@ impl Store {
             .fetch_one(&pool)
             .await?;
         ensure!(
-            identity == 0x4158_544b && (14..=17).contains(&version),
+            identity == 0x4158_544b && (14..=18).contains(&version),
             "unsupported task database identity or schema for read-only lookup"
         );
         Ok(Self {
@@ -135,7 +135,7 @@ impl Store {
     async fn migrate(&self) -> Result<bool> {
         let current: (i64, i64, i64) = sqlx::query_as("SELECT (SELECT application_id FROM pragma_application_id), (SELECT user_version FROM pragma_user_version), (SELECT auto_vacuum FROM pragma_auto_vacuum)")
             .fetch_one(&self.pool).await?;
-        if current == (0x4158_544b, 17, 2) {
+        if current == (0x4158_544b, 18, 2) {
             return Ok(false);
         }
         if current.2 != 2 {
@@ -149,7 +149,7 @@ impl Store {
                 "invalid: task database must be a dedicated taskix database"
             );
             ensure!(
-                current.1 <= 17,
+                current.1 <= 18,
                 "unsupported task database schema version {}",
                 current.1
             );
@@ -172,7 +172,7 @@ impl Store {
             .fetch_one(&mut *tx)
             .await?;
         ensure!(
-            version <= 17,
+            version <= 18,
             "unsupported task database schema version {version}"
         );
         sqlx::raw_sql(include_str!("schema.sql"))

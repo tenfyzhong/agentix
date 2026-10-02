@@ -31,7 +31,7 @@ taskix job create --project prj_ID --title "Login repair" --prompt "Fix login an
 taskix job update job_ID --inbox inbox_ID --executor agent:HOST --session HOST_SESSION --json
 ```
 
-Outside Git, `context` and implicit Job/Inbox selection register or reuse the current directory's Project. A parent Project does not own its subdirectories. Explicit `--project` and session-owned work retain their assignment. Git repositories and worktrees share their registered Project; register a new repository with `project register`. Directory discovery is reused within a context refresh, and lookup uses the indexed canonical root. Upgrade Agentix and Taskix together for schema 16; old binaries cannot maintain its lookup indexes and event retention watermarks.
+Outside Git, `context` and implicit Job/Inbox selection register or reuse the current directory's Project. A parent Project does not own its subdirectories. Explicit `--project` and session-owned work retain their assignment. Git repositories and worktrees share their registered Project; register a new repository with `project register`. Directory discovery is reused within a context refresh, and lookup uses the indexed canonical root. Upgrade Agentix and Taskix together for schema 18; old binaries cannot maintain its absolute archive paths, lookup indexes and event retention watermarks.
 
 Configuration defaults to `~/.config/taskix/config.toml`; `TASKIX_CONFIG` or `--config` selects another file. Run `taskix <command> --help` for arguments. `--json` always has `schema_version`, `ok`, and `result` or `error`. Exit codes: 0 success, 1 business/runtime failure, 2 argument error.
 
@@ -87,8 +87,12 @@ Job and Task note filenames receive an automatic `YYMMDD-seq-` prefix (UTC creat
 Use `job update --name` and `task update --name` to improve display names, including after completion. Every Task has one note in `Tasks/`, including Tasks without a published Plan. Plan revisions update its body in place, with status, revision, and local lifecycle timestamps in frontmatter. The agent freely chooses the body’s structure and content. Use `project archive PROJECT_ID` after closing all Jobs; `project list --archived` and `project unarchive PROJECT_ID` browse and restore projects. `AGENT_TASK_LANG` configures the skill’s language for task decomposition and authored text. Hooks and extensions expose it as `task_language`; taskix does not interpret it or store language configuration.
 
 Project archival moves the complete note folder to `Archived Projects/<project>`
-under the document output; `documents.archive_directory` configures that relative
-folder. Unarchive restores `Projects/<project>`. Generated links and registered
+under `documents.root`; `documents.archive_directory` configures that vault-relative
+folder and is resolved to an absolute destination. For example, with
+`documents.directory = "11-Agents"` and `archive_directory = "40-Archive/11-Agents/Projects"`,
+archived notes live at `<root>/40-Archive/11-Agents/Projects/<project>`. Unarchive
+restores `<root>/<documents.directory>/Projects/<project>`. Existing output-relative
+archives migrate on the next sync, preserving their contents. Generated links and registered
 paths follow the move; repository/worktree roots and IDs stay unchanged.
 Obsidian's Taskix Sync context menu offers Archive project / Restore project on
 the managed Board or project folder. Resolve destination conflicts before

@@ -79,9 +79,7 @@ impl Service {
         self.safe_path(&relative)?;
         let path = self
             .config
-            .documents
-            .directory
-            .join(relative)
+            .vault_relative_path(Path::new(&relative))
             .to_string_lossy()
             .replace('\\', "/")
             .trim_start_matches("./")
@@ -463,16 +461,28 @@ impl Service {
 
     pub(crate) fn safe_path(&self, relative: &str) -> Result<PathBuf> {
         let relative = Path::new(relative);
-        ensure!(
+        let checked = if relative.is_absolute() {
             relative
+                .strip_prefix(&self.config.documents.root)
+                .context("document path escapes vault root")?
+        } else {
+            relative
+        };
+        ensure!(
+            checked
                 .components()
                 .all(|c| matches!(c, Component::Normal(_) | Component::CurDir)),
             "invalid document path"
         );
         let path = self.config.output_dir().join(relative);
+        let boundary = if relative.is_absolute() {
+            self.config.documents.root.clone()
+        } else {
+            self.config.output_dir()
+        };
         ensure!(
-            resolved_path(&path)?.starts_with(resolved_path(&self.config.output_dir())?),
-            "document path escapes output directory"
+            resolved_path(&path)?.starts_with(resolved_path(&boundary)?),
+            "document path escapes its root"
         );
         Ok(path)
     }
@@ -688,7 +698,10 @@ impl Service {
                 // Remove only empty generated ancestors; leave user files intact.
                 let mut parent = path.parent();
                 while let Some(dir) = parent {
-                    if dir == self.config.output_dir() || std::fs::remove_dir(dir).is_err() {
+                    if dir == self.config.output_dir()
+                        || dir == self.config.documents.root
+                        || std::fs::remove_dir(dir).is_err()
+                    {
                         break;
                     }
                     parent = dir.parent();
@@ -794,8 +807,8 @@ impl Service {
 
     fn deletion_path(&self, relative: &str) -> Result<PathBuf> {
         let path = self.safe_path(relative)?;
-        let output = self.config.output_dir();
-        for component in path.ancestors().take_while(|p| *p != output) {
+        let root = &self.config.documents.root;
+        for component in path.ancestors().take_while(|p| *p != root) {
             match std::fs::symlink_metadata(component) {
                 Ok(metadata) => ensure!(
                     !metadata.file_type().is_symlink(),
@@ -938,11 +951,10 @@ impl Service {
         statuses: &Value,
         job_id: Option<&str>,
     ) -> Result<String> {
-        let folder = self
-            .config
-            .documents
-            .directory
-            .join(format!("{}/{kind}s", project.document_directory()));
+        let folder = self.config.vault_relative_path(Path::new(&format!(
+            "{}/{kind}s",
+            project.document_directory()
+        )));
         let folder = folder.to_string_lossy().replace('\\', "/");
         let folder = folder.trim_start_matches("./");
         let mut filters = vec![
@@ -995,9 +1007,7 @@ impl Service {
             format!(
                 "[[{}]]",
                 self.config
-                    .documents
-                    .directory
-                    .join(path)
+                    .vault_relative_path(Path::new(path))
                     .to_string_lossy()
                     .replace('\\', "/")
                     .trim_start_matches("./")
@@ -1050,9 +1060,7 @@ impl Service {
         let label = escaped_label;
         let to = self
             .config
-            .documents
-            .directory
-            .join(to)
+            .vault_relative_path(Path::new(to))
             .to_string_lossy()
             .replace('\\', "/");
         let to = to.trim_start_matches("./").trim_end_matches(".md");
@@ -1236,9 +1244,7 @@ fn job_dependency_graph(
         // HTML internal links keep the file target separate from the status label.
         let file = service
             .config
-            .documents
-            .directory
-            .join(&path)
+            .vault_relative_path(Path::new(&path))
             .to_string_lossy()
             .replace('\\', "/");
         let target = escape(file.trim_start_matches("./"))

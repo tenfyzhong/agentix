@@ -47,26 +47,28 @@ async fn schema_fifteen_memory_database_upgrades_with_event_watermarks() {
 }
 
 #[tokio::test]
-async fn schema_sixteen_upgrades_to_protect_project_document_locations() {
-    let (dir, store, snapshot) = fixture().await;
-    sqlx::query("PRAGMA user_version=16")
-        .execute(&store.pool)
-        .await
-        .unwrap();
-    store.pool.close().await;
-    store.maintenance_pool.close().await;
-    let reopened = Store::open(&dir.path().join("tasks.sqlite3"))
-        .await
-        .unwrap();
-    let version: i64 = sqlx::query_scalar("PRAGMA user_version")
-        .fetch_one(&reopened.pool)
-        .await
-        .unwrap();
-    assert_eq!(version, 17);
-    assert_eq!(
-        reopened.snapshot().await.unwrap().projects,
-        snapshot.projects
-    );
+async fn schema_sixteen_and_seventeen_upgrade_to_protect_absolute_archive_paths() {
+    for previous in [16, 17] {
+        let (dir, store, snapshot) = fixture().await;
+        sqlx::query(&format!("PRAGMA user_version={previous}"))
+            .execute(&store.pool)
+            .await
+            .unwrap();
+        store.pool.close().await;
+        store.maintenance_pool.close().await;
+        let reopened = Store::open(&dir.path().join("tasks.sqlite3"))
+            .await
+            .unwrap();
+        let version: i64 = sqlx::query_scalar("PRAGMA user_version")
+            .fetch_one(&reopened.pool)
+            .await
+            .unwrap();
+        assert_eq!(version, 18);
+        assert_eq!(
+            reopened.snapshot().await.unwrap().projects,
+            snapshot.projects
+        );
+    }
 }
 
 async fn assert_schema_fifteen_upgrade(has_memory: bool) {
@@ -107,7 +109,7 @@ async fn assert_schema_fifteen_upgrade(has_memory: bool) {
         .fetch_one(&store.pool)
         .await
         .unwrap();
-    assert_eq!(version, 17);
+    assert_eq!(version, 18);
     assert!(
         store.event_policy(None, None, None).await.unwrap()["enabled"]
             .as_bool()

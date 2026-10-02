@@ -682,9 +682,7 @@ impl Application {
         let config = agentix_task::Config::load(&self.path)?;
         let project = self.tasks.project_result(project).await?;
         let directory = config
-            .documents
-            .directory
-            .join(project.document_directory())
+            .vault_relative_path(std::path::Path::new(&project.document_directory()))
             .join("Memory")
             .components()
             .collect::<PathBuf>();

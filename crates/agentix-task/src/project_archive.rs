@@ -14,8 +14,7 @@ impl Service {
             let old = project.document_directory();
             let new = if project.archived_at.is_some() {
                 self.config()
-                    .documents
-                    .archive_directory
+                    .archive_dir()
                     .join(&project.key)
                     .to_string_lossy()
                     .replace('\\', "/")
@@ -28,14 +27,19 @@ impl Service {
             let source = self.safe_path(&old)?;
             let destination = self.safe_path(&new)?;
             if source.exists() {
-                ensure!(
-                    !destination.exists(),
-                    "conflict: archive destination already exists: {}",
-                    destination.display()
-                );
-                std::fs::create_dir_all(destination.parent().context("missing archive parent")?)?;
-                std::fs::rename(&source, &destination)
-                    .with_context(|| format!("move project documents from {old} to {new}"))?;
+                // Legacy vault-root output can already occupy the absolute target.
+                if !destination.exists() || source.canonicalize()? != destination.canonicalize()? {
+                    ensure!(
+                        !destination.exists(),
+                        "conflict: archive destination already exists: {}",
+                        destination.display()
+                    );
+                    std::fs::create_dir_all(
+                        destination.parent().context("missing archive parent")?,
+                    )?;
+                    std::fs::rename(&source, &destination)
+                        .with_context(|| format!("move project documents from {old} to {new}"))?;
+                }
             } else if destination.exists() {
                 // Recover a crash between the filesystem rename and the DB commit.
                 let source = std::fs::read_to_string(destination.join("Board.md"))?;

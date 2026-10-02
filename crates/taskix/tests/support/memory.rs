@@ -323,8 +323,7 @@ fn memory_service_restores_read_only_notes_through_the_real_cli() {
             .success()
     );
     cli.ok(&["project", "archive", id]);
-    let archived_relative = std::path::PathBuf::from("Tasks ☃")
-        .join("Archived Projects")
+    let archived_relative = std::path::PathBuf::from("Archived Projects")
         .join(project["key"].as_str().unwrap())
         .join("Memory")
         .join(format!("{memory_id}.md"));
@@ -333,6 +332,20 @@ fn memory_service_restores_read_only_notes_through_the_real_cli() {
     assert_eq!(archived_document["text"], text);
     assert_eq!(archived_document["path"], archived_relative);
     assert!(!path.exists());
+    let daemon = Daemon(
+        cli.command(&["memory", "serve"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    );
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while cli.ok(&["memory", "status"])["online"] != true {
+        assert!(Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    cli.ok(&["memory", "sync", "--project", id]);
+    drop(daemon);
     cli.ok(&["project", "unarchive", id]);
     assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
 }

@@ -7,7 +7,7 @@ path = "~/.local/share/taskix/tasks.sqlite3"
 # Replace with an existing absolute Obsidian vault root containing .obsidian.
 root = "/absolute/path/to/vault"
 directory = "Agent Tasks"
-# Relative to documents.directory; archived projects move here on archive/sync.
+# Relative to documents.root; resolved to an absolute path on archive/sync.
 archive_directory = "Archived Projects"
 
 # Optional project memory; one config and release, independent resident process.

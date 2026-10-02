@@ -299,7 +299,12 @@ async fn project_deletion_removes_its_entire_output_directory_only() {
         .await
         .unwrap();
     let root = f.service.config().output_dir();
-    let project_dir = root.join("Archived Projects/demo");
+    let project_dir = f
+        .service
+        .config()
+        .documents
+        .root
+        .join("Archived Projects/demo");
     std::fs::create_dir_all(project_dir.join("Attachments/nested")).unwrap();
     std::fs::write(
         project_dir.join("Attachments/nested/user.txt"),
