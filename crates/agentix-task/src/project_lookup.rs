@@ -5,10 +5,12 @@ use std::path::Path;
 
 pub(crate) const BY_ROOT: &str = "SELECT p.id FROM project_lookup l JOIN projects p ON p.id=l.project_id WHERE l.canonical_root=? ORDER BY p.rowid LIMIT 1";
 
-pub(crate) fn canonical_root(root: &str) -> String {
-    Path::new(root)
+pub(crate) fn canonical_root(root: &str) -> Result<String> {
+    let root = crate::stored_paths::expand_home(root)?;
+    let canonical = Path::new(&root)
         .canonicalize()
-        .map_or_else(|_| root.to_owned(), |p| p.to_string_lossy().into_owned())
+        .map_or_else(|_| root, |p| p.to_string_lossy().into_owned());
+    crate::stored_paths::abbreviate_home(&canonical)
 }
 
 pub(crate) async fn upsert(
@@ -18,7 +20,7 @@ pub(crate) async fn upsert(
     key: &str,
 ) -> Result<()> {
     sqlx::query("INSERT INTO project_lookup(project_id,canonical_root,folded_key) VALUES (?,?,?) ON CONFLICT(project_id) DO UPDATE SET canonical_root=excluded.canonical_root,folded_key=excluded.folded_key")
-        .bind(id).bind(canonical_root(root)).bind(key.to_lowercase()).execute(conn).await?;
+        .bind(id).bind(canonical_root(root)?).bind(key.to_lowercase()).execute(conn).await?;
     Ok(())
 }
 

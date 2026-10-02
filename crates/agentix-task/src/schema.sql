@@ -230,7 +230,7 @@ WHEN (SELECT user_version FROM pragma_user_version) >= 19
 BEGIN
     SELECT RAISE(ABORT, 'relative document path required');
 END;
-PRAGMA user_version = 19;
+PRAGMA user_version = 20;
 PRAGMA application_id = 0x4158544b;
 CREATE INDEX IF NOT EXISTS jobs_by_followup_session ON jobs(json_extract(data, '$.followup_session_id'));
 CREATE INDEX IF NOT EXISTS inbox_by_lease_session ON inbox_entries(json_extract(data, '$.lease.session_ref'));

@@ -37,6 +37,307 @@ async fn fixture() -> (tempfile::TempDir, Store, Snapshot) {
 }
 
 #[tokio::test]
+async fn workspace_paths_abbreviate_home_in_storage_and_expand_at_runtime() {
+    let (_dir, store, state) = fixture().await;
+    let root = dirs::home_dir()
+        .unwrap()
+        .join("taskix-isolated-workspace-test")
+        .to_string_lossy()
+        .into_owned();
+    let request = json!({"command":"project.register","root":root,"name":"Home"});
+    let options = WriteOptions {
+        idempotency_key: Some("relative-workspace".into()),
+        ..WriteOptions::default()
+    };
+    let first = store
+        .execute(request.clone(), options.clone())
+        .await
+        .unwrap();
+    let replay = store.execute(request, options).await.unwrap();
+    assert_eq!(first.result, replay.result);
+    assert_eq!(replay.result["root"], root);
+    let id = first.result["id"].as_str().unwrap();
+    assert_eq!(store.project_result(id).await.unwrap().root, root);
+    assert_eq!(store.project_by_root(&root).await.unwrap().unwrap().id, id);
+    assert_eq!(
+        store
+            .project_by_root("~/taskix-isolated-workspace-test")
+            .await
+            .unwrap()
+            .unwrap()
+            .id,
+        id
+    );
+    assert_eq!(
+        store
+            .project_result(&state.projects[0].id)
+            .await
+            .unwrap()
+            .root,
+        state.projects[0].root
+    );
+    for query in [
+        "SELECT root FROM projects WHERE json_extract(data,'$.name')='Home'",
+        "SELECT canonical_root FROM project_lookup WHERE folded_key='home'",
+        "SELECT json_extract(result,'$.result.root') FROM idempotency_keys WHERE key='relative-workspace'",
+    ] {
+        let paths: Vec<String> = sqlx::query_scalar(query)
+            .fetch_all(&store.pool)
+            .await
+            .unwrap();
+        assert!(!paths.is_empty(), "{query}");
+        assert!(
+            paths.iter().all(|path| path.starts_with("~/")),
+            "{query}: {paths:?}"
+        );
+    }
+    let raw: String = sqlx::query_scalar("SELECT root FROM projects WHERE id=?")
+        .bind(&state.projects[0].id)
+        .fetch_one(&store.pool)
+        .await
+        .unwrap();
+    assert_eq!(raw, state.projects[0].root);
+    assert_eq!(
+        store
+            .project_summaries()
+            .await
+            .unwrap()
+            .iter()
+            .find(|p| p.project.id == id)
+            .unwrap()
+            .project
+            .root,
+        root
+    );
+    assert_eq!(
+        store
+            .browse_task_page(crate::BrowseScope::Project(id), None, 0, 10, 1)
+            .await
+            .unwrap()
+            .project
+            .unwrap()
+            .root,
+        root
+    );
+    let same = store.execute(json!({"command":"project.register","root":"~/taskix-isolated-workspace-test","name":"Home"}), WriteOptions::default()).await.unwrap();
+    assert_eq!(same.result["id"], id);
+    assert_eq!(same.result["root"], root);
+}
+
+#[tokio::test]
+async fn workspace_home_abbreviation_respects_prefix_boundaries() {
+    let (_dir, store, _) = fixture().await;
+    let home = dirs::home_dir().unwrap().to_string_lossy().into_owned();
+    for (name, path, expected) in [
+        ("Exact home", home.clone(), "~".to_owned()),
+        (
+            "Sibling",
+            format!("{home}-sibling/workspace"),
+            format!("{home}-sibling/workspace"),
+        ),
+    ] {
+        let project = store
+            .execute(
+                json!({"command":"project.register","root":path,"name":name}),
+                WriteOptions::default(),
+            )
+            .await
+            .unwrap();
+        let raw: String = sqlx::query_scalar("SELECT root FROM projects WHERE id=?")
+            .bind(project.result["id"].as_str().unwrap())
+            .fetch_one(&store.pool)
+            .await
+            .unwrap();
+        assert_eq!(raw, expected);
+        assert_eq!(
+            store
+                .project_result(project.result["id"].as_str().unwrap())
+                .await
+                .unwrap()
+                .root,
+            path
+        );
+    }
+}
+
+#[tokio::test]
+async fn sync_cursor_keys_abbreviate_home_without_resetting_watermarks() {
+    let (_dir, store, _) = fixture().await;
+    let key = format!(
+        "agentix:cursor:{}",
+        dirs::home_dir()
+            .unwrap()
+            .join(".local/share/agentix/state.sqlite3")
+            .display()
+    );
+    store.set_metadata(&key, &json!(2164)).await.unwrap();
+    assert_eq!(store.metadata(&key).await.unwrap(), Some(json!(2164)));
+    let keys: Vec<String> =
+        sqlx::query_scalar("SELECT key FROM projection_state WHERE key LIKE 'agentix:cursor:%'")
+            .fetch_all(&store.pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        keys,
+        ["agentix:cursor:~/.local/share/agentix/state.sqlite3"]
+    );
+}
+
+#[tokio::test]
+async fn schema_nineteen_migrates_workspace_paths_and_preserves_history_and_cursors() {
+    let (dir, store, _) = fixture().await;
+    store.set_background_maintenance(false);
+    let root = dirs::home_dir()
+        .unwrap()
+        .join("taskix-isolated-workspace-test")
+        .to_string_lossy()
+        .into_owned();
+    store
+        .execute(
+            json!({"command":"project.register","root":root,"name":"Home"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    let state = store.snapshot().await.unwrap();
+    sqlx::query("PRAGMA user_version=19")
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    let project = state.projects.iter().find(|p| p.name == "Home").unwrap();
+    sqlx::query("UPDATE projects SET data=json_set(data,'$.root',?) WHERE id=?")
+        .bind(&project.root)
+        .bind(&project.id)
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE project_lookup SET canonical_root=? WHERE project_id=?")
+        .bind(&project.root)
+        .bind(&project.id)
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    let history = json!({"root":project.root,"conversation":[{"text":project.root}]});
+    sqlx::query(
+        "INSERT INTO idempotency_keys(key,fingerprint,result) VALUES ('legacy-root','unchanged',?)",
+    )
+    .bind(json!({"result":history}).to_string())
+    .execute(&store.pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE task_events SET data=json_set(data,'$.payload.root',?) WHERE sequence=1")
+        .bind(&project.root)
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    let key = format!(
+        "agentix:cursor:{}",
+        dirs::home_dir()
+            .unwrap()
+            .join(".local/share/agentix/state.sqlite3")
+            .display()
+    );
+    for (key, watermark) in [
+        (&key, 2164),
+        (
+            &"agentix:cursor:~/.local/share/agentix/state.sqlite3".to_owned(),
+            2100,
+        ),
+    ] {
+        sqlx::query("INSERT INTO projection_state(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(key).bind(watermark.to_string()).execute(&store.pool).await.unwrap();
+    }
+    let migrated = Store::open(&dir.path().join("tasks.sqlite3"))
+        .await
+        .unwrap();
+    assert_eq!(migrated.snapshot().await.unwrap().projects, state.projects);
+    assert_eq!(migrated.metadata(&key).await.unwrap(), Some(json!(2164)));
+    let raw: String =
+        sqlx::query_scalar("SELECT result FROM idempotency_keys WHERE key='legacy-root'")
+            .fetch_one(&migrated.pool)
+            .await
+            .unwrap();
+    let raw: Value = serde_json::from_str(&raw).unwrap();
+    assert!(!Path::new(raw["result"]["root"].as_str().unwrap()).is_absolute());
+    assert_eq!(raw["result"]["conversation"][0]["text"], project.root);
+    let version: i64 = sqlx::query_scalar("PRAGMA user_version")
+        .fetch_one(&migrated.pool)
+        .await
+        .unwrap();
+    assert_eq!(version, 20);
+    assert!(
+        migrated
+            .events(None, 0, 100)
+            .await
+            .unwrap()
+            .iter()
+            .any(|event| event.payload["root"] == project.root)
+    );
+}
+
+#[tokio::test]
+async fn home_path_migration_rolls_back_on_incompatible_cursor_collisions() {
+    let (dir, store, _) = fixture().await;
+    store.set_background_maintenance(false);
+    sqlx::query("PRAGMA user_version=19")
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    let root = dirs::home_dir()
+        .unwrap()
+        .join("migration-workspace")
+        .to_string_lossy()
+        .into_owned();
+    sqlx::query("UPDATE projects SET data=json_set(data,'$.root',?)")
+        .bind(&root)
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    let key = format!(
+        "agentix:cursor:{}/state.sqlite3",
+        dirs::home_dir().unwrap().display()
+    );
+    for (key, value) in [
+        (&key, "2164"),
+        (
+            &"agentix:cursor:~/state.sqlite3".to_owned(),
+            "\"incompatible\"",
+        ),
+    ] {
+        sqlx::query("INSERT INTO projection_state(key,value) VALUES (?,?)")
+            .bind(key)
+            .bind(value)
+            .execute(&store.pool)
+            .await
+            .unwrap();
+    }
+    let error = Store::open(&dir.path().join("tasks.sqlite3"))
+        .await
+        .err()
+        .unwrap();
+    assert!(
+        error
+            .to_string()
+            .contains("incompatible legacy sync cursors")
+    );
+    let version: i64 = sqlx::query_scalar("PRAGMA user_version")
+        .fetch_one(&store.pool)
+        .await
+        .unwrap();
+    assert_eq!(version, 19);
+    let raw: String = sqlx::query_scalar("SELECT root FROM projects")
+        .fetch_one(&store.pool)
+        .await
+        .unwrap();
+    assert_eq!(raw, root);
+    let value: String = sqlx::query_scalar("SELECT value FROM projection_state WHERE key=?")
+        .bind(key)
+        .fetch_one(&store.pool)
+        .await
+        .unwrap();
+    assert_eq!(value, "2164");
+}
+
+#[tokio::test]
 async fn relative_document_schema_rejects_absolute_paths_from_existing_writers() {
     let (_dir, store, _) = fixture().await;
     for (table, field) in [
@@ -250,7 +551,7 @@ async fn schema_sixteen_and_seventeen_upgrade_to_relative_document_paths() {
             .fetch_one(&reopened.pool)
             .await
             .unwrap();
-        assert_eq!(version, 19);
+        assert_eq!(version, 20);
         assert_eq!(
             reopened.snapshot().await.unwrap().projects,
             snapshot.projects
@@ -296,7 +597,7 @@ async fn assert_schema_fifteen_upgrade(has_memory: bool) {
         .fetch_one(&store.pool)
         .await
         .unwrap();
-    assert_eq!(version, 19);
+    assert_eq!(version, 20);
     assert!(
         store.event_policy(None, None, None).await.unwrap()["enabled"]
             .as_bool()

@@ -59,7 +59,7 @@ impl Store {
             .fetch_one(&pool)
             .await?;
         ensure!(
-            identity == 0x4158_544b && (14..=19).contains(&version),
+            identity == 0x4158_544b && (14..=20).contains(&version),
             "unsupported task database identity or schema for read-only lookup"
         );
         Ok(Self {
@@ -135,7 +135,7 @@ impl Store {
     async fn migrate(&self) -> Result<bool> {
         let current: (i64, i64, i64) = sqlx::query_as("SELECT (SELECT application_id FROM pragma_application_id), (SELECT user_version FROM pragma_user_version), (SELECT auto_vacuum FROM pragma_auto_vacuum)")
             .fetch_one(&self.pool).await?;
-        if current == (0x4158_544b, 19, 2) {
+        if current == (0x4158_544b, 20, 2) {
             return Ok(false);
         }
         if current.2 != 2 {
@@ -149,7 +149,7 @@ impl Store {
                 "invalid: task database must be a dedicated taskix database"
             );
             ensure!(
-                current.1 <= 19,
+                current.1 <= 20,
                 "unsupported task database schema version {}",
                 current.1
             );
@@ -172,7 +172,7 @@ impl Store {
             .fetch_one(&mut *tx)
             .await?;
         ensure!(
-            version <= 19,
+            version <= 20,
             "unsupported task database schema version {version}"
         );
         sqlx::raw_sql(include_str!("schema.sql"))
@@ -372,7 +372,9 @@ impl Store {
                 row.get::<String, _>("fingerprint") == fingerprint,
                 "conflict: idempotency key reused with different input"
             );
-            return Ok(Some(serde_json::from_str(&row.get::<String, _>("result"))?));
+            return Ok(Some(crate::stored_paths::from_str(
+                &row.get::<String, _>("result"),
+            )?));
         }
         Ok(None)
     }
@@ -384,6 +386,7 @@ impl Store {
         source: Value,
     ) -> Result<Outcome> {
         let command = mutations::required(&request, "command")?.to_owned();
+        crate::stored_paths::expand_roots(&mut request)?;
         let fingerprint = hash_bytes(
             serde_json::to_string(&json!({"request":source,"options":options}))?.as_bytes(),
         );
@@ -400,7 +403,7 @@ impl Store {
                     row.get::<String, _>("fingerprint") == fingerprint,
                     "conflict: idempotency key reused with different input"
                 );
-                return Ok(serde_json::from_str(&row.get::<String, _>("result"))?);
+                return crate::stored_paths::from_str(&row.get::<String, _>("result"));
             }
         }
         crate::discussion::prepare(&mut tx, &mut request, &options, self.now()).await?;
@@ -432,7 +435,7 @@ impl Store {
             sqlx::query("INSERT INTO idempotency_keys(key,fingerprint,result) VALUES (?,?,?)")
                 .bind(key)
                 .bind(fingerprint)
-                .bind(serde_json::to_string(&outcome)?)
+                .bind(crate::stored_paths::to_string(&outcome)?)
                 .execute(&mut *tx)
                 .await?;
         }
@@ -513,7 +516,8 @@ impl Store {
         };
         rows.into_iter()
             .map(|row| {
-                let mut event: TaskEvent = serde_json::from_str(&row.get::<String, _>("data"))?;
+                let mut event: TaskEvent =
+                    crate::stored_paths::from_str(&row.get::<String, _>("data"))?;
                 event.sequence = row.get("sequence");
                 Ok(event)
             })
@@ -534,11 +538,14 @@ impl Store {
                 self.document_paths(None).await?,
             )?));
         }
-        let value: Option<String> =
-            sqlx::query_scalar("SELECT value FROM projection_state WHERE key = ?")
-                .bind(key)
-                .fetch_optional(&self.pool)
-                .await?;
+        let value: Option<String> = sqlx::query_scalar(
+            "SELECT value FROM projection_state WHERE key IN (?,?) ORDER BY key=? DESC LIMIT 1",
+        )
+        .bind(crate::stored_paths::metadata_key(key)?)
+        .bind(key)
+        .bind(crate::stored_paths::metadata_key(key)?)
+        .fetch_optional(&self.pool)
+        .await?;
         value
             .map(|v| serde_json::from_str(&v).map_err(Into::into))
             .transpose()
@@ -579,7 +586,7 @@ impl Store {
             tx.commit().await?;
             return Ok(());
         }
-        sqlx::query("INSERT INTO projection_state(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(key).bind(serde_json::to_string(value)?).execute(&self.pool).await?;
+        sqlx::query("INSERT INTO projection_state(key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(crate::stored_paths::metadata_key(key)?).bind(serde_json::to_string(value)?).execute(&self.pool).await?;
         Ok(())
     }
     pub async fn update_plan_hash(&self, id: &str, hash: &str) -> Result<()> {
@@ -619,6 +626,9 @@ async fn migrate_features(conn: &mut SqliteConnection, version: i64) -> Result<(
     }
     if version > 0 && version < 19 {
         crate::document_paths::migrate(conn).await?;
+    }
+    if version > 0 && version < 20 {
+        crate::stored_paths::migrate(conn).await?;
     }
     Ok(())
 }
@@ -902,7 +912,7 @@ async fn read_entities<T: DeserializeOwned>(
         .fetch_all(conn)
         .await?;
     rows.into_iter()
-        .map(|row| serde_json::from_str(&row).map_err(Into::into))
+        .map(|row| crate::stored_paths::from_str(&row))
         .collect()
 }
 
@@ -1103,7 +1113,7 @@ async fn upsert(
         "INSERT INTO {table}(id,data) VALUES (?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data"
     ))
     .bind(id)
-    .bind(serde_json::to_string(data)?)
+    .bind(crate::stored_paths::to_string(data)?)
     .execute(conn)
     .await?;
     Ok(())
@@ -1131,7 +1141,7 @@ pub(crate) async fn append_event(conn: &mut SqliteConnection, mut event: TaskEve
     sqlx::query("INSERT INTO task_events(event_id,job_id,data) VALUES (?,?,?)")
         .bind(&event.event_id)
         .bind(&event.job_id)
-        .bind(serde_json::to_string(&event)?)
+        .bind(crate::stored_paths::to_string(&event)?)
         .execute(conn)
         .await?;
     Ok(())

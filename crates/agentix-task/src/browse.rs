@@ -132,7 +132,7 @@ impl Store {
         rows.into_iter()
             .map(|row| {
                 Ok(ProjectSummary {
-                    project: serde_json::from_str(&row.get::<String, _>("data"))?,
+                    project: crate::stored_paths::from_str(&row.get::<String, _>("data"))?,
                     job_count: row.get::<i64, _>("jobs").try_into()?,
                     task_count: row.get::<i64, _>("tasks").try_into()?,
                 })

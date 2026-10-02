@@ -255,8 +255,10 @@ Obsidian uses a native `Dashboard.base` table with clickable Name, Status, and U
 Document locations in SQLite are configuration-independent relative paths. Active
 `Projects/<key>/...` paths resolve under `documents.root/documents.directory`;
 logical `Archived Projects/<key>/...` paths resolve under
-`documents.root/documents.archive_directory`. Project workspace roots remain absolute
-because they identify source repositories rather than document storage. Moving the
+`documents.root/documents.archive_directory`. Project workspace roots identify source
+repositories independently of document storage. SQLite abbreviates the current home
+prefix as `~` (for example, `~/go/src/project`); runtime reads expand it. Workspace
+paths outside the home directory remain unchanged. Moving the
 vault or either configured document folder requires updating that configuration,
 while Project, Job, Plan and document-registry paths remain stable. Obsidian links and
 CLI absolute-path responses are calculated from the current configuration.
@@ -265,7 +267,11 @@ Schema 19 converts existing absolute archive paths in one database transaction,
 including pending deletions, registered files and generated event/idempotency fields.
 Invalid traversal aborts the complete migration; authored conversation is preserved.
 Database triggers reject absolute document paths from older processes that still hold
-open connections. Upgrade both Agentix and Taskix before opening a migrated database.
+open connections. Schema 20 also abbreviates home prefixes in Project roots, lookup
+indexes, historical generated event/replay root fields, and Agentix sync cursor keys
+in one transaction. Colliding numeric cursor keys retain the highest watermark;
+incompatible values roll back the migration. Original conversation and message
+text is preserved. Upgrade both Agentix and Taskix before opening a migrated database.
 
 Task boards require an Obsidian vault with TaskNotes and Bases enabled. Initialize against the vault with `taskix init --root /existing/vault`. SQLite retains ownership of task state, and state changes must go through taskix or Agentix.
 

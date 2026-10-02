@@ -1,6 +1,64 @@
 use super::*;
 use std::{fs, path::Path};
 
+#[tokio::test]
+async fn abbreviated_workspace_roots_preserve_board_identity_and_archive_recovery() {
+    let f = Fixture::new().await;
+    let root = agentix_task::expand_home(Path::new("~/taskix-isolated-workspace-test")).unwrap();
+    let project = f
+        .service
+        .execute(
+            json!({"command":"project.register","root":root,"name":"Home"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap()
+        .result;
+    let id = project["id"].as_str().unwrap();
+    let key = project["key"].as_str().unwrap();
+    let source = f
+        .service
+        .config()
+        .output_dir()
+        .join(format!("Projects/{key}"));
+    let moved = f
+        .service
+        .config()
+        .output_dir()
+        .join("Projects/Renamed home");
+    fs::write(source.join("attachment.txt"), "Keep attachment").unwrap();
+    fs::rename(source, &moved).unwrap();
+    f.service.sync().await.unwrap();
+    let project = f.service.store().project_result(id).await.unwrap();
+    assert_eq!(project.root, root.to_string_lossy());
+    assert_eq!(project.key, "Renamed home");
+    for command in ["project.archive", "project.unarchive"] {
+        f.service
+            .execute(
+                json!({"command":command,"project":id}),
+                WriteOptions::default(),
+            )
+            .await
+            .unwrap();
+    }
+    assert_eq!(
+        fs::read_to_string(moved.join("attachment.txt")).unwrap(),
+        "Keep attachment"
+    );
+    let read_only = Store::open_read_only(&f.service.config().storage.path)
+        .await
+        .unwrap();
+    assert_eq!(
+        read_only
+            .project_by_root(&root.to_string_lossy())
+            .await
+            .unwrap()
+            .unwrap()
+            .id,
+        id
+    );
+}
+
 async fn archived_fixture() -> Fixture {
     let f = Fixture::new().await;
     let task = f.task("Preserve moved plan").await;

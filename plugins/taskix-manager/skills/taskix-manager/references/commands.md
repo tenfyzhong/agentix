@@ -31,7 +31,7 @@ taskix job create --project prj_ID --title "Login repair" --prompt "Fix login an
 taskix job update job_ID --inbox inbox_ID --executor agent:HOST --session HOST_SESSION --json
 ```
 
-Outside Git, `context` and implicit Job/Inbox selection register or reuse the current directory's Project. A parent Project does not own its subdirectories. Explicit `--project` and session-owned work retain their assignment. Git repositories and worktrees share their registered Project; register a new repository with `project register`. Directory discovery is reused within a context refresh, and lookup uses the indexed canonical root. Upgrade Agentix and Taskix together for schema 19; old binaries cannot maintain its relative document paths, lookup indexes and event retention watermarks.
+Outside Git, `context` and implicit Job/Inbox selection register or reuse the current directory's Project. A parent Project does not own its subdirectories. Explicit `--project` and session-owned work retain their assignment. Git repositories and worktrees share their registered Project; register a new repository with `project register`. Directory discovery is reused within a context refresh, and lookup uses the indexed canonical root. Upgrade Agentix and Taskix together for schema 20; old binaries cannot maintain its portable workspace roots and relative document paths, lookup indexes and event retention watermarks.
 
 Configuration defaults to `~/.config/taskix/config.toml`; `TASKIX_CONFIG` or `--config` selects another file. Run `taskix <command> --help` for arguments. `--json` always has `schema_version`, `ok`, and `result` or `error`. Exit codes: 0 success, 1 business/runtime failure, 2 argument error.
 
@@ -101,9 +101,13 @@ archived storage; it does not fix the physical archive folder name.
 After moving the vault or its active/archive folders, update the matching configuration
 and run `taskix sync`; stored paths remain unchanged. Schema 19 atomically converts
 old absolute archive paths, document registrations, cleanup records and replay results
-without reading the old vault. Workspace roots and authored conversation remain intact.
+without reading the old vault. Schema 20 stores workspace roots under the current home
+with a `~` prefix, independently of the document configuration, and expands them for
+runtime callers. Workspace roots outside home remain unchanged. It also abbreviates
+home paths in generated events, replay results and sync cursor keys, preserving
+cursor watermarks and authored conversation.
 Database triggers reject absolute document locations written by older processes
-that still hold open connections. Upgrade Agentix and Taskix together for schema 19.
+that still hold open connections. Upgrade Agentix and Taskix together for schema 20.
 Obsidian's Taskix Sync context menu offers Archive project / Restore project on
 the managed Board or project folder. Resolve destination conflicts before
 running `sync` to retry a pending move.
