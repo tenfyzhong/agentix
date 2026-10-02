@@ -643,3 +643,13 @@ test("Obsidian still rejects a concurrent change after a user edits a queued pro
     assert.match(f.notices[0], /revision changed/);
     assert.equal(f.files.get(f.row.path).status, "WAITING_USER");
 });
+
+test("Obsidian watches vault-relative archive folders outside the active output", async (t) => {
+    const { SyncEngine } = loadPlugin();
+    const engine = new SyncEngine({ connection: async () => ({ documents: { directory: "11-Agents", archive_directory: "40-Archive/11-Agents/Projects" } }) });
+    t.after(() => engine.dispose());
+    await engine.initialize();
+    assert.equal(engine.watches("40-Archive/11-Agents/Projects/Demo/Board.md"), true);
+    assert.equal(engine.watches("11-Agents/Projects/Demo/Board.md"), true);
+    assert.equal(engine.watches("40-Archive/Other/Board.md"), false);
+});

@@ -87,6 +87,21 @@ impl Config {
     pub fn output_dir(&self) -> PathBuf {
         self.documents.root.join(&self.documents.directory)
     }
+    /// Absolute archive destination, independent of the active document output.
+    #[must_use]
+    pub fn archive_dir(&self) -> PathBuf {
+        self.documents.root.join(&self.documents.archive_directory)
+    }
+
+    /// Convert a registered document path into an Obsidian vault-relative path.
+    #[must_use]
+    pub fn vault_relative_path(&self, path: &Path) -> PathBuf {
+        let path = self.documents.directory.join(path);
+        path.strip_prefix(&self.documents.root)
+            .unwrap_or(&path)
+            .to_owned()
+    }
+
     pub fn validate(&self) -> Result<()> {
         ensure!(
             self.schema_version == 1,
@@ -115,9 +130,18 @@ impl Config {
             "documents.archive_directory must be a relative directory outside Projects without traversal"
         );
         ensure!(
-            resolved_path(&self.output_dir().join(archive))?
-                .starts_with(resolved_path(&self.output_dir())?),
-            "archive directory escapes document output"
+            resolved_path(&self.archive_dir())?.starts_with(self.documents.root.canonicalize()?),
+            "archive directory escapes document root"
+        );
+        let archive = resolved_path(&self.archive_dir())?;
+        let projects = resolved_path(&self.output_dir().join("Projects"))?;
+        ensure!(
+            !archive.starts_with(&projects) && !projects.starts_with(&archive),
+            "archive directory overlaps active Projects"
+        );
+        ensure!(
+            !resolved_path(&self.storage.path)?.starts_with(&archive),
+            "task database must be outside the archive directory"
         );
         ensure!(
             self.storage.path.is_absolute() && self.storage.path.file_name().is_some(),

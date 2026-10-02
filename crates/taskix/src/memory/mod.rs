@@ -108,9 +108,7 @@ async fn memory_document(
     let tasks = agentix_task::Store::open_read_only(&location.task_path).await?;
     let project = tasks.project_result(&memory.project_id).await?;
     let expected = config
-        .documents
-        .directory
-        .join(project.document_directory())
+        .vault_relative_path(std::path::Path::new(&project.document_directory()))
         .join("Memory")
         .join(format!("{id}.md"))
         .components()

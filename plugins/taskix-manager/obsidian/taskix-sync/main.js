@@ -133,6 +133,7 @@ class SyncEngine {
         this.running = null;
         this.inFlight = null;
         this.directory = null;
+        this.archiveDirectory = null;
     }
 
     remember(note) {
@@ -157,8 +158,10 @@ class SyncEngine {
 
     watches(filePath) {
         if (!this.ready || this.disposed || this.directory === null) return false;
-        const relative = path.posix.relative(this.directory, filePath);
-        return relative !== ".." && !relative.startsWith("../") && !path.posix.isAbsolute(relative);
+        return [this.directory, this.archiveDirectory].filter(directory => directory !== null).some(directory => {
+            const relative = path.posix.relative(directory, filePath);
+            return relative !== ".." && !relative.startsWith("../") && !path.posix.isAbsolute(relative);
+        });
     }
 
     async initialize() {
@@ -166,6 +169,7 @@ class SyncEngine {
         const { documents } = await this.io.connection();
         if (this.disposed) return;
         this.directory = documents.directory;
+        this.archiveDirectory = documents.archive_directory || "Archived Projects";
         this.notes.clear();
         this.ready = true;
         await this.reconcile();
@@ -519,8 +523,15 @@ class TaskixSyncPlugin extends Plugin {
             const { result: project } = await runCli(settings, ["project", "show", id], this.children);
             if (project?.id !== id || !Number.isInteger(project.revision) ||
                 archive !== (project.archived_at == null)) throw new Error("Project archive state changed; refresh and try again.");
-            if (typeof project.key !== "string" || boardPath !== path.posix.join(this.engine.directory,
-                project.document_directory || `Projects/${project.key}`, "Board.md")) {
+            const directory = project.document_directory || `Projects/${project.key}`;
+            const normalized = typeof directory === "string" ? directory.replace(/\\/g, "/") : "";
+            const vaultRoot = settings.vaultPath.replace(/\\/g, "/").replace(/\/$/, "");
+            const absolute = path.posix.isAbsolute(normalized) || /^[A-Za-z]:\//.test(normalized);
+            const relative = absolute && normalized.startsWith(`${vaultRoot}/`)
+                ? normalized.slice(vaultRoot.length + 1)
+                : absolute ? "" : path.posix.join(this.engine.directory, normalized);
+            if (typeof project.key !== "string" || !relative || normalized.split("/").includes("..") ||
+                boardPath !== path.posix.join(relative, "Board.md")) {
                 throw new Error("This Board does not match the registered Project folder.");
             }
             const response = await runCli(settings, ["project", archive ? "archive" : "unarchive", id,

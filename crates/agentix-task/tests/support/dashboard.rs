@@ -159,21 +159,18 @@ async fn recent_jobs_base_preserves_unmanaged_collision_and_recovers_publication
 }
 
 pub(super) fn board_properties(f: &Fixture) -> Value {
-    let body = std::fs::read_to_string(
-        f.service.config().output_dir().join(
-            if f.service
-                .config()
-                .output_dir()
-                .join("Projects/demo/Board.md")
-                .exists()
-            {
-                "Projects/demo/Board.md"
-            } else {
-                "Archived Projects/demo/Board.md"
-            },
-        ),
-    )
-    .unwrap();
+    let active = f
+        .service
+        .config()
+        .output_dir()
+        .join("Projects/demo/Board.md");
+    let archived = f
+        .service
+        .config()
+        .documents
+        .root
+        .join("Archived Projects/demo/Board.md");
+    let body = std::fs::read_to_string(if active.exists() { active } else { archived }).unwrap();
     serde_yaml::from_str(
         body.strip_prefix("---\n")
             .unwrap()
