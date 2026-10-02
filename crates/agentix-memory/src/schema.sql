@@ -57,7 +57,7 @@ CREATE TABLE IF NOT EXISTS embedding_failures (
 );
 INSERT OR IGNORE INTO memory_metadata(key,value) VALUES ('tokenizer_version','1');
 PRAGMA application_id=0x41584d4d;
-PRAGMA user_version=1;
+
 CREATE TABLE IF NOT EXISTS source_heads (
     instance_id TEXT NOT NULL,
     session_id TEXT NOT NULL,
@@ -154,3 +154,10 @@ CREATE TABLE IF NOT EXISTS work_retention (
 CREATE INDEX IF NOT EXISTS work_retention_age ON work_retention(observed_at,work_id);
 CREATE INDEX IF NOT EXISTS work_cancelled ON work_items(id) WHERE state='cancelled';
 CREATE INDEX IF NOT EXISTS memory_reviews_by_work ON memory_reviews(work_id);
+
+CREATE TABLE IF NOT EXISTS memory_id_renames (
+    old_id TEXT PRIMARY KEY,
+    memory_id TEXT NOT NULL REFERENCES memories(id),
+    projection_pending INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS memory_id_renames_by_memory ON memory_id_renames(memory_id);

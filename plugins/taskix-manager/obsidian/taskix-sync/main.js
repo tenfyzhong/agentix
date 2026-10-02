@@ -514,7 +514,7 @@ class TaskixSyncPlugin extends Plugin {
     isMemoryPath(filePath) {
         if (!this.engine?.watches(filePath)) return false;
         const relative = path.posix.relative(this.engine.directory, filePath);
-        return /^(?:[^/]+\/)+Memory\/mem_[0-9a-f]{32}\.md$/.test(relative);
+        return /^(?:[^/]+\/)+Memory\/mem_(?:[0-9]{12}_)?[0-9a-f]{32}\.md$/.test(relative);
     }
 
     async archiveProject(id, archive, boardPath) {
