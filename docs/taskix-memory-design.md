@@ -35,6 +35,8 @@ migration error rolls back the whole transaction and schema version.
 
 Upgrade the service and CLI together, stop the old service before migration,
 and retain a SQLite online backup. Old writable binaries reject schema 2.
+Upgrade `scripts/taskix-backup.py` as well: backup and restore support schemas
+1 and 2, retain the archived schema version, and reject unknown versions.
 Offline reads support schemas 1 and 2 without migrating. Reset pagination cursors
 after migration and use the new IDs for CLI mutations. On the next projection
 sync, renamed notes publish under the new ID and preserve old file bytes in

@@ -113,6 +113,37 @@ if os.environ.get("MOCK_FAIL"):
         with tarfile.open(next(self.output.glob("*.tar.gz"))) as package:
             self.assertIn("memory.sqlite3", package.getnames())
 
+    def test_timestamp_id_schema_backup_restores_without_changing_schema(self):
+        memory = self.memory_fixture(custom=True)
+        with sqlite3.connect(memory) as db:
+            db.execute("PRAGMA user_version=2")
+        self.assert_success(self.run_backup())
+        archive = next(self.output.glob("*.tar.gz"))
+        with tarfile.open(archive) as package:
+            manifest = json.load(package.extractfile("manifest.json"))
+            self.assertEqual(manifest["memory"]["sqlite_user_version"], 2)
+            self.assertEqual(manifest["coverage"]["memory_sources"], 1)
+        destination = self.root / "recovered"
+        self.assert_success(self.restore(archive, destination))
+        with sqlite3.connect(destination / "memory.sqlite3") as db:
+            self.assertEqual(db.execute("PRAGMA user_version").fetchone(), (2,))
+            with sqlite3.connect(memory) as original:
+                self.assertEqual(db.execute("SELECT * FROM sources").fetchall(),
+                                 original.execute("SELECT * FROM sources").fetchall())
+
+    def test_unsupported_memory_schema_or_identity_rejects_backup_before_publishing(self):
+        memory = self.memory_fixture()
+        for version, identity in ((0, 0x41584d4d), (3, 0x41584d4d), (2, 0)):
+            with self.subTest(version=version, identity=identity):
+                with sqlite3.connect(memory) as db:
+                    db.execute(f"PRAGMA user_version={version}")
+                    db.execute(f"PRAGMA application_id={identity}")
+                result = self.run_backup()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("unsupported memory database identity or schema", result.stderr)
+                self.assertFalse(list(self.output.glob("*.tar.gz")))
+                self.assertFalse((self.root / "calls").exists())
+
     def test_mismatched_source_history_rejects_pair_before_publishing(self):
         self.memory_fixture()
         self.connection.execute("UPDATE memory_source_outbox SET snapshot='{}'")
