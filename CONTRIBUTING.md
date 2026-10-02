@@ -63,6 +63,58 @@ after stopping any existing service. Keep the checkout and build output while
 using the links. To restore the installed commands, run
 `brew link --overwrite agentix taskix`.
 
+## Building local source through Homebrew
+
+Update `tenfyzhong/tap` to a version with local-source support, then use:
+
+```sh
+make install-local
+make install-local PROFILE=debug
+make install-local FORMULAE=taskix
+```
+
+The target passes the current checkout as `HOMEBREW_AGENTIX_LOCAL_SOURCE` to
+`brew reinstall --build-from-source`. The tap's Formulae snapshot the source
+and build/install the selected CLIs using Cargo. No separate Cargo build or
+installer script runs in this repository. Homebrew manages its build directory;
+`CARGO_TARGET_DIR` does not select the local installation output.
+
+`PROFILE` defaults to `release` and accepts `release` or `debug`.
+`FORMULAE` defaults to `agentix taskix`; select either CLI to build and install
+only that package. Local builds enable all Cargo features. Homebrew installs
+normal build dependencies and preserves the Formula's configuration, completion
+and service installation rules.
+
+The same operation works directly from the tap or any directory:
+
+```sh
+env HOMEBREW_AGENTIX_LOCAL_SOURCE=/absolute/path/to/agentix \
+  brew reinstall --build-from-source tenfyzhong/tap/agentix tenfyzhong/tap/taskix
+```
+
+The snapshot includes current tracked files and nonignored untracked files;
+Git metadata, `target` and `node_modules` are excluded. Source and Formula files
+are never rewritten. Keep the checkout unchanged during installation.
+Source/profile content determines the `0.0.0-local.<digest>.<profile>` Cellar
+version; the executable retains its Cargo version. Installed snapshot metadata
+remains readable after removing the checkout.
+
+`reinstall` replaces the active keg using Homebrew's normal linking and failure
+recovery. It can also install a selected CLI for the first time. Conflicting
+manual `link-debug` links may need to be removed before Homebrew can link the
+commands. This target does not restart services. Restart only the selected
+service after installation:
+
+```sh
+brew services restart tenfyzhong/tap/agentix
+brew services restart tenfyzhong/tap/taskix
+```
+
+To return to the upstream release or remote HEAD, run `brew reinstall` or
+`brew reinstall --HEAD` without `HOMEBREW_AGENTIX_LOCAL_SOURCE`, then restart
+the selected service explicitly. To rebuild the local source again, rerun
+`make install-local`.
+
 ## Installing and switching Homebrew versions
 
 The following targets manage both `agentix` and `taskix` from

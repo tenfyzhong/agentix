@@ -48,6 +48,20 @@ test("bottle overlay replaces compilation but preserves source and tap installat
     }
 });
 
+test("bottle_overlay_accepts_native_local_source_formula", { skip: !rubyAvailable }, async t => {
+    const dir = await mkdtemp(join(tmpdir(), "release-local-source-"));
+    t.after(() => rm(dir, {recursive: true, force: true}));
+    const path = join(dir, "agentix.rb");
+    const binary = join(dir, "agentix");
+    await writeFile(binary, "binary");
+    await chmod(binary, 0o755);
+    await writeFile(path, fixture.replace('version.to_s\n', 'version.to_s if !build.head? && !local_build\n')
+        .replace('path: "crates/agentix")\n', 'path: "crates/agentix"), *cargo_args\n'));
+    const result = spawnSync("ruby", [overlay], {env: {...process.env, FORMULA_PATH: path, PREBUILT_BINARY: binary, FORMULA: "agentix"}, encoding: "utf8"});
+    assert.equal(result.status, 0, result.stderr);
+    assert.doesNotMatch(await readFile(path, "utf8"), /system "cargo"|set-release-version/);
+});
+
 test("bottle overlay refuses changed compiler recipes or missing binaries without modifying formula", { skip: !rubyAvailable }, async () => {
     const dir = await mkdtemp(join(tmpdir(), "release-bottle-"));
     try {

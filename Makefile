@@ -11,12 +11,13 @@ HOSTS ?= codex pi omp claude
 VERSION ?= stable
 FORMULAE ?= agentix taskix
 SOURCE ?= main
+PROFILE ?= release
 BREW_FORMULAE = $(addprefix tenfyzhong/tap/,$(FORMULAE))
 DEBUG_TARGET_DIR = $(if $(CARGO_TARGET_DIR),$(CARGO_TARGET_DIR),target)
 
 .DEFAULT_GOAL := build
 
-.PHONY: build release completions check fmt clippy test test-backup clean help remove-plugin link-debug install update switch plugin
+.PHONY: build release completions check fmt clippy test test-backup clean help remove-plugin link-debug install-local install update switch plugin
 
 build:
 	$(CARGO) build --workspace --all-features
@@ -34,6 +35,16 @@ link-debug:
 
 release:
 	$(CARGO) build --workspace --all-features --release
+
+install-local:
+	@case "$(PROFILE)" in release|debug) ;; *) echo 'PROFILE must be release or debug' >&2; exit 2 ;; esac
+	@test -n "$(strip $(FORMULAE))" || { echo 'FORMULAE must not be empty' >&2; exit 2; }
+	@for formula in $(FORMULAE); do \
+		case "$$formula" in agentix|taskix) ;; *) echo 'FORMULAE must contain only agentix or taskix' >&2; exit 2 ;; esac; \
+	done
+	HOMEBREW_AGENTIX_LOCAL_SOURCE="$(CURDIR)" HOMEBREW_AGENTIX_LOCAL_PROFILE="$(PROFILE)" \
+	HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1 \
+	$(BREW) reinstall --build-from-source $(BREW_FORMULAE)
 
 completions:
 	$(CARGO) build --package agentix --package taskix
@@ -157,6 +168,7 @@ help:
 		'make completions  Regenerate bash, zsh, and fish completions for both CLIs' \
 		'make check    Run formatting, lint, and tests' \
 		'make link-debug  Build debug CLIs and replace Homebrew command links' \
+		'make install-local [PROFILE=release|debug]  Build local source through Homebrew Formulae (default: release)' \
 		'make install [VERSION=stable|head]  Install and use both Homebrew CLIs (default: stable)' \
 		'make update [VERSION=stable|head]  Update and use the selected version' \
 		'make switch [VERSION=stable|head]  Use an already installed version without downloading' \
