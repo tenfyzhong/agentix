@@ -48,10 +48,13 @@ impl MultiplexerDriver for WorkspaceDriver {
         }]))
     }
 
-    async fn new_codex_session(&self, pid: u32) -> Result<(), MultiplexerError> {
+    async fn new_codex_session(
+        &self,
+        pid: u32,
+    ) -> Result<agentix_multiplexer::CodexNewSessionOutcome, MultiplexerError> {
         assert_eq!(pid, std::process::id());
         self.switched.as_ref().unwrap().notify_one();
-        Ok(())
+        Ok(agentix_multiplexer::CodexNewSessionOutcome::Started)
     }
 
     async fn execute(

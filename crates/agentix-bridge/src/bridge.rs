@@ -355,6 +355,19 @@ impl AgentAdapter for BridgeAdapter {
     async fn session_client_id(&self, session: &SessionId) -> Option<String> {
         self.connection(session).await.ok()?.client_id.clone()
     }
+    async fn terminal_interaction_target(
+        &self,
+        session: &SessionId,
+    ) -> Option<agentix_domain::TerminalInteractionTarget> {
+        let connection = self.connection(session).await.ok()?;
+        if !connection.online.load(Ordering::Acquire) {
+            return None;
+        }
+        Some(agentix_domain::TerminalInteractionTarget {
+            pid: connection.pid?,
+            client_id: connection.client_id.clone()?,
+        })
+    }
     async fn session_capabilities(
         &self,
         session: &SessionId,

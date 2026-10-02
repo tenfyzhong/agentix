@@ -1,4 +1,5 @@
 //! Namespaced routing across independently connected local agent runtimes.
+mod terminal;
 use crate::{
     AgentAdapter, AgentError, AgentEvent, AgentKind, HistoryPage, InteractionDecision,
     MultiplexerMutation, MultiplexerMutationResult, MultiplexerSnapshot, QueuedPrompt,
@@ -26,6 +27,8 @@ pub struct AgentRegistry {
     known: BTreeMap<AgentKind, KnownSessions>,
     workspaces: BTreeMap<AgentKind, NamespacedWorkspace>,
     tasks: Vec<tokio::task::JoinHandle<()>>,
+    terminal: Arc<terminal::TerminalObserver>,
+    terminal_port: Option<Arc<dyn crate::TerminalInteractionPort>>,
 }
 impl Drop for AgentRegistry {
     fn drop(&mut self) {
@@ -50,6 +53,7 @@ impl AgentRegistry {
         let mut tasks = Vec::new();
         let mut known = BTreeMap::new();
         let mut generations = BTreeMap::new();
+        let terminal = Arc::new(terminal::TerminalObserver::default());
         for (&kind, agent) in &map {
             let sessions = KnownSessions::default();
             let generation = Arc::new(AtomicU64::new(0));
@@ -62,6 +66,7 @@ impl AgentRegistry {
                 routes.clone(),
                 sessions,
                 generation,
+                terminal.clone(),
             ));
         }
         let workspaces = map
@@ -85,7 +90,26 @@ impl AgentRegistry {
             known,
             workspaces,
             tasks,
+            terminal,
+            terminal_port: None,
         })
+    }
+    #[must_use]
+    pub fn with_terminal_interactions(
+        mut self,
+        port: Arc<dyn crate::TerminalInteractionPort>,
+    ) -> Self {
+        for agent in self.agents.values() {
+            agent.enable_terminal_interactions();
+        }
+        self.tasks.push(self.terminal.spawn(
+            self.agents.clone(),
+            port.clone(),
+            self.routes.clone(),
+            self.events.clone(),
+        ));
+        self.terminal_port = Some(port);
+        self
     }
     fn target(
         &self,
@@ -289,7 +313,9 @@ impl AgentAdapter for AgentRegistry {
     async fn attach(&self, session: &SessionId) -> Result<(), AgentError> {
         let session = self.canonical_session(session).await?;
         let (key, agent) = self.target(&session)?;
-        agent.attach(key.native_id.adapter_id()).await
+        agent.attach(key.native_id.adapter_id()).await?;
+        self.terminal.observe(key);
+        Ok(())
     }
     async fn is_read_only(&self, session: &SessionId) -> bool {
         match self.target(session) {
@@ -303,6 +329,7 @@ impl AgentAdapter for AgentRegistry {
     }
     async fn unsubscribe(&self, session: &SessionId) -> Result<(), AgentError> {
         let (key, agent) = self.target(session)?;
+        self.terminal.unobserve(&key, &self.events);
         agent.unsubscribe(key.native_id.adapter_id()).await
     }
     async fn start_turn(&self, session: &SessionId, text: &str) -> Result<String, AgentError> {
@@ -327,6 +354,20 @@ impl AgentAdapter for AgentRegistry {
             .rpc_id
             .as_str()
             .ok_or_else(|| AgentError::Rejected("invalid interaction".into()))?;
+        if token.starts_with("terminal:") {
+            return self
+                .terminal
+                .respond(
+                    token,
+                    &decision.response,
+                    &self.agents,
+                    self.terminal_port.as_deref().ok_or_else(|| {
+                        AgentError::Rejected("Terminal interaction unavailable".into())
+                    })?,
+                    &self.events,
+                )
+                .await;
+        }
         let route = self
             .routes
             .lock()
@@ -393,11 +434,22 @@ impl SessionControlPort for AgentRegistry {
         command: SessionCommand,
     ) -> Result<SessionCommandResult, AgentError> {
         let (key, agent) = self.target(session)?;
-        let mut result = agent
+        let control = agent
             .session_control()
-            .ok_or_else(|| AgentError::Rejected("session control unavailable".into()))?
+            .ok_or_else(|| AgentError::Rejected("session control unavailable".into()))?;
+        let switching = matches!(command, SessionCommand::New);
+        if switching
+            && let Some(client_id) = agent.session_client_id(key.native_id.adapter_id()).await
+        {
+            self.terminal.begin_switch(key.clone(), client_id);
+        }
+        let result = control
             .run_session_command(key.native_id.adapter_id(), command)
-            .await?;
+            .await;
+        if switching && result.is_err() {
+            self.terminal.fail_switch(&key);
+        }
+        let mut result = result?;
         if let Some(session) = &mut result.replacement_session {
             Self::qualify(key.agent, session);
         }
@@ -546,6 +598,7 @@ fn spawn_backend(
     routes: Routes,
     known: KnownSessions,
     generation: Arc<AtomicU64>,
+    terminal: Arc<terminal::TerminalObserver>,
 ) -> tokio::task::JoinHandle<()> {
     let mut source = agent.subscribe();
     tokio::spawn(async move {
@@ -580,6 +633,7 @@ fn spawn_backend(
                     }
                 }
                 Ok(mut event) => {
+                    terminal.backend_event(kind, &event, &events);
                     if let Some(session) = event.session_id() {
                         known
                             .lock()

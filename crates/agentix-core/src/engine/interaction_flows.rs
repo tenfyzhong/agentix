@@ -14,6 +14,7 @@ impl Engine {
         owner_id: &str,
     ) -> Result<(), EngineError> {
         self.cancel_reattachment(conversation);
+        self.cancel_checkout_choices(conversation).await?;
         if let Some(session) = self
             .interactions
             .terminal_inputs
@@ -35,6 +36,50 @@ impl Engine {
             &OutboundView::text("Agentix", "Pending reply cancelled."),
         )
         .await?;
+        Ok(())
+    }
+
+    async fn cancel_checkout_choices(
+        &self,
+        conversation: &ConversationRef,
+    ) -> Result<(), EngineError> {
+        let keys = self
+            .interactions
+            .pending
+            .lock()
+            .await
+            .iter()
+            .filter(|(_, pending)| {
+                pending.message.conversation == *conversation
+                    && (pending.session_switch_client.is_some() || pending.terminal_cancelable)
+            })
+            .map(|(key, _)| key.clone())
+            .collect::<Vec<_>>();
+        for key in keys {
+            let pending = self.interactions.pending.lock().await.remove(&key);
+            if let Some(pending) = pending {
+                self.revoke_action_group(&pending.action_group).await;
+                let result = self
+                    .agent
+                    .resolve_interaction(InteractionDecision {
+                        rpc_id: pending.rpc_id.clone(),
+                        response: json!({"decision":"cancel"}),
+                    })
+                    .await;
+                if pending.session_switch_client.is_some() {
+                    self.cancel_session_switch(conversation).await?;
+                }
+                self.show_local_approval_resolution(conversation, pending, "cancel")
+                    .await?;
+                if let Err(error) = result {
+                    self.send_view(
+                        conversation,
+                        &OutboundView::text("Terminal cancellation failed", error.to_string()),
+                    )
+                    .await?;
+                }
+            }
+        }
         Ok(())
     }
 
@@ -161,6 +206,13 @@ impl Engine {
             interaction,
             PendingInteractionView {
                 rpc_id: request.rpc_id.clone(),
+                terminal_cancelable: request.method == "agentix/terminal/interaction"
+                    && request.payload["cancelable"] == true,
+                session_switch_client: (request.method == "agentix/codex/checkoutChoice"
+                    || request.method == "agentix/terminal/interaction"
+                        && request.payload["sessionSwitch"] == true)
+                    .then(|| request.payload["clientId"].as_str().map(str::to_owned))
+                    .flatten(),
                 message,
                 view,
                 action_group,
@@ -285,6 +337,25 @@ impl Engine {
                 interaction,
                 decision,
             } => {
+                let checkout_client = self
+                    .interactions
+                    .pending
+                    .lock()
+                    .await
+                    .get(&interaction)
+                    .and_then(|pending| pending.session_switch_client.clone());
+                if let Some(checkout_client) = checkout_client {
+                    self.refresh_session_switch(conversation).await?;
+                    let switch = self.state.session_switch(conversation).await?;
+                    if !switch.is_some_and(|switch| {
+                        switch.old_session == interaction.session_id
+                            && switch.paused.is_none()
+                            && switch.target.is_none()
+                            && checkout_client == switch.client_id
+                    }) {
+                        return Err(EngineError::InvalidAction);
+                    }
+                }
                 let selected = decision
                     .response
                     .get("decision")

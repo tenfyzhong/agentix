@@ -501,7 +501,15 @@ async fn build_service(
     {
         previous.adapter.clone()
     } else {
-        Arc::new(agentix_core::AgentRegistry::new(agents)?)
+        let registry = agentix_core::AgentRegistry::new(agents)?;
+        let registry = if let Some(driver) = build_multiplexer(multiplexer.resolved_kind) {
+            registry.with_terminal_interactions(Arc::new(
+                agentix_multiplexer::TerminalInteractions::new(driver),
+            ))
+        } else {
+            registry
+        };
+        Arc::new(registry)
     };
     tracing::info!(
         phase = "agent_connection",

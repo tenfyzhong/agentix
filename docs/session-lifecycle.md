@@ -242,6 +242,18 @@ RPC. Candidates are local to an open connection and never cross disconnection.
 The two-minute candidate deadline and the 30-second IM switch deadline serve
 different purposes.
 
+An IM-initiated Codex `/new` can first open a checkout picker in the original
+terminal. Agentix forwards its Current checkout and New worktree options to IM
+without selecting a default. Human decision time does not consume the replacement
+startup deadline. An explicit choice revalidates the original client and picker
+before submitting that option; `/cancel` dismisses the picker and cancels the
+handoff. Detached or already answered choices are invalidated.
+
+The configured service uses the shared [terminal interaction observer](terminal-interactions.md)
+for this picker and other native dialogs across Codex, Pi, OMP, and Claude Code.
+Recognition does not depend on `/new` or checkout option text. Unknown recognizable
+dialogs stay visible in IM for local handling; they do not receive speculative input.
+
 ### Attached and background messages
 
 Lifecycle, attached-content recovery, and background completion reads run in
@@ -464,7 +476,8 @@ uncertain result, which must not be automatically resent.
 | Remote Stop | Supported | Supported | Supported | Not advertised |
 | Remote new-session operation | Native/session-switch orchestration | Registered command calling `newSession` | Restricted terminal `/new` | Restricted terminal `/clear` when supported |
 
-Shared explicit IM session switches have a 30-second deadline. Codex native
+Shared explicit IM session switches have a 30-second replacement startup deadline,
+excluding a pending Codex checkout decision in IM. Codex native
 replacement candidates have a separate two-minute deadline while their connection
 remains open. Bridge registration has a three-second connection/handshake deadline;
 graceful Bridge close allows up to 100ms to flush. These values bound individual

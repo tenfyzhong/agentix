@@ -1,5 +1,16 @@
 # Agentix bridge implementation and validation
 
+## Terminal interaction boundary
+
+Attached Pi, OMP, and Claude Code sessions supply their original PID and client
+identity to Agentix's shared [terminal interaction observer](../../docs/terminal-interactions.md).
+Common choice lists and confirmations become IM requests; recognizable unsupported
+dialogs produce a terminal handling notice. This does not add structured approval
+events or capabilities to the bridge protocol. Claude's completion hooks and
+optional Channel delivery retain their existing transport behavior.
+
+## Native host validation
+
 The native loader smoke tests have passed with Pi 0.84.4 and OMP 17.3.7. They exercise public extension APIs without model requests. Run them against installed hosts with:
 
 ```sh

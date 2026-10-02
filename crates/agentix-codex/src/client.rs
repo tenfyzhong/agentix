@@ -1,4 +1,5 @@
 mod background;
+mod checkout;
 mod goal_input;
 mod observed;
 
@@ -134,6 +135,8 @@ pub struct CodexClient {
     process_sessions: Arc<Mutex<HashSet<SessionId>>>,
     exited_process_sessions: Arc<Mutex<HashSet<SessionId>>>,
     pending_resumes: Arc<Mutex<HashSet<SessionId>>>,
+    checkout_choices: Arc<Mutex<HashMap<String, checkout::PendingCheckout>>>,
+    terminal_interactions_enabled: Arc<AtomicBool>,
     token_usage: Arc<Mutex<HashMap<SessionId, Value>>>,
     process_discovery: Option<CodexProcessDiscovery>,
     registry: Option<crate::ClientRegistry>,
@@ -360,6 +363,8 @@ impl CodexClient {
             process_sessions,
             exited_process_sessions,
             pending_resumes,
+            checkout_choices: Arc::new(Mutex::new(HashMap::new())),
+            terminal_interactions_enabled: Arc::new(AtomicBool::new(false)),
             token_usage,
             process_discovery,
             registry,
@@ -928,6 +933,9 @@ impl CodexClient {
     }
 
     pub async fn respond(&self, id: Value, result: Value) -> Result<(), ClientError> {
+        if id.get("agentixCheckout").is_some() {
+            return self.respond_checkout_choice(&id, &result).await;
+        }
         if self
             .registry
             .as_ref()
@@ -1883,11 +1891,19 @@ impl CodexClient {
                 if client.session_client_id(&session).await.as_ref() != Some(&client_id) {
                     return Err(AgentError::Rejected("The original client changed".into()));
                 }
-                client
+                let outcome = client
                     .workspace
                     .new_codex_session(pid)
                     .await
-                    .map_err(|e| AgentError::Rejected(e.to_string()))
+                    .map_err(|e| AgentError::Rejected(e.to_string()))?;
+                if outcome == agentix_multiplexer::CodexNewSessionOutcome::CheckoutChoice
+                    && !client.terminal_interactions_enabled.load(Ordering::Acquire)
+                {
+                    client
+                        .request_checkout_choice(&session, &client_id, pid)
+                        .await;
+                }
+                Ok(())
             }
             .await;
             if let Err(error) = result {
@@ -2453,6 +2469,27 @@ impl AgentAdapter for CodexClient {
             return None;
         }
         Some(owner.client_id.clone())
+    }
+    fn enable_terminal_interactions(&self) {
+        self.terminal_interactions_enabled
+            .store(true, Ordering::Release);
+    }
+    async fn terminal_interaction_target(
+        &self,
+        session: &SessionId,
+    ) -> Option<agentix_domain::TerminalInteractionTarget> {
+        let clients = self.registry.as_ref()?.snapshot();
+        let mut owners = clients
+            .iter()
+            .filter(|client| client.sessions.iter().any(|id| id == session.as_str()));
+        let owner = owners.next()?;
+        if owners.next().is_some() {
+            return None;
+        }
+        Some(agentix_domain::TerminalInteractionTarget {
+            pid: owner.pid?,
+            client_id: owner.client_id.clone(),
+        })
     }
 
     fn display_name(&self) -> &'static str {

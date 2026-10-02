@@ -106,6 +106,56 @@ impl TmuxDriver {
 
 #[async_trait]
 impl MultiplexerDriver for TmuxDriver {
+    async fn inspect_interaction(
+        &self,
+        agent: agentix_domain::AgentKind,
+        pid: u32,
+    ) -> Result<Option<agentix_domain::TerminalInteraction>, MultiplexerError> {
+        let location = self
+            .process_locations()
+            .await?
+            .remove(&pid)
+            .ok_or_else(|| error("Original agent pane is unavailable"))?;
+        let prefix = self.socket.as_ref().map_or_else(
+            || strings(&["-L", "default"]),
+            |socket| vec!["-S".into(), socket.to_string_lossy().into_owned()],
+        );
+        agentix_multiplexer::inspect_terminal_interaction(
+            &self.command,
+            &prefix,
+            &location.pane_id,
+            pid,
+            agent,
+        )
+        .await
+    }
+    async fn respond_interaction(
+        &self,
+        agent: agentix_domain::AgentKind,
+        pid: u32,
+        expected: &agentix_domain::TerminalInteraction,
+        response: agentix_domain::TerminalInteractionResponse,
+    ) -> Result<(), MultiplexerError> {
+        let location = self
+            .process_locations()
+            .await?
+            .remove(&pid)
+            .ok_or_else(|| error("Original agent pane is unavailable"))?;
+        let prefix = self.socket.as_ref().map_or_else(
+            || strings(&["-L", "default"]),
+            |socket| vec!["-S".into(), socket.to_string_lossy().into_owned()],
+        );
+        agentix_multiplexer::respond_terminal_interaction(
+            &self.command,
+            &prefix,
+            &location.pane_id,
+            pid,
+            agent,
+            expected,
+            response,
+        )
+        .await
+    }
     async fn codex_terminal_input(
         &self,
         pid: u32,
@@ -129,7 +179,10 @@ impl MultiplexerDriver for TmuxDriver {
         )
         .await
     }
-    async fn new_codex_session(&self, pid: u32) -> Result<(), MultiplexerError> {
+    async fn new_codex_session(
+        &self,
+        pid: u32,
+    ) -> Result<agentix_multiplexer::CodexNewSessionOutcome, MultiplexerError> {
         let location = self
             .process_locations()
             .await?
@@ -140,6 +193,29 @@ impl MultiplexerDriver for TmuxDriver {
             |socket| vec!["-S".into(), socket.to_string_lossy().into_owned()],
         );
         agentix_multiplexer::send_codex_new(&self.command, &prefix, &location.pane_id, pid).await
+    }
+    async fn select_codex_checkout(
+        &self,
+        pid: u32,
+        choice: agentix_multiplexer::CodexCheckoutChoice,
+    ) -> Result<(), MultiplexerError> {
+        let location = self
+            .process_locations()
+            .await?
+            .remove(&pid)
+            .ok_or_else(|| error("Original Codex pane is unavailable"))?;
+        let prefix = self.socket.as_ref().map_or_else(
+            || strings(&["-L", "default"]),
+            |socket| vec!["-S".into(), socket.to_string_lossy().into_owned()],
+        );
+        agentix_multiplexer::select_codex_checkout(
+            &self.command,
+            &prefix,
+            &location.pane_id,
+            pid,
+            choice,
+        )
+        .await
     }
 
     fn kind(&self) -> MultiplexerKind {

@@ -2,11 +2,21 @@
 mod directories;
 mod launch;
 pub use launch::{interactive_login_shell_argv, persistent_launch_argv};
+#[cfg(all(test, unix))]
+mod interaction_tests;
+mod interactions;
 mod native_control;
+pub use interactions::{
+    TerminalInteractions, inspect_terminal_interaction, parse_terminal_interaction,
+    respond_terminal_interaction,
+};
 mod terminal_command;
 #[cfg(test)]
 use native_control::validate_codex_prompt;
-pub use native_control::{codex_terminal_input, send_codex_new};
+pub use native_control::{
+    CodexCheckoutChoice, CodexNewSessionOutcome, codex_terminal_input, select_codex_checkout,
+    send_codex_new,
+};
 pub use terminal_command::terminal_command_output;
 
 use agentix_domain::{
@@ -46,6 +56,24 @@ pub struct MultiplexerOutcome {
 
 #[async_trait]
 pub trait MultiplexerDriver: std::fmt::Debug + Send + Sync {
+    async fn inspect_interaction(
+        &self,
+        _agent: agentix_domain::AgentKind,
+        _pid: u32,
+    ) -> Result<Option<agentix_domain::TerminalInteraction>, MultiplexerError> {
+        Ok(None)
+    }
+    async fn respond_interaction(
+        &self,
+        _agent: agentix_domain::AgentKind,
+        _pid: u32,
+        _expected: &agentix_domain::TerminalInteraction,
+        _response: agentix_domain::TerminalInteractionResponse,
+    ) -> Result<(), MultiplexerError> {
+        Err(MultiplexerError::Backend(
+            "Terminal interaction is unavailable".into(),
+        ))
+    }
     fn kind(&self) -> MultiplexerKind;
     async fn inventory(&self, start: bool) -> Result<Option<Vec<PaneState>>, MultiplexerError>;
     async fn execute(
@@ -62,9 +90,21 @@ pub trait MultiplexerDriver: std::fmt::Debug + Send + Sync {
             "Terminal input inspection is unavailable".into(),
         ))
     }
-    async fn new_codex_session(&self, _pid: u32) -> Result<(), MultiplexerError> {
+    async fn new_codex_session(
+        &self,
+        _pid: u32,
+    ) -> Result<CodexNewSessionOutcome, MultiplexerError> {
         Err(MultiplexerError::Backend(
             "Native session control is unavailable".into(),
+        ))
+    }
+    async fn select_codex_checkout(
+        &self,
+        _pid: u32,
+        _choice: CodexCheckoutChoice,
+    ) -> Result<(), MultiplexerError> {
+        Err(MultiplexerError::Backend(
+            "Terminal checkout selection is unavailable".into(),
         ))
     }
     async fn process_locations(&self) -> Result<HashMap<u32, TerminalLocation>, MultiplexerError> {
@@ -158,8 +198,18 @@ impl WorkspaceManager {
     ) -> Result<Option<String>, MultiplexerError> {
         self.driver()?.codex_terminal_input(pid, clear).await
     }
-    pub async fn new_codex_session(&self, pid: u32) -> Result<(), MultiplexerError> {
+    pub async fn new_codex_session(
+        &self,
+        pid: u32,
+    ) -> Result<CodexNewSessionOutcome, MultiplexerError> {
         self.driver()?.new_codex_session(pid).await
+    }
+    pub async fn select_codex_checkout(
+        &self,
+        pid: u32,
+        choice: CodexCheckoutChoice,
+    ) -> Result<(), MultiplexerError> {
+        self.driver()?.select_codex_checkout(pid, choice).await
     }
     pub async fn pane_exists(&self, location: &TerminalLocation) -> Result<bool, MultiplexerError> {
         let driver = self.driver()?;

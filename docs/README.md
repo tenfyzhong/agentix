@@ -8,6 +8,7 @@ Installation, configuration, commands, and other user guides live in the [GitHub
 - [Architecture and message flow](architecture.md)
 - [Native host protocol](host-protocol.md)
 - [Session lifecycle](session-lifecycle.md)
+- [Terminal interaction recognition and lifecycle](terminal-interactions.md)
 - [Background completions](background-completions.md)
 - [Task state machines](task-state-machines.md)
 - [Task workflow mechanisms](task-workflow-mechanisms.md)

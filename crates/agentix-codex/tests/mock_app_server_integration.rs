@@ -3,6 +3,9 @@
 
 mod support;
 
+#[path = "support/checkout.rs"]
+mod checkout;
+
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 

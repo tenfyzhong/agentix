@@ -16,6 +16,7 @@ pub struct DeferredAgent {
     connected: Arc<RwLock<Option<Arc<dyn AgentAdapter>>>>,
     events: broadcast::Sender<AgentEvent>,
     task: tokio::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
+    terminal_enabled: Arc<std::sync::atomic::AtomicBool>,
 }
 impl DeferredAgent {
     pub fn new<F, Fut>(name: &'static str, directory: String, factory: F) -> Self
@@ -27,10 +28,15 @@ impl DeferredAgent {
         let (events, _) = broadcast::channel(1024);
         let target = connected.clone();
         let output = events.clone();
+        let terminal_enabled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let enable = terminal_enabled.clone();
         let task = tokio::spawn(async move {
             loop {
                 match factory().await {
                     Ok(agent) => {
+                        if enable.load(std::sync::atomic::Ordering::Acquire) {
+                            agent.enable_terminal_interactions();
+                        }
                         let mut source = agent.subscribe();
                         *target.write().expect("backend lock") = Some(agent);
                         let _ = output.send(AgentEvent::Connected { generation: 1 });
@@ -63,6 +69,7 @@ impl DeferredAgent {
             connected,
             events,
             task: tokio::sync::Mutex::new(Some(task)),
+            terminal_enabled,
         }
     }
     fn agent(&self) -> Result<Arc<dyn AgentAdapter>, AgentError> {
@@ -85,6 +92,22 @@ fn unsupported() -> AgentError {
 }
 #[async_trait]
 impl AgentAdapter for DeferredAgent {
+    fn enable_terminal_interactions(&self) {
+        self.terminal_enabled
+            .store(true, std::sync::atomic::Ordering::Release);
+        if let Ok(agent) = self.agent() {
+            agent.enable_terminal_interactions();
+        }
+    }
+    async fn terminal_interaction_target(
+        &self,
+        session: &SessionId,
+    ) -> Option<crate::TerminalInteractionTarget> {
+        self.agent()
+            .ok()?
+            .terminal_interaction_target(session)
+            .await
+    }
     async fn shutdown(&self) -> Result<(), AgentError> {
         // Stop connection attempts before reading the final connected backend.
         // Keep the join handle in the mutex across await so cancellation is safe.
