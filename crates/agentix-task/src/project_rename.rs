@@ -16,7 +16,7 @@ impl Service {
         .fetch_all(&self.store().pool)
         .await?
         .iter()
-        .map(|data| serde_json::from_str::<crate::Project>(data))
+        .map(|data| crate::stored_paths::from_str::<crate::Project>(data))
         .collect::<std::result::Result<Vec<_>, _>>()?;
         let mut listings = BTreeMap::new();
         let mut roots = BTreeSet::new();

@@ -70,7 +70,7 @@ async fn selection(
                 AND json_extract(projects.data,'$.archived_at') IS NULL"
                     .into(),
                 id,
-                Some(serde_json::from_str(&data)?),
+                Some(crate::stored_paths::from_str(&data)?),
             ))
         }
         BrowseScope::Session(session) => {

@@ -11,7 +11,7 @@ impl Service {
         let rows = sqlx::query("SELECT p.data,d.path FROM projects p JOIN document_registry d ON d.key='board:'||p.id WHERE json_extract(p.data,'$.archived_at') IS NOT NULL")
             .fetch_all(&self.store().pool).await?;
         for row in rows {
-            let project: Project = serde_json::from_str(&row.get::<String, _>("data"))?;
+            let project: Project = crate::stored_paths::from_str(&row.get::<String, _>("data"))?;
             let relative = project.document_directory();
             if !std::path::Path::new(&relative).starts_with("Archived Projects") {
                 continue;
@@ -51,7 +51,7 @@ impl Service {
         let rows = sqlx::query("SELECT p.data,d.path FROM projects p LEFT JOIN document_registry d ON d.key='board:'||p.id")
             .fetch_all(&self.store().pool).await?;
         for row in rows {
-            let project: Project = serde_json::from_str(&row.get::<String, _>("data"))?;
+            let project: Project = crate::stored_paths::from_str(&row.get::<String, _>("data"))?;
             let old = project.document_directory();
             let new = if project.archived_at.is_some() {
                 format!("Archived Projects/{}", project.key)

@@ -35,6 +35,7 @@ mod scoped;
 pub use scoped::JobFilter;
 mod state_index;
 mod store;
+mod stored_paths;
 
 pub use config::{Config, DocumentConfig, StorageConfig, expand_home};
 pub use model::*;

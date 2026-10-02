@@ -87,7 +87,7 @@ pub(crate) async fn entities<T: DeserializeOwned>(
     .fetch_all(conn)
     .await?;
     rows.into_iter()
-        .map(|v| serde_json::from_str(&v).map_err(Into::into))
+        .map(|v| crate::stored_paths::from_str(&v))
         .collect()
 }
 
@@ -212,7 +212,7 @@ pub(crate) async fn request_scope(conn: &mut SqliteConnection, request: &Value) 
         scope.projects = ids(
             conn,
             crate::project_lookup::BY_ROOT,
-            &crate::project_lookup::canonical_root(required(request, "root")?),
+            &crate::project_lookup::canonical_root(required(request, "root")?)?,
         )
         .await?;
     }
@@ -546,12 +546,12 @@ impl Store {
 
     /// Indexed lookup by canonical directory identity, without filesystem access.
     pub async fn project_by_root(&self, root: &str) -> Result<Option<crate::Project>> {
-        let data: Option<String> = sqlx::query_scalar("SELECT data FROM projects WHERE id=(SELECT p.id FROM project_lookup l JOIN projects p ON p.id=l.project_id WHERE l.canonical_root=? ORDER BY p.rowid LIMIT 1)")
-            .bind(root)
+        let data: Option<String> = sqlx::query_scalar("SELECT data FROM projects WHERE id=(SELECT p.id FROM project_lookup l JOIN projects p ON p.id=l.project_id WHERE l.canonical_root IN (?,?) ORDER BY p.rowid LIMIT 1)")
+            .bind(crate::stored_paths::abbreviate_home(&crate::stored_paths::expand_home(root)?)?)
+            .bind(crate::stored_paths::expand_home(root)?)
             .fetch_optional(&self.pool)
             .await?;
-        data.map(|v| serde_json::from_str(&v).map_err(Into::into))
-            .transpose()
+        data.map(|v| crate::stored_paths::from_str(&v)).transpose()
     }
 
     pub(crate) async fn request_snapshot(&self, request: &Value) -> Result<Snapshot> {
