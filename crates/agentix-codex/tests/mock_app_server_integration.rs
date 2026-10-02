@@ -2660,6 +2660,96 @@ async fn async_cli_questions_can_be_answered_from_attached_or_background_im() {
 }
 
 #[tokio::test]
+async fn cli_answered_async_question_is_not_resent_after_im_attach() {
+    use agentix_codex::{CodexEndpoint, CodexProxy};
+    use std::path::Path;
+
+    let server = MockCodexAppServer::start();
+    server
+        .add_thread(MockThread::new("thr_question", "CLI question", "/work"))
+        .await;
+    let directory = tempfile::tempdir().unwrap();
+    let proxy = CodexProxy::bind(
+        &format!("unix://{}", directory.path().join("proxy.sock").display()),
+        &format!("unix://{}", server.endpoint().socket_path().display()),
+    )
+    .await
+    .unwrap();
+    let cli = CodexClient::connect(CodexEndpoint::parse(proxy.endpoint()).unwrap())
+        .await
+        .unwrap();
+    cli.set_background_turn_notifications(false);
+    let session = SessionId::new("thr_question");
+    cli.attach(&session).await.unwrap();
+    server.set_active_writer(session.as_str()).await;
+    let client = Arc::new(
+        CodexClient::connect_with_registry(
+            server.endpoint(),
+            Path::new("codex"),
+            Path::new("/tmp"),
+            true,
+            proxy.registry(),
+        )
+        .await
+        .unwrap(),
+    );
+    let mut events = client.subscribe();
+    let channel = Arc::new(RecordingChannel::default());
+    let engine = Engine::new(
+        client.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    engine.handle_inbound(inbound("/help")).await.unwrap();
+    server.send_notification(json!({"method":"item/completed","params":{"threadId":"thr_question","turnId":"turn-question","item":{"id":"item-question","type":"agentMessage","text":"","questions":[{"title":"Which approach?","options":["Fast"]}]}}})).await;
+    let request = tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            let event = events.recv().await.unwrap();
+            if let AgentEvent::InteractionRequested(request) = &event {
+                let request = request.clone();
+                engine.handle_agent_event(event).await.unwrap();
+                break request;
+            }
+            engine.handle_agent_event(event).await.unwrap();
+        }
+    })
+    .await
+    .unwrap();
+
+    cli.start_turn(&session, "Which approach?\nFast")
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            let event = events.recv().await.unwrap();
+            let resolved = matches!(&event, AgentEvent::InteractionResolved { request_id, .. } if request_id == &request.rpc_id.to_string());
+            engine.handle_agent_event(event).await.unwrap();
+            if resolved { break; }
+        }
+    }).await.expect("the accepted CLI answer must resolve the queued IM question");
+
+    let before = channel.views().len();
+    engine
+        .handle_inbound(inbound("/attach thr_question"))
+        .await
+        .unwrap();
+    assert!(client.is_read_only(&session).await);
+    assert!(
+        channel.views()[before..]
+            .iter()
+            .all(|view| view.actions.iter().all(|action| action.label != "Fast"))
+    );
+    let error = client
+        .respond(
+            request.rpc_id,
+            json!({"answers":{"0":{"answers":["Fast"]}}}),
+        )
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("already been resolved"));
+}
+
+#[tokio::test]
 async fn restarted_engine_receives_discovered_background_completion_without_new_im_input() {
     let server = MockCodexAppServer::start();
     server
