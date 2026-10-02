@@ -1922,6 +1922,7 @@ mod tests {
                 documents: agentix_task::DocumentConfig {
                     root: dir.path().into(),
                     directory: "Tasks".into(),
+                    archive_directory: "Archived Projects".into(),
                 },
             })
             .await

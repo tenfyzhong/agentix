@@ -474,6 +474,18 @@ class TaskixSyncPlugin extends Plugin {
             id: "refresh", name: "Check connection and refresh state",
             callback: () => this.checkConnection(),
         });
+        this.registerEvent(this.app.workspace.on("file-menu", (menu, file) => {
+            const board = Array.isArray(file.children)
+                ? this.app.vault.getAbstractFileByPath(path.posix.join(file.path, "Board.md")) : file;
+            if (!board || path.posix.basename(board.path) !== "Board.md" || !this.engine?.watches(board.path)) return;
+            const properties = this.app.metadataCache.getFileCache(board)?.frontmatter;
+            if (properties?.["taskix-generated"] !== true || !/^prj_/.test(properties.id) ||
+                !["ACTIVE", "ARCHIVED"].includes(properties.status)) return;
+            const archive = properties.status === "ACTIVE";
+            menu.addItem(item => item.setTitle(archive ? "Archive project" : "Restore project")
+                .setIcon(archive ? "archive" : "archive-restore")
+                .onClick(() => this.archiveProject(properties.id, archive, board.path)));
+        }));
         this.registerEvent(this.app.metadataCache.on("changed", (file, data, cache) => {
             if (!this.engine?.watches(file.path)) return;
             this.engine.observe(file.path, cache.frontmatter);
@@ -498,7 +510,30 @@ class TaskixSyncPlugin extends Plugin {
     isMemoryPath(filePath) {
         if (!this.engine?.watches(filePath)) return false;
         const relative = path.posix.relative(this.engine.directory, filePath);
-        return /^Projects\/[^/]+\/Memory\/mem_[0-9a-f]{32}\.md$/.test(relative);
+        return /^(?:[^/]+\/)+Memory\/mem_[0-9a-f]{32}\.md$/.test(relative);
+    }
+
+    async archiveProject(id, archive, boardPath) {
+        try {
+            const settings = { ...this.settings, vaultPath: this.app.vault.adapter.getBasePath() };
+            const { result: project } = await runCli(settings, ["project", "show", id], this.children);
+            if (project?.id !== id || !Number.isInteger(project.revision) ||
+                archive !== (project.archived_at == null)) throw new Error("Project archive state changed; refresh and try again.");
+            if (typeof project.key !== "string" || boardPath !== path.posix.join(this.engine.directory,
+                project.document_directory || `Projects/${project.key}`, "Board.md")) {
+                throw new Error("This Board does not match the registered Project folder.");
+            }
+            const response = await runCli(settings, ["project", archive ? "archive" : "unarchive", id,
+                "--expect-revision", String(project.revision), "--idempotency-key", randomUUID()], this.children);
+            if (this.stopped) return;
+            this.engine?.forget(boardPath);
+            await this.engine?.reconcile();
+            new Notice(response.projection_pending
+                ? `Project state saved; document move is pending: ${response.projection_pending}. Run taskix sync after resolving the conflict.`
+                : `Project ${archive ? "archived" : "restored"}.`, 5000);
+        } catch (error) {
+            if (!this.stopped) new Notice(`Could not ${archive ? "archive" : "restore"} project: ${error.message}`, 10000);
+        }
     }
 
     queueMemory(file) {

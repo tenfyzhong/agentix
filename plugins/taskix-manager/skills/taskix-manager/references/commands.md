@@ -86,7 +86,15 @@ Job and Task note filenames receive an automatic `YYMMDD-seq-` prefix (UTC creat
 
 Use `job update --name` and `task update --name` to improve display names, including after completion. Every Task has one note in `Tasks/`, including Tasks without a published Plan. Plan revisions update its body in place, with status, revision, and local lifecycle timestamps in frontmatter. The agent freely chooses the body’s structure and content. Use `project archive PROJECT_ID` after closing all Jobs; `project list --archived` and `project unarchive PROJECT_ID` browse and restore projects. `AGENT_TASK_LANG` configures the skill’s language for task decomposition and authored text. Hooks and extensions expose it as `task_language`; taskix does not interpret it or store language configuration.
 
-For explicitly requested permanent removal, use `taskix job delete JOB_ID` or `taskix project delete PROJECT_ID`. Job deletion removes its Tasks and their notes. Project deletion removes all its work and the entire generated `Projects/<project>/` directory, including attachments. Release active leases first; Job deletion rejects dependencies from surviving Tasks. Both commands support `--expect-revision` and `--idempotency-key`. A `projection_pending` warning means database deletion committed; repair the reported filesystem issue and run `sync`. Do not replace archival with deletion unless permanent removal was requested.
+Project archival moves the complete note folder to `Archived Projects/<project>`
+under the document output; `documents.archive_directory` configures that relative
+folder. Unarchive restores `Projects/<project>`. Generated links and registered
+paths follow the move; repository/worktree roots and IDs stay unchanged.
+Obsidian's Taskix Sync context menu offers Archive project / Restore project on
+the managed Board or project folder. Resolve destination conflicts before
+running `sync` to retry a pending move.
+
+For explicitly requested permanent removal, use `taskix job delete JOB_ID` or `taskix project delete PROJECT_ID`. Job deletion removes its Tasks and their notes. Project deletion removes all its work and the entire generated project directory (including archived directories and attachments). Release active leases first; Job deletion rejects dependencies from surviving Tasks. Both commands support `--expect-revision` and `--idempotency-key`. A `projection_pending` warning means database deletion committed; repair the reported filesystem issue and run `sync`. Do not replace archival with deletion unless permanent removal was requested.
 
 
 Host interruption releases the lease and preserves the Plan. Pi/OMP stop their heartbeat timer until new work begins. Starting a new prompt restarts heartbeat but does not claim the Task: inspect context, claim again, review the Plan, and explicitly start. Claude’s interrupted-tool-failure hook only handles events carrying `is_interrupt: true`; cancelling a turn may emit no such event. After stopping the agent, `taskix hook interrupt --session HOST_SESSION` explicitly releases its active Tasks, and `taskix hook session-end --session HOST_SESSION` records session shutdown. Do not send cleanup for a session still working. Force-kills and missed hooks retain the lease-expiry fallback.

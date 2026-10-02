@@ -149,7 +149,7 @@ fn checked_write(path: &std::path::Path, expected: &str, next: &str) -> Result<(
 
 impl Service {
     pub fn inbox_path(&self, project: &Project) -> Result<PathBuf> {
-        self.safe_path(&format!("Projects/{}/Inbox.md", project.key))
+        self.safe_path(&format!("{}/Inbox.md", project.document_directory()))
     }
 
     pub(crate) async fn reconcile_inboxes_locked(

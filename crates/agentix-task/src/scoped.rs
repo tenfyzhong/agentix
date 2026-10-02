@@ -222,7 +222,11 @@ pub(crate) async fn request_scope(conn: &mut SqliteConnection, request: &Value) 
     scope.parents(conn).await?;
     let project_wide = matches!(
         command,
-        "project.archive" | "project.unarchive" | "project.delete" | "project.rename"
+        "project.archive"
+            | "project.unarchive"
+            | "project.delete"
+            | "project.rename"
+            | "project.relocate"
     );
     let inbox_wide = command.starts_with("inbox.");
     if project_wide || inbox_wide || crate::inbox::needs_job_inbox(request) {
@@ -270,6 +274,7 @@ pub(crate) async fn request_scope(conn: &mut SqliteConnection, request: &Value) 
             | "job.delete"
             | "project.delete"
             | "project.rename"
+            | "project.relocate"
     ) || inbox_wide
     {
         scope.job_tasks(conn).await?;

@@ -149,10 +149,16 @@ fn cli_project_archive_restores_dashboard_and_task_visibility_in_obsidian() {
     let note = Path::new(plan["absolute_path"].as_str().unwrap());
     cli.ok(&["job", "approve", &job]);
     cli.ok(&["project", "archive", &project]);
-    assert_eq!(properties(&board)["status"], "ARCHIVED");
-    assert_eq!(properties(note)["archived"], true);
+    let archived_board = root.join("Archived Projects/Demo/Board.md");
+    let archived_note = std::path::PathBuf::from(
+        note.to_string_lossy()
+            .replace("Projects/Demo/", "Archived Projects/Demo/"),
+    );
+    assert!(!board.exists());
+    assert_eq!(properties(&archived_board)["status"], "ARCHIVED");
+    assert_eq!(properties(&archived_note)["archived"], true);
     assert!(
-        properties(note)["tags"]
+        properties(&archived_note)["tags"]
             .as_array()
             .unwrap()
             .contains(&json!("archived"))

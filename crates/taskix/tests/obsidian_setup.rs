@@ -29,6 +29,7 @@ impl Fixture {
             documents: DocumentConfig {
                 root: f.path("vault"),
                 directory: "Tasks".into(),
+                archive_directory: "Archived Projects".into(),
             },
         };
         fs::write(f.path("config.toml"), toml::to_string(&config).unwrap()).unwrap();

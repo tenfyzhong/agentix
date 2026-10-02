@@ -684,8 +684,7 @@ impl Application {
         let directory = config
             .documents
             .directory
-            .join("Projects")
-            .join(&project.key)
+            .join(project.document_directory())
             .join("Memory");
         let projection =
             MemoryProjection::new(self.store.clone(), &config.documents.root, &directory)?;

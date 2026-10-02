@@ -296,6 +296,7 @@ async fn draft_capture_does_not_load_a_previous_jobs_body() {
         documents: DocumentConfig {
             root: dir.path().into(),
             directory: "notes".into(),
+            archive_directory: "Archived Projects".into(),
         },
     })
     .await

@@ -50,7 +50,23 @@ The reusable [tasknotes-settings.json](tasknotes-settings.json) contains this se
       Archived/YYMMDD-seq-<job-name>.md
     Tasks/
       YYMMDD-seq-<task-name>.md
+  Archived Projects/<project>/
+    Board.md
+    Inbox.md
+    Jobs/
+    Tasks/
 ```
+
+Right-click a managed project folder or its `Board.md` to choose **Archive
+project**; archived projects offer **Restore project**. Taskix Sync queries the
+current Project revision and submits the guarded CLI command. Archive requires
+all Jobs to be completed or cancelled. The entire note folder, including
+attachments and memory notes, moves to `Archived Projects` by default. Set
+`documents.archive_directory` in the Taskix TOML config to another relative
+directory under `documents.directory`. Restore moves it back to `Projects`.
+An existing destination is never overwritten: resolve the reported conflict
+and run `taskix sync`. The repository/worktree directory does not move.
+Run `taskix obsidian setup` with the updated binary to install the updated menu.
 
 - **Dashboard.base** is a compact native table of active projects: Name (click to open Board), Status, and Updated (recent project activity). It uses read-only formula columns and hides archived projects. Its **Pending review** Kanban view lists all unarchived PENDING_REVIEW Jobs, newest `completed_at` first, then newest `updated_at`. Sync safely replaces the old generated Dashboard.md.
 - **Recent Jobs.base** opens a cross-project board with ACTIVE, PENDING_REVIEW, COMPLETED, and CANCELLED columns. Each column shows up to ten unarchived Jobs, newest `completed_at` first, then newest `updated_at`. Taskix Sync supplies the limited TaskNotes Kanban view; four native status tables also limit results to ten each. Cards show the project Board link, local update time, and pending-review time when present. Sync safely migrates the registered `Pending Review.base` to the new filename.

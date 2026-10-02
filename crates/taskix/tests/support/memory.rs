@@ -322,6 +322,15 @@ fn memory_service_restores_read_only_notes_through_the_real_cli() {
             .status
             .success()
     );
+    cli.ok(&["project", "archive", id]);
+    let archived_relative = relative.replace("Projects/", "Archived Projects/");
+    assert_eq!(
+        cli.ok(&["memory", "document", &archived_relative])["text"],
+        text
+    );
+    assert!(!path.exists());
+    cli.ok(&["project", "unarchive", id]);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
 }
 
 fn start_memory(cli: &Cli, expected_sources: i64) -> Daemon {

@@ -15,6 +15,7 @@ async fn export_fixture() -> (tempfile::TempDir, Service, String) {
         documents: crate::DocumentConfig {
             root: dir.path().to_owned(),
             directory: "notes".into(),
+            archive_directory: "Archived Projects".into(),
         },
     })
     .await
