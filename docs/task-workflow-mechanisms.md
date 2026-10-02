@@ -257,8 +257,11 @@ Document locations in SQLite are configuration-independent relative paths. Activ
 logical `Archived Projects/<key>/...` paths resolve under
 `documents.root/documents.archive_directory`. Project workspace roots identify source
 repositories independently of document storage. SQLite abbreviates the current home
-prefix as `~` (for example, `~/go/src/project`); runtime reads expand it. Workspace
-paths outside the home directory remain unchanged. Moving the
+prefix as `~` (for example, `~/go/src/project`); runtime reads expand it. Generated
+Board frontmatter uses the same home abbreviation. Project-folder rename and archive
+recovery accept both abbreviated and legacy absolute Board roots after expansion,
+while rejecting a different workspace. Workspace paths outside the home directory
+remain unchanged. Moving the
 vault or either configured document folder requires updating that configuration,
 while Project, Job, Plan and document-registry paths remain stable. Obsidian links and
 CLI absolute-path responses are calculated from the current configuration.

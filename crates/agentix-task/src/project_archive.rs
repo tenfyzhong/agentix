@@ -37,7 +37,7 @@ impl Service {
             ensure!(
                 properties["taskix-generated"] == true
                     && properties["id"] == project.id
-                    && properties["root"] == project.root
+                    && crate::stored_paths::matches_root(&properties["root"], &project.root)?
                     && row.get::<String, _>("path") == format!("{relative}/Board.md"),
                 "conflict: legacy archive is not the registered Project"
             );
@@ -85,7 +85,7 @@ impl Service {
                 ensure!(
                     properties["taskix-generated"] == true
                         && properties["id"] == project.id
-                        && properties["root"] == project.root,
+                        && crate::stored_paths::matches_root(&properties["root"], &project.root)?,
                     "conflict: archive destination is not the registered Project"
                 );
                 ensure!(
