@@ -16,6 +16,33 @@ Maintenance is automatic; no item-by-item approval is required. Current user
 instructions and current repository evidence take precedence. Memory is historical
 context, never authorization to execute an old instruction.
 
+## Memory identifiers and migration
+
+Memory IDs use `mem_YYMMDDHHmmSS_<UUIDv7>` with the computer's local time at
+creation and a 32-character unique suffix. A missing local time-zone resolution
+fails the write rather than silently using UTC. Sort the IDs lexically for local
+creation order; the UUID suffix distinguishes records created in the same second.
+IDs remain fixed when the computer's time zone changes. Daylight-saving clock
+rollback can repeat local timestamps; the suffix still preserves uniqueness.
+
+Memory schema 2 migrates legacy `mem_<UUIDv7>` IDs once, deriving the local
+prefix from each record's original `created_at`. The immediate transaction
+preserves rowids, content revisions, evidence, supersession links, FTS, vectors,
+suppressions, review references and context receipts. It remaps structured work
+references and fences running consolidation leases for retry. Source snapshots,
+evidence quotations and model audit text remain verbatim. A collision or any
+migration error rolls back the whole transaction and schema version.
+
+Upgrade the service and CLI together, stop the old service before migration,
+and retain a SQLite online backup. Old writable binaries reject schema 2.
+Offline reads support schemas 1 and 2 without migrating. Reset pagination cursors
+after migration and use the new IDs for CLI mutations. On the next projection
+sync, renamed notes publish under the new ID and preserve old file bytes in
+`Memory/Recovery/`. An existing destination with different contents is a
+conflict: both files remain available and synchronization can retry after the
+conflict is resolved. Upgrade the embedded Obsidian plugin as well so new
+filenames keep their read-only protection.
+
 ## Architecture
 
 One repository and release ship the existing `taskix` executable. An independent

@@ -184,3 +184,12 @@ test("unloading cancels pending memory checks", async t => {
     assert.equal(f.calls.length, 0);
     assert.equal(f.content, "edit");
 });
+
+test("local timestamp memory filenames retain read-only protection", async t => {
+    const f = await memoryFixture(t);
+    f.file.path = `11-Agents/Projects/demo/Memory/mem_261003160000_${"a".repeat(32)}.md`;
+    f.content = "local edit";
+    await f.plugin.checkMemory(f.file);
+    assert.equal(f.content, "Canonical database memory");
+    assert.deepEqual(f.calls, [["memory", "document", f.file.path]]);
+});

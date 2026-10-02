@@ -3,6 +3,8 @@ mod agent_loop;
 pub use agent_loop::{AgentLoop, LoopResult, ToolInputError, ToolSet};
 mod config;
 mod domain;
+mod id_migration;
+mod ids;
 mod providers;
 mod retrieval;
 mod store;

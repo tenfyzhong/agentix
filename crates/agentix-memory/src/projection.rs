@@ -107,6 +107,16 @@ impl MemoryProjection {
         Ok(result)
     }
     async fn sync_one(&self, initial: &Memory) -> Result<(bool, bool)> {
+        let legacy: Vec<String> = sqlx::query_scalar(
+            "SELECT old_id FROM memory_id_renames WHERE memory_id=? AND projection_pending=1",
+        )
+        .bind(&initial.id)
+        .fetch_all(&self.store.pool)
+        .await?;
+        let legacy_paths = legacy
+            .iter()
+            .map(|id| self.path(id))
+            .collect::<Result<Vec<_>>>()?;
         let path = self.path(&initial.id)?;
         let root = self.root.clone();
         let directory = self.directory.clone();
@@ -122,7 +132,12 @@ impl MemoryProjection {
             .await?;
         let output = document::render(&current)?;
         let output_hash = digest(&output);
+        ensure!(
+            legacy.is_empty() || text.is_none() || text.as_deref() == Some(&output),
+            "conflict: renamed memory destination already exists; preserve it and retry"
+        );
         if text.as_deref() == Some(&output) {
+            self.retire_legacy(&current.id, legacy_paths).await?;
             self.acknowledge(&current.id, current.revision, &output_hash)
                 .await?;
             return Ok((false, false));
@@ -137,9 +152,27 @@ impl MemoryProjection {
         .await?;
         tokio::task::spawn_blocking(move || files::publish(&path, text.as_deref(), &output))
             .await??;
+        self.retire_legacy(&current.id, legacy_paths).await?;
         self.acknowledge(&current.id, current.revision, &output_hash)
             .await?;
         Ok((false, true))
+    }
+    async fn retire_legacy(&self, id: &str, paths: Vec<PathBuf>) -> Result<()> {
+        if paths.is_empty() {
+            return Ok(());
+        }
+        tokio::task::spawn_blocking(move || {
+            for path in paths {
+                files::retire(&path)?;
+            }
+            Ok::<_, anyhow::Error>(())
+        })
+        .await??;
+        sqlx::query("UPDATE memory_id_renames SET projection_pending=0 WHERE memory_id=?")
+            .bind(id)
+            .execute(&self.store.pool)
+            .await?;
+        Ok(())
     }
     async fn acknowledge(&self, id: &str, revision: i64, hash: &str) -> Result<()> {
         sqlx::query("UPDATE memory_projection SET published_revision=?,published_hash=?,imported_hash='',prepared_revision=0,prepared_hash='',error=NULL WHERE memory_id=? AND published_revision<=? AND (published_revision<>? OR published_hash<>? OR imported_hash<>'' OR prepared_revision<>0 OR prepared_hash<>'' OR error IS NOT NULL)")

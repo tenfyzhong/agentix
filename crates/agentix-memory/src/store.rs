@@ -63,7 +63,7 @@ impl MemoryStore {
             .fetch_one(&pool)
             .await?;
         ensure!(
-            app == 0x4158_4d4d && version == 1,
+            app == 0x4158_4d4d && (1..=2).contains(&version),
             "unsupported memory database identity or schema"
         );
         Ok(Self {
@@ -103,7 +103,7 @@ impl MemoryStore {
         let version: i64 = sqlx::query_scalar("PRAGMA user_version")
             .fetch_one(&mut *tx)
             .await?;
-        ensure!(version <= 1, "unsupported memory database schema {version}");
+        ensure!(version <= 2, "unsupported memory database schema {version}");
         sqlx::raw_sql(include_str!("schema.sql"))
             .execute(&mut *tx)
             .await?;
@@ -121,12 +121,21 @@ impl MemoryStore {
             .execute(&mut *tx)
             .await?;
         }
+        if version < 2 {
+            crate::id_migration::migrate(&mut tx).await?;
+        }
         tx.commit().await?;
         Ok(Self {
             pool,
             changes: tokio::sync::broadcast::channel(256).0,
             work_changes: tokio::sync::watch::channel(0).0,
         })
+    }
+
+    pub async fn schema_version(&self) -> Result<i64> {
+        Ok(sqlx::query_scalar("PRAGMA user_version")
+            .fetch_one(&self.pool)
+            .await?)
     }
 
     /// Bind once to a source database and resume its ordered replay checkpoint.
@@ -320,7 +329,7 @@ impl MemoryStore {
         validate_evidence(&mut tx, project, &content).await?;
         let now = time::OffsetDateTime::now_utc().unix_timestamp();
         let memory = Memory {
-            id: format!("mem_{}", uuid::Uuid::now_v7().simple()),
+            id: crate::ids::new_id(now)?,
             project_id: project.into(),
             revision: 1,
             status: Status::Active,
@@ -362,7 +371,7 @@ impl MemoryStore {
         validate_evidence(&mut tx, project, &content).await?;
         let now = time::OffsetDateTime::now_utc().unix_timestamp();
         let memory = Memory {
-            id: format!("mem_{}", uuid::Uuid::now_v7().simple()),
+            id: crate::ids::new_id(now)?,
             project_id: project.into(),
             revision: 1,
             status: Status::Active,

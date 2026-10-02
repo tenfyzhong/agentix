@@ -94,6 +94,38 @@ pub(super) fn publish(path: &Path, expected: Option<&str>, text: &str) -> Result
     result
 }
 
+/// Retain a legacy filename's bytes in Recovery after its new note is published.
+pub(super) fn retire(path: &Path) -> Result<()> {
+    let Some(expected) = read(path)? else {
+        return Ok(());
+    };
+    let parent = path.parent().context("missing note directory")?;
+    let recovery = parent.join("Recovery");
+    if !recovery.exists() {
+        std::fs::create_dir(&recovery)?;
+    }
+    let meta = std::fs::symlink_metadata(&recovery)?;
+    ensure!(
+        meta.is_dir() && !meta.file_type().is_symlink(),
+        "unsafe recovery directory"
+    );
+    let saved = recovery.join(format!(
+        "{}-{}.md",
+        path.file_stem()
+            .context("missing memory ID")?
+            .to_string_lossy(),
+        uuid::Uuid::now_v7().simple()
+    ));
+    std::fs::rename(path, &saved)?;
+    if read(&saved)?.as_deref() != Some(&expected) {
+        let _ = std::fs::hard_link(&saved, path);
+        anyhow::bail!("conflict: concurrent edit preserved in {}", saved.display());
+    }
+    sync_directory(&recovery)?;
+    sync_directory(parent)?;
+    Ok(())
+}
+
 // Unix can fsync a directory. Windows File::open cannot open a directory,
 // and a directory handle is not a portable FlushFileBuffers target. The file
 // contents are synced before publication on every platform; SQLite remains

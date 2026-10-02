@@ -90,7 +90,7 @@ impl MemoryStore {
                     decision.target.is_none() && decision.expected_revision.is_none(),
                     "create cannot target an existing memory"
                 );
-                let memory = new_memory(&lease.project_id, content.clone(), &decision.reason, now);
+                let memory = new_memory(&lease.project_id, content.clone(), &decision.reason, now)?;
                 store::save(&mut tx, &memory).await?;
                 changed.push(memory);
                 continue;
@@ -122,7 +122,7 @@ impl MemoryStore {
                 }
                 DecisionAction::Supersede | DecisionAction::Conflict => {
                     let mut new =
-                        new_memory(&lease.project_id, content.clone(), &decision.reason, now);
+                        new_memory(&lease.project_id, content.clone(), &decision.reason, now)?;
                     if decision.action == DecisionAction::Supersede {
                         new.supersedes = Some(prior.id.clone());
                         prior.superseded_by = Some(new.id.clone());
@@ -148,9 +148,9 @@ impl MemoryStore {
     }
 }
 
-fn new_memory(project: &str, content: MemoryInput, reason: &str, now: i64) -> Memory {
-    Memory {
-        id: format!("mem_{}", uuid::Uuid::now_v7().simple()),
+fn new_memory(project: &str, content: MemoryInput, reason: &str, now: i64) -> Result<Memory> {
+    Ok(Memory {
+        id: crate::ids::new_id(now)?,
         project_id: project.into(),
         revision: 1,
         status: Status::Active,
@@ -161,5 +161,5 @@ fn new_memory(project: &str, content: MemoryInput, reason: &str, now: i64) -> Me
         supersedes: None,
         superseded_by: None,
         content,
-    }
+    })
 }

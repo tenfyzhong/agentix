@@ -96,6 +96,15 @@ async fn memory_document(
         .context("invalid memory ID")?;
     ensure!(
         id.strip_prefix("mem_")
+            .and_then(|suffix| {
+                if suffix.len() == 45 {
+                    let (stamp, suffix) = suffix.split_once('_')?;
+                    (stamp.len() == 12 && stamp.bytes().all(|b| b.is_ascii_digit()))
+                        .then_some(suffix)
+                } else {
+                    Some(suffix)
+                }
+            })
             .is_some_and(|suffix| suffix.len() == 32
                 && suffix
                     .bytes()
@@ -140,7 +149,9 @@ async fn doctor(path: &std::path::Path, location: &MemoryLocation) -> Result<Val
     };
     let database = if location.path.exists() {
         match MemoryStore::open_read_only(&location.path).await {
-            Ok(_) => json!({"exists":true,"readable":true,"schema_version":1}),
+            Ok(store) => {
+                json!({"exists":true,"readable":true,"schema_version":store.schema_version().await?})
+            }
             Err(_) => {
                 json!({"exists":true,"readable":false,"error":"incompatible or unreadable memory database"})
             }
