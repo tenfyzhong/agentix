@@ -558,7 +558,31 @@ checks do not establish live provider/IM or service-manager environment behavior
 
 ## CI test cost
 
-Plugin tests run in parallel with Rust tests on each supported operating system. CI disables dev/test debug symbols to reduce Windows linker work and cache size; local Cargo profiles are unchanged. Windows retains the workspace check, native TCP control tests, task-board tests, and three system-time-zone checks. Compare GitHub Actions step timings on equivalent revisions and cache states before claiming a speedup; the baseline Windows run `34441426541` took 17m26s, including 3m43s for workspace checking, 4m31s for the TCP test step, and 5m57s for task-board tests.
+Plugin tests run in parallel with Rust tests on each supported operating system.
+Rust CI uses pinned cargo-nextest 0.9.146 to schedule tests across binaries, with
+two hash partitions on Linux and macOS and four on Windows. Every partition runs
+on its own runner; `fail-fast: false` and `--no-fail-fast` retain results from all
+partitions and tests after a failure. Partitions share one Cargo cache per OS,
+with only partition 1 saving it to avoid redundant uploads. CI disables dev/test
+debug symbols; local Cargo profiles and `make check` remain unchanged.
+
+Nextest does not execute doctests, so partition 1 runs them separately with
+`cargo test --doc`. Windows retains its original memory, task library and taskix
+test scope, plus the workspace check and native TCP control tests on partition
+1. That partition runs the three system-time-zone checks after its other tests
+and restores the original zone; other partitions use separate machines. Unix
+partitions retain the fish hook integration environment. Standalone Node plugin
+files remain serial within each OS job to avoid starving the bounded metrics
+worker. Both CI workflows cancel superseded runs for the same branch or PR.
+
+The [CI coverage regressions](../crates/taskix/tests/ci_workflows.rs) check complete
+partition numbering and retained platform/doctest checks. Compare GitHub Actions
+step timings on equivalent revisions and cache states before claiming a speedup.
+The baseline run `37040150341` took 8m43s on Linux, 11m44s on macOS and 16m37s on
+Windows. Its Windows task-board step took 12m08s, including about 31s of compilation
+and two test binaries taking 341s and 286s. Sharding adds runner/build work in
+exchange for a shorter elapsed test path; queue limits and cold caches can still
+dominate the total time.
 
 ## Codex proxy verification
 
