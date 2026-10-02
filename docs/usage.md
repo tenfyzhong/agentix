@@ -39,7 +39,7 @@ An attached session can claim a Task and use state actions; Block, Wait, and Fai
 
 ### Human job submissions
 
-After attaching a session in a registered Project, use `/inboxes` to browse its human queue. Filter with the status buttons or `/inboxes TODO` (also `ACTIVE`, `PENDING_REVIEW`, `COMPLETED`, or `CANCELLED`, case-insensitive); `/inboxes ALL` shows all statuses. Submit one requirement with `/inbox`:
+After attaching a session in a registered Project, use `/inboxes` to browse its human queue. Filter with the status buttons or `/inboxes TODO` (also `ACTIVE`, `PENDING_REVIEW`, `COMPLETED`, or `CANCELLED`, case-insensitive); `/inboxes ALL` shows all statuses. The `ACTIVE` filter button is labeled **In Progress**. Submit one requirement with `/inbox`:
 
 ```text
 /inbox Add CSV export

@@ -61,7 +61,14 @@ async fn inbox_status_filter_preserves_pagination_and_detail_navigation() {
         assert!(last(&channel).body.contains("Entries (8)"));
         click(&engine, button(&last(&channel), "All statuses")).await;
         assert!(last(&channel).body.contains("Entries (40)"));
-        click(&engine, button(&last(&channel), status)).await;
+        let filter_view = last(&channel);
+        assert!(!filter_view.actions.iter().any(|a| a.label == "ACTIVE"));
+        let label = if status == "ACTIVE" {
+            "In Progress"
+        } else {
+            status
+        };
+        click(&engine, button(&filter_view, label)).await;
         assert!(last(&channel).body.contains("Entries (8)"));
         assert_eq!(last(&channel).subtitle.as_deref(), Some("Page 1 / 2"));
     }
