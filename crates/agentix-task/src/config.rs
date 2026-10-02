@@ -96,10 +96,32 @@ impl Config {
     /// Convert a registered document path into an Obsidian vault-relative path.
     #[must_use]
     pub fn vault_relative_path(&self, path: &Path) -> PathBuf {
-        let path = self.documents.directory.join(path);
-        path.strip_prefix(&self.documents.root)
-            .unwrap_or(&path)
-            .to_owned()
+        path.strip_prefix("Archived Projects").map_or_else(
+            |_| self.documents.directory.join(path),
+            |relative| self.documents.archive_directory.join(relative),
+        )
+    }
+
+    /// Resolve a logical relative document path against the current configuration.
+    pub fn document_path(&self, relative: &Path) -> Result<PathBuf> {
+        ensure!(
+            !relative.is_absolute()
+                && relative
+                    .components()
+                    .all(|c| matches!(c, Component::Normal(_) | Component::CurDir)),
+            "invalid relative document path"
+        );
+        let boundary = if relative.starts_with("Archived Projects") {
+            self.archive_dir()
+        } else {
+            self.output_dir()
+        };
+        let path = self.documents.root.join(self.vault_relative_path(relative));
+        ensure!(
+            resolved_path(&path)?.starts_with(resolved_path(&boundary)?),
+            "document path escapes its root"
+        );
+        Ok(path)
     }
 
     pub fn validate(&self) -> Result<()> {

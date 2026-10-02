@@ -6,6 +6,47 @@ use sqlx::Row;
 use crate::{Project, Service, WriteOptions};
 
 impl Service {
+    /// Move pre-v18 output-relative archives without retaining configuration paths.
+    pub(crate) async fn migrate_legacy_archive_folders_locked(&self) -> Result<()> {
+        let rows = sqlx::query("SELECT p.data,d.path FROM projects p JOIN document_registry d ON d.key='board:'||p.id WHERE json_extract(p.data,'$.archived_at') IS NOT NULL")
+            .fetch_all(&self.store().pool).await?;
+        for row in rows {
+            let project: Project = serde_json::from_str(&row.get::<String, _>("data"))?;
+            let relative = project.document_directory();
+            if !std::path::Path::new(&relative).starts_with("Archived Projects") {
+                continue;
+            }
+            let destination = self.safe_path(&relative)?;
+            let source = self.config().output_dir().join(&relative);
+            if destination.exists() || !source.exists() {
+                continue;
+            }
+            ensure!(
+                source
+                    .canonicalize()?
+                    .starts_with(self.config().output_dir().canonicalize()?),
+                "legacy archive escapes document output"
+            );
+            let board = source.join("Board.md");
+            ensure!(
+                board.canonicalize()?.starts_with(source.canonicalize()?),
+                "legacy archive Board escapes Project folder"
+            );
+            let (properties, _) =
+                crate::projection::split_properties(&std::fs::read_to_string(board)?)?;
+            ensure!(
+                properties["taskix-generated"] == true
+                    && properties["id"] == project.id
+                    && properties["root"] == project.root
+                    && row.get::<String, _>("path") == format!("{relative}/Board.md"),
+                "conflict: legacy archive is not the registered Project"
+            );
+            std::fs::create_dir_all(destination.parent().context("missing archive parent")?)?;
+            std::fs::rename(source, destination)?;
+        }
+        Ok(())
+    }
+
     pub(crate) async fn relocate_archived_projects_locked(&self) -> Result<()> {
         let rows = sqlx::query("SELECT p.data,d.path FROM projects p LEFT JOIN document_registry d ON d.key='board:'||p.id")
             .fetch_all(&self.store().pool).await?;
@@ -13,11 +54,7 @@ impl Service {
             let project: Project = serde_json::from_str(&row.get::<String, _>("data"))?;
             let old = project.document_directory();
             let new = if project.archived_at.is_some() {
-                self.config()
-                    .archive_dir()
-                    .join(&project.key)
-                    .to_string_lossy()
-                    .replace('\\', "/")
+                format!("Archived Projects/{}", project.key)
             } else {
                 format!("Projects/{}", project.key)
             };
@@ -42,7 +79,8 @@ impl Service {
                 }
             } else if destination.exists() {
                 // Recover a crash between the filesystem rename and the DB commit.
-                let source = std::fs::read_to_string(destination.join("Board.md"))?;
+                let board = self.safe_path(&format!("{new}/Board.md"))?;
+                let source = std::fs::read_to_string(board)?;
                 let (properties, _) = crate::projection::split_properties(&source)?;
                 ensure!(
                     properties["taskix-generated"] == true

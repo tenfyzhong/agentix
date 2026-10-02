@@ -31,7 +31,7 @@ taskix job create --project prj_ID --title "Login repair" --prompt "Fix login an
 taskix job update job_ID --inbox inbox_ID --executor agent:HOST --session HOST_SESSION --json
 ```
 
-Outside Git, `context` and implicit Job/Inbox selection register or reuse the current directory's Project. A parent Project does not own its subdirectories. Explicit `--project` and session-owned work retain their assignment. Git repositories and worktrees share their registered Project; register a new repository with `project register`. Directory discovery is reused within a context refresh, and lookup uses the indexed canonical root. Upgrade Agentix and Taskix together for schema 18; old binaries cannot maintain its absolute archive paths, lookup indexes and event retention watermarks.
+Outside Git, `context` and implicit Job/Inbox selection register or reuse the current directory's Project. A parent Project does not own its subdirectories. Explicit `--project` and session-owned work retain their assignment. Git repositories and worktrees share their registered Project; register a new repository with `project register`. Directory discovery is reused within a context refresh, and lookup uses the indexed canonical root. Upgrade Agentix and Taskix together for schema 19; old binaries cannot maintain its relative document paths, lookup indexes and event retention watermarks.
 
 Configuration defaults to `~/.config/taskix/config.toml`; `TASKIX_CONFIG` or `--config` selects another file. Run `taskix <command> --help` for arguments. `--json` always has `schema_version`, `ok`, and `result` or `error`. Exit codes: 0 success, 1 business/runtime failure, 2 argument error.
 
@@ -94,6 +94,14 @@ archived notes live at `<root>/40-Archive/11-Agents/Projects/<project>`. Unarchi
 restores `<root>/<documents.directory>/Projects/<project>`. Existing output-relative
 archives migrate on the next sync, preserving their contents. Generated links and registered
 paths follow the move; repository/worktree roots and IDs stay unchanged.
+The database stores logical relative paths: `Projects/<project>/...` uses
+`documents.root` plus `documents.directory`, while `Archived Projects/<project>/...`
+uses `documents.root` plus `documents.archive_directory`. The latter prefix identifies
+archived storage; it does not fix the physical archive folder name.
+After moving the vault or its active/archive folders, update the matching configuration
+and run `taskix sync`; stored paths remain unchanged. Schema 19 atomically converts
+old absolute archive paths, document registrations, cleanup records and replay results
+without reading the old vault. Workspace roots and authored conversation remain intact.
 Obsidian's Taskix Sync context menu offers Archive project / Restore project on
 the managed Board or project folder. Resolve destination conflicts before
 running `sync` to retry a pending move.

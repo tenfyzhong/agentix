@@ -4,7 +4,7 @@ import { connectionFixture } from "./support/obsidian-plugin.mjs";
 
 test("project context menu archives a managed Board using the authoritative revision", async () => {
     const f = await connectionFixture();
-    f.plugin.engine = { directory: "11-Agents", watches: () => true, forget() {}, reconcile: async () => {} };
+    f.plugin.engine = { directory: "11-Agents", archiveDirectory: "40-Archive/11-Agents/Projects", watches: () => true, forget() {}, reconcile: async () => {} };
     const file = { path: "11-Agents/Projects/Demo/Board.md" };
     f.plugin.app.metadataCache.getFileCache = () => ({ frontmatter: { id: "prj_demo", revision: 2, status: "ACTIVE", "taskix-generated": true, tags: ["agent/project"] } });
     const items = [];
@@ -39,7 +39,7 @@ test("copied Board cannot archive a different registered project folder", async 
 
 test("folder menu restores an archived project and reports a pending move", async () => {
     const f = await connectionFixture();
-    f.plugin.engine = { directory: "11-Agents", watches: () => true, forget() {}, reconcile: async () => {} };
+    f.plugin.engine = { directory: "11-Agents", archiveDirectory: "40-Archive/11-Agents/Projects", watches: () => true, forget() {}, reconcile: async () => {} };
     const folder = { path: "40-Archive/11-Agents/Projects/Demo", children: [] };
     const board = { path: `${folder.path}/Board.md` };
     f.plugin.app.vault.getAbstractFileByPath = () => board;
@@ -51,7 +51,7 @@ test("folder menu restores an archived project and reports a pending move", asyn
     } }, folder);
     assert.equal(item.title, "Restore project");
     const action = item.click();
-    f.reply(null, undefined, { id: "prj_demo", key: "Demo", document_directory: `${f.plugin.app.vault.adapter.getBasePath()}/40-Archive/11-Agents/Projects/Demo`, revision: 7, archived_at: 1 });
+    f.reply(null, undefined, { id: "prj_demo", key: "Demo", document_directory: "Archived Projects/Demo", revision: 7, archived_at: 1 });
     await new Promise(resolve => setImmediate(resolve));
     assert.ok(f.requests.at(-1).args.includes("unarchive"));
     f.requests.at(-1).callback(null, JSON.stringify({ schema_version: 1, ok: true, result: {}, projection_pending: "destination exists" }), "");
@@ -86,12 +86,12 @@ for (const directory of ["/other-vault/40-Archive/Demo", "../40-Archive/Demo"]) 
     });
 }
 
-test("restore accepts Windows absolute archive paths and uses vault-relative Board paths", async () => {
+test("restore resolves relative archive paths with a Windows vault root", async () => {
     const f = await connectionFixture();
     f.plugin.app.vault.adapter.getBasePath = () => "C:\\vault";
-    f.plugin.engine = { directory: "11-Agents", forget() {}, reconcile: async () => {} };
+    f.plugin.engine = { directory: "11-Agents", archiveDirectory: "40-Archive/Projects", forget() {}, reconcile: async () => {} };
     const action = f.plugin.archiveProject("prj_demo", false, "40-Archive/Projects/Demo/Board.md");
-    f.reply(null, undefined, { id: "prj_demo", key: "Demo", document_directory: "C:/vault/40-Archive/Projects/Demo", revision: 7, archived_at: 1 });
+    f.reply(null, undefined, { id: "prj_demo", key: "Demo", document_directory: "Archived Projects/Demo", revision: 7, archived_at: 1 });
     await new Promise(resolve => setImmediate(resolve));
     assert.ok(f.requests.at(-1).args.includes("unarchive"));
     f.reply(null, undefined, {});

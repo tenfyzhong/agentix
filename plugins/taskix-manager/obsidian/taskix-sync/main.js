@@ -525,11 +525,10 @@ class TaskixSyncPlugin extends Plugin {
                 archive !== (project.archived_at == null)) throw new Error("Project archive state changed; refresh and try again.");
             const directory = project.document_directory || `Projects/${project.key}`;
             const normalized = typeof directory === "string" ? directory.replace(/\\/g, "/") : "";
-            const vaultRoot = settings.vaultPath.replace(/\\/g, "/").replace(/\/$/, "");
             const absolute = path.posix.isAbsolute(normalized) || /^[A-Za-z]:\//.test(normalized);
-            const relative = absolute && normalized.startsWith(`${vaultRoot}/`)
-                ? normalized.slice(vaultRoot.length + 1)
-                : absolute ? "" : path.posix.join(this.engine.directory, normalized);
+            const relative = absolute ? "" : normalized.startsWith("Archived Projects/")
+                ? path.posix.join(this.engine.archiveDirectory || "Archived Projects", normalized.slice("Archived Projects/".length))
+                : path.posix.join(this.engine.directory, normalized);
             if (typeof project.key !== "string" || !relative || normalized.split("/").includes("..") ||
                 boardPath !== path.posix.join(relative, "Board.md")) {
                 throw new Error("This Board does not match the registered Project folder.");

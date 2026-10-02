@@ -54,12 +54,17 @@ async fn project_archive_moves_entire_folder_and_restores_paths() {
     assert!(
         after.jobs[0]
             .document_path
-            .starts_with(archived.to_string_lossy().replace('\\', "/").as_str())
+            .starts_with("Archived Projects/demo/")
     );
     assert!(
-        fs::read_to_string(output.join(&after.plans[0].path))
-            .unwrap()
-            .contains("Authored plan edit.")
+        fs::read_to_string(
+            f.service
+                .config()
+                .document_path(std::path::Path::new(&after.plans[0].path))
+                .unwrap()
+        )
+        .unwrap()
+        .contains("Authored plan edit.")
     );
     let note = f.service.obsidian_note(&task).await.unwrap();
     assert!(
@@ -186,18 +191,12 @@ async fn project_archive_recovers_a_move_before_the_database_receipt() {
             .await
             .unwrap()
             .document_path
-            .starts_with(
-                archive_root
-                    .join("Archived Projects/demo")
-                    .to_string_lossy()
-                    .replace('\\', "/")
-                    .as_str()
-            )
+            .starts_with("Archived Projects/demo/")
     );
 }
 
 #[tokio::test]
-async fn project_archive_configuration_change_moves_existing_archives() {
+async fn project_archive_configuration_change_resolves_moved_archives() {
     let f = Fixture::new().await;
     f.service
         .execute(
@@ -215,6 +214,8 @@ async fn project_archive_configuration_change_moves_existing_archives() {
         .unwrap();
     let mut config = f.service.config().clone();
     config.documents.archive_directory = "History/Projects".into();
+    fs::create_dir_all(config.archive_dir().parent().unwrap()).unwrap();
+    fs::rename(f.service.config().archive_dir(), config.archive_dir()).unwrap();
     let service = Service::new(config, f.service.store().clone()).unwrap();
     service.sync_pending_documents().await.unwrap();
     let output = service.config().output_dir();
@@ -356,7 +357,7 @@ async fn project_archive_migrates_relative_path_without_moving_same_directory() 
     service.sync().await.unwrap();
     assert!(archived.join("Board.md").exists());
     assert!(
-        std::path::Path::new(
+        !std::path::Path::new(
             &service.store().snapshot().await.unwrap().projects[0].document_directory()
         )
         .is_absolute()

@@ -129,6 +129,133 @@ fn legacy_dashboard_migration_preserves_conflicts_and_recovers_in_a_new_process(
 }
 
 #[test]
+#[ignore = "requires TASKIX_RELATIVE_PATHS_BACKUP with an offline task database and vault"]
+fn real_backup_relative_paths_survive_two_vault_moves() {
+    let backup = std::path::PathBuf::from(
+        std::env::var("TASKIX_RELATIVE_PATHS_BACKUP").expect("offline backup directory"),
+    );
+    let cli = Cli::new();
+    let database = cli.dir.path().join("restored.sqlite3");
+    fs::copy(backup.join("tasks.sqlite3"), &database).unwrap();
+    copy_offline_vault(&backup.join("vault"), &cli.dir.path().join("vault"));
+    let documents: Value =
+        serde_json::from_str(&fs::read_to_string(backup.join("documents.json")).unwrap()).unwrap();
+    let config_path = cli.dir.path().join("config.toml");
+    let mut config: toml::Value =
+        toml::from_str(&fs::read_to_string(&config_path).unwrap()).unwrap();
+    config["storage"]["path"] = toml::Value::String(database.to_str().unwrap().to_owned());
+    config["documents"]["directory"] =
+        toml::Value::String(documents["directory"].as_str().unwrap().to_owned());
+    config["documents"]["archive_directory"] =
+        toml::Value::String(documents["archive_directory"].as_str().unwrap().to_owned());
+    fs::write(&config_path, toml::to_string(&config).unwrap()).unwrap();
+    cli.ok(&["sync"]);
+    assert_eq!(cli.ok(&["doctor"])["healthy"], true);
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let snapshot = || {
+        runtime.block_on(async {
+            let store = agentix_task::Store::open_read_only(&database)
+                .await
+                .unwrap();
+            serde_json::to_value(store.snapshot().await.unwrap()).unwrap()
+        })
+    };
+    let before = snapshot();
+    for name in ["moved-backup-once", "moved-backup-twice"] {
+        let old = Path::new(config["documents"]["root"].as_str().unwrap());
+        let root = cli.dir.path().join(name);
+        fs::rename(old, &root).unwrap();
+        config["documents"]["root"] = toml::Value::String(root.to_str().unwrap().to_owned());
+        fs::write(&config_path, toml::to_string(&config).unwrap()).unwrap();
+        cli.ok(&["sync"]);
+        assert_eq!(cli.ok(&["doctor"])["healthy"], true);
+        let after = snapshot();
+        for kind in ["projects", "jobs", "plans"] {
+            let field = match kind {
+                "projects" => "document_directory",
+                "jobs" => "document_path",
+                _ => "path",
+            };
+            assert_eq!(
+                before[kind]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|e| (&e["id"], &e[field]))
+                    .collect::<Vec<_>>(),
+                after[kind]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|e| (&e["id"], &e[field]))
+                    .collect::<Vec<_>>()
+            );
+        }
+    }
+}
+
+fn copy_offline_vault(source: &Path, destination: &Path) {
+    fs::create_dir_all(destination).unwrap();
+    for entry in fs::read_dir(source).unwrap() {
+        let entry = entry.unwrap();
+        let target = destination.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_offline_vault(&entry.path(), &target);
+        } else {
+            fs::copy(entry.path(), target).unwrap();
+        }
+    }
+}
+
+#[test]
+fn cli_doctor_resolves_relative_archived_plans_after_two_vault_moves() {
+    let cli = Cli::new();
+    let job = cli.job("Relative archive");
+    let task = cli.task(&job, "Keep plan");
+    let claim = cli.claim(&task, "relative-archive");
+    cli.owned(
+        &["plan", "create", &task, "--body", "# Preserve body"],
+        &claim,
+    );
+    cli.owned(&["task", "start", &task], &claim);
+    cli.owned(&["task", "done", &task], &claim);
+    cli.ok(&["job", "approve", &job]);
+    let project = cli.ok(&["job", "show", &job])["project_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    cli.ok(&["project", "archive", &project]);
+    cli.ok(&["sync"]);
+    assert_eq!(cli.ok(&["doctor"])["healthy"], true);
+    let config_path = cli.dir.path().join("config.toml");
+    let mut config: toml::Value =
+        toml::from_str(&fs::read_to_string(&config_path).unwrap()).unwrap();
+    for directory in ["moved-once", "moved-twice"] {
+        let old = Path::new(config["documents"]["root"].as_str().unwrap());
+        let root = cli.dir.path().join(directory);
+        fs::rename(old, &root).unwrap();
+        config["documents"]["root"] = toml::Value::String(root.to_str().unwrap().to_owned());
+        fs::write(&config_path, toml::to_string(&config).unwrap()).unwrap();
+        cli.ok(&["sync"]);
+        assert_eq!(cli.ok(&["doctor"])["healthy"], true);
+        let plan = cli.ok(&["plan", "show", &task]);
+        assert!(
+            plan["path"]
+                .as_str()
+                .unwrap()
+                .starts_with("Archived Projects/")
+        );
+        assert!(
+            plan["absolute_path"]
+                .as_str()
+                .unwrap()
+                .starts_with(root.to_str().unwrap())
+        );
+        assert!(plan["body"].as_str().unwrap().contains("# Preserve body"));
+    }
+}
+
+#[test]
 fn cli_project_archive_restores_dashboard_and_task_visibility_in_obsidian() {
     let cli = Cli::new();
     let job = cli.job("Archive project");
