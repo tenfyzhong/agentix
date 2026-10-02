@@ -1415,7 +1415,7 @@ async fn task_buttons_follow_claim_plan_start_done_phases() {
         .await
         .unwrap();
     let view = channel.sent().last().unwrap().1.clone();
-    assert!(view.body.contains("PLANNING"));
+    assert!(view.body.contains("Planning"));
     assert!(
         !view
             .actions
@@ -1450,7 +1450,7 @@ async fn task_buttons_follow_claim_plan_start_done_phases() {
         .await
         .unwrap();
     let view = channel.sent().last().unwrap().1.clone();
-    assert!(view.body.contains("EXECUTING"));
+    assert!(view.body.contains("Executing"));
     assert!(view.actions.iter().any(|a| a.label == "Done"));
     assert!(!view.actions.iter().any(|a| a.label == "Start"));
 }

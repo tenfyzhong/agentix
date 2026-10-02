@@ -34,7 +34,16 @@ async fn inbox_status_filter_preserves_pagination_and_detail_navigation() {
             .await
             .unwrap();
         let first = last(&channel);
+        let label = match status {
+            "TODO" => "Todo",
+            "ACTIVE" => "Active",
+            "PENDING_REVIEW" => "Pending review",
+            "COMPLETED" => "Completed",
+            "CANCELLED" => "Cancelled",
+            _ => unreachable!(),
+        };
         assert!(first.body.contains("Entries (8)"), "{first:?}");
+        assert!(first.body.contains(&format!("Status: {label}")));
         assert_eq!(first.subtitle.as_deref(), Some("Page 1 / 2"));
         assert!(
             first
@@ -57,24 +66,31 @@ async fn inbox_status_filter_preserves_pagination_and_detail_navigation() {
         assert_eq!(second.subtitle.as_deref(), Some("Page 2 / 2"));
         assert!(second.body.contains("Entries (8)"));
         click(&engine, button(&second, &format!("{status} request 7"))).await;
+        assert!(
+            last(&channel)
+                .body
+                .contains(&format!("**Status:** {label}"))
+        );
         click(&engine, button(&last(&channel), "Project inbox")).await;
         assert!(last(&channel).body.contains("Entries (8)"));
-        click(&engine, button(&last(&channel), "All statuses")).await;
+        click(&engine, button(&last(&channel), "All")).await;
         assert!(last(&channel).body.contains("Entries (40)"));
         let filter_view = last(&channel);
-        assert!(!filter_view.actions.iter().any(|a| a.label == "ACTIVE"));
-        let label = if status == "ACTIVE" {
-            "In Progress"
-        } else {
-            status
-        };
+        assert!(!filter_view.actions.iter().any(|a| a.label == status));
         click(&engine, button(&filter_view, label)).await;
         assert!(last(&channel).body.contains("Entries (8)"));
         assert_eq!(last(&channel).subtitle.as_deref(), Some("Page 1 / 2"));
+        assert!(
+            last(&channel)
+                .actions
+                .iter()
+                .any(|a| a.label == format!("{status} request 0"))
+        );
     }
     for command in ["/inboxes", "/inboxes ALL"] {
         engine.handle_inbound(input(command)).await.unwrap();
         assert!(last(&channel).body.contains("Entries (40)"));
+        assert!(last(&channel).body.contains("Status: All"));
     }
 }
 
@@ -99,7 +115,7 @@ async fn inbox_status_filter_handles_empty_results_and_invalid_arguments() {
             .iter()
             .any(|a| a.label == "Next" || a.label == "Pending request")
     );
-    click(&engine, button(&empty, "TODO")).await;
+    click(&engine, button(&empty, "Todo")).await;
     assert!(last(&channel).body.contains("Entries (1)"));
     for command in ["/inboxes typo", "/inboxes TODO extra", "/inboxes --status"] {
         assert!(agentix_core::parse_input(command).is_err(), "{command}");
@@ -200,7 +216,7 @@ async fn inbox_requires_attachment_and_preserves_multiline_submission_without_a_
     engine.handle_inbound(event.clone()).await.unwrap();
     let response = last(&channel);
     assert!(response.body.contains("demo"));
-    assert!(response.body.contains("TODO"));
+    assert!(response.body.contains("Todo"));
     engine.handle_inbound(event).await.unwrap();
     let state = service.store().snapshot().await.unwrap();
     assert_eq!(state.inboxes.len(), 1);
@@ -253,7 +269,7 @@ async fn inbox_project_list_pages_in_document_order_and_scopes_old_buttons() {
     let first = last(&channel);
     assert_eq!(first.title, "Project inbox");
     assert_eq!(first.subtitle.as_deref(), Some("Page 1 / 2"));
-    assert!(first.body.contains("CANCELLED"));
+    assert!(first.body.contains("Cancelled"));
     assert!(first.body.contains("Requirement 5"));
     assert!(!first.body.contains("Requirement 6"));
     click(&engine, button(&first, "Next")).await;
@@ -298,7 +314,7 @@ async fn inbox_response_retry_after_restart_does_not_append_again() {
     engine.restore_bindings().await.unwrap();
     engine.handle_inbound(event).await.unwrap();
     assert_eq!(service.store().snapshot().await.unwrap().inboxes.len(), 1);
-    assert!(last(&channel).body.contains("TODO"));
+    assert!(last(&channel).body.contains("Todo"));
 }
 
 #[tokio::test]
@@ -553,7 +569,7 @@ async fn inbox_commands_keep_entry_controls_adjacent_and_return_paths_visible() 
     assert!(
         section_for_action(&list, "New requirement")
             .body
-            .contains("TODO")
+            .contains("Todo")
     );
     assert_eq!(
         section_for_action(&list, "Project jobs").title,

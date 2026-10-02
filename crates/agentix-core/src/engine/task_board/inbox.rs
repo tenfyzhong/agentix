@@ -1,5 +1,6 @@
 use std::{collections::HashSet, path::Path};
 
+use super::labels::inbox_status_label;
 use agentix_task::{InboxEntry, InboxStatus, Project, WriteOptions};
 use serde_json::json;
 
@@ -94,7 +95,7 @@ impl TaskBoardView<'_> {
                 "**Project:** {}\n**Entry:** `{}`\n**Status:** {}\n\nAdded to the end of the project inbox.",
                 escape(&project.name),
                 entry.id,
-                entry.status
+                inbox_status_label(entry.status)
             ),
         );
         if let Some(warning) = result.projection_pending {
@@ -168,7 +169,7 @@ impl TaskBoardView<'_> {
                 "**Project:** {}\n**Entries ({})**\nStatus: {}\n\nUse /inbox <content> to append a requirement.",
                 escape(&short(&project.name)),
                 entries.len(),
-                status.map_or_else(|| "ALL".into(), |status| status.to_string())
+                status.map_or("All", inbox_status_label)
             ),
         );
         for entry in entries.iter().skip(page * PAGE_SIZE).take(PAGE_SIZE) {
@@ -176,7 +177,11 @@ impl TaskBoardView<'_> {
                 conversation,
                 owner,
                 &mut view,
-                format!("**{}**\n{}", escape(&short(entry.title())), entry.status),
+                format!(
+                    "**{}**\n{}",
+                    escape(&short(entry.title())),
+                    inbox_status_label(entry.status)
+                ),
                 entry.title().into(),
                 TaskBrowse::Inbox {
                     id: entry.id.clone(),
@@ -274,7 +279,7 @@ impl TaskBoardView<'_> {
                 "**Entry:** `{}`\n**Project:** {}\n**Status:** {}\n\n{}",
                 entry.id,
                 escape(&short(&project.name)),
-                entry.status,
+                inbox_status_label(entry.status),
                 content[page]
             ),
         );
@@ -392,11 +397,7 @@ fn inbox_status_buttons(project: &str) -> Vec<(String, TaskBrowse, ActionStyle)>
     .into_iter()
     .map(|filter| {
         (
-            match filter {
-                None => "All statuses".into(),
-                Some(InboxStatus::Active) => "In Progress".into(),
-                Some(status) => status.to_string(),
-            },
+            filter.map_or("All", inbox_status_label).into(),
             TaskBrowse::Inboxes {
                 project: project.to_owned(),
                 status: filter,

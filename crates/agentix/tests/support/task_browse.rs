@@ -223,19 +223,15 @@ async fn browse_round_trip(telegram: bool) {
     browser.command(400, "/dashboard").await;
     let dashboard = browser.view(0, "Channel tests").await;
     let board = browser
-        .follow(401, &dashboard, "Channel tests", "COMPLETED")
+        .follow(401, &dashboard, "Channel tests", "Completed")
         .await;
-    let empty = browser
-        .follow(402, &board, "COMPLETED", "All statuses")
-        .await;
+    let empty = browser.follow(402, &board, "Completed", "All").await;
     assert!(
         markdown_content(&empty)
             .unwrap()
             .contains("No matching jobs")
     );
-    let board = browser
-        .follow(403, &empty, "All statuses", "IM integration")
-        .await;
+    let board = browser.follow(403, &empty, "All", "IM integration").await;
     let job = browser
         .follow(404, &board, "IM integration", "Channel task")
         .await;
@@ -327,7 +323,7 @@ async fn inbox_round_trip(browser: &Browser, service: &agentix_task::Service) {
     let after = browser.requests().await.len();
     browser.command(417, "/inboxes").await;
     let inbox = browser.view(after, "Transport requirement").await;
-    assert!(markdown_content(&inbox).unwrap().contains("TODO"));
+    assert!(markdown_content(&inbox).unwrap().contains("Todo"));
     let state = service.store().snapshot().await.unwrap();
     assert_eq!(state.inboxes.len(), 1);
     assert_eq!(state.inboxes[0].content, content);

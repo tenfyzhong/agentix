@@ -7,9 +7,11 @@ use agentix_task::{JobStatus, Service, Snapshot, Task, TaskPhase, TaskStatus, Wr
 
 mod browse;
 mod inbox;
+mod labels;
 #[cfg(test)]
 mod tests;
 pub(super) use browse::TaskBrowse;
+use labels::{task_phase_label, task_status_label};
 use serde_json::json;
 
 use super::{
@@ -153,7 +155,7 @@ impl TaskBoardView<'_> {
                 format!(
                     "**{}**\n{}\n`{}`",
                     browse::escape(&browse::short(&task.title)),
-                    task.status,
+                    task_status_label(task.status),
                     task.id
                 ),
                 task.title.clone(),
@@ -233,8 +235,8 @@ impl TaskBoardView<'_> {
             format!(
                 "**Task:** `{}`\n**Status:** {} · {}\n**Job:** {}\n**Revision:** {}\n\n{}",
                 task.id,
-                task.status,
-                task.phase.map_or_else(|| "—".into(), |p| p.to_string()),
+                task_status_label(task.status),
+                task.phase.map_or("—", task_phase_label),
                 browse::escape(&browse::short(&job.title)),
                 task.revision,
                 pages[page]
