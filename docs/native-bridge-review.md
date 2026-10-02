@@ -39,4 +39,4 @@ See [integration coverage](integration-coverage.md) for executable tests and the
 
 Receipts are retained for duplicate suppression, so storage and startup replay grow with session lifetime. Claude's private store records observed hooks; it is not an ongoing mirror of native transcript changes made without the plugin/hooks. An uncertain receipt is never automatically replayed. rmux pane checks and input-clearing delays are intentional delivery safeguards.
 
-Use the [configuration example](../config/agentix.example.toml), [operational guide](development-and-operations.md), [commands](usage.md), [native protocol](host-protocol.md), [architecture](architecture.md), and [Claude delivery guide](claude-code.md) as the aligned entrypoints.
+Use the [configuration example](../config/agentix.example.toml), [operational guide](https://github.com/tenfyzhong/agentix/wiki/Configuration-and-Operations), [commands](https://github.com/tenfyzhong/agentix/wiki/Usage), [native protocol](host-protocol.md), [architecture](architecture.md), and [Claude delivery guide](https://github.com/tenfyzhong/agentix/wiki/Claude-Code) as the aligned entrypoints.

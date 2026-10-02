@@ -356,7 +356,8 @@ async fn board_contains_project_metadata_and_is_the_only_project_link_target() {
         )
         .await
         .unwrap();
-    let archived = properties(&std::fs::read_to_string(&board_path).unwrap());
+    let archived =
+        properties(&std::fs::read_to_string(root.join("Archived Projects/demo/Board.md")).unwrap());
     assert_eq!(archived["status"], "ARCHIVED");
     assert!(archived["archived_at"].is_string());
     assert!(

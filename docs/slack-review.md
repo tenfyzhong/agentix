@@ -40,4 +40,4 @@ New messages use a 1.1-second channel budget shared across threads; unrelated ch
 
 A successful Socket Mode ACK means an event is retained in memory, not durably written to SQLite. A process crash in the gap can lose it, as with the existing transport handoff model. This change does not introduce a durable broker. Normal core event claims still handle retries after delivery.
 
-Tests use local services and do not verify real workspace installation, permissions, Slack availability, or a particular enterprise proxy. Follow [Slack setup](slack.md) for the real-workspace smoke test.
+Tests use local services and do not verify real workspace installation, permissions, Slack availability, or a particular enterprise proxy. Follow [Slack setup](https://github.com/tenfyzhong/agentix/wiki/Slack) for the real-workspace smoke test.

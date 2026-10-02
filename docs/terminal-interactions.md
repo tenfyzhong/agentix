@@ -1,4 +1,4 @@
-# Native terminal interactions in IM
+# Terminal interaction recognition and lifecycle
 
 Agentix observes attached Codex, Pi, OMP, and Claude Code sessions through the
 configured tmux or rmux driver. Recognition depends on dialog structure rather

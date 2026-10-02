@@ -69,7 +69,7 @@ export async function fixture(overrides = {}) {
 
 export async function connectionFixture(directory = "11-Agents", globals = {}) {
     const notices = [], requests = [], commands = [], buttons = [];
-    const vaultEvents = new Map(), metadataEvents = new Map();
+    const vaultEvents = new Map(), metadataEvents = new Map(), workspaceEvents = new Map();
     class TFile {}
     const file = new TFile();
     let settingsTab;
@@ -110,7 +110,7 @@ export async function connectionFixture(directory = "11-Agents", globals = {}) {
     plugin.app = {
         vault: { adapter: { getBasePath: () => "/vault" }, on: (name, handler) => vaultEvents.set(name, handler), getAbstractFileByPath() { return null; } },
         metadataCache: { on: (name, handler) => metadataEvents.set(name, handler) },
-        workspace: { onLayoutReady() {}, on() {}, getLeavesOfType() { return []; } },
+        workspace: { onLayoutReady() {}, on: (name, handler) => workspaceEvents.set(name, handler), getLeavesOfType() { return []; } },
     };
     plugin.loadData = async () => ({ cliPath: "/bin/taskix", configPath: "/config.toml" });
     plugin.addSettingTab = (tab) => { settingsTab = tab; };
@@ -120,7 +120,7 @@ export async function connectionFixture(directory = "11-Agents", globals = {}) {
     await plugin.onload();
     settingsTab.display();
     return {
-        plugin, file, notices, requests, commands, vaultEvents, metadataEvents, button: buttons[0],
+        plugin, file, notices, requests, commands, vaultEvents, metadataEvents, workspaceEvents, button: buttons[0],
         reply(error, index = requests.length - 1, result) {
             result ??= requests[index].args.includes("show") ? null : { protocol_version: 1, documents: { root: "/vault", directory } };
             requests[index].callback(error ? new Error(error) : null, JSON.stringify(error

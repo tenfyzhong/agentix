@@ -126,6 +126,17 @@ pub struct Project {
     pub created_at: i64,
     #[serde(default)]
     pub archived_at: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub document_directory: Option<String>,
+}
+
+impl Project {
+    #[must_use]
+    pub fn document_directory(&self) -> String {
+        self.document_directory
+            .clone()
+            .unwrap_or_else(|| format!("Projects/{}", self.key))
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]

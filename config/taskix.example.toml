@@ -7,10 +7,12 @@ path = "~/.local/share/taskix/tasks.sqlite3"
 # Replace with an existing absolute Obsidian vault root containing .obsidian.
 root = "/absolute/path/to/vault"
 directory = "Agent Tasks"
+# Relative to documents.directory; archived projects move here on archive/sync.
+archive_directory = "Archived Projects"
 
 # Optional project memory; one config and release, independent resident process.
 # Export TASKIX_MEMORY_ENABLED=true (or 1) to the CLI, host and service.
-# Run `taskix memory serve` separately. See docs/taskix-memory.md.
+# Run `taskix memory serve` separately. See https://github.com/tenfyzhong/agentix/wiki/Taskix-Memory.
 # On macOS/Linux, serve loads exported variables from your account login shell.
 # Set TASKIX_LOGIN_SHELL to an absolute path to override it; Windows inherits
 # the launcher's environment. Restart the service after environment changes.

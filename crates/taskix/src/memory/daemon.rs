@@ -684,9 +684,10 @@ impl Application {
         let directory = config
             .documents
             .directory
-            .join("Projects")
-            .join(&project.key)
-            .join("Memory");
+            .join(project.document_directory())
+            .join("Memory")
+            .components()
+            .collect::<PathBuf>();
         let projection =
             MemoryProjection::new(self.store.clone(), &config.documents.root, &directory)?;
         Ok(serde_json::to_value(if pending {

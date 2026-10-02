@@ -98,6 +98,15 @@ test("memory protection excludes Recovery copies and ordinary notes", async t =>
     assert.equal(f.calls.length, 0);
 });
 
+test("archived project memory retains read-only protection in a configured folder", async t => {
+    const f = await memoryFixture(t);
+    f.file.path = `11-Agents/History/Projects/demo/Memory/mem_${"a".repeat(32)}.md`;
+    f.content = "edited archive memory";
+    await f.plugin.checkMemory(f.file);
+    assert.equal(f.content, "Canonical database memory");
+    assert.equal(f.calls.length, 1);
+});
+
 test("memory rollback does not overwrite a concurrent edit and retries its latest event", async t => {
     const f = await memoryFixture(t);
     f.content = "first edit";

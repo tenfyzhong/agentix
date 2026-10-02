@@ -59,7 +59,7 @@ impl Store {
             .fetch_one(&pool)
             .await?;
         ensure!(
-            identity == 0x4158_544b && (14..=16).contains(&version),
+            identity == 0x4158_544b && (14..=17).contains(&version),
             "unsupported task database identity or schema for read-only lookup"
         );
         Ok(Self {
@@ -135,7 +135,7 @@ impl Store {
     async fn migrate(&self) -> Result<bool> {
         let current: (i64, i64, i64) = sqlx::query_as("SELECT (SELECT application_id FROM pragma_application_id), (SELECT user_version FROM pragma_user_version), (SELECT auto_vacuum FROM pragma_auto_vacuum)")
             .fetch_one(&self.pool).await?;
-        if current == (0x4158_544b, 16, 2) {
+        if current == (0x4158_544b, 17, 2) {
             return Ok(false);
         }
         if current.2 != 2 {
@@ -149,7 +149,7 @@ impl Store {
                 "invalid: task database must be a dedicated taskix database"
             );
             ensure!(
-                current.1 <= 16,
+                current.1 <= 17,
                 "unsupported task database schema version {}",
                 current.1
             );
@@ -172,7 +172,7 @@ impl Store {
             .fetch_one(&mut *tx)
             .await?;
         ensure!(
-            version <= 16,
+            version <= 17,
             "unsupported task database schema version {version}"
         );
         sqlx::raw_sql(include_str!("schema.sql"))
@@ -260,7 +260,7 @@ impl Store {
             ),
         ] {
             let rows = sqlx::query(&format!(
-                "SELECT json_remove(e.data, {fields}) AS entity, json_extract(p.data, '$.key') AS project_key \
+                "SELECT json_remove(e.data, {fields}) AS entity, COALESCE(json_extract(p.data, '$.document_directory'), 'Projects/'||json_extract(p.data, '$.key')) AS project_key \
                  FROM {table} e LEFT JOIN projects p ON p.id = json_extract(e.data, '$.project_id') \
                  WHERE {filter} ORDER BY e.rowid"
             ))
@@ -343,7 +343,7 @@ impl Store {
             .as_str()
             .context("missing project ID")?;
         let key: String =
-            sqlx::query_scalar("SELECT json_extract(data, '$.key') FROM projects WHERE id = ?")
+            sqlx::query_scalar("SELECT COALESCE(json_extract(data, '$.document_directory'), 'Projects/'||json_extract(data, '$.key')) FROM projects WHERE id = ?")
                 .bind(project)
                 .fetch_one(&mut *tx)
                 .await?;
@@ -424,7 +424,7 @@ impl Store {
         crate::inbox::refresh(&mut state, self.now());
         crate::deletion::check_pending_paths(&mut tx, &before, &state).await?;
         persist(&mut tx, &before, &state, &command, &options, self.now()).await?;
-        if command == "project.rename" {
+        if matches!(command.as_str(), "project.rename" | "project.relocate") {
             crate::project_rename::rebase_registry(&mut tx, &before, &state).await?;
         }
         let sequence = max_sequence(&mut tx).await?;

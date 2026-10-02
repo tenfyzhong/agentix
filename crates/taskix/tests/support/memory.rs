@@ -322,6 +322,19 @@ fn memory_service_restores_read_only_notes_through_the_real_cli() {
             .status
             .success()
     );
+    cli.ok(&["project", "archive", id]);
+    let archived_relative = std::path::PathBuf::from("Tasks ☃")
+        .join("Archived Projects")
+        .join(project["key"].as_str().unwrap())
+        .join("Memory")
+        .join(format!("{memory_id}.md"));
+    let archived_relative = archived_relative.to_str().unwrap();
+    let archived_document = cli.ok(&["memory", "document", archived_relative]);
+    assert_eq!(archived_document["text"], text);
+    assert_eq!(archived_document["path"], archived_relative);
+    assert!(!path.exists());
+    cli.ok(&["project", "unarchive", id]);
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
 }
 
 fn start_memory(cli: &Cli, expected_sources: i64) -> Daemon {

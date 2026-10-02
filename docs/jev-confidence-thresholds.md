@@ -19,7 +19,7 @@ the host. An already running host must be restarted with the updated environment
 setting a variable in another terminal does not update that process. For a host
 launched by a service, configure the service's environment instead. Jev must also
 be enabled with its endpoint and credentials as described in the
-[plugin configuration](../plugins/taskix-manager/README.md#optional-jev-routing).
+[plugin configuration](https://github.com/tenfyzhong/agentix/wiki/Taskix-Manager#optional-jev-routing).
 
 The valid threshold range is `0.5` through `1`. Both the provider's confidence
 and the selected-option probability must meet the threshold. The winning

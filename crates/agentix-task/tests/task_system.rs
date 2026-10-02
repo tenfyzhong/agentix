@@ -43,6 +43,9 @@ mod project_resolution;
 #[path = "support/project_rename.rs"]
 mod project_rename;
 
+#[path = "support/project_archive.rs"]
+mod project_archive;
+
 struct Fixture {
     dir: TempDir,
     service: Service,
@@ -637,7 +640,7 @@ async fn legacy_executing_tasks_migrate_without_losing_their_lease_or_history() 
         .fetch_one(&mut db)
         .await
         .unwrap();
-    assert_eq!(version, 16);
+    assert_eq!(version, 17);
 }
 
 #[tokio::test]

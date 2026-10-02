@@ -392,7 +392,11 @@ fn inbox_status_buttons(project: &str) -> Vec<(String, TaskBrowse, ActionStyle)>
     .into_iter()
     .map(|filter| {
         (
-            filter.map_or_else(|| "All statuses".into(), |status| status.to_string()),
+            match filter {
+                None => "All statuses".into(),
+                Some(InboxStatus::Active) => "In Progress".into(),
+                Some(status) => status.to_string(),
+            },
             TaskBrowse::Inboxes {
                 project: project.to_owned(),
                 status: filter,

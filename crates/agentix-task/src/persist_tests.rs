@@ -46,6 +46,29 @@ async fn schema_fifteen_memory_database_upgrades_with_event_watermarks() {
     assert_schema_fifteen_upgrade(true).await;
 }
 
+#[tokio::test]
+async fn schema_sixteen_upgrades_to_protect_project_document_locations() {
+    let (dir, store, snapshot) = fixture().await;
+    sqlx::query("PRAGMA user_version=16")
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    store.pool.close().await;
+    store.maintenance_pool.close().await;
+    let reopened = Store::open(&dir.path().join("tasks.sqlite3"))
+        .await
+        .unwrap();
+    let version: i64 = sqlx::query_scalar("PRAGMA user_version")
+        .fetch_one(&reopened.pool)
+        .await
+        .unwrap();
+    assert_eq!(version, 17);
+    assert_eq!(
+        reopened.snapshot().await.unwrap().projects,
+        snapshot.projects
+    );
+}
+
 async fn assert_schema_fifteen_upgrade(has_memory: bool) {
     let (dir, store, snapshot) = fixture().await;
     store.set_background_maintenance(false);
@@ -84,7 +107,7 @@ async fn assert_schema_fifteen_upgrade(has_memory: bool) {
         .fetch_one(&store.pool)
         .await
         .unwrap();
-    assert_eq!(version, 16);
+    assert_eq!(version, 17);
     assert!(
         store.event_policy(None, None, None).await.unwrap()["enabled"]
             .as_bool()
