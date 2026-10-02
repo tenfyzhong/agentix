@@ -567,6 +567,8 @@ with only partition 1 saving it to avoid redundant uploads. CI disables dev/test
 debug symbols; local Cargo profiles and `make check` remain unchanged.
 The `ci` nextest profile gives the slow native plugin integration higher priority
 so it starts immediately and overlaps the ordinary tests on its partition.
+The short memory IPC suite reserves all test threads while it runs, keeping its
+real request deadlines independent of competing tests without relaxing assertions.
 
 Nextest does not execute doctests, so Unix partition 1 runs them separately with
 `cargo test --doc`. Windows retains its original memory, task library and taskix

@@ -89,6 +89,21 @@ fn ci_profile_prioritizes_the_slow_native_plugin_integration() {
 }
 
 #[test]
+fn ci_profile_isolates_memory_ipc_deadline_tests() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.config/nextest.toml");
+    let config: toml::Value = toml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let ipc = config["profile"]["ci"]["overrides"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|rule| rule["filter"].as_str() == Some("package(agentix-memory) & binary(ipc)"))
+        .expect("real IPC deadlines need the runner without competing tests");
+    assert_eq!(ipc["threads-required"].as_str(), Some("num-test-threads"));
+    assert!(ipc["priority"].as_integer().unwrap() > 0);
+    assert!(ipc.get("retries").is_none());
+}
+
+#[test]
 fn partitioning_preserves_doctests_and_windows_platform_checks() {
     let config = workflow("tests.yml");
     let job = &config["jobs"]["test"];
