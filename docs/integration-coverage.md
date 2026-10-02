@@ -565,18 +565,21 @@ on its own runner; `fail-fast: false` and `--no-fail-fast` retain results from a
 partitions and tests after a failure. Partitions share one Cargo cache per OS,
 with only partition 1 saving it to avoid redundant uploads. CI disables dev/test
 debug symbols; local Cargo profiles and `make check` remain unchanged.
+The `ci` nextest profile gives the slow native plugin integration higher priority
+so it starts immediately and overlaps the ordinary tests on its partition.
 
-Nextest does not execute doctests, so partition 1 runs them separately with
+Nextest does not execute doctests, so Unix partition 1 runs them separately with
 `cargo test --doc`. Windows retains its original memory, task library and taskix
-test scope, plus the workspace check and native TCP control tests on partition
-1. That partition runs the three system-time-zone checks after its other tests
-and restores the original zone; other partitions use separate machines. Unix
+test scope. An independent Windows platform job runs the workspace check, native
+TCP control tests and doctests concurrently with the four test partitions. It
+runs the three system-time-zone checks after its other tests and restores the
+original zone; the partitions use separate machines. Unix
 partitions retain the fish hook integration environment. Standalone Node plugin
 files remain serial within each OS job to avoid starving the bounded metrics
 worker. Both CI workflows cancel superseded runs for the same branch or PR.
 
 The [CI coverage regressions](../crates/taskix/tests/ci_workflows.rs) check complete
-partition numbering and retained platform/doctest checks. Compare GitHub Actions
+partition numbering, slow-test priority and retained platform/doctest checks. Compare GitHub Actions
 step timings on equivalent revisions and cache states before claiming a speedup.
 The baseline run `37040150341` took 8m43s on Linux, 11m44s on macOS and 16m37s on
 Windows. Its Windows task-board step took 12m08s, including about 31s of compilation

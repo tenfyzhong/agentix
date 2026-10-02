@@ -150,25 +150,41 @@ jobs:
         if: runner.os != 'Windows'
         env:
           TASKIX_TEST_HOOK_SHELL: fish
-        run: cargo nextest run --workspace --all-features --no-fail-fast --partition hash:${{ matrix.shard }}/${{ matrix.shards }}
+        run: cargo nextest run --profile ci --workspace --all-features --no-fail-fast --partition hash:${{ matrix.shard }}/${{ matrix.shards }}
       # nextest does not run documentation tests. Run them once per platform.
       - name: Run workspace doctests
         if: runner.os != 'Windows' && matrix.shard == 1
         run: cargo test --workspace --all-features --doc
-      - name: Check the Windows workspace
-        if: runner.os == 'Windows' && matrix.shard == 1
-        run: cargo check --workspace --all-features
-      - name: Run Windows TCP control tests
-        if: runner.os == 'Windows' && matrix.shard == 1
-        run: cargo test -p agentix --all-features --bin agentix control::tests::tcp_control_server
       - name: Run Windows tests
         if: runner.os == 'Windows'
-        run: cargo nextest run -p agentix-memory -p agentix-task -p taskix --all-features --no-fail-fast --partition hash:${{ matrix.shard }}/${{ matrix.shards }}
+        run: cargo nextest run --profile ci -p agentix-memory -p agentix-task -p taskix --all-features --no-fail-fast --partition hash:${{ matrix.shard }}/${{ matrix.shards }}
+
+  windows-platform:
+    name: Windows platform checks
+    runs-on: windows-latest
+    env:
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install protobuf compiler
+        run: choco install protoc --yes --no-progress
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.95.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: tests-windows-platform
+      - name: Check the Windows workspace
+        run: cargo check --workspace --all-features
+      - name: Run Windows TCP control tests
+        run: cargo test -p agentix --all-features --bin agentix control::tests::tcp_control_server
       - name: Run Windows doctests
-        if: runner.os == 'Windows' && matrix.shard == 1
         run: cargo test -p agentix-memory -p agentix-task -p taskix --all-features --doc
       - name: Verify Windows system time zones
-        if: runner.os == 'Windows' && matrix.shard == 1
         shell: pwsh
         run: |
           $originalTimeZone = tzutil /g

@@ -52,6 +52,7 @@ fn test_matrix_covers_every_partition_once_on_each_platform() {
     for name in ["Run workspace tests", "Run Windows tests"] {
         let run = step(job, name)["run"].as_str().unwrap();
         assert!(run.contains("cargo nextest run"));
+        assert!(run.contains("--profile ci"));
         assert!(run.contains("--all-features"));
         assert!(run.contains("--no-fail-fast"));
         assert!(run.contains("--partition hash:${{ matrix.shard }}/${{ matrix.shards }}"));
@@ -69,26 +70,46 @@ fn test_matrix_covers_every_partition_once_on_each_platform() {
 }
 
 #[test]
+fn ci_profile_prioritizes_the_slow_native_plugin_integration() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.config/nextest.toml");
+    let config: toml::Value = toml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let profile = &config["profile"]["ci"];
+    assert_eq!(profile["fail-fast"].as_bool(), Some(false));
+    let integration = profile["overrides"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|rule| {
+            rule["filter"].as_str().is_some_and(|filter| {
+                filter.contains("plugin_entrypoints_execute_the_compiled_taskix")
+            })
+        })
+        .expect("slow native integration should run before the ordinary tests");
+    assert!(integration["priority"].as_integer().unwrap() > 0);
+}
+
+#[test]
 fn partitioning_preserves_doctests_and_windows_platform_checks() {
     let config = workflow("tests.yml");
     let job = &config["jobs"]["test"];
-    for name in [
-        "Run workspace doctests",
-        "Check the Windows workspace",
-        "Run Windows TCP control tests",
-        "Run Windows doctests",
-        "Verify Windows system time zones",
-    ] {
-        assert!(
-            step(job, name)["if"]
-                .as_str()
-                .unwrap()
-                .contains("matrix.shard == 1")
-        );
-    }
+    assert!(
+        step(job, "Run workspace doctests")["if"]
+            .as_str()
+            .unwrap()
+            .contains("matrix.shard == 1")
+    );
     assert_eq!(
         step(job, "Run workspace doctests")["run"].as_str(),
         Some("cargo test --workspace --all-features --doc")
+    );
+    assert_eq!(
+        config["jobs"]["windows-platform"]["runs-on"].as_str(),
+        Some("windows-latest")
+    );
+    let job = &config["jobs"]["windows-platform"];
+    assert!(
+        job.get("needs").is_none(),
+        "platform checks should overlap the test partitions"
     );
     assert_eq!(
         step(job, "Check the Windows workspace")["run"].as_str(),
@@ -120,7 +141,7 @@ fn partitioning_preserves_doctests_and_windows_platform_checks() {
             .position(|step| step["name"].as_str() == Some(name))
             .unwrap()
     };
-    assert!(index("Run Windows tests") < index("Verify Windows system time zones"));
+    assert!(index("Run Windows TCP control tests") < index("Verify Windows system time zones"));
 }
 
 #[test]

@@ -1,0 +1,7 @@
+[profile.ci]
+fail-fast = false
+
+[[profile.ci.overrides]]
+# Start the longest native integration early so ordinary tests overlap it.
+filter = 'package(taskix) & binary(cli) & test(plugin_entrypoints_execute_the_compiled_taskix)'
+priority = 100
