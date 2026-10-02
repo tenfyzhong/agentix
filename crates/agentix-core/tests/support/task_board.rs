@@ -159,7 +159,7 @@ async fn dashboard_project_jobs_sort_by_update_and_filter_across_pages() {
     let jobs = last(&channel);
     assert_eq!(jobs.title, "Jobs");
     assert!(jobs.body.contains("Jobs (11)"));
-    assert!(jobs.body.contains("Status: ALL"));
+    assert!(jobs.body.contains("Status: All"));
     let labels: Vec<_> = jobs
         .actions
         .iter()
@@ -174,21 +174,21 @@ async fn dashboard_project_jobs_sort_by_update_and_filter_across_pages() {
     let second = last(&channel);
     assert!(second.body.contains("Job 09"));
     assert!(!second.body.contains("Job 10"));
-    click(&engine, button(&second, "ACTIVE")).await;
+    click(&engine, button(&second, "Active")).await;
     let active = last(&channel);
-    assert!(active.body.contains("Status: ACTIVE"));
+    assert!(active.body.contains("Status: Active"));
     assert!(active.body.contains("Jobs (8)"));
     assert_eq!(active.subtitle.as_deref(), Some("Page 1 / 2"));
     click(&engine, button(&active, "Next")).await;
-    assert!(last(&channel).body.contains("Status: ACTIVE"));
+    assert!(last(&channel).body.contains("Status: Active"));
     assert!(last(&channel).body.contains("Job 06"));
     assert!(!last(&channel).body.contains("Job 07"));
     click(&engine, button(&last(&channel), "Previous")).await;
     assert_eq!(last(&channel).body, active.body);
     for (status, title) in [
-        ("PENDING_REVIEW", "Job 07"),
-        ("COMPLETED", "Job 08"),
-        ("CANCELLED", "Job 09"),
+        ("Pending review", "Job 07"),
+        ("Completed", "Job 08"),
+        ("Cancelled", "Job 09"),
     ] {
         click(&engine, button(&last(&channel), status)).await;
         let filtered = last(&channel);
@@ -201,14 +201,101 @@ async fn dashboard_project_jobs_sort_by_update_and_filter_across_pages() {
                 .iter()
                 .any(|a| a.label == "Next" || a.label == "Previous")
         );
+        click(&engine, button(&filtered, title)).await;
+        assert!(
+            last(&channel)
+                .body
+                .contains(&format!("**Status:** {status}"))
+        );
+        click(&engine, button(&last(&channel), "Project jobs")).await;
     }
-    click(&engine, button(&last(&channel), "All statuses")).await;
+    click(&engine, button(&last(&channel), "All")).await;
     assert_eq!(last(&channel).body, jobs.body);
     click(&engine, button(&last(&channel), "Job 00")).await;
     assert_eq!(last(&channel).title, "Job 00");
     click(&engine, button(&last(&channel), "Project jobs")).await;
     assert_eq!(last(&channel).body, jobs.body);
     assert_eq!(service.store().snapshot().await.unwrap(), before);
+}
+
+#[tokio::test]
+async fn task_status_labels_are_consistent_across_lists_details_and_counts() {
+    use sqlx::Connection;
+    let (_dir, service, id) = task_fixture().await;
+    let mut conn = sqlx::SqliteConnection::connect_with(
+        &sqlx::sqlite::SqliteConnectOptions::new().filename(&service.config().storage.path),
+    )
+    .await
+    .unwrap();
+    let (engine, channel) = engine(service.clone()).await;
+    engine.handle_inbound(input("/attach thr_a")).await.unwrap();
+    for (status, phase, label, phase_label) in [
+        ("TODO", None, "Todo", "—"),
+        ("IN_PROGRESS", Some("PLANNING"), "In progress", "Planning"),
+        ("IN_PROGRESS", Some("EXECUTING"), "In progress", "Executing"),
+        ("BLOCKED", None, "Blocked", "—"),
+        ("WAITING_USER", None, "Waiting user", "—"),
+        ("DONE", None, "Done", "—"),
+        ("FAILED", None, "Failed", "—"),
+        ("CANCELLED", None, "Cancelled", "—"),
+    ] {
+        sqlx::query("UPDATE tasks SET data=json_set(data,'$.status',?,'$.phase',?) WHERE id=?")
+            .bind(status)
+            .bind(phase)
+            .bind(&id)
+            .execute(&mut conn)
+            .await
+            .unwrap();
+        let before = service.store().snapshot().await.unwrap();
+        engine.handle_inbound(input("/tasks")).await.unwrap();
+        assert!(
+            section_for_action(&last(&channel), "Implement task board")
+                .body
+                .contains(&format!("\n{label}\n"))
+        );
+        engine.handle_inbound(input("/board")).await.unwrap();
+        let board = last(&channel);
+        assert!(board.body.contains(&format!("{label} (1)")));
+        assert!(
+            section_for_action(&board, "Implement task board")
+                .body
+                .contains(&format!("\n{label}"))
+        );
+        click(&engine, button(&board, "Implement task board")).await;
+        assert!(
+            last(&channel)
+                .body
+                .contains(&format!("**Status:** {label} · {phase_label}"))
+        );
+        assert_eq!(service.store().snapshot().await.unwrap(), before);
+    }
+    for (status, label) in [
+        ("ACTIVE", "Active"),
+        ("PENDING_REVIEW", "Pending review"),
+        ("COMPLETED", "Completed"),
+        ("CANCELLED", "Cancelled"),
+    ] {
+        sqlx::query("UPDATE jobs SET data=json_set(data,'$.status',?)")
+            .bind(status)
+            .execute(&mut conn)
+            .await
+            .unwrap();
+        let before = service.store().snapshot().await.unwrap();
+        engine.handle_inbound(input("/jobs")).await.unwrap();
+        let jobs = last(&channel);
+        assert!(
+            section_for_action(&jobs, "Task board")
+                .body
+                .contains(&format!("\n{label} ·"))
+        );
+        click(&engine, button(&jobs, "Task board")).await;
+        assert!(
+            last(&channel)
+                .body
+                .contains(&format!("**Status:** {label}"))
+        );
+        assert_eq!(service.store().snapshot().await.unwrap(), before);
+    }
 }
 
 #[tokio::test]
@@ -351,7 +438,7 @@ async fn session_board_and_jobs_follow_attachment_and_keep_released_work() {
     engine.handle_inbound(input("/attach thr_a")).await.unwrap();
     engine.handle_inbound(input("/board")).await.unwrap();
     let board = last(&channel);
-    for text in ["Current", "EXECUTING", "Sibling"] {
+    for text in ["Current", "Executing", "Sibling"] {
         assert!(board.body.contains(text));
     }
     assert!(!board.body.contains("Unrelated"));
@@ -368,7 +455,7 @@ async fn session_board_and_jobs_follow_attachment_and_keep_released_work() {
         .await
         .unwrap();
     engine.handle_inbound(input("/board")).await.unwrap();
-    assert!(last(&channel).body.contains("BLOCKED (1)"));
+    assert!(last(&channel).body.contains("Blocked (1)"));
     assert!(last(&channel).body.contains("Waiting for API"));
     engine.handle_inbound(input("/attach thr_b")).await.unwrap();
     let rejected = engine
@@ -704,7 +791,7 @@ async fn missing_documents_keep_metadata_and_bidirectional_navigation() {
             .body
             .contains("Task document is unavailable.")
     );
-    assert!(last(&channel).body.contains("EXECUTING"));
+    assert!(last(&channel).body.contains("Executing"));
     click(&engine, button(&last(&channel), "Job")).await;
     assert!(last(&channel).body.contains("Job document is unavailable."));
     assert!(last(&channel).body.contains("Ship"));
@@ -828,7 +915,7 @@ async fn legacy_filter_and_task_action_ignore_other_jobs() {
         .unwrap();
     assert!(last(&channel).body.contains(&id));
     click(&engine, done).await;
-    assert!(last(&channel).body.contains("DONE"));
+    assert!(last(&channel).body.contains("Done"));
     assert_eq!(
         service.store().task_result(&id).await.unwrap()["status"],
         "DONE"
@@ -875,7 +962,7 @@ async fn start_button_checks_dependencies_outside_the_task_detail() {
     engine.handle_inbound(input("/attach thr_a")).await.unwrap();
     let start = task_button(&engine, &channel, id, "Start").await;
     click(&engine, start).await;
-    assert!(last(&channel).body.contains("EXECUTING"));
+    assert!(last(&channel).body.contains("Executing"));
 }
 
 async fn paged_browse_fixture() -> (tempfile::TempDir, Arc<Service>, String) {
@@ -926,7 +1013,7 @@ async fn board_page_ignores_off_page_task_bodies_and_job_content() {
     );
     let view = last(&channel);
     assert!(view.body.contains("1 jobs · 1001 tasks"));
-    assert!(view.body.contains("TODO (1000)"));
+    assert!(view.body.contains("Todo (1000)"));
     assert!(view.body.contains("Current ·"));
     assert_eq!(view.actions.len(), 9);
 }
@@ -1001,13 +1088,13 @@ async fn task_board_lists_place_entry_buttons_after_their_own_descriptions() {
             .contains("1 tasks")
     );
     assert_eq!(
-        section_for_action(&jobs, "ACTIVE"),
+        section_for_action(&jobs, "Active"),
         jobs.sections.last().unwrap()
     );
     assert_ne!(
         jobs.actions
             .iter()
-            .find(|action| action.label == "ACTIVE")
+            .find(|action| action.label == "Active")
             .unwrap()
             .style,
         ActionStyle::Default
@@ -1016,7 +1103,7 @@ async fn task_board_lists_place_entry_buttons_after_their_own_descriptions() {
     assert!(
         section_for_action(&last(&channel), "Implement task board")
             .body
-            .contains("IN_PROGRESS")
+            .contains("In progress")
     );
     engine.handle_inbound(input("/attach thr_a")).await.unwrap();
     for command in ["/board", "/tasks", "/jobs"] {

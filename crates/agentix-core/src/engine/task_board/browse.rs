@@ -1,3 +1,4 @@
+use super::labels::{job_status_label, task_phase_label, task_status_label};
 use agentix_task::{BrowseScope, InboxStatus, JobStatus, TaskListItem, TaskStatus};
 
 use super::{
@@ -420,7 +421,7 @@ impl TaskBoardView<'_> {
                 "**Project:** {}\n**Jobs ({})**\nStatus: {}\nMost recently updated first.",
                 escape(&short(&project.name)),
                 result.total,
-                status.map_or_else(|| "ALL".into(), |status| status.to_string())
+                status.map_or("All", job_status_label)
             ),
         );
         for job in &result.jobs {
@@ -431,7 +432,7 @@ impl TaskBoardView<'_> {
                 format!(
                     "**{}**\n{} · {} tasks",
                     escape(&short(&job.title)),
-                    job.status,
+                    job_status_label(job.status),
                     job.task_count
                 ),
                 job.title.clone(),
@@ -482,7 +483,7 @@ impl TaskBoardView<'_> {
                 .chain(JobStatus::ALL.into_iter().map(Some))
                 .map(|filter| {
                     (
-                        filter.map_or_else(|| "All statuses".into(), |status| status.to_string()),
+                        filter.map_or("All", job_status_label).into(),
                         TaskBrowse::ProjectJobs {
                             project: project.id.clone(),
                             status: filter,
@@ -532,7 +533,7 @@ impl TaskBoardView<'_> {
                 format!(
                     "**{}**\n{} · {} tasks",
                     escape(&short(&job.title)),
-                    job.status,
+                    job_status_label(job.status),
                     job.task_count
                 ),
                 job.title.clone(),
@@ -616,7 +617,7 @@ impl TaskBoardView<'_> {
                 "**Job:** `{}`\n**Project:** {}\n**Status:** {}\n\n{}\n\n**Tasks ({})**",
                 job.id,
                 escape(&short(&project.name)),
-                job.status,
+                job_status_label(job.status),
                 content.get(page).map_or("", String::as_str),
                 result.total
             ),
@@ -667,7 +668,9 @@ impl TaskBoardView<'_> {
 }
 
 fn task_summary(task: &TaskListItem) -> String {
-    let phase = task.phase.map_or_else(String::new, |p| format!(" · {p}"));
+    let phase = task
+        .phase
+        .map_or_else(String::new, |p| format!(" · {}", task_phase_label(p)));
     let reason = task
         .reason
         .as_deref()
@@ -675,7 +678,7 @@ fn task_summary(task: &TaskListItem) -> String {
     format!(
         "**{}**\n{}{phase}{reason}",
         escape(&short(&task.title)),
-        task.status
+        task_status_label(task.status)
     )
 }
 
@@ -687,7 +690,8 @@ fn task_status_counts(counts: &[(TaskStatus, usize)]) -> String {
             .iter()
             .find(|(value, _)| *value == status)
             .map_or(0, |(_, count)| *count);
-        write!(text, "\n{status} ({count})").expect("writing to a String cannot fail");
+        write!(text, "\n{} ({count})", task_status_label(status))
+            .expect("writing to a String cannot fail");
     }
     text
 }
