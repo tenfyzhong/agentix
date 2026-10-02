@@ -126,7 +126,11 @@ are excluded. Installed metadata remains readable after removing the checkout.
 or replacing installed stable/HEAD kegs. Once every selected install succeeds,
 the target runs `switch VERSION=local` with the same profile and selection.
 Switch validates all local kegs before unlinking the actual linked kegs, then
-links the exact selected versions. This works even when `opt` points to a
+links the exact selected versions. Update passes the same artifact inputs into
+switch so it selects this snapshot even when an older snapshot is reused and
+another local version was installed more recently. A standalone switch without
+local source inputs still selects the most recently installed matching profile.
+This works even when `opt` points to a
 different version from the command links. Identical artifacts are reused;
 changed binary/resource content creates another local version. Failed installs
 do not run switch and preserve existing command links. Homebrew can still

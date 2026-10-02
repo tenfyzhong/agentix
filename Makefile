@@ -84,6 +84,8 @@ ifeq ($(VERSION),local)
 	HOMEBREW_AGENTIX_LOCAL_SOURCE="$(CURDIR)" HOMEBREW_AGENTIX_LOCAL_PROFILE="$(PROFILE)" \
 	HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1 \
 	$(BREW) install --build-from-source --skip-link $(BREW_FORMULAE)
+	HOMEBREW_AGENTIX_LOCAL_TARGET_DIR="$(DEBUG_TARGET_DIR)" \
+	HOMEBREW_AGENTIX_LOCAL_SOURCE="$(CURDIR)" HOMEBREW_AGENTIX_LOCAL_PROFILE="$(PROFILE)" \
 	$(MAKE) switch VERSION=local PROFILE="$(PROFILE)" FORMULAE="$(FORMULAE)"
 else
 	@case "$(VERSION)" in stable|head) ;; *) echo 'VERSION must be stable or head' >&2; exit 2 ;; esac
@@ -100,11 +102,18 @@ switch:
 ifeq ($(VERSION),local)
 	$(check-local-options)
 	$(BREW) ruby -e 'require "keg"; require "unlink"; profile = ARGV.shift; \
+	exact = !ENV.fetch("HOMEBREW_AGENTIX_LOCAL_SOURCE", "").empty?; \
+	ENV["HOMEBREW_AGENTIX_LOCAL_PROFILE"] = profile if exact; require "formulary" if exact; \
 	kegs = ARGV.map do |name|; \
-		rack = HOMEBREW_CELLAR/name.split("/").last; \
-		candidates = rack.directory? ? rack.subdirs.map { |path| Keg.new(path) } : []; \
-		matching = candidates.select { |keg| keg.tab.tap&.name == "tenfyzhong/tap" && keg.version.to_s.match?(/\A0\.0\.0-local\..+\.#{profile}(?:_\d+)?\z/) }; \
-		selected = matching.max_by { |keg| [keg.tab.time || 0, Pathname(keg.to_path).mtime.to_f] }; \
+		if exact; \
+			formula = Formulary.factory(name, :stable); \
+			selected = Keg.new(formula.prefix) if formula.prefix.directory?; \
+		else; \
+			rack = HOMEBREW_CELLAR/name.split("/").last; \
+			candidates = rack.directory? ? rack.subdirs.map { |path| Keg.new(path) } : []; \
+			matching = candidates.select { |keg| keg.tab.tap&.name == "tenfyzhong/tap" && keg.version.to_s.match?(/\A0\.0\.0-local\..+\.#{profile}(?:_\d+)?\z/) }; \
+			selected = matching.max_by { |keg| [keg.tab.time || 0, Pathname(keg.to_path).mtime.to_f] }; \
+		end; \
 		abort "#{name}: local #{profile} is not installed; run make update VERSION=local PROFILE=#{profile}" unless selected; \
 		selected; \
 	end; \

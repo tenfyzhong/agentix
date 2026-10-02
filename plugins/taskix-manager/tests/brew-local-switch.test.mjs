@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 const unix = {skip: process.platform === "win32"};
-async function fixture(t, missing = false, native = false) {
+async function fixture(t, missing = false, native = false, exact = false) {
     const dir = await realpath(await mkdtemp(join(tmpdir(), "brew-local-switch-")));
     t.after(() => rm(dir, {recursive: true, force: true}));
     const log = join(dir, "calls");
@@ -61,6 +61,14 @@ class Keg
   end
 end
 `);
+    await writeFile(join(dir, "formulary.rb"), `module Formulary
+  def self.factory(name, spec)
+    raise "Expected stable artifact spec" unless spec == :stable
+    version = ENV.fetch("HOMEBREW_AGENTIX_LOCAL_PROFILE", "release") == "debug" ? "0.0.0-local.bbb.debug" : "0.0.0-local.zzz.release"
+    OpenStruct.new(prefix: HOMEBREW_CELLAR/name.split("/").last/version)
+  end
+end
+`);
     await writeFile(join(dir, "unlink.rb"), `module Homebrew::Unlink
   def self.unlink(keg)
     File.open(ENV.fetch("TEST_LOG"), "a") { |f| f.puts "unlink:#{keg.path.parent.basename}/#{keg.version}" }
@@ -84,7 +92,7 @@ end
     await chmod(brew, 0o755);
     return {
         prefix: dir,
-        run: (...args) => spawnSync("make", ["switch", "VERSION=local", `BREW=${brew}`, ...args], {cwd: root, encoding: "utf8", env: {...process.env, RUBYLIB: native ? "" : dir, TEST_PREFIX: dir, TEST_REAL_BREW: native ? spawnSync("which", ["brew"], {encoding: "utf8"}).stdout.trim() : "", HOMEBREW_NO_AUTO_UPDATE: "1", TEST_BOOTSTRAP: join(dir, "bootstrap.rb"), TEST_CELLAR: cellar, TEST_LINKED: linked, TEST_LOG: log}}),
+        run: (...args) => spawnSync("make", ["switch", "VERSION=local", `BREW=${brew}`, ...args], {cwd: root, encoding: "utf8", env: {...process.env, HOMEBREW_AGENTIX_LOCAL_SOURCE: exact ? dir : "", RUBYLIB: native ? "" : dir, TEST_PREFIX: dir, TEST_REAL_BREW: native ? spawnSync("which", ["brew"], {encoding: "utf8"}).stdout.trim() : "", HOMEBREW_NO_AUTO_UPDATE: "1", TEST_BOOTSTRAP: join(dir, "bootstrap.rb"), TEST_CELLAR: cellar, TEST_LINKED: linked, TEST_LOG: log}}),
         calls: async () => (await readFile(log, "utf8")).trim().split("\n").filter(Boolean),
         linked: name => readlink(join(linked, name)),
     };
@@ -98,6 +106,24 @@ for (const [profile, version] of [["release", "0.0.0-local.aaa.release"], ["debu
         assert.equal((await f.linked("agentix")).split("/").at(-1), version);
     });
 }
+test("switch_local_uses_exact_artifact_inputs_even_when_a_newer_local_keg_exists", unix, async t => {
+    const f = await fixture(t, false, false, true);
+    const result = f.run();
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(await f.calls(), ["unlink:agentix/HEAD-abc", "unlink:taskix/HEAD-abc", "link:agentix/0.0.0-local.zzz.release", "link:taskix/0.0.0-local.zzz.release"]);
+});
+test("switch_local_uses_requested_profile_for_exact_artifact_inputs", unix, async t => {
+    const f = await fixture(t, false, false, true);
+    const result = f.run("PROFILE=debug");
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(await f.calls(), ["unlink:agentix/HEAD-abc", "unlink:taskix/HEAD-abc", "link:agentix/0.0.0-local.bbb.debug", "link:taskix/0.0.0-local.bbb.debug"]);
+});
+test("switch_local_validates_all_exact_artifacts_before_unlinking", unix, async t => {
+    const f = await fixture(t, true, false, true);
+    assert.notEqual(f.run().status, 0);
+    assert.deepEqual(await f.calls(), []);
+    assert.equal((await f.linked("agentix")).split("/").at(-1), "HEAD-abc");
+});
 test("switch_local_validates_both_kegs_before_unlinking", unix, async t => {
     const f = await fixture(t, true);
     const result = f.run();

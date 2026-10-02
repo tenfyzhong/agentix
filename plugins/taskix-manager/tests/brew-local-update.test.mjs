@@ -70,14 +70,17 @@ test("real_homebrew_local_update_handles_head_links_with_stable_opt_and_preserve
         await writeFile(join(source, "Makefile"), makefile);
         const update = profile => spawnSync("make", ["update", "VERSION=local", `PROFILE=${profile}`, `FORMULAE=${name}`, "CARGO=/nonexistent-cargo"], {cwd: source, env, encoding: "utf8", timeout: 90_000});
         let previous;
-        for (const [iteration, profile] of [[1, "release"], [1, "release"], [2, "release"], [3, "debug"]]) {
+        const installedSnapshots = new Map();
+        for (const [iteration, profile] of [[1, "release"], [1, "release"], [2, "release"], [1, "release"], [3, "debug"]]) {
             await writeFile(main, `fn main() { println!("${name} local-${iteration}-${profile}"); }\n`);
             build(profile);
             const result = update(profile);
             assert.equal(result.status, 0, result.stdout + result.stderr);
             const keg = await realpath(opt);
             assert.match(keg, new RegExp(`0\\.0\\.0-local\\..*\\.${profile}$`));
-            if (iteration === 1 && previous) assert.equal(keg, previous, "Identical artifacts are reused");
+            const identity = `${iteration}/${profile}`;
+            if (installedSnapshots.has(identity)) assert.equal(keg, installedSnapshots.get(identity), "Install the requested artifact even when a newer local keg exists");
+            installedSnapshots.set(identity, keg);
             previous = keg;
             assert.equal(await realpath(linked), keg);
             assert.equal(await realpath(command), join(keg, "bin", name));

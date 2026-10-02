@@ -27,7 +27,7 @@ async function fixture(t, fail = false) {
         const formulae = names.split(" ").map(name => `tenfyzhong/tap/${name}`).join(" ");
         assert.equal(calls.length, 2, "Install all artifacts before one explicit link switch");
         assert.equal(calls[0], `${checkout}|${profile}|${targetDirectory}|install --build-from-source --skip-link ${formulae}`);
-        assert.ok(calls[1].startsWith("|||ruby "), "Switch must not inherit local snapshot environment");
+        assert.ok(calls[1].startsWith(`${checkout}|${profile}|${targetDirectory}|ruby `), "Switch must resolve the same artifact inputs as installation");
         assert.ok(calls[1].endsWith(` ${profile} ${formulae}`), "Switch must use the selected profile and formulae");
     };
     return {
