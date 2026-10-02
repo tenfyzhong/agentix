@@ -188,6 +188,23 @@ fn codex_ansi_draft(state: &str, screen: &str) -> Result<Option<String>, Multipl
     Ok(draft)
 }
 
+fn codex_model_directory_footer(line: &str) -> bool {
+    let mut fields = line.trim_start().split(" · ");
+    let Some((model, effort)) = fields.next().and_then(|model| model.rsplit_once(' ')) else {
+        return false;
+    };
+    !model.is_empty()
+        && matches!(
+            effort,
+            "default" | "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max" | "ultra"
+        )
+        && fields
+            .next()
+            .is_some_and(|cwd| Path::new(cwd).is_absolute())
+        && fields.next().is_none_or(|hint| hint == "← for agents")
+        && fields.next().is_none()
+}
+
 fn codex_uncolored_draft(
     state: &str,
     rows: &[StyledLine],
@@ -205,6 +222,7 @@ fn codex_uncolored_draft(
                 && (r.0.contains("Context ")
                     || r.0.contains("context left")
                     || r.0.contains("? for shortcuts")
+                    || codex_model_directory_footer(&r.0)
                     || r.0.contains("Vim: Insert")))
             .then_some(i)
         })
@@ -357,13 +375,149 @@ async fn wait_for_codex_command(
     ))
 }
 
-/// Submit only Codex's native /new, after the caller verified PID-to-pane ownership.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CodexNewSessionOutcome {
+    Started,
+    CheckoutChoice,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CodexCheckoutChoice {
+    CurrentCheckout,
+    NewWorktree,
+    Cancel,
+}
+
+fn checkout_selection(screen: &str) -> Result<Option<CodexCheckoutChoice>, MultiplexerError> {
+    let rows = styled_lines(screen)?;
+    let Some(title) = rows
+        .iter()
+        .position(|row| row.0.trim() == "Where should the new conversation run?")
+    else {
+        return Ok(None);
+    };
+    let choices = rows[title + 1..]
+        .iter()
+        .filter(|row| !row.0.trim().is_empty())
+        .take(2)
+        .map(|row| row.0.split_whitespace().collect::<Vec<_>>().join(" "))
+        .collect::<Vec<_>>();
+    match choices.as_slice() {
+        [current, new]
+            if current == "› 1. Current checkout Keep using the current working directory"
+                && new == "2. New worktree Create an isolated managed checkout" =>
+        {
+            Ok(Some(CodexCheckoutChoice::CurrentCheckout))
+        }
+        [current, new]
+            if current == "1. Current checkout Keep using the current working directory"
+                && new == "› 2. New worktree Create an isolated managed checkout" =>
+        {
+            Ok(Some(CodexCheckoutChoice::NewWorktree))
+        }
+        _ => Err(error("Codex checkout choices changed; check the terminal")),
+    }
+}
+
+async fn codex_new_screen(
+    command: &Path,
+    prefix: &[String],
+    pane: &str,
+    pid: u32,
+) -> Result<(String, String), MultiplexerError> {
+    verify_process(pid).await?;
+    let state = run(
+        command,
+        prefix,
+        &[
+            "display-message",
+            "-p",
+            "-t",
+            pane,
+            "#{pane_current_command}|#{cursor_x}|#{cursor_y}|#{pane_in_mode}|#{pane_dead}",
+        ],
+    )
+    .await?;
+    let screen = run(command, prefix, &["capture-pane", "-p", "-e", "-t", pane]).await?;
+    let parts: Vec<_> = state.trim().split('|').collect();
+    if parts.len() != 5 || parts[0] != "codex" || parts[3] != "0" || parts[4] != "0" {
+        return Err(error("Original Codex input is not ready after /new"));
+    }
+    Ok((state, screen))
+}
+
+async fn finish_codex_new(
+    command: &Path,
+    prefix: &[String],
+    pane: &str,
+    pid: u32,
+) -> Result<CodexNewSessionOutcome, MultiplexerError> {
+    let mut previous = None;
+    for _ in 0..20 {
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        let (state, screen) = codex_new_screen(command, prefix, pane, pid).await?;
+        if codex_ansi_draft(&state, &screen).is_ok_and(|draft| draft.is_none()) {
+            return Ok(CodexNewSessionOutcome::Started);
+        }
+        let selected = checkout_selection(&screen)?;
+        if selected.is_some() && selected == previous {
+            return Ok(CodexNewSessionOutcome::CheckoutChoice);
+        }
+        previous = selected;
+    }
+    Err(error(
+        "Codex did not finish /new or display checkout choices; check the terminal",
+    ))
+}
+
+/// Submit only the checkout choice explicitly selected by the IM user.
+pub async fn select_codex_checkout(
+    command: &Path,
+    prefix: &[String],
+    pane: &str,
+    pid: u32,
+    choice: CodexCheckoutChoice,
+) -> Result<(), MultiplexerError> {
+    let mut ready = false;
+    for _ in 0..20 {
+        let (state, screen) = codex_new_screen(command, prefix, pane, pid).await?;
+        if codex_ansi_draft(&state, &screen).is_ok() {
+            return Err(error("Codex checkout choice expired; no input was sent"));
+        }
+        let selected = checkout_selection(&screen)?
+            .ok_or_else(|| error("Codex checkout choice expired; no input was sent"))?;
+        if choice == CodexCheckoutChoice::Cancel {
+            run(command, prefix, &["send-keys", "-t", pane, "Escape"]).await?;
+            return Ok(());
+        }
+        if selected != choice {
+            let key = if choice == CodexCheckoutChoice::CurrentCheckout {
+                "Up"
+            } else {
+                "Down"
+            };
+            run(command, prefix, &["send-keys", "-t", pane, key]).await?;
+            ready = false;
+        } else if ready {
+            run(command, prefix, &["send-keys", "-t", pane, "Enter"]).await?;
+            return Ok(());
+        } else {
+            ready = true;
+        }
+        tokio::time::sleep(Duration::from_millis(150)).await;
+    }
+    Err(error(
+        "Codex did not display the requested checkout selection; Enter was not sent",
+    ))
+}
+
+/// Submit Codex's native /new, reporting any checkout picker without choosing an item.
 pub async fn send_codex_new(
     command: &Path,
     prefix: &[String],
     pane: &str,
     pid: u32,
-) -> Result<(), MultiplexerError> {
+) -> Result<CodexNewSessionOutcome, MultiplexerError> {
     if !pane.starts_with('%') || !pane[1..].chars().all(|c| c.is_ascii_digit()) {
         return Err(error("Invalid pane"));
     }
@@ -390,7 +544,7 @@ pub async fn send_codex_new(
     run(command, prefix, &["send-keys", "-t", pane, "-l", "/new"]).await?;
     wait_for_codex_command(command, prefix, pane, pid).await?;
     run(command, prefix, &["send-keys", "-t", pane, "Enter"]).await?;
-    Ok(())
+    finish_codex_new(command, prefix, pane, pid).await
 }
 
 #[cfg(test)]
@@ -423,6 +577,41 @@ mod draft_tests {
 #[cfg(test)]
 mod styled_draft_tests {
     use super::codex_ansi_draft;
+    #[test]
+    fn codex_model_directory_footer_identifies_a_nonempty_composer() {
+        let draft =
+            "history\n\n› local draft\n  second line\n\n  GPT-6-Astra default · /tmp/repository\n";
+        assert_eq!(
+            codex_ansi_draft("codex|13|3|0|0", draft).unwrap(),
+            Some("local draft\nsecond line".into())
+        );
+        assert!(
+            codex_ansi_draft(
+                "codex|13|3|0|0",
+                &draft.replace("/tmp/repository", "unrelated dialog")
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn codex_agent_navigation_footer_identifies_the_default_background_composer() {
+        let empty = "history\n\n\x1b[1m›\x1b[0m \x1b[2mAsk Codex to do anything\x1b[0m\n\n  GPT-6-Astra default · /tmp/repository · ← for agents\n";
+        assert_eq!(codex_ansi_draft("codex|2|2|0|0", empty).unwrap(), None);
+        let draft = "history\n\n› local draft\n  second line\n\n  GPT-6-Astra default · /tmp/repository · ← for agents\n";
+        assert_eq!(
+            codex_ansi_draft("codex|13|3|0|0", draft).unwrap(),
+            Some("local draft\nsecond line".into())
+        );
+        assert!(
+            codex_ansi_draft(
+                "codex|13|3|0|0",
+                &draft.replace("← for agents", "unrelated dialog")
+            )
+            .is_err()
+        );
+    }
+
     #[test]
     fn codex_default_background_composer_is_read_using_padding_and_status() {
         let empty = "history\n\n\x1b[1m›\x1b[0m \x1b[2mAsk Codex to do anything\x1b[0m\n\n  gpt-6-astra · Context 0% used    Vim: Insert\n";
@@ -458,3 +647,7 @@ mod styled_draft_tests {
 #[cfg(all(test, unix))]
 #[path = "native_command_tests.rs"]
 mod command_tests;
+
+#[cfg(all(test, unix))]
+#[path = "codex_new_tests.rs"]
+mod codex_new_tests;

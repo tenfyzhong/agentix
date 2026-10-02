@@ -233,6 +233,7 @@ enum MultiplexerUiAction {
 #[derive(Debug, Clone)]
 struct PendingInteractionView {
     rpc_id: Value,
+    session_switch_client: Option<String>,
     message: MessageRef,
     view: OutboundView,
     action_group: String,

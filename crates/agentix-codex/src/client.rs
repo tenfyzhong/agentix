@@ -1,4 +1,5 @@
 mod background;
+mod checkout;
 mod goal_input;
 mod observed;
 
@@ -134,6 +135,7 @@ pub struct CodexClient {
     process_sessions: Arc<Mutex<HashSet<SessionId>>>,
     exited_process_sessions: Arc<Mutex<HashSet<SessionId>>>,
     pending_resumes: Arc<Mutex<HashSet<SessionId>>>,
+    checkout_choices: Arc<Mutex<HashMap<String, checkout::PendingCheckout>>>,
     token_usage: Arc<Mutex<HashMap<SessionId, Value>>>,
     process_discovery: Option<CodexProcessDiscovery>,
     registry: Option<crate::ClientRegistry>,
@@ -360,6 +362,7 @@ impl CodexClient {
             process_sessions,
             exited_process_sessions,
             pending_resumes,
+            checkout_choices: Arc::new(Mutex::new(HashMap::new())),
             token_usage,
             process_discovery,
             registry,
@@ -928,6 +931,9 @@ impl CodexClient {
     }
 
     pub async fn respond(&self, id: Value, result: Value) -> Result<(), ClientError> {
+        if id.get("agentixCheckout").is_some() {
+            return self.respond_checkout_choice(&id, &result).await;
+        }
         if self
             .registry
             .as_ref()
@@ -1883,11 +1889,17 @@ impl CodexClient {
                 if client.session_client_id(&session).await.as_ref() != Some(&client_id) {
                     return Err(AgentError::Rejected("The original client changed".into()));
                 }
-                client
+                let outcome = client
                     .workspace
                     .new_codex_session(pid)
                     .await
-                    .map_err(|e| AgentError::Rejected(e.to_string()))
+                    .map_err(|e| AgentError::Rejected(e.to_string()))?;
+                if outcome == agentix_multiplexer::CodexNewSessionOutcome::CheckoutChoice {
+                    client
+                        .request_checkout_choice(&session, &client_id, pid)
+                        .await;
+                }
+                Ok(())
             }
             .await;
             if let Err(error) = result {

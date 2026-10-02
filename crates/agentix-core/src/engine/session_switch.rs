@@ -403,9 +403,26 @@ impl Engine {
         &self,
         conversation: &ConversationRef,
     ) -> Result<bool, EngineError> {
-        let Some(switch) = self.state.session_switch(conversation).await? else {
+        let Some(mut switch) = self.state.session_switch(conversation).await? else {
             return Ok(false);
         };
+        let awaiting_choice =
+            self.interactions
+                .pending
+                .lock()
+                .await
+                .iter()
+                .any(|(key, pending)| {
+                    key.session_id == switch.old_session
+                        && pending.message.conversation == *conversation
+                        && pending.session_switch_client.as_deref() == Some(&switch.client_id)
+                });
+        if awaiting_choice && switch.paused.is_none() && switch.target.is_none() {
+            // Human decision time is separate from replacement startup time.
+            switch.deadline = u64::try_from(notification_now()).unwrap_or_default() + 30;
+            self.state.save_session_switch(&mut switch).await?;
+            return Ok(false);
+        }
         if switch.target.is_some()
             || notification_now() < i64::try_from(switch.deadline).unwrap_or(i64::MAX)
         {

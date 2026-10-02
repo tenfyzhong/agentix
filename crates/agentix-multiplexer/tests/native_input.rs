@@ -1,6 +1,13 @@
 //! Isolated real terminal transport; no model provider or developer session.
-use agentix_multiplexer::{codex_terminal_input, send_codex_new};
-use std::{path::Path, process::Command, time::Duration};
+use agentix_multiplexer::{
+    CodexCheckoutChoice, CodexNewSessionOutcome, codex_terminal_input, select_codex_checkout,
+    send_codex_new,
+};
+use std::{
+    path::{Path, PathBuf},
+    process::Command,
+    time::Duration,
+};
 
 fn output(command: &str, args: &[&str]) -> String {
     let result = Command::new(command).args(args).output().unwrap();
@@ -24,17 +31,38 @@ impl Drop for Cleanup {
             .output();
     }
 }
+
+struct CodexHomeCleanup(PathBuf, PathBuf);
+impl CodexHomeCleanup {
+    fn local(binary: &str, root: &Path) -> Option<Self> {
+        std::env::var_os("AGENTIX_TEST_CODEX_ENDPOINT")
+            .is_none()
+            .then(|| Self(PathBuf::from(binary), root.join("codex-home")))
+    }
+}
+impl Drop for CodexHomeCleanup {
+    fn drop(&mut self) {
+        let _ = Command::new(&self.0)
+            .env("CODEX_HOME", &self.1)
+            .args(["app-server", "daemon", "stop"])
+            .output();
+    }
+}
 #[tokio::test]
 #[allow(clippy::too_many_lines)]
 async fn native_codex_draft_is_read_and_cleared_only_after_matching_confirmation() {
     if std::env::var_os("AGENTIX_TEST_NATIVE_HOSTS").is_none() {
         return;
     }
-    for (driver, style) in [
-        ("tmux", "colored"),
-        ("rmux", "colored"),
-        ("tmux", "plain"),
-        ("rmux", "plain"),
+    for (driver, style, checkout) in [
+        ("tmux", "colored", "checkout"),
+        ("rmux", "colored", "checkout"),
+        ("tmux", "plain", "checkout"),
+        ("rmux", "plain", "checkout"),
+        ("tmux", "colored", "legacy"),
+        ("rmux", "colored", "legacy"),
+        ("tmux", "plain", "legacy"),
+        ("rmux", "plain", "legacy"),
     ] {
         let root = tempfile::tempdir().unwrap();
         let bin = root.path().join("bin");
@@ -54,7 +82,7 @@ async fn native_codex_draft_is_read_and_cleared_only_after_matching_confirmation
         let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../plugins/agentix-bridge/tests/claude-rmux-host.mjs");
         let command = format!(
-            "exec {} {} {} 'local draft\nsecond line' codex {style}",
+            "exec {} {} {} 'local draft\nsecond line' codex {style} {checkout}",
             quote(&executable),
             quote(&fixture),
             quote(&root.path().join("sent"))
@@ -131,14 +159,35 @@ async fn native_codex_draft_is_read_and_cleared_only_after_matching_confirmation
             None
         );
         assert!(!root.path().join("sent").exists());
-        send_codex_new(Path::new(driver), &prefix, &pane, pid)
+        let outcome = send_codex_new(Path::new(driver), &prefix, &pane, pid)
             .await
             .unwrap();
+        if outcome == CodexNewSessionOutcome::CheckoutChoice {
+            assert!(!root.path().join("sent").exists(), "wait for the IM choice");
+            let choice = if style == "plain" {
+                CodexCheckoutChoice::NewWorktree
+            } else {
+                CodexCheckoutChoice::CurrentCheckout
+            };
+            select_codex_checkout(Path::new(driver), &prefix, &pane, pid, choice)
+                .await
+                .unwrap();
+        }
         for _ in 0..30 {
             if root.path().join("sent").exists() {
                 break;
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        if outcome == CodexNewSessionOutcome::CheckoutChoice {
+            assert_eq!(
+                std::fs::read_to_string(root.path().join("sent.choice")).unwrap(),
+                if style == "plain" {
+                    "New worktree"
+                } else {
+                    "Current checkout"
+                }
+            );
         }
         assert_eq!(
             std::fs::read_to_string(root.path().join("sent")).unwrap(),
@@ -147,26 +196,20 @@ async fn native_codex_draft_is_read_and_cleared_only_after_matching_confirmation
     }
 }
 
-/// Opt-in real Codex TUI validation against a supplied local app-server.
+/// Opt-in real Codex TUI validation with an isolated home or supplied app-server.
 /// Sends only /new and an unsubmitted local draft; no model prompt is submitted.
 #[tokio::test]
 async fn real_codex_submits_new_from_empty_and_confirmed_draft() {
-    let (Ok(binary), Ok(endpoint)) = (
-        std::env::var("AGENTIX_TEST_CODEX_BINARY"),
-        std::env::var("AGENTIX_TEST_CODEX_ENDPOINT"),
-    ) else {
+    let Ok(binary) = std::env::var("AGENTIX_TEST_CODEX_BINARY") else {
         return;
     };
     for driver in ["tmux", "rmux"] {
         let root = tempfile::tempdir().unwrap();
+        initialize_test_checkout(root.path());
         let socket = root.path().join("server.sock");
         let socket = socket.to_str().unwrap();
-        let command = format!(
-            "exec {} --remote {} --no-alt-screen --dangerously-bypass-approvals-and-sandbox -C {}",
-            quote(Path::new(&binary)),
-            quote(Path::new(&endpoint)),
-            quote(root.path())
-        );
+        let command = real_codex_command(Path::new(&binary), root.path());
+        let _codex_cleanup = CodexHomeCleanup::local(&binary, root.path());
         let pane = output(
             driver,
             &[
@@ -204,7 +247,9 @@ async fn real_codex_submits_new_from_empty_and_confirmed_draft() {
         .unwrap();
         tokio::time::sleep(Duration::from_secs(2)).await;
         let startup = output(driver, &["-S", socket, "capture-pane", "-p", "-t", &pane]);
-        if startup.contains("Do you trust the contents of this directory?") {
+        if startup.contains("Do you trust the contents of this directory?")
+            || (startup.contains("Trust this folder?") && startup.contains("Trust and continue"))
+        {
             output(driver, &["-S", socket, "send-keys", "-t", &pane, "Enter"]);
             tokio::time::sleep(Duration::from_secs(2)).await;
         }
@@ -219,7 +264,13 @@ async fn real_codex_submits_new_from_empty_and_confirmed_draft() {
                 assert_eq!(
                     codex_terminal_input(Path::new(driver), &prefix, &pane, pid, None)
                         .await
-                        .unwrap()
+                        .unwrap_or_else(|error| {
+                            let screen = output(
+                                driver,
+                                &["-S", socket, "capture-pane", "-p", "-e", "-t", &pane],
+                            );
+                            panic!("{driver}: {error}; draft screen={screen}");
+                        })
                         .as_deref(),
                     Some(draft)
                 );
@@ -230,24 +281,127 @@ async fn real_codex_submits_new_from_empty_and_confirmed_draft() {
                     None
                 );
             }
-            if let Err(error) = send_codex_new(Path::new(driver), &prefix, &pane, pid).await {
-                let state = output(
-                    driver,
-                    &[
-                        "-S",
-                        socket,
-                        "display-message",
-                        "-p",
-                        "-t",
-                        &pane,
-                        "#{pane_current_command}|#{cursor_x}|#{cursor_y}|#{pane_in_mode}|#{pane_dead}",
-                    ],
-                );
-                let screen = output(driver, &["-S", socket, "capture-pane", "-p", "-t", &pane]);
-                panic!("{driver}: {error}; state={state}; screen={screen}");
-            }
+            submit_real_codex_new(
+                driver,
+                &prefix,
+                &pane,
+                pid,
+                if draft.is_some() {
+                    CodexCheckoutChoice::NewWorktree
+                } else {
+                    CodexCheckoutChoice::CurrentCheckout
+                },
+            )
+            .await;
             wait_for_empty_codex(driver, &prefix, &pane, pid).await;
+            if std::env::var_os("AGENTIX_TEST_CODEX_ENDPOINT").is_none() {
+                assert_worktree_count(root.path(), if draft.is_some() { 2 } else { 1 });
+            }
         }
+    }
+}
+
+fn assert_worktree_count(root: &Path, expected: usize) {
+    let worktrees = output(
+        "git",
+        &[
+            "-C",
+            root.to_str().unwrap(),
+            "worktree",
+            "list",
+            "--porcelain",
+        ],
+    );
+    assert_eq!(
+        worktrees
+            .lines()
+            .filter(|line| line.starts_with("worktree "))
+            .count(),
+        expected,
+        "only the explicit New worktree choice creates a managed checkout"
+    );
+}
+
+fn initialize_test_checkout(root: &Path) {
+    output("git", &["init", "--quiet", root.to_str().unwrap()]);
+    output(
+        "git",
+        &[
+            "-C",
+            root.to_str().unwrap(),
+            "-c",
+            "user.name=Agentix Test",
+            "-c",
+            "user.email=agentix-test@example.invalid",
+            "-c",
+            "commit.gpgsign=false",
+            "-c",
+            "core.hooksPath=/dev/null",
+            "commit",
+            "--quiet",
+            "--allow-empty",
+            "-s",
+            "-m",
+            "test: initialize checkout fixture",
+        ],
+    );
+}
+
+async fn submit_real_codex_new(
+    driver: &str,
+    prefix: &[String],
+    pane: &str,
+    pid: u32,
+    choice: CodexCheckoutChoice,
+) {
+    let outcome = send_codex_new(Path::new(driver), prefix, pane, pid)
+        .await
+        .unwrap_or_else(|error| {
+            let screen = Command::new(driver)
+                .args(prefix)
+                .args(["capture-pane", "-p", "-e", "-t", pane])
+                .output()
+                .unwrap();
+            panic!(
+                "{driver}: {error}; screen={}",
+                String::from_utf8_lossy(&screen.stdout)
+            );
+        });
+    if std::env::var_os("AGENTIX_TEST_CODEX_ENDPOINT").is_none() {
+        assert_eq!(outcome, CodexNewSessionOutcome::CheckoutChoice);
+    }
+    if outcome == CodexNewSessionOutcome::CheckoutChoice {
+        select_codex_checkout(Path::new(driver), prefix, pane, pid, choice)
+            .await
+            .unwrap();
+    }
+}
+
+fn real_codex_command(binary: &Path, root: &Path) -> String {
+    if let Ok(endpoint) = std::env::var("AGENTIX_TEST_CODEX_ENDPOINT") {
+        format!(
+            "exec {} --remote {} --no-alt-screen --dangerously-bypass-approvals-and-sandbox -C {}",
+            quote(binary),
+            quote(Path::new(&endpoint)),
+            quote(root)
+        )
+    } else {
+        let codex_home = root.join("codex-home");
+        std::fs::create_dir(&codex_home).unwrap();
+        std::fs::write(
+            codex_home.join("config.toml"),
+            format!(
+                "model = \"gpt-6-astra\"\nmodel_provider = \"fixture\"\n[features]\nworktrees = true\n[model_providers.fixture]\nname = \"Offline terminal fixture\"\nbase_url = \"http://127.0.0.1:1/v1\"\nwire_api = \"responses\"\nrequires_openai_auth = false\n[projects.{:?}]\ntrust_level = \"trusted\"\n",
+                root.canonicalize().unwrap().to_str().unwrap()
+            ),
+        )
+        .unwrap();
+        format!(
+            "exec env CODEX_HOME={} {} --no-alt-screen --dangerously-bypass-approvals-and-sandbox -C {}",
+            quote(&codex_home),
+            quote(binary),
+            quote(root)
+        )
     }
 }
 
