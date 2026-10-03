@@ -17,21 +17,10 @@ DEBUG_TARGET_DIR = $(if $(CARGO_TARGET_DIR),$(CARGO_TARGET_DIR),target)
 
 .DEFAULT_GOAL := build
 
-.PHONY: build release completions check fmt clippy test test-backup clean help remove-plugin link-debug install update switch plugin
+.PHONY: build release completions check fmt clippy test test-backup clean help remove-plugin install update switch plugin
 
 build:
 	$(CARGO) build --workspace --all-features
-
-link-debug:
-	$(CARGO) build --package agentix --package taskix --all-features --target-dir "$(DEBUG_TARGET_DIR)"
-	@set -eu; \
-	debug_dir=$$(cd "$(DEBUG_TARGET_DIR)/debug" && pwd -P); \
-	test -x "$$debug_dir/agentix"; \
-	test -x "$$debug_dir/taskix"; \
-	prefix=$$($(BREW) --prefix); \
-	$(BREW) unlink agentix taskix; \
-	ln -sfn "$$debug_dir/agentix" "$$prefix/bin/agentix"; \
-	ln -sfn "$$debug_dir/taskix" "$$prefix/bin/taskix"
 
 release:
 	$(CARGO) build --workspace --all-features --release
@@ -74,10 +63,11 @@ install update:
 ifeq ($(VERSION),local)
 	@test "$@" = update || { echo 'Use make update VERSION=local to install local binaries' >&2; exit 2; }
 	$(check-local-options)
+	@$(MAKE) $(if $(filter release,$(PROFILE)),release,build)
 	@for formula in $(FORMULAE); do \
 		binary="$(DEBUG_TARGET_DIR)/$(PROFILE)/$$formula"; \
 		if ! test -f "$$binary" || ! test -x "$$binary"; then \
-			echo "Missing executable local binary: $$binary; run $(if $(filter release,$(PROFILE)),make release,make) first" >&2; exit 2; \
+			echo "Missing executable local binary: $$binary after $(if $(filter release,$(PROFILE)),make release,make build)" >&2; exit 2; \
 		fi; \
 	done
 	@HOMEBREW_AGENTIX_LOCAL_TARGET_DIR="$(DEBUG_TARGET_DIR)" \
@@ -205,11 +195,10 @@ help:
 		'make release  Build the workspace in release mode' \
 		'make completions  Regenerate bash, zsh, and fish completions for both CLIs' \
 		'make check    Run formatting, lint, and tests' \
-		'make link-debug  Build debug CLIs and replace Homebrew command links' \
 		'make install [VERSION=stable|head]  Install and use both Homebrew CLIs (default: stable)' \
 		'make update [VERSION=stable|head|local]  Update and use the selected version' \
 		'make switch [VERSION=stable|head|local]  Use an already installed version without downloading' \
-		'  VERSION=local installs existing binaries; build with make release or make first' \
+		'  VERSION=local builds the selected profile before installing local binaries' \
 		'  PROFILE=release|debug (default: release), CARGO_TARGET_DIR selects build output' \
 		'  FORMULAE=agentix or FORMULAE=taskix selects one CLI (default: both)' \
 		'make plugin [SOURCE=local|main]  Install plugins for all four hosts (default: main)' \

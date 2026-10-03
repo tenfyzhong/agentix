@@ -68,12 +68,11 @@ test("real_homebrew_local_update_handles_head_links_with_stable_opt_and_preserve
         const makefile = (await readFile(join(root, "Makefile"), "utf8"))
             .replaceAll("agentix", `agentix-link-fixture-${process.pid}`).replaceAll("taskix", name).replaceAll("tenfyzhong/tap", tap);
         await writeFile(join(source, "Makefile"), makefile);
-        const update = profile => spawnSync("make", ["update", "VERSION=local", `PROFILE=${profile}`, `FORMULAE=${name}`, "CARGO=/nonexistent-cargo"], {cwd: source, env, encoding: "utf8", timeout: 90_000});
+        const update = profile => spawnSync("make", ["update", "VERSION=local", `PROFILE=${profile}`, `FORMULAE=${name}`], {cwd: source, env, encoding: "utf8", timeout: 90_000});
         let previous;
         const installedSnapshots = new Map();
         for (const [iteration, profile] of [[1, "release"], [1, "release"], [2, "release"], [1, "release"], [3, "debug"]]) {
             await writeFile(main, `fn main() { println!("${name} local-${iteration}-${profile}"); }\n`);
-            build(profile);
             const result = update(profile);
             assert.equal(result.status, 0, result.stdout + result.stderr);
             const keg = await realpath(opt);
