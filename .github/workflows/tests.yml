@@ -70,7 +70,7 @@ jobs:
       - name: Verify bottle install and pour with an isolated fixture
         env:
           AGENTIX_TEST_HOMEBREW: '1'
-        run: node --test plugins/taskix-manager/tests/release-bottles.test.mjs
+        run: node --test plugins/taskix-manager/tests/release-bottles.test.mjs plugins/taskix-manager/tests/release-backup.test.mjs
 
   test:
     name: ${{ matrix.name }} (${{ matrix.shard }}/${{ matrix.shards }})

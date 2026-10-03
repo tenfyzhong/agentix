@@ -5,6 +5,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createHash } from "node:crypto";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 const read = async path => (await readFile(join(root, path), "utf8")).replace(/\r\n/g, "\n");
@@ -15,6 +16,68 @@ function stepScript(workflow, name) {
     const inline = body.match(/        run: ([^|\n].*)/);
     return inline ? inline[1] : body.split("        run: |\n")[1].replace(/^          /gm, "");
 }
+
+test("real_homebrew_bottles_backup_source_with_runtime_dependencies", {
+    skip: process.env.AGENTIX_TEST_HOMEBREW !== "1",
+    timeout: 600_000,
+}, async () => {
+    const directory = await mkdtemp(join(tmpdir(), "backup-bottle-real-"));
+    const tap = `codex-fixture/backup-${process.pid}`;
+    const qualified = `${tap}/taskix-backup`;
+    const env = { ...process.env, BASH_ENV: "/dev/null", HOMEBREW_NO_AUTO_UPDATE: "1",
+        HOMEBREW_NO_INSTALL_CLEANUP: "1", HOMEBREW_NO_ENV_HINTS: "1" };
+    const brew = (...args) => execFileSync("brew", args, { env, encoding: "utf8", timeout: 540_000, stdio: "pipe" });
+    const tapPath = brew("--repository", tap).trim();
+    try {
+        await mkdir(join(tapPath, "Formula"), { recursive: true });
+        execFileSync("git", ["init", "--quiet", "--initial-branch=test/backup-bottle", tapPath]);
+        await mkdir(join(directory, "source"));
+        await writeFile(join(directory, "source/taskix-backup"), await read("scripts/taskix-backup.py"));
+        await chmod(join(directory, "source/taskix-backup"), 0o755);
+        await writeFile(join(directory, "source/LICENSE"), await read("LICENSE"));
+        const archive = join(directory, "taskix-backup-1.2.3.tar.gz");
+        execFileSync("tar", ["-czf", archive, "-C", join(directory, "source"), "."]);
+        const digest = createHash("sha256").update(await readFile(archive)).digest("hex");
+        const formula = `class TaskixBackup < Formula
+  desc "Backup bottle regression fixture"
+  homepage "https://example.com"
+  url "file://${archive}"
+  sha256 "${digest}"
+  license "MIT"
+  depends_on "python@3.14"
+  depends_on "rclone"
+  def install
+    bin.install "taskix-backup"
+    inreplace bin/"taskix-backup", "#!/usr/bin/env python3", "#!#{Formula["python@3.14"].opt_bin}/python3.14"
+  end
+  test do
+    assert_match "--restore", shell_output("#{bin}/taskix-backup --help")
+  end
+end
+`;
+        const prepared = join(directory, "taskix-backup.rb");
+        await writeFile(prepared, formula);
+        await writeFile(join(tapPath, "Formula/taskix-backup.rb"), formula);
+        brew("trust", tap);
+        const result = spawnSync("bash", [join(root, ".github/scripts/build-homebrew-bottle.sh")], {
+            cwd: directory, encoding: "utf8", timeout: 540_000,
+            env: { ...env, FORMULA: "taskix-backup", FORMULA_PATH: prepared,
+                BOTTLE_INSTALL_KIND: "script", TAP_NAME: tap, RELEASE_TAG: "1.2.3",
+                BOTTLE_ROOT_URL: "https://example.com/releases/1.2.3" },
+        });
+        assert.equal(result.status, 0, result.stdout + result.stderr);
+        const prefix = brew("--prefix", qualified).trim();
+        const receipt = JSON.parse(await readFile(join(prefix, "INSTALL_RECEIPT.json"), "utf8"));
+        assert.equal(receipt.poured_from_bottle, true);
+        assert.equal(await readFile(join(prefix, ".brew/taskix-backup.rb"), "utf8"), formula);
+        assert.match(execFileSync(join(prefix, "bin/taskix-backup"), ["--help"], { encoding: "utf8" }), /--restore/);
+    } finally {
+        try { brew("uninstall", "--force", qualified); } catch { /* The fixture may not have installed. */ }
+        try { brew("untrust", "--formula", qualified); brew("untrust", tap); } catch { /* Only fixture trust is removed. */ }
+        await rm(tapPath, { recursive: true, force: true });
+        await rm(directory, { recursive: true, force: true });
+    }
+});
 
 test("backup_release_is_published_with_verified_script_and_three_platform_bottles", async () => {
     const release = await read(".github/workflows/release.yml");
