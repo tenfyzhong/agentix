@@ -313,7 +313,10 @@ async fn board_contains_project_metadata_and_is_the_only_project_link_target() {
     let project = &state.projects[0];
     assert_eq!(props["id"], project.id);
     assert_eq!(props["name"], project.name);
-    assert_eq!(props["root"], json!(project.root));
+    assert_eq!(
+        agentix_task::expand_home(std::path::Path::new(props["root"].as_str().unwrap())).unwrap(),
+        std::path::Path::new(&project.root)
+    );
     assert_eq!(props["remote"], json!(project.remote));
     assert_eq!(props["revision"], project.revision);
     assert_eq!(props["status"], "ACTIVE");

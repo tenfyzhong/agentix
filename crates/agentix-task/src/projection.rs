@@ -898,8 +898,9 @@ impl Service {
         updated_at: i64,
     ) -> Result<String> {
         let title = format!("{} — Board", project.name);
+        let root = crate::stored_paths::abbreviate_home(&project.root)?;
         let mut doc = frontmatter(
-            json!({"id":project.id,"name":project.name,"created_at":timestamp(project.created_at),"updated_at":timestamp(updated_at),"title":title,"revision":project.revision,"root":project.root,"remote":project.remote,"archived_at":optional_timestamp(project.archived_at),"status":if project.archived_at.is_some() {"ARCHIVED"} else {"ACTIVE"},"sync_status":"synced","sync_sequence":sequence,"tags":["agent/project","agent/board"]}),
+            json!({"id":project.id,"name":project.name,"created_at":timestamp(project.created_at),"updated_at":timestamp(updated_at),"title":title,"revision":project.revision,"root":root,"remote":project.remote,"archived_at":optional_timestamp(project.archived_at),"status":if project.archived_at.is_some() {"ARCHIVED"} else {"ACTIVE"},"sync_status":"synced","sync_sequence":sequence,"tags":["agent/project","agent/board"]}),
         );
         doc.push_str(&Self::header(&title));
         doc.push_str(&format!(
