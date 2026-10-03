@@ -185,10 +185,41 @@ jobs:
           binary-directory: target/${{ matrix.target }}/release
           artifact-suffix: ${{ matrix.runner }}
 
+  package-backup:
+    needs: resolve-version
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve-version.outputs.tag }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - name: Test backup tool
+        run: python3 -m unittest discover -s scripts/tests -p test_taskix_backup.py -v
+      - name: Package backup tool
+        env:
+          RELEASE_TAG: ${{ needs.resolve-version.outputs.tag }}
+        run: |
+          staging="dist/stage/taskix-backup"
+          mkdir -p "$staging"
+          cp scripts/taskix-backup.py "$staging/taskix-backup"
+          chmod +x "$staging/taskix-backup"
+          cp LICENSE "$staging/"
+          tar -C "$staging" -czf "dist/taskix-backup-${RELEASE_TAG}.tar.gz" .
+      - name: Upload backup artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-taskix-backup
+          path: dist/taskix-backup-*.tar.gz
+          if-no-files-found: error
+
   publish-release:
     needs:
       - resolve-version
       - build-release-binaries
+      - package-backup
     permissions:
       contents: write
     runs-on: ubuntu-latest

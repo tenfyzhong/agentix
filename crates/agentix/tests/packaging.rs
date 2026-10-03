@@ -414,7 +414,7 @@ fn homebrew_workflow_builds_a_bottle_and_updates_the_tap() {
     assert!(workflow.contains("HOMEBREW_TAP_TOKEN"));
     assert!(workflow.contains("FORMULA: ${{ matrix.formula }}"));
     assert!(workflow.contains("Formula/${{ matrix.formula }}.rb"));
-    assert!(workflow.contains(r#"'["agentix", "taskix"]'"#));
+    assert!(workflow.contains(r#"'["agentix", "taskix", "taskix-backup"]'"#));
     assert!(workflow.contains("branch: automation/${{ matrix.formula }}-"));
     assert!(workflow.contains("signoff: true"));
     assert!(workflow.contains("brew install --build-bottle"));
@@ -429,7 +429,7 @@ fn homebrew_workflow_builds_a_bottle_and_updates_the_tap() {
 fn homebrew_bottle_asset_names_match_the_selected_formula() {
     let script = repository_file(".github/scripts/normalize-homebrew-bottle.sh");
 
-    for formula in ["agentix", "taskix"] {
+    for formula in ["agentix", "taskix", "taskix-backup"] {
         let directory = tempfile::tempdir().unwrap();
         let original = format!("{formula}--0.2.0.arm64_sequoia.bottle.tar.gz");
         let asset = format!("{formula}-0.2.0.arm64_sequoia.bottle.tar.gz");

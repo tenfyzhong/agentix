@@ -2,12 +2,20 @@
 set -euo pipefail
 
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-: "${FORMULA:?}" "${FORMULA_PATH:?}" "${PREBUILT_BINARY:?}" "${TAP_NAME:?}" "${RELEASE_TAG:?}" "${BOTTLE_ROOT_URL:?}"
+: "${FORMULA:?}" "${FORMULA_PATH:?}" "${TAP_NAME:?}" "${RELEASE_TAG:?}" "${BOTTLE_ROOT_URL:?}"
 version="$("$script_dir/release-version.sh" "$RELEASE_TAG")"
-[[ "$("$PREBUILT_BINARY" --version)" == "$FORMULA $version" ]] || {
-    echo "Prebuilt binary version does not match $FORMULA $version" >&2
-    exit 1
-}
+install_kind="${BOTTLE_INSTALL_KIND:-binary}"
+case "$install_kind" in
+    binary)
+        : "${PREBUILT_BINARY:?}"
+        [[ "$("$PREBUILT_BINARY" --version)" == "$FORMULA $version" ]] || {
+            echo "Prebuilt binary version does not match $FORMULA $version" >&2
+            exit 1
+        }
+        ;;
+    script) ;;
+    *) echo "Unsupported bottle install kind: $install_kind" >&2; exit 1 ;;
+esac
 qualified="$TAP_NAME/$FORMULA"
 if brew list --versions "$qualified" >/dev/null 2>&1; then
     echo "Refusing to replace an existing installation of $qualified" >&2
@@ -22,7 +30,9 @@ restore_formula() {
 }
 trap restore_formula EXIT
 cp "$source_formula" "$tap_formula_path"
-FORMULA_PATH="$tap_formula_path" ruby "$script_dir/prepare-bottle-formula.rb"
+if [[ "$install_kind" == binary ]]; then
+    FORMULA_PATH="$tap_formula_path" ruby "$script_dir/prepare-bottle-formula.rb"
+fi
 brew install --build-bottle "$qualified"
 # Restore the public source recipe, including build dependencies, before export.
 cp "$source_formula" "$tap_formula_path"
@@ -38,7 +48,11 @@ bottles=("$FORMULA"--*.bottle.tar.gz)
 brew uninstall --force "$qualified"
 # Homebrew restricts local package paths to developer/test invocations.
 HOMEBREW_DEVELOPER=1 brew install --force-bottle "$PWD/${bottles[0]}"
-[[ "$("$(brew --prefix "$qualified")/bin/$FORMULA" --version)" == "$FORMULA $version" ]]
+if [[ "$install_kind" == binary ]]; then
+    [[ "$("$(brew --prefix "$qualified")/bin/$FORMULA" --version)" == "$FORMULA $version" ]]
+else
+    "$(brew --prefix "$qualified")/bin/$FORMULA" --help >/dev/null
+fi
 brew linkage --test "$qualified"
 brew test "$qualified"
 bash "$script_dir/normalize-homebrew-bottle.sh"

@@ -95,7 +95,7 @@ test("Homebrew publishes one PR per formula only after all platform bottles succ
 test("Homebrew merges every platform JSON and refuses incomplete bottle sets", { skip: process.platform === "win32" }, async () => {
     const workflow = await readFile(new URL(".github/workflows/homebrew-publish.yml", repository), "utf8");
     const merge = stepScript(workflow, "Add bottle metadata to formula");
-    for (const formula of ["agentix", "taskix"]) {
+    for (const formula of ["agentix", "taskix", "taskix-backup"]) {
         for (const count of [3, 2, 0]) {
             const directory = await mkdtemp(join(tmpdir(), "homebrew-merge-"));
             try {

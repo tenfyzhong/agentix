@@ -25,7 +25,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        formula: ${{ fromJSON(inputs.formula == 'agentix' && '["agentix"]' || inputs.formula == 'taskix' && '["taskix"]' || '["agentix", "taskix"]') }}
+        formula: ${{ fromJSON(inputs.formula == 'agentix' && '["agentix"]' || inputs.formula == 'taskix' && '["taskix"]' || inputs.formula == 'taskix-backup' && '["taskix-backup"]' || '["agentix", "taskix", "taskix-backup"]') }}
     runs-on: macos-15
     env:
       FORMULA: ${{ matrix.formula }}

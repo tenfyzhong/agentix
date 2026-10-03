@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       formula:
-        description: Formula to publish (all, agentix, or taskix)
+        description: Formula to publish (all, agentix, taskix, or taskix-backup)
         default: all
         type: string
     secrets:
@@ -28,6 +28,7 @@ on:
           - all
           - agentix
           - taskix
+          - taskix-backup
 
 permissions:
   contents: write
@@ -68,6 +69,7 @@ jobs:
           # Manual runs may package releases predating the reuse scripts.
           ref: ${{ github.workflow_sha }}
       - name: Download release binaries
+        if: inputs.formula != 'taskix-backup'
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.tag }}
@@ -84,7 +86,7 @@ jobs:
             mkdir -p "prebuilt/$formula"
             tar -xzf "dist/$archive" -C "prebuilt/$formula"
           done
-      - name: Build bottles from release binaries
+      - name: Build bottles from release binaries and backup source
         uses: ./.github/actions/build-bottles
         with:
           tag: ${{ inputs.tag }}
