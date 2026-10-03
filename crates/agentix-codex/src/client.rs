@@ -2,6 +2,7 @@ mod background;
 mod checkout;
 mod goal_input;
 mod observed;
+mod rollout_history;
 
 #[cfg(test)]
 mod daemon_tests;
@@ -130,6 +131,7 @@ pub struct CodexClient {
     connection: Arc<ConnectionState>,
     subscriptions: Arc<Mutex<HashSet<SessionId>>>,
     observed: Arc<Mutex<HashMap<SessionId, Option<TurnSummary>>>>,
+    rollout_history: Arc<Mutex<rollout_history::RolloutHistory>>,
     completed_turns: Arc<Mutex<HashMap<SessionId, String>>>,
     background_turn_notifications: Arc<AtomicBool>,
     process_sessions: Arc<Mutex<HashSet<SessionId>>>,
@@ -358,6 +360,7 @@ impl CodexClient {
             connection,
             subscriptions,
             observed: Arc::new(Mutex::new(HashMap::new())),
+            rollout_history: Arc::new(Mutex::new(rollout_history::RolloutHistory::default())),
             completed_turns,
             background_turn_notifications,
             process_sessions,
@@ -558,17 +561,23 @@ impl CodexClient {
         session_id: &SessionId,
         include_turns: bool,
     ) -> Result<Value, ClientError> {
-        self.request_after_reconnect(
-            "thread/read",
-            json!({
-                "threadId": session_id.as_str(),
-                "includeTurns": include_turns
-            }),
-        )
-        .await?
-        .get("thread")
-        .cloned()
-        .ok_or(ClientError::InvalidResponse("thread/read thread"))
+        let thread = self
+            .request_after_reconnect(
+                "thread/read",
+                json!({
+                    "threadId": session_id.as_str(),
+                    "includeTurns": include_turns
+                }),
+            )
+            .await?
+            .get("thread")
+            .cloned()
+            .ok_or(ClientError::InvalidResponse("thread/read thread"))?;
+        self.rollout_history
+            .lock()
+            .await
+            .remember_path(session_id, thread["path"].as_str());
+        Ok(thread)
     }
 
     async fn wait_for_workspace_session(
@@ -1004,13 +1013,14 @@ impl CodexClient {
                     "cursor": cursor,
                     "limit": limit,
                     "sortDirection": "desc",
-                    // IM renders input/output, not persisted tool payloads.
+                    // Recover local display events separately without tool/media payloads.
                     // A single full turn can contain hundreds of MB of media.
                     "itemsView": "summary"
                 }),
             )
             .await?;
         let mut page = history_from_result(&result)?;
+        self.restore_rollout_history(session_id, &mut page).await;
         self.restore_goal_inputs(session_id, &mut page, None).await;
         Ok(page)
     }
