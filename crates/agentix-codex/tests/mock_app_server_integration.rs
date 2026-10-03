@@ -20,6 +20,244 @@ use serde_json::json;
 
 use support::{MockCodexAppServer, MockThread, MockTurn};
 
+fn process_rollout(session: &str, turn: &str) -> tempfile::NamedTempFile {
+    let file = tempfile::NamedTempFile::new().unwrap();
+    let items = [
+        json!({"type":"Reasoning","id":"reason","summary_text":["Inspect the background work"],"raw_content":[]}),
+        json!({"type":"CommandExecution","id":"command","command":["cargo","test"],"status":"Completed","aggregated_output":"Tests passed"}),
+        json!({"type":"AgentMessage","id":format!("{turn}_native_agent"),"content":[{"type":"Text","text":"Work completed"}]}),
+    ];
+    let mut lines = vec![json!({"type":"session_meta","payload":{"id":session}}).to_string()];
+    lines.extend(items.into_iter().map(|item| json!({"type":"event_msg","payload":{"type":"item_completed","thread_id":session,"turn_id":turn,"item":item}}).to_string()));
+    std::fs::write(file.path(), format!("{}\n", lines.join("\n"))).unwrap();
+    file
+}
+
+#[tokio::test]
+async fn attach_restores_background_process_items_without_full_history() {
+    for read_only in [false, true] {
+        for (show_reasoning, show_tool_calls) in
+            [(false, false), (true, false), (false, true), (true, true)]
+        {
+            let server = MockCodexAppServer::start();
+            server.stall_full_history().await;
+            let rollout = process_rollout("thr_process", "turn_process");
+            let mut thread = MockThread::new("thr_process", "Process", "/work").with_turn(
+                MockTurn::in_progress_with_output("turn_process", "Do the work", "Work completed"),
+            );
+            thread.rollout_path = Some(rollout.path().to_string_lossy().into_owned());
+            server.add_thread(thread).await;
+            if read_only {
+                server.set_active_writer("thr_process").await;
+            }
+            let client = Arc::new(CodexClient::connect(server.endpoint()).await.unwrap());
+            let channel = Arc::new(RecordingChannel::default());
+            let engine = Engine::new(
+                client.clone(),
+                SqliteState::in_memory().await.unwrap(),
+                vec![channel.clone()],
+            )
+            .with_output(agentix_core::OutputConfig {
+                show_reasoning,
+                show_tool_calls,
+            });
+            engine
+                .handle_inbound(inbound("/attach thr_process"))
+                .await
+                .unwrap();
+            let views = channel.views();
+            let view = views
+                .iter()
+                .find(|view| view.body.contains("Work completed"))
+                .unwrap();
+            assert_eq!(
+                view.body.contains("Inspect the background work"),
+                show_reasoning
+            );
+            assert_eq!(view.body.contains("cargo test"), show_tool_calls);
+            assert_eq!(view.body.contains("Tests passed"), show_tool_calls);
+            let history = client
+                .read_history(&SessionId::new("thr_process"), None, 1)
+                .await
+                .unwrap();
+            let items = &history.turns[0].items;
+            assert_eq!(
+                items
+                    .iter()
+                    .map(|item| item.kind.as_str())
+                    .collect::<Vec<_>>(),
+                [
+                    "userMessage",
+                    "reasoning",
+                    "commandExecution",
+                    "agentMessage"
+                ]
+            );
+            assert_eq!(
+                items
+                    .iter()
+                    .filter(|item| item.kind == "agentMessage")
+                    .count(),
+                1
+            );
+            assert!(
+                server
+                    .request_params("thread/turns/list")
+                    .await
+                    .iter()
+                    .all(|params| params["itemsView"] != "full")
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn observed_process_items_refresh_after_notification_and_keep_answer_order() {
+    use agentix_codex::ClientRegistry;
+    use std::io::Write;
+    use std::path::Path;
+
+    let server = MockCodexAppServer::start();
+    let rollout = process_rollout("thr_process", "turn_process");
+    let mut thread = MockThread::new("thr_process", "Process", "/work").with_turn(
+        MockTurn::in_progress_with_output("turn_process", "Do the work", "Work completed"),
+    );
+    thread.rollout_path = Some(rollout.path().to_string_lossy().into_owned());
+    server.add_thread(thread).await;
+    server.set_active_writer("thr_process").await;
+    let registry = ClientRegistry::default();
+    let connection = registry.connect(None);
+    registry.client_message(
+        connection,
+        &json!({"id":1,"method":"thread/start","params":{}}),
+    );
+    registry.server_message(
+        connection,
+        &json!({"id":1,"result":{"thread":{"id":"thr_process"}}}),
+    );
+    let client = Arc::new(
+        CodexClient::connect_with_registry(
+            server.endpoint(),
+            Path::new("codex"),
+            Path::new("/tmp"),
+            true,
+            registry.clone(),
+        )
+        .await
+        .unwrap(),
+    );
+    let mut events = client.subscribe();
+    let channel = Arc::new(RecordingChannel::default());
+    let engine = Engine::new(
+        client.clone(),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    )
+    .with_output(agentix_core::OutputConfig {
+        show_reasoning: true,
+        show_tool_calls: true,
+    });
+    engine
+        .handle_inbound(inbound("/attach thr_process"))
+        .await
+        .unwrap();
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(rollout.path())
+        .unwrap();
+    for item in [
+        json!({"type":"Reasoning","id":"continued","summary_text":["Verify the final result"]}),
+        json!({"type":"AgentMessage","id":"final","content":[{"type":"Text","text":"Finished now"}]}),
+    ] {
+        writeln!(file, "{}", json!({"type":"event_msg","payload":{"type":"item_completed","thread_id":"thr_process","turn_id":"turn_process","item":item}})).unwrap();
+    }
+    server
+        .complete_turn("thr_process", "turn_process", "Finished now")
+        .await;
+    registry.server_frame(connection, &json!({"method":"turn/completed","params":{"threadId":"thr_process","turn":{"id":"turn_process","status":"completed"}}}).to_string());
+    tokio::time::timeout(Duration::from_secs(3), async {
+        loop {
+            let event = events.recv().await.unwrap();
+            let completed = matches!(&event, AgentEvent::TurnCompleted { turn_id, .. } if turn_id == "turn_process");
+            engine.handle_agent_event(event).await.unwrap();
+            if completed { break; }
+        }
+    }).await.expect("notification must restore appended process items");
+    let views = channel.views();
+    let body = &views.last().unwrap().body;
+    assert!(body.contains("Inspect the background work"));
+    assert!(body.contains("Verify the final result"));
+    assert!(body.find("Work completed").unwrap() < body.find("Verify the final result").unwrap());
+    assert!(body.find("Verify the final result").unwrap() < body.find("Finished now").unwrap());
+    assert_eq!(body.matches("Finished now").count(), 1);
+    assert!(client.is_read_only(&SessionId::new("thr_process")).await);
+}
+
+#[tokio::test]
+async fn background_completion_card_restores_process_items_without_full_history() {
+    let server = MockCodexAppServer::start();
+    server.stall_full_history().await;
+    let rollout = process_rollout("thr_process", "turn_process");
+    let mut thread = MockThread::new("thr_process", "Process", "/work").with_turn(
+        MockTurn::completed("turn_process", "Do the work", "Work completed"),
+    );
+    thread.rollout_path = Some(rollout.path().to_string_lossy().into_owned());
+    server.add_thread(thread).await;
+    let client = Arc::new(CodexClient::connect(server.endpoint()).await.unwrap());
+    let channel = Arc::new(RecordingChannel::default());
+    let engine = Engine::new(
+        client,
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    )
+    .with_output(agentix_core::OutputConfig {
+        show_reasoning: true,
+        show_tool_calls: true,
+    });
+    engine.handle_inbound(inbound("/help")).await.unwrap();
+    engine
+        .handle_agent_event(AgentEvent::TurnCompleted {
+            session_id: "thr_process".into(),
+            turn_id: "turn_process".into(),
+            status: TurnStatus::Completed,
+            error: None,
+        })
+        .await
+        .unwrap();
+    settle_background(&engine).await;
+    let views = channel.views();
+    let view = views.last().unwrap();
+    assert!(view.body.contains("Inspect the background work"));
+    assert!(view.body.contains("cargo test"));
+    assert!(view.body.contains("Work completed"));
+}
+
+#[tokio::test]
+async fn optional_rollout_metadata_timeout_preserves_summary_history() {
+    let server = MockCodexAppServer::start();
+    server
+        .add_thread(
+            MockThread::new("thr_process", "Process", "/work").with_turn(MockTurn::completed(
+                "turn_process",
+                "Do the work",
+                "Work completed",
+            )),
+        )
+        .await;
+    let client = CodexClient::connect(server.endpoint()).await.unwrap();
+    let (_entered, release) = server.hold_next_request("thread/read").await;
+    let result = tokio::time::timeout(
+        Duration::from_millis(500),
+        client.read_history(&SessionId::new("thr_process"), None, 1),
+    )
+    .await;
+    release.send(()).unwrap();
+    let page = result
+        .expect("optional rollout metadata must not stall an available summary")
+        .unwrap();
+    assert_eq!(page.turns[0].agent_text.as_deref(), Some("Work completed"));
+}
+
 #[tokio::test]
 async fn im_goal_objective_activates_existing_stopped_goals() {
     for previous_status in ["complete", "paused", "blocked"] {
