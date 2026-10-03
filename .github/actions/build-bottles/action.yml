@@ -1,12 +1,12 @@
-name: Build bottles from prebuilt binaries
-description: Install prebuilt binaries using the tap resources and verify exported bottles.
+name: Build release bottles
+description: Install prebuilt binaries or backup source using the tap and verify exported bottles.
 inputs:
   tag:
     required: true
     description: Release tag
   formula:
     default: all
-    description: all, agentix, or taskix
+    description: all, agentix, taskix, or taskix-backup
   binary-directory:
     required: true
     description: Directory containing prebuilt binaries
@@ -43,12 +43,17 @@ runs:
         # Tapping can validate formulae immediately, before a later trust command.
         brew trust "$TAP_NAME"
         brew tap "$TAP_NAME"
-        for formula in agentix taskix; do
+        for formula in agentix taskix taskix-backup; do
           if [[ "$SELECTED_FORMULA" != all && "$SELECTED_FORMULA" != "$formula" ]]; then continue; fi
           export FORMULA="$formula"
           export FORMULA_PATH="$GITHUB_WORKSPACE/prepared-formula/$formula.rb"
-          export PREBUILT_BINARY="$GITHUB_WORKSPACE/$BINARY_DIRECTORY/$formula"
-          if [[ "$STAGED_ARCHIVES" == true ]]; then export PREBUILT_BINARY="$PREBUILT_BINARY/$formula"; fi
+          export BOTTLE_INSTALL_KIND=binary
+          if [[ "$formula" == taskix-backup ]]; then
+            export BOTTLE_INSTALL_KIND=script
+          else
+            export PREBUILT_BINARY="$GITHUB_WORKSPACE/$BINARY_DIRECTORY/$formula"
+            if [[ "$STAGED_ARCHIVES" == true ]]; then export PREBUILT_BINARY="$PREBUILT_BINARY/$formula"; fi
+          fi
           mkdir -p "bottles/$formula"
           (cd "bottles/$formula" && bash "$BOTTLE_SCRIPT")
         done
@@ -65,4 +70,11 @@ runs:
       with:
         name: homebrew-bottle-taskix-${{ inputs.artifact-suffix }}
         path: bottles/taskix/*
+        if-no-files-found: error
+    - name: Save Taskix backup bottle
+      if: inputs.formula == 'all' || inputs.formula == 'taskix-backup'
+      uses: actions/upload-artifact@v4
+      with:
+        name: homebrew-bottle-taskix-backup-${{ inputs.artifact-suffix }}
+        path: bottles/taskix-backup/*
         if-no-files-found: error
