@@ -33,6 +33,11 @@ cp "$source_formula" "$tap_formula_path"
 if [[ "$install_kind" == binary ]]; then
     FORMULA_PATH="$tap_formula_path" ruby "$script_dir/prepare-bottle-formula.rb"
 fi
+# macOS CI images can link legacy OpenSSL into the new backup dependencies' paths.
+if [[ "$FORMULA" == taskix-backup && "$install_kind" == script && "${RUNNER_OS:-}" == macOS ]] \
+    && brew list --versions openssl@1.1 >/dev/null 2>&1; then
+    brew unlink openssl@1.1
+fi
 brew install --build-bottle "$qualified"
 # Restore the public source recipe, including build dependencies, before export.
 cp "$source_formula" "$tap_formula_path"
