@@ -73,7 +73,7 @@ impl Service {
                     "conflict: moved Board is not managed by taskix"
                 );
                 ensure!(
-                    properties["root"] == project.root,
+                    crate::stored_paths::matches_root(&properties["root"], &project.root)?,
                     "conflict: moved Board workspace root does not match Project {}",
                     project.id
                 );

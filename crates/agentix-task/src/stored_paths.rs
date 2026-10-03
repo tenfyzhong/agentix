@@ -35,6 +35,10 @@ pub(crate) fn expand_home(path: &str) -> Result<String> {
         .into_owned())
 }
 
+pub(crate) fn matches_root(value: &Value, root: &str) -> Result<bool> {
+    Ok(value.as_str().map(expand_home).transpose()?.as_deref() == Some(root))
+}
+
 pub(crate) fn metadata_key(key: &str) -> Result<String> {
     match key.strip_prefix("agentix:cursor:") {
         Some(path) => Ok(format!("agentix:cursor:{}", abbreviate_home(path)?)),
