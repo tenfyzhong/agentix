@@ -49,40 +49,26 @@ Documentation-only and configuration-only changes do not require a failing test 
 
 After changing CLI commands or options, run `make completions` and commit the updated files for both CLIs. Tests verify that the checked-in completions match their CLI and that taskix generation does not read configuration or create task state. Checked-in shell completions retain LF line endings on every platform through `.gitattributes`.
 
-## Using local debug binaries
-
-With both Homebrew formulas installed, run `make link-debug` to build debug
-versions of `agentix` and `taskix`, unlink the Homebrew formulas, and symlink
-the commands in `$(brew --prefix)/bin` to this checkout's build output. The
-target supports `CARGO_TARGET_DIR` (default: `target`) and can be run repeatedly.
-Build failures leave the existing Homebrew links intact.
-
-These links select the debug commands on your shell's PATH. Homebrew services
-use the formula's `opt` path, so run `agentix serve` directly for debug testing
-after stopping any existing service. Keep the checkout and build output while
-using the links. To restore the installed commands, run
-`brew link --overwrite agentix taskix`.
-
 ## Installing local binaries through Homebrew
 
 Update `tenfyzhong/tap` to a version with precompiled local installation support,
-then build once and install the resulting binaries:
+then build and install the current checkout:
 
 ```sh
-make release
 make update VERSION=local
 
-make
 make update VERSION=local PROFILE=debug
 
 make update VERSION=local FORMULAE=taskix
 ```
 
-`update VERSION=local` reads existing binaries from `target/<profile>/`; it does
-not run Cargo. Missing or nonexecutable selected binaries fail before invoking
-Homebrew and prompt you to run `make release` or `make` first. Only the selected
-CLI binaries are required. Rebuild explicitly after changing source; the enabled
-features and Cargo version come from the earlier build.
+`update VERSION=local` runs `make release` for the default release profile or
+`make build` for `PROFILE=debug` before installing binaries from
+`target/<profile>/`. Both build targets compile the workspace with all features.
+Invalid local options or a failed build stop before invoking Homebrew. Missing
+or nonexecutable selected binaries after a successful build also stop installation.
+`FORMULAE` selects the CLIs to install; the build still covers the workspace.
+Rerun the update target after changing source to build and install those changes.
 
 The target passes the current checkout as `HOMEBREW_AGENTIX_LOCAL_SOURCE` and the
 build directory as `HOMEBREW_AGENTIX_LOCAL_TARGET_DIR` to
@@ -94,11 +80,10 @@ dependencies. Stable/remote HEAD builds retain their existing build dependencies
 Configuration, completion and service installation rules remain in the tap.
 
 `PROFILE` defaults to `release` and accepts `release` or `debug`.
-`FORMULAE` defaults to `agentix taskix`. For a custom build directory, use the
-same `CARGO_TARGET_DIR` when building and installing, including paths with spaces:
+`FORMULAE` defaults to `agentix taskix`. For a custom build directory, set
+`CARGO_TARGET_DIR` for the build and installation, including paths with spaces:
 
 ```sh
-make release CARGO_TARGET_DIR=/absolute/path/to/build
 make update VERSION=local CARGO_TARGET_DIR=/absolute/path/to/build
 ```
 
@@ -134,9 +119,8 @@ This works even when `opt` points to a
 different version from the command links. Identical artifacts are reused;
 changed binary/resource content creates another local version. Failed installs
 do not run switch and preserve existing command links. Homebrew can still
-update `opt` paths during staging. Conflicting manual `link-debug` links may
-need to be removed before Homebrew can link the commands. This target does not restart services. Restart only the selected
-service after installation:
+update `opt` paths during staging. This target does not restart services.
+Restart only the selected service after installation:
 
 ```sh
 brew services restart tenfyzhong/tap/agentix
@@ -163,8 +147,8 @@ one CLI. `VERSION` defaults to `stable`.
 | Update and use the latest release | `make update` |
 | Install and use HEAD | `make install VERSION=head` |
 | Update and use the latest HEAD | `make update VERSION=head` |
-| Install existing local release binaries | `make update VERSION=local` |
-| Install existing local debug binaries | `make update VERSION=local PROFILE=debug` |
+| Build and install local release binaries | `make update VERSION=local` |
+| Build and install local debug binaries | `make update VERSION=local PROFILE=debug` |
 | Switch to an installed release | `make switch` |
 | Switch to an installed HEAD | `make switch VERSION=head` |
 | Switch to the latest installed local release build | `make switch VERSION=local` |
@@ -198,9 +182,8 @@ taskix --version
 
 Installation failures stop before the explicit switch. A link failure is
 reported without attempting rollback. Existing versions are not explicitly
-uninstalled, but Homebrew's own cleanup policy still applies. After using
-`make link-debug`, remove those manual debug symlinks before switching if
-Homebrew reports a link conflict; the targets do not overwrite arbitrary files.
+uninstalled, but Homebrew's own cleanup policy still applies. The targets do not
+overwrite arbitrary files when Homebrew reports a link conflict.
 
 ## Installing plugins
 
