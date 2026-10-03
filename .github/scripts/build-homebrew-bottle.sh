@@ -37,6 +37,11 @@ fi
 if [[ "$FORMULA" == taskix-backup && "$install_kind" == script && "${RUNNER_OS:-}" == macOS ]] \
     && brew list --versions openssl@1.1 >/dev/null 2>&1; then
     brew unlink openssl@1.1
+    # Some runner images create this link outside Homebrew's managed keg links.
+    openssl_link="$(brew --prefix)/bin/openssl"
+    if [[ -L "$openssl_link" && "$(readlink "$openssl_link")" == "$(brew --prefix openssl@1.1)/bin/openssl" ]]; then
+        rm "$openssl_link"
+    fi
 fi
 brew install --build-bottle "$qualified"
 # Restore the public source recipe, including build dependencies, before export.

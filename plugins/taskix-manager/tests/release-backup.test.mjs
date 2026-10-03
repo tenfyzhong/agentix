@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, readlink, symlink, writeFile } from "node:fs/promises";
 import { execFileSync, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -127,11 +127,13 @@ test("backup_archive_contains_only_the_executable_and_license_and_enters_checksu
     execFileSync("sha256sum", ["--check", "SHA256SUMS"], { cwd: join(directory, "dist") });
 });
 
-for (const [runnerOs, legacyOpenSsl] of [["macOS", true], ["macOS", false], ["Linux", true], ["", true]]) {
-    test(`script_bottles_install_and_pour_with_legacy_openssl_${runnerOs || "non_ci"}_${legacyOpenSsl}`, { skip: process.platform === "win32" }, async t => {
+for (const [runnerOs, legacyOpenSsl, manualLink = false] of [["macOS", true], ["macOS", false], ["Linux", true], ["", true], ["macOS", true, "legacy"], ["macOS", true, "unrelated"]]) {
+    test(`script_bottles_install_and_pour_with_legacy_openssl_${runnerOs || "non_ci"}_${legacyOpenSsl}${manualLink ? `_${manualLink}_link` : ""}`, { skip: process.platform === "win32" }, async t => {
         const directory = await mkdtemp(join(tmpdir(), "backup-bottle-"));
         t.after(() => rm(directory, { recursive: true, force: true }));
-        for (const path of ["tools", "tap/Formula", "keg/.brew", "keg/bin"]) await mkdir(join(directory, path), { recursive: true });
+        for (const path of ["tools", "tap/Formula", "keg/.brew", "keg/bin", "prefix/bin"]) await mkdir(join(directory, path), { recursive: true });
+        const linkTarget = join(directory, manualLink === "unrelated" ? "other/bin/openssl" : "prefix/opt/openssl@1.1/bin/openssl");
+        if (manualLink) await symlink(linkTarget, join(directory, "prefix/bin/openssl"));
         const formula = 'class TaskixBackup < Formula\n  def install\n    bin.install "scripts/taskix-backup.py" => "taskix-backup"\n  end\nend\n';
         await writeFile(join(directory, "prepared.rb"), formula);
         await writeFile(join(directory, "keg/bin/taskix-backup"), "#!/bin/sh\necho '--restore'\n");
@@ -143,11 +145,16 @@ for (const [runnerOs, legacyOpenSsl] of [["macOS", true], ["macOS", false], ["Li
         list) [[ "$3" == openssl@1.1 && "$LEGACY_OPENSSL" == 1 ]] ;;
         unlink) [[ "$2" == openssl@1.1 ]] || exit 1; touch "$FIXTURE/unlinked-openssl" ;;
         install)
-            if [[ "$2" == --build-bottle && "$RUNNER_OS" == macOS && "$LEGACY_OPENSSL" == 1 && ! -f "$FIXTURE/unlinked-openssl" ]]; then
+            if [[ "$2" == --build-bottle && "$RUNNER_OS" == macOS && "$LEGACY_OPENSSL" == 1 && ( ! -f "$FIXTURE/unlinked-openssl" || -L "$FIXTURE/prefix/bin/openssl" ) ]]; then
                 echo "Could not symlink bin/openssl: linked openssl@1.1" >&2
                 exit 1
             fi ;;
-        --prefix) echo "$FIXTURE/keg" ;;
+        --prefix)
+            case "$2" in
+                openssl@1.1) echo "$FIXTURE/prefix/opt/openssl@1.1" ;;
+                "") echo "$FIXTURE/prefix" ;;
+                *) echo "$FIXTURE/keg" ;;
+            esac ;;
         bottle) touch taskix-backup--1.2.3.arm64_sequoia.bottle.tar.gz ;;
     esac
     `);
@@ -158,6 +165,12 @@ for (const [runnerOs, legacyOpenSsl] of [["macOS", true], ["macOS", false], ["Li
                 FORMULA: "taskix-backup", FORMULA_PATH: join(directory, "prepared.rb"),
                 BOTTLE_INSTALL_KIND: "script", TAP_NAME: "fixture/tap", RELEASE_TAG: "1.2.3", BOTTLE_ROOT_URL: "https://example.invalid" },
         });
+        if (manualLink === "unrelated") {
+            assert.equal(result.status, 1);
+            assert.match(result.stderr, /Could not symlink bin\/openssl/);
+            assert.equal(await readlink(join(directory, "prefix/bin/openssl")), linkTarget);
+            return;
+        }
         assert.equal(result.status, 0, result.stderr);
         assert.equal(await readFile(join(directory, "tap/Formula/taskix-backup.rb"), "utf8"), formula);
         assert.equal(await readFile(join(directory, "keg/.brew/taskix-backup.rb"), "utf8"), formula);
