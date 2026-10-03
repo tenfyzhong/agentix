@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { chmod, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, readlink, symlink, writeFile } from "node:fs/promises";
 import { execFileSync, spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createHash } from "node:crypto";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 const read = async path => (await readFile(join(root, path), "utf8")).replace(/\r\n/g, "\n");
@@ -15,6 +16,68 @@ function stepScript(workflow, name) {
     const inline = body.match(/        run: ([^|\n].*)/);
     return inline ? inline[1] : body.split("        run: |\n")[1].replace(/^          /gm, "");
 }
+
+test("real_homebrew_bottles_backup_source_with_runtime_dependencies", {
+    skip: process.env.AGENTIX_TEST_HOMEBREW !== "1",
+    timeout: 600_000,
+}, async () => {
+    const directory = await mkdtemp(join(tmpdir(), "backup-bottle-real-"));
+    const tap = `codex-fixture/backup-${process.pid}`;
+    const qualified = `${tap}/taskix-backup`;
+    const env = { ...process.env, BASH_ENV: "/dev/null", HOMEBREW_NO_AUTO_UPDATE: "1",
+        HOMEBREW_NO_INSTALL_CLEANUP: "1", HOMEBREW_NO_ENV_HINTS: "1" };
+    const brew = (...args) => execFileSync("brew", args, { env, encoding: "utf8", timeout: 540_000, stdio: "pipe" });
+    const tapPath = brew("--repository", tap).trim();
+    try {
+        await mkdir(join(tapPath, "Formula"), { recursive: true });
+        execFileSync("git", ["init", "--quiet", "--initial-branch=test/backup-bottle", tapPath]);
+        await mkdir(join(directory, "source"));
+        await writeFile(join(directory, "source/taskix-backup"), await read("scripts/taskix-backup.py"));
+        await chmod(join(directory, "source/taskix-backup"), 0o755);
+        await writeFile(join(directory, "source/LICENSE"), await read("LICENSE"));
+        const archive = join(directory, "taskix-backup-1.2.3.tar.gz");
+        execFileSync("tar", ["-czf", archive, "-C", join(directory, "source"), "."]);
+        const digest = createHash("sha256").update(await readFile(archive)).digest("hex");
+        const formula = `class TaskixBackup < Formula
+  desc "Backup bottle regression fixture"
+  homepage "https://example.com"
+  url "file://${archive}"
+  sha256 "${digest}"
+  license "MIT"
+  depends_on "python@3.14"
+  depends_on "rclone"
+  def install
+    bin.install "taskix-backup"
+    inreplace bin/"taskix-backup", "#!/usr/bin/env python3", "#!#{Formula["python@3.14"].opt_bin}/python3.14"
+  end
+  test do
+    assert_match "--restore", shell_output("#{bin}/taskix-backup --help")
+  end
+end
+`;
+        const prepared = join(directory, "taskix-backup.rb");
+        await writeFile(prepared, formula);
+        await writeFile(join(tapPath, "Formula/taskix-backup.rb"), formula);
+        brew("trust", tap);
+        const result = spawnSync("bash", [join(root, ".github/scripts/build-homebrew-bottle.sh")], {
+            cwd: directory, encoding: "utf8", timeout: 540_000,
+            env: { ...env, FORMULA: "taskix-backup", FORMULA_PATH: prepared,
+                BOTTLE_INSTALL_KIND: "script", TAP_NAME: tap, RELEASE_TAG: "1.2.3",
+                BOTTLE_ROOT_URL: "https://example.com/releases/1.2.3" },
+        });
+        assert.equal(result.status, 0, result.stdout + result.stderr);
+        const prefix = brew("--prefix", qualified).trim();
+        const receipt = JSON.parse(await readFile(join(prefix, "INSTALL_RECEIPT.json"), "utf8"));
+        assert.equal(receipt.poured_from_bottle, true);
+        assert.equal(await readFile(join(prefix, ".brew/taskix-backup.rb"), "utf8"), formula);
+        assert.match(execFileSync(join(prefix, "bin/taskix-backup"), ["--help"], { encoding: "utf8" }), /--restore/);
+    } finally {
+        try { brew("uninstall", "--force", qualified); } catch { /* The fixture may not have installed. */ }
+        try { brew("untrust", "--formula", qualified); brew("untrust", tap); } catch { /* Only fixture trust is removed. */ }
+        await rm(tapPath, { recursive: true, force: true });
+        await rm(directory, { recursive: true, force: true });
+    }
+});
 
 test("backup_release_is_published_with_verified_script_and_three_platform_bottles", async () => {
     const release = await read(".github/workflows/release.yml");
@@ -64,35 +127,63 @@ test("backup_archive_contains_only_the_executable_and_license_and_enters_checksu
     execFileSync("sha256sum", ["--check", "SHA256SUMS"], { cwd: join(directory, "dist") });
 });
 
-test("script_bottles_preserve_the_source_recipe_and_test_install_and_pour_without_native_binary", { skip: process.platform === "win32" }, async t => {
-    const directory = await mkdtemp(join(tmpdir(), "backup-bottle-"));
-    t.after(() => rm(directory, { recursive: true, force: true }));
-    for (const path of ["tools", "tap/Formula", "keg/.brew", "keg/bin"]) await mkdir(join(directory, path), { recursive: true });
-    const formula = 'class TaskixBackup < Formula\n  def install\n    bin.install "scripts/taskix-backup.py" => "taskix-backup"\n  end\nend\n';
-    await writeFile(join(directory, "prepared.rb"), formula);
-    await writeFile(join(directory, "keg/bin/taskix-backup"), "#!/bin/sh\necho '--restore'\n");
-    await chmod(join(directory, "keg/bin/taskix-backup"), 0o755);
-    await writeFile(join(directory, "tools/brew"), `#!/bin/bash
-printf '%s\\n' "$*" >> "$FIXTURE/calls"
-case "$1" in
-    --repository) echo "$FIXTURE/tap" ;;
-    list) exit 1 ;;
-    --prefix) echo "$FIXTURE/keg" ;;
-    bottle) touch taskix-backup--1.2.3.arm64_sequoia.bottle.tar.gz ;;
-esac
-`);
-    await chmod(join(directory, "tools/brew"), 0o755);
-    const result = spawnSync("bash", [join(root, ".github/scripts/build-homebrew-bottle.sh")], {
-        cwd: directory, encoding: "utf8", env: { ...process.env, PATH: `${directory}/tools:${process.env.PATH}`,
-            FIXTURE: directory, FORMULA: "taskix-backup", FORMULA_PATH: join(directory, "prepared.rb"),
-            BOTTLE_INSTALL_KIND: "script", TAP_NAME: "fixture/tap", RELEASE_TAG: "1.2.3", BOTTLE_ROOT_URL: "https://example.invalid" },
+for (const [runnerOs, legacyOpenSsl, manualLink = false] of [["macOS", true], ["macOS", false], ["Linux", true], ["", true], ["macOS", true, "legacy"], ["macOS", true, "unrelated"]]) {
+    test(`script_bottles_install_and_pour_with_legacy_openssl_${runnerOs || "non_ci"}_${legacyOpenSsl}${manualLink ? `_${manualLink}_link` : ""}`, { skip: process.platform === "win32" }, async t => {
+        const directory = await mkdtemp(join(tmpdir(), "backup-bottle-"));
+        t.after(() => rm(directory, { recursive: true, force: true }));
+        for (const path of ["tools", "tap/Formula", "keg/.brew", "keg/bin", "prefix/bin"]) await mkdir(join(directory, path), { recursive: true });
+        const linkTarget = join(directory, manualLink === "unrelated" ? "other/bin/openssl" : "prefix/opt/openssl@1.1/bin/openssl");
+        if (manualLink) await symlink(linkTarget, join(directory, "prefix/bin/openssl"));
+        const formula = 'class TaskixBackup < Formula\n  def install\n    bin.install "scripts/taskix-backup.py" => "taskix-backup"\n  end\nend\n';
+        await writeFile(join(directory, "prepared.rb"), formula);
+        await writeFile(join(directory, "keg/bin/taskix-backup"), "#!/bin/sh\necho '--restore'\n");
+        await chmod(join(directory, "keg/bin/taskix-backup"), 0o755);
+        await writeFile(join(directory, "tools/brew"), `#!/bin/bash
+    printf '%s\\n' "$*" >> "$FIXTURE/calls"
+    case "$1" in
+        --repository) echo "$FIXTURE/tap" ;;
+        list) [[ "$3" == openssl@1.1 && "$LEGACY_OPENSSL" == 1 ]] ;;
+        unlink) [[ "$2" == openssl@1.1 ]] || exit 1; touch "$FIXTURE/unlinked-openssl" ;;
+        install)
+            if [[ "$2" == --build-bottle && "$RUNNER_OS" == macOS && "$LEGACY_OPENSSL" == 1 && ( ! -f "$FIXTURE/unlinked-openssl" || -L "$FIXTURE/prefix/bin/openssl" ) ]]; then
+                echo "Could not symlink bin/openssl: linked openssl@1.1" >&2
+                exit 1
+            fi ;;
+        --prefix)
+            case "$2" in
+                openssl@1.1) echo "$FIXTURE/prefix/opt/openssl@1.1" ;;
+                "") echo "$FIXTURE/prefix" ;;
+                *) echo "$FIXTURE/keg" ;;
+            esac ;;
+        bottle) touch taskix-backup--1.2.3.arm64_sequoia.bottle.tar.gz ;;
+    esac
+    `);
+        await chmod(join(directory, "tools/brew"), 0o755);
+        const result = spawnSync("bash", [join(root, ".github/scripts/build-homebrew-bottle.sh")], {
+            cwd: directory, encoding: "utf8", env: { ...process.env, PATH: `${directory}/tools:${process.env.PATH}`,
+                FIXTURE: directory, RUNNER_OS: runnerOs, LEGACY_OPENSSL: legacyOpenSsl ? "1" : "0",
+                FORMULA: "taskix-backup", FORMULA_PATH: join(directory, "prepared.rb"),
+                BOTTLE_INSTALL_KIND: "script", TAP_NAME: "fixture/tap", RELEASE_TAG: "1.2.3", BOTTLE_ROOT_URL: "https://example.invalid" },
+        });
+        if (manualLink === "unrelated") {
+            assert.equal(result.status, 1);
+            assert.match(result.stderr, /Could not symlink bin\/openssl/);
+            assert.equal(await readlink(join(directory, "prefix/bin/openssl")), linkTarget);
+            return;
+        }
+        assert.equal(result.status, 0, result.stderr);
+        assert.equal(await readFile(join(directory, "tap/Formula/taskix-backup.rb"), "utf8"), formula);
+        assert.equal(await readFile(join(directory, "keg/.brew/taskix-backup.rb"), "utf8"), formula);
+        const calls = await readFile(join(directory, "calls"), "utf8");
+        if (runnerOs === "macOS" && legacyOpenSsl) {
+            assert.ok(calls.indexOf("unlink openssl@1.1\n") >= 0);
+            assert.ok(calls.indexOf("unlink openssl@1.1\n") < calls.indexOf("install --build-bottle"));
+        } else {
+            assert.doesNotMatch(calls, /unlink /);
+        }
+        assert.equal(calls.split("\n").filter(line => line === "test fixture/tap/taskix-backup").length, 2);
+        assert.match(calls, /install --build-bottle fixture\/tap\/taskix-backup/);
+        assert.match(calls, /install --force-bottle/);
+        assert.ok((await readdir(directory)).includes("taskix-backup-1.2.3.arm64_sequoia.bottle.tar.gz"));
     });
-    assert.equal(result.status, 0, result.stderr);
-    assert.equal(await readFile(join(directory, "tap/Formula/taskix-backup.rb"), "utf8"), formula);
-    assert.equal(await readFile(join(directory, "keg/.brew/taskix-backup.rb"), "utf8"), formula);
-    const calls = await readFile(join(directory, "calls"), "utf8");
-    assert.equal(calls.split("\n").filter(line => line === "test fixture/tap/taskix-backup").length, 2);
-    assert.match(calls, /install --build-bottle fixture\/tap\/taskix-backup/);
-    assert.match(calls, /install --force-bottle/);
-    assert.ok((await readdir(directory)).includes("taskix-backup-1.2.3.arm64_sequoia.bottle.tar.gz"));
-});
+}
