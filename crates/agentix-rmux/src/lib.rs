@@ -105,6 +105,16 @@ impl MultiplexerDriver for RmuxDriver {
             })?;
         agentix_multiplexer::send_codex_new(Path::new("rmux"), &[], &location.pane_id, pid).await
     }
+    async fn exit_codex_session(&self, pid: u32) -> Result<(), MultiplexerError> {
+        let location = self
+            .process_locations()
+            .await?
+            .remove(&pid)
+            .ok_or_else(|| {
+                MultiplexerError::Backend("Original Codex pane is unavailable".into())
+            })?;
+        agentix_multiplexer::send_codex_exit(Path::new("rmux"), &[], &location.pane_id, pid).await
+    }
     async fn select_codex_checkout(
         &self,
         pid: u32,

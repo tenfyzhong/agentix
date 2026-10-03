@@ -92,7 +92,7 @@ For Pi, OMP, or Claude Code, start the configured host with its bridge loaded an
 
 1. Send `/sessions` to the bot and choose **Attach** for your session.
 2. Send an ordinary message to prompt the agent and follow its replies in chat.
-3. Use `/last` for the latest turn, `/history` for earlier turns, and `/detach` to disconnect.
+3. Use `/last` for the latest turn, `/history` for earlier turns, and `/detach` to disconnect. Use `/exit` to request agent exit where supported (Codex requires its original CLI in the configured rmux or tmux).
 4. Send `/help` for the commands supported by the current session.
 
 Mention the bot in group chats. If another Codex process owns the session's writer, the attachment is read-only; send prompts through the original process.

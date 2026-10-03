@@ -2728,6 +2728,75 @@ async fn attached_session_commands_are_gated_and_update_the_channel_menu() {
 }
 
 #[tokio::test]
+async fn exit_forwards_to_agent_and_keeps_binding_until_session_exits() {
+    let agent = Arc::new(FakeAgent::new());
+    let channel = Arc::new(FakeChannel::default());
+    let state = SqliteState::in_memory().await.unwrap();
+    let engine = Engine::new(agent.clone(), state, vec![channel.clone()]);
+    engine
+        .handle_inbound(inbound("chat-a", "/attach thr_a"))
+        .await
+        .unwrap();
+    engine
+        .handle_inbound(inbound("chat-a", "/exit"))
+        .await
+        .unwrap();
+    assert!(agent.calls().contains(&"command:thr_a:Exit".to_string()));
+    assert!(!agent.calls().contains(&"detach:thr_a".to_string()));
+    assert!(channel.session_commands().last().unwrap().1);
+    engine
+        .handle_inbound(inbound("chat-a", "/current"))
+        .await
+        .unwrap();
+    assert!(
+        channel
+            .sent()
+            .last()
+            .unwrap()
+            .1
+            .title
+            .contains("Parser cleanup")
+    );
+    engine
+        .handle_agent_event(AgentEvent::SessionExited {
+            session_id: "thr_a".into(),
+        })
+        .await
+        .unwrap();
+    assert!(!channel.session_commands().last().unwrap().1);
+}
+
+#[tokio::test]
+async fn exit_rejection_keeps_the_session_attached() {
+    for read_only in [false, true] {
+        let mut agent = FakeAgent::new();
+        agent.read_only = read_only;
+        agent.uncertain_command = Some("Exit could not be confirmed".into());
+        let agent = Arc::new(agent);
+        let channel = Arc::new(FakeChannel::default());
+        let engine = Engine::new(
+            agent.clone(),
+            SqliteState::in_memory().await.unwrap(),
+            vec![channel.clone()],
+        );
+        engine
+            .handle_inbound(inbound("chat-a", "/attach thr_a"))
+            .await
+            .unwrap();
+        engine
+            .handle_inbound(inbound("chat-a", "/exit"))
+            .await
+            .unwrap();
+        assert_eq!(
+            agent.calls().contains(&"command:thr_a:Exit".to_string()),
+            !read_only
+        );
+        assert!(!agent.calls().contains(&"detach:thr_a".to_string()));
+        assert!(channel.session_commands().last().unwrap().1);
+    }
+}
+
+#[tokio::test]
 async fn rename_without_an_argument_collects_the_next_im_message() {
     let agent = Arc::new(FakeAgent::new());
     let channel = Arc::new(FakeChannel::default());

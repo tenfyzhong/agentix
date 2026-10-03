@@ -338,6 +338,7 @@ async fn wait_for_codex_command(
     prefix: &[String],
     pane: &str,
     pid: u32,
+    text: &str,
 ) -> Result<(), MultiplexerError> {
     // Unbracketed input is buffered by Codex's paste-burst detector. Enter must
     // arrive only after the command has rendered and remained stable.
@@ -361,22 +362,22 @@ async fn wait_for_codex_command(
         let parts: Vec<_> = state.trim().split('|').collect();
         let matches = parts.len() == 5
             && parts[0] == "codex"
-            && parts[1] == "6"
+            && parts[1].parse::<usize>().ok() == Some(text.len() + 2)
             && parts[3] == "0"
             && parts[4] == "0"
             && parts[2]
                 .parse::<usize>()
                 .ok()
                 .and_then(|r| screen.lines().nth(r))
-                .is_some_and(|line| line.trim_end() == "› /new");
+                .is_some_and(|line| line.trim_end() == format!("› {text}"));
         if matches && ready {
             return Ok(());
         }
         ready = matches;
     }
-    Err(error(
-        "Codex did not display /new ready for submission; Enter was not sent",
-    ))
+    Err(error(format!(
+        "Codex did not display {text} ready for submission; Enter was not sent",
+    )))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -529,6 +530,27 @@ pub async fn send_codex_new(
     pane: &str,
     pid: u32,
 ) -> Result<CodexNewSessionOutcome, MultiplexerError> {
+    submit_codex_command(command, prefix, pane, pid, "/new").await?;
+    finish_codex_new(command, prefix, pane, pid).await
+}
+
+/// Submit Codex's native /exit to the verified original CLI.
+pub async fn send_codex_exit(
+    command: &Path,
+    prefix: &[String],
+    pane: &str,
+    pid: u32,
+) -> Result<(), MultiplexerError> {
+    submit_codex_command(command, prefix, pane, pid, "/exit").await
+}
+
+async fn submit_codex_command(
+    command: &Path,
+    prefix: &[String],
+    pane: &str,
+    pid: u32,
+    text: &str,
+) -> Result<(), MultiplexerError> {
     if !pane.starts_with('%') || !pane[1..].chars().all(|c| c.is_ascii_digit()) {
         return Err(error("Invalid pane"));
     }
@@ -552,10 +574,10 @@ pub async fn send_codex_new(
             "Terminal draft changed; confirm it in IM before sending",
         ));
     }
-    run(command, prefix, &["send-keys", "-t", pane, "-l", "/new"]).await?;
-    wait_for_codex_command(command, prefix, pane, pid).await?;
+    run(command, prefix, &["send-keys", "-t", pane, "-l", text]).await?;
+    wait_for_codex_command(command, prefix, pane, pid, text).await?;
     run(command, prefix, &["send-keys", "-t", pane, "Enter"]).await?;
-    finish_codex_new(command, prefix, pane, pid).await
+    Ok(())
 }
 
 #[cfg(test)]

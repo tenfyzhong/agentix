@@ -6,6 +6,8 @@ pub use launch::{interactive_login_shell_argv, persistent_launch_argv};
 mod interaction_tests;
 mod interactions;
 mod native_control;
+#[cfg(all(test, unix))]
+mod native_exit_tests;
 pub use interactions::{
     TerminalInteractions, inspect_terminal_interaction, parse_terminal_interaction,
     respond_terminal_interaction,
@@ -15,7 +17,7 @@ mod terminal_command;
 use native_control::validate_codex_prompt;
 pub use native_control::{
     CodexCheckoutChoice, CodexNewSessionOutcome, codex_terminal_input, select_codex_checkout,
-    send_codex_new,
+    send_codex_exit, send_codex_new,
 };
 pub use terminal_command::terminal_command_output;
 
@@ -96,6 +98,12 @@ pub trait MultiplexerDriver: std::fmt::Debug + Send + Sync {
     ) -> Result<CodexNewSessionOutcome, MultiplexerError> {
         Err(MultiplexerError::Backend(
             "Native session control is unavailable".into(),
+        ))
+    }
+    async fn exit_codex_session(&self, _pid: u32) -> Result<(), MultiplexerError> {
+        Err(MultiplexerError::Backend(
+            "Native agent exit is unavailable; start Codex inside the configured rmux or tmux"
+                .into(),
         ))
     }
     async fn select_codex_checkout(
@@ -203,6 +211,9 @@ impl WorkspaceManager {
         pid: u32,
     ) -> Result<CodexNewSessionOutcome, MultiplexerError> {
         self.driver()?.new_codex_session(pid).await
+    }
+    pub async fn exit_codex_session(&self, pid: u32) -> Result<(), MultiplexerError> {
+        self.driver()?.exit_codex_session(pid).await
     }
     pub async fn select_codex_checkout(
         &self,

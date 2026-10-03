@@ -516,3 +516,23 @@ async fn observed_snapshot_diff_scales_with_item_count() {
         "32x more items must not produce quadratic diff growth: {medians:?}"
     );
 }
+
+#[tokio::test]
+async fn exit_requires_an_original_cli_instead_of_reporting_detachment() {
+    let server = MockCodexAppServer::start();
+    server
+        .add_thread(MockThread::new("exit_thread", "Exit", "/work"))
+        .await;
+    let client = CodexClient::connect(server.endpoint()).await.unwrap();
+    let result = client
+        .run_session_command(&SessionId::new("exit_thread"), SessionCommand::Exit)
+        .await;
+    assert!(matches!(result, Err(AgentError::Rejected(_))), "{result:?}");
+    assert!(
+        !server
+            .request_methods()
+            .await
+            .iter()
+            .any(|method| method == "thread/unsubscribe")
+    );
+}

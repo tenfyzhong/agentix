@@ -20,7 +20,7 @@ const SESSION_COMMAND_HELP: &[(&str, &str)] = &[
         "/clear [name]",
         "Start a fresh session, optionally with a name.",
     ),
-    ("/exit", "End the IM connection to the current session."),
+    ("/exit", "Exit the agent in the original client."),
     ("/diff", "Show workspace changes."),
     ("/rename <name>", "Change the current session name."),
     ("/compact", "Compact the current session context."),
@@ -766,9 +766,6 @@ impl Engine {
             }
             Err(error) => return Err(error),
         };
-        if matches!(command, SessionCommand::Exit) {
-            return self.detach(conversation).await;
-        }
         if !self.agent.session_access(&session).await.can_write() {
             return self.show_read_only_notice(conversation).await;
         }

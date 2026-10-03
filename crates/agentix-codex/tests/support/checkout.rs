@@ -10,6 +10,7 @@ use agentix_multiplexer::{
 struct CheckoutDriver(
     Mutex<Vec<CodexCheckoutChoice>>,
     std::sync::atomic::AtomicBool,
+    Mutex<Vec<u32>>,
 );
 
 #[async_trait]
@@ -50,6 +51,10 @@ impl MultiplexerDriver for CheckoutDriver {
     async fn new_codex_session(&self, _: u32) -> Result<CodexNewSessionOutcome, MultiplexerError> {
         self.1.store(true, std::sync::atomic::Ordering::Release);
         Ok(CodexNewSessionOutcome::CheckoutChoice)
+    }
+    async fn exit_codex_session(&self, pid: u32) -> Result<(), MultiplexerError> {
+        self.2.lock().unwrap().push(pid);
+        Ok(())
     }
     async fn inspect_interaction(
         &self,
@@ -318,5 +323,73 @@ async fn check_choice(index: usize, choice: CodexCheckoutChoice, namespaced: boo
                 "cancel and detach must revoke the requested handoff"
             );
         }
+    }
+}
+
+#[tokio::test]
+async fn im_exit_targets_the_unique_original_codex_cli_and_waits_for_its_exit() {
+    for owners in [1, 2] {
+        let server = MockCodexAppServer::start();
+        server
+            .add_thread(MockThread::new("exit", "Exit", "/tmp"))
+            .await;
+        let registry = ClientRegistry::default();
+        for _ in 0..owners {
+            let connection = registry.connect(Some(std::process::id()));
+            registry.client_message(
+                connection,
+                &json!({"id":1,"method":"thread/resume","params":{"threadId":"exit"}}),
+            );
+            registry.server_message(
+                connection,
+                &json!({"id":1,"result":{"thread":{"id":"exit"}}}),
+            );
+        }
+        let driver = Arc::new(CheckoutDriver::default());
+        let client = Arc::new(
+            CodexClient::connect_with_registry(
+                server.endpoint(),
+                std::path::Path::new("must-not-launch"),
+                std::path::Path::new("/tmp"),
+                false,
+                registry,
+            )
+            .await
+            .unwrap()
+            .with_multiplexer(driver.clone()),
+        );
+        let channel = Arc::new(RecordingChannel::default());
+        let engine = Engine::new(
+            client,
+            SqliteState::in_memory().await.unwrap(),
+            vec![channel.clone()],
+        );
+        engine
+            .handle_inbound(inbound("/attach exit"))
+            .await
+            .unwrap();
+        engine.handle_inbound(inbound("/exit")).await.unwrap();
+        assert_eq!(
+            *driver.2.lock().unwrap(),
+            if owners == 1 {
+                vec![std::process::id()]
+            } else {
+                vec![]
+            }
+        );
+        engine.handle_inbound(inbound("/current")).await.unwrap();
+        assert!(channel.views().last().unwrap().title.contains("Exit"));
+        engine
+            .handle_agent_event(AgentEvent::SessionExited {
+                session_id: "exit".into(),
+            })
+            .await
+            .unwrap();
+        let mut current = inbound("/current");
+        current.event_id = "current-after-confirmed-exit".into();
+        assert!(matches!(
+            engine.handle_inbound(current).await,
+            Err(agentix_core::EngineError::NoCurrentSession)
+        ));
     }
 }
