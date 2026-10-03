@@ -1845,6 +1845,34 @@ impl CodexClient {
         }
     }
 
+    async fn request_native_exit(
+        &self,
+        session: &SessionId,
+    ) -> Result<SessionCommandResult, AgentError> {
+        let client_id = self.session_client_id(session).await.ok_or_else(|| {
+            AgentError::Rejected("A unique original Codex client is required".into())
+        })?;
+        let pid = self
+            .registry
+            .as_ref()
+            .and_then(|registry| {
+                registry
+                    .snapshot()
+                    .into_iter()
+                    .find(|client| client.client_id == client_id)
+            })
+            .and_then(|client| client.pid)
+            .ok_or_else(|| AgentError::Rejected("The original client PID is unavailable".into()))?;
+        self.workspace
+            .exit_codex_session(pid)
+            .await
+            .map_err(|error| AgentError::Rejected(error.to_string()))?;
+        Ok(SessionCommandResult::message(
+            "Codex · Exit",
+            "Exit requested in the original Codex CLI.",
+        ))
+    }
+
     async fn request_native_new(
         &self,
         session: &SessionId,
@@ -2931,10 +2959,7 @@ impl SessionControlPort for CodexClient {
             SessionCommand::Fork => self.fork_thread(session_id).await,
             SessionCommand::Fast(enabled) => self.fast_command(session_id, enabled).await,
             SessionCommand::Clear(name) => self.clear_command(session_id, name).await,
-            SessionCommand::Exit => Ok(SessionCommandResult::message(
-                "Codex · Exit",
-                "Detached from the session.",
-            )),
+            SessionCommand::Exit => return self.request_native_exit(session_id).await,
             SessionCommand::Diff => self.diff_command(session_id).await,
             SessionCommand::Rename(name) => self.rename_command(session_id, name).await,
             SessionCommand::Model(model) => self.model_command(session_id, model).await,
