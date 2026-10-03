@@ -73,17 +73,51 @@ jobs:
         run: node --test plugins/taskix-manager/tests/release-bottles.test.mjs
 
   test:
-    name: ${{ matrix.name }}
+    name: ${{ matrix.name }} (${{ matrix.shard }}/${{ matrix.shards }})
     strategy:
       fail-fast: false
       matrix:
         include:
           - name: Linux
             os: ubuntu-latest
+            shard: 1
+            shards: 2
+          - name: Linux
+            os: ubuntu-latest
+            shard: 2
+            shards: 2
           - name: macOS
             os: macos-latest
+            shard: 1
+            shards: 4
+          - name: macOS
+            os: macos-latest
+            shard: 2
+            shards: 4
+          - name: macOS
+            os: macos-latest
+            shard: 3
+            shards: 4
+          - name: macOS
+            os: macos-latest
+            shard: 4
+            shards: 4
           - name: Windows
             os: windows-latest
+            shard: 1
+            shards: 4
+          - name: Windows
+            os: windows-latest
+            shard: 2
+            shards: 4
+          - name: Windows
+            os: windows-latest
+            shard: 3
+            shards: 4
+          - name: Windows
+            os: windows-latest
+            shard: 4
+            shards: 4
     runs-on: ${{ matrix.os }}
     env:
       # Reduce Windows linker work and cache size; CI does not debug test binaries.
@@ -111,28 +145,54 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.95.0
+      - name: Install nextest
+        uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2
+        with:
+          tool: cargo-nextest@0.9.146
       - uses: Swatinem/rust-cache@v2
         with:
+          # All partitions compile the same binaries; reuse one cache per OS.
           shared-key: tests-${{ matrix.os }}
+          save-if: ${{ matrix.shard == 1 }}
       - name: Run workspace tests
         if: runner.os != 'Windows'
         env:
           TASKIX_TEST_HOOK_SHELL: fish
-        run: cargo test --workspace --all-features
-      - name: Check the Windows workspace
+        run: cargo nextest run --profile ci --workspace --all-features --no-fail-fast --partition hash:${{ matrix.shard }}/${{ matrix.shards }}
+      # nextest does not run documentation tests. Run them once per platform.
+      - name: Run workspace doctests
+        if: runner.os != 'Windows' && matrix.shard == 1
+        run: cargo test --workspace --all-features --doc
+      - name: Run Windows tests
         if: runner.os == 'Windows'
+        run: cargo nextest run --profile ci -p agentix-memory -p agentix-task -p taskix --all-features --no-fail-fast --partition hash:${{ matrix.shard }}/${{ matrix.shards }}
+
+  windows-platform:
+    name: Windows platform checks
+    runs-on: windows-latest
+    env:
+      CARGO_PROFILE_DEV_DEBUG: 0
+      CARGO_PROFILE_TEST_DEBUG: 0
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install protobuf compiler
+        run: choco install protoc --yes --no-progress
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.95.0
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: tests-windows-platform
+      - name: Check the Windows workspace
         run: cargo check --workspace --all-features
       - name: Run Windows TCP control tests
-        if: runner.os == 'Windows'
         run: cargo test -p agentix --all-features --bin agentix control::tests::tcp_control_server
-      - name: Run Windows memory tests
-        if: runner.os == 'Windows'
-        run: cargo test -p agentix-memory --all-features
-      - name: Run Windows task board tests
-        if: runner.os == 'Windows'
-        run: cargo test -p agentix-task -p taskix --all-features
+      - name: Run Windows doctests
+        run: cargo test -p agentix-memory -p agentix-task -p taskix --all-features --doc
       - name: Verify Windows system time zones
-        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $originalTimeZone = tzutil /g
