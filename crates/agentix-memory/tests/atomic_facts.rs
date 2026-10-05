@@ -270,7 +270,14 @@ impl ProjectRepository for Repository {
 struct SplitModel(Vec<MemoryInput>);
 #[async_trait::async_trait]
 impl Model for SplitModel {
-    async fn complete(&self, _: &ModelRequest) -> anyhow::Result<ModelReply> {
+    async fn complete(&self, request: &ModelRequest) -> anyhow::Result<ModelReply> {
+        assert!(
+            request
+                .tools
+                .iter()
+                .all(|tool| !tool.name.starts_with("repo_")),
+            "legacy splitting must use memory/source evidence; repository review has its own lane"
+        );
         Ok(ModelReply {
             continuation: json!([]),
             calls: vec![ToolCall {

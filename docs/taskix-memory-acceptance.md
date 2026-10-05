@@ -161,7 +161,7 @@ under simultaneous writers, original-source ordering, immutable values,
 qualifier normalization, stale revision rollback, human protection, active-only
 retrieval and separate conflict diagnostics. Legacy split regressions verify
 path/autostart/domain separation, complete evidence and version preservation,
-visible `derived_from` lineage, no recursive work, all-or-nothing rollback,
+visible `derived_from` lineage, memory/source-only split tools, no recursive work, all-or-nothing rollback,
 corrective feedback for altered literal quotes, and one-time schema 2-to-3
 migration including explicit null facts. Backup tests preserve schema 3 and reject
 unsupported schema 4; CLI restore and host extraction tests exercise the new schema. A worker regression rejects unstructured

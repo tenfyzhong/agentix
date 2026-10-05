@@ -380,7 +380,7 @@ impl MemoryWorker {
                 "related":decision_schema()["properties"]["related"].clone(),"reason":{"type":"string"}
             }),
         );
-        let result = agent.run_validated(FACT_COMPACT, &input.to_string(), tools, finish, &|value| {
+        let result = agent.run_validated(FACT_COMPACT, &input.to_string(), &FactTools(tools), finish, &|value| {
             let proposal: crate::FactCompaction = serde_json::from_value(value.clone())?;
             ensure!(proposal.parts.len() <= 16 && proposal.related.len() <= 16, "bounded fact split required");
             let mut keys = std::collections::HashSet::new();
@@ -405,6 +405,27 @@ impl MemoryWorker {
             .complete_fact_compaction(lease, proposal, now())
             .await?;
         Ok(())
+    }
+}
+
+// Splitting historical facts has no authority to run a repository review.
+struct FactTools<'a>(&'a ProjectTools);
+#[async_trait]
+impl ToolSet for FactTools<'_> {
+    fn definitions(&self) -> Vec<crate::ToolDefinition> {
+        self.0
+            .definitions()
+            .into_iter()
+            .filter(|tool| !tool.name.starts_with("repo_"))
+            .collect()
+    }
+
+    async fn execute(&self, name: &str, arguments: Value) -> Result<Value> {
+        ensure!(
+            !name.starts_with("repo_"),
+            "repository review is unavailable during legacy fact splitting"
+        );
+        self.0.execute(name, arguments).await
     }
 }
 
