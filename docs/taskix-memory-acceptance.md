@@ -289,7 +289,9 @@ cargo run -p agentix-memory --example compaction_acceptance -- \
 This opt-in example uses `gpt-6-luna` through standalone `codex exec`, without the
 shared daemon or inherited parent session identifiers, with personal configuration,
 plugins and native shell, web and multi-agent tools disabled. It returns a nonempty array of external call objects for the outer memory loop
-to execute; these labels do not need to exist as native Codex tools. Request and task deadlines remain those of the
+to execute; these labels do not need to exist as native Codex tools. Each response
+is constrained by the actual tool schemas, with typed arguments rather than
+JSON encoded inside strings. Older replay replies remain decodable. Request and task deadlines remain those of the
 supplied memory configuration; this flag does not add a production subscription provider
 or change the daemon's provider. The extraction benchmark reuses the bridge with its
 existing pinned model, replay checkpoint and request budget.

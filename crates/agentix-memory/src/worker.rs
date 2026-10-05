@@ -377,6 +377,8 @@ impl MemoryWorker {
         let mut input = input.clone();
         input["evidence_dates"] = json!(dates);
         let mut content_schema = memory_schema();
+        content_schema["properties"]["fact"] =
+            content_schema["properties"]["fact"]["anyOf"][0].clone();
         content_schema["properties"]["evidence"]["items"] = definition(
             "quote_reference",
             "Reuse an exact quotation from a supplied memory without repeating its text",

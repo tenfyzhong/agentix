@@ -206,7 +206,10 @@ It uses at most four model steps (or a lower configured limit) for the initial
 proposal and validation corrections, without repeating evidence reads. Split proposals reference preloaded quotations
 by memory ID and zero-based quote index; the worker restores exact receipt/message
 IDs and original text before validation. Unknown records/indices are correctable
-proposal errors. Expanded proposals retain the original submission byte limit,
+proposal errors. Missing evidence returns up to sixteen exact memory/quote references
+and the total missing count for correction. The submission schema requires a non-null
+fact in each part. Protocol, container port and published port are separate attributes.
+Expanded proposals retain the original submission byte limit,
 and all original evidence-retention fences still apply. Request/task
 timeouts, tool limits and retries remain unchanged. Each part creates a new fact or reconciles an existing atomic version;
 merge requires identical identity and value. The seed and overlapping legacy
