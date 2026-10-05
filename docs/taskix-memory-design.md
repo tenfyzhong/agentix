@@ -185,8 +185,17 @@ that work finishes or exhausts its lease.
 
 Compaction work has priority 3 within its Project, below live extraction/consolidation and backfill,
 and uses the existing per-Project consolidation lane and provider/Agent budgets.
-It keeps or revises its exact seed rather than creating a duplicate seed. A stale
-seed is completed without a model call; revisions produced by a successful compact
+It keeps or revises its exact seed, or merges it into an existing canonical record
+and supersedes the exact seed in the same transaction. Retargeting requires an
+explicit seed ID/revision assessment with `supersede` and no retained duplicate;
+all valid seed facts and quotations belong in the existing target. The model
+prefers the record supported by the confirmed current decision and original source
+dates. It converges overlapping claims about the same entity, scope and conditions
+to one effective record, rather than rewriting an old hostname to the current
+hostname while leaving both records active. Different entities or conditions can
+validly share a hostname; this is semantic consolidation, not string deduplication.
+Human content, revision guards and the sixteen-quotation budget still apply.
+A stale seed is completed without a model call; revisions produced by a successful compact
 are marked observed to prevent recursive scheduling. Failures retain normal retry
 limits; permanent provider 4xx rejections, except 408 and 429, fail immediately.
 They remain inspectable; exhausted work requires a retry, a changed memory revision,

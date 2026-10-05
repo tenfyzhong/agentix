@@ -92,10 +92,20 @@ impl MemoryStore {
                 "conflict: compaction seed changed"
             );
             ensure!(
-                decisions.iter().all(|d| d.action == DecisionAction::Discard
-                    || (d.action != DecisionAction::Create
-                        && d.target.as_deref() == Some(seed.id.as_str()))),
-                "compaction must retain or revise its seed instead of creating a duplicate"
+                decisions.iter().all(|d| {
+                    d.action == DecisionAction::Discard
+                        || (d.action != DecisionAction::Create
+                            && d.target.as_deref() == Some(seed.id.as_str()))
+                        || (d.action == DecisionAction::Merge
+                            && d.target.is_some()
+                            && d.related.iter().any(|r| {
+                                r.id == seed.id
+                                    && r.revision == seed.revision
+                                    && r.action == RelatedAction::Supersede
+                                    && r.retained.is_none()
+                            }))
+                }),
+                "compaction must revise its seed or merge into an existing target and retire the exact seed without a retained duplicate"
             );
             ensure!(
                 decisions

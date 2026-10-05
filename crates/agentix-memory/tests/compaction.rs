@@ -736,3 +736,321 @@ async fn an_expired_old_compact_wakes_the_new_revision() {
             .is_some()
     );
 }
+
+async fn canonical_pair(store: &MemoryStore) -> (Memory, Memory) {
+    let mut older = add(store, "p", "old_deployment", Actor::Agent).await;
+    older.content.conclusion =
+        "Use www.sakura.ad.jp for REALITY; deployment /root/deploy/sing-box with autostart.".into();
+    older = store
+        .update(
+            "p",
+            &older.id,
+            older.revision,
+            older.content.clone(),
+            Actor::Agent,
+        )
+        .await
+        .unwrap();
+    let mut canonical = add(store, "p", "confirmed_replacement", Actor::Agent).await;
+    canonical.content.conclusion = "Use www.sakura.ad.jp for REALITY; client SNI updated.".into();
+    canonical = store
+        .update(
+            "p",
+            &canonical.id,
+            canonical.revision,
+            canonical.content.clone(),
+            Actor::Agent,
+        )
+        .await
+        .unwrap();
+    (older, canonical)
+}
+
+struct CanonicalModel {
+    older: Memory,
+    canonical: Memory,
+}
+
+#[async_trait::async_trait]
+impl Model for CanonicalModel {
+    async fn complete(&self, request: &ModelRequest) -> anyhow::Result<ModelReply> {
+        assert!(
+            request
+                .instructions
+                .contains("one effective record for the same current fact")
+        );
+        let mut content = self.canonical.content.clone();
+        content.conclusion = "Use www.sakura.ad.jp for REALITY; deployment /root/deploy/sing-box with autostart and client SNI updated.".into();
+        Ok(ModelReply {
+            continuation: json!([]),
+            calls: vec![ToolCall {
+                id: "canonical".into(),
+                name: "submit_decisions".into(),
+                arguments: json!({"decisions":[{"candidate":0,"action":"merge","target":self.canonical.id,"expected_revision":self.canonical.revision,"content":content,"reason":"Consolidate the same current configuration into the confirmed replacement record","related":[{"id":self.older.id,"revision":self.older.revision,"action":"supersede","reason":"All valid deployment facts and evidence are consolidated into the canonical record","retained":null,"forget_request":null}]}]}),
+            }],
+            text: String::new(),
+            usage: TokenUsage::default(),
+        })
+    }
+}
+
+#[tokio::test]
+async fn compact_merges_duplicate_current_fact_into_existing_canonical_and_retires_old_seed() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(&temp.path().join("memory.db"))
+        .await
+        .unwrap();
+    let (older, canonical) = canonical_pair(&store).await;
+    let page = store
+        .schedule_compaction("p", "", 10, true, 0, now())
+        .await
+        .unwrap();
+    let lease = store
+        .claim_work("compact", &AgentConfig::default(), now())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(lease.payload["compact"]["id"], older.id);
+    let mut content = canonical.content.clone();
+    content.conclusion = "Use www.sakura.ad.jp for REALITY; deployment /root/deploy/sing-box with autostart and client SNI updated.".into();
+    let decisions = serde_json::from_value(json!([{"candidate":0,"action":"merge","target":canonical.id,"expected_revision":canonical.revision,"content":content,"reason":"Use one canonical current configuration","related":[{"id":older.id,"revision":older.revision,"action":"supersede","reason":"Preserve all stable facts in the canonical configuration","retained":null,"forget_request":null}]}])).unwrap();
+    store
+        .complete_consolidation(&lease, decisions, now())
+        .await
+        .unwrap();
+    let active = store.list("p", "", 100, false).await.unwrap();
+    assert_eq!(active.len(), 1);
+    assert_eq!(active[0].id, canonical.id);
+    assert_eq!(active[0].revision, canonical.revision + 1);
+    assert!(active[0].content.conclusion.contains("www.sakura.ad.jp"));
+    assert!(
+        active[0]
+            .content
+            .conclusion
+            .contains("/root/deploy/sing-box with autostart")
+    );
+    assert!(active[0].content.conclusion.contains("client SNI"));
+    for quote in older
+        .content
+        .evidence
+        .iter()
+        .chain(&canonical.content.evidence)
+    {
+        assert!(active[0].content.evidence.contains(quote));
+    }
+    let retired = store.show("p", &older.id, None).await.unwrap();
+    assert_eq!(retired.status, Status::Superseded);
+    assert_eq!(
+        retired.superseded_by.as_deref(),
+        Some(canonical.id.as_str())
+    );
+    assert_eq!(store.list("p", "", 100, true).await.unwrap().len(), 2);
+    for original in [&older, &canonical] {
+        assert_eq!(
+            store
+                .show("p", &original.id, Some(original.revision))
+                .await
+                .unwrap()
+                .content,
+            original.content
+        );
+    }
+    let worker = MemoryWorker::new(
+        store.clone(),
+        std::sync::Arc::new(NoCalls),
+        AgentConfig::default(),
+        std::sync::Arc::new(Repository(temp.path().into())),
+    );
+    assert!(worker.run_once("compact").await.unwrap());
+    assert_eq!(
+        store.work_details(page.work_ids[1]).await.unwrap()["state"],
+        "done"
+    );
+    assert_eq!(
+        store
+            .schedule_background_compaction("p", &AgentConfig::default(), now() + 60)
+            .await
+            .unwrap(),
+        0
+    );
+}
+
+#[tokio::test]
+async fn compact_worker_can_merge_old_seed_into_preloaded_canonical_record() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(&temp.path().join("memory.db"))
+        .await
+        .unwrap();
+    let (older, canonical) = canonical_pair(&store).await;
+    store
+        .schedule_compaction("p", "", 1, true, 0, now())
+        .await
+        .unwrap();
+    let worker = MemoryWorker::new(
+        store.clone(),
+        std::sync::Arc::new(CanonicalModel {
+            older: older.clone(),
+            canonical: canonical.clone(),
+        }),
+        AgentConfig::default(),
+        std::sync::Arc::new(Repository(temp.path().into())),
+    );
+    worker.run_once("compact").await.unwrap();
+    assert_eq!(
+        store.show("p", &older.id, None).await.unwrap().status,
+        Status::Superseded
+    );
+    let active = store.list("p", "", 100, false).await.unwrap();
+    assert_eq!(active.len(), 1);
+    assert_eq!(active[0].id, canonical.id);
+}
+
+#[tokio::test]
+async fn compact_retarget_requires_exact_seed_retirement_without_a_retained_duplicate() {
+    for (action, revision_delta, retain, include_seed) in [
+        ("keep", 0, false, true),
+        ("conflict", 0, false, true),
+        ("supersede", 1, false, true),
+        ("supersede", 0, true, true),
+        ("supersede", 0, false, false),
+    ] {
+        let temp = tempfile::tempdir().unwrap();
+        let store = MemoryStore::open(&temp.path().join("memory.db"))
+            .await
+            .unwrap();
+        let older = add(&store, "p", "older", Actor::Agent).await;
+        let canonical = add(&store, "p", "canonical", Actor::Agent).await;
+        store
+            .schedule_compaction("p", "", 1, true, 0, now())
+            .await
+            .unwrap();
+        let lease = store
+            .claim_work("compact", &AgentConfig::default(), now())
+            .await
+            .unwrap()
+            .unwrap();
+        let related = if include_seed {
+            json!([{"id":older.id,"revision":older.revision + revision_delta,"action":action,"reason":"Incomplete seed retirement","retained":if retain {Some(older.content.clone())} else {None},"forget_request":null}])
+        } else {
+            json!([])
+        };
+        let decisions = serde_json::from_value(json!([{"candidate":0,"action":"merge","target":canonical.id,"expected_revision":canonical.revision,"content":canonical.content,"reason":"Invalid retarget","related":related}])).unwrap();
+        assert!(
+            store
+                .complete_consolidation(&lease, decisions, now())
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            store.show("p", &older.id, None).await.unwrap().revision,
+            older.revision
+        );
+        assert_eq!(
+            store.show("p", &canonical.id, None).await.unwrap().revision,
+            canonical.revision
+        );
+        assert_eq!(
+            store.work_details(lease.id).await.unwrap()["state"],
+            "running"
+        );
+    }
+}
+
+#[tokio::test]
+async fn compact_canonical_seed_retires_older_duplicate_without_creating_another_record() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(&temp.path().join("memory.db"))
+        .await
+        .unwrap();
+    let (older, canonical) = canonical_pair(&store).await;
+    store
+        .schedule_compaction("p", &older.id, 1, true, 0, now())
+        .await
+        .unwrap();
+    let lease = store
+        .claim_work("compact", &AgentConfig::default(), now())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(lease.payload["compact"]["id"], canonical.id);
+    let mut content = canonical.content.clone();
+    content.conclusion = "Use www.sakura.ad.jp for REALITY; deployment /root/deploy/sing-box with autostart and client SNI updated.".into();
+    content.evidence.extend(older.content.evidence.clone());
+    let decisions = serde_json::from_value(json!([{"candidate":0,"action":"merge","target":canonical.id,"expected_revision":canonical.revision,"content":content,"reason":"Retire the older overlapping record","related":[{"id":older.id,"revision":older.revision,"action":"supersede","reason":"Stable facts merged into canonical","retained":null,"forget_request":null}]}])).unwrap();
+    store
+        .complete_consolidation(&lease, decisions, now())
+        .await
+        .unwrap();
+    assert_eq!(store.list("p", "", 100, false).await.unwrap().len(), 1);
+    assert_eq!(
+        store
+            .show("p", &older.id, None)
+            .await
+            .unwrap()
+            .superseded_by
+            .as_deref(),
+        Some(canonical.id.as_str())
+    );
+    assert_eq!(store.list("p", "", 100, true).await.unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn compact_canonical_merge_rolls_back_for_stale_or_human_target() {
+    for actor in [Actor::Agent, Actor::Human] {
+        let temp = tempfile::tempdir().unwrap();
+        let store = MemoryStore::open(&temp.path().join("memory.db"))
+            .await
+            .unwrap();
+        let (older, canonical) = canonical_pair(&store).await;
+        store
+            .schedule_compaction("p", "", 1, true, 0, now())
+            .await
+            .unwrap();
+        let lease = store
+            .claim_work("compact", &AgentConfig::default(), now())
+            .await
+            .unwrap()
+            .unwrap();
+        let updated = store
+            .update(
+                "p",
+                &canonical.id,
+                canonical.revision,
+                canonical.content.clone(),
+                actor,
+            )
+            .await
+            .unwrap();
+        let expected_revision = if actor == Actor::Human {
+            updated.revision
+        } else {
+            canonical.revision
+        };
+        let decisions = serde_json::from_value(json!([{"candidate":0,"action":"merge","target":canonical.id,"expected_revision":expected_revision,"content":canonical.content,"reason":"Merge duplicate with guarded target","related":[{"id":older.id,"revision":older.revision,"action":"supersede","reason":"Retire old duplicate","retained":null,"forget_request":null}]}])).unwrap();
+        let error = store
+            .complete_consolidation(&lease, decisions, now())
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains(if actor == Actor::Human {
+            "preserve human-authored"
+        } else {
+            "target changed"
+        }));
+        assert_eq!(
+            store.show("p", &older.id, None).await.unwrap().revision,
+            older.revision
+        );
+        assert_eq!(
+            store.show("p", &older.id, None).await.unwrap().status,
+            Status::Active
+        );
+        assert_eq!(
+            store.show("p", &canonical.id, None).await.unwrap().content,
+            updated.content
+        );
+        assert_eq!(
+            store.work_details(lease.id).await.unwrap()["state"],
+            "running"
+        );
+    }
+}

@@ -1,7 +1,7 @@
 //! Opt-in live acceptance on a temporary copy of one Project, never the original database.
 //! Usage: `compaction_acceptance CONFIG PROJECT_ID RETIRED_VALUE CURRENT_VALUE`
 use agentix_memory::{
-    Actor, DeepQuery, HttpModel, HttpProvider, MemoryConfig, MemoryLocation, MemoryStore,
+    Actor, DeepQuery, HttpModel, HttpProvider, Memory, MemoryConfig, MemoryLocation, MemoryStore,
     MemoryWorker, Model, ModelReply, ModelRequest, ProjectRepository,
 };
 use anyhow::{Context, Result, ensure};
@@ -122,9 +122,7 @@ async fn main() -> Result<()> {
         .iter()
         .filter(|m| m.content.conclusion.contains(&args[2]))
         .count();
-    let current_value = current
-        .iter()
-        .any(|m| m.content.conclusion.contains(&args[3]));
+    let canonical = check_canonical(&store, &copied, &current, &args[2], &args[3]).await?;
     let mut history_retained = true;
     for memory in &copied {
         history_retained &=
@@ -135,16 +133,71 @@ async fn main() -> Result<()> {
     println!(
         "{}",
         serde_json::to_string_pretty(
-            &json!({"copied_memories":copied.len(),"scheduled":page.scheduled,"elapsed_ms":started.elapsed().as_millis(),"active_memories":current.len(),"stale_conclusions":stale,"current_value_present":current_value,"history_retained":history_retained,"work":store.work_counts().await?,"answer":answer,"current_summaries":current.iter().map(|m| json!({"id":m.id,"revision":m.revision,"status":m.status,"conclusion":m.content.conclusion})).collect::<Vec<_>>()})
+            &json!({"copied_memories":copied.len(),"scheduled":page.scheduled,"elapsed_ms":started.elapsed().as_millis(),"active_memories":current.len(),"stale_conclusions":stale,"current_value_records":canonical.current_value_records,"duplicates_retired":canonical.duplicates_retired,"canonical_existing":canonical.canonical_existing,"evidence_retained":canonical.evidence_retained,"history_retained":history_retained,"work":store.work_counts().await?,"answer":answer,"current_summaries":current.iter().map(|m| json!({"id":m.id,"revision":m.revision,"status":m.status,"conclusion":m.content.conclusion})).collect::<Vec<_>>()})
         )?
     );
     ensure!(
         stale == 0
-            && current_value
+            && canonical.current_value_records == 1
+            && canonical.duplicates_retired
+            && canonical.canonical_existing
+            && canonical.evidence_retained
             && history_retained
             && !answer.insufficient_evidence
             && answer.answer.contains(&args[3]),
         "live semantic compaction acceptance failed"
     );
     Ok(())
+}
+
+struct CanonicalCheck {
+    current_value_records: usize,
+    duplicates_retired: bool,
+    canonical_existing: bool,
+    evidence_retained: bool,
+}
+
+async fn check_canonical(
+    store: &MemoryStore,
+    copied: &[Memory],
+    current: &[Memory],
+    retired_value: &str,
+    current_value: &str,
+) -> Result<CanonicalCheck> {
+    let current_value_records: Vec<_> = current
+        .iter()
+        .filter(|m| m.content.conclusion.contains(current_value))
+        .collect();
+    let mut duplicates_retired = true;
+    let mut evidence_retained = true;
+    let canonical = current_value_records.first();
+    for memory in copied {
+        if memory.content.conclusion.contains(retired_value)
+            || memory.content.conclusion.contains(current_value)
+        {
+            let updated = store.show("acceptance", &memory.id, None).await?;
+            duplicates_retired &= canonical.is_some_and(|canonical| {
+                updated.id == canonical.id
+                    || (updated.status == agentix_memory::Status::Superseded
+                        && updated.superseded_by.as_deref() == Some(canonical.id.as_str()))
+            });
+            evidence_retained &= canonical.is_some_and(|canonical| {
+                memory.content.evidence.iter().all(|quote| {
+                    canonical.content.evidence.iter().any(|retained| {
+                        retained.receipt_id == quote.receipt_id
+                            && retained.message_id == quote.message_id
+                            && retained.quote.contains(&quote.quote)
+                    })
+                })
+            });
+        }
+    }
+    let canonical_existing =
+        canonical.is_some_and(|canonical| copied.iter().any(|memory| memory.id == canonical.id));
+    Ok(CanonicalCheck {
+        current_value_records: current_value_records.len(),
+        duplicates_retired,
+        canonical_existing,
+        evidence_retained,
+    })
 }

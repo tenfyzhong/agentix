@@ -154,7 +154,13 @@ shared read-only assessments following a sibling candidate mutation.
 after restart, write debounce, protected human/inactive records, persisted
 historical progress, no duplicate seed or recursive scheduling, and stale seed
 completion with zero model calls, terminal-failure suspension across work-retention cleanup, compact-specific
-current-state reconciliation, and restoring seed evidence before validation. API tests cover invalid page budgets and reject
+current-state reconciliation, and restoring seed evidence before validation.
+Canonical-merge regressions cover two active claims with the same current domain:
+the older seed merges into the existing current record, preserving deployment,
+autostart, client facts, both evidence sets and original versions. The older ID is
+superseded with a link to the canonical ID, with no new record or recursive work.
+The inverse seed order, stale/human canonical targets, missing or stale seed
+retirement, and attempted retained duplication are covered too. API tests cover invalid page budgets and reject
 certainty based on conflicted records. Provider and worker tests cover safe error
 classification and immediate termination of permanent HTTP rejections. Agent-loop
 and provider tests cover required tools and reserving the original final step for
@@ -175,8 +181,10 @@ schedules.
 the original database read-only, copies one bounded Project page and its source
 evidence into a temporary database, runs real configured-model compaction, then
 asks for the current REALITY domain. It requires obsolete conclusions to leave
-default retrieval, the replacement to remain, original version content to be
-preserved, and a sourced answer containing the current value. It never modifies
+default retrieval, exactly one effective replacement record with an existing ID,
+old overlapping records superseded with canonical links, their literal evidence
+in the canonical record, original version content preserved, and a sourced answer
+containing the current value. It never modifies
 the original Project. Deterministic tests establish mutation/queue contracts;
 this live harness checks model judgment on a concrete case, not general accuracy
 or a throughput benchmark.
@@ -184,20 +192,27 @@ or a throughput benchmark.
 ### Live dogyun case
 
 On October 5, 2026, the configured `gemini-3.8-flash-high` model through the
-local OpenAI-compatible proxy completed a temporary-copy run with four existing
-memories. Four compact seeds completed with no pending, running or failed work.
-Two obsolete domain conclusions became zero; current conclusions retained
-`www.sakura.ad.jp`, the deployment path, autostart, TCP 6443/10443 and UDP
-Hysteria2 facts. Every copied original version retained its
-original content. The deep answer returned the new domain and literal quotations
-from the original user replacement request and completion report.
+local OpenAI-compatible proxy completed canonical-deduplication acceptance on a
+temporary copy of four existing dogyun memories. Two effective conclusions with
+`www.sakura.ad.jp` became exactly one, using an existing canonical ID. The older
+overlapping record became `superseded` with a canonical link. There were two
+effective records after consolidation: SSH access and combined sing-box
+configuration, including `/root/deploy/sing-box`, autostart, client SNI/serverName,
+TCP 6443/10443 VLESS + REALITY and UDP 6443 Hysteria2.
 
-Compaction plus the final deep query took 150.625 seconds in this single run.
+Obsolete domain conclusions became zero. The canonical record retained every
+literal quotation from the overlapping originals, and every copied original
+version retained its content. All four compact seeds finished, with no pending,
+running or failed work. The sourced deep answer returned `www.sakura.ad.jp`.
+Compaction plus the final deep query took 92.453 seconds in this single run.
 This is functional live acceptance, not a latency or model-accuracy benchmark.
-The original database and installed service were unchanged. Earlier attempts
-exposed stale historical/current-state interpretation, missing seed quotations
-and redundant-lookup validation; reusable regressions now cover the corrected
-contracts. The original HTTP 400 was an upstream unsupported-egress-location
+The original database and installed service were unchanged. The regression first
+failed because the old guard prohibited merging a seed into an existing canonical
+record; reusable tests now cover guarded retirement and both seed orders.
+Earlier acceptance established current-state replacement but did not require one
+canonical record; the strengthened harness explicitly checks deduplication,
+canonical links, evidence and history preservation.
+The original HTTP 400 was an upstream unsupported-egress-location
 rejection. After the user repaired the proxy, requests succeeded; application
 changes improve diagnostics and bounded tool completion rather than changing the
 provider's geographic eligibility.
