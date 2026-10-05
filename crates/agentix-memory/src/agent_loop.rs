@@ -95,6 +95,10 @@ impl AgentLoop {
         let mut usage = TokenUsage::default();
         let mut tool_calls = 0;
         for step in 0..self.config.max_steps {
+            if step + 1 == self.config.max_steps {
+                request.tools = vec![finish.clone()];
+                request.history.push(Message::User("This is the final step within the original budget. Submit a validated result using the evidence already inspected. Report insufficient evidence when answering a question; do not invent facts or mutations to finish.".into()));
+            }
             self.check_context(&request)?;
             let reply = self.model.complete(&request).await?;
             usage.input_tokens = usage.input_tokens.saturating_add(reply.usage.input_tokens);
@@ -115,7 +119,10 @@ impl AgentLoop {
             );
             let mut ids = HashSet::new();
             for call in &reply.calls {
-                ensure!(names.contains(&call.name), "unknown Agent tool");
+                ensure!(
+                    request.tools.iter().any(|tool| tool.name == call.name),
+                    "unknown or unavailable Agent tool"
+                );
                 ensure!(
                     !call.id.is_empty() && ids.insert(&call.id),
                     "duplicate or empty tool call ID"

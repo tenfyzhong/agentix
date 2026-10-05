@@ -96,6 +96,13 @@ pub enum MemoryCommand {
         #[arg(long, default_value_t = 50)]
         limit: i64,
     },
+    /// Enqueue a bounded page of low-priority semantic compaction proposals.
+    Compact {
+        #[arg(long, default_value = "")]
+        after: String,
+        #[arg(long, default_value_t = 10)]
+        limit: i64,
+    },
     /// Inspect one durable maintenance task and its audit.
     Work { id: i64 },
     /// Retry failed work against its current source revision.

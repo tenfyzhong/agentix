@@ -61,6 +61,7 @@ async fn responses_preserves_reasoning_and_tool_outputs_without_hidden_session_s
     assert_eq!(requests[0].0, "POST /responses HTTP/1.1");
     assert_eq!(requests[0].1["model"], "gpt-6-astra");
     assert_eq!(requests[0].1["store"], false);
+    assert_eq!(requests[0].1["tool_choice"], "required");
     assert_eq!(requests[1].1["input"][1], reasoning);
     assert_eq!(requests[1].1["input"][3]["call_id"], "call1");
     assert_eq!(requests[2].1["input"].as_array().unwrap().len(), 1);
@@ -182,4 +183,25 @@ fn reasoning_effort_rejects_invalid_configuration() {
     for value in [json!(""), json!("loow"), json!(42)] {
         assert!(serde_json::from_value::<AgentConfig>(json!({"reasoning_effort":value})).is_err());
     }
+}
+
+#[tokio::test]
+async fn provider_location_error_is_actionable_without_exposing_arbitrary_response_content() {
+    let server = http::MockHttp::start(vec![
+        (400, json!({"error":{"code":400,"status":"FAILED_PRECONDITION","message":"User location is not supported for the API use."}})),
+        (400, json!({"error":{"type":"invalid_request_error","param":"tools[0].function.parameters","message":"private conversation and secret"}})),
+    ]).await;
+    let model = HttpModel::new(
+        connection(&server.url, ProviderProtocol::Openai),
+        AgentConfig::default(),
+    )
+    .unwrap();
+    let error = model.complete(&request()).await.unwrap_err().to_string();
+    assert!(error.contains("400"));
+    assert!(error.contains("FAILED_PRECONDITION"));
+    assert!(error.contains("location"));
+    let error = model.complete(&request()).await.unwrap_err().to_string();
+    assert!(error.contains("invalid_request_error"));
+    assert!(error.contains("tools[0].function.parameters"));
+    assert!(!error.contains("private conversation"));
 }

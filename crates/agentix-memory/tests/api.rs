@@ -58,6 +58,27 @@ async fn api_supports_scoped_reads_and_revision_guarded_writes_without_model_cre
 }
 
 struct NoRepository;
+
+#[tokio::test]
+async fn compact_api_reports_a_bounded_page_and_rejects_invalid_limits() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(&temp.path().join("memory.db"))
+        .await
+        .unwrap();
+    let api = MemoryApi::new(store, RetrievalConfig::default(), ServiceConfig::default());
+    let page = api
+        .handle(json!({"op":"compact","project":"a","after":"","limit":10}))
+        .await
+        .unwrap();
+    assert_eq!(page["scanned"], 0);
+    assert_eq!(page["scheduled"], 0);
+    assert!(page["work_ids"].as_array().unwrap().is_empty());
+    assert!(
+        api.handle(json!({"op":"compact","project":"a","limit":1000}))
+            .await
+            .is_err()
+    );
+}
 #[async_trait::async_trait]
 impl agentix_memory::ProjectRepository for NoRepository {
     async fn root(&self, _project: &str) -> anyhow::Result<Option<std::path::PathBuf>> {
@@ -91,6 +112,55 @@ impl agentix_memory::Model for AnswerModel {
             usage: agentix_memory::TokenUsage::default(),
         })
     }
+}
+
+// Use the current revision so failure is about conflict handling, not staleness.
+struct ConflictAnswer(String);
+#[async_trait::async_trait]
+impl agentix_memory::Model for ConflictAnswer {
+    async fn complete(
+        &self,
+        request: &agentix_memory::ModelRequest,
+    ) -> anyhow::Result<agentix_memory::ModelReply> {
+        let mut reply = AnswerModel(self.0.clone()).complete(request).await?;
+        if reply.calls[0].name == "submit_answer" {
+            reply.calls[0].arguments["memories"][0]["revision"] = json!(2);
+        }
+        Ok(reply)
+    }
+}
+
+#[tokio::test]
+async fn deep_answer_cannot_claim_certainty_about_an_unresolved_conflict() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(&temp.path().join("memory.db"))
+        .await
+        .unwrap();
+    let content = serde_json::from_value(json!({"title":"Offline policy","conclusion":"Offline operation","rationale":"Unresolved evidence","scope":"project","tags":[],"kind":"user_assertion","evidence":[]})).unwrap();
+    let memory = store
+        .create("a", content, agentix_memory::Actor::Human)
+        .await
+        .unwrap();
+    store
+        .set_status(
+            "a",
+            &memory.id,
+            1,
+            agentix_memory::Status::Conflicted,
+            "Unresolved conflict",
+            agentix_memory::Actor::Human,
+        )
+        .await
+        .unwrap();
+    let deep = agentix_memory::DeepQuery::new(
+        store,
+        std::sync::Arc::new(ConflictAnswer(memory.id)),
+        agentix_memory::AgentConfig::default(),
+        std::sync::Arc::new(NoRepository),
+        1,
+    );
+    let error = deep.ask("a", "What is the policy?").await.unwrap_err();
+    assert!(error.to_string().contains("conflict"));
 }
 #[tokio::test]
 async fn deep_queries_are_read_only_and_reject_fabricated_citations() {

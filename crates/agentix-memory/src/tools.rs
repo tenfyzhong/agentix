@@ -50,6 +50,12 @@ impl ProjectTools {
         self.memory_checked.load(Ordering::Relaxed)
     }
 
+    pub(crate) async fn related_memories(&self, query: &str) -> Result<Vec<crate::Memory>> {
+        let matches = self.store.search(&self.project, query, 8).await?;
+        self.memory_checked.store(true, Ordering::Relaxed);
+        Ok(matches)
+    }
+
     pub fn inspection_audit(&self) -> Vec<Value> {
         self.inspections
             .lock()
@@ -171,8 +177,7 @@ impl ToolSet for ProjectTools {
         match name {
             "memory_search" => {
                 let args: Query = serde_json::from_value(arguments)?;
-                self.memory_checked.store(true, Ordering::Relaxed);
-                let matches = self.store.search(&self.project, &args.query, 8).await?;
+                let matches = self.related_memories(&args.query).await?;
                 Ok(json!(matches.iter().map(|m| json!({"id":m.id,"revision":m.revision,"status":m.status,"title":m.content.title,"conclusion":text_page(&m.content.conclusion,0,2048)})).collect::<Vec<_>>()))
             }
             "memory_show" => {

@@ -265,6 +265,9 @@ _taskix() {
             taskix__subcmd__help__subcmd__memory,backfill)
                 cmd="taskix__subcmd__help__subcmd__memory__subcmd__backfill"
                 ;;
+            taskix__subcmd__help__subcmd__memory,compact)
+                cmd="taskix__subcmd__help__subcmd__memory__subcmd__compact"
+                ;;
             taskix__subcmd__help__subcmd__memory,context)
                 cmd="taskix__subcmd__help__subcmd__memory__subcmd__context"
                 ;;
@@ -610,6 +613,9 @@ _taskix() {
             taskix__subcmd__memory,backfill)
                 cmd="taskix__subcmd__memory__subcmd__backfill"
                 ;;
+            taskix__subcmd__memory,compact)
+                cmd="taskix__subcmd__memory__subcmd__compact"
+                ;;
             taskix__subcmd__memory,context)
                 cmd="taskix__subcmd__memory__subcmd__context"
                 ;;
@@ -678,6 +684,9 @@ _taskix() {
                 ;;
             taskix__subcmd__memory__subcmd__help,backfill)
                 cmd="taskix__subcmd__memory__subcmd__help__subcmd__backfill"
+                ;;
+            taskix__subcmd__memory__subcmd__help,compact)
+                cmd="taskix__subcmd__memory__subcmd__help__subcmd__compact"
                 ;;
             taskix__subcmd__memory__subcmd__help,context)
                 cmd="taskix__subcmd__memory__subcmd__help__subcmd__context"
@@ -2532,7 +2541,7 @@ _taskix() {
             return 0
             ;;
         taskix__subcmd__help__subcmd__memory)
-            opts="serve status doctor sync document projection-status reload search show list context source create update forget set-status reindex work retry receipt backfill ask"
+            opts="serve status doctor sync document projection-status reload search show list context source create update forget set-status reindex compact work retry receipt backfill ask"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -2560,6 +2569,20 @@ _taskix() {
             return 0
             ;;
         taskix__subcmd__help__subcmd__memory__subcmd__backfill)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        taskix__subcmd__help__subcmd__memory__subcmd__compact)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -5808,7 +5831,7 @@ _taskix() {
             return 0
             ;;
         taskix__subcmd__memory)
-            opts="-h --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help serve status doctor sync document projection-status reload search show list context source create update forget set-status reindex work retry receipt backfill ask help"
+            opts="-h --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help serve status doctor sync document projection-status reload search show list context source create update forget set-status reindex compact work retry receipt backfill ask help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -5937,6 +5960,75 @@ _taskix() {
             fi
             case "${prev}" in
                 --offset)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --limit)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --config)
+                    local oldifs
+                    if [ -n "${IFS+x}" ]; then
+                        oldifs="$IFS"
+                    fi
+                    IFS=$'\n'
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    if [ -n "${oldifs+x}" ]; then
+                        IFS="$oldifs"
+                    fi
+                    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+                        compopt -o filenames
+                    fi
+                    return 0
+                    ;;
+                --project)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --actor)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --executor)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --session)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --delegated-by)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --lease-token)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --expect-revision)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --idempotency-key)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        taskix__subcmd__memory__subcmd__compact)
+            opts="-h --after --limit --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --after)
                     COMPREPLY=($(compgen -f "${cur}"))
                     return 0
                     ;;
@@ -6324,7 +6416,7 @@ _taskix() {
             return 0
             ;;
         taskix__subcmd__memory__subcmd__help)
-            opts="serve status doctor sync document projection-status reload search show list context source create update forget set-status reindex work retry receipt backfill ask help"
+            opts="serve status doctor sync document projection-status reload search show list context source create update forget set-status reindex compact work retry receipt backfill ask help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -6352,6 +6444,20 @@ _taskix() {
             return 0
             ;;
         taskix__subcmd__memory__subcmd__help__subcmd__backfill)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        taskix__subcmd__memory__subcmd__help__subcmd__compact)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )

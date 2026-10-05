@@ -74,6 +74,56 @@ fn submit() -> ToolDefinition {
     }
 }
 
+struct BudgetAware;
+#[async_trait]
+impl Model for BudgetAware {
+    async fn complete(&self, request: &ModelRequest) -> Result<ModelReply> {
+        let final_step = request.tools.len() == 1;
+        let name = if final_step { "submit" } else { "lookup" };
+        let call = ToolCall {
+            id: format!("call-{}", request.history.len()),
+            name: name.into(),
+            arguments: if final_step {
+                json!({"items":[]})
+            } else {
+                json!({"query":"decision"})
+            },
+        };
+        Ok(ModelReply {
+            continuation: json!([]),
+            calls: vec![call],
+            text: String::new(),
+            usage: TokenUsage::default(),
+        })
+    }
+}
+
+#[tokio::test]
+async fn last_step_is_reserved_for_submission_within_the_original_budget() {
+    let tools = ReadTools {
+        calls: Mutex::new(0),
+        large: false,
+    };
+    let agent = AgentLoop::new(
+        Arc::new(BudgetAware),
+        AgentConfig {
+            max_steps: 3,
+            ..AgentConfig::default()
+        },
+    );
+    let result = agent
+        .run(
+            "Answer with available evidence",
+            "question",
+            &tools,
+            submit(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.steps, 3);
+    assert_eq!(*tools.calls.lock().unwrap(), 2);
+}
+
 #[tokio::test]
 async fn each_loop_has_fresh_context_and_preserves_only_its_own_tool_results() {
     let model = Arc::new(Scripted {

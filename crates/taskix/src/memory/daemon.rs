@@ -774,6 +774,25 @@ async fn run_reviews(app: Arc<Application>) -> Result<()> {
     loop {
         let runtime = app.runtime.read().await.clone();
         let interval = runtime.config.agent.repository_review_interval_seconds;
+        if runtime.worker.is_some() && runtime.config.agent.compaction_interval_seconds > 0 {
+            for project in app.tasks.projects().await? {
+                if project.archived_at.is_none() {
+                    let result = app
+                        .store
+                        .schedule_background_compaction(
+                            &project.id,
+                            &runtime.config.agent,
+                            time::OffsetDateTime::now_utc().unix_timestamp(),
+                        )
+                        .await;
+                    app.report(
+                        &format!("compact:{}", project.id),
+                        result.err().map(|e| e.to_string()),
+                    )
+                    .await;
+                }
+            }
+        }
         if runtime.worker.is_some() && interval > 0 {
             for project in app.tasks.projects().await? {
                 if project.archived_at.is_some() {

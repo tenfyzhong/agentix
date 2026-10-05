@@ -30,7 +30,9 @@ mod queue;
 pub use queue::{WorkCounts, WorkKind, WorkLease};
 
 mod consolidation;
-pub use consolidation::{ConsolidationDecision, DecisionAction};
+pub use consolidation::{ConsolidationDecision, DecisionAction, RelatedAction, RelatedDecision};
+mod compaction;
+pub use compaction::CompactionPage;
 
 mod worker;
 pub use worker::{ExtractionGate, MemoryWorker, ProjectRepository, TriageDecision};

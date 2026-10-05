@@ -80,6 +80,13 @@ pub enum MemoryRequest {
         #[serde(default = "default_limit")]
         limit: i64,
     },
+    Compact {
+        project: String,
+        #[serde(default)]
+        after: String,
+        #[serde(default = "default_limit")]
+        limit: i64,
+    },
     Work {
         project: String,
         id: i64,
@@ -262,6 +269,23 @@ impl MemoryApi {
                 ensure!(work["project_id"] == project, "not_found: memory work");
                 Ok(work)
             }
+            MemoryRequest::Compact {
+                project,
+                after,
+                limit,
+            } => Ok(serde_json::to_value(
+                self.store
+                    .schedule_compaction(
+                        &project,
+                        &after,
+                        limit,
+                        true,
+                        0,
+                        0,
+                        time::OffsetDateTime::now_utc().unix_timestamp(),
+                    )
+                    .await?,
+            )?),
             MemoryRequest::Retry { project, id } => {
                 self.store.retry_work(&project, id).await?;
                 self.store.work_details(id).await

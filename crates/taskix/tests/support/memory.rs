@@ -60,6 +60,7 @@ fn memory_daemon_cli_and_offline_fallback_do_not_require_a_vault_or_model_creden
         "{}",
         String::from_utf8_lossy(&help.stderr)
     );
+    assert!(String::from_utf8_lossy(&help.stdout).contains("compact"));
     let project = cli.ok(&[
         "project",
         "register",

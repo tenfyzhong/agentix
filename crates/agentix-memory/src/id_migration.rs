@@ -35,6 +35,7 @@ pub(crate) async fn migrate(conn: &mut SqliteConnection) -> Result<()> {
             "embedding_failures",
             "memory_projection",
             "memory_reviews",
+            "memory_compactions",
             "context_deliveries",
         ] {
             sqlx::query(&format!("UPDATE {table} SET memory_id=? WHERE memory_id=?"))

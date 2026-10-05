@@ -363,6 +363,24 @@ _arguments "${_arguments_options[@]}" : \
 '--help[Print help]' \
 && ret=0
 ;;
+(compact)
+_arguments "${_arguments_options[@]}" : \
+'--after=[]:AFTER:_default' \
+'--limit=[]:LIMIT:_default' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
 (work)
 _arguments "${_arguments_options[@]}" : \
 '--config=[]:CONFIG:_files' \
@@ -528,6 +546,10 @@ _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
 (reindex)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(compact)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -2759,6 +2781,10 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
+(compact)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
 (work)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
@@ -3692,6 +3718,7 @@ _taskix__subcmd__help__subcmd__memory_commands() {
 'forget:Remove a memory from retrieval and suppress replay of its evidence' \
 'set-status:Change lifecycle status while preserving history' \
 'reindex:Rebuild a bounded FTS page without changing memory content' \
+'compact:Enqueue a bounded page of low-priority semantic compaction proposals' \
 'work:Inspect one durable maintenance task and its audit' \
 'retry:Retry failed work against its current source revision' \
 'receipt:Inspect receipt coverage; optionally wait with a deadline' \
@@ -3709,6 +3736,11 @@ _taskix__subcmd__help__subcmd__memory__subcmd__ask_commands() {
 _taskix__subcmd__help__subcmd__memory__subcmd__backfill_commands() {
     local commands; commands=()
     _describe -t commands 'taskix help memory backfill commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__memory__subcmd__compact_commands] )) ||
+_taskix__subcmd__help__subcmd__memory__subcmd__compact_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help memory compact commands' commands "$@"
 }
 (( $+functions[_taskix__subcmd__help__subcmd__memory__subcmd__context_commands] )) ||
 _taskix__subcmd__help__subcmd__memory__subcmd__context_commands() {
@@ -4450,6 +4482,7 @@ _taskix__subcmd__memory_commands() {
 'forget:Remove a memory from retrieval and suppress replay of its evidence' \
 'set-status:Change lifecycle status while preserving history' \
 'reindex:Rebuild a bounded FTS page without changing memory content' \
+'compact:Enqueue a bounded page of low-priority semantic compaction proposals' \
 'work:Inspect one durable maintenance task and its audit' \
 'retry:Retry failed work against its current source revision' \
 'receipt:Inspect receipt coverage; optionally wait with a deadline' \
@@ -4468,6 +4501,11 @@ _taskix__subcmd__memory__subcmd__ask_commands() {
 _taskix__subcmd__memory__subcmd__backfill_commands() {
     local commands; commands=()
     _describe -t commands 'taskix memory backfill commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__memory__subcmd__compact_commands] )) ||
+_taskix__subcmd__memory__subcmd__compact_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix memory compact commands' commands "$@"
 }
 (( $+functions[_taskix__subcmd__memory__subcmd__context_commands] )) ||
 _taskix__subcmd__memory__subcmd__context_commands() {
@@ -4514,6 +4552,7 @@ _taskix__subcmd__memory__subcmd__help_commands() {
 'forget:Remove a memory from retrieval and suppress replay of its evidence' \
 'set-status:Change lifecycle status while preserving history' \
 'reindex:Rebuild a bounded FTS page without changing memory content' \
+'compact:Enqueue a bounded page of low-priority semantic compaction proposals' \
 'work:Inspect one durable maintenance task and its audit' \
 'retry:Retry failed work against its current source revision' \
 'receipt:Inspect receipt coverage; optionally wait with a deadline' \
@@ -4532,6 +4571,11 @@ _taskix__subcmd__memory__subcmd__help__subcmd__ask_commands() {
 _taskix__subcmd__memory__subcmd__help__subcmd__backfill_commands() {
     local commands; commands=()
     _describe -t commands 'taskix memory help backfill commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__memory__subcmd__help__subcmd__compact_commands] )) ||
+_taskix__subcmd__memory__subcmd__help__subcmd__compact_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix memory help compact commands' commands "$@"
 }
 (( $+functions[_taskix__subcmd__memory__subcmd__help__subcmd__context_commands] )) ||
 _taskix__subcmd__memory__subcmd__help__subcmd__context_commands() {

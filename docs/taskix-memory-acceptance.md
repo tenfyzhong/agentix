@@ -141,6 +141,56 @@ records for memories already forgotten by an older build. Review-only tests
 archived outside the checkout are not part of the reproducible suite or coverage
 matrix; the normal suite is defined by the repository test files.
 
+## Consistency and compaction coverage
+
+`tests/consolidation_consistency.rs` covers partial replacement while retaining
+unrelated deployment facts and original evidence, atomic rollback on stale
+related revisions, evidence-loss rejection, both sides of unresolved conflicts,
+explicit forgetting with replay suppression, negated-request rejection, and
+corrective feedback when a supplied related record is left unassessed, and
+shared read-only assessments following a sibling candidate mutation.
+
+`tests/compaction.rs` covers bounded Project-scoped manual pages, deduplication
+after restart, debounce/cooldown, protected human/inactive records, persisted
+historical progress, no duplicate seed or recursive scheduling, and stale seed
+completion with zero model calls, terminal-failure suspension across work-retention cleanup, compact-specific
+current-state reconciliation, and restoring seed evidence before validation. API tests cover invalid page budgets and reject
+certainty based on conflicted records. Provider and worker tests cover safe error
+classification and immediate termination of permanent HTTP rejections. Agent-loop
+and provider tests cover required tools and reserving the original final step for
+submission. Taskix CLI tests cover command discovery.
+
+`examples/compaction_acceptance.rs` is an opt-in live acceptance harness. It opens
+the original database read-only, copies one bounded Project page and its source
+evidence into a temporary database, runs real configured-model compaction, then
+asks for the current REALITY domain. It requires obsolete conclusions to leave
+default retrieval, the replacement to remain, original version content to be
+preserved, and a sourced answer containing the current value. It never modifies
+the original Project. Deterministic tests establish mutation/queue contracts;
+this live harness checks model judgment on a concrete case, not general accuracy
+or a throughput benchmark.
+
+### Live dogyun case
+
+On October 5, 2026, the configured `gemini-3.8-flash-high` model through the
+local OpenAI-compatible proxy completed a temporary-copy run with four existing
+memories. Four compact seeds completed with no pending, running or failed work.
+Two obsolete domain conclusions became zero; current conclusions retained
+`www.sakura.ad.jp`, the deployment path, autostart, TCP 6443/10443 and UDP
+Hysteria2 facts. Every copied original version retained its
+original content. The deep answer returned the new domain and literal quotations
+from the original user replacement request and completion report.
+
+Compaction plus the final deep query took 150.625 seconds in this single run.
+This is functional live acceptance, not a latency or model-accuracy benchmark.
+The original database and installed service were unchanged. Earlier attempts
+exposed stale historical/current-state interpretation, missing seed quotations
+and redundant-lookup validation; reusable regressions now cover the corrected
+contracts. The original HTTP 400 was an upstream unsupported-egress-location
+rejection. After the user repaired the proxy, requests succeeded; application
+changes improve diagnostics and bounded tool completion rather than changing the
+provider's geographic eligibility.
+
 ## Measured scale
 
 Local run on macOS arm64, Rust 1.95.0 **debug/test build**, September 29, 2026:

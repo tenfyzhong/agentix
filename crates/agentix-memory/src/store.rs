@@ -451,21 +451,7 @@ impl MemoryStore {
             "conflict: memory was forgotten"
         );
         if status == Status::Forgotten {
-            // Merges and edits can replace evidence. Suppress every historical
-            // source of this memory, including versions written by older builds.
-            let versions: Vec<String> = sqlx::query_scalar(
-                "SELECT data FROM memory_versions WHERE memory_id=? ORDER BY revision",
-            )
-            .bind(id)
-            .fetch_all(&mut *tx)
-            .await?;
-            for data in versions {
-                let version: Memory = serde_json::from_str(&data)?;
-                for key in evidence_keys(&mut tx, project, &version.content).await? {
-                    sqlx::query("INSERT OR IGNORE INTO suppressions(project_id,evidence_key,memory_id) VALUES (?,?,?)")
-                        .bind(project).bind(key).bind(id).execute(&mut *tx).await?;
-                }
-            }
+            suppress_history(&mut tx, project, id).await?;
         }
         memory.revision += 1;
         memory.status = status;
@@ -670,6 +656,28 @@ async fn index_memory(conn: &mut SqliteConnection, memory: &Memory) -> Result<()
             .bind(retrieval::index_text(&format!("{} {} {}",memory.content.conclusion,memory.content.rationale,memory.content.conditions.join(" "))))
             .bind(retrieval::index_text(&memory.content.tags.join(" ")))
             .bind(retrieval::index_text(&memory.content.scope)).execute(conn).await?;
+    }
+    Ok(())
+}
+
+pub(crate) async fn suppress_history(
+    conn: &mut SqliteConnection,
+    project: &str,
+    id: &str,
+) -> Result<()> {
+    // Merges and edits can replace evidence. Suppress every historical
+    // source of this memory, including versions written by older builds.
+    let versions: Vec<String> =
+        sqlx::query_scalar("SELECT data FROM memory_versions WHERE memory_id=? ORDER BY revision")
+            .bind(id)
+            .fetch_all(&mut *conn)
+            .await?;
+    for data in versions {
+        let version: Memory = serde_json::from_str(&data)?;
+        for key in evidence_keys(conn, project, &version.content).await? {
+            sqlx::query("INSERT OR IGNORE INTO suppressions(project_id,evidence_key,memory_id) VALUES (?,?,?)")
+                        .bind(project).bind(key).bind(id).execute(&mut *conn).await?;
+        }
     }
     Ok(())
 }

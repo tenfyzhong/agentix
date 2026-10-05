@@ -155,6 +155,28 @@ CREATE INDEX IF NOT EXISTS work_retention_age ON work_retention(observed_at,work
 CREATE INDEX IF NOT EXISTS work_cancelled ON work_items(id) WHERE state='cancelled';
 CREATE INDEX IF NOT EXISTS memory_reviews_by_work ON memory_reviews(work_id);
 
+CREATE TABLE IF NOT EXISTS memory_compactions (
+    memory_id TEXT PRIMARY KEY REFERENCES memories(id) ON DELETE CASCADE,
+    project_id TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    dirty INTEGER NOT NULL DEFAULT 1,
+    dirty_at INTEGER NOT NULL,
+    checked_at INTEGER NOT NULL DEFAULT 0,
+    suspended INTEGER NOT NULL DEFAULT 0,
+    work_id INTEGER REFERENCES work_items(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS compaction_dirty ON memory_compactions(project_id,dirty,dirty_at,memory_id);
+CREATE TRIGGER IF NOT EXISTS compaction_insert AFTER INSERT ON memories BEGIN
+    INSERT INTO memory_compactions(memory_id,project_id,revision,dirty_at) VALUES(new.id,new.project_id,new.revision,coalesce(json_extract(new.data,'$.updated_at'),unixepoch()));
+END;
+CREATE TRIGGER IF NOT EXISTS compaction_update AFTER UPDATE OF revision ON memories BEGIN
+    UPDATE memory_compactions SET revision=new.revision,dirty=1,suspended=0,dirty_at=coalesce(json_extract(new.data,'$.updated_at'),unixepoch()) WHERE memory_id=new.id;
+END;
+CREATE TRIGGER IF NOT EXISTS compaction_failure AFTER UPDATE OF state ON work_items WHEN new.state='failed' BEGIN
+    UPDATE memory_compactions SET suspended=1 WHERE work_id=new.id;
+END;
+INSERT OR IGNORE INTO memory_compactions(memory_id,project_id,revision,dirty_at) SELECT id,project_id,revision,coalesce(json_extract(data,'$.updated_at'),unixepoch()) FROM memories;
+
 CREATE TABLE IF NOT EXISTS memory_id_renames (
     old_id TEXT PRIMARY KEY,
     memory_id TEXT NOT NULL REFERENCES memories(id),

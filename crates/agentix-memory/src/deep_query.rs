@@ -81,6 +81,10 @@ impl DeepQuery {
         for reference in &answer.memories {
             let memory = self.store.show(project, &reference.id, None).await?;
             ensure!(
+                memory.status != crate::Status::Conflicted || answer.insufficient_evidence,
+                "unresolved conflict requires insufficient_evidence"
+            );
+            ensure!(
                 memory.revision == reference.revision
                     && memory.status.searchable()
                     && memory

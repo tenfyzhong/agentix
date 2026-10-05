@@ -234,11 +234,21 @@ impl MemoryStore {
     }
 
     pub async fn fail_work(&self, lease: &WorkLease, error: &str, now: i64) -> Result<()> {
+        self.fail_work_with_retry(lease, error, now, true).await
+    }
+
+    pub(crate) async fn fail_work_with_retry(
+        &self,
+        lease: &WorkLease,
+        error: &str,
+        now: i64,
+        retry: bool,
+    ) -> Result<()> {
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         fence(&mut tx, lease, now).await?;
         ensure!(error.len() <= 2048, "worker error exceeds budget");
-        sqlx::query("UPDATE work_items SET state=CASE WHEN attempts>=max_attempts THEN 'failed' ELSE 'pending' END,available_at=?+min(300,1 << min(attempts,8)),owner=NULL,lease_until=NULL,error=? WHERE id=?")
-            .bind(now).bind(error).bind(lease.id).execute(&mut *tx).await?;
+        sqlx::query("UPDATE work_items SET state=CASE WHEN NOT ? OR attempts>=max_attempts THEN 'failed' ELSE 'pending' END,available_at=?+min(300,1 << min(attempts,8)),owner=NULL,lease_until=NULL,error=? WHERE id=?")
+            .bind(retry).bind(now).bind(error).bind(lease.id).execute(&mut *tx).await?;
         tx.commit().await?;
         self.notify_work();
         Ok(())

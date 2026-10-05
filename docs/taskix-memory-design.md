@@ -141,6 +141,67 @@ Do not let the model assign stronger evidence than the source supports. Normal
 queries do not run an Agent; optional deep queries run a separately limited,
 read-only loop and return traceable sources.
 
+## Consistency and incremental compaction
+
+Extraction separates independently replaceable facts. Consolidation receives a
+bounded lexical page of up to eight related records for each candidate, and must
+assess every supplied record with an exact ID/revision. This page is not an
+exhaustive conflict detector; scoped tools can inspect additional evidence.
+Original source dates and explicit replacement statements determine whether a
+claim supersedes another. New ingestion time alone does not establish precedence.
+
+Related assessments keep compatible facts, supersede replaced claims, or mark
+both unresolved claims conflicted. A partial replacement can retain unrelated
+valid facts in a separate memory. Literal prior evidence must remain in the
+replacement and/or retained facts; merges automatically retain missing prior
+quotations. Compact rewrites also restore seed quotations before validation.
+Exceeding the evidence budget rejects the result. All mutations,
+version writes and work completion share one fenced transaction. A stale revision
+rolls back the whole proposal. Human-authored records are protected from automatic
+replacement; disagreement is represented as a conflict. A deep answer citing a
+conflicted record must report insufficient evidence.
+
+Automatic forgetting is limited to a current, literal user message naming the
+exact memory ID or title: `Forget memory <ID or TITLE>.` or `忘记记忆 <ID or TITLE>`.
+The full message, source date, role and candidate evidence must match. Historical,
+negated and quoted requests do not authorize forgetting. Suppression covers every
+stored version to prevent replay. Manual forgetting retains its revision guard.
+Compaction never authorizes forgetting.
+
+Semantic compaction is asynchronous consolidation, independent of derived-data
+pruning and repository review. The daemon schedules once per minute for each
+unarchived Project: at most ten indexed dirty records plus ten records from a
+persisted rotating ID cursor. Only searchable, nonexpired Agent records qualify.
+The default dirty debounce is 30 seconds; previously checked records become
+eligible again after 86,400 seconds. Setting `compaction_interval_seconds = 0`
+disables automatic scheduling. A changed revision becomes dirty immediately but
+waits for the debounce. Scheduling records a durable work ID and avoids duplicate
+pending/running work across restart or manual requests.
+
+Compaction work has priority 3 within its Project, below live extraction/consolidation and backfill,
+and uses the existing per-Project consolidation lane and provider/Agent budgets.
+It keeps or revises its exact seed rather than creating a duplicate seed. A stale
+seed is completed without a model call; revisions produced by a successful compact
+are marked observed to prevent recursive scheduling. Failures retain normal retry
+limits; permanent provider 4xx rejections, except 408 and 429, fail immediately.
+They remain inspectable; exhausted work requires a retry, a changed memory revision,
+or explicit manual compaction rather than being re-created by periodic scheduling.
+
+The manual API scans an ID page of 1–100 records (default ten) and returns scanned
+and scheduled counts, work IDs and `next_after`. It ignores cooldown/debounce,
+while retaining all eligibility and duplicate-work guards. This command enqueues
+work; it does not wait for model completion or imply exhaustive consolidation.
+Normal search, context and deep-query reads never trigger compaction. Source
+snapshots and version history remain durable; this is not physical storage
+reclamation or a retention policy.
+
+Provider requests require tool calls when tools are supplied. The final Agent
+step exposes only the submission tool, retaining the original step/time budgets.
+Non-success HTTP diagnostics retain only bounded recognized status/schema fields;
+arbitrary provider messages are omitted. The known location rejection explains
+that the upstream proxy route needs attention without exposing credentials or
+request contents.
+
 ## Memory, search and lifecycle
 
 Each atomic memory carries conclusion, rationale, scope, conditions, type, tags,

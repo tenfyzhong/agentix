@@ -265,6 +265,9 @@ fn make_request(cli: &Cli, action: &MemoryCommand, project: Option<&str>) -> Res
         MemoryCommand::Reindex { after, limit } => {
             json!({"op":"reindex","project":project,"after":after,"limit":limit})
         }
+        MemoryCommand::Compact { after, limit } => {
+            json!({"op":"compact","project":project,"after":after,"limit":limit})
+        }
         MemoryCommand::Work { id } => json!({"op":"work","project":project,"id":id}),
         MemoryCommand::Retry { id } => json!({"op":"retry","project":project,"id":id}),
         MemoryCommand::Receipt { receipt_id, .. } => {

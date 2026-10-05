@@ -10,6 +10,48 @@ use tokio::sync::Semaphore;
 
 struct Repositories(PathBuf);
 
+#[tokio::test]
+async fn permanent_provider_rejection_fails_work_without_replaying_the_same_request() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(&temp.path().join("memory.db"))
+        .await
+        .unwrap();
+    store.ingest(&source("p")).await.unwrap();
+    let server = http::MockHttp::start(vec![(400, json!({"error":{"status":"FAILED_PRECONDITION","message":"User location is not supported for the API use."}}))]).await;
+    let config = AgentConfig {
+        extraction_debounce_ms: 0,
+        ..AgentConfig::default()
+    };
+    let provider = agentix_memory::HttpProvider::new(agentix_memory::ProviderConfig {
+        base_url: server.url.clone(),
+        protocol: agentix_memory::ProviderProtocol::Openai,
+        api_key_env: None,
+        max_in_flight: 4,
+    })
+    .unwrap();
+    let model = agentix_memory::HttpModel::new(Arc::new(provider), config.clone()).unwrap();
+    let worker = MemoryWorker::new(
+        store.clone(),
+        Arc::new(model),
+        config.clone(),
+        Arc::new(Repositories(temp.path().into())),
+    );
+    assert!(worker.run_once("worker").await.is_err());
+    assert_eq!(store.work_counts().await.unwrap().failed, 1);
+    assert_eq!(store.work_counts().await.unwrap().pending, 0);
+    assert!(
+        store
+            .claim_work(
+                "retry",
+                &config,
+                time::OffsetDateTime::now_utc().unix_timestamp() + 1000
+            )
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
 struct CrossTurnModel;
 #[async_trait]
 impl Model for CrossTurnModel {

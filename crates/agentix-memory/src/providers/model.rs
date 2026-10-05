@@ -118,6 +118,9 @@ impl HttpModel {
         } else {
             json!({"model":self.config.model,"messages":input,"tools":tools,"max_completion_tokens":self.config.max_output_tokens})
         };
+        if !request.tools.is_empty() {
+            body["tool_choice"] = json!("required");
+        }
         if let Some(effort) = self.config.reasoning_effort {
             if self.config.api == ModelApi::Responses {
                 body["reasoning"] = json!({"effort": effort});
