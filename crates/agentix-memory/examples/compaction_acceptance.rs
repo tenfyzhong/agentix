@@ -187,7 +187,8 @@ async fn check_atomic(
         .iter()
         .filter(|m| {
             m.content.fact.as_ref().is_some_and(|fact| {
-                fact.attribute.contains("domain") && fact.value == current_value
+                (fact.attribute.contains("domain") || fact.attribute == "reality_server_name")
+                    && fact.value == current_value
             })
         })
         .count();
@@ -286,4 +287,45 @@ async fn schedule_legacy(store: &MemoryStore, copied: &[Memory]) -> Result<Vec<i
         after.clone_from(&memory.id);
     }
     Ok(work_ids)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn atomic_check_recognizes_reality_server_name_and_keeps_client_sni_distinct() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = MemoryStore::open(&dir.path().join("memory.db"))
+            .await
+            .unwrap();
+        let source = serde_json::from_value(json!({"instance_id":"db","receipt_id":"r","sequence":1,"project_id":"acceptance","session_id":"s","turn_id":"t","revision":1,"job_id":null,"recorded_at":now(),"messages":[{"id":"m","role":"user","text":"REALITY server_name and client SNI are new.example."}]})).unwrap();
+        store.ingest(&source).await.unwrap();
+        let lease = store
+            .claim_work("setup", &agentix_memory::AgentConfig::default(), now())
+            .await
+            .unwrap()
+            .unwrap();
+        store
+            .complete_extraction(&lease, vec![], now())
+            .await
+            .unwrap();
+        for (entity, attribute) in [
+            ("dogyun sing-box server", "reality_server_name"),
+            ("dogyun sing-box client", "sni"),
+        ] {
+            let content = serde_json::from_value(json!({"title":attribute,"conclusion":"new.example","rationale":"Confirmed server domain and client SNI","scope":"dogyun","conditions":[],"tags":[],"kind":"user_decision","fact":{"entity":entity,"attribute":attribute,"qualifiers":[],"value":"new.example"},"evidence":[{"receipt_id":"r","message_id":"m","quote":"REALITY server_name and client SNI are new.example."}]})).unwrap();
+            store
+                .create("acceptance", content, Actor::Agent)
+                .await
+                .unwrap();
+        }
+        let current = store.list("acceptance", "", 100, false).await.unwrap();
+        let result = check_atomic(&store, &[], &current, "new.example")
+            .await
+            .unwrap();
+        assert_eq!(result.current_domain_records, 1);
+        assert_eq!(result.atomic_memories, 2);
+        assert!(result.one_active_per_fact);
+    }
 }

@@ -1110,3 +1110,98 @@ async fn legacy_split_corrects_assistant_only_user_decisions_before_transaction(
         Status::Superseded
     );
 }
+
+struct MissingQuoteModel {
+    calls: std::sync::atomic::AtomicUsize,
+    seed: Memory,
+    parts: Vec<MemoryInput>,
+}
+#[async_trait::async_trait]
+impl Model for MissingQuoteModel {
+    async fn complete(&self, request: &ModelRequest) -> anyhow::Result<ModelReply> {
+        let step = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if step > 0 {
+            assert!(request.history.iter().any(|m| matches!(m, Message::Tool {output,..} if output.contains("missing quote references") && output.contains(&self.seed.id) && output.contains("quote_index"))), "correction must identify missing original quotation references");
+        }
+        let count = if step == 0 { 1 } else { self.parts.len() };
+        let parts: Vec<_> = self.parts.iter().take(count).enumerate().map(|(index, part)| {
+            let mut content = serde_json::to_value(part).unwrap();
+            content["evidence"] = json!([{"memory_id":self.seed.id,"quote_index":index}]);
+            json!({"content":content,"action":"create","target":null,"expected_revision":null,"reason":"Independent supported fact"})
+        }).collect();
+        Ok(ModelReply {
+            continuation: json!([]),
+            calls: vec![ToolCall {
+                id: format!("missing{step}"),
+                name: "submit_fact_compaction".into(),
+                arguments: json!({"parts":parts,"related":[],"reason":"Retain complete original evidence"}),
+            }],
+            text: String::new(),
+            usage: TokenUsage::default(),
+        })
+    }
+}
+
+#[tokio::test]
+async fn legacy_split_identifies_missing_quote_references_for_correction() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(&temp.path().join("memory.db"))
+        .await
+        .unwrap();
+    receipt(
+        &store,
+        "legacy",
+        "Deploy at /srv/proxy. Enable autostart.",
+        now(),
+    )
+    .await;
+    let lease = store
+        .claim_work("setup", &AgentConfig::default(), now())
+        .await
+        .unwrap()
+        .unwrap();
+    store
+        .complete_extraction(&lease, vec![], now())
+        .await
+        .unwrap();
+    let mut path = input("legacy", "deployment.path", "/srv/proxy");
+    path.evidence[0].quote = "Deploy at /srv/proxy.".into();
+    let mut boot = input("legacy", "autostart", "enabled");
+    boot.evidence[0].quote = "Enable autostart.".into();
+    let mut legacy = path.clone();
+    legacy.fact = None;
+    legacy.evidence.extend(boot.evidence.clone());
+    let old = store.create("p", legacy, Actor::Agent).await.unwrap();
+    store
+        .schedule_compaction("p", "", 10, true, 0, now())
+        .await
+        .unwrap();
+    let model = std::sync::Arc::new(MissingQuoteModel {
+        calls: std::sync::atomic::AtomicUsize::new(0),
+        seed: old.clone(),
+        parts: vec![path, boot],
+    });
+    let worker = MemoryWorker::new(
+        store.clone(),
+        model.clone(),
+        AgentConfig::default(),
+        std::sync::Arc::new(Repository(temp.path().into())),
+    );
+    worker
+        .run_once("compact")
+        .await
+        .expect("identify missing refs, then split with exact evidence");
+    assert_eq!(model.calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    assert_eq!(
+        store.show("p", &old.id, None).await.unwrap().status,
+        Status::Superseded
+    );
+    let current = store.list("p", "", 100, false).await.unwrap();
+    assert_eq!(current.len(), 2);
+    assert!(
+        old.content
+            .evidence
+            .iter()
+            .all(|quote| current.iter().any(|m| m.content.evidence.contains(quote)))
+    );
+}
