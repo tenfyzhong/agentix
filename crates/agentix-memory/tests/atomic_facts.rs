@@ -1247,6 +1247,7 @@ struct ExistingFactCorrectionModel {
     existing: Memory,
     parts: Vec<MemoryInput>,
     wrong_revision: bool,
+    keep_atomic_unchanged: bool,
 }
 #[async_trait::async_trait]
 impl Model for ExistingFactCorrectionModel {
@@ -1260,16 +1261,20 @@ impl Model for ExistingFactCorrectionModel {
             assert_eq!(bound["action"]["enum"], json!(["keep"]));
             assert_eq!(bound["retained"]["type"], "null");
         }
-        if step > 0 {
+        if step > 0 && !self.keep_atomic_unchanged {
             assert!(request.history.iter().any(|m| matches!(m,Message::Tool {output,..} if output.contains(if self.wrong_revision {"related assessment"}else{"active fact"}) && output.contains(&self.existing.id))), "duplicate creation must be corrected before the transaction");
         }
-        let parts: Vec<_> = self.parts.iter().enumerate().map(|(index,content)| {
+        let parts: Vec<_> = self.parts.iter().take(if self.keep_atomic_unchanged {1} else {self.parts.len()}).enumerate().map(|(index,content)| {
             let merge = (step > 0 || self.wrong_revision) && index == 1;
             json!({"content":content,"action":if merge {"merge"} else {"create"},"target":if merge {Some(&self.existing.id)}else{None},"expected_revision":if merge {Some(self.existing.revision)}else{None},"reason":"Independent fact with original evidence"})
         }).collect();
-        let related = vec![
-            json!({"id":self.existing.id,"revision":self.existing.revision + i64::from(self.wrong_revision && step == 0),"action":"keep","reason":"Existing atomic fact","retained":null,"forget_request":null}),
-        ];
+        let related = if self.keep_atomic_unchanged {
+            vec![]
+        } else {
+            vec![
+                json!({"id":self.existing.id,"revision":self.existing.revision + i64::from(self.wrong_revision && step == 0),"action":"keep","reason":"Existing atomic fact","retained":null,"forget_request":null}),
+            ]
+        };
         Ok(ModelReply {
             continuation: json!([]),
             calls: vec![ToolCall {
@@ -1285,15 +1290,20 @@ impl Model for ExistingFactCorrectionModel {
 
 #[tokio::test]
 async fn legacy_split_corrects_existing_active_fact_creation_before_transaction() {
-    existing_fact_correction(false).await;
+    existing_fact_correction(false, false).await;
 }
 
 #[tokio::test]
 async fn legacy_split_corrects_wrong_related_revision_before_transaction() {
-    existing_fact_correction(true).await;
+    existing_fact_correction(true, false).await;
 }
 
-async fn existing_fact_correction(wrong_revision: bool) {
+#[tokio::test]
+async fn legacy_split_keeps_unmodified_atomic_snapshots_without_redundant_assessments() {
+    existing_fact_correction(false, true).await;
+}
+
+async fn existing_fact_correction(wrong_revision: bool, keep_atomic_unchanged: bool) {
     let temp = tempfile::tempdir().unwrap();
     let store = MemoryStore::open(&temp.path().join("memory.db"))
         .await
@@ -1326,6 +1336,7 @@ async fn existing_fact_correction(wrong_revision: bool) {
         existing: existing.clone(),
         parts: vec![path, port],
         wrong_revision,
+        keep_atomic_unchanged,
     });
     let worker = MemoryWorker::new(
         store.clone(),
@@ -1337,7 +1348,10 @@ async fn existing_fact_correction(wrong_revision: bool) {
         .run_once("compact")
         .await
         .expect("correct duplicate creation to merge before committing");
-    assert_eq!(model.calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    assert_eq!(
+        model.calls.load(std::sync::atomic::Ordering::SeqCst),
+        if keep_atomic_unchanged { 1 } else { 2 }
+    );
     assert_eq!(store.list("p", "", 100, false).await.unwrap().len(), 2);
     assert_eq!(
         store.show("p", &old.id, None).await.unwrap().status,
@@ -1345,7 +1359,11 @@ async fn existing_fact_correction(wrong_revision: bool) {
     );
     let updated = store.show("p", &existing.id, None).await.unwrap();
     assert_eq!(updated.content.fact, existing.content.fact);
-    assert!(updated.derived_from.contains(&old.id));
+    if keep_atomic_unchanged {
+        assert_eq!(updated, existing);
+    } else {
+        assert!(updated.derived_from.contains(&old.id));
+    }
 }
 
 struct IndexedOnlySplitModel {

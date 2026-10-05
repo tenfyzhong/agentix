@@ -305,6 +305,10 @@ including matches outside the initial lexical snapshots. It does not reload full
 quotation bodies. Database failures stop the attempt instead of asking the model
 to correct infrastructure errors. The transaction repeats its uniqueness and
 revision checks to protect against intervening writes.
+Untouched atomic and human snapshots do not require redundant `keep` assessments;
+their records remain byte-for-byte unchanged. Supplied assessments are still
+validated, atomic mutations need guarded part actions, and every related legacy
+agent record still requires an explicit assessment or targeted reconciliation.
 
 For an explicitly authorized one-shot migration, `compact_codex` executes selected
 consolidation work through the normal worker leases, cancellation, retries and
