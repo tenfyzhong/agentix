@@ -3,7 +3,31 @@ use crate::{Actor, Memory, MemoryInput, MemoryStore, Source, Status};
 use anyhow::{Context, Result, ensure};
 use sqlx::SqliteConnection;
 
+pub(crate) struct ActiveFactMatch {
+    pub id: String,
+    pub revision: i64,
+    pub actor: String,
+    pub same_value: bool,
+}
+
 impl MemoryStore {
+    /// Only correction metadata for one indexed active identity, without quotation bodies.
+    pub(crate) async fn active_fact_match(
+        &self,
+        project: &str,
+        content: &MemoryInput,
+    ) -> Result<Option<ActiveFactMatch>> {
+        let fact = content.fact.as_ref().context("fact identity required")?;
+        let row: Option<(String, i64, String, String)> = sqlx::query_as("SELECT m.id,m.revision,json_extract(m.data,'$.actor'),json_extract(m.data,'$.content.fact.value') FROM memory_facts f JOIN memories m ON m.id=f.memory_id WHERE f.project_id=? AND f.fact_key=? AND f.status='active' LIMIT 1")
+            .bind(project).bind(fact.key()?).fetch_optional(&self.pool).await?;
+        Ok(row.map(|(id, revision, actor, value)| ActiveFactMatch {
+            id,
+            revision,
+            actor,
+            same_value: value == fact.value,
+        }))
+    }
+
     /// Conflict diagnostics are separate from ordinary effective-memory retrieval.
     pub async fn conflicts(&self, project: &str, after: &str, limit: i64) -> Result<Vec<Memory>> {
         ensure!((1..=100).contains(&limit), "invalid: conflict page");

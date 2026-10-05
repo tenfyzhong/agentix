@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 
 use crate::{
     AgentConfig, AgentLoop, ConsolidationDecision, MemoryInput, MemoryStore, Model, ProjectTools,
-    Source, ToolSet, WorkKind, WorkLease, tools::definition,
+    Source, ToolSet, WorkKind, WorkLease, agent_loop::ProposalValidator, tools::definition,
 };
 
 #[async_trait]
@@ -61,6 +61,22 @@ impl MemoryWorker {
         let Some(lease) = self.store.claim_work(owner, &self.config, now()).await? else {
             return Ok(false);
         };
+        self.run_lease(&lease).await
+    }
+
+    /// Execute one explicitly selected item without claiming unrelated queue work.
+    pub async fn run_work_item(&self, owner: &str, id: i64) -> Result<bool> {
+        let Some(lease) = self
+            .store
+            .claim_work_item(owner, &self.config, now(), id)
+            .await?
+        else {
+            return Ok(false);
+        };
+        self.run_lease(&lease).await
+    }
+
+    async fn run_lease(&self, lease: &WorkLease) -> Result<bool> {
         // Dropping the execution future stops further tool/model steps and aborts
         // in-flight HTTP work when a source revision or lease supersedes it.
         let execution = async {
@@ -70,11 +86,11 @@ impl MemoryWorker {
                 ))
                 .await;
             }
-            self.execute(&lease).await
+            self.execute(lease).await
         };
         let cancelled = async {
             loop {
-                if !self.store.work_is_current(&lease, now()).await? {
+                if !self.store.work_is_current(lease, now()).await? {
                     return Ok::<_, anyhow::Error>(());
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(200)).await;
@@ -95,7 +111,7 @@ impl MemoryWorker {
             // Never turn a stale completion into an unfenced retry.
             self.store
                 .fail_work_with_retry(
-                    &lease,
+                    lease,
                     &text[..end],
                     now(),
                     !error
@@ -397,34 +413,32 @@ impl MemoryWorker {
                 "related":legacy_related_schema(related),"reason":{"type":"string"}
             }),
         );
-        let result = agent.run_validated(FACT_COMPACT, &input.to_string(), &PreloadedFacts, finish, &|value| {
-            let proposal = expand_split_quotes(value, &seed, related)?;
-            ensure!(serde_json::to_vec(&proposal)?.len() <= self.config.max_context_bytes, "expanded split proposal exceeds submission budget");
-            ensure!(proposal.parts.len() <= 16 && proposal.related.len() <= 16, "bounded fact split required");
-            let mut keys = std::collections::HashSet::new();
-            for part in &proposal.parts {
-                part.content.validate(crate::Actor::Agent)?;
-                ensure!(!matches!(part.content.kind, crate::Kind::UserDecision | crate::Kind::UserAssertion) || part.content.evidence.iter().any(|quote| user_messages.contains(&(quote.receipt_id.clone(),quote.message_id.clone()))), "assistant text alone cannot establish a user decision; cite a literal user quotation or use the supported observation/inference kind");
-                let fact = part.content.fact.as_ref().context("each part needs one atomic fact")?;
-                ensure!(keys.insert(fact.key()?), "split contains duplicate fact identities");
-                for quote in &part.content.evidence {
-                    ensure!(messages.get(&(quote.receipt_id.clone(), quote.message_id.clone())).is_some_and(|text| text.contains(&quote.quote)), "each part must reuse a literal source quotation from the supplied receipts; do not paraphrase evidence");
-                }
-            }
-            validate_new_fact_parts(&proposal.parts, related)?;
-            validate_legacy_assessments(&proposal.related, related)?;
-            ensure!(related.iter().all(|m| proposal.parts.iter().any(|p| p.target.as_deref() == Some(m.id.as_str()) && p.expected_revision == Some(m.revision)) || proposal.related.iter().filter(|r| r.id == m.id && r.revision == m.revision).count() == 1), "assess every supplied related memory with its current revision, including keep decisions");
-            let mut missing = Vec::new();
-            for original in std::iter::once(&seed).chain(related.iter().filter(|m| proposal.related.iter().any(|r| r.id == m.id && r.action == crate::RelatedAction::Supersede))) {
-                for (index, quote) in original.content.evidence.iter().enumerate() {
-                    if !proposal.parts.iter().any(|part| part.content.evidence.iter().any(|e| e.receipt_id == quote.receipt_id && e.message_id == quote.message_id && e.quote.contains(&quote.quote))) {
-                        missing.push(json!({"memory_id":original.id,"quote_index":index}));
-                    }
-                }
-            }
-            ensure!(proposal.parts.is_empty() || missing.is_empty(), "keep every complete original quotation from each retired record in at least one part; missing quote references: {}", json!({"items":missing.iter().take(16).collect::<Vec<_>>(),"total":missing.len()}));
-            Ok(())
-        }).await?;
+        let check = |value: &Value| {
+            validate_legacy_proposal(
+                value,
+                &seed,
+                related,
+                &messages,
+                &user_messages,
+                self.config.max_context_bytes,
+            )
+        };
+        let validator = IndexedFactValidator {
+            check: &check,
+            store: &self.store,
+            project: &lease.project_id,
+            seed: &seed,
+            related,
+        };
+        let result = agent
+            .run_async_validated(
+                FACT_COMPACT,
+                &input.to_string(),
+                &PreloadedFacts,
+                finish,
+                &validator,
+            )
+            .await?;
         self.record_audit(lease, tools, head, &result, triage)
             .await?;
         let proposal = expand_split_quotes(&result.value, &seed, related)?;
@@ -433,6 +447,94 @@ impl MemoryWorker {
             .await?;
         Ok(())
     }
+}
+
+fn validate_legacy_proposal(
+    value: &Value,
+    seed: &crate::Memory,
+    related: &[crate::Memory],
+    messages: &std::collections::HashMap<(String, String), String>,
+    user_messages: &std::collections::HashSet<(String, String)>,
+    max_bytes: usize,
+) -> Result<()> {
+    let proposal = expand_split_quotes(value, seed, related)?;
+    ensure!(
+        serde_json::to_vec(&proposal)?.len() <= max_bytes,
+        "expanded split proposal exceeds submission budget"
+    );
+    ensure!(
+        proposal.parts.len() <= 16 && proposal.related.len() <= 16,
+        "bounded fact split required"
+    );
+    let mut keys = std::collections::HashSet::new();
+    for part in &proposal.parts {
+        part.content.validate(crate::Actor::Agent)?;
+        ensure!(
+            !matches!(
+                part.content.kind,
+                crate::Kind::UserDecision | crate::Kind::UserAssertion
+            ) || part.content.evidence.iter().any(|quote| user_messages
+                .contains(&(quote.receipt_id.clone(), quote.message_id.clone()))),
+            "assistant text alone cannot establish a user decision; cite a literal user quotation or use the supported observation/inference kind"
+        );
+        let fact = part
+            .content
+            .fact
+            .as_ref()
+            .context("each part needs one atomic fact")?;
+        ensure!(
+            keys.insert(fact.key()?),
+            "split contains duplicate fact identities"
+        );
+        for quote in &part.content.evidence {
+            ensure!(
+                messages
+                    .get(&(quote.receipt_id.clone(), quote.message_id.clone()))
+                    .is_some_and(|text| text.contains(&quote.quote)),
+                "each part must reuse a literal source quotation from the supplied receipts; do not paraphrase evidence"
+            );
+        }
+    }
+    validate_legacy_assessments(&proposal.related, related)?;
+    ensure!(
+        related.iter().all(|m| proposal
+            .parts
+            .iter()
+            .any(|p| p.target.as_deref() == Some(m.id.as_str())
+                && p.expected_revision == Some(m.revision))
+            || proposal
+                .related
+                .iter()
+                .filter(|r| r.id == m.id && r.revision == m.revision)
+                .count()
+                == 1),
+        "assess every supplied related memory with its current revision, including keep decisions"
+    );
+    let mut missing = Vec::new();
+    for original in std::iter::once(seed).chain(related.iter().filter(|m| {
+        proposal
+            .related
+            .iter()
+            .any(|r| r.id == m.id && r.action == crate::RelatedAction::Supersede)
+    })) {
+        for (index, quote) in original.content.evidence.iter().enumerate() {
+            if !proposal.parts.iter().any(|part| {
+                part.content.evidence.iter().any(|e| {
+                    e.receipt_id == quote.receipt_id
+                        && e.message_id == quote.message_id
+                        && e.quote.contains(&quote.quote)
+                })
+            }) {
+                missing.push(json!({"memory_id":original.id,"quote_index":index}));
+            }
+        }
+    }
+    ensure!(
+        proposal.parts.is_empty() || missing.is_empty(),
+        "keep every complete original quotation from each retired record in at least one part; missing quote references: {}",
+        json!({"items":missing.iter().take(16).collect::<Vec<_>>(),"total":missing.len()})
+    );
+    Ok(())
 }
 
 fn legacy_quote_schema(seed: &crate::Memory, related: &[crate::Memory]) -> Result<Value> {
@@ -514,39 +616,49 @@ fn validate_legacy_assessments(
     Ok(())
 }
 
-// Existing snapshots let the model correct duplicate creates before the fenced write.
-fn validate_new_fact_parts(parts: &[crate::FactPart], related: &[crate::Memory]) -> Result<()> {
-    for part in parts
-        .iter()
-        .filter(|part| part.action == crate::DecisionAction::Create)
-    {
-        let key = part
-            .content
-            .fact
-            .as_ref()
-            .context("each part needs one atomic fact")?
-            .key()?;
-        for current in related
+// Read at most sixteen indexed identities after the proposal, including targets
+// outside the initial lexical snapshots. No transaction is held across model calls.
+struct IndexedFactValidator<'a> {
+    check: &'a (dyn Fn(&Value) -> Result<()> + Send + Sync),
+    store: &'a MemoryStore,
+    project: &'a str,
+    seed: &'a crate::Memory,
+    related: &'a [crate::Memory],
+}
+#[async_trait]
+impl ProposalValidator for IndexedFactValidator<'_> {
+    async fn validate(&self, value: &Value) -> Result<Option<String>> {
+        if let Err(error) = (self.check)(value) {
+            return Ok(Some(error.to_string()));
+        }
+        let proposal = expand_split_quotes(value, self.seed, self.related)?;
+        let mut collisions = Vec::new();
+        for (index, part) in proposal
+            .parts
             .iter()
-            .filter(|memory| memory.status == crate::Status::Active)
+            .enumerate()
+            .filter(|(_, part)| part.action == crate::DecisionAction::Create)
         {
-            if current
-                .content
-                .fact
-                .as_ref()
-                .map(crate::Fact::key)
-                .transpose()?
-                .is_some_and(|existing| existing == key)
+            if let Some(current) = self
+                .store
+                .active_fact_match(self.project, &part.content)
+                .await?
             {
-                anyhow::bail!(
-                    "existing active fact {} (revision {}) already uses this identity; merge the same value, supersede/conflict a supported replacement, or keep it and omit the duplicate part",
-                    current.id,
-                    current.revision
-                );
+                collisions.push(json!({"part":index,"id":current.id,"revision":current.revision,"actor":current.actor,"same_value":current.same_value}));
             }
         }
+        if collisions.is_empty() {
+            return Ok(None);
+        }
+        let mut count = collisions.len().min(8);
+        while serde_json::to_vec(&collisions[..count])?.len() > 1400 {
+            count -= 1;
+        }
+        Ok(Some(format!(
+            "existing active facts require reconciliation, including indexed targets outside the original related snapshots: {}. Merge same_value=true agent facts; otherwise use supported supersede/conflict or keep. Human facts require conflict or keep. Correct all listed parts; remaining collisions are checked next.",
+            json!({"items":&collisions[..count],"total":collisions.len()})
+        )))
     }
-    Ok(())
 }
 
 // References can only select literal evidence already loaded for this proposal.

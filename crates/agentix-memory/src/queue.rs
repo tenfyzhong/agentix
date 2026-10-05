@@ -128,10 +128,31 @@ impl MemoryStore {
         config: &AgentConfig,
         now: i64,
     ) -> Result<Option<WorkLease>> {
+        self.claim_selected_work(owner, config, now, None).await
+    }
+
+    /// Claim only the requested item, with the normal concurrency and lease guards.
+    pub async fn claim_work_item(
+        &self,
+        owner: &str,
+        config: &AgentConfig,
+        now: i64,
+        id: i64,
+    ) -> Result<Option<WorkLease>> {
+        self.claim_selected_work(owner, config, now, Some(id)).await
+    }
+
+    async fn claim_selected_work(
+        &self,
+        owner: &str,
+        config: &AgentConfig,
+        now: i64,
+        id: Option<i64>,
+    ) -> Result<Option<WorkLease>> {
         ensure!(!owner.is_empty(), "missing worker owner");
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
-        let expired: Vec<String> = sqlx::query_scalar("UPDATE work_items SET state='failed',error='lease expired after retry limit',owner=NULL,lease_until=NULL WHERE state='running' AND lease_until<=? AND attempts>=max_attempts RETURNING CASE WHEN json_type(payload,'$.compact') IS NOT NULL THEN project_id ELSE '' END")
-            .bind(now).fetch_all(&mut *tx).await?;
+        let expired: Vec<String> = sqlx::query_scalar("UPDATE work_items SET state='failed',error='lease expired after retry limit',owner=NULL,lease_until=NULL WHERE state='running' AND lease_until<=? AND attempts>=max_attempts AND (? IS NULL OR id=?) RETURNING CASE WHEN json_type(payload,'$.compact') IS NOT NULL THEN project_id ELSE '' END")
+            .bind(now).bind(id).bind(id).fetch_all(&mut *tx).await?;
         let running: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM work_items WHERE state='running' AND lease_until>?",
         )
@@ -147,8 +168,8 @@ impl MemoryStore {
             }
             return Ok(None);
         }
-        let row = sqlx::query("SELECT w.* FROM work_items w JOIN scheduler_projects p ON p.project_id=w.project_id WHERE ((w.state='pending' AND w.available_at<=?) OR (w.state='running' AND w.lease_until<=?)) AND (w.max_attempts IS NULL OR w.attempts<w.max_attempts) AND (SELECT count(*) FROM work_items r WHERE r.project_id=w.project_id AND r.kind=w.kind AND r.state='running' AND r.lease_until>?) < CASE WHEN w.kind='consolidate' THEN 1 ELSE ? END ORDER BY p.last_served,w.priority,w.id LIMIT 1")
-            .bind(now).bind(now).bind(now).bind(i64::try_from(config.max_extraction_loops_per_project)?).fetch_optional(&mut *tx).await?;
+        let row = sqlx::query("SELECT w.* FROM work_items w JOIN scheduler_projects p ON p.project_id=w.project_id WHERE ((w.state='pending' AND w.available_at<=?) OR (w.state='running' AND w.lease_until<=?)) AND (w.max_attempts IS NULL OR w.attempts<w.max_attempts) AND (SELECT count(*) FROM work_items r WHERE r.project_id=w.project_id AND r.kind=w.kind AND r.state='running' AND r.lease_until>?) < CASE WHEN w.kind='consolidate' THEN 1 ELSE ? END AND (? IS NULL OR w.id=?) ORDER BY p.last_served,w.priority,w.id LIMIT 1")
+            .bind(now).bind(now).bind(now).bind(i64::try_from(config.max_extraction_loops_per_project)?).bind(id).bind(id).fetch_optional(&mut *tx).await?;
         let Some(row) = row else {
             tx.commit().await?;
             for project in &expired {

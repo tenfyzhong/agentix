@@ -1347,3 +1347,150 @@ async fn existing_fact_correction(wrong_revision: bool) {
     assert_eq!(updated.content.fact, existing.content.fact);
     assert!(updated.derived_from.contains(&old.id));
 }
+
+struct IndexedOnlySplitModel {
+    calls: std::sync::atomic::AtomicUsize,
+    existing: Vec<Memory>,
+    parts: Vec<MemoryInput>,
+    seed: Memory,
+}
+#[async_trait::async_trait]
+impl Model for IndexedOnlySplitModel {
+    async fn complete(&self, request: &ModelRequest) -> anyhow::Result<ModelReply> {
+        let step = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let preload: serde_json::Value = serde_json::from_str(
+            request
+                .history
+                .iter()
+                .find_map(|m| match m {
+                    Message::User(text) => Some(text),
+                    _ => None,
+                })
+                .unwrap(),
+        )?;
+        assert!(
+            preload["related_memories"][0]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|snapshot| self.existing.iter().all(|m| snapshot["id"] != m.id))
+        );
+        if step > 0 {
+            let feedback = request
+                .history
+                .iter()
+                .find_map(|m| match m {
+                    Message::Tool { output, .. } => Some(output),
+                    _ => None,
+                })
+                .unwrap();
+            assert!(feedback.len() <= 2048);
+            for memory in &self.existing {
+                assert!(
+                    feedback.contains(&memory.id),
+                    "all indexed collisions should be corrected together"
+                );
+            }
+            assert!(
+                !feedback.contains("receipt_id"),
+                "indexed correction must not reload full quotation bodies"
+            );
+        }
+        let parts: Vec<_> = self.parts.iter().enumerate().map(|(index, part)| {
+            let mut content = serde_json::to_value(part).unwrap();
+            content["evidence"] = json!([{"memory_id":self.seed.id,"quote_index":0}]);
+            json!({"content":content,"action":if step == 0 {"create"}else{"merge"},"target":if step == 0 {None}else{Some(&self.existing[index].id)},"expected_revision":if step == 0 {None}else{Some(self.existing[index].revision)},"reason":"Preserve an indexed current fact and add legacy evidence"})
+        }).collect();
+        Ok(ModelReply {
+            continuation: json!([]),
+            calls: vec![ToolCall {
+                id: format!("indexed{step}"),
+                name: "submit_fact_compaction".into(),
+                arguments: json!({"parts":parts,"related":[],"reason":"Migrate the current scoped SSH facts"}),
+            }],
+            text: String::new(),
+            usage: TokenUsage::default(),
+        })
+    }
+}
+
+#[tokio::test]
+async fn legacy_split_corrects_all_active_fact_collisions_outside_lexical_snapshots() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(&temp.path().join("memory.db"))
+        .await
+        .unwrap();
+    let text = "Use SSH port 27254 and disable password authentication.";
+    receipt(&store, "existing", text, now() - 10).await;
+    receipt(&store, "legacy", text, now()).await;
+    while let Some(lease) = store
+        .claim_work("setup", &AgentConfig::default(), now())
+        .await
+        .unwrap()
+    {
+        store
+            .complete_extraction(&lease, vec![], now())
+            .await
+            .unwrap();
+    }
+    let mut existing = Vec::new();
+    let mut parts = Vec::new();
+    for (attribute, value) in [
+        ("ssh.port", "27254"),
+        ("ssh.password_authentication", "disabled"),
+    ] {
+        let mut current = input("existing", attribute, value);
+        current.title = "Stored access fact".into();
+        current.scope = "accesssettings".into();
+        current.tags.clear();
+        current.evidence[0].quote = text.into();
+        existing.push(
+            store
+                .create("p", current.clone(), Actor::Agent)
+                .await
+                .unwrap(),
+        );
+        current.evidence[0].receipt_id = "legacy".into();
+        parts.push(current);
+    }
+    let mut legacy = parts[0].clone();
+    legacy.fact = None;
+    legacy.title = "Migrationseed".into();
+    legacy.scope = "migrationcontext".into();
+    legacy.tags.clear();
+    legacy.conclusion = text.into();
+    let seed = store.create("p", legacy, Actor::Agent).await.unwrap();
+    store
+        .schedule_compaction("p", &existing[1].id, 10, true, 0, now())
+        .await
+        .unwrap();
+    let model = std::sync::Arc::new(IndexedOnlySplitModel {
+        calls: std::sync::atomic::AtomicUsize::new(0),
+        existing: existing.clone(),
+        parts,
+        seed: seed.clone(),
+    });
+    let worker = MemoryWorker::new(
+        store.clone(),
+        model.clone(),
+        AgentConfig::default(),
+        std::sync::Arc::new(Repository(temp.path().into())),
+    );
+    worker
+        .run_once("compact")
+        .await
+        .expect("indexed collisions must be model-correctable before the fenced write");
+    assert_eq!(model.calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    assert_eq!(
+        store.show("p", &seed.id, None).await.unwrap().status,
+        Status::Superseded
+    );
+    let current = store.list("p", "", 100, false).await.unwrap();
+    assert_eq!(current.len(), 2);
+    for original in &existing {
+        let merged = current.iter().find(|m| m.id == original.id).unwrap();
+        assert_eq!(merged.content.fact, original.content.fact);
+        assert_eq!(merged.content.evidence.len(), 2);
+        assert!(merged.derived_from.contains(&seed.id));
+    }
+}

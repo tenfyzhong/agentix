@@ -297,3 +297,34 @@ temporary directory; missing selected metadata is an explicit setup error. Reque
 supplied memory configuration; this flag does not add a production subscription provider
 or change the daemon's provider. The extraction benchmark reuses the bridge with its
 existing pinned model, replay checkpoint and request budget.
+
+Before a legacy proposal reaches the fenced write, the worker checks each proposed
+new identity against the active-fact index (at most sixteen metadata lookups).
+Correction feedback contains bounded IDs, revisions, actor and same-value flags,
+including matches outside the initial lexical snapshots. It does not reload full
+quotation bodies. Database failures stop the attempt instead of asking the model
+to correct infrastructure errors. The transaction repeats its uniqueness and
+revision checks to protect against intervening writes.
+
+For an explicitly authorized one-shot migration, `compact_codex` executes selected
+consolidation work through the normal worker leases, cancellation, retries and
+fenced transactions. It does not claim other queue items. Pause the installed
+memory worker to prevent a competing provider from claiming the same queued work,
+take an online SQLite backup, and use a separate configuration file pointing at
+the intended database. Resume the worker and sync the Project's memory projection
+afterward. No provider installation or daemon configuration change is required.
+
+```sh
+cargo run -p agentix-memory --example compact_codex -- \
+  ONE_SHOT_CONFIG PROJECT_ID NEW_ARTIFACT_DIRECTORY --enqueue-legacy
+```
+
+`--enqueue-legacy` requires a complete Project page below one hundred records and
+queues only active agent-authored records without a structured fact. Alternatively,
+provide explicit work IDs after the artifact directory. The example checks their
+Project and consolidation kind before execution. Artifacts contain memory evidence;
+keep them with the migration's private diagnostic files. Luna reasoning is always
+`low`. Request, task and lease budgets come from the supplied configuration, so a
+bounded operational override can accommodate slower migration calls without changing
+the production daemon's defaults. Successful writes still require normal projection
+publication; this example never writes generated Markdown directly.

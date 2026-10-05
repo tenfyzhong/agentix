@@ -11,6 +11,42 @@ use tokio::sync::Semaphore;
 struct Repositories(PathBuf);
 
 #[tokio::test]
+async fn targeted_worker_records_failure_without_claiming_other_projects() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(&temp.path().join("memory.db"))
+        .await
+        .unwrap();
+    store.ingest(&source("other")).await.unwrap();
+    let mut target = source("target");
+    target.receipt_id = "target".into();
+    target.turn_id = "target".into();
+    store.ingest(&target).await.unwrap();
+    let server = http::MockHttp::start(vec![(400, json!({"error":"rejected"}))]).await;
+    let config = AgentConfig {
+        extraction_debounce_ms: 0,
+        ..AgentConfig::default()
+    };
+    let provider = agentix_memory::HttpProvider::new(agentix_memory::ProviderConfig {
+        base_url: server.url.clone(),
+        protocol: agentix_memory::ProviderProtocol::Openai,
+        api_key_env: None,
+        max_in_flight: 4,
+    })
+    .unwrap();
+    let worker = MemoryWorker::new(
+        store.clone(),
+        Arc::new(agentix_memory::HttpModel::new(Arc::new(provider), config.clone()).unwrap()),
+        config,
+        Arc::new(Repositories(temp.path().into())),
+    );
+    assert!(worker.run_work_item("scoped", 2).await.is_err());
+    assert_eq!(store.work_details(2).await.unwrap()["state"], "failed");
+    assert_eq!(store.work_details(1).await.unwrap()["state"], "pending");
+    assert_eq!(store.work_details(1).await.unwrap()["attempts"], 0);
+    assert!(!worker.run_work_item("finished", 2).await.unwrap());
+}
+
+#[tokio::test]
 async fn permanent_provider_rejection_fails_work_without_replaying_the_same_request() {
     let temp = tempfile::tempdir().unwrap();
     let store = MemoryStore::open(&temp.path().join("memory.db"))

@@ -6,6 +6,61 @@ fn source(project: &str, receipt: &str, turn: &str, revision: i64) -> Source {
 }
 
 #[tokio::test]
+async fn targeted_claim_preserves_other_work_and_obeys_limits_and_source_cancellation() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(&dir.path().join("memory.db"))
+        .await
+        .unwrap();
+    let config = AgentConfig {
+        max_concurrent_loops: 1,
+        ..AgentConfig::default()
+    };
+    store
+        .ingest(&source("other", "other", "other", 1))
+        .await
+        .unwrap();
+    store
+        .ingest(&source("target", "target", "target", 1))
+        .await
+        .unwrap();
+    let lease = store
+        .claim_work_item("scoped", &config, 100, 2)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(lease.project_id, "target");
+    assert_eq!(store.work_details(1).await.unwrap()["attempts"], 0);
+    assert!(
+        store
+            .claim_work_item("blocked", &config, 100, 1)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    store
+        .ingest(&source("target", "replacement", "target", 2))
+        .await
+        .unwrap();
+    assert!(!store.work_is_current(&lease, 100).await.unwrap());
+    assert!(
+        store
+            .claim_work_item("cancelled", &config, 100, 2)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(store.work_details(1).await.unwrap()["state"], "pending");
+    assert_eq!(store.work_details(3).await.unwrap()["attempts"], 0);
+    assert!(
+        store
+            .claim_work_item("missing", &config, 100, 999)
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
 async fn ingest_and_queue_are_atomic_idempotent_and_fair_across_projects() {
     let dir = tempfile::tempdir().unwrap();
     let store = MemoryStore::open(&dir.path().join("memory.db"))
