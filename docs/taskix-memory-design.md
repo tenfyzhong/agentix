@@ -205,7 +205,9 @@ only its submission tool; repository review remains in its independent lane.
 It uses at most four model steps (or a lower configured limit) for the initial
 proposal and validation corrections, without repeating evidence reads. Split proposals reference preloaded quotations
 by memory ID and zero-based quote index; the worker restores exact receipt/message
-IDs and original text before validation. Unknown records/indices are correctable
+IDs and original text before validation. The submission schema permits only
+actually supplied memory IDs and quote indices; invalid indices report their
+available range. Unknown records/indices are correctable
 proposal errors. Missing evidence returns up to sixteen exact memory/quote references
 and the total missing count for correction. The submission schema requires a non-null
 fact in each part. The seed is supplied once rather than duplicated as a candidate.

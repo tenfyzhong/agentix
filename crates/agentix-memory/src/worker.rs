@@ -383,11 +383,22 @@ impl MemoryWorker {
         let mut content_schema = memory_schema();
         content_schema["properties"]["fact"] =
             content_schema["properties"]["fact"]["anyOf"][0].clone();
-        content_schema["properties"]["evidence"]["items"] = definition(
-            "quote_reference",
-            "Reuse an exact quotation from a supplied memory without repeating its text",
-            &json!({"memory_id":{"type":"string"},"quote_index":{"type":"integer","minimum":0,"maximum":15}}),
-        ).parameters;
+        let quote_choices: Vec<_> = std::iter::once(&seed)
+            .chain(related)
+            .filter(|memory| !memory.content.evidence.is_empty())
+            .map(|memory| {
+                definition(
+                    "quote_reference",
+                    "Reuse an exact quotation from a supplied memory without repeating its text",
+                    &json!({"memory_id":{"type":"string","enum":[memory.id]},"quote_index":{"type":"integer","enum":(0..memory.content.evidence.len()).collect::<Vec<_>>()}}),
+                ).parameters
+            })
+            .collect();
+        ensure!(
+            !quote_choices.is_empty(),
+            "legacy split needs supplied quotations"
+        );
+        content_schema["properties"]["evidence"]["items"] = json!({"anyOf":quote_choices});
         let part_schema = definition("part", "Reconcile one independent fact", &json!({
             "content":content_schema,"action":{"type":"string","enum":["create","merge","supersede","conflict"]},
             "target":{"type":["string","null"]},"expected_revision":{"type":["integer","null"]},"reason":{"type":"string"}
@@ -564,7 +575,7 @@ fn expand_split_quotes(
                         .content
                         .evidence
                         .get(index)
-                        .context("invalid quote index")?,
+                        .with_context(|| format!("invalid quote index {index} for {}; valid indices are 0..{} (exclusive upper bound)", memory.id, memory.content.evidence.len()))?,
                 )?;
             }
         }

@@ -879,13 +879,14 @@ impl Model for ReferencedSplitModel {
             "legacy seed quotes must not be duplicated in an extra candidate payload"
         );
         let schema = &request.tools[0].parameters["properties"]["parts"]["items"]["properties"]["content"]
-            ["properties"]["evidence"]["items"]["properties"];
-        assert!(schema.get("memory_id").is_some() && schema.get("quote_index").is_some());
+            ["properties"]["evidence"]["items"]["anyOf"][0]["properties"];
+        assert_eq!(schema["memory_id"]["enum"], json!([self.seed.id]));
+        assert_eq!(schema["quote_index"]["enum"], json!([0]));
         assert!(request.tools[0].parameters["properties"]["parts"]["items"]["properties"]["content"]["properties"]["fact"]["properties"].is_object(), "a submitted atomic part cannot advertise a nullable fact");
         if step > 0 {
             let expected = match step {
                 1 => "unknown preloaded quote source",
-                2 => "invalid quote index",
+                2 => "valid indices are 0..1",
                 _ => "invalid type: null",
             };
             assert!(
