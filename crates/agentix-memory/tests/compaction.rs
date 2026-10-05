@@ -1091,3 +1091,101 @@ async fn compact_canonical_merge_rolls_back_for_stale_or_human_target() {
         );
     }
 }
+
+#[tokio::test]
+async fn ineligible_revisions_do_not_accumulate_in_the_dirty_index() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("memory.db");
+    let store = MemoryStore::open(&path).await.unwrap();
+    add(&store, "p", "human", Actor::Human).await;
+    let old = add(&store, "p", "archived", Actor::Agent).await;
+    store
+        .set_status(
+            "p",
+            &old.id,
+            old.revision,
+            Status::Archived,
+            "Historical",
+            Actor::Agent,
+        )
+        .await
+        .unwrap();
+    let pool =
+        sqlx::SqlitePool::connect_with(sqlx::sqlite::SqliteConnectOptions::new().filename(&path))
+            .await
+            .unwrap();
+    let dirty: i64 = sqlx::query_scalar("SELECT count(*) FROM memory_compactions WHERE dirty=1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        dirty, 0,
+        "human and retired revisions never need semantic maintenance"
+    );
+    assert!(
+        store
+            .next_compaction_at("p", &AgentConfig::default(), now())
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn expiry_before_debounce_is_drained_without_model_work() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("memory.db");
+    let store = MemoryStore::open(&path).await.unwrap();
+    for i in 0..13 {
+        let seed = add(&store, "p", &format!("r{i}"), Actor::Agent).await;
+        let mut content = seed.content.clone();
+        content.valid_until = Some(now() + 10);
+        store
+            .update("p", &seed.id, seed.revision, content, Actor::Agent)
+            .await
+            .unwrap();
+    }
+    let future = now() + 60;
+    let config = AgentConfig::default();
+    let pool =
+        sqlx::SqlitePool::connect_with(sqlx::sqlite::SqliteConnectOptions::new().filename(&path))
+            .await
+            .unwrap();
+    assert_eq!(
+        store
+            .schedule_background_compaction("p", &config, future)
+            .await
+            .unwrap(),
+        0
+    );
+    let dirty: i64 = sqlx::query_scalar("SELECT count(*) FROM memory_compactions WHERE dirty=1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        dirty, 3,
+        "expired revisions must be retired from the dirty queue in bounded pages"
+    );
+    assert!(
+        store
+            .next_compaction_at("p", &config, future)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert_eq!(
+        store
+            .schedule_background_compaction("p", &config, future)
+            .await
+            .unwrap(),
+        0
+    );
+    assert!(
+        store
+            .next_compaction_at("p", &config, future)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(store.work_counts().await.unwrap().pending, 0);
+}

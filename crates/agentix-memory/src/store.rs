@@ -124,6 +124,16 @@ impl MemoryStore {
         sqlx::raw_sql(include_str!("schema.sql"))
             .execute(&mut *tx)
             .await?;
+        // Backfill legacy auxiliary rows once, inside the same migration transaction.
+        // Ordinary writes maintain these rows; reopening must not enumerate memories.
+        let auxiliary_ready: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM memory_metadata WHERE key='memory_auxiliary_version' AND value='1')",
+        ).fetch_one(&mut *tx).await?;
+        if !auxiliary_ready {
+            sqlx::raw_sql(include_str!("auxiliary_migration.sql"))
+                .execute(&mut *tx)
+                .await?;
+        }
         let indexed: bool = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM memory_metadata WHERE key='source_turn_index_version')",
         )
@@ -142,7 +152,7 @@ impl MemoryStore {
             crate::id_migration::migrate(&mut tx).await?;
         }
         if version < 3 {
-            sqlx::query("UPDATE memory_compactions SET dirty=1,suspended=0 WHERE memory_id IN (SELECT id FROM memories WHERE json_extract(data,'$.content.fact') IS NULL)")
+            sqlx::query("UPDATE memory_compactions SET dirty=1,suspended=0 WHERE memory_id IN (SELECT id FROM memories WHERE json_extract(data,'$.content.fact') IS NULL AND status IN ('active','conflicted') AND json_extract(data,'$.actor')='agent')")
                 .execute(&mut *tx).await?;
             sqlx::query("UPDATE memory_projection SET published_revision=0,prepared_revision=0,prepared_hash=''")
                 .execute(&mut *tx).await?;
@@ -370,6 +380,7 @@ impl MemoryStore {
             content,
         };
         save(&mut tx, &memory).await?;
+        crate::facts::check_settled(&mut tx, std::slice::from_ref(&memory)).await?;
         tx.commit().await?;
         self.notify_change(project);
         Ok(memory)
@@ -421,6 +432,7 @@ impl MemoryStore {
         crate::facts::validate_replacement(&mut tx, &prior, &memory.content).await?;
         save(&mut tx, &prior).await?;
         save(&mut tx, &memory).await?;
+        crate::facts::check_settled(&mut tx, std::slice::from_ref(&memory)).await?;
         tx.commit().await?;
         self.notify_change(project);
         Ok(memory)
@@ -451,6 +463,7 @@ impl MemoryStore {
         memory.actor = actor;
         memory.updated_at = time::OffsetDateTime::now_utc().unix_timestamp();
         save(&mut tx, &memory).await?;
+        crate::facts::check_settled(&mut tx, std::slice::from_ref(&memory)).await?;
         tx.commit().await?;
         self.notify_change(project);
         Ok(memory)
@@ -489,6 +502,7 @@ impl MemoryStore {
         memory.actor = actor;
         memory.updated_at = time::OffsetDateTime::now_utc().unix_timestamp();
         save(&mut tx, &memory).await?;
+        crate::facts::check_settled(&mut tx, std::slice::from_ref(&memory)).await?;
         tx.commit().await?;
         self.notify_change(project);
         Ok(memory)

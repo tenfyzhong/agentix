@@ -13,7 +13,7 @@ pub struct CompactionPage {
 }
 
 // Pending old seeds leave a new dirty revision dormant until their completion wakes it.
-const DIRTY: &str = "c.project_id=? AND c.dirty=1 AND c.suspended=0 AND m.status IN ('active','conflicted') AND json_extract(m.data,'$.actor')='agent' AND (m.valid_until IS NULL OR m.valid_until>?) AND NOT EXISTS(SELECT 1 FROM work_items w WHERE w.id=c.work_id AND w.state IN ('pending','running'))";
+const DIRTY: &str = "c.project_id=? AND c.dirty=1 AND c.suspended=0 AND NOT EXISTS(SELECT 1 FROM work_items w WHERE w.id=c.work_id AND w.state IN ('pending','running'))";
 
 impl MemoryStore {
     pub(crate) async fn skip_obsolete_compaction(
@@ -104,7 +104,6 @@ impl MemoryStore {
             "SELECT m.data FROM memory_compactions c JOIN memories m ON m.id=c.memory_id WHERE {DIRTY} AND c.dirty_at<=? ORDER BY c.dirty_at,c.memory_id LIMIT 10"
         ))
         .bind(project)
-        .bind(now)
         .bind(now.saturating_sub(i64::try_from(config.compaction_debounce_seconds)?))
         .fetch_all(&mut *tx)
         .await?;
@@ -135,16 +134,15 @@ impl MemoryStore {
         &self,
         project: &str,
         config: &AgentConfig,
-        now: i64,
+        _now: i64,
     ) -> Result<Option<i64>> {
         if !config.compaction_enabled {
             return Ok(None);
         }
         let dirty_at: Option<i64> = sqlx::query_scalar(&format!(
-            "SELECT c.dirty_at FROM memory_compactions c JOIN memories m ON m.id=c.memory_id WHERE {DIRTY} ORDER BY c.dirty_at,c.memory_id LIMIT 1"
+            "SELECT c.dirty_at FROM memory_compactions c WHERE {DIRTY} ORDER BY c.dirty_at,c.memory_id LIMIT 1"
         ))
         .bind(project)
-        .bind(now)
         .fetch_optional(&self.pool)
         .await?;
         Ok(dirty_at.map(|at| {

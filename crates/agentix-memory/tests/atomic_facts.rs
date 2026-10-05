@@ -1558,3 +1558,159 @@ async fn indexed_fact_reconciliation(wrong_merge_target: bool) {
         assert!(merged.derived_from.contains(&seed.id));
     }
 }
+
+#[tokio::test]
+async fn direct_writes_cannot_publish_an_unresolved_fact() {
+    for actor in [Actor::Agent, Actor::Human] {
+        for operation in ["create", "supersede", "activate"] {
+            let temp = tempfile::tempdir().unwrap();
+            let store = MemoryStore::open(&temp.path().join("memory.db"))
+                .await
+                .unwrap();
+            receipt(&store, "old", "old.example", now() - 10).await;
+            let old = write(
+                &store,
+                &input("old", "reality.domain", "old.example"),
+                None,
+                "create",
+            )
+            .await
+            .unwrap()
+            .remove(0);
+            receipt(&store, "uncertain", "other.example", now()).await;
+            write(
+                &store,
+                &input("uncertain", "reality.domain", "other.example"),
+                Some(&old),
+                "conflict",
+            )
+            .await
+            .unwrap();
+            let before = store.list("p", "", 100, true).await.unwrap();
+            let old = store.show("p", &old.id, None).await.unwrap();
+            let result = match operation {
+                "create" => {
+                    store
+                        .create(
+                            "p",
+                            input("uncertain", "reality.domain", "other.example"),
+                            actor,
+                        )
+                        .await
+                }
+                "supersede" => {
+                    store
+                        .supersede(
+                            "p",
+                            &old.id,
+                            old.revision,
+                            input("uncertain", "reality.domain", "other.example"),
+                            "Resolve one claim only",
+                            actor,
+                        )
+                        .await
+                }
+                _ => {
+                    store
+                        .set_status(
+                            "p",
+                            &old.id,
+                            old.revision,
+                            Status::Active,
+                            "Resolve one claim only",
+                            actor,
+                        )
+                        .await
+                }
+            };
+            let error = result.expect_err(&format!(
+                "{operation} must reconcile all conflicting claims"
+            ));
+            assert!(
+                error.to_string().contains("unresolved fact conflicts"),
+                "{error}"
+            );
+            assert_eq!(store.list("p", "", 100, true).await.unwrap(), before);
+            assert!(store.search("p", "Sing-box", 10).await.unwrap().is_empty());
+            // A human can explicitly retire the other claim before activating the chosen value.
+            let other = before.iter().find(|m| m.id != old.id).unwrap();
+            store
+                .set_status(
+                    "p",
+                    &other.id,
+                    other.revision,
+                    Status::Archived,
+                    "Rejected claim",
+                    Actor::Human,
+                )
+                .await
+                .unwrap();
+            store
+                .set_status(
+                    "p",
+                    &old.id,
+                    old.revision,
+                    Status::Active,
+                    "Confirmed remaining claim",
+                    Actor::Human,
+                )
+                .await
+                .unwrap();
+            assert_eq!(store.list("p", "", 100, false).await.unwrap().len(), 1);
+        }
+    }
+}
+
+#[tokio::test]
+async fn direct_conflict_transition_cannot_leave_a_confirmed_value() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(&temp.path().join("memory.db"))
+        .await
+        .unwrap();
+    receipt(&store, "old", "old.example", now() - 10).await;
+    let old = store
+        .create(
+            "p",
+            input("old", "reality.domain", "old.example"),
+            Actor::Agent,
+        )
+        .await
+        .unwrap();
+    let old = store
+        .set_status(
+            "p",
+            &old.id,
+            old.revision,
+            Status::Archived,
+            "Retired",
+            Actor::Human,
+        )
+        .await
+        .unwrap();
+    receipt(&store, "new", "new.example", now()).await;
+    store
+        .create(
+            "p",
+            input("new", "reality.domain", "new.example"),
+            Actor::Agent,
+        )
+        .await
+        .unwrap();
+    let before = store.list("p", "", 100, true).await.unwrap();
+    let error = store
+        .set_status(
+            "p",
+            &old.id,
+            old.revision,
+            Status::Conflicted,
+            "Reopen claim",
+            Actor::Human,
+        )
+        .await
+        .expect_err("conflicting claim must not coexist with active fact");
+    assert!(
+        error.to_string().contains("unresolved fact conflicts"),
+        "{error}"
+    );
+    assert_eq!(store.list("p", "", 100, true).await.unwrap(), before);
+}

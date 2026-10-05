@@ -160,6 +160,12 @@ and value merges evidence; a confirmed later replacement supersedes the old
 record and creates a new active record. Original source dates and explicit
 replacement statements establish precedence; newer ingestion alone does not.
 Unresolved incompatible claims become conflicted and leave ordinary retrieval.
+The same invariant applies to direct create, update, supersede and status writes:
+no active fact may coexist with a conflicted claim of the same identity. Checks
+run at the transaction boundary so multi-record reconciliation can retire all
+claims atomically. Rejected writes roll back content, versions and indexes.
+Manual resolution must retire the other claims before activating the selected
+record; changing only one conflicted record cannot publish a confirmed value.
 Conflict diagnostics remain available through the read-only `memory_conflicts`
 tool and explicit ID/history inspection.
 
@@ -188,7 +194,11 @@ compact work completion, startup recovery and configuration reload. It drains at
 most ten indexed dirty records per unarchived Project per pass. The durable
 per-revision dirty flags also track one-time historical processing and survive
 restart; there is no rotating scan or periodic reassessment of unchanged records.
-Only searchable, nonexpired Agent records qualify. The default dirty debounce is
+Only searchable, nonexpired Agent records qualify for model work. Human and
+retired revisions do not enter the dirty candidate index. Records expiring while
+waiting are drained in pages of ten and marked observed without model calls;
+this prevents expired candidates from being rescanned on every later write.
+The candidate index excludes suspended failures. The default dirty debounce is
 30 seconds. The loop arms a timer only for an actual outstanding dirty deadline;
 with no eligible dirty work it waits for notifications without compact database
 scans or model calls. Setting `compaction_enabled = false` disables automatic
@@ -457,3 +467,14 @@ once so they can be split, including records with an explicit null fact. Restart
 under schema 3 does not reopen unchanged assessed records. Projection metadata is
 reset once to render fact blocks and lineage. Migration itself does not call a
 model; subsequent background or manual compact performs the semantic split.
+
+
+### Auxiliary metadata initialization
+
+Projection and compaction metadata are backfilled once per database, guarded by
+`memory_auxiliary_version` in the migration transaction. Existing publication and
+compaction progress are preserved. A failed backfill rolls back the marker and
+all earlier changes so reopening can retry safely. Subsequent writable opens do
+not enumerate memories for these backfills or recreate the failure trigger;
+normal writes maintain the auxiliary rows. This does not remove the service's
+separate retained-source validation at startup described above.

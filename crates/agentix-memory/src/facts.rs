@@ -189,9 +189,9 @@ pub(crate) async fn validate_replacement(
 
 /// No confirmed active fact can coexist with unresolved claims of that identity.
 pub(crate) async fn check_settled(conn: &mut SqliteConnection, changed: &[Memory]) -> Result<()> {
-    for memory in changed.iter().filter(|m| m.status == Status::Active) {
+    for memory in changed {
         if let Some(fact) = &memory.content.fact {
-            let conflicted: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM memory_facts WHERE project_id=? AND fact_key=? AND status='conflicted')")
+            let conflicted: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM memory_facts a JOIN memory_facts c ON c.project_id=a.project_id AND c.fact_key=a.fact_key AND c.status='conflicted' WHERE a.project_id=? AND a.fact_key=? AND a.status='active')")
                 .bind(&memory.project_id).bind(fact.key()?).fetch_one(&mut *conn).await?;
             ensure!(
                 !conflicted,
@@ -205,4 +205,29 @@ pub(crate) async fn check_settled(conn: &mut SqliteConnection, changed: &[Memory
 pub(crate) fn same_value(a: &MemoryInput, b: &MemoryInput) -> Result<bool> {
     Ok(same_identity(a, b)?
         && a.fact.as_ref().map(|f| &f.value) == b.fact.as_ref().map(|f| &f.value))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn settled_check_uses_final_state_not_intermediate_batch_snapshots() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = MemoryStore::open(&temp.path().join("memory.db"))
+            .await
+            .unwrap();
+        let input: MemoryInput = serde_json::from_value(serde_json::json!({
+            "title":"Policy", "conclusion":"enabled", "rationale":"External choice",
+            "scope":"project", "tags":[], "kind":"user_decision", "evidence":[],
+            "fact":{"entity":"server", "attribute":"policy", "qualifiers":[], "value":"enabled"}
+        }))
+        .unwrap();
+        let mut intermediate = store.create("p", input, Actor::Human).await.unwrap();
+        intermediate.status = Status::Conflicted;
+        let mut conn = store.pool.acquire().await.unwrap();
+        // A batch may contain a snapshot preceding another decision. Its final
+        // index has only an active value, so that intermediate claim is resolved.
+        check_settled(&mut conn, &[intermediate]).await.unwrap();
+    }
 }

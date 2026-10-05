@@ -122,7 +122,6 @@ CREATE TABLE IF NOT EXISTS memory_projection (
     prepared_hash TEXT NOT NULL DEFAULT '',
     error TEXT
 );
-INSERT OR IGNORE INTO memory_projection(memory_id) SELECT id FROM memories;
 
 CREATE INDEX IF NOT EXISTS sources_by_sequence ON sources(json_extract(data,'$.sequence'));
 CREATE INDEX IF NOT EXISTS sources_by_conversation ON sources(project_id,instance_id,json_extract(data,'$.session_id'),json_extract(data,'$.sequence'));
@@ -165,18 +164,16 @@ CREATE TABLE IF NOT EXISTS memory_compactions (
     suspended INTEGER NOT NULL DEFAULT 0,
     work_id INTEGER REFERENCES work_items(id) ON DELETE SET NULL
 );
-CREATE INDEX IF NOT EXISTS compaction_dirty ON memory_compactions(project_id,dirty,dirty_at,memory_id);
+CREATE INDEX IF NOT EXISTS compaction_ready ON memory_compactions(project_id,dirty_at,memory_id) WHERE dirty=1 AND suspended=0;
 CREATE TRIGGER IF NOT EXISTS compaction_insert AFTER INSERT ON memories BEGIN
-    INSERT INTO memory_compactions(memory_id,project_id,revision,dirty_at) VALUES(new.id,new.project_id,new.revision,coalesce(json_extract(new.data,'$.updated_at'),unixepoch()));
+    INSERT INTO memory_compactions(memory_id,project_id,revision,dirty,dirty_at) VALUES(new.id,new.project_id,new.revision,(new.status IN ('active','conflicted') AND coalesce(json_extract(new.data,'$.actor')='agent',0)),coalesce(json_extract(new.data,'$.updated_at'),unixepoch()));
 END;
 CREATE TRIGGER IF NOT EXISTS compaction_update AFTER UPDATE OF revision ON memories BEGIN
-    UPDATE memory_compactions SET revision=new.revision,dirty=1,suspended=0,dirty_at=coalesce(json_extract(new.data,'$.updated_at'),unixepoch()) WHERE memory_id=new.id;
+    UPDATE memory_compactions SET revision=new.revision,dirty=(new.status IN ('active','conflicted') AND coalesce(json_extract(new.data,'$.actor')='agent',0)),suspended=0,dirty_at=coalesce(json_extract(new.data,'$.updated_at'),unixepoch()) WHERE memory_id=new.id;
 END;
-DROP TRIGGER IF EXISTS compaction_failure;
-CREATE TRIGGER compaction_failure AFTER UPDATE OF state ON work_items WHEN new.state='failed' BEGIN
+CREATE TRIGGER IF NOT EXISTS compaction_failure AFTER UPDATE OF state ON work_items WHEN new.state='failed' BEGIN
     UPDATE memory_compactions SET suspended=1 WHERE work_id=new.id AND revision=json_extract(new.payload,'$.compact.revision');
 END;
-INSERT OR IGNORE INTO memory_compactions(memory_id,project_id,revision,dirty_at) SELECT id,project_id,revision,coalesce(json_extract(data,'$.updated_at'),unixepoch()) FROM memories;
 
 CREATE TABLE IF NOT EXISTS memory_id_renames (
     old_id TEXT PRIMARY KEY,
