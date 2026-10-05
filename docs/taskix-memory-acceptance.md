@@ -351,3 +351,26 @@ publication; this example never writes generated Markdown directly.
 Process events and stderr are streamed to private artifacts as they arrive, including
 partial diagnostics from a timed-out or cancelled request. Partial output is never
 accepted as a completed model response.
+
+### Live migration checkpoint (2026-10-06)
+
+An authorized dogyun migration used the existing Codex subscription with
+`gpt-6-luna`, reasoning `low`, and a separate 120-second request, 480-second task,
+600-second lease configuration. Three selected legacy work items completed through
+normal guarded transactions. The resulting Project has sixteen active structured
+facts and no active legacy records. Its camouflage domain has one active fact with
+value `www.sakura.ad.jp`; the old domain is absent from effective conclusions.
+All three original mixed records are superseded, their literal quotations and
+original versions remain intact, and the two existing SSH facts are unchanged.
+Other Projects and the installed service configuration were unchanged during the
+paused migration; the original service was restored. All twenty-one memory notes
+match database status and fact presence after normal projection sync, with no
+pending publication revisions or projection errors.
+
+This verifies compaction data acceptance separately from model query acceptance.
+The preceding guarded copy finished compaction, but its query exceeded the existing
+60-second whole-query budget. The installed Gemini provider still reports an
+unsupported-egress-location HTTP 400. The one-shot Luna bridge does not replace that
+provider. Fact identity uniqueness is deterministic; semantic naming and qualifier
+canonicalization remain bounded model decisions, so a particular fact count is not
+a general compaction guarantee.
