@@ -305,10 +305,21 @@ including matches outside the initial lexical snapshots. It does not reload full
 quotation bodies. Database failures stop the attempt instead of asking the model
 to correct infrastructure errors. The transaction repeats its uniqueness and
 revision checks to protect against intervening writes.
+An untargeted create proposal for the exact same indexed agent fact and value is
+deterministically normalized to a merge with that record's current ID/revision.
+This adds evidence through the existing guarded merge without another model call.
+Human records, different values and explicit target guards are never normalized;
+they still require the supported conflict/replacement decisions.
 Untouched atomic and human snapshots do not require redundant `keep` assessments;
 their records remain byte-for-byte unchanged. Supplied assessments are still
 validated, atomic mutations need guarded part actions, and every related legacy
 agent record still requires an explicit assessment or targeted reconciliation.
+Preloaded snapshots share a quotation catalog: each exact receipt/message/quote
+appears once, and each memory's evidence array preserves its original index order
+through catalog references. Output references remain memory ID plus quote index.
+The worker expands them from the original snapshots and checks the full submission
+size and literal evidence before writing, so input deduplication never authorizes
+dropping or truncating stored quotations.
 
 For an explicitly authorized one-shot migration, `compact_codex` executes selected
 consolidation work through the normal worker leases, cancellation, retries and

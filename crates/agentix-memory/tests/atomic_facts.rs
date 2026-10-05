@@ -1248,11 +1248,31 @@ struct ExistingFactCorrectionModel {
     parts: Vec<MemoryInput>,
     wrong_revision: bool,
     keep_atomic_unchanged: bool,
+    check_quote_catalog: bool,
 }
 #[async_trait::async_trait]
 impl Model for ExistingFactCorrectionModel {
     async fn complete(&self, request: &ModelRequest) -> anyhow::Result<ModelReply> {
         let step = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if self.check_quote_catalog {
+            let Message::User(input) = &request.history[0] else {
+                panic!("missing preloaded input")
+            };
+            let input: serde_json::Value = serde_json::from_str(input)?;
+            assert_eq!(input["quotation_catalog"].as_array().unwrap().len(), 1);
+            assert_eq!(
+                input["quotation_catalog"][0]["evidence"],
+                serde_json::to_value(&self.parts[0].evidence[0])?
+            );
+            assert_eq!(
+                input["compact"]["content"]["evidence"][0],
+                json!({"quote_id":"q0"})
+            );
+            assert_eq!(
+                input["related_memories"][0][0]["content"]["evidence"][0],
+                json!({"quote_id":"q0"})
+            );
+        }
         if !self.wrong_revision {
             let bound = &request.tools[0].parameters["properties"]["related"]["items"]["anyOf"][0]
                 ["properties"];
@@ -1290,20 +1310,29 @@ impl Model for ExistingFactCorrectionModel {
 
 #[tokio::test]
 async fn legacy_split_corrects_existing_active_fact_creation_before_transaction() {
-    existing_fact_correction(false, false).await;
+    existing_fact_correction(false, false, false).await;
 }
 
 #[tokio::test]
 async fn legacy_split_corrects_wrong_related_revision_before_transaction() {
-    existing_fact_correction(true, false).await;
+    existing_fact_correction(true, false, false).await;
 }
 
 #[tokio::test]
 async fn legacy_split_keeps_unmodified_atomic_snapshots_without_redundant_assessments() {
-    existing_fact_correction(false, true).await;
+    existing_fact_correction(false, true, false).await;
 }
 
-async fn existing_fact_correction(wrong_revision: bool, keep_atomic_unchanged: bool) {
+#[tokio::test]
+async fn legacy_split_deduplicates_shared_quotations_without_changing_evidence() {
+    existing_fact_correction(false, false, true).await;
+}
+
+async fn existing_fact_correction(
+    wrong_revision: bool,
+    keep_atomic_unchanged: bool,
+    check_quote_catalog: bool,
+) {
     let temp = tempfile::tempdir().unwrap();
     let store = MemoryStore::open(&temp.path().join("memory.db"))
         .await
@@ -1337,6 +1366,7 @@ async fn existing_fact_correction(wrong_revision: bool, keep_atomic_unchanged: b
         parts: vec![path, port],
         wrong_revision,
         keep_atomic_unchanged,
+        check_quote_catalog,
     });
     let worker = MemoryWorker::new(
         store.clone(),
@@ -1350,7 +1380,7 @@ async fn existing_fact_correction(wrong_revision: bool, keep_atomic_unchanged: b
         .expect("correct duplicate creation to merge before committing");
     assert_eq!(
         model.calls.load(std::sync::atomic::Ordering::SeqCst),
-        if keep_atomic_unchanged { 1 } else { 2 }
+        if wrong_revision { 2 } else { 1 }
     );
     assert_eq!(store.list("p", "", 100, false).await.unwrap().len(), 2);
     assert_eq!(
@@ -1433,7 +1463,7 @@ impl Model for IndexedOnlySplitModel {
 }
 
 #[tokio::test]
-async fn legacy_split_corrects_all_active_fact_collisions_outside_lexical_snapshots() {
+async fn legacy_split_merges_identical_indexed_facts_without_model_correction() {
     let temp = tempfile::tempdir().unwrap();
     let store = MemoryStore::open(&temp.path().join("memory.db"))
         .await
@@ -1498,7 +1528,7 @@ async fn legacy_split_corrects_all_active_fact_collisions_outside_lexical_snapsh
         .run_once("compact")
         .await
         .expect("indexed collisions must be model-correctable before the fenced write");
-    assert_eq!(model.calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    assert_eq!(model.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
     assert_eq!(
         store.show("p", &seed.id, None).await.unwrap().status,
         Status::Superseded
