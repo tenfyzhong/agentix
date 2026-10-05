@@ -874,6 +874,10 @@ impl Model for ReferencedSplitModel {
                 .unwrap(),
         )
         .unwrap();
+        assert_eq!(
+            preload["migration_scope"], self.seed.content.conclusion,
+            "migration scope must describe the current retained conclusion, not all example attributes"
+        );
         assert!(
             preload.get("candidates").is_none(),
             "legacy seed quotes must not be duplicated in an extra candidate payload"
@@ -922,6 +926,15 @@ impl Model for ReferencedSplitModel {
 
 #[tokio::test]
 async fn legacy_split_resolves_quote_references_without_model_repeating_source_text() {
+    scoped_reference_split(false).await;
+}
+
+#[tokio::test]
+async fn legacy_split_scopes_a_retained_record_to_its_current_conclusion() {
+    scoped_reference_split(true).await;
+}
+
+async fn scoped_reference_split(stale_title: bool) {
     let temp = tempfile::tempdir().unwrap();
     let store = MemoryStore::open(&temp.path().join("memory.db"))
         .await
@@ -941,6 +954,9 @@ async fn legacy_split_resolves_quote_references_without_model_repeating_source_t
     part.evidence[0].quote = text.into();
     let mut legacy = part.clone();
     legacy.fact = None;
+    if stale_title {
+        legacy.title = "Former combined SSH, camouflage domain and autostart configuration".into();
+    }
     let old = store.create("p", legacy, Actor::Agent).await.unwrap();
     store
         .schedule_compaction("p", "", 10, true, 0, now())

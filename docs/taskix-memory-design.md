@@ -210,7 +210,10 @@ actually supplied memory IDs and quote indices; invalid indices report their
 available range. Unknown records/indices are correctable
 proposal errors. Missing evidence returns up to sixteen exact memory/quote references
 and the total missing count for correction. The submission schema requires a non-null
-fact in each part. The seed is supplied once rather than duplicated as a candidate.
+fact in each part. The seed is supplied once rather than duplicated as a candidate. Its current
+conclusion is supplied as `migration_scope`; example attributes and a formerly
+broader title do not require unrelated facts or reconstruction of retired facts.
+Keeping a complete quotation is separate from extracting every fact it mentions.
 Related assessments are restricted to supplied IDs and snapshot revisions; they can
 keep records or retire whole legacy agent records, while atomic and human records
 can only be kept through this assessment path. Duplicate creates against supplied
