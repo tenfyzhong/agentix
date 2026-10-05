@@ -239,7 +239,7 @@ impl Model for CurrentStateModel {
             "compaction must distinguish current claims from their historical quotations"
         );
         let step = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let (name, arguments) = if step == 0 {
+        let (name, arguments) = if request.tools.len() > 1 && step == 0 {
             ("memory_search", json!({"query":"Server decision"}))
         } else {
             let parts: Vec<_> = [("deployment.path","deployment"),("autostart","enabled"),("reality.domain","new.example")].into_iter().map(|(attribute,value)| {

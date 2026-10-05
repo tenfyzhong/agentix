@@ -275,8 +275,8 @@ impl Model for SplitModel {
             request
                 .tools
                 .iter()
-                .all(|tool| !tool.name.starts_with("repo_")),
-            "legacy splitting must use memory/source evidence; repository review has its own lane"
+                .all(|tool| tool.name == "submit_fact_compaction"),
+            "complete preloaded snapshots must go directly to a split proposal, without repeated evidence reads"
         );
         Ok(ModelReply {
             continuation: json!([]),
@@ -777,14 +777,15 @@ struct BoundedSplitModel {
 impl Model for BoundedSplitModel {
     async fn complete(&self, request: &ModelRequest) -> anyhow::Result<ModelReply> {
         let step = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let (name, arguments) = if request.tools.len() == 1 {
-            (
-                "submit_fact_compaction",
-                json!({"parts":[{"content":self.content,"action":"create","target":null,"expected_revision":null,"reason":"Independent deployment fact"}],"related":[],"reason":"Use supplied complete evidence"}),
-            )
-        } else {
-            ("memory_search", json!({"query":"Sing-box"}))
-        };
+        let final_step = request.history.iter().any(|message| {
+            matches!(message, Message::User(text) if text.contains("This is the final step"))
+        });
+        let mut content = self.content.clone();
+        if !final_step {
+            content.evidence[0].quote = "Needs a corrected literal quotation".into();
+        }
+        let name = "submit_fact_compaction";
+        let arguments = json!({"parts":[{"content":content,"action":"create","target":null,"expected_revision":null,"reason":"Independent deployment fact"}],"related":[],"reason":"Use supplied complete evidence"});
         Ok(ModelReply {
             continuation: json!([]),
             calls: vec![ToolCall {
@@ -799,7 +800,7 @@ impl Model for BoundedSplitModel {
 }
 
 #[tokio::test]
-async fn legacy_split_reserves_submission_after_bounded_preloaded_evidence_reads() {
+async fn legacy_split_bounds_proposal_corrections_and_preserves_a_lower_user_budget() {
     for requested_steps in [12, 2] {
         let temp = tempfile::tempdir().unwrap();
         let store = MemoryStore::open(&temp.path().join("memory.db"))
