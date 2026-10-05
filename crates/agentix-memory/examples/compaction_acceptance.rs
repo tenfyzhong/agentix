@@ -58,12 +58,19 @@ async fn acceptance_model(
         eprintln!(
             "using Codex subscription model gpt-6-luna with configured request/task deadlines"
         );
+        let codex_home = if let Some(path) = std::env::var_os("CODEX_HOME") {
+            PathBuf::from(path)
+        } else {
+            PathBuf::from(std::env::var_os("HOME").context("missing Codex home")?).join(".codex")
+        };
+        let catalog_cache = codex_home.join("models_cache.json");
         Arc::new(
             CodexModel::new(
                 directory.join("model"),
                 "gpt-6-luna",
                 0,
                 std::time::Duration::from_secs(config.agent.request_timeout_seconds),
+                Some(&catalog_cache),
             )
             .await?,
         )

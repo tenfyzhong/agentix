@@ -127,6 +127,31 @@ fn model_command(directory: &std::path::Path, model: &str) -> Command {
     command
 }
 
+fn catalog_model_command(
+    directory: &std::path::Path,
+    model: &str,
+    catalog: Option<&std::path::Path>,
+) -> Command {
+    let mut command = model_command(directory, model);
+    if let Some(path) = catalog {
+        command.arg("-c").arg(format!(
+            "model_catalog_json={}",
+            serde_json::to_string(&path.to_string_lossy()).expect("path JSON")
+        ));
+    }
+    command
+}
+
+fn selected_catalog(cache: &Value, model: &str) -> Result<Value> {
+    let selected = cache["models"]
+        .as_array()
+        .context("missing cached model metadata")?
+        .iter()
+        .find(|entry| entry["slug"].as_str() == Some(model))
+        .context("requested model absent from Codex cached catalog")?;
+    Ok(json!({"models":[selected]}))
+}
+
 fn external_calls_schema(tools: &[ToolDefinition]) -> Result<Value> {
     ensure!(
         !tools.is_empty(),
@@ -152,6 +177,7 @@ pub(crate) struct CodexModel {
     sequence: AtomicUsize,
     model: String,
     request_timeout: Duration,
+    model_catalog: Option<PathBuf>,
 }
 impl CodexModel {
     pub(crate) async fn new(
@@ -159,6 +185,7 @@ impl CodexModel {
         model: &str,
         sequence: usize,
         request_timeout: Duration,
+        catalog_cache: Option<&std::path::Path>,
     ) -> Result<Self> {
         tokio::fs::create_dir_all(&directory).await?;
         tokio::fs::write(
@@ -166,11 +193,23 @@ impl CodexModel {
             BRIDGE_INSTRUCTIONS,
         )
         .await?;
+        let model_catalog = if let Some(cache) = catalog_cache {
+            let catalog = selected_catalog(
+                &serde_json::from_slice(&tokio::fs::read(cache).await?)?,
+                model,
+            )?;
+            let path = directory.join("model-catalog.json");
+            tokio::fs::write(&path, serde_json::to_vec(&catalog)?).await?;
+            Some(path)
+        } else {
+            None
+        };
         Ok(Self {
             directory,
             sequence: AtomicUsize::new(sequence),
             model: model.into(),
             request_timeout,
+            model_catalog,
         })
     }
 }
@@ -190,17 +229,18 @@ impl Model for CodexModel {
         .await?;
         let prompt = json!({"instructions":request.instructions,"history":request.history,
             "tools":request.tools.iter().map(|tool| json!({"name":tool.name,"description":tool.description})).collect::<Vec<_>>()});
-        let mut child = model_command(&self.directory, &self.model)
-            .arg("--output-schema")
-            .arg(&schema_path)
-            .arg("--output-last-message")
-            .arg(&output_path)
-            .current_dir(&self.directory)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .kill_on_drop(true)
-            .spawn()?;
+        let mut child =
+            catalog_model_command(&self.directory, &self.model, self.model_catalog.as_deref())
+                .arg("--output-schema")
+                .arg(&schema_path)
+                .arg("--output-last-message")
+                .arg(&output_path)
+                .current_dir(&self.directory)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .kill_on_drop(true)
+                .spawn()?;
         let mut stdin = child.stdin.take().context("missing child stdin")?;
         stdin
             .write_all(format!("{BRIDGE_INSTRUCTIONS}\n\n{prompt}").as_bytes())
@@ -290,9 +330,15 @@ mod tests {
     #[tokio::test]
     async fn model_bridge_requires_a_nonempty_call_and_reads_its_protocol_as_prompt() {
         let dir = tempfile::tempdir().unwrap();
-        CodexModel::new(dir.path().into(), "gpt-6-luna", 0, Duration::from_secs(90))
-            .await
-            .unwrap();
+        CodexModel::new(
+            dir.path().into(),
+            "gpt-6-luna",
+            0,
+            Duration::from_secs(90),
+            None,
+        )
+        .await
+        .unwrap();
         let schema = external_calls_schema(&[ToolDefinition {name:"submit".into(),description:"Return a proposal".into(),parameters:json!({"type":"object","additionalProperties":false,"required":["reason"],"properties":{"reason":{"type":"string"}}})}]).unwrap();
         assert_eq!(
             schema["properties"]["calls"]["items"]["anyOf"][0]["properties"]["name"]["enum"],
@@ -308,6 +354,22 @@ mod tests {
         assert!(
             command.as_std().get_args().any(|arg| arg == "-"),
             "the complete model protocol must be stdin prompt, not a supplementary data block"
+        );
+    }
+
+    #[test]
+    fn model_command_selects_the_supplied_cached_catalog() {
+        let command = catalog_model_command(
+            std::path::Path::new("/tmp/benchmark"),
+            "gpt-6-luna",
+            Some(std::path::Path::new("/tmp/benchmark/catalog.json")),
+        );
+        assert!(
+            command
+                .as_std()
+                .get_args()
+                .any(|arg| arg == "model_catalog_json=\"/tmp/benchmark/catalog.json\""),
+            "copy acceptance must load the selected cached model catalog"
         );
     }
 
@@ -372,6 +434,15 @@ mod tests {
         assert_eq!(reply.calls[0].name, "submit_fact_compaction");
         assert_eq!(reply.calls[0].arguments["reason"], "No supported facts");
         assert_eq!(reply.calls[0].id, "call-4-0");
+    }
+
+    #[test]
+    fn model_catalog_retains_selected_capabilities_without_account_identity() {
+        let luna = json!({"slug":"gpt-6-luna","default_reasoning_level":"medium","supports_reasoning_summaries":true});
+        let cache = json!({"identity":"private-account-id","models":[{"slug":"gpt-6-astra"},luna]});
+        let catalog = selected_catalog(&cache, "gpt-6-luna").unwrap();
+        assert_eq!(catalog, json!({"models":[luna]}));
+        assert!(selected_catalog(&cache, "missing-model").is_err());
     }
 
     #[test]

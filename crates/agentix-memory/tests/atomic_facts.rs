@@ -860,6 +860,24 @@ struct ReferencedSplitModel {
 impl Model for ReferencedSplitModel {
     async fn complete(&self, request: &ModelRequest) -> anyhow::Result<ModelReply> {
         let step = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let preload: serde_json::Value = serde_json::from_str(
+            request
+                .history
+                .iter()
+                .find_map(|m| {
+                    if let Message::User(text) = m {
+                        Some(text.as_str())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap(),
+        )
+        .unwrap();
+        assert!(
+            preload.get("candidates").is_none(),
+            "legacy seed quotes must not be duplicated in an extra candidate payload"
+        );
         let schema = &request.tools[0].parameters["properties"]["parts"]["items"]["properties"]["content"]
             ["properties"]["evidence"]["items"]["properties"];
         assert!(schema.get("memory_id").is_some() && schema.get("quote_index").is_some());
@@ -1205,4 +1223,110 @@ async fn legacy_split_identifies_missing_quote_references_for_correction() {
             .iter()
             .all(|quote| current.iter().any(|m| m.content.evidence.contains(quote)))
     );
+}
+
+struct ExistingFactCorrectionModel {
+    calls: std::sync::atomic::AtomicUsize,
+    existing: Memory,
+    parts: Vec<MemoryInput>,
+    wrong_revision: bool,
+}
+#[async_trait::async_trait]
+impl Model for ExistingFactCorrectionModel {
+    async fn complete(&self, request: &ModelRequest) -> anyhow::Result<ModelReply> {
+        let step = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if !self.wrong_revision {
+            let bound = &request.tools[0].parameters["properties"]["related"]["items"]["anyOf"][0]
+                ["properties"];
+            assert_eq!(bound["id"]["enum"], json!([self.existing.id]));
+            assert_eq!(bound["revision"]["enum"], json!([self.existing.revision]));
+            assert_eq!(bound["action"]["enum"], json!(["keep"]));
+            assert_eq!(bound["retained"]["type"], "null");
+        }
+        if step > 0 {
+            assert!(request.history.iter().any(|m| matches!(m,Message::Tool {output,..} if output.contains(if self.wrong_revision {"related assessment"}else{"active fact"}) && output.contains(&self.existing.id))), "duplicate creation must be corrected before the transaction");
+        }
+        let parts: Vec<_> = self.parts.iter().enumerate().map(|(index,content)| {
+            let merge = (step > 0 || self.wrong_revision) && index == 1;
+            json!({"content":content,"action":if merge {"merge"} else {"create"},"target":if merge {Some(&self.existing.id)}else{None},"expected_revision":if merge {Some(self.existing.revision)}else{None},"reason":"Independent fact with original evidence"})
+        }).collect();
+        let related = vec![
+            json!({"id":self.existing.id,"revision":self.existing.revision + i64::from(self.wrong_revision && step == 0),"action":"keep","reason":"Existing atomic fact","retained":null,"forget_request":null}),
+        ];
+        Ok(ModelReply {
+            continuation: json!([]),
+            calls: vec![ToolCall {
+                id: format!("existing{step}"),
+                name: "submit_fact_compaction".into(),
+                arguments: json!({"parts":parts,"related":related,"reason":"Split mixed deployment and SSH facts"}),
+            }],
+            text: String::new(),
+            usage: TokenUsage::default(),
+        })
+    }
+}
+
+#[tokio::test]
+async fn legacy_split_corrects_existing_active_fact_creation_before_transaction() {
+    existing_fact_correction(false).await;
+}
+
+#[tokio::test]
+async fn legacy_split_corrects_wrong_related_revision_before_transaction() {
+    existing_fact_correction(true).await;
+}
+
+async fn existing_fact_correction(wrong_revision: bool) {
+    let temp = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(&temp.path().join("memory.db"))
+        .await
+        .unwrap();
+    let text = "Deploy at /srv/proxy and use SSH port 27254.";
+    receipt(&store, "legacy", text, now()).await;
+    let lease = store
+        .claim_work("setup", &AgentConfig::default(), now())
+        .await
+        .unwrap()
+        .unwrap();
+    store
+        .complete_extraction(&lease, vec![], now())
+        .await
+        .unwrap();
+    let mut path = input("legacy", "deployment.path", "/srv/proxy");
+    path.evidence[0].quote = text.into();
+    let mut port = input("legacy", "ssh.port", "27254");
+    port.evidence[0].quote = text.into();
+    let existing = store.create("p", port.clone(), Actor::Agent).await.unwrap();
+    let mut legacy = path.clone();
+    legacy.fact = None;
+    let old = store.create("p", legacy, Actor::Agent).await.unwrap();
+    store
+        .schedule_compaction("p", &existing.id, 10, true, 0, now())
+        .await
+        .unwrap();
+    let model = std::sync::Arc::new(ExistingFactCorrectionModel {
+        calls: std::sync::atomic::AtomicUsize::new(0),
+        existing: existing.clone(),
+        parts: vec![path, port],
+        wrong_revision,
+    });
+    let worker = MemoryWorker::new(
+        store.clone(),
+        model.clone(),
+        AgentConfig::default(),
+        std::sync::Arc::new(Repository(temp.path().into())),
+    );
+    worker
+        .run_once("compact")
+        .await
+        .expect("correct duplicate creation to merge before committing");
+    assert_eq!(model.calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    assert_eq!(store.list("p", "", 100, false).await.unwrap().len(), 2);
+    assert_eq!(
+        store.show("p", &old.id, None).await.unwrap().status,
+        Status::Superseded
+    );
+    let updated = store.show("p", &existing.id, None).await.unwrap();
+    assert_eq!(updated.content.fact, existing.content.fact);
+    assert!(updated.derived_from.contains(&old.id));
 }

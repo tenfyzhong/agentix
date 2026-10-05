@@ -375,6 +375,10 @@ impl MemoryWorker {
             }
         }
         let mut input = input.clone();
+        input
+            .as_object_mut()
+            .context("legacy compact input must be an object")?
+            .remove("candidates");
         input["evidence_dates"] = json!(dates);
         let mut content_schema = memory_schema();
         content_schema["properties"]["fact"] =
@@ -393,7 +397,7 @@ impl MemoryWorker {
             "Split a legacy mixed record into atomic facts with evidence",
             &json!({
                 "parts":{"type":"array","maxItems":16,"items":part_schema},
-                "related":decision_schema()["properties"]["related"].clone(),"reason":{"type":"string"}
+                "related":legacy_related_schema(related),"reason":{"type":"string"}
             }),
         );
         let result = agent.run_validated(FACT_COMPACT, &input.to_string(), &PreloadedFacts, finish, &|value| {
@@ -410,6 +414,8 @@ impl MemoryWorker {
                     ensure!(messages.get(&(quote.receipt_id.clone(), quote.message_id.clone())).is_some_and(|text| text.contains(&quote.quote)), "each part must reuse a literal source quotation from the supplied receipts; do not paraphrase evidence");
                 }
             }
+            validate_new_fact_parts(&proposal.parts, related)?;
+            validate_legacy_assessments(&proposal.related, related)?;
             ensure!(related.iter().all(|m| proposal.parts.iter().any(|p| p.target.as_deref() == Some(m.id.as_str()) && p.expected_revision == Some(m.revision)) || proposal.related.iter().filter(|r| r.id == m.id && r.revision == m.revision).count() == 1), "assess every supplied related memory with its current revision, including keep decisions");
             let mut missing = Vec::new();
             for original in std::iter::once(&seed).chain(related.iter().filter(|m| proposal.related.iter().any(|r| r.id == m.id && r.action == crate::RelatedAction::Supersede))) {
@@ -430,6 +436,101 @@ impl MemoryWorker {
             .await?;
         Ok(())
     }
+}
+
+fn legacy_related_schema(related: &[crate::Memory]) -> Value {
+    let properties = json!({"id":{"type":"string"},"revision":{"type":"integer"},"action":{"type":"string","enum":["keep","supersede"]},"reason":{"type":"string"},"retained":{"type":"null"},"forget_request":{"type":"null"}});
+    let base = definition(
+        "assessment",
+        "Keep or retire a whole legacy record",
+        &properties,
+    )
+    .parameters;
+    if related.is_empty() {
+        return json!({"type":"array","maxItems":0,"items":base});
+    }
+    let choices: Vec<_> = related
+        .iter()
+        .map(|memory| {
+            let mut schema = base.clone();
+            schema["properties"]["id"]["enum"] = json!([memory.id]);
+            schema["properties"]["revision"]["enum"] = json!([memory.revision]);
+            if memory.actor != crate::Actor::Agent || memory.content.fact.is_some() {
+                schema["properties"]["action"]["enum"] = json!(["keep"]);
+            }
+            schema
+        })
+        .collect();
+    json!({"type":"array","maxItems":16,"items":{"anyOf":choices}})
+}
+
+fn validate_legacy_assessments(
+    assessments: &[crate::RelatedDecision],
+    related: &[crate::Memory],
+) -> Result<()> {
+    let mut seen = std::collections::HashSet::new();
+    for assessment in assessments {
+        let current = related
+            .iter()
+            .find(|memory| memory.id == assessment.id)
+            .context("related assessment must reference a supplied snapshot")?;
+        ensure!(seen.insert(&assessment.id), "duplicate related assessment");
+        ensure!(
+            assessment.revision == current.revision,
+            "related assessment {} must use current snapshot revision {}",
+            current.id,
+            current.revision
+        );
+        ensure!(
+            matches!(
+                assessment.action,
+                crate::RelatedAction::Keep | crate::RelatedAction::Supersede
+            ) && assessment.retained.is_none()
+                && assessment.forget_request.is_none(),
+            "related assessments can only keep or supersede whole legacy records"
+        );
+        ensure!(
+            assessment.action != crate::RelatedAction::Supersede
+                || (current.actor == crate::Actor::Agent && current.content.fact.is_none()),
+            "only legacy agent records can be superseded by an assessment; reconcile atomic facts through parts and keep human records"
+        );
+    }
+    Ok(())
+}
+
+// Existing snapshots let the model correct duplicate creates before the fenced write.
+fn validate_new_fact_parts(parts: &[crate::FactPart], related: &[crate::Memory]) -> Result<()> {
+    for part in parts
+        .iter()
+        .filter(|part| part.action == crate::DecisionAction::Create)
+    {
+        let key = part
+            .content
+            .fact
+            .as_ref()
+            .context("each part needs one atomic fact")?
+            .key()?;
+        for current in related
+            .iter()
+            .filter(|memory| memory.status == crate::Status::Active)
+        {
+            if current
+                .content
+                .fact
+                .as_ref()
+                .map(crate::Fact::key)
+                .transpose()?
+                .is_some_and(|existing| existing == key)
+            {
+                anyhow::bail!(
+                    "existing active fact {} (revision {}) already uses this identity; merge the same value, supersede/conflict a supported replacement, or keep it and omit the duplicate part",
+                    current.id,
+                    current.revision
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 // References can only select literal evidence already loaded for this proposal.

@@ -163,7 +163,7 @@ retrieval and separate conflict diagnostics. Legacy split regressions verify
 path/autostart/domain separation, complete evidence and version preservation,
 visible `derived_from` lineage, direct proposals from preloaded snapshots without read tools, bounded validation
 corrections with a lower user budget preserved, no recursive work, all-or-nothing rollback,
-corrective feedback for altered literal quotes and invalid preloaded quote references, expanded-submission byte limits, assistant-only decision attribution, missing-quote reference feedback, and one-time schema 2-to-3
+corrective feedback for altered literal quotes and invalid preloaded quote references, expanded-submission byte limits, assistant-only decision attribution, missing-quote reference feedback, duplicate-create correction, snapshot-bound related assessments, and one-time schema 2-to-3
 migration including explicit null facts. Backup tests preserve schema 3 and reject
 unsupported schema 4; CLI restore and host extraction tests exercise the new schema. A worker regression rejects unstructured
 extraction and then writes all three facts as settled. Existing low-level legacy
@@ -291,7 +291,9 @@ shared daemon or inherited parent session identifiers, with personal configurati
 plugins and native shell, web and multi-agent tools disabled. It returns a nonempty array of external call objects for the outer memory loop
 to execute; these labels do not need to exist as native Codex tools. Each response
 is constrained by the actual tool schemas, with typed arguments rather than
-JSON encoded inside strings. Older replay replies remain decodable. Request and task deadlines remain those of the
+JSON encoded inside strings. Older replay replies remain decodable. The Luna option
+loads the selected model metadata from the existing Codex model cache into its
+temporary directory; missing selected metadata is an explicit setup error. Request and task deadlines remain those of the
 supplied memory configuration; this flag does not add a production subscription provider
 or change the daemon's provider. The extraction benchmark reuses the bridge with its
 existing pinned model, replay checkpoint and request budget.

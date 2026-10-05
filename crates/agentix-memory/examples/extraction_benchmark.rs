@@ -63,6 +63,7 @@ async fn main() -> Result<()> {
             "gpt-6-astra",
             state.next_request,
             Duration::from_mins(3),
+            None,
         )
         .await?,
     );

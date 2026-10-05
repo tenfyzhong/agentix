@@ -208,7 +208,13 @@ by memory ID and zero-based quote index; the worker restores exact receipt/messa
 IDs and original text before validation. Unknown records/indices are correctable
 proposal errors. Missing evidence returns up to sixteen exact memory/quote references
 and the total missing count for correction. The submission schema requires a non-null
-fact in each part. Protocol, container port and published port are separate attributes.
+fact in each part. The seed is supplied once rather than duplicated as a candidate.
+Related assessments are restricted to supplied IDs and snapshot revisions; they can
+keep records or retire whole legacy agent records, while atomic and human records
+can only be kept through this assessment path. Duplicate creates against supplied
+active facts receive corrective feedback before the fenced transaction; atomic
+updates still use part-level reconciliation. Protocol, container port and published
+port are separate attributes.
 Expanded proposals retain the original submission byte limit,
 and all original evidence-retention fences still apply. Request/task
 timeouts, tool limits and retries remain unchanged. Each part creates a new fact or reconciles an existing atomic version;
