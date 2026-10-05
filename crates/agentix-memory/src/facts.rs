@@ -1,8 +1,9 @@
 //! Fact identity, immutable values and one active version per Project.
 use crate::{Actor, Memory, MemoryInput, MemoryStore, Source, Status};
 use anyhow::{Context, Result, ensure};
-use sqlx::SqliteConnection;
+use sqlx::{Row, SqliteConnection};
 
+#[derive(serde::Serialize)]
 pub(crate) struct ActiveFactMatch {
     pub id: String,
     pub revision: i64,
@@ -10,7 +11,36 @@ pub(crate) struct ActiveFactMatch {
     pub same_value: bool,
 }
 
+#[derive(serde::Serialize)]
+pub(crate) struct FactTargetMatch {
+    pub revision: i64,
+    pub actor: String,
+    pub status: String,
+    pub same_identity: bool,
+    pub same_value: bool,
+}
+
 impl MemoryStore {
+    pub(crate) async fn fact_target_match(
+        &self,
+        project: &str,
+        id: &str,
+        input: &MemoryInput,
+    ) -> Result<Option<FactTargetMatch>> {
+        let fact = input.fact.as_ref().context("atomic fact required")?;
+        let row = sqlx::query("SELECT f.fact_key,f.status,m.revision,json_extract(m.data,'$.actor') AS actor,json_extract(m.data,'$.content.fact.value') AS value FROM memory_facts f JOIN memories m ON m.id=f.memory_id WHERE f.project_id=? AND f.memory_id=?")
+            .bind(project).bind(id).fetch_optional(&self.pool).await?;
+        row.map(|row| {
+            Ok(FactTargetMatch {
+                revision: row.try_get("revision")?,
+                actor: row.try_get("actor")?,
+                status: row.try_get("status")?,
+                same_identity: row.try_get::<String, _>("fact_key")? == fact.key()?,
+                same_value: row.try_get::<String, _>("value")? == fact.value,
+            })
+        })
+        .transpose()
+    }
     /// Only correction metadata for one indexed active identity, without quotation bodies.
     pub(crate) async fn active_fact_match(
         &self,

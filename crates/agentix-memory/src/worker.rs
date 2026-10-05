@@ -676,12 +676,15 @@ impl ProposalValidator for IndexedFactValidator<'_> {
         }
         let mut proposal = expand_split_quotes(value, self.seed, self.related)?;
         let mut collisions = Vec::new();
-        for (index, part) in proposal
-            .parts
-            .iter_mut()
-            .enumerate()
-            .filter(|(_, part)| part.action == crate::DecisionAction::Create)
-        {
+        for (index, part) in proposal.parts.iter_mut().enumerate() {
+            if part.action != crate::DecisionAction::Create {
+                if let Some(error) =
+                    indexed_part_target_error(self.store, self.project, index, part).await?
+                {
+                    collisions.push(error);
+                }
+                continue;
+            }
             if let Some(current) = self
                 .store
                 .active_fact_match(self.project, &part.content)
@@ -703,10 +706,42 @@ impl ProposalValidator for IndexedFactValidator<'_> {
             count -= 1;
         }
         Ok(Some(format!(
-            "existing active facts require reconciliation, including indexed targets outside the original related snapshots: {}. Merge same_value=true agent facts; otherwise use supported supersede/conflict or keep. Human facts require conflict or keep. Correct all listed parts; remaining collisions are checked next.",
+            "existing active facts require reconciliation, including indexed targets outside the original related snapshots: {}. Use an indexed ID/revision only for the exact fact identity; never merge unrelated targets. Merge same_value=true agent facts; otherwise use supported supersede/conflict or keep. Human facts require conflict or keep. Correct all listed parts; remaining collisions are checked next.",
             json!({"items":&collisions[..count],"total":collisions.len()})
         )))
     }
+}
+
+async fn indexed_part_target_error(
+    store: &MemoryStore,
+    project: &str,
+    index: usize,
+    part: &crate::FactPart,
+) -> Result<Option<Value>> {
+    let current = if let Some(id) = &part.target {
+        store.fact_target_match(project, id, &part.content).await?
+    } else {
+        None
+    };
+    if current.as_ref().is_some_and(|target| {
+        target.same_identity
+            && Some(target.revision) == part.expected_revision
+            && matches!(target.status.as_str(), "active" | "conflicted")
+            && matches!(
+                part.action,
+                crate::DecisionAction::Merge
+                    | crate::DecisionAction::Supersede
+                    | crate::DecisionAction::Conflict
+            )
+            && (target.actor != "human" || part.action == crate::DecisionAction::Conflict)
+            && (part.action != crate::DecisionAction::Merge || target.same_value)
+    }) {
+        return Ok(None);
+    }
+    let indexed = store.active_fact_match(project, &part.content).await?;
+    Ok(Some(
+        json!({"part":index,"target":part.target,"target_state":current,"indexed":indexed}),
+    ))
 }
 
 fn merge_identical_indexed_part(

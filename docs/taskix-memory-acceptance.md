@@ -299,7 +299,10 @@ or change the daemon's provider. The extraction benchmark reuses the bridge with
 existing pinned model, replay checkpoint and request budget.
 
 Before a legacy proposal reaches the fenced write, the worker checks each proposed
-new identity against the active-fact index (at most sixteen metadata lookups).
+new identity against the active-fact index. Existing targets also receive indexed
+identity/value, actor, status and revision checks before model correction. An
+invalid target adds one indexed identity lookup to suggest the correct record;
+sixteen parts therefore need at most thirty-two metadata reads per proposal.
 Correction feedback contains bounded IDs, revisions, actor and same-value flags,
 including matches outside the initial lexical snapshots. It does not reload full
 quotation bodies. Database failures stop the attempt instead of asking the model

@@ -1401,6 +1401,7 @@ struct IndexedOnlySplitModel {
     existing: Vec<Memory>,
     parts: Vec<MemoryInput>,
     seed: Memory,
+    wrong_merge_target: bool,
 }
 #[async_trait::async_trait]
 impl Model for IndexedOnlySplitModel {
@@ -1447,7 +1448,9 @@ impl Model for IndexedOnlySplitModel {
         let parts: Vec<_> = self.parts.iter().enumerate().map(|(index, part)| {
             let mut content = serde_json::to_value(part).unwrap();
             content["evidence"] = json!([{"memory_id":self.seed.id,"quote_index":0}]);
-            json!({"content":content,"action":if step == 0 {"create"}else{"merge"},"target":if step == 0 {None}else{Some(&self.existing[index].id)},"expected_revision":if step == 0 {None}else{Some(self.existing[index].revision)},"reason":"Preserve an indexed current fact and add legacy evidence"})
+            let create = step == 0 && !self.wrong_merge_target;
+            let target_index = if step == 0 && self.wrong_merge_target {1-index} else {index};
+            json!({"content":content,"action":if create {"create"}else{"merge"},"target":if create {None}else{Some(&self.existing[target_index].id)},"expected_revision":if create {None}else{Some(self.existing[target_index].revision)},"reason":"Preserve an indexed current fact and add legacy evidence"})
         }).collect();
         Ok(ModelReply {
             continuation: json!([]),
@@ -1464,6 +1467,15 @@ impl Model for IndexedOnlySplitModel {
 
 #[tokio::test]
 async fn legacy_split_merges_identical_indexed_facts_without_model_correction() {
+    indexed_fact_reconciliation(false).await;
+}
+
+#[tokio::test]
+async fn legacy_split_corrects_unrelated_merge_targets_before_writing() {
+    indexed_fact_reconciliation(true).await;
+}
+
+async fn indexed_fact_reconciliation(wrong_merge_target: bool) {
     let temp = tempfile::tempdir().unwrap();
     let store = MemoryStore::open(&temp.path().join("memory.db"))
         .await
@@ -1517,6 +1529,7 @@ async fn legacy_split_merges_identical_indexed_facts_without_model_correction() 
         existing: existing.clone(),
         parts,
         seed: seed.clone(),
+        wrong_merge_target,
     });
     let worker = MemoryWorker::new(
         store.clone(),
@@ -1528,7 +1541,10 @@ async fn legacy_split_merges_identical_indexed_facts_without_model_correction() 
         .run_once("compact")
         .await
         .expect("indexed collisions must be model-correctable before the fenced write");
-    assert_eq!(model.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    assert_eq!(
+        model.calls.load(std::sync::atomic::Ordering::SeqCst),
+        if wrong_merge_target { 2 } else { 1 }
+    );
     assert_eq!(
         store.show("p", &seed.id, None).await.unwrap().status,
         Status::Superseded
