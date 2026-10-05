@@ -163,7 +163,7 @@ retrieval and separate conflict diagnostics. Legacy split regressions verify
 path/autostart/domain separation, complete evidence and version preservation,
 visible `derived_from` lineage, direct proposals from preloaded snapshots without read tools, bounded validation
 corrections with a lower user budget preserved, no recursive work, all-or-nothing rollback,
-corrective feedback for altered literal quotes, and one-time schema 2-to-3
+corrective feedback for altered literal quotes and invalid preloaded quote references, expanded-submission byte limits, and one-time schema 2-to-3
 migration including explicit null facts. Backup tests preserve schema 3 and reject
 unsupported schema 4; CLI restore and host extraction tests exercise the new schema. A worker regression rejects unstructured
 extraction and then writes all three facts as settled. Existing low-level legacy

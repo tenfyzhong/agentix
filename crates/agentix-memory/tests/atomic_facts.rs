@@ -850,3 +850,178 @@ async fn legacy_split_bounds_proposal_corrections_and_preserves_a_lower_user_bud
         assert_eq!(store.list("p", "", 100, false).await.unwrap().len(), 1);
     }
 }
+
+struct ReferencedSplitModel {
+    calls: std::sync::atomic::AtomicUsize,
+    content: MemoryInput,
+    seed: Memory,
+}
+#[async_trait::async_trait]
+impl Model for ReferencedSplitModel {
+    async fn complete(&self, request: &ModelRequest) -> anyhow::Result<ModelReply> {
+        let step = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let schema = &request.tools[0].parameters["properties"]["parts"]["items"]["properties"]["content"]
+            ["properties"]["evidence"]["items"]["properties"];
+        assert!(schema.get("memory_id").is_some() && schema.get("quote_index").is_some());
+        if step > 0 {
+            let expected = match step {
+                1 => "unknown preloaded quote source",
+                2 => "invalid quote index",
+                _ => "invalid type: null",
+            };
+            assert!(
+                request
+                    .history
+                    .iter()
+                    .any(|m| matches!(m, Message::Tool {output,..} if output.contains(expected)))
+            );
+        }
+        let mut content = serde_json::to_value(&self.content)?;
+        let id = if step == 0 {
+            "not-preloaded"
+        } else {
+            &self.seed.id
+        };
+        let index = if step == 1 { 999 } else { 0 };
+        content["evidence"] = json!([{"memory_id":id,"quote_index":index}]);
+        if step == 2 {
+            content["title"] = serde_json::Value::Null;
+        }
+        Ok(ModelReply {
+            continuation: json!([]),
+            calls: vec![ToolCall {
+                id: "referenced".into(),
+                name: "submit_fact_compaction".into(),
+                arguments: json!({"parts":[{"content":content,"action":"create","target":null,"expected_revision":null,"reason":"Independent supported fact"}],"related":[],"reason":"Reuse exact preloaded evidence"}),
+            }],
+            text: String::new(),
+            usage: TokenUsage::default(),
+        })
+    }
+}
+
+#[tokio::test]
+async fn legacy_split_resolves_quote_references_without_model_repeating_source_text() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(&temp.path().join("memory.db"))
+        .await
+        .unwrap();
+    let text = "Deploy at /srv/proxy. Preserve every original character!";
+    receipt(&store, "legacy", text, now()).await;
+    let lease = store
+        .claim_work("setup", &AgentConfig::default(), now())
+        .await
+        .unwrap()
+        .unwrap();
+    store
+        .complete_extraction(&lease, vec![], now())
+        .await
+        .unwrap();
+    let mut part = input("legacy", "deployment.path", "/srv/proxy");
+    part.evidence[0].quote = text.into();
+    let mut legacy = part.clone();
+    legacy.fact = None;
+    let old = store.create("p", legacy, Actor::Agent).await.unwrap();
+    store
+        .schedule_compaction("p", "", 10, true, 0, now())
+        .await
+        .unwrap();
+    let worker = MemoryWorker::new(
+        store.clone(),
+        std::sync::Arc::new(ReferencedSplitModel {
+            calls: std::sync::atomic::AtomicUsize::new(0),
+            content: part,
+            seed: old.clone(),
+        }),
+        AgentConfig::default(),
+        std::sync::Arc::new(Repository(temp.path().into())),
+    );
+    worker
+        .run_once("compact")
+        .await
+        .expect("resolve only supplied quote references before fenced validation");
+    let current = store.list("p", "", 100, false).await.unwrap();
+    assert_eq!(current.len(), 1);
+    assert_eq!(current[0].content.evidence, old.content.evidence);
+    assert_eq!(current[0].derived_from, vec![old.id.clone()]);
+    assert_eq!(
+        store.show("p", &old.id, Some(1)).await.unwrap().content,
+        old.content
+    );
+    assert_eq!(
+        store.show("p", &old.id, None).await.unwrap().status,
+        Status::Superseded
+    );
+}
+
+struct OversizedReferencedSplitModel {
+    content: MemoryInput,
+    seed: Memory,
+}
+#[async_trait::async_trait]
+impl Model for OversizedReferencedSplitModel {
+    async fn complete(&self, _: &ModelRequest) -> anyhow::Result<ModelReply> {
+        let parts: Vec<_> = (0..16).map(|index| {
+            let mut content = serde_json::to_value(&self.content).unwrap();
+            content["fact"]["attribute"] = json!(format!("independent{index}"));
+            content["evidence"] = json!([{"memory_id":self.seed.id,"quote_index":0}]);
+            json!({"content":content,"action":"create","target":null,"expected_revision":null,"reason":"Independent supported fact"})
+        }).collect();
+        Ok(ModelReply {
+            continuation: json!([]),
+            calls: vec![ToolCall {
+                id: "oversized".into(),
+                name: "submit_fact_compaction".into(),
+                arguments: json!({"parts":parts,"related":[],"reason":"Reuse exact evidence"}),
+            }],
+            text: String::new(),
+            usage: TokenUsage::default(),
+        })
+    }
+}
+
+#[tokio::test]
+async fn quote_references_cannot_bypass_the_expanded_submission_byte_budget() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(&temp.path().join("memory.db"))
+        .await
+        .unwrap();
+    let text = "x".repeat(2048);
+    receipt(&store, "legacy", &text, now()).await;
+    let lease = store
+        .claim_work("setup", &AgentConfig::default(), now())
+        .await
+        .unwrap()
+        .unwrap();
+    store
+        .complete_extraction(&lease, vec![], now())
+        .await
+        .unwrap();
+    let mut part = input("legacy", "deployment.path", "/srv/proxy");
+    part.evidence[0].quote = text;
+    let mut legacy = part.clone();
+    legacy.fact = None;
+    let old = store.create("p", legacy, Actor::Agent).await.unwrap();
+    store
+        .schedule_compaction("p", "", 10, true, 0, now())
+        .await
+        .unwrap();
+    let worker = MemoryWorker::new(
+        store.clone(),
+        std::sync::Arc::new(OversizedReferencedSplitModel {
+            content: part,
+            seed: old.clone(),
+        }),
+        AgentConfig {
+            max_steps: 1,
+            max_context_bytes: 32768,
+            ..AgentConfig::default()
+        },
+        std::sync::Arc::new(Repository(temp.path().into())),
+    );
+    assert!(
+        worker.run_once("compact").await.is_err(),
+        "small references must not authorize an oversized expanded proposal"
+    );
+    assert_eq!(store.list("p", "", 100, true).await.unwrap(), vec![old]);
+}

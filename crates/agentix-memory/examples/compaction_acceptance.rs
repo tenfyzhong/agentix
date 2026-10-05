@@ -30,8 +30,10 @@ impl Model for LiveModel {
         let result = self.0.complete(request).await;
         match &result {
             Ok(reply) => eprintln!(
-                "model response: {} ms, tools {:?}",
+                "model response: {} ms, input/output tokens {}/{}, tools {:?}",
                 started.elapsed().as_millis(),
+                reply.usage.input_tokens,
+                reply.usage.output_tokens,
                 reply
                     .calls
                     .iter()

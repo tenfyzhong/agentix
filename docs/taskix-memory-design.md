@@ -203,7 +203,11 @@ Legacy seeds without a structured fact are split into up to sixteen independent
 parts. Legacy splitting receives complete bounded memory/source snapshots and exposes
 only its submission tool; repository review remains in its independent lane.
 It uses at most four model steps (or a lower configured limit) for the initial
-proposal and validation corrections, without repeating evidence reads. Request/task
+proposal and validation corrections, without repeating evidence reads. Split proposals reference preloaded quotations
+by memory ID and zero-based quote index; the worker restores exact receipt/message
+IDs and original text before validation. Unknown records/indices are correctable
+proposal errors. Expanded proposals retain the original submission byte limit,
+and all original evidence-retention fences still apply. Request/task
 timeouts, tool limits and retries remain unchanged. Each part creates a new fact or reconciles an existing atomic version;
 merge requires identical identity and value. The seed and overlapping legacy
 records become superseded only when their evidence is preserved among the parts.
