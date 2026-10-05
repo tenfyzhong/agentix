@@ -265,6 +265,8 @@ impl MemoryStore {
         tx.commit().await?;
         if !changed.is_empty() {
             self.notify_change(&lease.project_id);
+        } else if seed.is_some() {
+            self.notify_compaction(&lease.project_id);
         }
         Ok(changed)
     }

@@ -281,7 +281,6 @@ impl MemoryApi {
                         limit,
                         true,
                         0,
-                        0,
                         time::OffsetDateTime::now_utc().unix_timestamp(),
                     )
                     .await?,

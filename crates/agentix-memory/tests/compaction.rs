@@ -32,7 +32,7 @@ async fn manual_compaction_is_paginated_idempotent_and_survives_restart() {
     }
     add(&store, "foreign", "foreign", Actor::Agent).await;
     let first = store
-        .schedule_compaction("p", "", 2, true, 0, 0, now())
+        .schedule_compaction("p", "", 2, true, 0, now())
         .await
         .unwrap();
     assert_eq!(first.scanned, 2);
@@ -40,7 +40,7 @@ async fn manual_compaction_is_paginated_idempotent_and_survives_restart() {
     assert!(!first.next_after.is_empty());
     assert_eq!(
         store
-            .schedule_compaction("p", "", 2, true, 0, 0, now())
+            .schedule_compaction("p", "", 2, true, 0, now())
             .await
             .unwrap()
             .scheduled,
@@ -49,7 +49,7 @@ async fn manual_compaction_is_paginated_idempotent_and_survives_restart() {
     drop(store);
     let store = MemoryStore::open(&path).await.unwrap();
     let last = store
-        .schedule_compaction("p", &first.next_after, 2, true, 0, 0, now())
+        .schedule_compaction("p", &first.next_after, 2, true, 0, now())
         .await
         .unwrap();
     assert_eq!(last.scanned, 1);
@@ -123,7 +123,7 @@ async fn compact_completion_does_not_create_duplicates_or_enqueue_itself_forever
         .unwrap();
     let seed = add(&store, "p", "seed", Actor::Agent).await;
     store
-        .schedule_compaction("p", "", 10, true, 0, 0, now())
+        .schedule_compaction("p", "", 10, true, 0, now())
         .await
         .unwrap();
     let lease = store
@@ -155,7 +155,7 @@ async fn stale_compaction_seed_cannot_overwrite_a_new_revision() {
         .unwrap();
     let seed = add(&store, "p", "seed", Actor::Agent).await;
     store
-        .schedule_compaction("p", "", 10, true, 0, 0, now())
+        .schedule_compaction("p", "", 10, true, 0, now())
         .await
         .unwrap();
     let lease = store
@@ -203,7 +203,7 @@ async fn worker_finishes_obsolete_compaction_without_model_calls_or_retries() {
         .unwrap();
     let seed = add(&store, "p", "seed", Actor::Agent).await;
     let page = store
-        .schedule_compaction("p", "", 10, true, 0, 0, now())
+        .schedule_compaction("p", "", 10, true, 0, now())
         .await
         .unwrap();
     store
@@ -294,7 +294,7 @@ async fn compact_worker_distinguishes_current_claims_from_preserved_historical_e
         calls: std::sync::atomic::AtomicUsize::new(0),
     });
     store
-        .schedule_compaction("p", "", 1, true, 0, 0, now())
+        .schedule_compaction("p", "", 1, true, 0, now())
         .await
         .unwrap();
     let worker = MemoryWorker::new(
@@ -335,7 +335,7 @@ async fn terminal_compaction_failure_requires_manual_retry_or_a_changed_revision
         .unwrap();
     let seed = add(&store, "p", "seed", Actor::Agent).await;
     store
-        .schedule_compaction("p", "", 10, true, 0, 0, now())
+        .schedule_compaction("p", "", 10, true, 0, now())
         .await
         .unwrap();
     let config = AgentConfig {
@@ -364,7 +364,7 @@ async fn terminal_compaction_failure_requires_manual_retry_or_a_changed_revision
     );
     assert_eq!(
         store
-            .schedule_compaction("p", "", 10, true, 0, 0, now() + 172_800)
+            .schedule_compaction("p", "", 10, true, 0, now() + 172_800)
             .await
             .unwrap()
             .scheduled,
@@ -401,7 +401,7 @@ async fn compact_rewrite_appends_seed_evidence_before_validating_the_replacement
     let seed = add(&store, "p", "seed", Actor::Agent).await;
     let replacement = add(&store, "p", "replacement", Actor::Agent).await;
     store
-        .schedule_compaction("p", "", 1, true, 0, 0, now())
+        .schedule_compaction("p", "", 1, true, 0, now())
         .await
         .unwrap();
     let lease = store
@@ -437,7 +437,7 @@ async fn compact_worker_can_use_preloaded_current_memories_without_repeating_sea
         calls: std::sync::atomic::AtomicUsize::new(1),
     });
     store
-        .schedule_compaction("p", "", 1, true, 0, 0, now())
+        .schedule_compaction("p", "", 1, true, 0, now())
         .await
         .unwrap();
     let worker = MemoryWorker::new(
@@ -466,7 +466,7 @@ async fn terminal_compaction_suspension_survives_work_retention_cleanup() {
     let store = MemoryStore::open(&path).await.unwrap();
     add(&store, "p", "seed", Actor::Agent).await;
     store
-        .schedule_compaction("p", "", 1, true, 0, 0, now())
+        .schedule_compaction("p", "", 1, true, 0, now())
         .await
         .unwrap();
     let config = AgentConfig {
@@ -502,10 +502,237 @@ async fn terminal_compaction_suspension_survives_work_retention_cleanup() {
     );
     assert_eq!(
         store
-            .schedule_compaction("p", "", 1, true, 0, 0, now() + 172_800)
+            .schedule_compaction("p", "", 1, true, 0, now() + 172_800)
             .await
             .unwrap()
             .scheduled,
         1
+    );
+}
+
+#[tokio::test]
+async fn unchanged_compaction_is_not_repeated_after_a_day_or_restart() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("memory.db");
+    let store = MemoryStore::open(&path).await.unwrap();
+    let seed = add(&store, "p", "seed", Actor::Agent).await;
+    let config = AgentConfig::default();
+    let checked = now() + 60;
+    assert_eq!(
+        store
+            .schedule_background_compaction("p", &config, checked)
+            .await
+            .unwrap(),
+        1
+    );
+    let lease = store
+        .claim_work("compact", &config, checked)
+        .await
+        .unwrap()
+        .unwrap();
+    let decisions = serde_json::from_value(json!([{"candidate":0,"action":"discard","reason":"Current conclusion remains valid","related":[]}])).unwrap();
+    store
+        .complete_consolidation(&lease, decisions, checked)
+        .await
+        .unwrap();
+    drop(store);
+    let store = MemoryStore::open(&path).await.unwrap();
+    assert_eq!(
+        store
+            .schedule_background_compaction("p", &config, checked + 172_800)
+            .await
+            .unwrap(),
+        0,
+        "a checked unchanged revision must not be re-enqueued on the next day"
+    );
+    store
+        .update("p", &seed.id, seed.revision, seed.content, Actor::Agent)
+        .await
+        .unwrap();
+    assert_eq!(
+        store
+            .schedule_background_compaction("p", &config, now() + 60)
+            .await
+            .unwrap(),
+        1,
+        "a new revision must still trigger compaction"
+    );
+}
+
+#[tokio::test]
+async fn historical_compaction_drains_in_batches_of_at_most_ten() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("memory.db");
+    let store = MemoryStore::open(&path).await.unwrap();
+    for i in 0..23 {
+        add(&store, "p", &format!("history{i}"), Actor::Agent).await;
+    }
+    let config = AgentConfig::default();
+    assert_eq!(
+        store
+            .schedule_background_compaction("p", &config, now() + 60)
+            .await
+            .unwrap(),
+        10,
+        "one scheduling pass must not scan a second historical page"
+    );
+    drop(store);
+    let store = MemoryStore::open(&path).await.unwrap();
+    assert_eq!(
+        store
+            .schedule_background_compaction("p", &config, now() + 60)
+            .await
+            .unwrap(),
+        10
+    );
+    assert_eq!(
+        store
+            .schedule_background_compaction("p", &config, now() + 60)
+            .await
+            .unwrap(),
+        3
+    );
+    assert_eq!(
+        store
+            .schedule_background_compaction("p", &config, now() + 60)
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(store.work_counts().await.unwrap().pending, 23);
+}
+
+#[tokio::test]
+async fn compaction_deadline_tracks_dirty_revisions_and_ignores_inflight_work() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(&temp.path().join("memory.db"))
+        .await
+        .unwrap();
+    let config = AgentConfig::default();
+    assert_eq!(
+        store.next_compaction_at("p", &config, now()).await.unwrap(),
+        None
+    );
+    let seed = add(&store, "p", "seed", Actor::Agent).await;
+    assert_eq!(
+        store.next_compaction_at("p", &config, now()).await.unwrap(),
+        Some(seed.updated_at + 30)
+    );
+    store
+        .schedule_background_compaction("p", &config, now() + 60)
+        .await
+        .unwrap();
+    let updated = store
+        .update("p", &seed.id, 1, seed.content, Actor::Agent)
+        .await
+        .unwrap();
+    assert_eq!(
+        store.next_compaction_at("p", &config, now()).await.unwrap(),
+        None,
+        "a dirty revision with old inflight work must wait for its completion notification"
+    );
+    let mut changes = store.subscribe_compaction();
+    let worker = MemoryWorker::new(
+        store.clone(),
+        std::sync::Arc::new(NoCalls),
+        config.clone(),
+        std::sync::Arc::new(Repository(temp.path().into())),
+    );
+    worker.run_once("obsolete").await.unwrap();
+    assert_eq!(changes.try_recv().unwrap(), Some("p".to_owned()));
+    assert_eq!(
+        store.next_compaction_at("p", &config, now()).await.unwrap(),
+        Some(updated.updated_at + 30)
+    );
+}
+
+#[tokio::test]
+async fn an_old_failed_compact_does_not_suspend_a_new_dirty_revision() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(&temp.path().join("memory.db"))
+        .await
+        .unwrap();
+    let seed = add(&store, "p", "seed", Actor::Agent).await;
+    let config = AgentConfig {
+        max_attempts: 1,
+        ..AgentConfig::default()
+    };
+    store
+        .schedule_background_compaction("p", &config, now() + 60)
+        .await
+        .unwrap();
+    let lease = store
+        .claim_work("compact", &config, now())
+        .await
+        .unwrap()
+        .unwrap();
+    store
+        .update("p", &seed.id, 1, seed.content, Actor::Agent)
+        .await
+        .unwrap();
+    store
+        .fail_work(&lease, "old revision rejected", now())
+        .await
+        .unwrap();
+    assert!(
+        store
+            .next_compaction_at("p", &config, now())
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert_eq!(
+        store
+            .schedule_background_compaction("p", &config, now() + 60)
+            .await
+            .unwrap(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn an_expired_old_compact_wakes_the_new_revision() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(&temp.path().join("memory.db"))
+        .await
+        .unwrap();
+    let seed = add(&store, "p", "seed", Actor::Agent).await;
+    let config = AgentConfig {
+        max_attempts: 1,
+        lease_seconds: 1,
+        ..AgentConfig::default()
+    };
+    store
+        .schedule_background_compaction("p", &config, now() + 60)
+        .await
+        .unwrap();
+    let lease = store
+        .claim_work("expired", &config, now())
+        .await
+        .unwrap()
+        .unwrap();
+    store
+        .update("p", &seed.id, 1, seed.content, Actor::Agent)
+        .await
+        .unwrap();
+    let mut changes = store.subscribe_compaction();
+    assert!(
+        store
+            .claim_work("recover", &config, lease.lease_until)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        changes.try_recv().unwrap(),
+        Some("p".to_owned()),
+        "expiry of an old inflight seed must wake a waiting dirty revision"
+    );
+    assert!(
+        store
+            .next_compaction_at("p", &config, now())
+            .await
+            .unwrap()
+            .is_some()
     );
 }

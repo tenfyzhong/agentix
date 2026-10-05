@@ -151,7 +151,7 @@ corrective feedback when a supplied related record is left unassessed, and
 shared read-only assessments following a sibling candidate mutation.
 
 `tests/compaction.rs` covers bounded Project-scoped manual pages, deduplication
-after restart, debounce/cooldown, protected human/inactive records, persisted
+after restart, write debounce, protected human/inactive records, persisted
 historical progress, no duplicate seed or recursive scheduling, and stale seed
 completion with zero model calls, terminal-failure suspension across work-retention cleanup, compact-specific
 current-state reconciliation, and restoring seed evidence before validation. API tests cover invalid page budgets and reject
@@ -159,6 +159,17 @@ certainty based on conflicted records. Provider and worker tests cover safe erro
 classification and immediate termination of permanent HTTP rejections. Agent-loop
 and provider tests cover required tools and reserving the original final step for
 submission. Taskix CLI tests cover command discovery.
+
+The write-driven scheduler regressions also verify that unchanged compacted
+revisions stay settled across days and restart, historical dirty work drains in
+batches of ten, inflight old seeds wake newer revisions on completion/failure/lease
+expiry, and the repository-review loop does not scan semantic compaction.
+`taskix/src/memory/daemon_tests.rs` verifies write notification and debounce
+scheduling, disabled/re-enabled recovery, startup history, reload notification,
+and advances the clock by two idle days after removing the compact
+table to prove that no idle compact SQL is executed. This isolates the compact
+loop; source intake, embedding, projection and repository review have independent
+schedules.
 
 `examples/compaction_acceptance.rs` is an opt-in live acceptance harness. It opens
 the original database read-only, copies one bounded Project page and its source

@@ -169,14 +169,19 @@ stored version to prevent replay. Manual forgetting retains its revision guard.
 Compaction never authorizes forgetting.
 
 Semantic compaction is asynchronous consolidation, independent of derived-data
-pruning and repository review. The daemon schedules once per minute for each
-unarchived Project: at most ten indexed dirty records plus ten records from a
-persisted rotating ID cursor. Only searchable, nonexpired Agent records qualify.
-The default dirty debounce is 30 seconds; previously checked records become
-eligible again after 86,400 seconds. Setting `compaction_interval_seconds = 0`
-disables automatic scheduling. A changed revision becomes dirty immediately but
-waits for the debounce. Scheduling records a durable work ID and avoids duplicate
-pending/running work across restart or manual requests.
+pruning and repository review. A dedicated daemon loop wakes on memory writes,
+compact work completion, startup recovery and configuration reload. It drains at
+most ten indexed dirty records per unarchived Project per pass. The durable
+per-revision dirty flags also track one-time historical processing and survive
+restart; there is no rotating scan or periodic reassessment of unchanged records.
+Only searchable, nonexpired Agent records qualify. The default dirty debounce is
+30 seconds. The loop arms a timer only for an actual outstanding dirty deadline;
+with no eligible dirty work it waits for notifications without compact database
+scans or model calls. Setting `compaction_enabled = false` disables automatic
+scheduling. Re-enabling it through reload resumes durable dirty work. Scheduling
+records a durable work ID and avoids duplicate pending/running work across restart
+or manual requests. A changed revision waiting behind an old seed is woken when
+that work finishes or exhausts its lease.
 
 Compaction work has priority 3 within its Project, below live extraction/consolidation and backfill,
 and uses the existing per-Project consolidation lane and provider/Agent budgets.
@@ -185,10 +190,10 @@ seed is completed without a model call; revisions produced by a successful compa
 are marked observed to prevent recursive scheduling. Failures retain normal retry
 limits; permanent provider 4xx rejections, except 408 and 429, fail immediately.
 They remain inspectable; exhausted work requires a retry, a changed memory revision,
-or explicit manual compaction rather than being re-created by periodic scheduling.
+or explicit manual compaction rather than being re-created automatically.
 
 The manual API scans an ID page of 1–100 records (default ten) and returns scanned
-and scheduled counts, work IDs and `next_after`. It ignores cooldown/debounce,
+and scheduled counts, work IDs and `next_after`. It ignores the observed-revision and debounce checks,
 while retaining all eligibility and duplicate-work guards. This command enqueues
 work; it does not wait for model completion or imply exhaustive consolidation.
 Normal search, context and deep-query reads never trigger compaction. Source

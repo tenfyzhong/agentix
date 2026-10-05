@@ -22,6 +22,7 @@ pub struct MemoryStore {
     pub(crate) pool: SqlitePool,
     changes: tokio::sync::broadcast::Sender<String>,
     work_changes: tokio::sync::watch::Sender<u64>,
+    compaction_changes: tokio::sync::broadcast::Sender<Option<String>>,
 }
 
 impl MemoryStore {
@@ -42,6 +43,21 @@ impl MemoryStore {
 
     pub(crate) fn notify_change(&self, project: &str) {
         let _ = self.changes.send(project.to_owned());
+        self.notify_compaction(project);
+    }
+
+    #[must_use]
+    pub fn subscribe_compaction(&self) -> tokio::sync::broadcast::Receiver<Option<String>> {
+        self.compaction_changes.subscribe()
+    }
+
+    pub(crate) fn notify_compaction(&self, project: &str) {
+        let _ = self.compaction_changes.send(Some(project.to_owned()));
+    }
+
+    /// Reconcile durable dirty work after configuration reload, without idle polling.
+    pub fn wake_compaction(&self) {
+        let _ = self.compaction_changes.send(None);
     }
 
     /// Offline fallback opens an existing database without creating or migrating it.
@@ -70,6 +86,7 @@ impl MemoryStore {
             pool,
             changes: tokio::sync::broadcast::channel(256).0,
             work_changes: tokio::sync::watch::channel(0).0,
+            compaction_changes: tokio::sync::broadcast::channel(256).0,
         })
     }
 
@@ -129,6 +146,7 @@ impl MemoryStore {
             pool,
             changes: tokio::sync::broadcast::channel(256).0,
             work_changes: tokio::sync::watch::channel(0).0,
+            compaction_changes: tokio::sync::broadcast::channel(256).0,
         })
     }
 

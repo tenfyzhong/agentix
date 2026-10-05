@@ -12,6 +12,9 @@ pub struct CompactionPage {
     pub work_ids: Vec<i64>,
 }
 
+// Pending old seeds leave a new dirty revision dormant until their completion wakes it.
+const DIRTY: &str = "c.project_id=? AND c.dirty=1 AND c.suspended=0 AND m.status IN ('active','conflicted') AND json_extract(m.data,'$.actor')='agent' AND (m.valid_until IS NULL OR m.valid_until>?) AND NOT EXISTS(SELECT 1 FROM work_items w WHERE w.id=c.work_id AND w.state IN ('pending','running'))";
+
 impl MemoryStore {
     pub(crate) async fn skip_obsolete_compaction(
         &self,
@@ -36,17 +39,18 @@ impl MemoryStore {
             crate::queue::finish(&mut tx, lease, &json!({"skipped":"compaction seed changed","id":seed.id,"expected_revision":seed.revision,"current_revision":current.revision})).await?;
         }
         tx.commit().await?;
+        if obsolete {
+            self.notify_compaction(&lease.project_id);
+        }
         Ok(obsolete)
     }
     /// Scan a bounded ID page. Enqueue proposals, never mutate memory inline.
-    #[allow(clippy::too_many_arguments)]
     pub async fn schedule_compaction(
         &self,
         project: &str,
         after: &str,
         limit: i64,
         force: bool,
-        interval: u64,
         debounce: u64,
         now: i64,
     ) -> Result<CompactionPage> {
@@ -70,7 +74,7 @@ impl MemoryStore {
         for data in &rows {
             let memory: Memory = serde_json::from_str(data)?;
             page.next_after.clone_from(&memory.id);
-            if let Some(id) = enqueue(&mut tx, &memory, force, interval, debounce, now).await? {
+            if let Some(id) = enqueue(&mut tx, &memory, force, debounce, now).await? {
                 page.work_ids.push(id);
             }
         }
@@ -85,19 +89,25 @@ impl MemoryStore {
         Ok(page)
     }
 
+    /// Drain one indexed dirty page. Its per-revision progress also covers legacy history.
     pub async fn schedule_background_compaction(
         &self,
         project: &str,
         config: &AgentConfig,
         now: i64,
     ) -> Result<usize> {
-        if config.compaction_interval_seconds == 0 {
+        if !config.compaction_enabled {
             return Ok(0);
         }
-        // An indexed dirty queue prioritizes new revisions ahead of the historical sweep.
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
-        let rows: Vec<String> = sqlx::query_scalar("SELECT m.data FROM memory_compactions c JOIN memories m ON m.id=c.memory_id WHERE c.project_id=? AND c.dirty=1 AND c.dirty_at<=? ORDER BY c.dirty_at,c.memory_id LIMIT 10")
-            .bind(project).bind(now.saturating_sub(i64::try_from(config.compaction_debounce_seconds)?)).fetch_all(&mut *tx).await?;
+        let rows: Vec<String> = sqlx::query_scalar(&format!(
+            "SELECT m.data FROM memory_compactions c JOIN memories m ON m.id=c.memory_id WHERE {DIRTY} AND c.dirty_at<=? ORDER BY c.dirty_at,c.memory_id LIMIT 10"
+        ))
+        .bind(project)
+        .bind(now)
+        .bind(now.saturating_sub(i64::try_from(config.compaction_debounce_seconds)?))
+        .fetch_all(&mut *tx)
+        .await?;
         let mut count = 0;
         for data in rows {
             let memory = serde_json::from_str(&data)?;
@@ -106,7 +116,6 @@ impl MemoryStore {
                     &mut tx,
                     &memory,
                     false,
-                    config.compaction_interval_seconds,
                     config.compaction_debounce_seconds,
                     now,
                 )
@@ -115,29 +124,32 @@ impl MemoryStore {
             );
         }
         tx.commit().await?;
-        let key = format!("compaction_cursor:{project}");
-        let after: Option<String> =
-            sqlx::query_scalar("SELECT value FROM memory_metadata WHERE key=?")
-                .bind(&key)
-                .fetch_optional(&self.pool)
-                .await?;
-        let page = self
-            .schedule_compaction(
-                project,
-                after.as_deref().unwrap_or(""),
-                10,
-                false,
-                config.compaction_interval_seconds,
-                config.compaction_debounce_seconds,
-                now,
-            )
-            .await?;
-        sqlx::query("INSERT INTO memory_metadata(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value WHERE value<>excluded.value")
-            .bind(key).bind(page.next_after).execute(&self.pool).await?;
         if count > 0 {
             self.notify_work();
         }
-        Ok(count + page.scheduled)
+        Ok(count)
+    }
+
+    /// The next actual dirty deadline, or None when notification-only waiting is enough.
+    pub async fn next_compaction_at(
+        &self,
+        project: &str,
+        config: &AgentConfig,
+        now: i64,
+    ) -> Result<Option<i64>> {
+        if !config.compaction_enabled {
+            return Ok(None);
+        }
+        let dirty_at: Option<i64> = sqlx::query_scalar(&format!(
+            "SELECT c.dirty_at FROM memory_compactions c JOIN memories m ON m.id=c.memory_id WHERE {DIRTY} ORDER BY c.dirty_at,c.memory_id LIMIT 1"
+        ))
+        .bind(project)
+        .bind(now)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(dirty_at.map(|at| {
+            at.saturating_add(i64::try_from(config.compaction_debounce_seconds).unwrap_or(i64::MAX))
+        }))
     }
 }
 
@@ -145,7 +157,6 @@ async fn enqueue(
     conn: &mut sqlx::SqliteConnection,
     memory: &Memory,
     force: bool,
-    interval: u64,
     debounce: u64,
     now: i64,
 ) -> Result<Option<i64>> {
@@ -159,8 +170,8 @@ async fn enqueue(
         observed(conn, memory, now).await?;
         return Ok(None);
     }
-    let eligible: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM memory_compactions c WHERE c.memory_id=? AND (? OR (c.dirty_at<=? AND (c.dirty=1 OR c.checked_at<=?))) AND (? OR c.dirty=1 OR c.suspended=0) AND NOT EXISTS(SELECT 1 FROM work_items w WHERE w.id=c.work_id AND w.state IN ('pending','running')))")
-        .bind(&memory.id).bind(force).bind(now.saturating_sub(i64::try_from(debounce)?)).bind(now.saturating_sub(i64::try_from(interval)?)).bind(force).fetch_one(&mut *conn).await?;
+    let eligible: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM memory_compactions c WHERE c.memory_id=? AND (? OR (c.dirty_at<=? AND c.dirty=1 AND c.suspended=0)) AND NOT EXISTS(SELECT 1 FROM work_items w WHERE w.id=c.work_id AND w.state IN ('pending','running')))")
+        .bind(&memory.id).bind(force).bind(now.saturating_sub(i64::try_from(debounce)?)).fetch_one(&mut *conn).await?;
     if !eligible {
         return Ok(None);
     }

@@ -69,7 +69,7 @@ pub struct AgentConfig {
     pub max_attempts: u32,
     pub extraction_debounce_ms: u64,
     pub repository_review_interval_seconds: u64,
-    pub compaction_interval_seconds: u64,
+    pub compaction_enabled: bool,
     pub compaction_debounce_seconds: u64,
 }
 impl Default for AgentConfig {
@@ -91,7 +91,7 @@ impl Default for AgentConfig {
             max_attempts: 3,
             extraction_debounce_ms: 1000,
             repository_review_interval_seconds: 86400,
-            compaction_interval_seconds: 86400,
+            compaction_enabled: true,
             compaction_debounce_seconds: 30,
         }
     }

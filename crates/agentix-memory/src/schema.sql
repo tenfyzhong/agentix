@@ -172,8 +172,9 @@ END;
 CREATE TRIGGER IF NOT EXISTS compaction_update AFTER UPDATE OF revision ON memories BEGIN
     UPDATE memory_compactions SET revision=new.revision,dirty=1,suspended=0,dirty_at=coalesce(json_extract(new.data,'$.updated_at'),unixepoch()) WHERE memory_id=new.id;
 END;
-CREATE TRIGGER IF NOT EXISTS compaction_failure AFTER UPDATE OF state ON work_items WHEN new.state='failed' BEGIN
-    UPDATE memory_compactions SET suspended=1 WHERE work_id=new.id;
+DROP TRIGGER IF EXISTS compaction_failure;
+CREATE TRIGGER compaction_failure AFTER UPDATE OF state ON work_items WHEN new.state='failed' BEGIN
+    UPDATE memory_compactions SET suspended=1 WHERE work_id=new.id AND revision=json_extract(new.payload,'$.compact.revision');
 END;
 INSERT OR IGNORE INTO memory_compactions(memory_id,project_id,revision,dirty_at) SELECT id,project_id,revision,coalesce(json_extract(data,'$.updated_at'),unixepoch()) FROM memories;
 

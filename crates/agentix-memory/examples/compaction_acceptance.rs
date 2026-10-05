@@ -102,7 +102,7 @@ async fn main() -> Result<()> {
         repository.clone(),
     );
     let page = store
-        .schedule_compaction("acceptance", "", 100, true, 0, 0, now())
+        .schedule_compaction("acceptance", "", 100, true, 0, now())
         .await?;
     let started = Instant::now();
     for _ in 0..page.scheduled {
