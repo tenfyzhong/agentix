@@ -101,11 +101,9 @@ async fn main() -> Result<()> {
         config.agent.clone(),
         repository.clone(),
     );
-    let page = store
-        .schedule_compaction("acceptance", "", 100, true, 0, now())
-        .await?;
+    let work_ids = schedule_legacy(&store, &copied).await?;
     let started = Instant::now();
-    drain_compaction(&store, &worker, &page.work_ids).await?;
+    drain_compaction(&store, &worker, &work_ids).await?;
     let current = store.list("acceptance", "", 100, false).await?;
     let stale = current
         .iter()
@@ -122,7 +120,7 @@ async fn main() -> Result<()> {
     println!(
         "{}",
         serde_json::to_string_pretty(
-            &json!({"copied_memories":copied.len(),"scheduled":page.scheduled,"elapsed_ms":started.elapsed().as_millis(),"active_memories":current.len(),"stale_conclusions":stale,"current_domain_records":canonical.current_domain_records,"legacy_retired":canonical.legacy_retired,"atomic_memories":canonical.atomic_memories,"one_active_per_fact":canonical.one_active_per_fact,"evidence_retained":canonical.evidence_retained,"history_retained":history_retained,"work":store.work_counts().await?,"answer":answer,"current_summaries":current.iter().map(|m| json!({"id":m.id,"revision":m.revision,"status":m.status,"fact":m.content.fact,"conclusion":m.content.conclusion})).collect::<Vec<_>>()})
+            &json!({"copied_memories":copied.len(),"scheduled":work_ids.len(),"elapsed_ms":started.elapsed().as_millis(),"active_memories":current.len(),"stale_conclusions":stale,"current_domain_records":canonical.current_domain_records,"legacy_retired":canonical.legacy_retired,"atomic_memories":canonical.atomic_memories,"one_active_per_fact":canonical.one_active_per_fact,"evidence_retained":canonical.evidence_retained,"history_retained":history_retained,"work":store.work_counts().await?,"answer":answer,"current_summaries":current.iter().map(|m| json!({"id":m.id,"revision":m.revision,"status":m.status,"fact":m.content.fact,"conclusion":m.content.conclusion})).collect::<Vec<_>>()})
         )?
     );
     ensure!(
@@ -236,4 +234,25 @@ async fn drain_compaction(
         }
     }
     Ok(())
+}
+
+async fn schedule_legacy(store: &MemoryStore, copied: &[Memory]) -> Result<Vec<i64>> {
+    let mut ordered: Vec<_> = copied.iter().collect();
+    ordered.sort_by(|a, b| a.id.cmp(&b.id));
+    let mut after = String::new();
+    let mut work_ids = Vec::new();
+    for memory in ordered {
+        if memory.content.fact.is_none() {
+            let page = store
+                .schedule_compaction("acceptance", &after, 1, true, 0, now())
+                .await?;
+            ensure!(
+                page.scanned == 1 && page.next_after == memory.id,
+                "acceptance cursor did not select its legacy seed"
+            );
+            work_ids.extend(page.work_ids);
+        }
+        after.clone_from(&memory.id);
+    }
+    Ok(work_ids)
 }

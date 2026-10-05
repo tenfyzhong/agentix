@@ -161,7 +161,8 @@ under simultaneous writers, original-source ordering, immutable values,
 qualifier normalization, stale revision rollback, human protection, active-only
 retrieval and separate conflict diagnostics. Legacy split regressions verify
 path/autostart/domain separation, complete evidence and version preservation,
-visible `derived_from` lineage, memory/source-only split tools, no recursive work, all-or-nothing rollback,
+visible `derived_from` lineage, memory/source-only split tools, early forced submission with a lower user budget
+preserved, no recursive work, all-or-nothing rollback,
 corrective feedback for altered literal quotes, and one-time schema 2-to-3
 migration including explicit null facts. Backup tests preserve schema 3 and reject
 unsupported schema 4; CLI restore and host extraction tests exercise the new schema. A worker regression rejects unstructured
@@ -184,7 +185,8 @@ schedules.
 
 `examples/compaction_acceptance.rs` is an opt-in live acceptance harness. It opens
 the original database read-only, copies one bounded Project page and its source
-evidence into a temporary database, runs real configured-model compaction, then
+evidence into a temporary database, schedules only still-mixed records for real
+configured-model splitting (existing atomic facts remain available), then
 asks for the current REALITY domain. Acceptance requires every effective record
 to contain one structured fact, at most one active version per identity, exactly
 one effective domain fact, old mixed originals superseded, complete split lineage,

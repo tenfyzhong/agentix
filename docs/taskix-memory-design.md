@@ -201,7 +201,9 @@ Compaction work has priority 3 within its Project, below live extraction/consoli
 and uses the existing per-Project consolidation lane and provider/Agent budgets.
 Legacy seeds without a structured fact are split into up to sixteen independent
 parts. Legacy splitting exposes only memory/source reads; repository review remains
-in its independent lane. Each part creates a new fact or reconciles an existing atomic version;
+in its independent lane. It uses at most four model steps (or a lower configured
+limit), reserving the last for submission from preloaded snapshots. Request/task
+timeouts, tool limits and retries remain unchanged. Each part creates a new fact or reconciles an existing atomic version;
 merge requires identical identity and value. The seed and overlapping legacy
 records become superseded only when their evidence is preserved among the parts.
 Every part records `derived_from` IDs; an indexed one-to-many lineage table also

@@ -768,3 +768,84 @@ async fn schema_upgrade_reopens_settled_legacy_records_once_including_null_fact(
         0
     );
 }
+
+struct BoundedSplitModel {
+    calls: std::sync::atomic::AtomicUsize,
+    content: MemoryInput,
+}
+#[async_trait::async_trait]
+impl Model for BoundedSplitModel {
+    async fn complete(&self, request: &ModelRequest) -> anyhow::Result<ModelReply> {
+        let step = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let (name, arguments) = if request.tools.len() == 1 {
+            (
+                "submit_fact_compaction",
+                json!({"parts":[{"content":self.content,"action":"create","target":null,"expected_revision":null,"reason":"Independent deployment fact"}],"related":[],"reason":"Use supplied complete evidence"}),
+            )
+        } else {
+            ("memory_search", json!({"query":"Sing-box"}))
+        };
+        Ok(ModelReply {
+            continuation: json!([]),
+            calls: vec![ToolCall {
+                id: format!("bounded{step}"),
+                name: name.into(),
+                arguments,
+            }],
+            text: String::new(),
+            usage: TokenUsage::default(),
+        })
+    }
+}
+
+#[tokio::test]
+async fn legacy_split_reserves_submission_after_bounded_preloaded_evidence_reads() {
+    for requested_steps in [12, 2] {
+        let temp = tempfile::tempdir().unwrap();
+        let store = MemoryStore::open(&temp.path().join("memory.db"))
+            .await
+            .unwrap();
+        receipt(&store, "legacy", "/srv/proxy", now()).await;
+        let lease = store
+            .claim_work("setup", &AgentConfig::default(), now())
+            .await
+            .unwrap()
+            .unwrap();
+        store
+            .complete_extraction(&lease, vec![], now())
+            .await
+            .unwrap();
+        let part = input("legacy", "deployment.path", "/srv/proxy");
+        let mut legacy = part.clone();
+        legacy.fact = None;
+        let old = store.create("p", legacy, Actor::Agent).await.unwrap();
+        store
+            .schedule_compaction("p", "", 10, true, 0, now())
+            .await
+            .unwrap();
+        let model = std::sync::Arc::new(BoundedSplitModel {
+            calls: std::sync::atomic::AtomicUsize::new(0),
+            content: part,
+        });
+        let config = AgentConfig {
+            max_steps: requested_steps,
+            ..AgentConfig::default()
+        };
+        let worker = MemoryWorker::new(
+            store.clone(),
+            model.clone(),
+            config,
+            std::sync::Arc::new(Repository(temp.path().into())),
+        );
+        worker.run_once("compact").await.unwrap();
+        assert!(
+            model.calls.load(std::sync::atomic::Ordering::SeqCst) <= requested_steps.min(4),
+            "legacy splitting must submit promptly from preloaded evidence and honor a lower user budget"
+        );
+        assert_eq!(
+            store.show("p", &old.id, None).await.unwrap().status,
+            Status::Superseded
+        );
+        assert_eq!(store.list("p", "", 100, false).await.unwrap().len(), 1);
+    }
+}
