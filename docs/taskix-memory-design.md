@@ -245,6 +245,8 @@ before the transaction; the store repeats evidence validation when committing. D
 attributes may legitimately share a hostname; identity/value matching determines
 duplicates rather than counting text occurrences. Human protection, revision
 guards and the sixteen-quotation limit per part still apply.
+Commit rechecks the seed expiry as well as its revision, actor and status, so a
+seed expiring during model execution cannot be revived by the proposal.
 A stale seed is completed without a model call; revisions produced by a successful compact
 are marked observed to prevent recursive scheduling. Failures retain normal retry
 limits; permanent provider 4xx rejections, except 408 and 429, fail immediately.

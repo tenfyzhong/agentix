@@ -88,7 +88,11 @@ impl MemoryStore {
             ensure!(
                 current.revision == seed.revision
                     && current.actor == Actor::Agent
-                    && current.status.searchable(),
+                    && current.status.searchable()
+                    && current
+                        .content
+                        .valid_until
+                        .is_none_or(|expiry| expiry > now),
                 "conflict: compaction seed changed"
             );
             ensure!(

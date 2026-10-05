@@ -1189,3 +1189,73 @@ async fn expiry_before_debounce_is_drained_without_model_work() {
     );
     assert_eq!(store.work_counts().await.unwrap().pending, 0);
 }
+
+#[tokio::test]
+async fn compaction_commit_rechecks_seed_expiry_after_model_execution() {
+    for atomic in [false, true] {
+        let temp = tempfile::tempdir().unwrap();
+        let store = MemoryStore::open(&temp.path().join("memory.db"))
+            .await
+            .unwrap();
+        let seed = add(&store, "p", "expiring", Actor::Agent).await;
+        let at = now();
+        let fact = Fact {
+            entity: "server".into(),
+            attribute: "policy".into(),
+            qualifiers: vec![],
+            value: seed.content.conclusion.clone(),
+        };
+        let mut content = seed.content.clone();
+        content.valid_until = Some(at + 30);
+        if atomic {
+            content.fact = Some(fact.clone());
+        }
+        let seed = store
+            .update("p", &seed.id, seed.revision, content, Actor::Agent)
+            .await
+            .unwrap();
+        store
+            .schedule_compaction("p", "", 10, true, 0, at)
+            .await
+            .unwrap();
+        let lease = store
+            .claim_work("compact", &AgentConfig::default(), at)
+            .await
+            .unwrap()
+            .unwrap();
+        let mut content = seed.content.clone();
+        content.valid_until = None;
+        let result = if atomic {
+            let decisions = serde_json::from_value(json!([{"candidate":0,"action":"merge","target":seed.id,"expected_revision":seed.revision,"content":content,"reason":"Refresh policy","related":[]}])).unwrap();
+            store
+                .complete_consolidation(&lease, decisions, at + 30)
+                .await
+        } else {
+            content.fact = Some(fact);
+            store
+                .complete_fact_compaction(
+                    &lease,
+                    FactCompaction {
+                        parts: vec![FactPart {
+                            content,
+                            action: DecisionAction::Create,
+                            target: None,
+                            expected_revision: None,
+                            reason: "Atomic policy".into(),
+                        }],
+                        related: vec![],
+                        reason: "Split legacy policy".into(),
+                    },
+                    at + 30,
+                )
+                .await
+        };
+        let error = result.expect_err("a seed expiring during model work must not be revived");
+        assert!(
+            error.to_string().contains("compaction seed changed"),
+            "{error}"
+        );
+        assert_eq!(store.show("p", &seed.id, None).await.unwrap(), seed);
+        assert_eq!(store.list("p", "", 100, true).await.unwrap().len(), 1);
+    }
+}

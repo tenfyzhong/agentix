@@ -27,6 +27,7 @@ pub struct FactCompaction {
 
 impl MemoryStore {
     /// Split only after every part and all original evidence validate atomically.
+    #[allow(clippy::too_many_lines)] // Keep the fenced split and retirement transaction together.
     pub async fn complete_fact_compaction(
         &self,
         lease: &WorkLease,
@@ -61,7 +62,11 @@ impl MemoryStore {
         ensure!(
             current.revision == seed.revision
                 && current.actor == Actor::Agent
-                && current.status.searchable(),
+                && current.status.searchable()
+                && current
+                    .content
+                    .valid_until
+                    .is_none_or(|expiry| expiry > now),
             "conflict: compaction seed changed"
         );
         let mut related_ids = std::collections::HashSet::new();
