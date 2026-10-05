@@ -215,8 +215,9 @@ Every part records `derived_from` IDs; an indexed one-to-many lineage table also
 retains each original revision. Superseded originals and all versions remain
 inspectable. A legacy record's `superseded_by` points to the first part, while the
 parts and lineage preserve the complete split. Atomic seeds use normal same-fact
-reconciliation. Supplied evidence dates avoid redundant source reads, and invalid
-literal quotations receive corrective feedback before the transaction. Different
+reconciliation. Supplied evidence dates and author roles avoid redundant source reads. Invalid
+literal quotations and assistant-only user decisions receive corrective feedback
+before the transaction; the store repeats evidence validation when committing. Different
 attributes may legitimately share a hostname; identity/value matching determines
 duplicates rather than counting text occurrences. Human protection, revision
 guards and the sixteen-quotation limit per part still apply.

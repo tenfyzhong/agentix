@@ -1025,3 +1025,88 @@ async fn quote_references_cannot_bypass_the_expanded_submission_byte_budget() {
     );
     assert_eq!(store.list("p", "", 100, true).await.unwrap(), vec![old]);
 }
+
+struct AttributionCorrectionModel {
+    calls: std::sync::atomic::AtomicUsize,
+    content: MemoryInput,
+}
+#[async_trait::async_trait]
+impl Model for AttributionCorrectionModel {
+    async fn complete(&self, request: &ModelRequest) -> anyhow::Result<ModelReply> {
+        let step = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        let mut content = self.content.clone();
+        if step == 0 {
+            content.kind = Kind::UserDecision;
+        } else {
+            assert!(request.history.iter().any(|m| matches!(m, Message::Tool {output,..} if output.contains("assistant text alone cannot establish a user decision"))));
+            let Message::User(input) = &request.history[0] else {
+                panic!("missing preloaded snapshots")
+            };
+            let input: serde_json::Value = serde_json::from_str(input)?;
+            assert_eq!(input["evidence_dates"][0]["role"], "assistant");
+        }
+        Ok(ModelReply {
+            continuation: json!([]),
+            calls: vec![ToolCall {
+                id: format!("attribution{step}"),
+                name: "submit_fact_compaction".into(),
+                arguments: json!({"parts":[{"content":content,"action":"create","target":null,"expected_revision":null,"reason":"Preserve reported observation"}],"related":[],"reason":"Split without promoting assistant text to a user decision"}),
+            }],
+            text: String::new(),
+            usage: TokenUsage::default(),
+        })
+    }
+}
+
+#[tokio::test]
+async fn legacy_split_corrects_assistant_only_user_decisions_before_transaction() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(&temp.path().join("memory.db"))
+        .await
+        .unwrap();
+    let text = "Deployment observed at /srv/proxy.";
+    let source: Source = serde_json::from_value(json!({"instance_id":"db","receipt_id":"legacy","sequence":1,"project_id":"p","session_id":"s","turn_id":"legacy","revision":1,"job_id":null,"recorded_at":now(),"messages":[{"id":"m","role":"assistant","text":text}]})).unwrap();
+    store.ingest(&source).await.unwrap();
+    let lease = store
+        .claim_work("setup", &AgentConfig::default(), now())
+        .await
+        .unwrap()
+        .unwrap();
+    store
+        .complete_extraction(&lease, vec![], now())
+        .await
+        .unwrap();
+    let mut part = input("legacy", "deployment.path", "/srv/proxy");
+    part.kind = Kind::Observation;
+    part.evidence[0].quote = text.into();
+    let mut legacy = part.clone();
+    legacy.fact = None;
+    let old = store.create("p", legacy, Actor::Agent).await.unwrap();
+    store
+        .schedule_compaction("p", "", 10, true, 0, now())
+        .await
+        .unwrap();
+    let model = std::sync::Arc::new(AttributionCorrectionModel {
+        calls: std::sync::atomic::AtomicUsize::new(0),
+        content: part,
+    });
+    let worker = MemoryWorker::new(
+        store.clone(),
+        model.clone(),
+        AgentConfig::default(),
+        std::sync::Arc::new(Repository(temp.path().into())),
+    );
+    worker
+        .run_once("compact")
+        .await
+        .expect("correct attribution in the original loop instead of failing the whole work");
+    assert_eq!(model.calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    let current = store.list("p", "", 100, false).await.unwrap();
+    assert_eq!(current.len(), 1);
+    assert_eq!(current[0].content.kind, Kind::Observation);
+    assert_eq!(current[0].content.evidence, old.content.evidence);
+    assert_eq!(
+        store.show("p", &old.id, None).await.unwrap().status,
+        Status::Superseded
+    );
+}

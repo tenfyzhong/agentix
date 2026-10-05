@@ -163,7 +163,7 @@ retrieval and separate conflict diagnostics. Legacy split regressions verify
 path/autostart/domain separation, complete evidence and version preservation,
 visible `derived_from` lineage, direct proposals from preloaded snapshots without read tools, bounded validation
 corrections with a lower user budget preserved, no recursive work, all-or-nothing rollback,
-corrective feedback for altered literal quotes and invalid preloaded quote references, expanded-submission byte limits, and one-time schema 2-to-3
+corrective feedback for altered literal quotes and invalid preloaded quote references, expanded-submission byte limits, assistant-only decision attribution, and one-time schema 2-to-3
 migration including explicit null facts. Backup tests preserve schema 3 and reject
 unsupported schema 4; CLI restore and host extraction tests exercise the new schema. A worker regression rejects unstructured
 extraction and then writes all three facts as settled. Existing low-level legacy
@@ -272,3 +272,23 @@ records the negative-gate backtest and why the positive experiment was rolled ba
 [Current performance measurements](taskix-memory-performance.md) include debug
 and release results, provider request counts and scheduler CPU scope. These
 manual benchmarks supplement deterministic tests; they are not production SLOs.
+
+### Optional subscription-backed copy acceptance
+
+`compaction_acceptance` copies a complete small Project into a temporary database,
+checks atomic facts, original evidence, superseded legacy records and version history,
+and asks for the replacement domain through the same memory query loop. The original
+database and installed memory daemon are unchanged. Its default model uses the configured
+HTTP provider. To use an existing ChatGPT Codex login for acceptance, select Luna explicitly:
+
+```sh
+cargo run -p agentix-memory --example compaction_acceptance -- \
+  CONFIG PROJECT_ID RETIRED_VALUE CURRENT_VALUE --codex-luna
+```
+
+This opt-in example uses `gpt-6-luna` through `codex exec`, with personal configuration,
+plugins and native shell, web and multi-agent tools disabled. It only proposes calls
+for the outer memory loop to execute. Request and task deadlines remain those of the
+supplied memory configuration; this flag does not add a production subscription provider
+or change the daemon's provider. The extraction benchmark reuses the bridge with its
+existing pinned model, replay checkpoint and request budget.

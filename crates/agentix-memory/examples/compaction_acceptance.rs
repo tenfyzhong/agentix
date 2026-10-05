@@ -1,11 +1,14 @@
 //! Opt-in live acceptance on a temporary copy of one Project, never the original database.
-//! Usage: `compaction_acceptance CONFIG PROJECT_ID RETIRED_VALUE CURRENT_VALUE`
+//! Usage: `compaction_acceptance CONFIG PROJECT_ID RETIRED_VALUE CURRENT_VALUE [--codex-luna]`
+#[path = "support/codex_model.rs"]
+mod codex_model;
 use agentix_memory::{
     Actor, DeepQuery, HttpModel, HttpProvider, Memory, MemoryConfig, MemoryLocation, MemoryStore,
     MemoryWorker, Model, ModelReply, ModelRequest, ProjectRepository,
 };
 use anyhow::{Context, Result, ensure};
 use async_trait::async_trait;
+use codex_model::CodexModel;
 use serde_json::json;
 use std::{collections::HashSet, path::PathBuf, sync::Arc, time::Instant};
 
@@ -17,7 +20,7 @@ impl ProjectRepository for Repository {
     }
 }
 
-struct LiveModel(HttpModel);
+struct LiveModel(Arc<dyn Model>);
 #[async_trait]
 impl Model for LiveModel {
     async fn complete(&self, request: &ModelRequest) -> Result<ModelReply> {
@@ -46,6 +49,37 @@ impl Model for LiveModel {
     }
 }
 
+async fn acceptance_model(
+    config: &MemoryConfig,
+    directory: &std::path::Path,
+    codex_luna: bool,
+) -> Result<Arc<dyn Model>> {
+    let inner: Arc<dyn Model> = if codex_luna {
+        eprintln!(
+            "using Codex subscription model gpt-6-luna with configured request/task deadlines"
+        );
+        Arc::new(
+            CodexModel::new(
+                directory.join("model"),
+                "gpt-6-luna",
+                0,
+                std::time::Duration::from_secs(config.agent.request_timeout_seconds),
+            )
+            .await?,
+        )
+    } else {
+        let provider = Arc::new(HttpProvider::new(
+            config
+                .providers
+                .get(&config.agent.provider)
+                .context("missing provider")?
+                .clone(),
+        )?);
+        Arc::new(HttpModel::new(provider, config.agent.clone())?)
+    };
+    Ok(inner)
+}
+
 fn now() -> i64 {
     time::OffsetDateTime::now_utc().unix_timestamp()
 }
@@ -54,8 +88,8 @@ fn now() -> i64 {
 async fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     ensure!(
-        args.len() == 4,
-        "usage: compaction_acceptance CONFIG PROJECT_ID RETIRED_VALUE CURRENT_VALUE"
+        args.len() == 4 || (args.len() == 5 && args[4] == "--codex-luna"),
+        "usage: compaction_acceptance CONFIG PROJECT_ID RETIRED_VALUE CURRENT_VALUE [--codex-luna]"
     );
     let config = MemoryConfig::load(std::path::Path::new(&args[0]))?;
     let location = MemoryLocation::load(std::path::Path::new(&args[0]))?;
@@ -88,14 +122,9 @@ async fn main() -> Result<()> {
                 .await?,
         );
     }
-    let provider = Arc::new(HttpProvider::new(
-        config
-            .providers
-            .get(&config.agent.provider)
-            .context("missing provider")?
-            .clone(),
-    )?);
-    let model = Arc::new(LiveModel(HttpModel::new(provider, config.agent.clone())?));
+    let model = Arc::new(LiveModel(
+        acceptance_model(&config, temp.path(), args.len() == 5).await?,
+    ));
     let repository = Arc::new(Repository(temp.path().into()));
     let worker = MemoryWorker::new(
         store.clone(),
