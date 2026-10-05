@@ -334,15 +334,20 @@ afterward. No provider installation or daemon configuration change is required.
 
 ```sh
 cargo run -p agentix-memory --example compact_codex -- \
-  ONE_SHOT_CONFIG PROJECT_ID NEW_ARTIFACT_DIRECTORY --enqueue-legacy
+  ONE_SHOT_CONFIG PROJECT_ID REPOSITORY_ROOT NEW_ARTIFACT_DIRECTORY --enqueue-legacy
 ```
 
 `--enqueue-legacy` requires a complete Project page below one hundred records and
 queues only active agent-authored records without a structured fact. Alternatively,
 provide explicit work IDs after the artifact directory. The example checks their
-Project and consolidation kind before execution. Artifacts contain memory evidence;
+Project and consolidation kind before execution. Supply the actual Project repository
+directory; it is validated before enqueueing work, because the worker requires an
+available repository. Artifacts contain memory evidence;
 keep them with the migration's private diagnostic files. Luna reasoning is always
 `low`. Request, task and lease budgets come from the supplied configuration, so a
 bounded operational override can accommodate slower migration calls without changing
 the production daemon's defaults. Successful writes still require normal projection
 publication; this example never writes generated Markdown directly.
+Process events and stderr are streamed to private artifacts as they arrive, including
+partial diagnostics from a timed-out or cancelled request. Partial output is never
+accepted as a completed model response.

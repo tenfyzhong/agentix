@@ -6,7 +6,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{
     path::PathBuf,
-    process::Stdio,
+    process::{ExitStatus, Stdio},
     sync::atomic::{AtomicUsize, Ordering},
     time::Duration,
 };
@@ -229,31 +229,28 @@ impl Model for CodexModel {
         .await?;
         let prompt = json!({"instructions":request.instructions,"history":request.history,
             "tools":request.tools.iter().map(|tool| json!({"name":tool.name,"description":tool.description})).collect::<Vec<_>>()});
-        let mut child =
-            catalog_model_command(&self.directory, &self.model, self.model_catalog.as_deref())
-                .arg("--output-schema")
-                .arg(&schema_path)
-                .arg("--output-last-message")
-                .arg(&output_path)
-                .current_dir(&self.directory)
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .kill_on_drop(true)
-                .spawn()?;
-        let mut stdin = child.stdin.take().context("missing child stdin")?;
-        stdin
-            .write_all(format!("{BRIDGE_INSTRUCTIONS}\n\n{prompt}").as_bytes())
-            .await?;
-        drop(stdin);
-        let output = tokio::time::timeout(self.request_timeout, child.wait_with_output()).await??;
-        tokio::fs::write(prefix.with_extension("events.jsonl"), &output.stdout).await?;
-        tokio::fs::write(prefix.with_extension("stderr"), &output.stderr).await?;
+        let mut command =
+            catalog_model_command(&self.directory, &self.model, self.model_catalog.as_deref());
+        command
+            .arg("--output-schema")
+            .arg(&schema_path)
+            .arg("--output-last-message")
+            .arg(&output_path)
+            .current_dir(&self.directory);
+        let status = capture_process(
+            &mut command,
+            &prefix,
+            &format!("{BRIDGE_INSTRUCTIONS}\n\n{prompt}"),
+            self.request_timeout,
+        )
+        .await?;
         ensure!(
-            output.status.success(),
+            status.success(),
             "Codex failed; inspect request-{sequence:06}.stderr"
         );
-        let usage = decode_events(&String::from_utf8(output.stdout)?)?;
+        let usage = decode_events(
+            &tokio::fs::read_to_string(prefix.with_extension("events.jsonl")).await?,
+        )?;
         decode_reply(
             &tokio::fs::read_to_string(output_path).await?,
             sequence,
@@ -262,9 +259,66 @@ impl Model for CodexModel {
     }
 }
 
+async fn capture_process(
+    command: &mut Command,
+    prefix: &std::path::Path,
+    input: &str,
+    timeout: Duration,
+) -> Result<ExitStatus> {
+    let stdout = tokio::fs::File::create(prefix.with_extension("events.jsonl"))
+        .await?
+        .into_std()
+        .await;
+    let stderr = tokio::fs::File::create(prefix.with_extension("stderr"))
+        .await?
+        .into_std()
+        .await;
+    let mut child = command
+        .stdin(Stdio::piped())
+        .stdout(Stdio::from(stdout))
+        .stderr(Stdio::from(stderr))
+        .kill_on_drop(true)
+        .spawn()?;
+    tokio::time::timeout(timeout, async {
+        let mut stdin = child.stdin.take().context("missing child stdin")?;
+        stdin.write_all(input.as_bytes()).await?;
+        drop(stdin);
+        Ok::<_, anyhow::Error>(child.wait().await?)
+    })
+    .await?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn timed_out_model_process_preserves_partial_diagnostics() {
+        let dir = tempfile::tempdir().unwrap();
+        let prefix = dir.path().join("request-000000");
+        let mut command = Command::new("sh");
+        command.args([
+            "-c",
+            "printf 'started\\n'; printf 'diagnostic before timeout\\n' >&2; exec sleep 60",
+        ]);
+        assert!(
+            capture_process(&mut command, &prefix, "input", Duration::from_millis(500))
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            tokio::fs::read_to_string(prefix.with_extension("events.jsonl"))
+                .await
+                .unwrap(),
+            "started\n"
+        );
+        assert_eq!(
+            tokio::fs::read_to_string(prefix.with_extension("stderr"))
+                .await
+                .unwrap(),
+            "diagnostic before timeout\n"
+        );
+    }
     #[test]
     fn model_command_uses_isolated_minimal_instructions() {
         let command = model_command(std::path::Path::new("/tmp/benchmark"), "gpt-6-astra");

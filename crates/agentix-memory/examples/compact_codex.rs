@@ -1,5 +1,5 @@
 //! Opt-in execution of explicitly queued work using an existing Codex subscription.
-//! Usage: `compact_codex CONFIG PROJECT_ID ARTIFACT_DIRECTORY WORK_ID...|--enqueue-legacy`
+//! Usage: `compact_codex CONFIG PROJECT_ID REPOSITORY_ROOT ARTIFACT_DIRECTORY WORK_ID...|--enqueue-legacy`
 #[path = "support/codex_model.rs"]
 mod codex_model;
 
@@ -8,11 +8,17 @@ use anyhow::{Context, Result, ensure};
 use async_trait::async_trait;
 use std::{path::PathBuf, sync::Arc, time::Duration};
 
-struct NoRepository;
+struct Repository(PathBuf);
+impl Repository {
+    fn new(root: &std::path::Path) -> Result<Self> {
+        ensure!(root.is_dir(), "Project repository directory unavailable");
+        Ok(Self(root.canonicalize()?))
+    }
+}
 #[async_trait]
-impl ProjectRepository for NoRepository {
+impl ProjectRepository for Repository {
     async fn root(&self, _: &str) -> Result<Option<PathBuf>> {
-        Ok(None)
+        Ok(Some(self.0.clone()))
     }
 }
 
@@ -58,6 +64,17 @@ mod tests {
     use serde_json::json;
 
     #[tokio::test]
+    async fn explicit_repository_root_is_validated_before_enqueue() {
+        let dir = tempfile::tempdir().unwrap();
+        let repository = Repository::new(dir.path()).unwrap();
+        assert_eq!(
+            repository.root("target").await.unwrap(),
+            Some(dir.path().canonicalize().unwrap())
+        );
+        assert!(Repository::new(&dir.path().join("missing")).is_err());
+    }
+
+    #[tokio::test]
     async fn legacy_selection_queues_only_active_mixed_agent_records_in_requested_project() {
         let dir = tempfile::tempdir().unwrap();
         let store = MemoryStore::open(&dir.path().join("memory.db"))
@@ -93,16 +110,17 @@ mod tests {
 async fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     ensure!(
-        args.len() >= 4,
-        "usage: compact_codex CONFIG PROJECT_ID ARTIFACT_DIRECTORY WORK_ID...|--enqueue-legacy"
+        args.len() >= 5,
+        "usage: compact_codex CONFIG PROJECT_ID REPOSITORY_ROOT ARTIFACT_DIRECTORY WORK_ID...|--enqueue-legacy"
     );
     let config = MemoryConfig::load(std::path::Path::new(&args[0]))?;
     let location = MemoryLocation::load(std::path::Path::new(&args[0]))?;
-    let enqueue_legacy = args.len() == 4 && args[3] == "--enqueue-legacy";
+    let repository = Repository::new(std::path::Path::new(&args[2]))?;
+    let enqueue_legacy = args.len() == 5 && args[4] == "--enqueue-legacy";
     let mut ids: Vec<i64> = if enqueue_legacy {
         Vec::new()
     } else {
-        args[3..]
+        args[4..]
             .iter()
             .map(|id| id.parse())
             .collect::<std::result::Result<_, _>>()?
@@ -120,7 +138,7 @@ async fn main() -> Result<()> {
         );
     }
     drop(original);
-    let artifacts = PathBuf::from(&args[2]);
+    let artifacts = PathBuf::from(&args[3]);
     ensure!(!artifacts.exists(), "artifact directory must be new");
     let codex_home = std::env::var_os("CODEX_HOME").map_or(
         PathBuf::from(std::env::var_os("HOME").context("missing Codex home")?).join(".codex"),
@@ -142,7 +160,7 @@ async fn main() -> Result<()> {
         store.clone(),
         Arc::new(model),
         config.agent,
-        Arc::new(NoRepository),
+        Arc::new(repository),
     );
     eprintln!(
         "Executing {} selected work items using gpt-6-luna, reasoning low",
