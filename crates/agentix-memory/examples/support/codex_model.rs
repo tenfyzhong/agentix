@@ -299,6 +299,10 @@ mod tests {
             args.iter().any(|arg| arg == "gpt-6-luna"),
             "subscription acceptance must use the requested Luna model"
         );
+        assert!(
+            args.iter()
+                .any(|arg| arg == "model_reasoning_effort=\"low\"")
+        );
         assert!(args.iter().any(|arg| arg == "--ignore-user-config"));
         assert!(args.iter().any(|arg| arg == "features.shell_tool=false"));
         assert!(args.iter().any(|arg| arg == "features.multi_agent=false"));
