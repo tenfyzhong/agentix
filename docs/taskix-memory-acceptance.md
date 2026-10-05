@@ -168,7 +168,8 @@ unsupported schema 4; CLI restore and host extraction tests exercise the new sch
 extraction and then writes all three facts as settled. Existing low-level legacy
 merge regressions retain compatibility for already queued work. API, provider and
 Agent-loop tests cover safe error classification, bounded tools, permanent HTTP
-rejections and final-step submission. Taskix CLI tests cover command discovery.
+rejections and final-step submission. Tool regressions distinguish a model-guessed
+missing repository path (correctable input) from operational I/O failures. Taskix CLI tests cover command discovery.
 
 The write-driven scheduler regressions also verify that unchanged compacted
 revisions stay settled across days and restart, historical dirty work drains in

@@ -215,3 +215,24 @@ async fn invalid_repository_query_is_correctable_but_not_an_inspection() {
         .unwrap();
     assert!(tools.repository_checked());
 }
+
+#[tokio::test]
+async fn missing_repository_file_is_correctable_input_not_a_worker_failure() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(&temp.path().join("memory.db"))
+        .await
+        .unwrap();
+    let tools = ProjectTools::new(store, "p".into(), Some(temp.path().into())).unwrap();
+    let error = tools
+        .execute("repo_read", json!({"path":"missing/README.md","offset":0}))
+        .await
+        .unwrap_err();
+    assert!(
+        error
+            .downcast_ref::<agentix_memory::ToolInputError>()
+            .is_some(),
+        "a guessed missing path must receive correction feedback: {error}"
+    );
+    assert!(error.to_string().contains("repository path absent"));
+    assert!(tools.inspection_audit().is_empty());
+}

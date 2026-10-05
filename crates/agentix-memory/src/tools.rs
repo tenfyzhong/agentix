@@ -246,7 +246,15 @@ impl ToolSet for ProjectTools {
             "repo_read" => {
                 let args: ReadFile = serde_json::from_value(arguments)?;
                 let root = self.root()?;
-                let value = tokio::task::spawn_blocking(move || read_file(&root, &args)).await??;
+                let value = tokio::task::spawn_blocking(move || read_file(&root, &args))
+                    .await?
+                    .map_err(|error| {
+                        if error.downcast_ref::<std::io::Error>().is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound) {
+                            ToolInputError("repository path absent; locate an existing file with repo_search or use the supplied memory evidence".into()).into()
+                        } else {
+                            error
+                        }
+                    })?;
                 self.record_inspection(name, &value);
                 self.checked.store(true, Ordering::Relaxed);
                 Ok(value)
