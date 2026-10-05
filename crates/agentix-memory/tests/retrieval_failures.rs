@@ -60,6 +60,16 @@ async fn failed_batch_isolates_items_and_persists_bounded_retry_state() {
         "failed item should back off; good item should already be indexed"
     );
     assert_eq!(server.requests.lock().unwrap().len(), 3);
+    let pool =
+        sqlx::SqlitePool::connect_with(sqlx::sqlite::SqliteConnectOptions::new().filename(&path))
+            .await
+            .unwrap();
+    // Keep the persisted deadline in the future even on a slow CI runner. Later
+    // retry checks explicitly expire it, so this does not change their assertions.
+    sqlx::query("UPDATE embedding_failures SET available_at=available_at+3600")
+        .execute(&pool)
+        .await
+        .unwrap();
     drop(index);
     drop(store);
     let store = MemoryStore::open(&path).await.unwrap();
@@ -69,10 +79,6 @@ async fn failed_batch_isolates_items_and_persists_bounded_retry_state() {
         0,
         "backoff survives reopen"
     );
-    let pool =
-        sqlx::SqlitePool::connect_with(sqlx::sqlite::SqliteConnectOptions::new().filename(&path))
-            .await
-            .unwrap();
     for _ in 0..2 {
         sqlx::query("UPDATE embedding_failures SET available_at=0")
             .execute(&pool)
