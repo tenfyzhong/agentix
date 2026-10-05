@@ -184,3 +184,20 @@ CREATE TABLE IF NOT EXISTS memory_id_renames (
     projection_pending INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS memory_id_renames_by_memory ON memory_id_renames(memory_id);
+
+CREATE TABLE IF NOT EXISTS memory_facts (
+    memory_id TEXT PRIMARY KEY REFERENCES memories(id) ON DELETE CASCADE,
+    project_id TEXT NOT NULL,
+    fact_key TEXT NOT NULL,
+    status TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS fact_lookup ON memory_facts(project_id,fact_key,status,memory_id);
+CREATE UNIQUE INDEX IF NOT EXISTS fact_active ON memory_facts(project_id,fact_key) WHERE status='active';
+
+CREATE TABLE IF NOT EXISTS memory_fact_origins (
+    memory_id TEXT NOT NULL REFERENCES memories(id),
+    source_memory_id TEXT NOT NULL REFERENCES memories(id),
+    source_revision INTEGER NOT NULL,
+    PRIMARY KEY(memory_id,source_memory_id,source_revision)
+);
+CREATE INDEX IF NOT EXISTS fact_origins_by_source ON memory_fact_origins(source_memory_id,memory_id);

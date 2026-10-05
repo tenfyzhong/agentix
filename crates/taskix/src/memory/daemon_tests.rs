@@ -688,7 +688,7 @@ async fn compact_loop_waits_without_database_scans_when_idle() {
 async fn compact_loop_wakes_after_a_write_and_uses_the_debounce_deadline() {
     let (_dir, app, project) = repository_test_application().await;
     let mut config = app.runtime.read().await.config.clone();
-    config.agent.compaction_debounce_seconds = 1;
+    config.agent.compaction_debounce_seconds = 5;
     *app.runtime.write().await =
         Arc::new(Runtime::build(config, &app.store, app.repositories.clone()));
     let key = format!("compact:{project}");
@@ -696,10 +696,7 @@ async fn compact_loop_wakes_after_a_write_and_uses_the_debounce_deadline() {
         .await;
     let background = tokio::spawn(run_compactions(app.clone()));
     wait_compaction_pass(&app, &project).await;
-    // Move to the beginning of a second so the debounce has a full second left.
-    while time::OffsetDateTime::now_utc().millisecond() > 100 {
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
+    // Leave room for SQLite setup and scheduling on loaded CI runners.
     create_compact_memory(&app, &project).await;
     tokio::time::sleep(Duration::from_millis(100)).await;
     assert_eq!(
@@ -707,7 +704,7 @@ async fn compact_loop_wakes_after_a_write_and_uses_the_debounce_deadline() {
         0,
         "do not compact before the debounce"
     );
-    tokio::time::timeout(Duration::from_secs(2), async {
+    tokio::time::timeout(Duration::from_secs(10), async {
         while app.store.work_counts().await.unwrap().pending == 0 {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }

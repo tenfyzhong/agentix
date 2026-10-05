@@ -155,16 +155,20 @@ after restart, write debounce, protected human/inactive records, persisted
 historical progress, no duplicate seed or recursive scheduling, and stale seed
 completion with zero model calls, terminal-failure suspension across work-retention cleanup, compact-specific
 current-state reconciliation, and restoring seed evidence before validation.
-Canonical-merge regressions cover two active claims with the same current domain:
-the older seed merges into the existing current record, preserving deployment,
-autostart, client facts, both evidence sets and original versions. The older ID is
-superseded with a link to the canonical ID, with no new record or recursive work.
-The inverse seed order, stale/human canonical targets, missing or stale seed
-retirement, and attempted retained duplication are covered too. API tests cover invalid page budgets and reject
-certainty based on conflicted records. Provider and worker tests cover safe error
-classification and immediate termination of permanent HTTP rejections. Agent-loop
-and provider tests cover required tools and reserving the original final step for
-submission. Taskix CLI tests cover command discovery.
+`tests/atomic_facts.rs` covers structured identity, write-time replacement with
+independent sibling facts unchanged, evidence merging, one-active uniqueness
+under simultaneous writers, original-source ordering, immutable values,
+qualifier normalization, stale revision rollback, human protection, active-only
+retrieval and separate conflict diagnostics. Legacy split regressions verify
+path/autostart/domain separation, complete evidence and version preservation,
+visible `derived_from` lineage, no recursive work, all-or-nothing rollback,
+corrective feedback for altered literal quotes, and one-time schema 2-to-3
+migration including explicit null facts. Backup tests preserve schema 3 and reject
+unsupported schema 4; CLI restore and host extraction tests exercise the new schema. A worker regression rejects unstructured
+extraction and then writes all three facts as settled. Existing low-level legacy
+merge regressions retain compatibility for already queued work. API, provider and
+Agent-loop tests cover safe error classification, bounded tools, permanent HTTP
+rejections and final-step submission. Taskix CLI tests cover command discovery.
 
 The write-driven scheduler regressions also verify that unchanged compacted
 revisions stay settled across days and restart, historical dirty work drains in
@@ -180,42 +184,20 @@ schedules.
 `examples/compaction_acceptance.rs` is an opt-in live acceptance harness. It opens
 the original database read-only, copies one bounded Project page and its source
 evidence into a temporary database, runs real configured-model compaction, then
-asks for the current REALITY domain. It requires obsolete conclusions to leave
-default retrieval, exactly one effective replacement record with an existing ID,
-old overlapping records superseded with canonical links, their literal evidence
-in the canonical record, original version content preserved, and a sourced answer
-containing the current value. It never modifies
-the original Project. Deterministic tests establish mutation/queue contracts;
-this live harness checks model judgment on a concrete case, not general accuracy
-or a throughput benchmark.
+asks for the current REALITY domain. Acceptance requires every effective record
+to contain one structured fact, at most one active version per identity, exactly
+one effective domain fact, old mixed originals superseded, complete split lineage,
+all original literal evidence and versions preserved, and a sourced current-value
+answer. Other attributes such as SNI may legitimately contain the same hostname.
+It never modifies the original Project or installs/restarts the service.
+Deterministic tests establish transaction and queue contracts; this harness checks
+model judgment on a concrete case, not general accuracy or throughput.
 
-### Live dogyun case
-
-On October 5, 2026, the configured `gemini-3.8-flash-high` model through the
-local OpenAI-compatible proxy completed canonical-deduplication acceptance on a
-temporary copy of four existing dogyun memories. Two effective conclusions with
-`www.sakura.ad.jp` became exactly one, using an existing canonical ID. The older
-overlapping record became `superseded` with a canonical link. There were two
-effective records after consolidation: SSH access and combined sing-box
-configuration, including `/root/deploy/sing-box`, autostart, client SNI/serverName,
-TCP 6443/10443 VLESS + REALITY and UDP 6443 Hysteria2.
-
-Obsolete domain conclusions became zero. The canonical record retained every
-literal quotation from the overlapping originals, and every copied original
-version retained its content. All four compact seeds finished, with no pending,
-running or failed work. The sourced deep answer returned `www.sakura.ad.jp`.
-Compaction plus the final deep query took 92.453 seconds in this single run.
-This is functional live acceptance, not a latency or model-accuracy benchmark.
-The original database and installed service were unchanged. The regression first
-failed because the old guard prohibited merging a seed into an existing canonical
-record; reusable tests now cover guarded retirement and both seed orders.
-Earlier acceptance established current-state replacement but did not require one
-canonical record; the strengthened harness explicitly checks deduplication,
-canonical links, evidence and history preservation.
-The original HTTP 400 was an upstream unsupported-egress-location
-rejection. After the user repaired the proxy, requests succeeded; application
-changes improve diagnostics and bounded tool completion rather than changing the
-provider's geographic eligibility.
+The earlier aggregate-record acceptance is superseded by this atomic-fact
+contract. Its four-to-two result is not evidence for atomic separation. The
+reported HTTP 400 was an upstream unsupported-egress-location rejection; requests
+recovered after the user repaired the proxy route. Application changes improve
+bounded diagnostics and validation, not provider geographic eligibility.
 
 ## Measured scale
 

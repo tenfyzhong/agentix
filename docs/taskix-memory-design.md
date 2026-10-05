@@ -36,8 +36,8 @@ migration error rolls back the whole transaction and schema version.
 Upgrade the service and CLI together, stop the old service before migration,
 and retain a SQLite online backup. Old writable binaries reject schema 2.
 Upgrade `scripts/taskix-backup.py` as well: backup and restore support schemas
-1 and 2, retain the archived schema version, and reject unknown versions.
-Offline reads support schemas 1 and 2 without migrating. Reset pagination cursors
+1, 2 and 3, retain the archived schema version, and reject unknown versions.
+Offline reads support schemas 1, 2 and 3 without migrating. Reset pagination cursors
 after migration and use the new IDs for CLI mutations. On the next projection
 sync, renamed notes publish under the new ID and preserve old file bytes in
 `Memory/Recovery/`. An existing destination with different contents is a
@@ -143,23 +143,37 @@ read-only loop and return traceable sources.
 
 ## Consistency and incremental compaction
 
-Extraction separates independently replaceable facts. Consolidation receives a
-bounded lexical page of up to eight related records for each candidate, and must
-assess every supplied record with an exact ID/revision. This page is not an
-exhaustive conflict detector; scoped tools can inspect additional evidence.
-Original source dates and explicit replacement statements determine whether a
-claim supersedes another. New ingestion time alone does not establish precedence.
+Extraction emits every supported independently replaceable fact as its own memory.
+A structured `fact` contains a canonical `entity`, one `attribute`, a bounded
+array of `{name, value}` qualifiers, and a separate `value`. Project, normalized
+entity/attribute and sorted qualifiers identify the fact; value, title and
+record ID do not. Conditions that distinguish applicability belong in qualifiers.
+Deployment path, autostart, domain, client SNI and independently configurable
+protocol/port settings remain separate. Repository-discoverable information and
+unconfirmed brainstorming remain excluded.
 
-Related assessments keep compatible facts, supersede replaced claims, or mark
-both unresolved claims conflicted. A partial replacement can retain unrelated
-valid facts in a separate memory. Literal prior evidence must remain in the
-replacement and/or retained facts; merges automatically retain missing prior
-quotations. Compact rewrites also restore seed quotations before validation.
-Exceeding the evidence budget rejects the result. All mutations,
-version writes and work completion share one fenced transaction. A stale revision
-rolls back the whole proposal. Human-authored records are protected from automatic
-replacement; disagreement is represented as a conflict. A deep answer citing a
-conflicted record must report insufficient evidence.
+Before a background write, consolidation receives exact indexed matches for that
+identity plus bounded related lexical snapshots. The model reuses canonical
+identity names when source wording changes. This is not exhaustive semantic
+matching across arbitrary synonyms. A new fact becomes active; the same identity
+and value merges evidence; a confirmed later replacement supersedes the old
+record and creates a new active record. Original source dates and explicit
+replacement statements establish precedence; newer ingestion alone does not.
+Unresolved incompatible claims become conflicted and leave ordinary retrieval.
+Conflict diagnostics remain available through the read-only `memory_conflicts`
+tool and explicit ID/history inspection.
+
+A partial legacy replacement can retain unrelated facts; compact migrates legacy
+mixed records into atomic parts. Literal prior evidence must remain available.
+Fact identities and values are immutable within a record: changing either
+requires a new record. A partial unique index permits at most one active record
+per Project/fact identity. All mutations, version writes, dirty observations and
+work completion share one fenced transaction. Stale revisions, older replacement
+evidence, unrelated fact merges and evidence loss roll back the whole proposal.
+Human-authored records are protected from automatic replacement. Successful
+write-time reconciliation marks its atomic outputs observed, avoiding redundant
+automatic compact work. A deep answer citing conflicted records must report
+insufficient evidence.
 
 Automatic forgetting is limited to a current, literal user message naming the
 exact memory ID or title: `Forget memory <ID or TITLE>.` or `忘记记忆 <ID or TITLE>`.
@@ -185,16 +199,19 @@ that work finishes or exhausts its lease.
 
 Compaction work has priority 3 within its Project, below live extraction/consolidation and backfill,
 and uses the existing per-Project consolidation lane and provider/Agent budgets.
-It keeps or revises its exact seed, or merges it into an existing canonical record
-and supersedes the exact seed in the same transaction. Retargeting requires an
-explicit seed ID/revision assessment with `supersede` and no retained duplicate;
-all valid seed facts and quotations belong in the existing target. The model
-prefers the record supported by the confirmed current decision and original source
-dates. It converges overlapping claims about the same entity, scope and conditions
-to one effective record, rather than rewriting an old hostname to the current
-hostname while leaving both records active. Different entities or conditions can
-validly share a hostname; this is semantic consolidation, not string deduplication.
-Human content, revision guards and the sixteen-quotation budget still apply.
+Legacy seeds without a structured fact are split into up to sixteen independent
+parts. Each part creates a new fact or reconciles an existing atomic version;
+merge requires identical identity and value. The seed and overlapping legacy
+records become superseded only when their evidence is preserved among the parts.
+Every part records `derived_from` IDs; an indexed one-to-many lineage table also
+retains each original revision. Superseded originals and all versions remain
+inspectable. A legacy record's `superseded_by` points to the first part, while the
+parts and lineage preserve the complete split. Atomic seeds use normal same-fact
+reconciliation. Supplied evidence dates avoid redundant source reads, and invalid
+literal quotations receive corrective feedback before the transaction. Different
+attributes may legitimately share a hostname; identity/value matching determines
+duplicates rather than counting text occurrences. Human protection, revision
+guards and the sixteen-quotation limit per part still apply.
 A stale seed is completed without a model call; revisions produced by a successful compact
 are marked observed to prevent recursive scheduling. Failures retain normal retry
 limits; permanent provider 4xx rejections, except 408 and 429, fail immediately.
@@ -218,10 +235,11 @@ request contents.
 
 ## Memory, search and lifecycle
 
-Each atomic memory carries conclusion, rationale, scope, conditions, type, tags,
+Each atomic memory carries its structured fact, conclusion, rationale, scope, conditions, type, tags,
 evidence, revision and timestamps. Preserve versions and relationships for
-conflicts and supersession. Default retrieval excludes forgotten, superseded and
-archived content. Explicit historical inspection remains possible. Forgetting
+conflicts and supersession. Default lexical/vector search, context and lists include only active,
+unexpired content. Conflicted, forgotten, superseded and archived records are
+excluded. Explicit historical inspection remains possible. Forgetting
 removes search visibility and atomically creates suppression records from every
 historical version of that memory. Merges and edits can replace current evidence,
 so suppressing only the latest version would let replay/backfill resurrect the
@@ -405,3 +423,14 @@ bounded primary-key query per page of at most 100 receipts. Full content and
 instance checks remain mandatory; total startup work still grows with retained
 history size. This reduces query round trips without claiming a measured speedup
 or changing exact vector retrieval into approximate nearest-neighbor search.
+
+### Atomic-fact schema upgrade
+
+Memory database schema 3 adds the fact identity/uniqueness index and split lineage.
+Upgrade the CLI and memory daemon together; older writers do not understand the
+new identity invariant. Existing schema 1/2 databases migrate atomically, preserving
+sources and versions. Previously settled legacy mixed records are marked dirty
+once so they can be split, including records with an explicit null fact. Restart
+under schema 3 does not reopen unchanged assessed records. Projection metadata is
+reset once to render fact blocks and lineage. Migration itself does not call a
+model; subsequent background or manual compact performs the semantic split.

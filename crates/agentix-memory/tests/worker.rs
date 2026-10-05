@@ -85,7 +85,7 @@ impl Model for CrossTurnModel {
             }
             _ => (
                 "submit_candidates",
-                json!({"candidates":[{"title":"Offline storage chosen","conclusion":"Keep data offline","rationale":"User selected option B","scope":"project","conditions":[],"valid_until":null,"tags":[],"kind":"user_decision","evidence":[{"receipt_id":"choice","message_id":"message","quote":"Choose option B."},{"receipt_id":"proposal","message_id":"message","quote":"Option B keeps data offline."}]}]}),
+                json!({"candidates":[{"fact":{"entity":"project","attribute":"storage.location","qualifiers":[],"value":"offline"},"title":"Offline storage chosen","conclusion":"Keep data offline","rationale":"User selected option B","scope":"project","conditions":[],"valid_until":null,"tags":[],"kind":"user_decision","evidence":[{"receipt_id":"choice","message_id":"message","quote":"Choose option B."},{"receipt_id":"proposal","message_id":"message","quote":"Option B keeps data offline."}]}]}),
             ),
         };
         Ok(ModelReply {
@@ -249,7 +249,7 @@ async fn real_http_agent_pipeline_extracts_consolidates_and_preserves_provenance
             json!({"status":"completed","output":[{"type":"function_call","call_id":name,"name":name,"arguments":args.to_string()}]}),
         )
     }
-    let candidate = json!({"title":"External decision","conclusion":"external decision","rationale":"User instruction","scope":"project","conditions":[],"valid_until":null,"tags":[],"kind":"user_decision","evidence":[{"receipt_id":"a","message_id":"message","quote":"external decision"}]});
+    let candidate = json!({"fact":{"entity":"project","attribute":"external.constraint","qualifiers":[],"value":"external decision"},"title":"External decision","conclusion":"external decision","rationale":"User instruction","scope":"project","conditions":[],"valid_until":null,"tags":[],"kind":"user_decision","evidence":[{"receipt_id":"a","message_id":"message","quote":"external decision"}]});
     let server=http::MockHttp::start(vec![
         response("repo_search",&json!({"query":"external decision"})),
         response("submit_candidates",&json!({"candidates":[candidate]})),
@@ -660,7 +660,7 @@ async fn worker_corrects_unanchored_candidates_and_oversized_consolidation_evide
         )
     }
 
-    let candidate = json!({"title":"External decision","conclusion":"external decision","rationale":"User instruction","scope":"project","conditions":[],"valid_until":null,"tags":[],"kind":"user_decision","evidence":[{"receipt_id":"a","message_id":"message","quote":"external decision"}]});
+    let candidate = json!({"fact":{"entity":"project","attribute":"external.constraint","qualifiers":[],"value":"external decision"},"title":"External decision","conclusion":"external decision","rationale":"User instruction","scope":"project","conditions":[],"valid_until":null,"tags":[],"kind":"user_decision","evidence":[{"receipt_id":"a","message_id":"message","quote":"external decision"}]});
     let mut unanchored = candidate.clone();
     unanchored["evidence"][0]["receipt_id"] = json!("neighbor");
     let mut oversized = candidate.clone();

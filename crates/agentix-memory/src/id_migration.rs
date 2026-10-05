@@ -65,6 +65,9 @@ pub(crate) async fn migrate(conn: &mut SqliteConnection) -> Result<()> {
                 {
                     rename(reference, &mapping);
                 }
+                for reference in &mut memory.derived_from {
+                    rename(reference, &mapping);
+                }
                 let migrated = serde_json::to_string(&memory)?;
                 if migrated != data {
                     sqlx::query(&format!("UPDATE {table} SET data=? WHERE rowid=?"))

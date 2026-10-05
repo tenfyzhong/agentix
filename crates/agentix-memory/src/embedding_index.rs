@@ -201,7 +201,7 @@ impl MemoryStore {
     ) -> Result<()> {
         let error: String = error.chars().take(512).collect();
         // A delayed provider failure must not suppress a newer memory or model.
-        sqlx::query("INSERT INTO embedding_failures(memory_id,generation,revision,attempts,available_at,error) SELECT m.id,p.generation,m.revision,1,unixepoch()+2,? FROM memories m JOIN embedding_profiles p ON p.project_id=m.project_id WHERE m.id=? AND m.project_id=? AND m.revision=? AND p.generation=? AND m.status IN ('active','conflicted') ON CONFLICT(memory_id,generation,revision) DO UPDATE SET attempts=embedding_failures.attempts+1,available_at=unixepoch()+min(300,1 << min(embedding_failures.attempts+1,8)),error=excluded.error")
+        sqlx::query("INSERT INTO embedding_failures(memory_id,generation,revision,attempts,available_at,error) SELECT m.id,p.generation,m.revision,1,unixepoch()+2,? FROM memories m JOIN embedding_profiles p ON p.project_id=m.project_id WHERE m.id=? AND m.project_id=? AND m.revision=? AND p.generation=? AND m.status='active' ON CONFLICT(memory_id,generation,revision) DO UPDATE SET attempts=embedding_failures.attempts+1,available_at=unixepoch()+min(300,1 << min(embedding_failures.attempts+1,8)),error=excluded.error")
             .bind(error).bind(&memory.id).bind(&memory.project_id).bind(memory.revision).bind(generation).execute(&self.pool).await?;
         Ok(())
     }

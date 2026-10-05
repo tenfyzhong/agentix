@@ -51,7 +51,10 @@ impl ProjectTools {
     }
 
     pub(crate) async fn related_memories(&self, query: &str) -> Result<Vec<crate::Memory>> {
-        let matches = self.store.search(&self.project, query, 8).await?;
+        let matches = self
+            .store
+            .search_scoped(&self.project, query, 8, true)
+            .await?;
         self.memory_checked.store(true, Ordering::Relaxed);
         Ok(matches)
     }
@@ -142,8 +145,13 @@ impl ToolSet for ProjectTools {
         vec![
             definition(
                 "memory_search",
-                "Search current Project memories, including unresolved conflicts",
+                "Search active, unexpired Project memories; inspect memory_conflicts separately",
                 &json!({"query":{"type":"string"}}),
+            ),
+            definition(
+                "memory_conflicts",
+                "Inspect a bounded page of unresolved Project conflicts; they are not effective facts",
+                &json!({"after":{"type":"string"}}),
             ),
             definition(
                 "memory_show",
@@ -177,8 +185,22 @@ impl ToolSet for ProjectTools {
         match name {
             "memory_search" => {
                 let args: Query = serde_json::from_value(arguments)?;
-                let matches = self.related_memories(&args.query).await?;
-                Ok(json!(matches.iter().map(|m| json!({"id":m.id,"revision":m.revision,"status":m.status,"title":m.content.title,"conclusion":text_page(&m.content.conclusion,0,2048)})).collect::<Vec<_>>()))
+                let matches = self.store.search(&self.project, &args.query, 8).await?;
+                self.memory_checked.store(true, Ordering::Relaxed);
+                Ok(json!(matches.iter().map(|m| json!({"id":m.id,"revision":m.revision,"status":m.status,"title":m.content.title,"fact":m.content.fact,"conclusion":text_page(&m.content.conclusion,0,2048)})).collect::<Vec<_>>()))
+            }
+            "memory_conflicts" => {
+                #[derive(Deserialize)]
+                #[serde(deny_unknown_fields)]
+                struct ConflictPage {
+                    #[serde(default)]
+                    after: String,
+                }
+                let args: ConflictPage = serde_json::from_value(arguments)?;
+                self.memory_checked.store(true, Ordering::Relaxed);
+                Ok(serde_json::to_value(
+                    self.store.conflicts(&self.project, &args.after, 8).await?,
+                )?)
             }
             "memory_show" => {
                 let args: Show = serde_json::from_value(arguments)?;

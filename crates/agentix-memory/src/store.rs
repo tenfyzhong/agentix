@@ -79,7 +79,7 @@ impl MemoryStore {
             .fetch_one(&pool)
             .await?;
         ensure!(
-            app == 0x4158_4d4d && (1..=2).contains(&version),
+            app == 0x4158_4d4d && (1..=3).contains(&version),
             "unsupported memory database identity or schema"
         );
         Ok(Self {
@@ -120,7 +120,7 @@ impl MemoryStore {
         let version: i64 = sqlx::query_scalar("PRAGMA user_version")
             .fetch_one(&mut *tx)
             .await?;
-        ensure!(version <= 2, "unsupported memory database schema {version}");
+        ensure!(version <= 3, "unsupported memory database schema {version}");
         sqlx::raw_sql(include_str!("schema.sql"))
             .execute(&mut *tx)
             .await?;
@@ -140,6 +140,15 @@ impl MemoryStore {
         }
         if version < 2 {
             crate::id_migration::migrate(&mut tx).await?;
+        }
+        if version < 3 {
+            sqlx::query("UPDATE memory_compactions SET dirty=1,suspended=0 WHERE memory_id IN (SELECT id FROM memories WHERE json_extract(data,'$.content.fact') IS NULL)")
+                .execute(&mut *tx).await?;
+            sqlx::query("UPDATE memory_projection SET published_revision=0,prepared_revision=0,prepared_hash=''")
+                .execute(&mut *tx).await?;
+            sqlx::query("PRAGMA user_version=3")
+                .execute(&mut *tx)
+                .await?;
         }
         tx.commit().await?;
         Ok(Self {
@@ -357,6 +366,7 @@ impl MemoryStore {
             reason: String::new(),
             supersedes: None,
             superseded_by: None,
+            derived_from: Vec::new(),
             content,
         };
         save(&mut tx, &memory).await?;
@@ -399,6 +409,7 @@ impl MemoryStore {
             reason: reason.into(),
             supersedes: Some(id.into()),
             superseded_by: None,
+            derived_from: Vec::new(),
             content,
         };
         prior.revision += 1;
@@ -407,8 +418,9 @@ impl MemoryStore {
         prior.updated_at = now;
         prior.reason = reason.into();
         prior.actor = actor;
-        save(&mut tx, &memory).await?;
+        crate::facts::validate_replacement(&mut tx, &prior, &memory.content).await?;
         save(&mut tx, &prior).await?;
+        save(&mut tx, &memory).await?;
         tx.commit().await?;
         self.notify_change(project);
         Ok(memory)
@@ -497,12 +509,22 @@ impl MemoryStore {
     }
 
     pub async fn search(&self, project: &str, query: &str, limit: i64) -> Result<Vec<Memory>> {
+        self.search_scoped(project, query, limit, false).await
+    }
+
+    pub(crate) async fn search_scoped(
+        &self,
+        project: &str,
+        query: &str,
+        limit: i64,
+        include_conflicts: bool,
+    ) -> Result<Vec<Memory>> {
         ensure!((1..=100).contains(&limit), "invalid: memory search limit");
         let Some(query) = retrieval::query(project, query)? else {
             return Ok(Vec::new());
         };
-        let rows:Vec<String>=sqlx::query_scalar("SELECT m.data FROM memory_fts JOIN memories m ON m.rowid=memory_fts.rowid WHERE memory_fts MATCH ? AND m.project_id=? AND m.status IN ('active','conflicted') AND (m.valid_until IS NULL OR m.valid_until>unixepoch()) ORDER BY bm25(memory_fts,0,5,1,4,2),m.id LIMIT ?")
-            .bind(query).bind(project).bind(limit).fetch_all(&self.pool).await?;
+        let rows:Vec<String>=sqlx::query_scalar("SELECT m.data FROM memory_fts JOIN memories m ON m.rowid=memory_fts.rowid WHERE memory_fts MATCH ? AND m.project_id=? AND (m.status='active' OR (? AND m.status='conflicted')) AND (m.valid_until IS NULL OR m.valid_until>unixepoch()) ORDER BY bm25(memory_fts,0,5,1,4,2),m.id LIMIT ?")
+            .bind(query).bind(project).bind(include_conflicts).bind(limit).fetch_all(&self.pool).await?;
         rows.into_iter()
             .map(|s| Ok(serde_json::from_str(&s)?))
             .collect()
@@ -516,7 +538,7 @@ impl MemoryStore {
         include_inactive: bool,
     ) -> Result<Vec<Memory>> {
         ensure!((1..=100).contains(&limit), "invalid: memory page size");
-        let rows:Vec<String>=sqlx::query_scalar("SELECT data FROM memories WHERE project_id=? AND id>? AND (? OR (status IN ('active','conflicted') AND (valid_until IS NULL OR valid_until>unixepoch()))) ORDER BY id LIMIT ?")
+        let rows:Vec<String>=sqlx::query_scalar("SELECT data FROM memories WHERE project_id=? AND id>? AND (? OR (status='active' AND (valid_until IS NULL OR valid_until>unixepoch()))) ORDER BY id LIMIT ?")
             .bind(project).bind(after).bind(include_inactive).bind(limit).fetch_all(&self.pool).await?;
         rows.into_iter()
             .map(|s| Ok(serde_json::from_str(&s)?))
@@ -630,6 +652,7 @@ pub(crate) async fn validate_evidence(
 }
 
 pub(crate) async fn save(conn: &mut SqliteConnection, memory: &Memory) -> Result<()> {
+    crate::facts::validate_version(conn, memory).await?;
     let data = serde_json::to_string(memory)?;
     let status = serde_json::to_value(memory.status)?
         .as_str()
@@ -637,6 +660,7 @@ pub(crate) async fn save(conn: &mut SqliteConnection, memory: &Memory) -> Result
         .to_owned();
     sqlx::query("INSERT INTO memories(id,project_id,revision,status,data) VALUES (?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,status=excluded.status,data=excluded.data")
         .bind(&memory.id).bind(&memory.project_id).bind(memory.revision).bind(status).bind(&data).execute(&mut *conn).await?;
+    crate::facts::index(conn, memory).await?;
     sqlx::query("INSERT INTO memory_versions(memory_id,revision,data) VALUES (?,?,?)")
         .bind(&memory.id)
         .bind(memory.revision)

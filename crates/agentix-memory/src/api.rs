@@ -350,7 +350,7 @@ impl MemoryStore {
         } else {
             None
         };
-        let indexed:i64=sqlx::query_scalar("SELECT count(*) FROM memory_vectors v JOIN embedding_profiles p ON p.project_id=v.project_id AND p.generation=v.generation JOIN memories m ON m.id=v.memory_id AND m.revision=v.revision WHERE (? IS NULL OR v.project_id=?) AND m.status IN ('active','conflicted') AND (m.valid_until IS NULL OR m.valid_until>unixepoch())").bind(project).bind(project).fetch_one(&self.pool).await?;
+        let indexed:i64=sqlx::query_scalar("SELECT count(*) FROM memory_vectors v JOIN embedding_profiles p ON p.project_id=v.project_id AND p.generation=v.generation JOIN memories m ON m.id=v.memory_id AND m.revision=v.revision WHERE (? IS NULL OR v.project_id=?) AND m.status='active' AND (m.valid_until IS NULL OR m.valid_until>unixepoch())").bind(project).bind(project).fetch_one(&self.pool).await?;
         // Offline readers may open a v1 snapshot before the daemon has installed
         // the additive retry-state table. Reads must not migrate that snapshot.
         let has_failures: bool = sqlx::query_scalar(
@@ -359,7 +359,7 @@ impl MemoryStore {
         .fetch_one(&self.pool)
         .await?;
         let failures: Vec<String> = if has_failures {
-            sqlx::query_scalar("SELECT json_object('memory_id',f.memory_id,'revision',f.revision,'generation',f.generation,'attempts',f.attempts,'available_at',f.available_at,'error',f.error) FROM embedding_failures f JOIN memories m ON m.id=f.memory_id AND m.revision=f.revision JOIN embedding_profiles p ON p.project_id=m.project_id AND p.generation=f.generation WHERE (? IS NULL OR m.project_id=?) AND m.status IN ('active','conflicted') AND (m.valid_until IS NULL OR m.valid_until>unixepoch()) ORDER BY f.memory_id LIMIT 20")
+            sqlx::query_scalar("SELECT json_object('memory_id',f.memory_id,'revision',f.revision,'generation',f.generation,'attempts',f.attempts,'available_at',f.available_at,'error',f.error) FROM embedding_failures f JOIN memories m ON m.id=f.memory_id AND m.revision=f.revision JOIN embedding_profiles p ON p.project_id=m.project_id AND p.generation=f.generation WHERE (? IS NULL OR m.project_id=?) AND m.status='active' AND (m.valid_until IS NULL OR m.valid_until>unixepoch()) ORDER BY f.memory_id LIMIT 20")
             .bind(project).bind(project).fetch_all(&self.pool).await?
         } else {
             Vec::new()

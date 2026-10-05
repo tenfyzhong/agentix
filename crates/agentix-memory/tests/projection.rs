@@ -3,6 +3,7 @@ use std::path::Path;
 
 fn input() -> MemoryInput {
     MemoryInput {
+        fact: None,
         title: "Regional service".into(),
         conclusion: "Use the regional endpoint".into(),
         rationale: "External residency requirement".into(),

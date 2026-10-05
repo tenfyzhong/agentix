@@ -298,7 +298,7 @@ async fn concurrent_edit_keeps_one_winner_and_historical_states_are_explicit() {
         .await
         .unwrap();
     assert_eq!(
-        store.search("p1", "备份", 10).await.unwrap()[0].status,
+        store.conflicts("p1", "", 10).await.unwrap()[0].status,
         Status::Conflicted
     );
     store

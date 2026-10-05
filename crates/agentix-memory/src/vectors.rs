@@ -8,7 +8,7 @@ use sqlx::Row;
 
 use crate::{Memory, MemoryStore};
 
-const VECTOR_PAGE_SQL: &str = "SELECT v.memory_id,v.vector FROM memory_vectors v JOIN memories m ON m.id=v.memory_id JOIN embedding_profiles p ON p.project_id=v.project_id AND p.generation=v.generation WHERE v.project_id=? AND v.generation=? AND v.memory_id>? AND v.revision=m.revision AND m.status IN ('active','conflicted') AND (m.valid_until IS NULL OR m.valid_until>unixepoch()) ORDER BY v.memory_id LIMIT 256";
+const VECTOR_PAGE_SQL: &str = "SELECT v.memory_id,v.vector FROM memory_vectors v JOIN memories m ON m.id=v.memory_id JOIN embedding_profiles p ON p.project_id=v.project_id AND p.generation=v.generation WHERE v.project_id=? AND v.generation=? AND v.memory_id>? AND v.revision=m.revision AND m.status='active' AND (m.valid_until IS NULL OR m.valid_until>unixepoch()) ORDER BY v.memory_id LIMIT 256";
 
 // The greatest heap entry is the worst retained candidate.
 struct Candidate(String, f64);
@@ -134,7 +134,7 @@ impl MemoryStore {
         limit: i64,
     ) -> Result<Vec<Memory>> {
         ensure!((1..=100).contains(&limit), "invalid: embedding page size");
-        let rows:Vec<String>=sqlx::query_scalar("SELECT m.data FROM memories m JOIN embedding_profiles p ON p.project_id=m.project_id WHERE m.project_id=? AND p.generation=? AND m.id>? AND m.status IN ('active','conflicted') AND (m.valid_until IS NULL OR m.valid_until>unixepoch()) AND NOT EXISTS(SELECT 1 FROM memory_vectors v WHERE v.memory_id=m.id AND v.generation=p.generation AND v.revision=m.revision) AND NOT EXISTS(SELECT 1 FROM embedding_failures f WHERE f.memory_id=m.id AND f.generation=p.generation AND f.revision=m.revision AND (f.attempts>=3 OR f.available_at>unixepoch())) ORDER BY m.id LIMIT ?")
+        let rows:Vec<String>=sqlx::query_scalar("SELECT m.data FROM memories m JOIN embedding_profiles p ON p.project_id=m.project_id WHERE m.project_id=? AND p.generation=? AND m.id>? AND m.status='active' AND (m.valid_until IS NULL OR m.valid_until>unixepoch()) AND NOT EXISTS(SELECT 1 FROM memory_vectors v WHERE v.memory_id=m.id AND v.generation=p.generation AND v.revision=m.revision) AND NOT EXISTS(SELECT 1 FROM embedding_failures f WHERE f.memory_id=m.id AND f.generation=p.generation AND f.revision=m.revision AND (f.attempts>=3 OR f.available_at>unixepoch())) ORDER BY m.id LIMIT ?")
             .bind(project).bind(generation).bind(after).bind(limit).fetch_all(&self.pool).await?;
         rows.into_iter()
             .map(|v| Ok(serde_json::from_str(&v)?))
@@ -150,7 +150,7 @@ impl MemoryStore {
         vector: &[f32],
     ) -> Result<bool> {
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
-        let expected:Option<i64>=sqlx::query_scalar("SELECT p.dimensions FROM embedding_profiles p JOIN memories m ON m.project_id=p.project_id WHERE p.project_id=? AND p.generation=? AND m.id=? AND m.revision=? AND m.status IN ('active','conflicted') AND (m.valid_until IS NULL OR m.valid_until>unixepoch())")
+        let expected:Option<i64>=sqlx::query_scalar("SELECT p.dimensions FROM embedding_profiles p JOIN memories m ON m.project_id=p.project_id WHERE p.project_id=? AND p.generation=? AND m.id=? AND m.revision=? AND m.status='active' AND (m.valid_until IS NULL OR m.valid_until>unixepoch())")
             .bind(project).bind(generation).bind(id).bind(revision).fetch_optional(&mut *tx).await?;
         let Some(expected) = expected else {
             return Ok(false);
@@ -202,7 +202,7 @@ impl MemoryStore {
         }
         let ids: Vec<_> = scores.keys().collect();
         // Recheck visibility after recall; an intervening forget must not leak an old result.
-        let rows:Vec<String>=sqlx::query_scalar("SELECT data FROM memories WHERE project_id=? AND status IN ('active','conflicted') AND (valid_until IS NULL OR valid_until>unixepoch()) AND id IN (SELECT value FROM json_each(?))")
+        let rows:Vec<String>=sqlx::query_scalar("SELECT data FROM memories WHERE project_id=? AND status='active' AND (valid_until IS NULL OR valid_until>unixepoch()) AND id IN (SELECT value FROM json_each(?))")
             .bind(project).bind(serde_json::to_string(&ids)?).fetch_all(&self.pool).await?;
         let mut results: Vec<Memory> = rows
             .into_iter()

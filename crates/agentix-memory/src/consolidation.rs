@@ -161,6 +161,12 @@ impl MemoryStore {
                 preserve_evidence(&mut content, candidate)?;
             }
             content.validate(Actor::Agent)?;
+            if candidate.fact.is_some() && seed.is_none() {
+                ensure!(
+                    crate::facts::same_value(&content, candidate)?,
+                    "consolidation cannot change the extracted fact identity or value"
+                );
+            }
             ensure!(
                 candidate.evidence.iter().all(|original| {
                     content.evidence.iter().any(|retained| {
@@ -207,6 +213,20 @@ impl MemoryStore {
                 prior.actor != Actor::Human || decision.action == DecisionAction::Conflict,
                 "conflict: preserve human-authored memory; report a conflict instead"
             );
+            if prior.content.fact.is_some() || content.fact.is_some() {
+                ensure!(
+                    crate::facts::same_identity(&prior.content, &content)?,
+                    "consolidation cannot combine different facts"
+                );
+                if decision.action == DecisionAction::Merge {
+                    ensure!(
+                        crate::facts::same_value(&prior.content, &content)?,
+                        "changed fact values require supersede, not merge"
+                    );
+                } else if decision.action == DecisionAction::Supersede {
+                    crate::facts::validate_replacement(&mut tx, &prior, &content).await?;
+                }
+            }
             prior.revision += 1;
             prior.updated_at = now;
             prior.reason.clone_from(&decision.reason);
@@ -232,12 +252,17 @@ impl MemoryStore {
                         new.status = Status::Conflicted;
                         prior.status = Status::Conflicted;
                     }
+                    if decision.action == DecisionAction::Supersede {
+                        store::save(&mut tx, &prior).await?;
+                    }
                     store::save(&mut tx, &new).await?;
                     changed.push(new);
                 }
                 DecisionAction::Create | DecisionAction::Discard => unreachable!(),
             }
-            store::save(&mut tx, &prior).await?;
+            if decision.action != DecisionAction::Supersede {
+                store::save(&mut tx, &prior).await?;
+            }
             let anchor = if matches!(
                 decision.action,
                 DecisionAction::Supersede | DecisionAction::Conflict
@@ -264,11 +289,17 @@ impl MemoryStore {
             }
             changed.push(prior);
         }
+        crate::facts::check_settled(&mut tx, &changed).await?;
         queue::finish(&mut tx, lease, &serde_json::to_value(decisions)?).await?;
         if let Some(seed) = &seed {
             let current = store::load(&mut tx, &lease.project_id, &seed.id).await?;
             crate::compaction::observed(&mut tx, &current, now).await?;
             for memory in &changed {
+                crate::compaction::observed(&mut tx, memory, now).await?;
+            }
+        }
+        if seed.is_none() {
+            for memory in changed.iter().filter(|m| m.content.fact.is_some()) {
                 crate::compaction::observed(&mut tx, memory, now).await?;
             }
         }
@@ -290,7 +321,7 @@ fn covers(content: &MemoryInput, original: &Evidence) -> bool {
     })
 }
 
-fn preserve_evidence(content: &mut MemoryInput, prior: &MemoryInput) -> Result<()> {
+pub(crate) fn preserve_evidence(content: &mut MemoryInput, prior: &MemoryInput) -> Result<()> {
     for evidence in &prior.evidence {
         if !covers(content, evidence) {
             content.evidence.push(evidence.clone());
@@ -344,6 +375,9 @@ async fn apply_related(
     match decision.action {
         RelatedAction::Supersede => {
             let anchor = anchor.context("replacement requires a current memory")?;
+            if prior.content.fact.is_some() {
+                crate::facts::validate_replacement(conn, &prior, &anchor.content).await?;
+            }
             ensure!(
                 prior
                     .content
@@ -368,6 +402,12 @@ async fn apply_related(
         }
         RelatedAction::Conflict => {
             let mut anchor = anchor.context("conflict requires both claims")?.clone();
+            if prior.content.fact.is_some() {
+                ensure!(
+                    crate::facts::same_identity(&prior.content, &anchor.content)?,
+                    "conflict must refer to the same fact"
+                );
+            }
             if anchor.status != Status::Conflicted {
                 anchor.revision += 1;
                 anchor.status = Status::Conflicted;
@@ -443,7 +483,12 @@ fn explicit_forget_request(text: &str, memory: &Memory) -> bool {
         })
 }
 
-fn new_memory(project: &str, content: MemoryInput, reason: &str, now: i64) -> Result<Memory> {
+pub(crate) fn new_memory(
+    project: &str,
+    content: MemoryInput,
+    reason: &str,
+    now: i64,
+) -> Result<Memory> {
     Ok(Memory {
         id: crate::ids::new_id(now)?,
         project_id: project.into(),
@@ -455,6 +500,7 @@ fn new_memory(project: &str, content: MemoryInput, reason: &str, now: i64) -> Re
         reason: reason.into(),
         supersedes: None,
         superseded_by: None,
+        derived_from: Vec::new(),
         content,
     })
 }

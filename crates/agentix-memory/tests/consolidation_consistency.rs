@@ -217,7 +217,7 @@ async fn replacement_cannot_drop_prior_evidence_without_a_retained_record() {
 }
 
 #[tokio::test]
-async fn unresolved_conflict_keeps_both_claims_searchable() {
+async fn unresolved_conflict_keeps_both_claims_in_diagnostics() {
     let dir = tempfile::tempdir().unwrap();
     let store = MemoryStore::open(&dir.path().join("memory.db"))
         .await
@@ -231,7 +231,7 @@ async fn unresolved_conflict_keeps_both_claims_searchable() {
         .unwrap();
     assert!(
         store
-            .list("p", "", 20, false)
+            .conflicts("p", "", 20)
             .await
             .unwrap()
             .iter()

@@ -242,15 +242,16 @@ impl Model for CurrentStateModel {
         let (name, arguments) = if step == 0 {
             ("memory_search", json!({"query":"Server decision"}))
         } else {
-            let mut content = self.seed.content.clone();
-            content.conclusion =
-                "Keep deployment and autostart; use new.example for camouflage.".into();
-            content
-                .evidence
-                .extend(self.current.content.evidence.clone());
+            let parts: Vec<_> = [("deployment.path","deployment"),("autostart","enabled"),("reality.domain","new.example")].into_iter().map(|(attribute,value)| {
+                let mut content = self.seed.content.clone();
+                content.conclusion = format!("{attribute}: {value}");
+                content.fact = Some(Fact {entity:"server/sing-box".into(),attribute:attribute.into(),qualifiers:vec![],value:value.into()});
+                content.evidence.extend(self.current.content.evidence.clone());
+                json!({"content":content,"action":"create","target":null,"expected_revision":null,"reason":"Independent supported fact"})
+            }).collect();
             (
-                "submit_decisions",
-                json!({"decisions":[{"candidate":0,"action":"merge","target":self.seed.id,"expected_revision":self.seed.revision,"content":content,"reason":"Replace mutable value and keep stable deployment facts","related":[{"id":self.current.id,"revision":self.current.revision,"action":"keep","reason":"Confirmed replacement evidence","retained":null,"forget_request":null}]}]}),
+                "submit_fact_compaction",
+                json!({"parts":parts,"reason":"Split mixed configuration and remove obsolete current-state clauses","related":[{"id":self.current.id,"revision":self.current.revision,"action":"supersede","reason":"Current domain represented independently with all evidence","retained":null,"forget_request":null}]}),
             )
         };
         Ok(ModelReply {
@@ -308,14 +309,31 @@ async fn compact_worker_distinguishes_current_claims_from_preserved_historical_e
         result.is_ok(),
         "{result:?}; setup revisions {seed_revision}/{current_revision}"
     );
-    let updated = store.show("p", &seed.id, None).await.unwrap();
-    assert!(updated.content.conclusion.contains("new.example"));
-    assert!(!updated.content.conclusion.contains("old.example"));
+    assert_eq!(
+        store.show("p", &seed.id, None).await.unwrap().status,
+        Status::Superseded
+    );
+    let active = store.list("p", "", 100, false).await.unwrap();
+    assert_eq!(active.len(), 3);
     assert!(
-        updated
-            .content
-            .conclusion
-            .contains("deployment and autostart")
+        active
+            .iter()
+            .any(|m| m.content.conclusion.contains("new.example"))
+    );
+    assert!(
+        active
+            .iter()
+            .all(|m| !m.content.conclusion.contains("old.example"))
+    );
+    assert!(
+        active
+            .iter()
+            .any(|m| m.content.fact.as_ref().unwrap().attribute == "deployment.path")
+    );
+    assert!(
+        active
+            .iter()
+            .any(|m| m.content.fact.as_ref().unwrap().attribute == "autostart")
     );
     assert_eq!(
         store
@@ -448,14 +466,17 @@ async fn compact_worker_can_use_preloaded_current_memories_without_repeating_sea
     );
     worker.run_once("compact").await.unwrap();
     assert_eq!(model.calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+    assert_eq!(
+        store.show("p", &seed.id, None).await.unwrap().status,
+        Status::Superseded
+    );
     assert!(
         store
-            .show("p", &seed.id, None)
+            .list("p", "", 100, false)
             .await
             .unwrap()
-            .content
-            .conclusion
-            .contains("new.example")
+            .iter()
+            .any(|m| m.content.conclusion.contains("new.example"))
     );
 }
 
@@ -777,16 +798,21 @@ impl Model for CanonicalModel {
         assert!(
             request
                 .instructions
-                .contains("one effective record for the same current fact")
+                .contains("independently replaceable atomic facts")
         );
-        let mut content = self.canonical.content.clone();
-        content.conclusion = "Use www.sakura.ad.jp for REALITY; deployment /root/deploy/sing-box with autostart and client SNI updated.".into();
+        let parts: Vec<_> = [("deployment.path","/root/deploy/sing-box"),("autostart","enabled"),("reality.domain","www.sakura.ad.jp"),("client.sni","www.sakura.ad.jp")].into_iter().map(|(attribute,value)| {
+            let mut content = self.canonical.content.clone();
+            content.conclusion = format!("{attribute}: {value}");
+            content.fact = Some(Fact {entity:"server/sing-box".into(),attribute:attribute.into(),qualifiers:vec![],value:value.into()});
+            content.evidence.extend(self.older.content.evidence.clone());
+            json!({"content":content,"action":"create","target":null,"expected_revision":null,"reason":"Independent supported fact"})
+        }).collect();
         Ok(ModelReply {
             continuation: json!([]),
             calls: vec![ToolCall {
-                id: "canonical".into(),
-                name: "submit_decisions".into(),
-                arguments: json!({"decisions":[{"candidate":0,"action":"merge","target":self.canonical.id,"expected_revision":self.canonical.revision,"content":content,"reason":"Consolidate the same current configuration into the confirmed replacement record","related":[{"id":self.older.id,"revision":self.older.revision,"action":"supersede","reason":"All valid deployment facts and evidence are consolidated into the canonical record","retained":null,"forget_request":null}]}]}),
+                id: "split".into(),
+                name: "submit_fact_compaction".into(),
+                arguments: json!({"parts":parts,"reason":"Split duplicated legacy configurations into atomic facts","related":[{"id":self.canonical.id,"revision":self.canonical.revision,"action":"supersede","reason":"All current facts preserved independently","retained":null,"forget_request":null}]}),
             }],
             text: String::new(),
             usage: TokenUsage::default(),
@@ -876,7 +902,7 @@ async fn compact_merges_duplicate_current_fact_into_existing_canonical_and_retir
 }
 
 #[tokio::test]
-async fn compact_worker_can_merge_old_seed_into_preloaded_canonical_record() {
+async fn compact_worker_splits_old_seed_and_related_record_into_independent_facts() {
     let temp = tempfile::tempdir().unwrap();
     let store = MemoryStore::open(&temp.path().join("memory.db"))
         .await
@@ -901,8 +927,19 @@ async fn compact_worker_can_merge_old_seed_into_preloaded_canonical_record() {
         Status::Superseded
     );
     let active = store.list("p", "", 100, false).await.unwrap();
-    assert_eq!(active.len(), 1);
-    assert_eq!(active[0].id, canonical.id);
+    assert_eq!(active.len(), 4);
+    assert_eq!(
+        store.show("p", &canonical.id, None).await.unwrap().status,
+        Status::Superseded
+    );
+    assert!(active.iter().all(|m| m.content.fact.is_some()));
+    assert_eq!(
+        active
+            .iter()
+            .filter(|m| m.content.fact.as_ref().unwrap().attribute == "reality.domain")
+            .count(),
+        1
+    );
 }
 
 #[tokio::test]

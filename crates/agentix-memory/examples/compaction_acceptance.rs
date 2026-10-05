@@ -105,24 +105,13 @@ async fn main() -> Result<()> {
         .schedule_compaction("acceptance", "", 100, true, 0, now())
         .await?;
     let started = Instant::now();
-    for _ in 0..page.scheduled {
-        if let Err(error) = worker.run_once("acceptance").await {
-            for id in &page.work_ids {
-                let details = store.work_details(*id).await?;
-                eprintln!(
-                    "work {}: {}, error {}",
-                    id, details["state"], details["error"]
-                );
-            }
-            return Err(error);
-        }
-    }
+    drain_compaction(&store, &worker, &page.work_ids).await?;
     let current = store.list("acceptance", "", 100, false).await?;
     let stale = current
         .iter()
         .filter(|m| m.content.conclusion.contains(&args[2]))
         .count();
-    let canonical = check_canonical(&store, &copied, &current, &args[2], &args[3]).await?;
+    let canonical = check_atomic(&store, &copied, &current, &args[3]).await?;
     let mut history_retained = true;
     for memory in &copied {
         history_retained &=
@@ -133,14 +122,15 @@ async fn main() -> Result<()> {
     println!(
         "{}",
         serde_json::to_string_pretty(
-            &json!({"copied_memories":copied.len(),"scheduled":page.scheduled,"elapsed_ms":started.elapsed().as_millis(),"active_memories":current.len(),"stale_conclusions":stale,"current_value_records":canonical.current_value_records,"duplicates_retired":canonical.duplicates_retired,"canonical_existing":canonical.canonical_existing,"evidence_retained":canonical.evidence_retained,"history_retained":history_retained,"work":store.work_counts().await?,"answer":answer,"current_summaries":current.iter().map(|m| json!({"id":m.id,"revision":m.revision,"status":m.status,"conclusion":m.content.conclusion})).collect::<Vec<_>>()})
+            &json!({"copied_memories":copied.len(),"scheduled":page.scheduled,"elapsed_ms":started.elapsed().as_millis(),"active_memories":current.len(),"stale_conclusions":stale,"current_domain_records":canonical.current_domain_records,"legacy_retired":canonical.legacy_retired,"atomic_memories":canonical.atomic_memories,"one_active_per_fact":canonical.one_active_per_fact,"evidence_retained":canonical.evidence_retained,"history_retained":history_retained,"work":store.work_counts().await?,"answer":answer,"current_summaries":current.iter().map(|m| json!({"id":m.id,"revision":m.revision,"status":m.status,"fact":m.content.fact,"conclusion":m.content.conclusion})).collect::<Vec<_>>()})
         )?
     );
     ensure!(
         stale == 0
-            && canonical.current_value_records == 1
-            && canonical.duplicates_retired
-            && canonical.canonical_existing
+            && canonical.current_domain_records == 1
+            && canonical.legacy_retired
+            && canonical.atomic_memories == current.len()
+            && canonical.one_active_per_fact
             && canonical.evidence_retained
             && history_retained
             && !answer.insufficient_evidence
@@ -150,40 +140,49 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-struct CanonicalCheck {
-    current_value_records: usize,
-    duplicates_retired: bool,
-    canonical_existing: bool,
+struct AtomicCheck {
+    current_domain_records: usize,
+    legacy_retired: bool,
+    atomic_memories: usize,
+    one_active_per_fact: bool,
     evidence_retained: bool,
 }
 
-async fn check_canonical(
+async fn check_atomic(
     store: &MemoryStore,
     copied: &[Memory],
     current: &[Memory],
-    retired_value: &str,
     current_value: &str,
-) -> Result<CanonicalCheck> {
-    let current_value_records: Vec<_> = current
+) -> Result<AtomicCheck> {
+    let current_domain_records = current
         .iter()
-        .filter(|m| m.content.conclusion.contains(current_value))
-        .collect();
-    let mut duplicates_retired = true;
+        .filter(|m| {
+            m.content.fact.as_ref().is_some_and(|fact| {
+                fact.attribute.contains("domain") && fact.value == current_value
+            })
+        })
+        .count();
+    let atomic_memories = current.iter().filter(|m| m.content.fact.is_some()).count();
+    let mut one_active_per_fact = true;
+    for memory in current {
+        one_active_per_fact &= memory.content.fact.is_some()
+            && store
+                .fact_versions("acceptance", &memory.content)
+                .await?
+                .len()
+                == 1;
+    }
+    let mut legacy_retired = true;
     let mut evidence_retained = true;
-    let canonical = current_value_records.first();
     for memory in copied {
-        if memory.content.conclusion.contains(retired_value)
-            || memory.content.conclusion.contains(current_value)
-        {
-            let updated = store.show("acceptance", &memory.id, None).await?;
-            duplicates_retired &= canonical.is_some_and(|canonical| {
-                updated.id == canonical.id
-                    || (updated.status == agentix_memory::Status::Superseded
-                        && updated.superseded_by.as_deref() == Some(canonical.id.as_str()))
-            });
-            evidence_retained &= canonical.is_some_and(|canonical| {
-                memory.content.evidence.iter().all(|quote| {
-                    canonical.content.evidence.iter().any(|retained| {
+        let updated = store.show("acceptance", &memory.id, None).await?;
+        if memory.content.fact.is_none() {
+            let derivatives = store.fact_derivatives("acceptance", &memory.id).await?;
+            legacy_retired &=
+                updated.status == agentix_memory::Status::Superseded && !derivatives.is_empty();
+            evidence_retained &= memory.content.evidence.iter().all(|quote| {
+                derivatives.iter().any(|part| {
+                    part.content.evidence.iter().any(|retained| {
                         retained.receipt_id == quote.receipt_id
                             && retained.message_id == quote.message_id
                             && retained.quote.contains(&quote.quote)
@@ -192,12 +191,49 @@ async fn check_canonical(
             });
         }
     }
-    let canonical_existing =
-        canonical.is_some_and(|canonical| copied.iter().any(|memory| memory.id == canonical.id));
-    Ok(CanonicalCheck {
-        current_value_records: current_value_records.len(),
-        duplicates_retired,
-        canonical_existing,
+    Ok(AtomicCheck {
+        current_domain_records,
+        legacy_retired,
+        atomic_memories,
+        one_active_per_fact,
         evidence_retained,
     })
+}
+
+async fn drain_compaction(
+    store: &MemoryStore,
+    worker: &MemoryWorker,
+    work_ids: &[i64],
+) -> Result<()> {
+    loop {
+        let counts = store.work_counts().await?;
+        ensure!(
+            counts.failed == 0,
+            "acceptance work exhausted the configured retry budget"
+        );
+        if counts.pending == 0 && counts.running == 0 {
+            break;
+        }
+        match worker.run_once("acceptance").await {
+            Ok(true) => {}
+            Ok(false) => tokio::time::sleep(std::time::Duration::from_millis(250)).await,
+            Err(error) => {
+                eprintln!(
+                    "attempt error: {error}; inspect durable work and honor configured retries"
+                );
+                for id in work_ids {
+                    let details = store.work_details(*id).await?;
+                    eprintln!(
+                        "work {}: {}, attempts {}, error {}",
+                        id, details["state"], details["attempts"], details["error"]
+                    );
+                    ensure!(
+                        details["state"] != "failed",
+                        "acceptance work failed: {error}"
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
 }
