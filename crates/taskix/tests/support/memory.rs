@@ -1060,5 +1060,23 @@ fn service_file_logging_prunes_old_rotations_without_removing_other_files() {
         std::fs::read_to_string(logs.join("other.log")).unwrap(),
         "preserve"
     );
-    assert!(!logs.join("taskix.log.2000-01-01").exists());
+    // The appender orders by creation time, which may tie on some filesystems.
+    let old_logs = ["2000-01-01", "2000-01-02", "2000-01-03"]
+        .into_iter()
+        .filter(|day| logs.join(format!("taskix.log.{day}")).exists())
+        .count();
+    assert_eq!(old_logs, 1);
+    let current = std::fs::read_dir(&logs)
+        .unwrap()
+        .map(Result::unwrap)
+        .find(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            name.starts_with("taskix.log.") && !name.starts_with("taskix.log.2000-")
+        })
+        .expect("current log must be retained");
+    assert!(
+        std::fs::read_to_string(current.path())
+            .unwrap()
+            .contains("task database must be initialized")
+    );
 }
