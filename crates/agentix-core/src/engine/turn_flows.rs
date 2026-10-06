@@ -718,13 +718,10 @@ impl Engine {
                     .get(session_id)
                     .is_some_and(|active_turn| active_turn == turn_id)
             };
-        let owner_id = self
-            .interactions
-            .owners
-            .lock()
-            .await
-            .get(conversation)
-            .cloned();
+        let owner_id = {
+            let owners = self.interactions.owners.lock().await;
+            owners.get(conversation).cloned()
+        };
         if let Some(stop_action) = self
             .replace_stop_action(&key, conversation, owner_id.as_deref(), can_stop)
             .await
@@ -739,7 +736,14 @@ impl Engine {
                 .push(self.attach_action(conversation, owner_id, session_id).await);
         }
         let Some(message) = self
-            .deliver_turn_view(conversation, &key, existing.zip(revision), &view)
+            .deliver_turn_view(
+                conversation,
+                &key,
+                existing.zip(revision),
+                &view,
+                &snapshot,
+                delivery,
+            )
             .await?
         else {
             return Ok(());
@@ -766,6 +770,29 @@ impl Engine {
             self.archive_turn(session_id, turn_id).await?;
         }
         Ok(())
+    }
+
+    async fn finalize_previous_turn_card(
+        &self,
+        conversation: &ConversationRef,
+        key: &(SessionId, String),
+        revision: &super::card_writes::Revision,
+        view: &OutboundView,
+    ) {
+        // Finish the streaming card, but a stale or unavailable old card
+        // must not prevent the final response from reaching the chat bottom.
+        match tokio::time::timeout(
+            Duration::from_millis(250),
+            self.update_card_revision(conversation, revision, view),
+        )
+        .await
+        {
+            Ok(Ok(_)) => {}
+            Ok(Err(error)) => tracing::warn!(%error, session = %key.0,
+                turn = %key.1, "failed to finalize the previous turn card"),
+            Err(_) => tracing::warn!(session = %key.0, turn = %key.1,
+                "previous turn card finalization exceeded its delivery budget"),
+        }
     }
 
     pub(super) async fn restore_cold_turn(
@@ -853,12 +880,22 @@ impl Engine {
         key: &(SessionId, String),
         existing: Option<(MessageRef, super::card_writes::Revision)>,
         view: &OutboundView,
+        snapshot: &TurnBuffer,
+        delivery: DeliveryClass,
     ) -> Result<Option<MessageRef>, EngineError> {
+        let fresh_final = snapshot.status == TurnStatus::Completed
+            && delivery == DeliveryClass::Live
+            && !snapshot.final_card_delivered;
         if let Some((message, revision)) = existing {
-            return Ok(self
-                .update_card_revision(conversation, &revision, view)
-                .await?
-                .then_some(message));
+            if fresh_final {
+                self.finalize_previous_turn_card(conversation, key, &revision, view)
+                    .await;
+            } else {
+                return Ok(self
+                    .update_card_revision(conversation, &revision, view)
+                    .await?
+                    .then_some(message));
+            }
         }
         let message = self.send_view(conversation, view).await?;
         self.turns
@@ -866,6 +903,11 @@ impl Engine {
             .lock()
             .await
             .insert(key.clone(), message.clone());
+        if fresh_final && let Some(buffer) = self.turns.buffers.lock().await.get_mut(key) {
+            // Archive the receipt with the buffer so cold recovery and duplicate
+            // completion events update this card instead of sending another one.
+            buffer.final_card_delivered = true;
+        }
         Ok(Some(message))
     }
 

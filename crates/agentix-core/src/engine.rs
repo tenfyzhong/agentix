@@ -105,6 +105,7 @@ struct TurnOutputItem {
 #[derive(Debug, Clone, Default)]
 struct TurnBuffer {
     answer_complete: bool,
+    final_card_delivered: bool,
     user_text: String,
     agent_text: String,
     output_items: Vec<TurnOutputItem>,

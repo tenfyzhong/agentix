@@ -33,6 +33,8 @@ pub(super) struct ColdTurn {
 struct StoredTurn {
     #[serde(default)]
     answer_complete: bool,
+    #[serde(default)]
+    final_card_delivered: bool,
     user_text: String,
     agent_text: String,
     #[serde(default)]
@@ -60,6 +62,7 @@ impl ColdTurns {
     ) -> Result<(), StorageError> {
         let stored = StoredTurn {
             answer_complete: value.buffer.answer_complete,
+            final_card_delivered: value.buffer.final_card_delivered,
             user_text: value.buffer.user_text,
             agent_text: value.buffer.agent_text,
             output_items: value.buffer.output_items,
@@ -90,6 +93,7 @@ impl ColdTurns {
                 value.map(|stored| ColdTurn {
                     buffer: TurnBuffer {
                         answer_complete: stored.answer_complete,
+                        final_card_delivered: stored.final_card_delivered,
                         user_text: stored.user_text,
                         agent_text: stored.agent_text,
                         output_items: stored.output_items,
@@ -124,6 +128,7 @@ mod tests {
         ColdTurn {
             buffer: TurnBuffer {
                 answer_complete: false,
+                final_card_delivered: false,
                 user_text: "Question".into(),
                 agent_text: text.into(),
                 output_items: Vec::new(),

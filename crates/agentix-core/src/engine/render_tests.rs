@@ -64,6 +64,10 @@ struct UnusedChannel;
 struct CompletedTurnChannel {
     interval: Duration,
     sends: std::sync::atomic::AtomicUsize,
+    reject_send: std::sync::atomic::AtomicBool,
+    reject_update: std::sync::atomic::AtomicBool,
+    stall_update: std::sync::atomic::AtomicBool,
+    sent_views: tokio::sync::Mutex<Vec<OutboundView>>,
     updates: tokio::sync::Mutex<Vec<(MessageRef, OutboundView)>>,
 }
 
@@ -78,8 +82,12 @@ impl ChannelAdapter for CompletedTurnChannel {
     async fn send(
         &self,
         conversation: &ConversationRef,
-        _: &OutboundView,
+        view: &OutboundView,
     ) -> Result<MessageRef, ChannelError> {
+        if self.reject_send.load(std::sync::atomic::Ordering::Relaxed) {
+            return Err(ChannelError::Rejected("injected send rejection".into()));
+        }
+        self.sent_views.lock().await.push(view.clone());
         let id = self
             .sends
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -91,12 +99,154 @@ impl ChannelAdapter for CompletedTurnChannel {
         message: &MessageRef,
         view: &OutboundView,
     ) -> Result<(), ChannelError> {
+        if self
+            .reject_update
+            .swap(false, std::sync::atomic::Ordering::Relaxed)
+        {
+            return Err(ChannelError::Rejected("injected update rejection".into()));
+        }
+        if self
+            .stall_update
+            .swap(false, std::sync::atomic::Ordering::Relaxed)
+        {
+            std::future::pending::<()>().await;
+        }
         self.updates
             .lock()
             .await
             .push((message.clone(), view.clone()));
         Ok(())
     }
+}
+
+#[tokio::test]
+async fn final_response_uses_a_fresh_card_and_repeated_completion_reuses_it() {
+    assert_fresh_final_card(Arc::new(CompletedTurnChannel::default()), false).await;
+}
+
+#[tokio::test]
+async fn final_response_send_failure_preserves_recoverable_card_and_retries() {
+    assert_fresh_final_card(Arc::new(CompletedTurnChannel::default()), true).await;
+}
+
+#[tokio::test]
+async fn final_response_is_sent_when_previous_card_update_is_rejected() {
+    let channel = Arc::new(CompletedTurnChannel {
+        reject_update: true.into(),
+        ..Default::default()
+    });
+    assert_fresh_final_card(channel, false).await;
+}
+
+#[tokio::test]
+async fn final_response_is_sent_when_previous_card_update_stalls() {
+    let channel = Arc::new(CompletedTurnChannel {
+        stall_update: true.into(),
+        ..Default::default()
+    });
+    tokio::time::timeout(
+        Duration::from_secs(1),
+        assert_fresh_final_card(channel, false),
+    )
+    .await
+    .expect("the old card must not block final response delivery");
+}
+
+async fn assert_fresh_final_card(channel: Arc<CompletedTurnChannel>, reject_first: bool) {
+    use std::sync::atomic::Ordering::Relaxed;
+    let engine = Engine::new(
+        Arc::new(UnusedAgent),
+        SqliteState::in_memory().await.unwrap(),
+        vec![channel.clone()],
+    );
+    let session = SessionId::new("session");
+    let conversation = ConversationRef::new(ChannelKind::Telegram, "chat");
+    let key = (session.clone(), "turn".to_owned());
+    engine
+        .record_turn_started(session.clone(), key.1.clone())
+        .await
+        .unwrap();
+    {
+        let mut buffers = engine.turns.buffers.lock().await;
+        let buffer = buffers.get_mut(&key).unwrap();
+        buffer.user_text = "Original question".into();
+        buffer.agent_text = "Final answer".into();
+    }
+    engine
+        .render_turn(&conversation, &session, &key.1, DeliveryClass::Live, true)
+        .await
+        .unwrap();
+    assert_eq!(channel.sends.load(Relaxed), 1);
+    // Another chat card appears after the streaming response.
+    engine
+        .send_view(
+            &conversation,
+            &OutboundView::text("Notification", "New activity"),
+        )
+        .await
+        .unwrap();
+    channel.reject_send.store(reject_first, Relaxed);
+    let result = engine
+        .handle_turn_completed(
+            &conversation,
+            &session,
+            key.1.clone(),
+            crate::TurnStatus::Completed,
+            None,
+            DeliveryClass::Live,
+        )
+        .await;
+    if reject_first {
+        assert!(result.is_err(), "completion must attempt a new send");
+        let previous = engine.turns.views.lock().await.get(&key).cloned().unwrap();
+        assert_eq!(previous.message_id, "0");
+        assert!(engine.turns.active_turn(&session).await.is_none());
+        channel.reject_send.store(false, Relaxed);
+        engine
+            .handle_turn_completed(
+                &conversation,
+                &session,
+                key.1.clone(),
+                crate::TurnStatus::Completed,
+                None,
+                DeliveryClass::Live,
+            )
+            .await
+            .unwrap();
+    } else {
+        result.unwrap();
+    }
+    assert_eq!(
+        channel.sends.load(Relaxed),
+        3,
+        "completion must appear after the notification"
+    );
+    let views = channel.sent_views.lock().await;
+    assert!(views.last().unwrap().body.contains("Final answer"));
+    assert!(views.last().unwrap().body.contains("Original question"));
+    assert!(views.last().unwrap().actions.is_empty());
+    drop(views);
+    assert!(!engine.turns.buffers.lock().await.contains_key(&key));
+    engine
+        .handle_turn_completed(
+            &conversation,
+            &session,
+            key.1.clone(),
+            crate::TurnStatus::Completed,
+            None,
+            DeliveryClass::Live,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        channel.sends.load(Relaxed),
+        3,
+        "replayed completion must not duplicate the final card"
+    );
+    assert_eq!(
+        channel.updates.lock().await.last().unwrap().0.message_id,
+        "2"
+    );
 }
 
 #[tokio::test]

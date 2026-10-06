@@ -5065,6 +5065,7 @@ async fn stream_updates_are_throttled_but_completion_flushes_latest_text() {
         .await
         .unwrap();
     let before = channel.sent().len();
+    let cards_before = channel.messages.lock().unwrap().len();
 
     for delta in ["first", " second"] {
         engine
@@ -5089,7 +5090,8 @@ async fn stream_updates_are_throttled_but_completion_flushes_latest_text() {
         .await
         .unwrap();
     let sent = channel.sent();
-    assert_eq!(sent.len(), before + 2);
+    assert_eq!(sent.len(), before + 3);
+    assert_eq!(channel.messages.lock().unwrap().len(), cards_before + 2);
     assert!(sent.last().unwrap().1.body.contains("first second"));
 }
 
@@ -9736,10 +9738,10 @@ async fn runtime_pending_ack_preserves_completed_output_and_card() {
     );
     assert_eq!(
         channel.messages.lock().unwrap().len(),
-        count,
-        "retain the pending input card"
+        count + 1,
+        "send one final card and preserve it across the late acknowledgement"
     );
-    let views = channel.updated();
+    let views = channel.sent();
     let view = &views.last().unwrap().1;
     assert!(view.body.contains("early streamed answer"));
     assert!(view.actions.is_empty());
@@ -10443,8 +10445,8 @@ async fn runtime_pending_card_reconciles_completed_output_after_ack() {
     );
     release.cancel();
     apply_next_pending_input(&engine).await;
-    assert_eq!(channel.messages.lock().unwrap().len(), count + 1);
-    let updated = channel.updated();
+    assert_eq!(channel.messages.lock().unwrap().len(), count + 2);
+    let updated = channel.sent();
     let view = &updated.last().unwrap().1;
     assert!(view.body.contains("completed before card"));
     assert!(view.actions.is_empty());

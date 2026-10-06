@@ -1190,6 +1190,7 @@ impl Engine {
             (session.clone(), turn_id.clone()),
             TurnBuffer {
                 answer_complete: false,
+                final_card_delivered: false,
                 user_text: prompt.to_owned(),
                 agent_text: String::new(),
                 output_items: Vec::new(),

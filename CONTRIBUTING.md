@@ -379,7 +379,7 @@ Before tagging a release:
 2. Run `agentix doctor` as the intended runtime user.
 3. Verify the selected channel's owner allowlist and group mention behavior.
 4. Exercise concurrent sessions and confirm their cards update independently.
-5. Restart Agentix during an active turn and verify that the original message recovers its Stop action and completes in place.
+5. Restart Agentix during an active turn and verify that the original message recovers its Stop action and completion sends a fresh final card.
 6. Restart the Codex daemon and verify reconnect and subscription recovery.
 7. Attach a fresh Codex TUI before its first prompt, send that prompt from IM, and verify that the session materializes and resumes.
 
