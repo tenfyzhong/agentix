@@ -267,3 +267,83 @@ fn source_from_row(r: &sqlx::sqlite::SqliteRow) -> Result<MemorySource> {
         messages: serde_json::from_value(snapshot["messages"].clone())?,
     })
 }
+
+/// Durable source revocation; retained even after reopening or deleting a Job.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryJobCancellation {
+    pub sequence: i64,
+    pub project_id: String,
+    pub job_id: String,
+    pub revision: i64,
+    pub cancelled_at: i64,
+}
+
+impl Store {
+    pub async fn memory_cancellation_head(&self) -> Result<i64> {
+        Ok(
+            sqlx::query_scalar("SELECT coalesce(max(sequence),0) FROM memory_job_cancellations")
+                .fetch_one(&self.pool)
+                .await?,
+        )
+    }
+
+    pub async fn memory_job_cancellations(
+        &self,
+        after: i64,
+        limit: i64,
+    ) -> Result<Vec<MemoryJobCancellation>> {
+        ensure!((1..=100).contains(&limit), "invalid cancellation page size");
+        let rows = sqlx::query("SELECT sequence,project_id,job_id,revision,cancelled_at FROM memory_job_cancellations WHERE sequence>? ORDER BY sequence LIMIT ?")
+            .bind(after).bind(limit).fetch_all(&self.pool).await?;
+        rows.into_iter()
+            .map(|row| {
+                Ok(MemoryJobCancellation {
+                    sequence: row.try_get("sequence")?,
+                    project_id: row.try_get("project_id")?,
+                    job_id: row.try_get("job_id")?,
+                    revision: row.try_get("revision")?,
+                    cancelled_at: row.try_get("cancelled_at")?,
+                })
+            })
+            .collect()
+    }
+
+    /// Read-only fallback also supports snapshots made before cancellation history existed.
+    pub async fn memory_jobs_cancelled(&self, jobs: &[String]) -> Result<bool> {
+        ensure!(jobs.len() <= 1024, "too many source Jobs");
+        let ids = serde_json::to_string(jobs)?;
+        let current: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM jobs WHERE id IN (SELECT value FROM json_each(?)) AND json_extract(data,'$.status')='CANCELLED')")
+            .bind(&ids).fetch_one(&self.pool).await?;
+        if current {
+            return Ok(true);
+        }
+        let has_history: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE name='memory_job_cancellations')",
+        )
+        .fetch_one(&self.pool)
+        .await?;
+        if !has_history {
+            return Ok(false);
+        }
+        Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM memory_job_cancellations WHERE job_id IN (SELECT value FROM json_each(?)))")
+            .bind(ids).fetch_one(&self.pool).await?)
+    }
+}
+
+impl Store {
+    pub async fn memory_job_sources(&self, job: &str, after: i64) -> Result<Vec<MemorySource>> {
+        let rows = sqlx::query("SELECT o.*,i.instance_id FROM memory_source_outbox o CROSS JOIN memory_source_identity i WHERE json_extract(o.snapshot,'$.job_id')=? AND o.sequence>? ORDER BY o.sequence LIMIT 100")
+            .bind(job).bind(after).fetch_all(&self.pool).await?;
+        rows.iter().map(source_from_row).collect()
+    }
+
+    pub async fn memory_turn_jobs(
+        &self,
+        instance: &str,
+        session: &str,
+        turn: &str,
+    ) -> Result<Vec<String>> {
+        Ok(sqlx::query_scalar("SELECT DISTINCT json_extract(snapshot,'$.job_id') FROM memory_source_outbox WHERE session_id=? AND turn_id=? AND json_extract(snapshot,'$.job_id') IS NOT NULL AND EXISTS(SELECT 1 FROM memory_source_identity WHERE instance_id=?)")
+            .bind(session).bind(turn).bind(instance).fetch_all(&self.pool).await?)
+    }
+}

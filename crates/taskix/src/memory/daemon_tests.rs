@@ -1,4 +1,5 @@
 use super::*;
+use crate::memory_command::MemoryCommand;
 use agentix_memory::{Actor, MemoryInput, ProviderConfig, ProviderProtocol};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
@@ -804,4 +805,151 @@ async fn compact_loop_recovers_history_before_waiting_for_writes() {
     background.abort();
     let _ = background.await;
     assert_eq!(app.store.work_counts().await.unwrap().pending, 1);
+}
+
+#[tokio::test]
+async fn cancelled_job_is_excluded_before_background_poll() {
+    let (_dir, app, project) = repository_test_application().await;
+    let job = app
+        .tasks
+        .execute(
+            json!({"command":"job.create","project":project,"title":"Backup policy"}),
+            agentix_task::WriteOptions::default(),
+        )
+        .await
+        .unwrap()
+        .result["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let source: Source = serde_json::from_value(json!({
+        "instance_id":"test", "receipt_id":"cancel-source", "sequence":1,
+        "project_id":project,"session_id":"s","turn_id":"t","revision":1,
+        "job_id":job,"recorded_at":1,
+        "messages":[{"id":"m","role":"user","text":"Use offline backups"}]
+    }))
+    .unwrap();
+    app.store.ingest(&source).await.unwrap();
+    let content: MemoryInput = serde_json::from_value(json!({
+        "title":"Backup policy","conclusion":"Use offline backups","rationale":"Decision",
+        "scope":"project","tags":[],"kind":"user_decision",
+        "evidence":[{"receipt_id":"cancel-source","message_id":"m","quote":"Use offline backups"}]
+    }))
+    .unwrap();
+    let memory = app
+        .store
+        .create(&project, content, Actor::Agent)
+        .await
+        .unwrap();
+    app.tasks
+        .execute(
+            json!({"command":"job.cancel","job":job}),
+            agentix_task::WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    app.handle(json!({"op":"search","project":project,"query":"backups"}))
+        .await
+        .unwrap();
+    assert!(
+        app.store
+            .search(&project, "backups", 10)
+            .await
+            .unwrap()
+            .is_empty(),
+        "a query after cancellation must exclude the source without waiting for background polling"
+    );
+    let current = app.store.show(&project, &memory.id, None).await.unwrap();
+    assert_eq!(serde_json::to_value(current.status).unwrap(), "invalidated");
+    assert_eq!(
+        app.store
+            .show(&project, &memory.id, Some(1))
+            .await
+            .unwrap()
+            .revision,
+        1
+    );
+}
+
+#[tokio::test]
+async fn offline_search_filters_cancelled_sources_without_mutating_memory() {
+    let (_dir, app, project) = repository_test_application().await;
+    let job = app
+        .tasks
+        .execute(
+            json!({"command":"job.create","project":project,"title":"Policy"}),
+            agentix_task::WriteOptions::default(),
+        )
+        .await
+        .unwrap()
+        .result["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let source: Source = serde_json::from_value(json!({"instance_id":"test","receipt_id":"offline","sequence":1,"project_id":project,"session_id":"s","turn_id":"t","revision":1,"job_id":job,"recorded_at":1,"messages":[{"id":"m","role":"user","text":"Offline backups"}]})).unwrap();
+    app.store.ingest(&source).await.unwrap();
+    let memory = app.store.create(&project, serde_json::from_value(json!({"title":"Backups","conclusion":"Offline backups","rationale":"Decision","scope":"project","tags":[],"kind":"user_decision","evidence":[{"receipt_id":"offline","message_id":"m","quote":"Offline backups"}]})).unwrap(), Actor::Agent).await.unwrap();
+    app.tasks
+        .execute(
+            json!({"command":"job.cancel","job":job}),
+            agentix_task::WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    let memories = super::super::filter_cancelled(&app.store, &app.location, vec![memory.clone()])
+        .await
+        .unwrap();
+    assert!(memories.is_empty());
+    for (action, request, field) in [
+        (
+            MemoryCommand::Search {
+                query: "backups".into(),
+                limit: 10,
+            },
+            json!({"op":"search","project":project,"query":"backups"}),
+            "memories",
+        ),
+        (
+            MemoryCommand::Context {
+                query: "backups".into(),
+                turn: "turn".into(),
+                budget: None,
+            },
+            json!({"op":"context","project":project}),
+            "items",
+        ),
+    ] {
+        let result = super::super::offline(&app.location, request, &action, "service stopped")
+            .await
+            .unwrap();
+        assert!(result[field].as_array().unwrap().is_empty());
+    }
+    let result = super::super::offline(
+        &app.location,
+        json!({"op":"list","project":project}),
+        &MemoryCommand::List {
+            after: String::new(),
+            limit: 20,
+            all: false,
+        },
+        "service stopped",
+    )
+    .await
+    .unwrap();
+    assert!(result.as_array().unwrap().is_empty());
+    assert_eq!(
+        app.store
+            .show(&project, &memory.id, None)
+            .await
+            .unwrap()
+            .status,
+        agentix_memory::Status::Active
+    );
+}
+
+#[tokio::test]
+async fn cancellation_sync_rejects_a_task_database_older_than_its_checkpoint() {
+    let (_dir, app, _project) = repository_test_application().await;
+    app.store.checkpoint_cancellations(5).await.unwrap();
+    assert!(sync_cancellations(&app.tasks, &app.store).await.is_err());
 }

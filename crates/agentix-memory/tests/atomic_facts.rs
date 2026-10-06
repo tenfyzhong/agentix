@@ -743,7 +743,7 @@ async fn schema_upgrade_reopens_settled_legacy_records_once_including_null_fact(
         .await
         .unwrap();
     let upgraded = MemoryStore::open(&path).await.unwrap();
-    assert_eq!(upgraded.schema_version().await.unwrap(), 3);
+    assert_eq!(upgraded.schema_version().await.unwrap(), 4);
     assert_eq!(
         upgraded
             .schedule_background_compaction("p", &AgentConfig::default(), now() + 60)

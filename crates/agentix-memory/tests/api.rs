@@ -246,3 +246,41 @@ async fn context_retry_skips_retrieval_and_revalidates_even_empty_receipts() {
         .is_err()
     );
 }
+
+struct SourceOnlyAnswer;
+#[async_trait::async_trait]
+impl agentix_memory::Model for SourceOnlyAnswer {
+    async fn complete(
+        &self,
+        request: &agentix_memory::ModelRequest,
+    ) -> anyhow::Result<agentix_memory::ModelReply> {
+        let mut reply = AnswerModel(String::new()).complete(request).await?;
+        if reply.calls[0].name == "submit_answer" {
+            reply.calls[0].arguments["memories"] = json!([]);
+            reply.calls[0].arguments["sources"] =
+                json!([{"receipt_id":"r","message_id":"m","quote":"Offline policy"}]);
+        }
+        Ok(reply)
+    }
+}
+
+#[tokio::test]
+async fn deep_answer_rejects_cancelled_evidence_without_a_memory_citation() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(&dir.path().join("memory.db"))
+        .await
+        .unwrap();
+    let source = serde_json::from_value(json!({"instance_id":"db","receipt_id":"r","sequence":1,"project_id":"a","session_id":"s","turn_id":"t","revision":1,"job_id":"j","recorded_at":1,"messages":[{"id":"m","role":"user","text":"Offline policy"}]})).unwrap();
+    store.ingest(&source).await.unwrap();
+    let deep = agentix_memory::DeepQuery::new(
+        store.clone(),
+        std::sync::Arc::new(SourceOnlyAnswer),
+        agentix_memory::AgentConfig::default(),
+        std::sync::Arc::new(NoRepository),
+        1,
+    );
+    assert!(deep.ask("a", "What is the policy?").await.is_ok());
+    store.invalidate_job("a", "j", 2, 2).await.unwrap();
+    let error = deep.ask("a", "What is the policy?").await.unwrap_err();
+    assert!(error.to_string().contains("cancelled"));
+}

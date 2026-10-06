@@ -36,8 +36,8 @@ migration error rolls back the whole transaction and schema version.
 Upgrade the service and CLI together, stop the old service before migration,
 and retain a SQLite online backup. Old writable binaries reject schema 2.
 Upgrade `scripts/taskix-backup.py` as well: backup and restore support schemas
-1, 2 and 3, retain the archived schema version, and reject unknown versions.
-Offline reads support schemas 1, 2 and 3 without migrating. Reset pagination cursors
+1, 2, 3 and 4, retain the archived schema version, and reject unknown versions.
+Offline reads support schemas 1, 2, 3 and 4 without migrating. Reset pagination cursors
 after migration and use the new IDs for CLI mutations. On the next projection
 sync, renamed notes publish under the new ID and preserve old file bytes in
 `Memory/Recovery/`. An existing destination with different contents is a
@@ -470,6 +470,59 @@ under schema 3 does not reopen unchanged assessed records. Projection metadata i
 reset once to render fact blocks and lineage. Migration itself does not call a
 model; subsequent background or manual compact performs the semantic split.
 
+
+### Cancelled source Jobs
+
+Task schema 21 records entry into `CANCELLED` in a durable cancellation outbox,
+inside the same SQLite transaction as the Job update. A database trigger covers
+CLI cancellation, Inbox cancellation and withdrawal, including existing writers
+that already hold a connection. The history survives reopening and deletion of
+the Job and ordinary event retention. Migration captures currently cancelled
+legacy Jobs once; cancellations followed by reopening before this upgrade cannot
+be reconstructed from current Job state.
+
+Memory schema 4 adds `invalidated`, indexed receipt-to-memory and Job-to-receipt
+relationships, persistent turn ownership and cancellation tombstones. Current
+facts, including merged evidence and compacted children, become invalid when any
+of their supporting sources belongs to a cancelled Job. A split uses the child's
+own evidence, so unrelated facts from a mixed legacy record are not invalidated
+merely because they share a compaction parent. The new revision records
+`source_job_cancelled`, the Job ID and cancellation time; original versions,
+evidence and supersession links remain available for audit. FTS/vector indexes
+and projection revisions update through the normal memory write transaction.
+
+Pending and running extraction/consolidation work loses its lease generation.
+Every searchable write rechecks evidence inside its transaction, including
+manual writes and compaction merges. Replay stores revoked receipts for audit
+without scheduling extraction. Turn ownership also fences receipts captured
+before a discussion was attached, even if the cancellation arrives before those
+receipts. Invalidated memories cannot be reactivated through lifecycle changes;
+a new independently supported fact must use uncancelled evidence. Reopening a
+Job does not restore its old facts, and cancelling a replacement does not revive
+its superseded predecessor. Worker cancellation or failure alone never revokes
+business facts.
+
+The daemon consumes cancellation events in pages of 100 and persists progress
+only after applying each event; retries are idempotent. Source pages and affected
+memory batches are bounded to 100 records, with indexed provenance lookup rather
+than a periodic full-memory scan. Applying one Job's invalidation is transactional;
+its total work and writer-lock duration still grow with that Job's affected facts.
+The schema migrations build provenance indexes once and enumerate existing data;
+ordinary reopen does not repeat those backfills.
+
+Online operations synchronize cancellation progress before use and recheck it
+after potentially slow model/embedding calls. An unfinished event backlog fails
+closed and resumes on the next call. Offline search, context and default list
+validate candidate provenance against the task database read-only, including
+cancellations after the daemon stopped and later turn attachment. Offline filtering
+can return fewer than the requested limit; it does not rewrite memory history or
+claim that the stored status has already changed. Deep answers also reject direct citations of cancelled sources, even without a
+memory citation. Explicit historical reads remain available. A query started after a committed cancellation cannot return its facts;
+this does not retract text already delivered to an Agent before cancellation.
+
+Upgrade Agentix, Taskix and the daemon together. Older binaries reject task schema
+21 and memory schema 4 on open. The backup tool accepts memory schema 4 and
+preserves the databases without downgrading them.
 
 ### Auxiliary metadata initialization
 

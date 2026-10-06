@@ -95,6 +95,12 @@ impl DeepQuery {
             );
         }
         for evidence in &answer.sources {
+            let mut conn = self.store.pool.acquire().await?;
+            ensure!(
+                crate::invalidation::source_valid(&mut conn, &evidence.receipt_id).await?,
+                "deep answer cites evidence from a cancelled source Job"
+            );
+            drop(conn);
             let source = self.store.source(project, &evidence.receipt_id).await?;
             ensure!(
                 !evidence.quote.trim().is_empty()

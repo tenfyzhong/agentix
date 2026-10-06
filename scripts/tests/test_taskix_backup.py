@@ -149,9 +149,27 @@ if os.environ.get("MOCK_FAIL"):
                 self.assertEqual(db.execute("SELECT * FROM sources").fetchall(),
                                  original.execute("SELECT * FROM sources").fetchall())
 
+    def test_cancelled_source_schema_backup_restores_without_changing_schema(self):
+        memory = self.memory_fixture(custom=True)
+        with sqlite3.connect(memory) as db:
+            db.execute("PRAGMA user_version=4")
+        self.assert_success(self.run_backup())
+        archive = next(self.output.glob("*.tar.gz"))
+        with tarfile.open(archive) as package:
+            manifest = json.load(package.extractfile("manifest.json"))
+            self.assertEqual(manifest["memory"]["sqlite_user_version"], 4)
+            self.assertEqual(manifest["coverage"]["memory_sources"], 1)
+        destination = self.root / "recovered"
+        self.assert_success(self.restore(archive, destination))
+        with sqlite3.connect(destination / "memory.sqlite3") as db:
+            self.assertEqual(db.execute("PRAGMA user_version").fetchone(), (4,))
+            with sqlite3.connect(memory) as original:
+                self.assertEqual(db.execute("SELECT * FROM sources").fetchall(),
+                                 original.execute("SELECT * FROM sources").fetchall())
+
     def test_unsupported_memory_schema_or_identity_rejects_backup_before_publishing(self):
         memory = self.memory_fixture()
-        for version, identity in ((0, 0x41584d4d), (4, 0x41584d4d), (2, 0)):
+        for version, identity in ((0, 0x41584d4d), (5, 0x41584d4d), (2, 0)):
             with self.subTest(version=version, identity=identity):
                 with sqlite3.connect(memory) as db:
                     db.execute(f"PRAGMA user_version={version}")

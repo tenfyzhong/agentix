@@ -306,7 +306,7 @@ async fn inbox_aligned_schema_migrates_legacy_states_and_pending_review_idempote
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(version, 20);
+    assert_eq!(version, 21);
 }
 
 #[tokio::test]
@@ -803,6 +803,13 @@ async fn inbox_cancellation_revokes_task_ownership_and_deletion_preserves_histor
     f.service.sync().await.unwrap();
     let state = f.service.store().snapshot().await.unwrap();
     assert_eq!(state.task_result(task_id).unwrap()["status"], "CANCELLED");
+    let cancellations = f
+        .service
+        .store()
+        .memory_job_cancellations(0, 100)
+        .await
+        .unwrap();
+    assert!(cancellations.iter().any(|event| event.job_id == job));
     assert!(state.leases.is_empty());
     assert_eq!(entries(&f).await[0]["status"], "CANCELLED");
     assert!(
@@ -965,6 +972,17 @@ async fn inbox_deleted_active_entry_cancels_and_cannot_be_restored_by_an_old_buf
             .unwrap()
             .status,
         agentix_task::JobStatus::Cancelled
+    );
+    let cancellations = f
+        .service
+        .store()
+        .memory_job_cancellations(0, 100)
+        .await
+        .unwrap();
+    assert!(
+        cancellations
+            .iter()
+            .any(|event| event.job_id == claimed["job"]["id"])
     );
     std::fs::write(path(&f), source).unwrap();
     f.service.sync().await.unwrap();
@@ -1424,4 +1442,32 @@ async fn inbox_duplicate_text_with_stale_receipts_gets_stable_unique_ids() {
         assert_eq!(edited[1]["id"], rows[1]["id"]);
         assert_eq!(edited[1]["content"], "重复输入\nContinue typing.");
     }
+}
+
+#[tokio::test]
+async fn inbox_reopening_does_not_erase_memory_cancellation_history() {
+    let f = fixture().await;
+    let entry = add(&f, "Reconsider delivery").await;
+    let claimed = claim(&f, "one").await;
+    let id = entry["id"].as_str().unwrap();
+    set_status(&f, id, "CANCELLED").await.unwrap();
+    set_status(&f, id, "ACTIVE").await.unwrap();
+    let events = f
+        .service
+        .store()
+        .memory_job_cancellations(0, 100)
+        .await
+        .unwrap();
+    assert!(
+        events
+            .iter()
+            .any(|event| event.job_id == claimed["job"]["id"])
+    );
+    assert!(
+        f.service
+            .store()
+            .memory_jobs_cancelled(&[claimed["job"]["id"].as_str().unwrap().into()])
+            .await
+            .unwrap()
+    );
 }

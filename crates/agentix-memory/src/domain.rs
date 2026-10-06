@@ -52,6 +52,7 @@ pub enum Status {
     Superseded,
     Archived,
     Forgotten,
+    Invalidated,
 }
 
 impl Status {
