@@ -10,6 +10,19 @@ directory = "Agent Tasks"
 # Relative to documents.root; resolved to an absolute path on archive/sync.
 archive_directory = "Archived Projects"
 
+# Service logging uses the same options as Agentix. RUST_LOG overrides level.
+# Ordinary CLI commands do not initialize logging. Changes require a restart.
+[logging]
+level = "info"
+
+[logging.file]
+enabled = false
+path = "~/.local/state/taskix/taskix.log"
+# never, minutely, hourly, or daily; rotated files append a UTC timestamp.
+rotation = "daily"
+# Maximum retained files for time-based rotation; never does not limit file size.
+max_files = 7
+
 # Optional project memory; one config and release, independent resident process.
 # Export TASKIX_MEMORY_ENABLED=true (or 1) to the CLI, host and service.
 # Run `taskix serve` separately. See https://github.com/tenfyzhong/agentix/wiki/Taskix-Memory.

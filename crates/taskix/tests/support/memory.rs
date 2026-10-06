@@ -872,3 +872,211 @@ async fn memory_jev_triage_uses_existing_environment_and_reports_skip_extract_an
         }
     }
 }
+
+#[test]
+fn service_file_logging_writes_lifecycle_and_rejects_reload_changes() {
+    let cli = Cli::with_memory();
+    let path = cli.dir.path().join("config.toml");
+    let base = std::fs::read_to_string(&path).unwrap();
+    let log = cli.dir.path().join("logs/taskix.log");
+    let config = format!(
+        "{base}\n[logging]\nlevel='info'\n[logging.file]\nenabled=true\npath='{}'\nrotation='never'\nmax_files=2\n",
+        log.display()
+    );
+    std::fs::write(&path, &config).unwrap();
+    cli.ok(&["context", "--session", "logging"]);
+    let config = format!(
+        "{config}\n[memory.providers.openai]\nbase_url='http://127.0.0.1:9/v1'\n[memory.agent]\nmodel='gpt-6-astra'\n"
+    );
+    std::fs::write(&path, &config).unwrap();
+    let daemon = start_memory(&cli, 0);
+    cli.ok(&["reload"]);
+    std::fs::write(&path, config.replace("level='info'", "level='debug'")).unwrap();
+    let output = cli.run(&["reload"]);
+    assert!(!output.status.success(), "logging changes require restart");
+    assert!(String::from_utf8_lossy(&output.stdout).contains("logging"));
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let text = std::fs::read_to_string(&log).unwrap_or_default();
+        if text.contains("memory service listening") && text.contains("configuration reloaded") {
+            assert!(!text.contains('\u{1b}'));
+            break;
+        }
+        assert!(Instant::now() < deadline, "missing file logs: {text}");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    #[cfg(unix)]
+    {
+        let mut daemon = daemon;
+        assert!(
+            Command::new("/bin/kill")
+                .args(["-TERM", &daemon.0.id().to_string()])
+                .status()
+                .unwrap()
+                .success()
+        );
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Some(status) = daemon.0.try_wait().unwrap() {
+                assert!(status.success());
+                break;
+            }
+            assert!(Instant::now() < deadline, "service did not shut down");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(
+            std::fs::read_to_string(&log)
+                .unwrap()
+                .contains("taskix service stopped")
+        );
+    }
+    #[cfg(not(unix))]
+    drop(daemon);
+}
+
+#[test]
+fn service_file_logging_flushes_startup_errors() {
+    let cli = Cli::with_memory();
+    let path = cli.dir.path().join("config.toml");
+    let base = std::fs::read_to_string(&path).unwrap();
+    let log = cli.dir.path().join("startup.log");
+    std::fs::write(
+        &path,
+        format!(
+            "{base}\n[logging.file]\nenabled=true\npath='{}'\nrotation='never'\n",
+            log.display()
+        ),
+    )
+    .unwrap();
+    std::fs::remove_file(cli.dir.path().join("state.sqlite3")).unwrap();
+    let output = cli.run(&["serve"]);
+    assert!(!output.status.success());
+    let text = std::fs::read_to_string(log).expect("startup errors must reach file logging");
+    assert!(text.contains("task database must be initialized"), "{text}");
+}
+
+#[test]
+fn service_file_logging_validates_configuration_before_starting() {
+    for (setting, expected) in [
+        ("[logging]\nlevel=''", "logging.level"),
+        ("[logging]\nlevel='['", "logging.level"),
+        (
+            "[logging.file]\nenabled=true\nmax_files=0",
+            "logging.file.max_files",
+        ),
+        (
+            "[logging.file]\nenabled=true\npath='/'",
+            "logging.file.path",
+        ),
+        ("[logging.file]\nrotation='weekly'", "weekly"),
+    ] {
+        let cli = Cli::with_memory();
+        let path = cli.dir.path().join("config.toml");
+        let base = std::fs::read_to_string(&path).unwrap();
+        std::fs::write(&path, format!("{base}\n{setting}\n")).unwrap();
+        std::fs::remove_file(cli.dir.path().join("state.sqlite3")).unwrap();
+        let output = cli
+            .command(&["serve"])
+            .env_remove("RUST_LOG")
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains(expected),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+    }
+}
+
+#[test]
+fn service_file_logging_honors_rotation_disabled_and_environment_filter() {
+    for (rotation, enabled, filter) in [
+        ("daily", true, "error"),
+        ("hourly", true, "error"),
+        ("minutely", true, "error"),
+        ("never", false, "error"),
+        ("never", true, "off"),
+    ] {
+        let cli = Cli::with_memory();
+        let path = cli.dir.path().join("config.toml");
+        let base = std::fs::read_to_string(&path).unwrap();
+        let logs = cli.dir.path().join("logs");
+        std::fs::write(&path, format!("{base}\n[logging]\nlevel='off'\n[logging.file]\nenabled={enabled}\npath='{}'\nrotation='{rotation}'\n", logs.join("taskix.log").display())).unwrap();
+        std::fs::remove_file(cli.dir.path().join("state.sqlite3")).unwrap();
+        let output = cli
+            .command(&["serve"])
+            .env("RUST_LOG", filter)
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert_eq!(
+            String::from_utf8_lossy(&output.stderr).contains("taskix service failed"),
+            filter == "error"
+        );
+        if !enabled {
+            assert!(!logs.exists());
+            continue;
+        }
+        let files: Vec<_> = std::fs::read_dir(logs)
+            .unwrap()
+            .map(Result::unwrap)
+            .collect();
+        assert_eq!(files.len(), 1);
+        let name = files[0].file_name().to_string_lossy().into_owned();
+        if rotation == "never" {
+            assert_eq!(name, "taskix.log");
+        } else {
+            assert!(name.starts_with("taskix.log."), "{name}");
+        }
+        let text = std::fs::read_to_string(files[0].path()).unwrap();
+        assert_eq!(text.contains("taskix service failed"), filter == "error");
+    }
+}
+
+#[test]
+fn service_file_logging_prunes_old_rotations_without_removing_other_files() {
+    let cli = Cli::with_memory();
+    let path = cli.dir.path().join("config.toml");
+    let base = std::fs::read_to_string(&path).unwrap();
+    let logs = cli.dir.path().join("logs");
+    std::fs::create_dir(&logs).unwrap();
+    for day in ["2000-01-01", "2000-01-02", "2000-01-03"] {
+        std::fs::write(logs.join(format!("taskix.log.{day}")), day).unwrap();
+    }
+    std::fs::write(logs.join("other.log"), "preserve").unwrap();
+    std::fs::write(
+        &path,
+        format!(
+            "{base}\n[logging.file]\nenabled=true\npath='{}'\nrotation='daily'\nmax_files=2\n",
+            logs.join("taskix.log").display()
+        ),
+    )
+    .unwrap();
+    std::fs::remove_file(cli.dir.path().join("state.sqlite3")).unwrap();
+    assert!(!cli.run(&["serve"]).status.success());
+    assert_eq!(std::fs::read_dir(&logs).unwrap().count(), 3);
+    assert_eq!(
+        std::fs::read_to_string(logs.join("other.log")).unwrap(),
+        "preserve"
+    );
+    // The appender orders by creation time, which may tie on some filesystems.
+    let old_logs = ["2000-01-01", "2000-01-02", "2000-01-03"]
+        .into_iter()
+        .filter(|day| logs.join(format!("taskix.log.{day}")).exists())
+        .count();
+    assert_eq!(old_logs, 1);
+    let current = std::fs::read_dir(&logs)
+        .unwrap()
+        .map(Result::unwrap)
+        .find(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            name.starts_with("taskix.log.") && !name.starts_with("taskix.log.2000-")
+        })
+        .expect("current log must be retained");
+    assert!(
+        std::fs::read_to_string(current.path())
+            .unwrap()
+            .contains("task database must be initialized")
+    );
+}

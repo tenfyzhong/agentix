@@ -178,6 +178,7 @@ impl Runtime {
     }
 }
 struct Application {
+    logging: crate::service::logging::LoggingConfig,
     path: PathBuf,
     location: MemoryLocation,
     store: MemoryStore,
@@ -198,6 +199,9 @@ impl Application {
                 }
                 error.truncate(end);
             }
+            if errors.get(component) != Some(&error) {
+                tracing::warn!(component, error = %error, "taskix background operation failed");
+            }
             errors.insert(component.into(), error);
             while errors.len() > 16 {
                 errors.pop_first();
@@ -209,6 +213,10 @@ impl Application {
     async fn reload(&self) -> Result<Value> {
         // Serialize configuration snapshots and admission-limit updates.
         let mut installed = self.runtime.write().await;
+        ensure!(
+            crate::service::logging::LoggingConfig::load(&self.path)? == self.logging,
+            "changing logging requires restarting taskix serve"
+        );
         let location = MemoryLocation::load(&self.path)?;
         ensure!(
             location.enabled
@@ -233,6 +241,7 @@ impl Application {
         let result = json!({"reloaded":true,"errors":runtime.errors});
         *installed = Arc::new(runtime);
         self.store.wake_compaction();
+        tracing::info!("taskix service configuration reloaded");
         Ok(result)
     }
 }
@@ -310,7 +319,11 @@ impl RequestHandler for Application {
     }
 }
 
-pub async fn serve(path: &Path, location: MemoryLocation) -> Result<Value> {
+pub async fn serve(
+    path: &Path,
+    location: MemoryLocation,
+    logging: crate::service::logging::LoggingConfig,
+) -> Result<Value> {
     ensure!(
         location.task_path.exists(),
         "task database must be initialized before taskix serve"
@@ -342,6 +355,7 @@ pub async fn serve(path: &Path, location: MemoryLocation) -> Result<Value> {
     let repositories = Arc::new(Repositories(tasks.clone()));
     let runtime = Arc::new(Runtime::build(config, &store, repositories.clone()));
     let app = Arc::new(Application {
+        logging,
         path: path.into(),
         location,
         store,
@@ -375,7 +389,7 @@ pub async fn serve(path: &Path, location: MemoryLocation) -> Result<Value> {
         Ok::<(), anyhow::Error>(())
     });
     let (stop, rx) = watch::channel(false);
-    eprintln!("memory service listening at {}", server.path().display());
+    tracing::info!("memory service listening at {}", server.path().display());
     let mut serving = tokio::spawn(server.serve(app, rx));
     let shutdown = shutdown_signal();
     let result = tokio::select! {
