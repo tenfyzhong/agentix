@@ -23,7 +23,7 @@ fn check_login_service(shell_body: &str, inherited_key: Option<&str>, credential
     let count = cli.dir.path().join("shell calls");
     let parent = cli.dir.path().join("shell parent");
     let log_path = cli.dir.path().join("login.log");
-    let mut command = cli.command(&["memory", "serve"]);
+    let mut command = cli.command(&["serve"]);
     command
         .env_clear()
         .env("TASKIX_MEMORY_ENABLED", "true")
@@ -68,7 +68,7 @@ fn check_login_service(shell_body: &str, inherited_key: Option<&str>, credential
         std::fs::read_to_string(&parent).unwrap().trim(),
         daemon.0.id().to_string()
     );
-    cli.ok(&["memory", "reload"]);
+    cli.ok(&["reload"]);
     assert_eq!(std::fs::read_to_string(&count).unwrap(), "call\n");
     let log = std::fs::read_to_string(log_path).unwrap();
     assert!(
@@ -101,7 +101,7 @@ const RECORD_CALL: &str =
     "printf 'call\\n' >> \"$LOGIN_COUNT\"; printf '%s\\n' \"$PPID\" > \"$LOGIN_PARENT\"";
 
 #[test]
-fn memory_serve_loads_login_credentials_once_and_preserves_pid() {
+fn serve_loads_login_credentials_once_and_preserves_pid() {
     check_login_service(
         &format!(
             "{RECORD_CALL}\nprintf 'startup banner\\n'\nexport TASKIX_LOGIN_TEST_SECRET='secret-shell-value'\nexec /bin/sh -c \"$2\""
@@ -112,7 +112,7 @@ fn memory_serve_loads_login_credentials_once_and_preserves_pid() {
 }
 
 #[test]
-fn memory_serve_honors_login_shell_unset() {
+fn serve_honors_login_shell_unset() {
     check_login_service(
         &format!("{RECORD_CALL}\nunset TASKIX_LOGIN_TEST_SECRET\nexec /bin/sh -c \"$2\""),
         Some("inherited-key"),
@@ -121,7 +121,7 @@ fn memory_serve_honors_login_shell_unset() {
 }
 
 #[test]
-fn memory_serve_keeps_inherited_credentials_when_login_shell_fails() {
+fn serve_keeps_inherited_credentials_when_login_shell_fails() {
     check_login_service(
         &format!("{RECORD_CALL}\nexit 1"),
         Some("inherited-key"),
@@ -130,7 +130,7 @@ fn memory_serve_keeps_inherited_credentials_when_login_shell_fails() {
 }
 
 #[test]
-fn memory_serve_keeps_inherited_credentials_when_login_output_is_malformed() {
+fn serve_keeps_inherited_credentials_when_login_output_is_malformed() {
     check_login_service(
         &format!(
             "{RECORD_CALL}\nprintf '\\0taskix-login-environment\\0TASKIX_LOGIN_TEST_SECRET=broken'"
@@ -141,7 +141,7 @@ fn memory_serve_keeps_inherited_credentials_when_login_output_is_malformed() {
 }
 
 #[test]
-fn memory_serve_keeps_inherited_credentials_when_login_marker_is_missing() {
+fn serve_keeps_inherited_credentials_when_login_marker_is_missing() {
     check_login_service(
         &format!("{RECORD_CALL}\nprintf 'startup output only\\n'"),
         Some("inherited-key"),
@@ -150,7 +150,7 @@ fn memory_serve_keeps_inherited_credentials_when_login_marker_is_missing() {
 }
 
 #[test]
-fn memory_serve_bounds_login_shell_timeout() {
+fn serve_bounds_login_shell_timeout() {
     check_login_service(
         &format!("{RECORD_CALL}\nexec /bin/sleep 30"),
         Some("inherited-key"),

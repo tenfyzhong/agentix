@@ -18,6 +18,8 @@ mod memory;
 mod memory_command;
 mod metrics;
 mod obsidian;
+#[cfg(any(unix, windows))]
+mod service;
 
 #[derive(Parser)]
 #[command(
@@ -51,6 +53,10 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Run Taskix services until interrupted.
+    Serve,
+    /// Reload configuration for future service work.
+    Reload,
     /// Maintain and retrieve project memory through a local service.
     Memory {
         #[command(subcommand)]
@@ -657,6 +663,16 @@ async fn setup_obsidian(
 }
 
 async fn run(cli: &Cli) -> Result<Value> {
+    if matches!(cli.command, Command::Serve | Command::Reload) {
+        #[cfg(any(unix, windows))]
+        return Ok(response(match cli.command {
+            Command::Serve => service::serve(cli).await?,
+            Command::Reload => service::reload(cli).await?,
+            _ => unreachable!(),
+        }));
+        #[cfg(not(any(unix, windows)))]
+        bail!("service commands require Unix or Windows");
+    }
     if let Command::Memory { action } = &cli.command {
         #[cfg(any(unix, windows))]
         return Ok(response(memory::run(cli, action).await?));
@@ -820,7 +836,9 @@ async fn dispatch_task_command(cli: &Cli, service: &Service) -> Result<Value> {
         Command::Obsidian {
             action: ObsidianCommand::Snapshot,
         } => Ok(response(service.obsidian_snapshot().await?)),
-        Command::Memory { .. }
+        Command::Serve
+        | Command::Reload
+        | Command::Memory { .. }
         | Command::Event {
             action:
                 EventCommand::Maintain(_) | EventCommand::Policy(_) | EventCommand::Worker { .. },

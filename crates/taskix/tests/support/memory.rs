@@ -87,7 +87,7 @@ fn memory_daemon_cli_and_offline_fallback_do_not_require_a_vault_or_model_creden
     std::fs::remove_dir_all(cli.dir.path().join("vault")).unwrap();
     let log = std::fs::File::create(cli.dir.path().join("daemon.log")).unwrap();
     let mut daemon = Daemon(
-        cli.command(&["memory", "serve"])
+        cli.command(&["serve"])
             .stdout(Stdio::null())
             .stderr(log)
             .spawn()
@@ -196,7 +196,7 @@ fn memory_reload_rejects_ipc_limits_without_changing_the_running_configuration()
     std::fs::write(&path, &config).unwrap();
     let log_path = cli.dir.path().join("reload-service.log");
     let mut daemon = Daemon(
-        cli.command(&["memory", "serve"])
+        cli.command(&["serve"])
             .stdout(Stdio::null())
             .stderr(std::fs::File::create(&log_path).unwrap())
             .spawn()
@@ -219,21 +219,21 @@ fn memory_reload_rejects_ipc_limits_without_changing_the_running_configuration()
         format!("{config}\n[memory.service]\nmax_request_bytes=524288\n"),
     )
     .unwrap();
-    let result = cli.run(&["memory", "reload"]);
+    let result = cli.run(&["reload"]);
     assert!(!result.status.success(), "IPC bounds require a restart");
     assert_eq!(cli.ok(&["memory", "status"])["model"], "gpt-6-astra");
     std::fs::write(&path, config.replace("gpt-6-astra", "gpt-6-sol")).unwrap();
-    assert_eq!(cli.ok(&["memory", "reload"])["reloaded"], true);
+    assert_eq!(cli.ok(&["reload"])["reloaded"], true);
     assert_eq!(cli.ok(&["memory", "status"])["model"], "gpt-6-sol");
     std::fs::write(&path, format!("{config}reasoning_effort='low'\n")).unwrap();
-    assert_eq!(cli.ok(&["memory", "reload"])["reloaded"], true);
+    assert_eq!(cli.ok(&["reload"])["reloaded"], true);
     assert_eq!(cli.ok(&["memory", "status"])["reasoning_effort"], "low");
     assert_eq!(
         cli.ok(&["memory", "doctor"])["configuration"]["reasoning_effort"],
         "low"
     );
     std::fs::write(&path, format!("{config}reasoning_effort='loow'\n")).unwrap();
-    assert!(!cli.run(&["memory", "reload"]).status.success());
+    assert!(!cli.run(&["reload"]).status.success());
     assert_eq!(cli.ok(&["memory", "status"])["reasoning_effort"], "low");
 }
 
@@ -258,7 +258,7 @@ fn memory_service_restores_read_only_notes_through_the_real_cli() {
     )
     .unwrap();
     let daemon = Daemon(
-        cli.command(&["memory", "serve"])
+        cli.command(&["serve"])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
@@ -334,7 +334,7 @@ fn memory_service_restores_read_only_notes_through_the_real_cli() {
     assert_eq!(archived_document["path"], archived_relative);
     assert!(!path.exists());
     let daemon = Daemon(
-        cli.command(&["memory", "serve"])
+        cli.command(&["serve"])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
@@ -354,7 +354,7 @@ fn memory_service_restores_read_only_notes_through_the_real_cli() {
 fn start_memory(cli: &Cli, expected_sources: i64) -> Daemon {
     let log = std::fs::File::create(cli.dir.path().join("recovery.log")).unwrap();
     let mut daemon = Daemon(
-        cli.command(&["memory", "serve"])
+        cli.command(&["serve"])
             .stdout(Stdio::null())
             .stderr(log)
             .spawn()
@@ -422,7 +422,7 @@ fn memory_replay_retries_a_failed_acknowledged_receipt_after_later_receipts_succ
         pool.close().await;
     });
     let daemon = Daemon(
-        cli.command(&["memory", "serve"])
+        cli.command(&["serve"])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
@@ -471,7 +471,7 @@ fn memory_replay_retries_a_failed_acknowledged_receipt_after_later_receipts_succ
     });
     // Restart also must not treat MAX(sequence)=3 as proof that receipt 2 exists.
     let _daemon = Daemon(
-        cli.command(&["memory", "serve"])
+        cli.command(&["serve"])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
@@ -640,7 +640,7 @@ fn memory_restore_replays_acknowledged_sources_and_rejects_a_forked_task_history
             .unwrap();
         pool.close().await;
     });
-    let rejected = cli.run(&["memory", "serve"]);
+    let rejected = cli.run(&["serve"]);
     assert!(!rejected.status.success());
     assert!(
         format!(
@@ -806,7 +806,7 @@ async fn memory_jev_triage_uses_existing_environment_and_reports_skip_extract_an
         std::fs::write(&path, format!("{config}\n[memory]\n[memory.providers.mock]\nbase_url='{}'\n[memory.agent]\nprovider='mock'\n[memory.service]\npoll_interval_ms=20\n",model.url)).unwrap();
         let metrics_path = cli.dir.path().join("jev-metrics.db");
         let _daemon = Daemon(
-            cli.command(&["memory", "serve"])
+            cli.command(&["serve"])
                 .env("TASKIX_JEV_ENABLED", enabled)
                 .env("TASKIX_JEV_URL", format!("{}/evaluate", jev.url))
                 .env("TASKIX_JEV_API_KEY", "mock-key")

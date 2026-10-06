@@ -300,7 +300,7 @@ impl RequestHandler for Application {
 pub async fn serve(path: &Path, location: MemoryLocation) -> Result<Value> {
     ensure!(
         location.task_path.exists(),
-        "task database must be initialized before memory serve"
+        "task database must be initialized before taskix serve"
     );
     std::fs::create_dir_all(
         location

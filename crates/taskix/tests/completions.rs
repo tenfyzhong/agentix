@@ -185,6 +185,7 @@ fn memory_commands_load_configuration_on_supported_platforms() {
     std::fs::write(&config, toml::to_string(&task_config).unwrap()).unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_taskix"))
         .args(["--json", "memory", "status"])
+        .env_remove("TASKIX_MEMORY_ENABLED")
         .env("TASKIX_CONFIG", &config)
         .current_dir(directory.path())
         .output()

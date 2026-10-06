@@ -259,8 +259,9 @@ retrieval. Current user instructions and repository evidence take precedence.
 The host already injects a bounded packet when memory is enabled; do not request
 another full context packet just to duplicate it.
 
-Memory writes, historical `backfill`, `reindex`, projection `sync`, `reload` and
-optional `ask` require the separately running `taskix memory serve`. Manual
+Memory writes, historical `backfill`, `reindex`, projection `sync` and
+optional `ask` require the separately running `taskix serve`. Use `taskix reload`
+to reload its configuration for future work. Manual
 `create`/`update` take a JSON document; updates and `forget` require `--revision`.
 Preserve the host executor identity for provenance. Do not create a Job solely
 to retrieve memory. See [Taskix memory in the Wiki](https://github.com/tenfyzhong/agentix/wiki/Taskix-Memory) for configuration,
