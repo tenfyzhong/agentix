@@ -355,7 +355,7 @@ fn start_memory(cli: &Cli, expected_sources: i64) -> Daemon {
     let log = std::fs::File::create(cli.dir.path().join("recovery.log")).unwrap();
     let mut daemon = Daemon(
         cli.command(&["serve"])
-            .stdout(Stdio::null())
+            .stdout(log.try_clone().unwrap())
             .stderr(log)
             .spawn()
             .unwrap(),
@@ -369,9 +369,10 @@ fn start_memory(cli: &Cli, expected_sources: i64) -> Daemon {
                 return daemon;
             }
         }
+        let exit = daemon.0.try_wait().unwrap();
         assert!(
-            daemon.0.try_wait().unwrap().is_none(),
-            "{}",
+            exit.is_none(),
+            "memory startup for {expected_sources} sources exited with {exit:?}: {}",
             std::fs::read_to_string(cli.dir.path().join("recovery.log")).unwrap()
         );
         assert!(Instant::now() < deadline, "replay did not complete");
