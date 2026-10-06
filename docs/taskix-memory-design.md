@@ -48,7 +48,7 @@ filenames keep their read-only protection.
 ## Architecture
 
 One repository and release ship the existing `taskix` executable. An independent
-resident process, `taskix memory serve`, owns maintenance and semantic writes.
+resident process, `taskix serve`, owns maintenance and semantic writes.
 `agentix-task` retains task state and conversation capture. `agentix-memory` owns
 memory domain rules, storage, retrieval, providers, workers, projection and API.
 Neither library depends on the other. A source adapter in `taskix` connects them.
@@ -480,3 +480,15 @@ all earlier changes so reopening can retry safely. Subsequent writable opens do
 not enumerate memories for these backfills or recreate the failure trigger;
 normal writes maintain the auxiliary rows. This does not remove the service's
 separate retained-source validation at startup described above.
+
+## Service lifecycle
+
+Run `taskix serve` to host Taskix services (currently project memory). The former
+`taskix memory serve` and `taskix memory reload` commands have been removed.
+Enable memory with `TASKIX_MEMORY_ENABLED=true` or `1`, then use `taskix reload`
+to reload the running service's startup configuration file for future work.
+`--config` selects the client configuration used to locate that service. Reload
+does not require a registered Project. Invalid configuration leaves the active
+configuration unchanged; storage paths and IPC limits require a restart.
+On Unix, only `serve` loads the login shell environment; restart after changing
+exported credentials, proxy settings, or memory enablement.

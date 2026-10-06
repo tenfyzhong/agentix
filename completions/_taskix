@@ -38,7 +38,39 @@ _taskix() {
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:taskix-command-$line[1]:"
         case $line[1] in
-            (memory)
+            (serve)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(reload)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(memory)
 _arguments "${_arguments_options[@]}" : \
 '--config=[]:CONFIG:_files' \
 '--project=[]:PROJECT:_default' \
@@ -62,23 +94,7 @@ _arguments "${_arguments_options[@]}" : \
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:taskix-memory-command-$line[1]:"
         case $line[1] in
-            (serve)
-_arguments "${_arguments_options[@]}" : \
-'--config=[]:CONFIG:_files' \
-'--project=[]:PROJECT:_default' \
-'--actor=[]:ACTOR:_default' \
-'--executor=[]:EXECUTOR:_default' \
-'--session=[]:SESSION:_default' \
-'--delegated-by=[]:DELEGATED_BY:_default' \
-'--lease-token=[]:LEASE_TOKEN:_default' \
-'--expect-revision=[]:EXPECT_REVISION:_default' \
-'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
-'--json[]' \
-'-h[Print help]' \
-'--help[Print help]' \
-&& ret=0
-;;
-(status)
+            (status)
 _arguments "${_arguments_options[@]}" : \
 '--config=[]:CONFIG:_files' \
 '--project=[]:PROJECT:_default' \
@@ -146,22 +162,6 @@ _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
 (projection-status)
-_arguments "${_arguments_options[@]}" : \
-'--config=[]:CONFIG:_files' \
-'--project=[]:PROJECT:_default' \
-'--actor=[]:ACTOR:_default' \
-'--executor=[]:EXECUTOR:_default' \
-'--session=[]:SESSION:_default' \
-'--delegated-by=[]:DELEGATED_BY:_default' \
-'--lease-token=[]:LEASE_TOKEN:_default' \
-'--expect-revision=[]:EXPECT_REVISION:_default' \
-'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
-'--json[]' \
-'-h[Print help]' \
-'--help[Print help]' \
-&& ret=0
-;;
-(reload)
 _arguments "${_arguments_options[@]}" : \
 '--config=[]:CONFIG:_files' \
 '--project=[]:PROJECT:_default' \
@@ -481,11 +481,7 @@ _arguments "${_arguments_options[@]}" : \
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:taskix-memory-help-command-$line[1]:"
         case $line[1] in
-            (serve)
-_arguments "${_arguments_options[@]}" : \
-&& ret=0
-;;
-(status)
+            (status)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -502,10 +498,6 @@ _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
 (projection-status)
-_arguments "${_arguments_options[@]}" : \
-&& ret=0
-;;
-(reload)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -2701,7 +2693,15 @@ _arguments "${_arguments_options[@]}" : \
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:taskix-help-command-$line[1]:"
         case $line[1] in
-            (memory)
+            (serve)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(reload)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(memory)
 _arguments "${_arguments_options[@]}" : \
 ":: :_taskix__subcmd__help__subcmd__memory_commands" \
 "*::: :->memory" \
@@ -2713,11 +2713,7 @@ _arguments "${_arguments_options[@]}" : \
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:taskix-help-memory-command-$line[1]:"
         case $line[1] in
-            (serve)
-_arguments "${_arguments_options[@]}" : \
-&& ret=0
-;;
-(status)
+            (status)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -2734,10 +2730,6 @@ _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
 (projection-status)
-_arguments "${_arguments_options[@]}" : \
-&& ret=0
-;;
-(reload)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -3289,6 +3281,8 @@ esac
 (( $+functions[_taskix_commands] )) ||
 _taskix_commands() {
     local commands; commands=(
+'serve:Run Taskix services until interrupted' \
+'reload:Reload configuration for future service work' \
 'memory:Maintain and retrieve project memory through a local service' \
 'conversation:Inspect and attach session discussion turns' \
 'inbox:Submit, inspect, claim, or cancel human requirements in a Project Inbox' \
@@ -3437,6 +3431,8 @@ _taskix__subcmd__event__subcmd__policy_commands() {
 (( $+functions[_taskix__subcmd__help_commands] )) ||
 _taskix__subcmd__help_commands() {
     local commands; commands=(
+'serve:Run Taskix services until interrupted' \
+'reload:Reload configuration for future service work' \
 'memory:Maintain and retrieve project memory through a local service' \
 'conversation:Inspect and attach session discussion turns' \
 'inbox:Submit, inspect, claim, or cancel human requirements in a Project Inbox' \
@@ -3701,13 +3697,11 @@ _taskix__subcmd__help__subcmd__job__subcmd__update_commands() {
 (( $+functions[_taskix__subcmd__help__subcmd__memory_commands] )) ||
 _taskix__subcmd__help__subcmd__memory_commands() {
     local commands; commands=(
-'serve:Run the independent local memory service until interrupted' \
 'status:Inspect queue, index coverage and provider availability' \
 'doctor:Inspect service configuration and local availability without a model request' \
 'sync:Restore one page of read-only project memory notes from the database' \
 'document:Read the authoritative Markdown for a managed vault-relative memory path' \
 'projection-status:Inspect pending publication and preserved edit conflicts' \
-'reload:Reload service configuration for future work' \
 'search:Search project memory (offline FTS fallback is available)' \
 'show:Read one current or historical memory' \
 'list:List a bounded memory page' \
@@ -3787,11 +3781,6 @@ _taskix__subcmd__help__subcmd__memory__subcmd__reindex_commands() {
     local commands; commands=()
     _describe -t commands 'taskix help memory reindex commands' commands "$@"
 }
-(( $+functions[_taskix__subcmd__help__subcmd__memory__subcmd__reload_commands] )) ||
-_taskix__subcmd__help__subcmd__memory__subcmd__reload_commands() {
-    local commands; commands=()
-    _describe -t commands 'taskix help memory reload commands' commands "$@"
-}
 (( $+functions[_taskix__subcmd__help__subcmd__memory__subcmd__retry_commands] )) ||
 _taskix__subcmd__help__subcmd__memory__subcmd__retry_commands() {
     local commands; commands=()
@@ -3801,11 +3790,6 @@ _taskix__subcmd__help__subcmd__memory__subcmd__retry_commands() {
 _taskix__subcmd__help__subcmd__memory__subcmd__search_commands() {
     local commands; commands=()
     _describe -t commands 'taskix help memory search commands' commands "$@"
-}
-(( $+functions[_taskix__subcmd__help__subcmd__memory__subcmd__serve_commands] )) ||
-_taskix__subcmd__help__subcmd__memory__subcmd__serve_commands() {
-    local commands; commands=()
-    _describe -t commands 'taskix help memory serve commands' commands "$@"
 }
 (( $+functions[_taskix__subcmd__help__subcmd__memory__subcmd__set-status_commands] )) ||
 _taskix__subcmd__help__subcmd__memory__subcmd__set-status_commands() {
@@ -3938,6 +3922,11 @@ _taskix__subcmd__help__subcmd__project__subcmd__unarchive_commands() {
     local commands; commands=()
     _describe -t commands 'taskix help project unarchive commands' commands "$@"
 }
+(( $+functions[_taskix__subcmd__help__subcmd__reload_commands] )) ||
+_taskix__subcmd__help__subcmd__reload_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help reload commands' commands "$@"
+}
 (( $+functions[_taskix__subcmd__help__subcmd__routing_commands] )) ||
 _taskix__subcmd__help__subcmd__routing_commands() {
     local commands; commands=(
@@ -3986,6 +3975,11 @@ _taskix__subcmd__help__subcmd__routing__subcmd__revision_commands() {
 _taskix__subcmd__help__subcmd__routing__subcmd__snapshot_commands() {
     local commands; commands=()
     _describe -t commands 'taskix help routing snapshot commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__serve_commands] )) ||
+_taskix__subcmd__help__subcmd__serve_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help serve commands' commands "$@"
 }
 (( $+functions[_taskix__subcmd__help__subcmd__sync_commands] )) ||
 _taskix__subcmd__help__subcmd__sync_commands() {
@@ -4465,13 +4459,11 @@ _taskix__subcmd__job__subcmd__update_commands() {
 (( $+functions[_taskix__subcmd__memory_commands] )) ||
 _taskix__subcmd__memory_commands() {
     local commands; commands=(
-'serve:Run the independent local memory service until interrupted' \
 'status:Inspect queue, index coverage and provider availability' \
 'doctor:Inspect service configuration and local availability without a model request' \
 'sync:Restore one page of read-only project memory notes from the database' \
 'document:Read the authoritative Markdown for a managed vault-relative memory path' \
 'projection-status:Inspect pending publication and preserved edit conflicts' \
-'reload:Reload service configuration for future work' \
 'search:Search project memory (offline FTS fallback is available)' \
 'show:Read one current or historical memory' \
 'list:List a bounded memory page' \
@@ -4535,13 +4527,11 @@ _taskix__subcmd__memory__subcmd__forget_commands() {
 (( $+functions[_taskix__subcmd__memory__subcmd__help_commands] )) ||
 _taskix__subcmd__memory__subcmd__help_commands() {
     local commands; commands=(
-'serve:Run the independent local memory service until interrupted' \
 'status:Inspect queue, index coverage and provider availability' \
 'doctor:Inspect service configuration and local availability without a model request' \
 'sync:Restore one page of read-only project memory notes from the database' \
 'document:Read the authoritative Markdown for a managed vault-relative memory path' \
 'projection-status:Inspect pending publication and preserved edit conflicts' \
-'reload:Reload service configuration for future work' \
 'search:Search project memory (offline FTS fallback is available)' \
 'show:Read one current or historical memory' \
 'list:List a bounded memory page' \
@@ -4627,11 +4617,6 @@ _taskix__subcmd__memory__subcmd__help__subcmd__reindex_commands() {
     local commands; commands=()
     _describe -t commands 'taskix memory help reindex commands' commands "$@"
 }
-(( $+functions[_taskix__subcmd__memory__subcmd__help__subcmd__reload_commands] )) ||
-_taskix__subcmd__memory__subcmd__help__subcmd__reload_commands() {
-    local commands; commands=()
-    _describe -t commands 'taskix memory help reload commands' commands "$@"
-}
 (( $+functions[_taskix__subcmd__memory__subcmd__help__subcmd__retry_commands] )) ||
 _taskix__subcmd__memory__subcmd__help__subcmd__retry_commands() {
     local commands; commands=()
@@ -4641,11 +4626,6 @@ _taskix__subcmd__memory__subcmd__help__subcmd__retry_commands() {
 _taskix__subcmd__memory__subcmd__help__subcmd__search_commands() {
     local commands; commands=()
     _describe -t commands 'taskix memory help search commands' commands "$@"
-}
-(( $+functions[_taskix__subcmd__memory__subcmd__help__subcmd__serve_commands] )) ||
-_taskix__subcmd__memory__subcmd__help__subcmd__serve_commands() {
-    local commands; commands=()
-    _describe -t commands 'taskix memory help serve commands' commands "$@"
 }
 (( $+functions[_taskix__subcmd__memory__subcmd__help__subcmd__set-status_commands] )) ||
 _taskix__subcmd__memory__subcmd__help__subcmd__set-status_commands() {
@@ -4702,11 +4682,6 @@ _taskix__subcmd__memory__subcmd__reindex_commands() {
     local commands; commands=()
     _describe -t commands 'taskix memory reindex commands' commands "$@"
 }
-(( $+functions[_taskix__subcmd__memory__subcmd__reload_commands] )) ||
-_taskix__subcmd__memory__subcmd__reload_commands() {
-    local commands; commands=()
-    _describe -t commands 'taskix memory reload commands' commands "$@"
-}
 (( $+functions[_taskix__subcmd__memory__subcmd__retry_commands] )) ||
 _taskix__subcmd__memory__subcmd__retry_commands() {
     local commands; commands=()
@@ -4716,11 +4691,6 @@ _taskix__subcmd__memory__subcmd__retry_commands() {
 _taskix__subcmd__memory__subcmd__search_commands() {
     local commands; commands=()
     _describe -t commands 'taskix memory search commands' commands "$@"
-}
-(( $+functions[_taskix__subcmd__memory__subcmd__serve_commands] )) ||
-_taskix__subcmd__memory__subcmd__serve_commands() {
-    local commands; commands=()
-    _describe -t commands 'taskix memory serve commands' commands "$@"
 }
 (( $+functions[_taskix__subcmd__memory__subcmd__set-status_commands] )) ||
 _taskix__subcmd__memory__subcmd__set-status_commands() {
@@ -4970,6 +4940,11 @@ _taskix__subcmd__project__subcmd__unarchive_commands() {
     local commands; commands=()
     _describe -t commands 'taskix project unarchive commands' commands "$@"
 }
+(( $+functions[_taskix__subcmd__reload_commands] )) ||
+_taskix__subcmd__reload_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix reload commands' commands "$@"
+}
 (( $+functions[_taskix__subcmd__routing_commands] )) ||
 _taskix__subcmd__routing_commands() {
     local commands; commands=(
@@ -5105,6 +5080,11 @@ _taskix__subcmd__routing__subcmd__revision_commands() {
 _taskix__subcmd__routing__subcmd__snapshot_commands() {
     local commands; commands=()
     _describe -t commands 'taskix routing snapshot commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__serve_commands] )) ||
+_taskix__subcmd__serve_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix serve commands' commands "$@"
 }
 (( $+functions[_taskix__subcmd__sync_commands] )) ||
 _taskix__subcmd__sync_commands() {

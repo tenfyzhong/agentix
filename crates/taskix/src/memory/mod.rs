@@ -5,16 +5,10 @@ use agentix_memory::{
 use anyhow::{Context, Result, bail, ensure};
 use serde_json::{Value, json};
 use std::{path::PathBuf, time::Duration};
-mod daemon;
-#[cfg(unix)]
-mod login_environment;
+pub(crate) mod daemon;
 mod triage;
 
 pub async fn run(cli: &Cli, action: &MemoryCommand) -> Result<Value> {
-    #[cfg(unix)]
-    if matches!(action, MemoryCommand::Serve) {
-        login_environment::reexec().await?;
-    }
     let path = cli.config_path()?;
     let location = MemoryLocation::load(&path)?;
     if !location.enabled {
@@ -31,9 +25,6 @@ pub async fn run(cli: &Cli, action: &MemoryCommand) -> Result<Value> {
     }
     if matches!(action, MemoryCommand::Doctor) {
         return doctor(&path, &location).await;
-    }
-    if matches!(action, MemoryCommand::Serve) {
-        return daemon::serve(&path, location).await;
     }
     let project = resolve_project(cli, &location, action).await?;
     let request = make_request(cli, action, project.as_deref())?;
@@ -180,9 +171,6 @@ async fn resolve_project(
     location: &MemoryLocation,
     action: &MemoryCommand,
 ) -> Result<Option<String>> {
-    if matches!(action, MemoryCommand::Reload) {
-        return Ok(None);
-    }
     if cli.project.is_none() && matches!(action, MemoryCommand::Status | MemoryCommand::Doctor) {
         return Ok(None);
     }
@@ -213,7 +201,6 @@ fn make_request(cli: &Cli, action: &MemoryCommand, project: Option<&str>) -> Res
     let request = match action {
         MemoryCommand::Document { .. } => bail!("document is a local read"),
         MemoryCommand::Status | MemoryCommand::Doctor => json!({"op":"status","project":project}),
-        MemoryCommand::Reload => json!({"op":"reload"}),
         MemoryCommand::Sync { after, limit } => {
             json!({"op":"sync","project":project,"after":after,"limit":limit})
         }
@@ -277,7 +264,6 @@ fn make_request(cli: &Cli, action: &MemoryCommand, project: Option<&str>) -> Res
             json!({"op":"backfill","project":project,"job":job,"offset":offset,"limit":limit})
         }
         MemoryCommand::Ask { query } => json!({"op":"ask","project":project,"query":query}),
-        MemoryCommand::Serve => unreachable!(),
     };
     Ok(request)
 }

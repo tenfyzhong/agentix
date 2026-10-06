@@ -38,7 +38,7 @@ test("other Obsidian subprocesses preserve the inherited memory switch", async (
         },
     });
     for (const args of [["obsidian", "connection"], ["sync", "--pending"],
-        ["memory", "status"], ["memory", "serve"], ["memory", "document"]]) {
+        ["memory", "status"], ["serve"], ["reload"], ["memory", "document"]]) {
         await runCli({}, args);
     }
     assert.equal(env.TASKIX_MEMORY_ENABLED, "false");

@@ -3,8 +3,6 @@ use std::path::PathBuf;
 
 #[derive(Subcommand)]
 pub enum MemoryCommand {
-    /// Run the independent local memory service until interrupted.
-    Serve,
     /// Inspect queue, index coverage and provider availability.
     Status,
     /// Inspect service configuration and local availability without a model request.
@@ -20,8 +18,6 @@ pub enum MemoryCommand {
     Document { path: PathBuf },
     /// Inspect pending publication and preserved edit conflicts.
     ProjectionStatus,
-    /// Reload service configuration for future work.
-    Reload,
     /// Search project memory (offline FTS fallback is available).
     Search {
         query: String,

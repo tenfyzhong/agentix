@@ -450,7 +450,7 @@ The bounded Jev request contains original messages rather than summaries. Exceed
 `agentix-task` captures immutable conversation revisions and an outbox alongside
 task state. The independent `agentix-memory` crate owns evidence, memory versions,
 FTS/vector retrieval, durable workers, API adapters and read-only projections.
-Neither library depends on the other. `taskix memory serve` composes them using
+Neither library depends on the other. `taskix serve` composes them using
 an explicit source adapter, while `agentix-core` and host plugins keep capture
 outside internal memory model conversations.
 

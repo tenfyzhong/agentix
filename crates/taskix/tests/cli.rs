@@ -1636,3 +1636,35 @@ async fn automatic_worker_drains_backlog_after_cli_exit() {
         std::fs::read_to_string(cli.dir.path().join("state.maintenance.log"))
     );
 }
+
+#[test]
+fn service_commands_are_top_level_and_old_memory_entrypoints_are_rejected() {
+    for command in ["serve", "reload"] {
+        let output = Command::new(env!("CARGO_BIN_EXE_taskix"))
+            .args([command, "--help"])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let old = Command::new(env!("CARGO_BIN_EXE_taskix"))
+            .args(["memory", command, "--help"])
+            .output()
+            .unwrap();
+        assert_eq!(old.status.code(), Some(2));
+    }
+}
+
+#[cfg(any(unix, windows))]
+#[test]
+fn reload_requires_a_running_service_without_registering_a_project() {
+    let cli = Cli::with_memory();
+    assert_eq!(cli.ok(&["project", "list"]), json!([]));
+    let output = cli.run(&["reload"]);
+    assert_eq!(output.status.code(), Some(1));
+    let response: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(response["ok"], false);
+    assert_eq!(cli.ok(&["project", "list"]), json!([]));
+}

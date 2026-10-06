@@ -23,13 +23,13 @@ pub(super) async fn reexec() -> Result<()> {
         Ok(Ok(environment)) => environment,
         Ok(Err(error)) => {
             eprintln!(
-                "taskix memory: could not load login shell environment: {error:#}; using inherited environment"
+                "taskix service: could not load login shell environment: {error:#}; using inherited environment"
             );
             return Ok(());
         }
         Err(_) => {
             eprintln!(
-                "taskix memory: login shell environment lookup timed out; using inherited environment"
+                "taskix service: login shell environment lookup timed out; using inherited environment"
             );
             return Ok(());
         }
@@ -43,7 +43,7 @@ pub(super) async fn reexec() -> Result<()> {
         .envs(environment)
         .env(LOADED_PID, pid)
         .exec();
-    Err(error).context("could not restart memory service with login environment")
+    Err(error).context("could not restart Taskix service with login environment")
 }
 
 async fn read() -> Result<Vec<(OsString, OsString)>> {
