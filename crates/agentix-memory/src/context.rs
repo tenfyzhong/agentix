@@ -3,7 +3,7 @@ use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-const CONTEXT_REFERENCES_SQL: &str = "SELECT m.data FROM json_each(?) r CROSS JOIN memories m ON m.id=json_extract(r.value,'$.id') AND m.revision=json_extract(r.value,'$.revision') WHERE m.project_id=? AND m.status IN ('active','conflicted') AND (m.valid_until IS NULL OR m.valid_until>unixepoch()) ORDER BY CAST(r.key AS INTEGER)";
+const CONTEXT_REFERENCES_SQL: &str = "SELECT m.data FROM json_each(?) r CROSS JOIN memories m ON m.id=json_extract(r.value,'$.id') AND m.revision=json_extract(r.value,'$.revision') WHERE m.project_id=? AND m.status='active' AND (m.valid_until IS NULL OR m.valid_until>unixepoch()) ORDER BY CAST(r.key AS INTEGER)";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MemoryRef {
@@ -153,7 +153,7 @@ pub fn context_preview(
     let now = time::OffsetDateTime::now_utc().unix_timestamp();
     for memory in candidates {
         if memory.project_id != project
-            || !memory.status.searchable()
+            || memory.status != crate::Status::Active
             || memory.content.valid_until.is_some_and(|t| t <= now)
         {
             continue;

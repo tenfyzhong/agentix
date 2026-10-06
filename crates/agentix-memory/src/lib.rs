@@ -19,7 +19,8 @@ pub use config::{
     ProviderConfig, ProviderProtocol, ReasoningEffort, RetrievalConfig, ServiceConfig,
 };
 pub use domain::{
-    Actor, Evidence, IndexPage, Kind, Memory, MemoryInput, Source, SourceMessage, Status,
+    Actor, Evidence, Fact, FactQualifier, IndexPage, Kind, Memory, MemoryInput, Source,
+    SourceMessage, Status,
 };
 pub use store::{MemoryStore, SourceSummary};
 
@@ -30,7 +31,12 @@ mod queue;
 pub use queue::{WorkCounts, WorkKind, WorkLease};
 
 mod consolidation;
-pub use consolidation::{ConsolidationDecision, DecisionAction};
+pub use consolidation::{ConsolidationDecision, DecisionAction, RelatedAction, RelatedDecision};
+mod fact_compaction;
+mod facts;
+pub use fact_compaction::{FactCompaction, FactPart};
+mod compaction;
+pub use compaction::CompactionPage;
 
 mod worker;
 pub use worker::{ExtractionGate, MemoryWorker, ProjectRepository, TriageDecision};

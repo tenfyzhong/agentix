@@ -71,3 +71,33 @@ although embedding/network/queue time consumes the same budget. ANN is not added
 without a larger-scale bottleneck and a measured recall requirement. This
 decision does not establish an unlimited capacity guarantee: higher dimensions,
 more memories, concurrent distinct scans and slower disks need fresh profiling.
+
+
+## Atomic-memory audit (2026-10-06)
+
+`initialized_open_and_ineligible_compaction_scale` measures 30 samples per size
+in a debug build on the same local Apple Silicon host, with a warm OS page cache.
+It bulk-loads valid human-memory JSON through the real insertion trigger, then
+measures fresh writable opens and `next_compaction_at` calls. No model, IPC,
+retained-source validation, FTS or vector work is included.
+
+| Human memories | Open p50 / p95 | Dirty probe before p50 / p95 | Dirty probe after p50 / p95 |
+| ---: | ---: | ---: | ---: |
+| 1,000 | 1.066 / 1.299 ms | 2.272 / 2.326 ms | 0.479 / 0.548 ms |
+| 10,000 | 1.089 / 1.171 ms | 18.594 / 21.973 ms | 0.481 / 0.524 ms |
+| 100,000 | 1.137 / 1.330 ms | 192.726 / 203.327 ms | 0.507 / 0.604 ms |
+
+Before/after probe measurements use the same fixture and harness in consecutive
+runs. Human and retired revisions now have `dirty=0`; a partial candidate index
+excludes suspended work. Expired pending candidates are consumed in bounded
+pages without model calls. The deadline probe no longer joins memory JSON.
+Outstanding dirty revisions waiting for old in-flight seeds still require work
+state lookups; the table above does not measure a large waiting-work backlog.
+
+Auxiliary-table backfills and trigger replacement now run once in an atomic
+migration, not on every open. Sentinel-trigger tests reject any repeated backfill
+attempt and check that reopening leaves SQLite's schema version unchanged.
+Migration failure tests verify rollback, retry and preservation of existing
+progress. The one-time migration still scans historical records; these open
+measurements are after initialization and do not claim constant-time migration
+or full-service startup.

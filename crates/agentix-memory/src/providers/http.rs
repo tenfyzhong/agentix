@@ -7,10 +7,10 @@ use serde_json::Value;
 use crate::{ProviderConfig, ProviderProtocol};
 
 #[derive(Debug)]
-pub(crate) struct ProviderHttpError(pub u16);
+pub(crate) struct ProviderHttpError(pub u16, String);
 impl std::fmt::Display for ProviderHttpError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "provider returned HTTP {}", self.0)
+        write!(f, "provider returned HTTP {}{}", self.0, self.1)
     }
 }
 impl std::error::Error for ProviderHttpError {}
@@ -112,7 +112,15 @@ impl HttpProvider {
             }
             let mut response = request.send().await.context("provider request failed")?;
             if !response.status().is_success() {
-                return Err(ProviderHttpError(response.status().as_u16()).into());
+                let status = response.status().as_u16();
+                let mut bytes = Vec::new();
+                while let Ok(Some(chunk)) = response.chunk().await {
+                    if bytes.len() + chunk.len() > 8192 {
+                        break;
+                    }
+                    bytes.extend_from_slice(&chunk);
+                }
+                return Err(ProviderHttpError(status, error_detail(&bytes)).into());
             }
             let mut bytes = Vec::new();
             while let Some(chunk) = response.chunk().await? {
@@ -126,6 +134,67 @@ impl HttpProvider {
         })
         .await
         .context("provider deadline exceeded")?
+    }
+}
+
+// Error bodies can echo credentials or conversations. Publish only known codes,
+// schema field paths, and an exact recognized operational diagnostic.
+fn error_detail(bytes: &[u8]) -> String {
+    let Ok(value) = serde_json::from_slice::<Value>(bytes) else {
+        return String::new();
+    };
+    let error = &value["error"];
+    let mut details = Vec::new();
+    for field in ["code", "type", "status"] {
+        if let Some(code) = error[field].as_str()
+            && matches!(
+                code,
+                "FAILED_PRECONDITION"
+                    | "INVALID_ARGUMENT"
+                    | "PERMISSION_DENIED"
+                    | "UNAUTHENTICATED"
+                    | "RESOURCE_EXHAUSTED"
+                    | "invalid_request_error"
+                    | "invalid_api_key"
+                    | "rate_limit_exceeded"
+                    | "unsupported_country_region_territory"
+            )
+        {
+            details.push(code.to_owned());
+        }
+    }
+    if let Some(param) = error["param"].as_str()
+        && param.len() <= 128
+        && param
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"_.[]".contains(&b))
+        && [
+            "tools",
+            "messages",
+            "input",
+            "reasoning",
+            "max_output_tokens",
+            "max_completion_tokens",
+        ]
+        .iter()
+        .any(|prefix| {
+            param == *prefix
+                || param
+                    .strip_prefix(prefix)
+                    .is_some_and(|rest| rest.starts_with('.') || rest.starts_with('['))
+        })
+    {
+        details.push(format!("parameter: {param}"));
+    }
+    if error["message"] == "User location is not supported for the API use." {
+        details.push(
+            "provider egress location is not supported; check the upstream proxy route".into(),
+        );
+    }
+    if details.is_empty() {
+        String::new()
+    } else {
+        format!(" ({})", details.join("; "))
     }
 }
 

@@ -141,6 +141,67 @@ records for memories already forgotten by an older build. Review-only tests
 archived outside the checkout are not part of the reproducible suite or coverage
 matrix; the normal suite is defined by the repository test files.
 
+## Consistency and compaction coverage
+
+`tests/consolidation_consistency.rs` covers partial replacement while retaining
+unrelated deployment facts and original evidence, atomic rollback on stale
+related revisions, evidence-loss rejection, both sides of unresolved conflicts,
+explicit forgetting with replay suppression, negated-request rejection, and
+corrective feedback when a supplied related record is left unassessed, and
+shared read-only assessments following a sibling candidate mutation.
+
+`tests/compaction.rs` covers bounded Project-scoped manual pages, deduplication
+after restart, write debounce, protected human/inactive records, persisted
+historical progress, no duplicate seed or recursive scheduling, and stale seed
+completion with zero model calls, terminal-failure suspension across work-retention cleanup, compact-specific
+current-state reconciliation, and restoring seed evidence before validation.
+`tests/atomic_facts.rs` covers structured identity, write-time replacement with
+independent sibling facts unchanged, evidence merging, one-active uniqueness
+under simultaneous writers, original-source ordering, immutable values,
+qualifier normalization, stale revision rollback, human protection, active-only
+retrieval and separate conflict diagnostics. Legacy split regressions verify
+path/autostart/domain separation, complete evidence and version preservation,
+visible `derived_from` lineage, direct proposals from preloaded snapshots without read tools, bounded validation
+corrections with a lower user budget preserved, no recursive work, all-or-nothing rollback,
+corrective feedback for altered literal quotes and current-conclusion migration scope for retained legacy records, snapshot-bound preloaded quote references with explicit valid-index feedback, expanded-submission byte limits, assistant-only decision attribution, missing-quote reference feedback, duplicate-create correction, snapshot-bound related assessments, and one-time schema 2-to-3
+migration including explicit null facts. Backup tests preserve schema 3 and reject
+unsupported schema 4; CLI restore and host extraction tests exercise the new schema. A worker regression rejects unstructured
+extraction and then writes all three facts as settled. Existing low-level legacy
+merge regressions retain compatibility for already queued work. API, provider and
+Agent-loop tests cover safe error classification, bounded tools, permanent HTTP
+rejections and final-step submission. Tool regressions distinguish a model-guessed
+missing repository path (correctable input) from operational I/O failures. Taskix CLI tests cover command discovery.
+
+The write-driven scheduler regressions also verify that unchanged compacted
+revisions stay settled across days and restart, historical dirty work drains in
+batches of ten, inflight old seeds wake newer revisions on completion/failure/lease
+expiry, and the repository-review loop does not scan semantic compaction.
+`taskix/src/memory/daemon_tests.rs` verifies write notification and debounce
+scheduling, disabled/re-enabled recovery, startup history, reload notification,
+and advances the clock by two idle days after removing the compact
+table to prove that no idle compact SQL is executed. This isolates the compact
+loop; source intake, embedding, projection and repository review have independent
+schedules.
+
+`examples/compaction_acceptance.rs` is an opt-in live acceptance harness. It opens
+the original database read-only, copies one bounded Project page and its source
+evidence into a temporary database, schedules only still-mixed records for real
+configured-model splitting (existing atomic facts remain available), then
+asks for the current REALITY domain. Acceptance requires every effective record
+to contain one structured fact, at most one active version per identity, exactly
+one effective domain fact, old mixed originals superseded, complete split lineage,
+all original literal evidence and versions preserved, and a sourced current-value
+answer. Other attributes such as SNI may legitimately contain the same hostname.
+It never modifies the original Project or installs/restarts the service.
+Deterministic tests establish transaction and queue contracts; this harness checks
+model judgment on a concrete case, not general accuracy or throughput.
+
+The earlier aggregate-record acceptance is superseded by this atomic-fact
+contract. Its four-to-two result is not evidence for atomic separation. The
+reported HTTP 400 was an upstream unsupported-egress-location rejection; requests
+recovered after the user repaired the proxy route. Application changes improve
+bounded diagnostics and validation, not provider geographic eligibility.
+
 ## Measured scale
 
 Local run on macOS arm64, Rust 1.95.0 **debug/test build**, September 29, 2026:
@@ -211,3 +272,105 @@ records the negative-gate backtest and why the positive experiment was rolled ba
 [Current performance measurements](taskix-memory-performance.md) include debug
 and release results, provider request counts and scheduler CPU scope. These
 manual benchmarks supplement deterministic tests; they are not production SLOs.
+
+### Optional subscription-backed copy acceptance
+
+`compaction_acceptance` copies a complete small Project into a temporary database,
+checks atomic facts, original evidence, superseded legacy records and version history,
+and asks for the replacement domain through the same memory query loop. The original
+database and installed memory daemon are unchanged. Its default model uses the configured
+HTTP provider. To use an existing ChatGPT Codex login for acceptance, select Luna explicitly:
+
+```sh
+cargo run -p agentix-memory --example compaction_acceptance -- \
+  CONFIG PROJECT_ID RETIRED_VALUE CURRENT_VALUE --codex-luna
+```
+
+This opt-in example uses `gpt-6-luna` through standalone `codex exec`, without the
+shared daemon or inherited parent session identifiers, with personal configuration,
+plugins and native shell, web and multi-agent tools disabled. It returns a nonempty array of external call objects for the outer memory loop
+to execute; these labels do not need to exist as native Codex tools. Each response
+is constrained by the actual tool schemas, with typed arguments rather than
+JSON encoded inside strings. Older replay replies remain decodable. The Luna option
+loads the selected model metadata from the existing Codex model cache into its
+temporary directory; missing selected metadata is an explicit setup error. Request and task deadlines remain those of the
+supplied memory configuration; this flag does not add a production subscription provider
+or change the daemon's provider. The extraction benchmark reuses the bridge with its
+existing pinned model, replay checkpoint and request budget.
+
+Before a legacy proposal reaches the fenced write, the worker checks each proposed
+new identity against the active-fact index. Existing targets also receive indexed
+identity/value, actor, status and revision checks before model correction. An
+invalid target adds one indexed identity lookup to suggest the correct record;
+sixteen parts therefore need at most thirty-two metadata reads per proposal.
+Correction feedback contains bounded IDs, revisions, actor and same-value flags,
+including matches outside the initial lexical snapshots. It does not reload full
+quotation bodies. Database failures stop the attempt instead of asking the model
+to correct infrastructure errors. The transaction repeats its uniqueness and
+revision checks to protect against intervening writes.
+An untargeted create proposal for the exact same indexed agent fact and value is
+deterministically normalized to a merge with that record's current ID/revision.
+This adds evidence through the existing guarded merge without another model call.
+Human records, different values and explicit target guards are never normalized;
+they still require the supported conflict/replacement decisions.
+Untouched atomic and human snapshots do not require redundant `keep` assessments;
+their records remain byte-for-byte unchanged. Supplied assessments are still
+validated, atomic mutations need guarded part actions, and every related legacy
+agent record still requires an explicit assessment or targeted reconciliation.
+Preloaded snapshots share a quotation catalog: each exact receipt/message/quote
+appears once, and each memory's evidence array preserves its original index order
+through catalog references. Output references remain memory ID plus quote index.
+The worker expands them from the original snapshots and checks the full submission
+size and literal evidence before writing, so input deduplication never authorizes
+dropping or truncating stored quotations.
+
+For an explicitly authorized one-shot migration, `compact_codex` executes selected
+consolidation work through the normal worker leases, cancellation, retries and
+fenced transactions. It does not claim other queue items. Pause the installed
+memory worker to prevent a competing provider from claiming the same queued work,
+take an online SQLite backup, and use a separate configuration file pointing at
+the intended database. Resume the worker and sync the Project's memory projection
+afterward. No provider installation or daemon configuration change is required.
+
+```sh
+cargo run -p agentix-memory --example compact_codex -- \
+  ONE_SHOT_CONFIG PROJECT_ID REPOSITORY_ROOT NEW_ARTIFACT_DIRECTORY --enqueue-legacy
+```
+
+`--enqueue-legacy` requires a complete Project page below one hundred records and
+queues only active agent-authored records without a structured fact. Alternatively,
+provide explicit work IDs after the artifact directory. The example checks their
+Project and consolidation kind before execution. Supply the actual Project repository
+directory; it is validated before enqueueing work, because the worker requires an
+available repository. Artifacts contain memory evidence;
+keep them with the migration's private diagnostic files. Luna reasoning is always
+`low`. Request, task and lease budgets come from the supplied configuration, so a
+bounded operational override can accommodate slower migration calls without changing
+the production daemon's defaults. Successful writes still require normal projection
+publication; this example never writes generated Markdown directly.
+Process events and stderr are streamed to private artifacts as they arrive, including
+partial diagnostics from a timed-out or cancelled request. Partial output is never
+accepted as a completed model response.
+
+### Live migration checkpoint (2026-10-06)
+
+An authorized dogyun migration used the existing Codex subscription with
+`gpt-6-luna`, reasoning `low`, and a separate 120-second request, 480-second task,
+600-second lease configuration. Three selected legacy work items completed through
+normal guarded transactions. The resulting Project has sixteen active structured
+facts and no active legacy records. Its camouflage domain has one active fact with
+value `www.sakura.ad.jp`; the old domain is absent from effective conclusions.
+All three original mixed records are superseded, their literal quotations and
+original versions remain intact, and the two existing SSH facts are unchanged.
+Other Projects and the installed service configuration were unchanged during the
+paused migration; the original service was restored. All twenty-one memory notes
+match database status and fact presence after normal projection sync, with no
+pending publication revisions or projection errors.
+
+This verifies compaction data acceptance separately from model query acceptance.
+The preceding guarded copy finished compaction, but its query exceeded the existing
+60-second whole-query budget. The installed Gemini provider still reports an
+unsupported-egress-location HTTP 400. The one-shot Luna bridge does not replace that
+provider. Fact identity uniqueness is deterministic; semantic naming and qualifier
+canonicalization remain bounded model decisions, so a particular fact count is not
+a general compaction guarantee.

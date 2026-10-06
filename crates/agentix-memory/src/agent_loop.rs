@@ -25,6 +25,20 @@ pub trait ToolSet: Send + Sync {
     async fn execute(&self, name: &str, arguments: Value) -> Result<Value>;
 }
 
+// Correctable feedback is separate from an operational failure such as a failed DB read.
+#[async_trait]
+pub(crate) trait ProposalValidator: Send + Sync {
+    async fn validate(&self, value: &Value) -> Result<Option<String>>;
+}
+
+struct ImmediateValidator<'a>(&'a (dyn Fn(&Value) -> Result<()> + Send + Sync));
+#[async_trait]
+impl ProposalValidator for ImmediateValidator<'_> {
+    async fn validate(&self, value: &Value) -> Result<Option<String>> {
+        Ok((self.0)(value).err().map(|error| error.to_string()))
+    }
+}
+
 pub struct LoopResult {
     pub value: Value,
     pub usage: TokenUsage,
@@ -64,6 +78,24 @@ impl AgentLoop {
         finish: ToolDefinition,
         validate: &(dyn Fn(&Value) -> Result<()> + Send + Sync),
     ) -> Result<LoopResult> {
+        self.run_async_validated(
+            instructions,
+            input,
+            tools,
+            finish,
+            &ImmediateValidator(validate),
+        )
+        .await
+    }
+
+    pub(crate) async fn run_async_validated(
+        &self,
+        instructions: &str,
+        input: &str,
+        tools: &dyn ToolSet,
+        finish: ToolDefinition,
+        validate: &dyn ProposalValidator,
+    ) -> Result<LoopResult> {
         tokio::time::timeout(
             Duration::from_secs(self.config.task_timeout_seconds),
             self.run_inner(instructions, input, tools, finish, validate),
@@ -78,7 +110,7 @@ impl AgentLoop {
         input: &str,
         tools: &dyn ToolSet,
         finish: ToolDefinition,
-        validate: &(dyn Fn(&Value) -> Result<()> + Send + Sync),
+        validate: &dyn ProposalValidator,
     ) -> Result<LoopResult> {
         let mut definitions = tools.definitions();
         definitions.push(finish.clone());
@@ -95,6 +127,10 @@ impl AgentLoop {
         let mut usage = TokenUsage::default();
         let mut tool_calls = 0;
         for step in 0..self.config.max_steps {
+            if step + 1 == self.config.max_steps {
+                request.tools = vec![finish.clone()];
+                request.history.push(Message::User("This is the final step within the original budget. Submit a validated result using the evidence already inspected. Report insufficient evidence when answering a question; do not invent facts or mutations to finish.".into()));
+            }
             self.check_context(&request)?;
             let reply = self.model.complete(&request).await?;
             usage.input_tokens = usage.input_tokens.saturating_add(reply.usage.input_tokens);
@@ -115,7 +151,10 @@ impl AgentLoop {
             );
             let mut ids = HashSet::new();
             for call in &reply.calls {
-                ensure!(names.contains(&call.name), "unknown Agent tool");
+                ensure!(
+                    request.tools.iter().any(|tool| tool.name == call.name),
+                    "unknown or unavailable Agent tool"
+                );
                 ensure!(
                     !call.id.is_empty() && ids.insert(&call.id),
                     "duplicate or empty tool call ID"
@@ -130,8 +169,7 @@ impl AgentLoop {
                     serde_json::to_vec(&call.arguments)?.len() <= self.config.max_context_bytes,
                     "Agent submission budget exceeded"
                 );
-                if let Err(error) = validate(&call.arguments) {
-                    let mut message = error.to_string();
+                if let Some(mut message) = validate.validate(&call.arguments).await? {
                     let mut end = message.len().min(2048);
                     while !message.is_char_boundary(end) {
                         end -= 1;
@@ -179,5 +217,76 @@ impl AgentLoop {
             "Agent context budget exceeded"
         );
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{ModelReply, ToolCall};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct SubmissionModel(AtomicUsize);
+    #[async_trait]
+    impl Model for SubmissionModel {
+        async fn complete(&self, _: &ModelRequest) -> Result<ModelReply> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(ModelReply {
+                continuation: json!([]),
+                calls: vec![ToolCall {
+                    id: "submission".into(),
+                    name: "submit".into(),
+                    arguments: json!({}),
+                }],
+                text: String::new(),
+                usage: TokenUsage::default(),
+            })
+        }
+    }
+    struct NoTools;
+    #[async_trait]
+    impl ToolSet for NoTools {
+        fn definitions(&self) -> Vec<ToolDefinition> {
+            vec![]
+        }
+        async fn execute(&self, _: &str, _: Value) -> Result<Value> {
+            bail!("no tools available")
+        }
+    }
+    struct FailedIndexedRead;
+    #[async_trait]
+    impl ProposalValidator for FailedIndexedRead {
+        async fn validate(&self, _: &Value) -> Result<Option<String>> {
+            tokio::task::yield_now().await;
+            bail!("indexed database read unavailable")
+        }
+    }
+
+    #[tokio::test]
+    async fn operational_validation_failure_stops_without_model_correction() {
+        let model = Arc::new(SubmissionModel(AtomicUsize::new(0)));
+        let agent = AgentLoop::new(model.clone(), AgentConfig::default());
+        let finish = ToolDefinition {
+            name: "submit".into(),
+            description: "Return a proposal".into(),
+            parameters: json!({"type":"object","properties":{},"required":[],"additionalProperties":false}),
+        };
+        let error = agent
+            .run_async_validated(
+                "Submit a proposal",
+                "{}",
+                &NoTools,
+                finish,
+                &FailedIndexedRead,
+            )
+            .await
+            .err()
+            .unwrap();
+        assert!(
+            error
+                .to_string()
+                .contains("indexed database read unavailable")
+        );
+        assert_eq!(model.0.load(Ordering::SeqCst), 1);
     }
 }

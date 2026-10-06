@@ -9,6 +9,7 @@ const CREATED: i64 = 1_790_956_800;
 
 fn input() -> MemoryInput {
     MemoryInput {
+        fact: None,
         title: "External residency decision".into(),
         conclusion: format!("Original quote mentions {OLD}"),
         rationale: "Regional constraint".into(),
@@ -67,6 +68,7 @@ async fn legacy(path: &Path) -> SqlitePool {
             reason: "Original reason".into(),
             supersedes,
             superseded_by,
+            derived_from: Vec::new(),
             content: input(),
         };
         let data = serde_json::to_string(&memory).unwrap();

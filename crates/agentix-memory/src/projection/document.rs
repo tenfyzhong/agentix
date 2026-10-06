@@ -1,7 +1,8 @@
 use crate::Memory;
 use anyhow::{Context, Result, ensure};
 use serde_json::Value;
-const FIELDS: [&str; 10] = [
+const FIELDS: [&str; 11] = [
+    "fact",
     "title",
     "conclusion",
     "rationale",

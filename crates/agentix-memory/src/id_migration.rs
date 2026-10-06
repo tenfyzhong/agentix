@@ -35,6 +35,7 @@ pub(crate) async fn migrate(conn: &mut SqliteConnection) -> Result<()> {
             "embedding_failures",
             "memory_projection",
             "memory_reviews",
+            "memory_compactions",
             "context_deliveries",
         ] {
             sqlx::query(&format!("UPDATE {table} SET memory_id=? WHERE memory_id=?"))
@@ -62,6 +63,9 @@ pub(crate) async fn migrate(conn: &mut SqliteConnection) -> Result<()> {
                     .into_iter()
                     .flatten()
                 {
+                    rename(reference, &mapping);
+                }
+                for reference in &mut memory.derived_from {
                     rename(reference, &mapping);
                 }
                 let migrated = serde_json::to_string(&memory)?;

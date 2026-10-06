@@ -68,9 +68,71 @@ pub struct Evidence {
     pub quote: String,
 }
 
+/// Identity excludes the value, wording and ingestion time of a fact version.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Fact {
+    pub entity: String,
+    pub attribute: String,
+    pub qualifiers: Vec<FactQualifier>,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactQualifier {
+    pub name: String,
+    pub value: String,
+}
+
+impl Fact {
+    pub(crate) fn key(&self) -> Result<String> {
+        let mut qualifiers: Vec<_> = self
+            .qualifiers
+            .iter()
+            .map(|q| (q.name.trim().to_lowercase(), q.value.trim()))
+            .collect();
+        qualifiers.sort_unstable();
+        Ok(serde_json::to_string(&(
+            self.entity.trim().to_lowercase(),
+            self.attribute.trim().to_lowercase(),
+            qualifiers,
+        ))?)
+    }
+
+    fn validate(&self) -> Result<()> {
+        ensure!(
+            !self.entity.trim().is_empty()
+                && self.entity.len() <= 512
+                && !self.attribute.trim().is_empty()
+                && self.attribute.len() <= 256
+                && !self.value.trim().is_empty()
+                && self.value.len() <= 8192
+                && self.qualifiers.len() <= 16
+                && self.qualifiers.iter().all(|q| !q.name.trim().is_empty()
+                    && q.name.len() <= 128
+                    && !q.value.trim().is_empty()
+                    && q.value.len() <= 512),
+            "invalid: fact identity or value"
+        );
+        let names: std::collections::HashSet<_> = self
+            .qualifiers
+            .iter()
+            .map(|q| q.name.trim().to_lowercase())
+            .collect();
+        ensure!(
+            names.len() == self.qualifiers.len(),
+            "duplicate fact qualifier"
+        );
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MemoryInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fact: Option<Fact>,
     pub title: String,
     pub conclusion: String,
     pub rationale: String,
@@ -86,6 +148,9 @@ pub struct MemoryInput {
 
 impl MemoryInput {
     pub(crate) fn validate(&self, actor: Actor) -> Result<()> {
+        if let Some(fact) = &self.fact {
+            fact.validate()?;
+        }
         ensure!(
             serde_json::to_vec(self)?.len() <= 60 * 1024,
             "invalid: atomic memory exceeds 60 KiB"
@@ -142,6 +207,8 @@ pub struct Memory {
     pub reason: String,
     pub supersedes: Option<String>,
     pub superseded_by: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub derived_from: Vec<String>,
     pub content: MemoryInput,
 }
 

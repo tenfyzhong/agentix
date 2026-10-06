@@ -122,7 +122,6 @@ CREATE TABLE IF NOT EXISTS memory_projection (
     prepared_hash TEXT NOT NULL DEFAULT '',
     error TEXT
 );
-INSERT OR IGNORE INTO memory_projection(memory_id) SELECT id FROM memories;
 
 CREATE INDEX IF NOT EXISTS sources_by_sequence ON sources(json_extract(data,'$.sequence'));
 CREATE INDEX IF NOT EXISTS sources_by_conversation ON sources(project_id,instance_id,json_extract(data,'$.session_id'),json_extract(data,'$.sequence'));
@@ -155,9 +154,47 @@ CREATE INDEX IF NOT EXISTS work_retention_age ON work_retention(observed_at,work
 CREATE INDEX IF NOT EXISTS work_cancelled ON work_items(id) WHERE state='cancelled';
 CREATE INDEX IF NOT EXISTS memory_reviews_by_work ON memory_reviews(work_id);
 
+CREATE TABLE IF NOT EXISTS memory_compactions (
+    memory_id TEXT PRIMARY KEY REFERENCES memories(id) ON DELETE CASCADE,
+    project_id TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    dirty INTEGER NOT NULL DEFAULT 1,
+    dirty_at INTEGER NOT NULL,
+    checked_at INTEGER NOT NULL DEFAULT 0,
+    suspended INTEGER NOT NULL DEFAULT 0,
+    work_id INTEGER REFERENCES work_items(id) ON DELETE SET NULL
+);
+CREATE INDEX IF NOT EXISTS compaction_ready ON memory_compactions(project_id,dirty_at,memory_id) WHERE dirty=1 AND suspended=0;
+CREATE TRIGGER IF NOT EXISTS compaction_insert AFTER INSERT ON memories BEGIN
+    INSERT INTO memory_compactions(memory_id,project_id,revision,dirty,dirty_at) VALUES(new.id,new.project_id,new.revision,(new.status IN ('active','conflicted') AND coalesce(json_extract(new.data,'$.actor')='agent',0)),coalesce(json_extract(new.data,'$.updated_at'),unixepoch()));
+END;
+CREATE TRIGGER IF NOT EXISTS compaction_update AFTER UPDATE OF revision ON memories BEGIN
+    UPDATE memory_compactions SET revision=new.revision,dirty=(new.status IN ('active','conflicted') AND coalesce(json_extract(new.data,'$.actor')='agent',0)),suspended=0,dirty_at=coalesce(json_extract(new.data,'$.updated_at'),unixepoch()) WHERE memory_id=new.id;
+END;
+CREATE TRIGGER IF NOT EXISTS compaction_failure AFTER UPDATE OF state ON work_items WHEN new.state='failed' BEGIN
+    UPDATE memory_compactions SET suspended=1 WHERE work_id=new.id AND revision=json_extract(new.payload,'$.compact.revision');
+END;
+
 CREATE TABLE IF NOT EXISTS memory_id_renames (
     old_id TEXT PRIMARY KEY,
     memory_id TEXT NOT NULL REFERENCES memories(id),
     projection_pending INTEGER NOT NULL DEFAULT 1
 );
 CREATE INDEX IF NOT EXISTS memory_id_renames_by_memory ON memory_id_renames(memory_id);
+
+CREATE TABLE IF NOT EXISTS memory_facts (
+    memory_id TEXT PRIMARY KEY REFERENCES memories(id) ON DELETE CASCADE,
+    project_id TEXT NOT NULL,
+    fact_key TEXT NOT NULL,
+    status TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS fact_lookup ON memory_facts(project_id,fact_key,status,memory_id);
+CREATE UNIQUE INDEX IF NOT EXISTS fact_active ON memory_facts(project_id,fact_key) WHERE status='active';
+
+CREATE TABLE IF NOT EXISTS memory_fact_origins (
+    memory_id TEXT NOT NULL REFERENCES memories(id),
+    source_memory_id TEXT NOT NULL REFERENCES memories(id),
+    source_revision INTEGER NOT NULL,
+    PRIMARY KEY(memory_id,source_memory_id,source_revision)
+);
+CREATE INDEX IF NOT EXISTS fact_origins_by_source ON memory_fact_origins(source_memory_id,memory_id);

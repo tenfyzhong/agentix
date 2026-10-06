@@ -37,6 +37,7 @@ async fn forgetting_merged_memory_suppresses_original_evidence() {
         .complete_consolidation(
             &merge,
             vec![ConsolidationDecision {
+                related: vec![],
                 candidate: 0,
                 action: DecisionAction::Merge,
                 target: Some(prior.id.clone()),
@@ -195,6 +196,7 @@ async fn consolidation_accepts_covering_quotes_only_from_the_same_source() {
         .quote
         .clone_from(&receipt.messages[0].text);
     let decision = ConsolidationDecision {
+        related: vec![],
         candidate: 0,
         action: DecisionAction::Create,
         target: None,
@@ -246,6 +248,7 @@ async fn consolidation_cannot_archive_without_repository_review() {
         .complete_consolidation(
             &lease,
             vec![ConsolidationDecision {
+                related: vec![],
                 candidate: 0,
                 action: DecisionAction::Archive,
                 target: Some(prior.id.clone()),

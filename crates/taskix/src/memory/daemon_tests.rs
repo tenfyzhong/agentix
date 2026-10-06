@@ -590,7 +590,13 @@ async fn check_reload_admission(deep_limit: bool) {
         .await
         .unwrap()
         .unwrap();
+    let mut compact_changes = app.store.subscribe_compaction();
     app.reload().await.unwrap();
+    assert_eq!(
+        compact_changes.try_recv().unwrap(),
+        None,
+        "reload must wake dirty recovery"
+    );
     if !deep_limit {
         let second = tokio::spawn(async move { app.handle(request).await });
         let admitted = tokio::time::timeout(Duration::from_millis(100), listener.accept()).await;
@@ -615,4 +621,187 @@ async fn check_reload_admission(deep_limit: bool) {
         .expect("reload must reject excess queries without contacting the model")
         .unwrap_err();
     assert!(error.to_string().contains("busy:"), "{error}");
+}
+
+#[tokio::test]
+async fn repository_review_loop_does_not_scan_semantic_compaction() {
+    let (_dir, app, project) = repository_test_application().await;
+    let key = format!("compact:{project}");
+    app.report(
+        &key,
+        Some("Sentinel: only compact scheduling clears this".into()),
+    )
+    .await;
+    let background = tokio::spawn(run_reviews(app.clone()));
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    background.abort();
+    let _ = background.await;
+    assert!(
+        app.errors.lock().await.contains_key(&key),
+        "the periodic repository review must not perform a compact scan"
+    );
+}
+
+async fn wait_compaction_pass(app: &Application, project: &str) {
+    let key = format!("compact:{project}");
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while app.errors.lock().await.contains_key(&key) {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("compaction pass must finish");
+}
+
+#[tokio::test]
+async fn compact_loop_waits_without_database_scans_when_idle() {
+    let (_dir, app, project) = repository_test_application().await;
+    let key = format!("compact:{project}");
+    app.report(&key, Some("Await startup recovery".into()))
+        .await;
+    let background = tokio::spawn(run_compactions(app.clone()));
+    wait_compaction_pass(&app, &project).await;
+    // Any further compact SQL would fail, making a periodic scan observable.
+    let pool = sqlx::SqlitePool::connect_with(
+        sqlx::sqlite::SqliteConnectOptions::new().filename(&app.location.path),
+    )
+    .await
+    .unwrap();
+    sqlx::query("DROP TABLE memory_compactions")
+        .execute(&pool)
+        .await
+        .unwrap();
+    tokio::time::pause();
+    tokio::time::advance(Duration::from_hours(48)).await;
+    tokio::time::resume();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    background.abort();
+    let _ = background.await;
+    assert!(
+        !app.errors.lock().await.contains_key(&key),
+        "two idle days must not trigger another compact database scan"
+    );
+    pool.close().await;
+}
+
+#[tokio::test]
+async fn compact_loop_wakes_after_a_write_and_uses_the_debounce_deadline() {
+    let (_dir, app, project) = repository_test_application().await;
+    let mut config = app.runtime.read().await.config.clone();
+    config.agent.compaction_debounce_seconds = 5;
+    *app.runtime.write().await =
+        Arc::new(Runtime::build(config, &app.store, app.repositories.clone()));
+    let key = format!("compact:{project}");
+    app.report(&key, Some("Await startup recovery".into()))
+        .await;
+    let background = tokio::spawn(run_compactions(app.clone()));
+    wait_compaction_pass(&app, &project).await;
+    // Leave room for SQLite setup and scheduling on loaded CI runners.
+    create_compact_memory(&app, &project).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(
+        app.store.work_counts().await.unwrap().pending,
+        0,
+        "do not compact before the debounce"
+    );
+    tokio::time::timeout(Duration::from_secs(10), async {
+        while app.store.work_counts().await.unwrap().pending == 0 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("a write must wake compact without waiting for a periodic scan");
+    background.abort();
+    let _ = background.await;
+    assert_eq!(app.store.work_counts().await.unwrap().pending, 1);
+}
+
+async fn create_compact_memory(app: &Application, project: &str) {
+    let input: MemoryInput = serde_json::from_value(json!({
+        "title":"External policy","conclusion":"Keep the external server policy",
+        "rationale":"Confirmed constraint","scope":"server","tags":[],"kind":"user_decision",
+        "evidence":[{"receipt_id":"write","message_id":"message","quote":"Keep the external server policy"}]
+    })).unwrap();
+    let source: Source = serde_json::from_value(json!({
+        "instance_id":"db","receipt_id":"write","sequence":1,"project_id":project,
+        "session_id":"session","turn_id":"turn","revision":1,"job_id":null,"recorded_at":1,
+        "messages":[{"id":"message","role":"user","text":"Keep the external server policy"}]
+    }))
+    .unwrap();
+    app.store.ingest(&source).await.unwrap();
+    let lease = app
+        .store
+        .claim_work(
+            "setup",
+            &app.runtime.read().await.config.agent,
+            time::OffsetDateTime::now_utc().unix_timestamp(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    app.store
+        .complete_extraction(
+            &lease,
+            vec![],
+            time::OffsetDateTime::now_utc().unix_timestamp(),
+        )
+        .await
+        .unwrap();
+    app.store
+        .create(project, input, Actor::Agent)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn compact_loop_recovers_dirty_work_when_reenabled() {
+    let (_dir, app, project) = repository_test_application().await;
+    let mut config = app.runtime.read().await.config.clone();
+    config.agent.compaction_enabled = false;
+    config.agent.compaction_debounce_seconds = 0;
+    *app.runtime.write().await = Arc::new(Runtime::build(
+        config.clone(),
+        &app.store,
+        app.repositories.clone(),
+    ));
+    let background = tokio::spawn(run_compactions(app.clone()));
+    create_compact_memory(&app, &project).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(app.store.work_counts().await.unwrap().pending, 0);
+    config.agent.compaction_enabled = true;
+    *app.runtime.write().await =
+        Arc::new(Runtime::build(config, &app.store, app.repositories.clone()));
+    app.store.wake_compaction();
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while app.store.work_counts().await.unwrap().pending == 0 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("reload must resume dirty work without waiting for a new write");
+    background.abort();
+    let _ = background.await;
+    assert_eq!(app.store.work_counts().await.unwrap().pending, 1);
+}
+
+#[tokio::test]
+async fn compact_loop_recovers_history_before_waiting_for_writes() {
+    let (_dir, app, project) = repository_test_application().await;
+    let mut config = app.runtime.read().await.config.clone();
+    config.agent.compaction_debounce_seconds = 0;
+    *app.runtime.write().await =
+        Arc::new(Runtime::build(config, &app.store, app.repositories.clone()));
+    create_compact_memory(&app, &project).await;
+    // No receiver was subscribed when history was written; startup must recover it.
+    let background = tokio::spawn(run_compactions(app.clone()));
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while app.store.work_counts().await.unwrap().pending == 0 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("startup must recover durable dirty history");
+    background.abort();
+    let _ = background.await;
+    assert_eq!(app.store.work_counts().await.unwrap().pending, 1);
 }

@@ -10,6 +10,84 @@ use tokio::sync::Semaphore;
 
 struct Repositories(PathBuf);
 
+#[tokio::test]
+async fn targeted_worker_records_failure_without_claiming_other_projects() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(&temp.path().join("memory.db"))
+        .await
+        .unwrap();
+    store.ingest(&source("other")).await.unwrap();
+    let mut target = source("target");
+    target.receipt_id = "target".into();
+    target.turn_id = "target".into();
+    store.ingest(&target).await.unwrap();
+    let server = http::MockHttp::start(vec![(400, json!({"error":"rejected"}))]).await;
+    let config = AgentConfig {
+        extraction_debounce_ms: 0,
+        ..AgentConfig::default()
+    };
+    let provider = agentix_memory::HttpProvider::new(agentix_memory::ProviderConfig {
+        base_url: server.url.clone(),
+        protocol: agentix_memory::ProviderProtocol::Openai,
+        api_key_env: None,
+        max_in_flight: 4,
+    })
+    .unwrap();
+    let worker = MemoryWorker::new(
+        store.clone(),
+        Arc::new(agentix_memory::HttpModel::new(Arc::new(provider), config.clone()).unwrap()),
+        config,
+        Arc::new(Repositories(temp.path().into())),
+    );
+    assert!(worker.run_work_item("scoped", 2).await.is_err());
+    assert_eq!(store.work_details(2).await.unwrap()["state"], "failed");
+    assert_eq!(store.work_details(1).await.unwrap()["state"], "pending");
+    assert_eq!(store.work_details(1).await.unwrap()["attempts"], 0);
+    assert!(!worker.run_work_item("finished", 2).await.unwrap());
+}
+
+#[tokio::test]
+async fn permanent_provider_rejection_fails_work_without_replaying_the_same_request() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = MemoryStore::open(&temp.path().join("memory.db"))
+        .await
+        .unwrap();
+    store.ingest(&source("p")).await.unwrap();
+    let server = http::MockHttp::start(vec![(400, json!({"error":{"status":"FAILED_PRECONDITION","message":"User location is not supported for the API use."}}))]).await;
+    let config = AgentConfig {
+        extraction_debounce_ms: 0,
+        ..AgentConfig::default()
+    };
+    let provider = agentix_memory::HttpProvider::new(agentix_memory::ProviderConfig {
+        base_url: server.url.clone(),
+        protocol: agentix_memory::ProviderProtocol::Openai,
+        api_key_env: None,
+        max_in_flight: 4,
+    })
+    .unwrap();
+    let model = agentix_memory::HttpModel::new(Arc::new(provider), config.clone()).unwrap();
+    let worker = MemoryWorker::new(
+        store.clone(),
+        Arc::new(model),
+        config.clone(),
+        Arc::new(Repositories(temp.path().into())),
+    );
+    assert!(worker.run_once("worker").await.is_err());
+    assert_eq!(store.work_counts().await.unwrap().failed, 1);
+    assert_eq!(store.work_counts().await.unwrap().pending, 0);
+    assert!(
+        store
+            .claim_work(
+                "retry",
+                &config,
+                time::OffsetDateTime::now_utc().unix_timestamp() + 1000
+            )
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
 struct CrossTurnModel;
 #[async_trait]
 impl Model for CrossTurnModel {
@@ -43,7 +121,7 @@ impl Model for CrossTurnModel {
             }
             _ => (
                 "submit_candidates",
-                json!({"candidates":[{"title":"Offline storage chosen","conclusion":"Keep data offline","rationale":"User selected option B","scope":"project","conditions":[],"valid_until":null,"tags":[],"kind":"user_decision","evidence":[{"receipt_id":"choice","message_id":"message","quote":"Choose option B."},{"receipt_id":"proposal","message_id":"message","quote":"Option B keeps data offline."}]}]}),
+                json!({"candidates":[{"fact":{"entity":"project","attribute":"storage.location","qualifiers":[],"value":"offline"},"title":"Offline storage chosen","conclusion":"Keep data offline","rationale":"User selected option B","scope":"project","conditions":[],"valid_until":null,"tags":[],"kind":"user_decision","evidence":[{"receipt_id":"choice","message_id":"message","quote":"Choose option B."},{"receipt_id":"proposal","message_id":"message","quote":"Option B keeps data offline."}]}]}),
             ),
         };
         Ok(ModelReply {
@@ -207,7 +285,7 @@ async fn real_http_agent_pipeline_extracts_consolidates_and_preserves_provenance
             json!({"status":"completed","output":[{"type":"function_call","call_id":name,"name":name,"arguments":args.to_string()}]}),
         )
     }
-    let candidate = json!({"title":"External decision","conclusion":"external decision","rationale":"User instruction","scope":"project","conditions":[],"valid_until":null,"tags":[],"kind":"user_decision","evidence":[{"receipt_id":"a","message_id":"message","quote":"external decision"}]});
+    let candidate = json!({"fact":{"entity":"project","attribute":"external.constraint","qualifiers":[],"value":"external decision"},"title":"External decision","conclusion":"external decision","rationale":"User instruction","scope":"project","conditions":[],"valid_until":null,"tags":[],"kind":"user_decision","evidence":[{"receipt_id":"a","message_id":"message","quote":"external decision"}]});
     let server=http::MockHttp::start(vec![
         response("repo_search",&json!({"query":"external decision"})),
         response("submit_candidates",&json!({"candidates":[candidate]})),
@@ -618,7 +696,7 @@ async fn worker_corrects_unanchored_candidates_and_oversized_consolidation_evide
         )
     }
 
-    let candidate = json!({"title":"External decision","conclusion":"external decision","rationale":"User instruction","scope":"project","conditions":[],"valid_until":null,"tags":[],"kind":"user_decision","evidence":[{"receipt_id":"a","message_id":"message","quote":"external decision"}]});
+    let candidate = json!({"fact":{"entity":"project","attribute":"external.constraint","qualifiers":[],"value":"external decision"},"title":"External decision","conclusion":"external decision","rationale":"User instruction","scope":"project","conditions":[],"valid_until":null,"tags":[],"kind":"user_decision","evidence":[{"receipt_id":"a","message_id":"message","quote":"external decision"}]});
     let mut unanchored = candidate.clone();
     unanchored["evidence"][0]["receipt_id"] = json!("neighbor");
     let mut oversized = candidate.clone();

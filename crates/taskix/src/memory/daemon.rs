@@ -232,6 +232,7 @@ impl Application {
         );
         let result = json!({"reloaded":true,"errors":runtime.errors});
         *installed = Arc::new(runtime);
+        self.store.wake_compaction();
         Ok(result)
     }
 }
@@ -340,6 +341,8 @@ pub async fn serve(path: &Path, location: MemoryLocation) -> Result<Value> {
     let mut background = JoinSet::new();
     let sources = app.clone();
     background.spawn(async move { poll_sources(sources, replay_cursor).await });
+    let compactions = app.clone();
+    background.spawn(async move { run_compactions(compactions).await });
     let reviews = app.clone();
     background.spawn(async move { run_reviews(reviews).await });
     let workers = app.clone();
@@ -767,6 +770,95 @@ async fn run_projection(app: Arc<Application>) -> Result<()> {
             }
         }
         tokio::time::sleep(Duration::from_millis(config.poll_interval_ms)).await;
+    }
+}
+
+/// Only writes, startup recovery and configuration reload wake semantic maintenance.
+async fn run_compactions(app: Arc<Application>) -> Result<()> {
+    let mut changes = app.store.subscribe_compaction();
+    let mut due = BTreeMap::<String, tokio::time::Instant>::new();
+    let mut recover = true;
+    loop {
+        let runtime = app.runtime.read().await.clone();
+        if runtime.worker.is_some() && runtime.config.agent.compaction_enabled {
+            if recover {
+                for project in app.tasks.projects().await? {
+                    if project.archived_at.is_none() {
+                        due.insert(project.id, tokio::time::Instant::now());
+                    }
+                }
+                recover = false;
+            }
+            let ready: Vec<_> = due
+                .iter()
+                .filter(|(_, at)| **at <= tokio::time::Instant::now())
+                .map(|(project, _)| project.clone())
+                .collect();
+            for project in ready {
+                due.remove(&project);
+                let result = async {
+                    if app
+                        .tasks
+                        .project_result(&project)
+                        .await?
+                        .archived_at
+                        .is_some()
+                    {
+                        return Ok(None);
+                    }
+                    let now = time::OffsetDateTime::now_utc().unix_timestamp();
+                    app.store
+                        .schedule_background_compaction(&project, &runtime.config.agent, now)
+                        .await?;
+                    app.store
+                        .next_compaction_at(&project, &runtime.config.agent, now)
+                        .await
+                }
+                .await;
+                match result {
+                    Ok(next) => {
+                        if let Some(next) = next {
+                            let now = time::OffsetDateTime::now_utc().unix_timestamp();
+                            let delay = u64::try_from(next.saturating_sub(now)).unwrap_or(0);
+                            due.insert(
+                                project.clone(),
+                                tokio::time::Instant::now() + Duration::from_secs(delay),
+                            );
+                        }
+                        app.report(&format!("compact:{project}"), None).await;
+                    }
+                    Err(error) => {
+                        // A failed database check has outstanding recovery work, unlike idle.
+                        due.insert(
+                            project.clone(),
+                            tokio::time::Instant::now() + Duration::from_mins(1),
+                        );
+                        app.report(&format!("compact:{project}"), Some(error.to_string()))
+                            .await;
+                    }
+                }
+            }
+        } else {
+            due.clear();
+            recover = true;
+        }
+        let next = due.values().min().copied();
+        tokio::select! {
+            event = changes.recv() => {
+                match event {
+                    Ok(Some(project)) => { due.insert(project, tokio::time::Instant::now()); },
+                    Ok(None) | Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => { recover = true; },
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => return Ok(()),
+                }
+            },
+            () = async {
+                if let Some(at) = next {
+                    tokio::time::sleep_until(at).await;
+                } else {
+                    std::future::pending::<()>().await;
+                }
+            } => {},
+        }
     }
 }
 

@@ -298,7 +298,7 @@ async fn concurrent_edit_keeps_one_winner_and_historical_states_are_explicit() {
         .await
         .unwrap();
     assert_eq!(
-        store.search("p1", "备份", 10).await.unwrap()[0].status,
+        store.conflicts("p1", "", 10).await.unwrap()[0].status,
         Status::Conflicted
     );
     store
@@ -587,4 +587,113 @@ async fn user_choice_can_cite_the_proposal_it_explicitly_accepts() {
         result.is_ok(),
         "explicit user selection plus its proposal must be valid evidence: {result:?}"
     );
+}
+
+#[tokio::test]
+async fn reopening_initialized_store_does_not_revisit_all_memory_rows() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("memory.sqlite3");
+    let store = MemoryStore::open(&path).await.unwrap();
+    store.ingest(&source("p1", "r1")).await.unwrap();
+    let memory = store.create("p1", input("r1"), Actor::Agent).await.unwrap();
+    let pool =
+        sqlx::SqlitePool::connect_with(sqlx::sqlite::SqliteConnectOptions::new().filename(&path))
+            .await
+            .unwrap();
+    // BEFORE INSERT fires even for INSERT OR IGNORE of an existing row. These
+    // sentinels catch replayed full-table backfills without timing thresholds.
+    sqlx::raw_sql("CREATE TRIGGER reject_projection_replay BEFORE INSERT ON memory_projection BEGIN SELECT RAISE(ABORT,'projection backfill replayed'); END; CREATE TRIGGER reject_compaction_replay BEFORE INSERT ON memory_compactions BEGIN SELECT RAISE(ABORT,'compaction backfill replayed'); END;").execute(&pool).await.unwrap();
+    let schema_before: i64 = sqlx::query_scalar("PRAGMA schema_version")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    drop(store);
+    let reopened = MemoryStore::open(&path)
+        .await
+        .expect("reopening must not rescan persisted memories");
+    assert_eq!(reopened.show("p1", &memory.id, None).await.unwrap(), memory);
+    let schema_after: i64 = sqlx::query_scalar("PRAGMA schema_version")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        schema_before, schema_after,
+        "ordinary opens must not invalidate cached schemas"
+    );
+}
+
+#[tokio::test]
+async fn legacy_auxiliary_backfill_is_atomic_and_preserves_existing_progress() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("memory.sqlite3");
+    let store = MemoryStore::open(&path).await.unwrap();
+    store.ingest(&source("p1", "r1")).await.unwrap();
+    let first = store.create("p1", input("r1"), Actor::Agent).await.unwrap();
+    let second = store.create("p1", input("r1"), Actor::Agent).await.unwrap();
+    let pool =
+        sqlx::SqlitePool::connect_with(sqlx::sqlite::SqliteConnectOptions::new().filename(&path))
+            .await
+            .unwrap();
+    sqlx::query("DELETE FROM memory_metadata WHERE key='memory_auxiliary_version'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM memory_projection WHERE memory_id=?")
+        .bind(&first.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM memory_compactions WHERE memory_id=?")
+        .bind(&first.id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "UPDATE memory_compactions SET dirty=0,suspended=1,checked_at=123 WHERE memory_id=?",
+    )
+    .bind(&second.id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::raw_sql("CREATE TRIGGER fail_auxiliary_migration BEFORE INSERT ON memory_compactions BEGIN SELECT RAISE(ABORT,'injected migration failure'); END;").execute(&pool).await.unwrap();
+    drop(store);
+    assert!(MemoryStore::open(&path).await.is_err());
+    let marker: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM memory_metadata WHERE key='memory_auxiliary_version'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(marker, 0);
+    let projection: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM memory_projection WHERE memory_id=?")
+            .bind(&first.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        projection, 0,
+        "failed migration must roll back earlier backfills"
+    );
+    sqlx::query("DROP TRIGGER fail_auxiliary_migration")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let store = MemoryStore::open(&path).await.unwrap();
+    assert_eq!(store.show("p1", &first.id, None).await.unwrap(), first);
+    let progress: (i64, i64, i64) = sqlx::query_as(
+        "SELECT dirty,suspended,checked_at FROM memory_compactions WHERE memory_id=?",
+    )
+    .bind(&second.id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(progress, (0, 1, 123));
+    for table in ["memory_projection", "memory_compactions"] {
+        let count: i64 = sqlx::query_scalar(&format!("SELECT count(*) FROM {table}"))
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 2);
+    }
 }

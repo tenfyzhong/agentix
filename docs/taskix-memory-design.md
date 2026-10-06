@@ -36,8 +36,8 @@ migration error rolls back the whole transaction and schema version.
 Upgrade the service and CLI together, stop the old service before migration,
 and retain a SQLite online backup. Old writable binaries reject schema 2.
 Upgrade `scripts/taskix-backup.py` as well: backup and restore support schemas
-1 and 2, retain the archived schema version, and reject unknown versions.
-Offline reads support schemas 1 and 2 without migrating. Reset pagination cursors
+1, 2 and 3, retain the archived schema version, and reject unknown versions.
+Offline reads support schemas 1, 2 and 3 without migrating. Reset pagination cursors
 after migration and use the new IDs for CLI mutations. On the next projection
 sync, renamed notes publish under the new ID and preserve old file bytes in
 `Memory/Recovery/`. An existing destination with different contents is a
@@ -141,12 +141,140 @@ Do not let the model assign stronger evidence than the source supports. Normal
 queries do not run an Agent; optional deep queries run a separately limited,
 read-only loop and return traceable sources.
 
+## Consistency and incremental compaction
+
+Extraction emits every supported independently replaceable fact as its own memory.
+A structured `fact` contains a canonical `entity`, one `attribute`, a bounded
+array of `{name, value}` qualifiers, and a separate `value`. Project, normalized
+entity/attribute and sorted qualifiers identify the fact; value, title and
+record ID do not. Conditions that distinguish applicability belong in qualifiers.
+Deployment path, autostart, domain, client SNI and independently configurable
+protocol/port settings remain separate. Repository-discoverable information and
+unconfirmed brainstorming remain excluded.
+
+Before a background write, consolidation receives exact indexed matches for that
+identity plus bounded related lexical snapshots. The model reuses canonical
+identity names when source wording changes. This is not exhaustive semantic
+matching across arbitrary synonyms. A new fact becomes active; the same identity
+and value merges evidence; a confirmed later replacement supersedes the old
+record and creates a new active record. Original source dates and explicit
+replacement statements establish precedence; newer ingestion alone does not.
+Unresolved incompatible claims become conflicted and leave ordinary retrieval.
+The same invariant applies to direct create, update, supersede and status writes:
+no active fact may coexist with a conflicted claim of the same identity. Checks
+run at the transaction boundary so multi-record reconciliation can retire all
+claims atomically. Rejected writes roll back content, versions and indexes.
+Manual resolution must retire the other claims before activating the selected
+record; changing only one conflicted record cannot publish a confirmed value.
+Conflict diagnostics remain available through the read-only `memory_conflicts`
+tool and explicit ID/history inspection.
+
+A partial legacy replacement can retain unrelated facts; compact migrates legacy
+mixed records into atomic parts. Literal prior evidence must remain available.
+Fact identities and values are immutable within a record: changing either
+requires a new record. A partial unique index permits at most one active record
+per Project/fact identity. All mutations, version writes, dirty observations and
+work completion share one fenced transaction. Stale revisions, older replacement
+evidence, unrelated fact merges and evidence loss roll back the whole proposal.
+Human-authored records are protected from automatic replacement. Successful
+write-time reconciliation marks its atomic outputs observed, avoiding redundant
+automatic compact work. A deep answer citing conflicted records must report
+insufficient evidence.
+
+Automatic forgetting is limited to a current, literal user message naming the
+exact memory ID or title: `Forget memory <ID or TITLE>.` or `忘记记忆 <ID or TITLE>`.
+The full message, source date, role and candidate evidence must match. Historical,
+negated and quoted requests do not authorize forgetting. Suppression covers every
+stored version to prevent replay. Manual forgetting retains its revision guard.
+Compaction never authorizes forgetting.
+
+Semantic compaction is asynchronous consolidation, independent of derived-data
+pruning and repository review. A dedicated daemon loop wakes on memory writes,
+compact work completion, startup recovery and configuration reload. It drains at
+most ten indexed dirty records per unarchived Project per pass. The durable
+per-revision dirty flags also track one-time historical processing and survive
+restart; there is no rotating scan or periodic reassessment of unchanged records.
+Only searchable, nonexpired Agent records qualify for model work. Human and
+retired revisions do not enter the dirty candidate index. Records expiring while
+waiting are drained in pages of ten and marked observed without model calls;
+this prevents expired candidates from being rescanned on every later write.
+The candidate index excludes suspended failures. The default dirty debounce is
+30 seconds. The loop arms a timer only for an actual outstanding dirty deadline;
+with no eligible dirty work it waits for notifications without compact database
+scans or model calls. Setting `compaction_enabled = false` disables automatic
+scheduling. Re-enabling it through reload resumes durable dirty work. Scheduling
+records a durable work ID and avoids duplicate pending/running work across restart
+or manual requests. A changed revision waiting behind an old seed is woken when
+that work finishes or exhausts its lease.
+
+Compaction work has priority 3 within its Project, below live extraction/consolidation and backfill,
+and uses the existing per-Project consolidation lane and provider/Agent budgets.
+Legacy seeds without a structured fact are split into up to sixteen independent
+parts. Legacy splitting receives complete bounded memory/source snapshots and exposes
+only its submission tool; repository review remains in its independent lane.
+It uses at most four model steps (or a lower configured limit) for the initial
+proposal and validation corrections, without repeating evidence reads. Split proposals reference preloaded quotations
+by memory ID and zero-based quote index; the worker restores exact receipt/message
+IDs and original text before validation. The submission schema permits only
+actually supplied memory IDs and quote indices; invalid indices report their
+available range. Unknown records/indices are correctable
+proposal errors. Missing evidence returns up to sixteen exact memory/quote references
+and the total missing count for correction. The submission schema requires a non-null
+fact in each part. The seed is supplied once rather than duplicated as a candidate. Its current
+conclusion is supplied as `migration_scope`; example attributes and a formerly
+broader title do not require unrelated facts or reconstruction of retired facts.
+Keeping a complete quotation is separate from extracting every fact it mentions.
+Related assessments are restricted to supplied IDs and snapshot revisions; they can
+keep records or retire whole legacy agent records, while atomic and human records
+can only be kept through this assessment path. Duplicate creates against supplied
+active facts receive corrective feedback before the fenced transaction; atomic
+updates still use part-level reconciliation. Protocol, container port and published
+port are separate attributes.
+Expanded proposals retain the original submission byte limit,
+and all original evidence-retention fences still apply. Request/task
+timeouts, tool limits and retries remain unchanged. Each part creates a new fact or reconciles an existing atomic version;
+merge requires identical identity and value. The seed and overlapping legacy
+records become superseded only when their evidence is preserved among the parts.
+Every part records `derived_from` IDs; an indexed one-to-many lineage table also
+retains each original revision. Superseded originals and all versions remain
+inspectable. A legacy record's `superseded_by` points to the first part, while the
+parts and lineage preserve the complete split. Atomic seeds use normal same-fact
+reconciliation. Supplied evidence dates and author roles avoid redundant source reads. Invalid
+literal quotations and assistant-only user decisions receive corrective feedback
+before the transaction; the store repeats evidence validation when committing. Different
+attributes may legitimately share a hostname; identity/value matching determines
+duplicates rather than counting text occurrences. Human protection, revision
+guards and the sixteen-quotation limit per part still apply.
+Commit rechecks the seed expiry as well as its revision, actor and status, so a
+seed expiring during model execution cannot be revived by the proposal.
+A stale seed is completed without a model call; revisions produced by a successful compact
+are marked observed to prevent recursive scheduling. Failures retain normal retry
+limits; permanent provider 4xx rejections, except 408 and 429, fail immediately.
+They remain inspectable; exhausted work requires a retry, a changed memory revision,
+or explicit manual compaction rather than being re-created automatically.
+
+The manual API scans an ID page of 1–100 records (default ten) and returns scanned
+and scheduled counts, work IDs and `next_after`. It ignores the observed-revision and debounce checks,
+while retaining all eligibility and duplicate-work guards. This command enqueues
+work; it does not wait for model completion or imply exhaustive consolidation.
+Normal search, context and deep-query reads never trigger compaction. Source
+snapshots and version history remain durable; this is not physical storage
+reclamation or a retention policy.
+
+Provider requests require tool calls when tools are supplied. The final Agent
+step exposes only the submission tool, retaining the original step/time budgets.
+Non-success HTTP diagnostics retain only bounded recognized status/schema fields;
+arbitrary provider messages are omitted. The known location rejection explains
+that the upstream proxy route needs attention without exposing credentials or
+request contents.
+
 ## Memory, search and lifecycle
 
-Each atomic memory carries conclusion, rationale, scope, conditions, type, tags,
+Each atomic memory carries its structured fact, conclusion, rationale, scope, conditions, type, tags,
 evidence, revision and timestamps. Preserve versions and relationships for
-conflicts and supersession. Default retrieval excludes forgotten, superseded and
-archived content. Explicit historical inspection remains possible. Forgetting
+conflicts and supersession. Default lexical/vector search, context and lists include only active,
+unexpired content. Conflicted, forgotten, superseded and archived records are
+excluded. Explicit historical inspection remains possible. Forgetting
 removes search visibility and atomically creates suppression records from every
 historical version of that memory. Merges and edits can replace current evidence,
 so suppressing only the latest version would let replay/backfill resurrect the
@@ -330,3 +458,25 @@ bounded primary-key query per page of at most 100 receipts. Full content and
 instance checks remain mandatory; total startup work still grows with retained
 history size. This reduces query round trips without claiming a measured speedup
 or changing exact vector retrieval into approximate nearest-neighbor search.
+
+### Atomic-fact schema upgrade
+
+Memory database schema 3 adds the fact identity/uniqueness index and split lineage.
+Upgrade the CLI and memory daemon together; older writers do not understand the
+new identity invariant. Existing schema 1/2 databases migrate atomically, preserving
+sources and versions. Previously settled legacy mixed records are marked dirty
+once so they can be split, including records with an explicit null fact. Restart
+under schema 3 does not reopen unchanged assessed records. Projection metadata is
+reset once to render fact blocks and lineage. Migration itself does not call a
+model; subsequent background or manual compact performs the semantic split.
+
+
+### Auxiliary metadata initialization
+
+Projection and compaction metadata are backfilled once per database, guarded by
+`memory_auxiliary_version` in the migration transaction. Existing publication and
+compaction progress are preserved. A failed backfill rolls back the marker and
+all earlier changes so reopening can retry safely. Subsequent writable opens do
+not enumerate memories for these backfills or recreate the failure trigger;
+normal writes maintain the auxiliary rows. This does not remove the service's
+separate retained-source validation at startup described above.

@@ -60,6 +60,7 @@ fn memory_daemon_cli_and_offline_fallback_do_not_require_a_vault_or_model_creden
         "{}",
         String::from_utf8_lossy(&help.stderr)
     );
+    assert!(String::from_utf8_lossy(&help.stdout).contains("compact"));
     let project = cli.ok(&[
         "project",
         "register",
@@ -714,7 +715,7 @@ async fn memory_visible_turn_to_mock_model_to_real_host_hook_end_to_end() {
         .await
         .unwrap();
     let source = tasks.memory_sources(0, 1).await.unwrap().remove(0);
-    let candidate = json!({"title":"Offline recovery","conclusion":"Offline recovery is required","rationale":"User constraint","scope":"project","conditions":[],"valid_until":null,"tags":[],"kind":"user_decision","evidence":[{"receipt_id":source.receipt_id,"message_id":"first","quote":"Offline recovery is required"}]});
+    let candidate = json!({"fact":{"entity":"project","attribute":"recovery.mode","qualifiers":[],"value":"offline"},"title":"Offline recovery","conclusion":"Offline recovery is required","rationale":"User constraint","scope":"project","conditions":[],"valid_until":null,"tags":[],"kind":"user_decision","evidence":[{"receipt_id":source.receipt_id,"message_id":"first","quote":"Offline recovery is required"}]});
     let server = provider_http::MockHttp::start(vec![
         response("repo_read", &json!({"path":"README.md","offset":0})),
         response("submit_candidates", &json!({"candidates":[candidate]})),

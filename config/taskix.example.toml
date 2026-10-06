@@ -48,6 +48,10 @@ extraction_debounce_ms = 1000
 # Review agent-authored memories after repository changes and at this interval.
 # Set to zero to disable automatic repository reviews.
 repository_review_interval_seconds = 86400
+# Write-driven low-priority semantic compaction; idle waits for notifications.
+# Process existing history once and wait for dirty revisions to settle.
+compaction_enabled = true
+compaction_debounce_seconds = 30
 
 [memory.embedding]
 enabled = false

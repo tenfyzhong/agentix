@@ -149,3 +149,48 @@ async fn context_probe_latency_under_a_writer() {
     report("cache miss under writer", probes);
     report("SQLite writer acquisition (20ms blocker)", waits);
 }
+
+#[tokio::test]
+#[ignore = "startup and dirty-candidate scale acceptance"]
+async fn initialized_open_and_ineligible_compaction_scale() {
+    for count in [1_000_i64, 10_000, 100_000] {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("memory.db");
+        let store = MemoryStore::open(&path).await.unwrap();
+        let input: MemoryInput = serde_json::from_value(json!({"title":"External policy","conclusion":"Human confirmed policy","rationale":"External constraint","scope":"project","tags":[],"kind":"user_decision","evidence":[]})).unwrap();
+        let sample = store.create("target", input, Actor::Human).await.unwrap();
+        let pool = sqlx::SqlitePool::connect_with(
+            sqlx::sqlite::SqliteConnectOptions::new().filename(&path),
+        )
+        .await
+        .unwrap();
+        // Bulk fixture loading preserves the real memory JSON and insert trigger;
+        // FTS/vectors are irrelevant to these startup and scheduling measurements.
+        sqlx::query("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<?) INSERT INTO memories(id,project_id,revision,status,data) SELECT printf('fixture-%08d',i),'target',1,'active',json_set(?,'$.id',printf('fixture-%08d',i)) FROM n")
+            .bind(count - 1).bind(serde_json::to_string(&sample).unwrap()).execute(&pool).await.unwrap();
+        drop(store);
+        let mut opens = Vec::new();
+        let mut probes = Vec::new();
+        for _ in 0..30 {
+            let started = Instant::now();
+            let store = MemoryStore::open(&path).await.unwrap();
+            opens.push(started.elapsed().as_micros());
+            let started = Instant::now();
+            assert!(
+                store
+                    .next_compaction_at(
+                        "target",
+                        &agentix_memory::AgentConfig::default(),
+                        time::OffsetDateTime::now_utc().unix_timestamp()
+                    )
+                    .await
+                    .unwrap()
+                    .is_none()
+            );
+            probes.push(started.elapsed().as_micros());
+        }
+        println!("human memories={count}; no remote model calls; OS page cache warm");
+        report("initialized writable open", opens);
+        report("ineligible dirty probe", probes);
+    }
+}
