@@ -4,18 +4,6 @@
 
 Agentix is a Rust 2024 workspace under `crates/`. `agentix` and `taskix` provide the CLIs; `agentix-domain`, `agentix-core`, and `agentix-storage` separate contracts, orchestration, and persistence. Other crates implement agent, messaging, and terminal adapters. Keep unit tests beside source and integration tests in each crate's `tests/` directory. `plugins/` contains host integrations and plugin tests; `docs/` holds technical documentation, while detailed user guides live in the GitHub Wiki; `completions/` contains generated shell assets.
 
-## Build, Test, and Development Commands
-
-Use the pinned `rust-toolchain.toml` toolchain and Node.js 24+ with npm.
-
-- `make`: build the workspace with all features in debug mode.
-- `make release`: build optimized binaries.
-- `make check`: check formatting, run Clippy with warnings denied, and execute Rust and Node plugin tests.
-- `make test`: install locked plugin dependencies and run both test suites.
-- `cargo fmt --all`: format Rust code; `make fmt` only checks formatting.
-- `cargo run -p agentix -- serve`: run locally after configuring Agentix.
-- `make completions`: regenerate both CLIs' completions after command changes.
-
 ## Coding Style & Naming Conventions
 
 Follow rustfmt, using four-space Rust indentation and two spaces for YAML/JSON. Use `snake_case` for functions/modules, `PascalCase` for types, and `SCREAMING_SNAKE_CASE` for constants. Avoid trailing whitespace. Unsafe Rust is forbidden. Use English for documentation, comments, identifiers, messages, and test labels. Preserve transport boundaries and update related documentation when behavior changes.
@@ -25,6 +13,10 @@ Follow rustfmt, using four-space Rust indentation and two spaces for YAML/JSON. 
 When changes affect only one module, run only that module's tests to shorten feedback time; for one crate, use `cargo test -p <crate> --all-features`. Skip workspace-wide tests for these changes.
 
 Use Rust `#[test]`, asynchronous `#[tokio::test]`, and Node's test runner. Name tests in descriptive `snake_case` that identifies the behavior. For behavior changes, first add a reusable regression test and confirm the expected failure, then implement the minimum fix. Documentation-only changes are exempt. Use deterministic mocks and isolated databases; avoid live credentials or developer sessions. Run focused tests with `cargo test -p agentix-core <test_name>`; see `docs/integration-coverage.md` for coverage boundaries.
+
+## Documentation Guidelines
+
+When modifying user manuals, update the corresponding pages in this repository's GitHub Wiki as part of the same change. Keep repository documentation and Wiki instructions consistent before considering the documentation update complete.
 
 ## Commit & Pull Request Guidelines
 
