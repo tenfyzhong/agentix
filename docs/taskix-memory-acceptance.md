@@ -164,8 +164,8 @@ path/autostart/domain separation, complete evidence and version preservation,
 visible `derived_from` lineage, direct proposals from preloaded snapshots without read tools, bounded validation
 corrections with a lower user budget preserved, no recursive work, all-or-nothing rollback,
 corrective feedback for altered literal quotes and current-conclusion migration scope for retained legacy records, snapshot-bound preloaded quote references with explicit valid-index feedback, expanded-submission byte limits, assistant-only decision attribution, missing-quote reference feedback, duplicate-create correction, snapshot-bound related assessments, and one-time schema 2-to-3
-migration including explicit null facts. Backup tests preserve schema 3 and reject
-unsupported schema 4; CLI restore and host extraction tests exercise the new schema. A worker regression rejects unstructured
+migration including explicit null facts. Backup tests preserve schemas 3 and 4 and reject
+unsupported schema 5; CLI restore and host extraction tests exercise the new schema. A worker regression rejects unstructured
 extraction and then writes all three facts as settled. Existing low-level legacy
 merge regressions retain compatibility for already queued work. API, provider and
 Agent-loop tests cover safe error classification, bounded tools, permanent HTTP
@@ -374,3 +374,21 @@ unsupported-egress-location HTTP 400. The one-shot Luna bridge does not replace 
 provider. Fact identity uniqueness is deterministic; semantic naming and qualifier
 canonicalization remain bounded model decisions, so a particular fact count is not
 a general compaction guarantee.
+
+
+### Cancelled source acceptance
+
+`agentix-memory/tests/invalidation.rs` verifies persistent invalidation, historical
+versions, stale extraction/consolidation fences, replay after restart, late turn
+attachment, cancellation before receipt replay, mixed evidence, compacted child
+facts, no superseded-version resurrection, lifecycle bypass rejection and schema
+3 provenance backfill. `agentix-task/tests/memory_sources.rs` verifies durable
+cancellation events, idempotency and migration of existing cancelled Jobs.
+Task-system Inbox tests cover checkbox cancellation, withdrawal and reopening
+without losing cancellation history. Daemon regressions verify that a query sees
+cancellation before background polling and that offline candidate filtering does
+not mutate the memory database. Backup regressions verify schema 4 round trips. API regressions reject deep answers
+that bypass memory citations and cite cancelled source evidence directly.
+
+These are isolated SQLite and service tests, not acceptance against the user's
+live databases or deployed daemon. No live records are cancelled by these tests.

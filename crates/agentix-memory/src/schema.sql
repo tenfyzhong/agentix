@@ -198,3 +198,33 @@ CREATE TABLE IF NOT EXISTS memory_fact_origins (
     PRIMARY KEY(memory_id,source_memory_id,source_revision)
 );
 CREATE INDEX IF NOT EXISTS fact_origins_by_source ON memory_fact_origins(source_memory_id,memory_id);
+
+CREATE TABLE IF NOT EXISTS cancelled_jobs (
+    project_id TEXT NOT NULL,
+    job_id TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    cancelled_at INTEGER NOT NULL,
+    PRIMARY KEY(project_id,job_id)
+);
+CREATE TABLE IF NOT EXISTS source_jobs (
+    receipt_id TEXT NOT NULL REFERENCES sources(receipt_id),
+    project_id TEXT NOT NULL,
+    job_id TEXT NOT NULL,
+    PRIMARY KEY(receipt_id,job_id)
+);
+CREATE INDEX IF NOT EXISTS source_jobs_by_job ON source_jobs(project_id,job_id,receipt_id);
+CREATE INDEX IF NOT EXISTS sources_by_turn ON sources(instance_id,json_extract(data,'$.session_id'),json_extract(data,'$.turn_id'));
+CREATE TABLE IF NOT EXISTS memory_evidence (
+    memory_id TEXT NOT NULL REFERENCES memories(id),
+    receipt_id TEXT NOT NULL REFERENCES sources(receipt_id),
+    PRIMARY KEY(memory_id,receipt_id)
+);
+CREATE INDEX IF NOT EXISTS memory_evidence_by_source ON memory_evidence(receipt_id,memory_id);
+CREATE TABLE IF NOT EXISTS source_job_turns (
+    instance_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    turn_id TEXT NOT NULL,
+    project_id TEXT NOT NULL,
+    job_id TEXT NOT NULL,
+    PRIMARY KEY(instance_id,session_id,turn_id,job_id)
+);

@@ -477,3 +477,87 @@ async fn recovery_verifies_an_unordered_page_and_rejects_duplicate_sequences() {
     sources[99].messages[0]["text"] = json!("Forged historical decision");
     assert!(store.verify_memory_sources(&sources).await.is_err());
 }
+
+#[tokio::test]
+async fn cancellation_outbox_survives_reopen_and_metadata_updates() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("tasks.db");
+    let store = Store::open(&path).await.unwrap();
+    let p = project(&store, dir.path()).await;
+    let job = store
+        .execute(
+            json!({"command":"job.create","project":p,"title":"Policy"}),
+            options(),
+        )
+        .await
+        .unwrap()
+        .result;
+    store
+        .execute(json!({"command":"job.cancel","job":job["id"]}), options())
+        .await
+        .unwrap();
+    let events = store.memory_job_cancellations(0, 10).await.unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].job_id, job["id"]);
+    assert_eq!(events[0].project_id, p);
+    store
+        .execute(
+            json!({"command":"job.update","job":job["id"],"name":"Cancelled policy"}),
+            options(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        store
+            .memory_job_cancellations(events[0].sequence, 10)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+    drop(store);
+    let store = Store::open(&path).await.unwrap();
+    assert_eq!(
+        store.memory_job_cancellations(0, 10).await.unwrap().len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn schema_twenty_backfills_existing_cancelled_jobs_once() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("tasks.db");
+    let store = Store::open(&path).await.unwrap();
+    let p = project(&store, dir.path()).await;
+    let job = store
+        .execute(
+            json!({"command":"job.create","project":p,"title":"Policy"}),
+            options(),
+        )
+        .await
+        .unwrap()
+        .result;
+    store
+        .execute(json!({"command":"job.cancel","job":job["id"]}), options())
+        .await
+        .unwrap();
+    drop(store);
+    let pool =
+        sqlx::SqlitePool::connect_with(sqlx::sqlite::SqliteConnectOptions::new().filename(&path))
+            .await
+            .unwrap();
+    sqlx::raw_sql("DELETE FROM memory_job_cancellations; PRAGMA user_version=20;")
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool.close().await;
+    let store = Store::open(&path).await.unwrap();
+    let events = store.memory_job_cancellations(0, 100).await.unwrap();
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].job_id, job["id"]);
+    drop(store);
+    let store = Store::open(&path).await.unwrap();
+    assert_eq!(
+        store.memory_job_cancellations(0, 100).await.unwrap().len(),
+        1
+    );
+}

@@ -230,8 +230,28 @@ WHEN (SELECT user_version FROM pragma_user_version) >= 19
 BEGIN
     SELECT RAISE(ABORT, 'relative document path required');
 END;
-PRAGMA user_version = 20;
+-- Durable cancellation history is independent of event retention and Job reopening.
+CREATE TABLE IF NOT EXISTS memory_job_cancellations (
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id TEXT NOT NULL,
+    job_id TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    cancelled_at INTEGER NOT NULL,
+    UNIQUE(job_id, revision)
+);
+CREATE INDEX IF NOT EXISTS memory_cancelled_job ON memory_job_cancellations(job_id);
+CREATE TRIGGER IF NOT EXISTS memory_job_cancelled AFTER UPDATE OF data ON jobs
+WHEN json_extract(new.data,'$.status')='CANCELLED'
+ AND json_extract(old.data,'$.status') IS NOT 'CANCELLED'
+BEGIN
+    INSERT OR IGNORE INTO memory_job_cancellations(project_id,job_id,revision,cancelled_at)
+    VALUES(json_extract(new.data,'$.project_id'),new.id,json_extract(new.data,'$.revision'),coalesce(json_extract(new.data,'$.cancelled_at'),json_extract(new.data,'$.updated_at')));
+END;
+PRAGMA user_version = 21;
 PRAGMA application_id = 0x4158544b;
 CREATE INDEX IF NOT EXISTS jobs_by_followup_session ON jobs(json_extract(data, '$.followup_session_id'));
 CREATE INDEX IF NOT EXISTS inbox_by_lease_session ON inbox_entries(json_extract(data, '$.lease.session_ref'));
 CREATE INDEX IF NOT EXISTS inbox_by_source ON inbox_entries(json_extract(data, '$.source'));
+
+CREATE INDEX IF NOT EXISTS memory_sources_by_job ON memory_source_outbox(json_extract(snapshot,'$.job_id'),sequence);
+CREATE INDEX IF NOT EXISTS memory_sources_by_turn ON memory_source_outbox(session_id,turn_id);

@@ -51,7 +51,7 @@ def pair_coverage(tasks, memory):
     """Memory is captured first; every persisted input must exist in the later task snapshot."""
     with closing(sqlite3.connect(tasks)) as task_db, closing(sqlite3.connect(memory)) as memory_db:
         if (memory_db.execute("PRAGMA application_id").fetchone()[0] != 0x41584d4d
-                or memory_db.execute("PRAGMA user_version").fetchone()[0] not in (1, 2, 3)):
+                or memory_db.execute("PRAGMA user_version").fetchone()[0] not in (1, 2, 3, 4)):
             raise BackupError("unsupported memory database identity or schema")
         identity = task_db.execute("SELECT instance_id FROM memory_source_identity WHERE singleton=1").fetchone()
         if not identity:

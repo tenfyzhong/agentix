@@ -21,7 +21,7 @@ mod inbox_read;
 pub use inbox_read::InboxSource;
 mod memory_source;
 mod model;
-pub use memory_source::{MemoryBackfillPage, MemorySource};
+pub use memory_source::{MemoryBackfillPage, MemoryJobCancellation, MemorySource};
 mod mutations;
 mod naming;
 mod project;

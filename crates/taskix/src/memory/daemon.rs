@@ -239,6 +239,7 @@ impl Application {
 #[async_trait]
 impl RequestHandler for Application {
     async fn handle(&self, mut request: Value) -> Result<Value> {
+        sync_cancellations(&self.tasks, &self.store).await?;
         if request["op"] == "reload" {
             return self.reload().await;
         }
@@ -284,7 +285,19 @@ impl RequestHandler for Application {
                 .context("busy: memory query limit reached")?
         };
         let status = request["op"] == "status";
+        let retrieval = matches!(
+            request["op"].as_str(),
+            Some("search" | "context" | "ask" | "list")
+        );
+        let before = self.store.cancellation_cursor().await?;
         let mut result = runtime.api.handle(request).await?;
+        if retrieval {
+            sync_cancellations(&self.tasks, &self.store).await?;
+            ensure!(
+                before == self.store.cancellation_cursor().await?,
+                "conflict: source Jobs changed during query; retry"
+            );
+        }
         if status {
             result["online"] = json!(true);
             result["provider_errors"] = json!(runtime.errors);
@@ -385,6 +398,12 @@ async fn poll_sources(app: Arc<Application>, mut replay_cursor: i64) -> Result<(
     let mut cursor = 0;
     loop {
         let runtime = app.runtime.read().await.clone();
+        let cancellation = sync_cancellations(&app.tasks, &app.store).await;
+        app.report(
+            "cancellation_sync",
+            cancellation.err().map(|e| e.to_string()),
+        )
+        .await;
         let pending = app.tasks.memory_sources(cursor, 100).await;
         match pending {
             Ok(sources) => {
@@ -920,5 +939,43 @@ async fn shutdown_signal() -> Result<()> {
         result = tokio::signal::ctrl_c() => result?,
         _ = terminate.recv() => {},
     }
+    Ok(())
+}
+
+/// A bounded catch-up barrier. A large backlog fails closed and resumes next call.
+async fn sync_cancellations(tasks: &agentix_task::Store, store: &MemoryStore) -> Result<()> {
+    let cursor = store.cancellation_cursor().await?;
+    ensure!(
+        cursor <= tasks.memory_cancellation_head().await?,
+        "conflict: task cancellation history is older than memory; restore a compatible database pair"
+    );
+    let events = tasks.memory_job_cancellations(cursor, 100).await?;
+    for event in &events {
+        let mut after = 0;
+        loop {
+            let sources = tasks.memory_job_sources(&event.job_id, after).await?;
+            for source in &sources {
+                let source: Source = serde_json::from_value(serde_json::to_value(source)?)?;
+                store.bind_cancelled_source(&source).await?;
+                after = source.sequence;
+            }
+            if sources.len() < 100 {
+                break;
+            }
+        }
+        store
+            .invalidate_job(
+                &event.project_id,
+                &event.job_id,
+                event.revision,
+                event.cancelled_at,
+            )
+            .await?;
+        store.checkpoint_cancellations(event.sequence).await?;
+    }
+    anyhow::ensure!(
+        events.len() < 100,
+        "busy: memory cancellation recovery is catching up; retry"
+    );
     Ok(())
 }

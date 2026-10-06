@@ -5,6 +5,7 @@ mod config;
 mod domain;
 mod id_migration;
 mod ids;
+mod invalidation;
 mod providers;
 mod retrieval;
 mod store;

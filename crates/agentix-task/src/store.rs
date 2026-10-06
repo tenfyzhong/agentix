@@ -59,7 +59,7 @@ impl Store {
             .fetch_one(&pool)
             .await?;
         ensure!(
-            identity == 0x4158_544b && (14..=20).contains(&version),
+            identity == 0x4158_544b && (14..=21).contains(&version),
             "unsupported task database identity or schema for read-only lookup"
         );
         Ok(Self {
@@ -135,7 +135,7 @@ impl Store {
     async fn migrate(&self) -> Result<bool> {
         let current: (i64, i64, i64) = sqlx::query_as("SELECT (SELECT application_id FROM pragma_application_id), (SELECT user_version FROM pragma_user_version), (SELECT auto_vacuum FROM pragma_auto_vacuum)")
             .fetch_one(&self.pool).await?;
-        if current == (0x4158_544b, 20, 2) {
+        if current == (0x4158_544b, 21, 2) {
             return Ok(false);
         }
         if current.2 != 2 {
@@ -149,7 +149,7 @@ impl Store {
                 "invalid: task database must be a dedicated taskix database"
             );
             ensure!(
-                current.1 <= 20,
+                current.1 <= 21,
                 "unsupported task database schema version {}",
                 current.1
             );
@@ -172,7 +172,7 @@ impl Store {
             .fetch_one(&mut *tx)
             .await?;
         ensure!(
-            version <= 20,
+            version <= 21,
             "unsupported task database schema version {version}"
         );
         sqlx::raw_sql(include_str!("schema.sql"))
@@ -226,6 +226,10 @@ impl Store {
             .await?;
         }
         migrate_features(&mut tx, version).await?;
+        if version < 21 {
+            sqlx::query("INSERT OR IGNORE INTO memory_job_cancellations(project_id,job_id,revision,cancelled_at) SELECT json_extract(data,'$.project_id'),id,json_extract(data,'$.revision'),coalesce(json_extract(data,'$.cancelled_at'),json_extract(data,'$.updated_at')) FROM jobs WHERE json_extract(data,'$.status')='CANCELLED'")
+                .execute(&mut *tx).await?;
+        }
         tx.commit().await?;
         Ok(true)
     }

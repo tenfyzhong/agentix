@@ -79,7 +79,7 @@ impl MemoryStore {
             .fetch_one(&pool)
             .await?;
         ensure!(
-            app == 0x4158_4d4d && (1..=3).contains(&version),
+            app == 0x4158_4d4d && (1..=4).contains(&version),
             "unsupported memory database identity or schema"
         );
         Ok(Self {
@@ -120,7 +120,7 @@ impl MemoryStore {
         let version: i64 = sqlx::query_scalar("PRAGMA user_version")
             .fetch_one(&mut *tx)
             .await?;
-        ensure!(version <= 3, "unsupported memory database schema {version}");
+        ensure!(version <= 4, "unsupported memory database schema {version}");
         sqlx::raw_sql(include_str!("schema.sql"))
             .execute(&mut *tx)
             .await?;
@@ -157,6 +157,17 @@ impl MemoryStore {
             sqlx::query("UPDATE memory_projection SET published_revision=0,prepared_revision=0,prepared_hash=''")
                 .execute(&mut *tx).await?;
             sqlx::query("PRAGMA user_version=3")
+                .execute(&mut *tx)
+                .await?;
+        }
+        if version < 4 {
+            sqlx::query("INSERT OR IGNORE INTO source_job_turns(instance_id,session_id,turn_id,project_id,job_id) SELECT instance_id,json_extract(data,'$.session_id'),json_extract(data,'$.turn_id'),project_id,json_extract(data,'$.job_id') FROM sources WHERE json_extract(data,'$.job_id') IS NOT NULL")
+                .execute(&mut *tx).await?;
+            sqlx::query("INSERT OR IGNORE INTO source_jobs(receipt_id,project_id,job_id) SELECT older.receipt_id,older.project_id,json_extract(bound.data,'$.job_id') FROM sources older JOIN sources bound ON bound.instance_id=older.instance_id AND json_extract(bound.data,'$.session_id')=json_extract(older.data,'$.session_id') AND json_extract(bound.data,'$.turn_id')=json_extract(older.data,'$.turn_id') WHERE json_extract(bound.data,'$.job_id') IS NOT NULL")
+                .execute(&mut *tx).await?;
+            sqlx::query("INSERT OR IGNORE INTO memory_evidence(memory_id,receipt_id) SELECT m.id,json_extract(e.value,'$.receipt_id') FROM memories m,json_each(m.data,'$.content.evidence') e")
+                .execute(&mut *tx).await?;
+            sqlx::query("PRAGMA user_version=4")
                 .execute(&mut *tx)
                 .await?;
         }
@@ -303,11 +314,15 @@ impl MemoryStore {
             .bind(data)
             .execute(&mut *tx)
             .await?;
-        crate::queue::enqueue_source(&mut tx, source).await?;
+        crate::invalidation::index_source(&mut tx, source).await?;
+        if crate::invalidation::source_valid(&mut tx, &source.receipt_id).await? {
+            crate::queue::enqueue_source(&mut tx, source).await?;
+        }
         sqlx::query("INSERT INTO source_turns(project_id,instance_id,session_id,turn_id,first_sequence,receipt_id,revision,recorded_at,message_count) VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(instance_id,session_id,turn_id) DO UPDATE SET first_sequence=min(first_sequence,excluded.first_sequence),receipt_id=CASE WHEN excluded.revision>revision THEN excluded.receipt_id ELSE receipt_id END,recorded_at=CASE WHEN excluded.revision>revision THEN excluded.recorded_at ELSE recorded_at END,message_count=CASE WHEN excluded.revision>revision THEN excluded.message_count ELSE message_count END,revision=max(revision,excluded.revision)")
             .bind(&source.project_id).bind(&source.instance_id).bind(&source.session_id).bind(&source.turn_id).bind(source.sequence).bind(&source.receipt_id).bind(source.revision).bind(source.recorded_at).bind(i64::try_from(source.messages.len())?).execute(&mut *tx).await?;
         tx.commit().await?;
         self.notify_work();
+        self.notify_change(&source.project_id);
         Ok(true)
     }
 
@@ -493,6 +508,11 @@ impl MemoryStore {
             memory.status != Status::Forgotten,
             "conflict: memory was forgotten"
         );
+        ensure!(
+            memory.status != Status::Invalidated
+                || matches!(status, Status::Invalidated | Status::Forgotten),
+            "conflict: invalidated memory cannot be reactivated or have its revocation cleared"
+        );
         if status == Status::Forgotten {
             suppress_history(&mut tx, project, id).await?;
         }
@@ -652,6 +672,12 @@ pub(crate) async fn validate_evidence(
     project: &str,
     content: &MemoryInput,
 ) -> Result<()> {
+    for evidence in &content.evidence {
+        ensure!(
+            crate::invalidation::source_valid(conn, &evidence.receipt_id).await?,
+            "conflict: source Job was cancelled"
+        );
+    }
     for key in evidence_keys(conn, project, content).await? {
         let suppressed: bool = sqlx::query_scalar(
             "SELECT EXISTS(SELECT 1 FROM suppressions WHERE project_id=? AND evidence_key=?)",
@@ -666,6 +692,7 @@ pub(crate) async fn validate_evidence(
 }
 
 pub(crate) async fn save(conn: &mut SqliteConnection, memory: &Memory) -> Result<()> {
+    crate::invalidation::validate_memory(conn, memory).await?;
     crate::facts::validate_version(conn, memory).await?;
     let data = serde_json::to_string(memory)?;
     let status = serde_json::to_value(memory.status)?
@@ -674,6 +701,17 @@ pub(crate) async fn save(conn: &mut SqliteConnection, memory: &Memory) -> Result
         .to_owned();
     sqlx::query("INSERT INTO memories(id,project_id,revision,status,data) VALUES (?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,status=excluded.status,data=excluded.data")
         .bind(&memory.id).bind(&memory.project_id).bind(memory.revision).bind(status).bind(&data).execute(&mut *conn).await?;
+    sqlx::query("DELETE FROM memory_evidence WHERE memory_id=?")
+        .bind(&memory.id)
+        .execute(&mut *conn)
+        .await?;
+    for evidence in &memory.content.evidence {
+        sqlx::query("INSERT OR IGNORE INTO memory_evidence(memory_id,receipt_id) VALUES(?,?)")
+            .bind(&memory.id)
+            .bind(&evidence.receipt_id)
+            .execute(&mut *conn)
+            .await?;
+    }
     crate::facts::index(conn, memory).await?;
     sqlx::query("INSERT INTO memory_versions(memory_id,revision,data) VALUES (?,?,?)")
         .bind(&memory.id)

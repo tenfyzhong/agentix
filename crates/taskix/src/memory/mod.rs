@@ -306,6 +306,7 @@ async fn offline(
         let memories = store
             .search(project, query, i64::try_from(location.retrieval.max_items)?)
             .await?;
+        let memories = filter_cancelled(&store, location, memories).await?;
         let mut value = serde_json::to_value(context_preview(
             project,
             &memories,
@@ -316,14 +317,50 @@ async fn offline(
         value["mode"] = json!("offline_fts");
         return Ok(value);
     }
-    let api = MemoryApi::new(store, location.retrieval.clone(), location.service);
+    let api = MemoryApi::new(store.clone(), location.retrieval.clone(), location.service);
     let mut value = api.handle(request).await?;
     if matches!(action, MemoryCommand::Search { .. }) {
+        let memories: Vec<agentix_memory::Memory> =
+            serde_json::from_value(value["memories"].clone())?;
+        value["memories"] =
+            serde_json::to_value(filter_cancelled(&store, location, memories).await?)?;
         value["mode"] = json!("offline_fts");
+    }
+    if matches!(action, MemoryCommand::List { all: false, .. }) {
+        let memories = serde_json::from_value(value)?;
+        value = serde_json::to_value(filter_cancelled(&store, location, memories).await?)?;
     }
     if matches!(action, MemoryCommand::Status | MemoryCommand::Doctor) {
         value["online"] = json!(false);
         value["error"] = json!(error);
     }
     Ok(value)
+}
+
+async fn filter_cancelled(
+    store: &MemoryStore,
+    location: &MemoryLocation,
+    memories: Vec<agentix_memory::Memory>,
+) -> Result<Vec<agentix_memory::Memory>> {
+    let tasks = agentix_task::Store::open_read_only(&location.task_path).await?;
+    let mut valid = Vec::new();
+    for memory in memories {
+        let mut jobs = store.memory_source_jobs(&memory).await?;
+        for evidence in &memory.content.evidence {
+            let source = store
+                .source(&memory.project_id, &evidence.receipt_id)
+                .await?;
+            jobs.extend(
+                tasks
+                    .memory_turn_jobs(&source.instance_id, &source.session_id, &source.turn_id)
+                    .await?,
+            );
+        }
+        jobs.sort();
+        jobs.dedup();
+        if !tasks.memory_jobs_cancelled(&jobs).await? {
+            valid.push(memory);
+        }
+    }
+    Ok(valid)
 }
