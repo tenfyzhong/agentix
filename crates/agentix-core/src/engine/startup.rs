@@ -108,6 +108,7 @@ impl Engine {
                 key.clone(),
                 TurnBuffer {
                     answer_complete: false,
+                    final_card_delivered: false,
                     user_text: stored.user_text,
                     agent_text: stored.agent_text,
                     output_items: Vec::new(),
@@ -284,6 +285,7 @@ impl Engine {
                 .map(|stored| {
                     let buffer = TurnBuffer {
                         answer_complete: false,
+                        final_card_delivered: false,
                         user_text: stored.user_text,
                         agent_text: stored.agent_text,
                         output_items: Vec::new(),

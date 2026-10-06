@@ -85,7 +85,7 @@ When a turn finishes outside the currently attached session, Agentix identifies 
 - The Codex CLI Tab queue is independent from the app-server queue. Neither side synchronizes or deduplicates the other. When both contain pending input, they may both submit after the active turn ends, producing back-to-back turns with no shared ordering guarantee; users should not operate both queues concurrently for one session.
 - Backends without persistent queue support continue to send ordinary text through their steering operation while a turn is active.
 - Codex automatically starts the next queued message after a completed or failed turn. Interrupting a turn leaves its queue paused until Codex resumes it.
-- During streaming, the turn card is updated at most once every five seconds on Telegram and once per second on Feishu, and once every two seconds on Slack. Completion bypasses that refresh interval; Telegram outbound pacing and cooldowns still apply.
+- During streaming, the turn card is updated at most once every five seconds on Telegram and once per second on Feishu, and once every two seconds on Slack. Completion bypasses that refresh interval. A completed live turn sends its full response in a fresh card at the bottom of the conversation, like `/last`, after a bounded best-effort final update of the streaming card. Repeated completion events and late content updates reuse the final card. Telegram outbound pacing and cooldowns still apply.
 
 ### Approval and input
 
