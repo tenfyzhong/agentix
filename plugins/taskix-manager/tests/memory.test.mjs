@@ -84,7 +84,7 @@ test("Codex and Claude prompt hooks retrieve memory independently of Jev routing
     const calls = [];
     const output = await runHook({ hook_event_name: "UserPromptSubmit", session_id: "s", turn_id: "t", prompt: "regional endpoints" }, async args => { calls.push(args); return packet(); }, { env: { TASKIX_JEV_ENABLED: "false", TASKIX_MEMORY_ENABLED: "true" } });
     assert.match(output.hookSpecificOutput.additionalContext, /regional endpoints/);
-    assert.deepEqual(calls.map(args => args.slice(0, 2)), [["memory", "context"]]);
+    assert.deepEqual(calls.map(args => args.slice(0, 2)), [["hook", "prompt"], ["memory", "context"]]);
 });
 for (const host of ["pi", "omp"]) test(`${host} retrieves memory before the agent starts`, async () => {
     const handlers = {};

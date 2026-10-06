@@ -1180,3 +1180,40 @@ for (const [choice, expected] of [["completed", "COMPLETED"], ["pending_review",
     }
     assert.equal((await f.run(["job", "show", f.job.id])).status, expected);
 });
+
+for (const host of ["codex", "claude", "pi", "omp"]) {
+    test(`${host} next prompt restores a blocked task and allows normal Job progress`, async t => {
+        const f = await fixture(t);
+        const x = ["pi", "omp"].includes(host) ? await extension(t, f, host) : undefined;
+        const options = {session:x ? `session:${host}` : `prompt:${host}`,executor:x ? `agent:${host}:session:${host}` : `agent:${host}`};
+        const task = await f.run(["task", "add", "--job", f.job.id, "--title", "Await CI"], options);
+        const claim = await f.run(["task", "claim", task.id], options);
+        const owner = {...options, token:claim.lease.token};
+        await f.run(["plan", "create", task.id, "--body", "Check successful CI, then finish"], owner);
+        await f.run(["task", "start", task.id], owner);
+        await f.run(["task", "block", task.id, "--reason", "CI failed"], owner);
+        if (x) await x.handlers.get("before_agent_start")({prompt:"Continue"}, x.ctx);
+        else {
+            const output = await runHook({hook_event_name:"UserPromptSubmit",session_id:options.session,cwd:f.dir,prompt:"Continue"},runTaskix,{env:{}});
+            assert.ok(output.hookSpecificOutput.additionalContext.includes(task.id));
+            assert.match(output.hookSpecificOutput.additionalContext, /PLANNING/);
+        }
+        const recovered = await f.run(["task", "show", task.id]);
+        assert.equal(recovered.status, "IN_PROGRESS");
+        assert.equal(recovered.phase, "PLANNING");
+        assert.equal(recovered.reason, "CI failed");
+        assert.notEqual(recovered.lease.token, claim.lease.token);
+        assert.equal(recovered.lease.session_ref, options.session);
+        await assert.rejects(f.run(["task", "start", task.id], owner), /conflict/);
+        const resumed = {...options, token:recovered.lease.token};
+        await assert.rejects(f.run(["task", "done", task.id], resumed), /EXECUTING/);
+        if (x) {
+            await x.invoke(["task", "start", task.id]);
+            await x.invoke(["task", "done", task.id]);
+        } else {
+            await f.run(["task", "start", task.id], resumed);
+            await f.run(["task", "done", task.id], resumed);
+        }
+        assert.equal((await f.run(["job", "show", f.job.id])).status, "PENDING_REVIEW");
+    });
+}

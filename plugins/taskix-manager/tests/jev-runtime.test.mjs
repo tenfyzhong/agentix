@@ -115,11 +115,11 @@ test("unwritable_receipt_retains_legacy_tool_fallback",async t=>{
 });
 
 for (const configuration of [{}, { TASKIX_JEV_ENABLED: "true" }, { ...env, TASKIX_JEV_API_KEY: "" }]) {
-    test(`disabled_prompt_has_zero_cli_calls_${JSON.stringify(configuration)}`, async t => {
+    test(`disabled_prompt_only_restores_lease_${JSON.stringify(configuration)}`, async t => {
         const f = await fixture(t);
         f.routing.env = configuration;
         await runHook({ ...f.event, hook_event_name: "UserPromptSubmit", prompt: "Continue" }, f.runner, f.routing);
-        assert.deepEqual(f.calls, []);
+        assert.deepEqual(f.calls, [["hook", "prompt"]]);
     });
 }
 
@@ -278,13 +278,14 @@ test("prompt_uses_one_snapshot_and_one_revision_process", async t => {
     const calls = [];
     const runner = async args => {
         calls.push(args);
+        if (args[0] === "hook" && args[1] === "prompt") return { result: {} };
         if (args[0] === "routing" && args[1] === "snapshot") return { result: { ...f.context, routing: { complete: true, candidates: [{ job, tasks: [] }] } } };
         if (args[0] === "routing" && args[1] === "revision") return { result: job };
         throw new Error("Separate heartbeat/context/candidate processes are forbidden");
     };
     const result = await runHook({ ...f.event, hook_event_name: "UserPromptSubmit", prompt: "Create PR" }, runner, f.routing);
     assert.match(result.hookSpecificOutput.additionalContext, /Taskix route: followup/);
-    assert.deepEqual(calls, [["routing", "snapshot"], ["routing", "revision", "job_a"]]);
+    assert.deepEqual(calls, [["hook", "prompt"], ["routing", "snapshot"], ["routing", "revision", "job_a"]]);
 });
 
 test("older_cli_without_snapshot_defers_and_retains_legacy_tool_context", async t => {
@@ -299,7 +300,7 @@ test("older_cli_without_snapshot_defers_and_retains_legacy_tool_context", async 
     assert.equal(f.requests(), 0);
     const tool = await runHook({ ...f.event, hook_event_name: "PreToolUse" }, runner, f.routing);
     assert.match(tool.hookSpecificOutput.additionalContext, /Unrelated Inbox body/);
-    assert.deepEqual(f.calls, [["hook", "heartbeat"], ["context"]]);
+    assert.deepEqual(f.calls, [["hook", "prompt"], ["hook", "heartbeat"], ["context"]]);
 });
 
 test("unwritable_receipt_keeps_bounded_main_agent_fallback", async t => {
@@ -346,7 +347,7 @@ for (const host of ["codex", "claude", "pi", "omp"]) {
             assert.doesNotMatch(content, /Delegate once|Snapshot:|routing-classifier|routing-decision|private/);
             assert.ok(content.length <= 12000);
             assert.ok(!(await readdir(f.routing.cacheDir)).some(name => name.endsWith(".snapshot.json")));
-            assert.ok(f.calls.every(args => ["context", "routing"].includes(args[0])));
+            assert.ok(f.calls.every(args => ["context", "routing"].includes(args[0]) || (args[0] === "hook" && args[1] === "prompt")));
         });
     }
 }
@@ -374,7 +375,7 @@ for (const candidates of [0, 1]) test(`main_agent_fallback_has_compact_instructi
     const facts = JSON.parse(content.slice(content.lastIndexOf("\n") + 1));
     assert.equal(facts.candidate_count, candidates);
     assert.equal(facts.candidates_complete, true);
-    assert.deepEqual(f.calls, [["routing", "snapshot"]]);
+    assert.deepEqual(f.calls, [["hook", "prompt"], ["routing", "snapshot"]]);
 });
 
 for (const host of ["codex", "claude", "pi", "omp"]) test(`${host}_related_discussion_preserves_job_without_lifecycle_write`, async t => {
@@ -452,4 +453,35 @@ test("prompt_routes_with_complete_recent_advice_despite_oversized_older_history"
     const result = await runHook({ ...f.event, hook_event_name: "UserPromptSubmit", prompt: "按照建议进行修改", transcript_path: path }, f.runner, f.routing);
     assert.equal(f.requests(), 1);
     assert.match(result.hookSpecificOutput.additionalContext, /job followup/);
+});
+
+for (const host of ["codex", "claude", "pi", "omp"]) for (const enabled of [false, true]) {
+    test(`${host}_prompt_restores_lease_before_context_jev_${enabled}`, async t => {
+        const f = await fixture(t, "new_job");
+        if (!enabled) f.routing.env = {};
+        if (["codex", "claude"].includes(host)) {
+            await runHook({...f.event, hook_event_name:"UserPromptSubmit", prompt:"Continue"}, f.runner, f.routing);
+        } else {
+            const handlers = new Map();
+            registerExtension({on:(n,h)=>handlers.set(n,h),registerTool(){}},host,f.runner,globalThis,undefined,f.routing);
+            await handlers.get("before_agent_start")({prompt:"Continue"},{cwd:"/work",sessionManager:{getSessionId:()=>"session"}});
+        }
+        const recovery = f.calls.findIndex(args => args[0] === "hook" && args[1] === "prompt");
+        assert.ok(recovery >= 0, "new prompt must restore the lease");
+        const context = f.calls.findIndex(args => args[0] === "context" || args[1] === "snapshot");
+        if (context >= 0) assert.ok(recovery < context, "recovery precedes context and routing");
+        assert.equal(f.calls.filter(args => args[0] === "hook" && args[1] === "prompt").length, 1);
+    });
+}
+
+test("disabled_prompt_injects_recovered_planning_ownership_before_the_model_runs", async t => {
+    const f = await fixture(t);
+    f.routing.env = {};
+    f.context.task = {id:"task_recovered",status:"IN_PROGRESS",phase:"PLANNING",reason:"CI failed"};
+    const runner = async args => args[0] === "hook" && args[1] === "prompt"
+        ? {result:{tasks:["task_recovered"]}} : f.runner(args);
+    const result = await runHook({...f.event,hook_event_name:"UserPromptSubmit",prompt:"Continue"},runner,f.routing);
+    assert.match(result.hookSpecificOutput?.additionalContext || "", /task_recovered/);
+    assert.match(result.hookSpecificOutput.additionalContext, /PLANNING/);
+    assert.match(result.hookSpecificOutput.additionalContext, /CI failed/);
 });

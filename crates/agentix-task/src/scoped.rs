@@ -338,6 +338,9 @@ async fn session_scope(
     }
     let query = match command {
         "session.heartbeat" => "SELECT id FROM task_leases WHERE session_ref=?",
+        "session.prompt" => {
+            "SELECT id FROM tasks WHERE json_extract(data,'$.last_session')=? AND json_extract(data,'$.status') IN ('BLOCKED','IN_PROGRESS')"
+        }
         "session.start" => {
             "SELECT id FROM tasks WHERE json_extract(data,'$.last_session')=? AND json_extract(data,'$.status')='BLOCKED' AND json_extract(data,'$.system_block')=1"
         }

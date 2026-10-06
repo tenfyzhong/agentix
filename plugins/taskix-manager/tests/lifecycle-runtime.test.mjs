@@ -8,6 +8,7 @@ function fixture(choice = "resume") {
     const calls = [];
     const runner = async args => {
         calls.push(args);
+        if (args[0] === "hook" && args[1] === "prompt") return {result:{}};
         if (args[0] === "routing" && args[1] === "snapshot") return { result: { project_id: "p", routing: { complete: true, candidates: [{ job, tasks: [task] }] } } };
         if (args[0] === "routing" && args[1] === "revision") return { result: job };
         if (args[0] === "task" && args[1] === "show") return { result: task };

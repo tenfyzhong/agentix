@@ -57,3 +57,14 @@ With the existing `TASKIX_JEV_ENABLED` configuration, prompt routing also classi
 All assessments reuse the existing filtered Job/Task facts and visible conversation excerpts, 30,000-byte request ceiling, eight-second deadline, score gates and current-Job revision check. No raw tool results, source files, lease credentials or reasoning are collected. Explicit terminal Task recovery reads only that named Task and projects the same title/status/reason fields within existing bounds; normal prompt candidate discovery is unchanged. Shared instructions are sent once rather than repeated for every Job. Each assessment makes one provider request; disabled configuration makes no CLI or HTTP calls.
 
 Results contain guarded command arguments, never execute them, and defer to the main Agent on uncertainty, failure, oversize or stale evidence. Actual CLI lease, dependency, Plan and transition guards remain authoritative. `ready` is not `done` and never authorizes self-approval. Prompt metrics include the work-scope question when it can change the selected policy; lifecycle checkpoints have separate request-kind statistics. See [command examples](skills/taskix-manager/references/commands.md#optional-lifecycle-classification).
+
+## Recovery on the next prompt
+
+Upgrade the Taskix CLI together with this plugin. Every nonblank user prompt calls
+`taskix hook prompt` before context/routing in Codex, Claude, Pi and OMP, with or
+without Jev. The CLI renews live leases and restores this session's unleased
+BLOCKED Tasks to IN_PROGRESS / PLANNING with a new lease. Existing Plans,
+delegation and blocking reasons are preserved. The Agent must recheck the obstacle,
+review the Plan and call start before execution; recovery does not assert that CI
+or another external dependency succeeded. Other sessions, WAITING_USER and
+terminal Tasks are unchanged. No external listener or automatic approval is added.

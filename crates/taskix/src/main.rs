@@ -519,6 +519,8 @@ enum HookCommand {
     Stop,
     /// Recover the session's Tasks blocked by interruption or lease expiry into planning.
     SessionStart,
+    /// Restore blocked Tasks owned by this session to planning before a new prompt.
+    Prompt,
     /// Record session shutdown and release its active Task leases.
     SessionEnd,
     /// Release an interrupted session's Task leases while preserving its Plans.
@@ -1453,11 +1455,16 @@ async fn hook(cli: &Cli, service: &Service, action: &HookCommand) -> Result<Valu
             ));
         }
         HookCommand::SessionStart => "session.start",
+        HookCommand::Prompt => "session.prompt",
         HookCommand::SessionEnd => "session.end",
         HookCommand::Interrupt => "session.interrupt",
         HookCommand::Heartbeat => "session.heartbeat",
     };
-    mutate(cli, service, json!({"command":command,"session":session})).await
+    let mut request = json!({"command":command,"session":session});
+    if matches!(action, HookCommand::Prompt) {
+        request["executor"] = json!(cli.executor);
+    }
+    mutate(cli, service, request).await
 }
 
 async fn inbox(cli: &Cli, service: &Service, action: &InboxCommand) -> Result<Value> {

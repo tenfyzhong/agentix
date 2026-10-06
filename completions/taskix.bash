@@ -190,6 +190,9 @@ _taskix() {
             taskix__subcmd__help__subcmd__hook,interrupt)
                 cmd="taskix__subcmd__help__subcmd__hook__subcmd__interrupt"
                 ;;
+            taskix__subcmd__help__subcmd__hook,prompt)
+                cmd="taskix__subcmd__help__subcmd__hook__subcmd__prompt"
+                ;;
             taskix__subcmd__help__subcmd__hook,record)
                 cmd="taskix__subcmd__help__subcmd__hook__subcmd__record"
                 ;;
@@ -448,6 +451,9 @@ _taskix() {
             taskix__subcmd__hook,interrupt)
                 cmd="taskix__subcmd__hook__subcmd__interrupt"
                 ;;
+            taskix__subcmd__hook,prompt)
+                cmd="taskix__subcmd__hook__subcmd__prompt"
+                ;;
             taskix__subcmd__hook,record)
                 cmd="taskix__subcmd__hook__subcmd__record"
                 ;;
@@ -468,6 +474,9 @@ _taskix() {
                 ;;
             taskix__subcmd__hook__subcmd__help,interrupt)
                 cmd="taskix__subcmd__hook__subcmd__help__subcmd__interrupt"
+                ;;
+            taskix__subcmd__hook__subcmd__help,prompt)
+                cmd="taskix__subcmd__hook__subcmd__help__subcmd__prompt"
                 ;;
             taskix__subcmd__hook__subcmd__help,record)
                 cmd="taskix__subcmd__hook__subcmd__help__subcmd__record"
@@ -2135,7 +2144,7 @@ _taskix() {
             return 0
             ;;
         taskix__subcmd__help__subcmd__hook)
-            opts="record stop session-start session-end interrupt heartbeat"
+            opts="record stop session-start prompt session-end interrupt heartbeat"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -2163,6 +2172,20 @@ _taskix() {
             return 0
             ;;
         taskix__subcmd__help__subcmd__hook__subcmd__interrupt)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        taskix__subcmd__help__subcmd__hook__subcmd__prompt)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -3479,7 +3502,7 @@ _taskix() {
             return 0
             ;;
         taskix__subcmd__hook)
-            opts="-h --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help record stop session-start session-end interrupt heartbeat help"
+            opts="-h --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help record stop session-start prompt session-end interrupt heartbeat help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 2 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -3601,7 +3624,7 @@ _taskix() {
             return 0
             ;;
         taskix__subcmd__hook__subcmd__help)
-            opts="record stop session-start session-end interrupt heartbeat help"
+            opts="record stop session-start prompt session-end interrupt heartbeat help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
                 return 0
@@ -3643,6 +3666,20 @@ _taskix() {
             return 0
             ;;
         taskix__subcmd__hook__subcmd__help__subcmd__interrupt)
+            opts=""
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        taskix__subcmd__hook__subcmd__help__subcmd__prompt)
             opts=""
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 4 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
@@ -3713,6 +3750,67 @@ _taskix() {
             return 0
             ;;
         taskix__subcmd__hook__subcmd__interrupt)
+            opts="-h --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help"
+            if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
+                COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+                return 0
+            fi
+            case "${prev}" in
+                --config)
+                    local oldifs
+                    if [ -n "${IFS+x}" ]; then
+                        oldifs="$IFS"
+                    fi
+                    IFS=$'\n'
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    if [ -n "${oldifs+x}" ]; then
+                        IFS="$oldifs"
+                    fi
+                    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
+                        compopt -o filenames
+                    fi
+                    return 0
+                    ;;
+                --project)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --actor)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --executor)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --session)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --delegated-by)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --lease-token)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --expect-revision)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                --idempotency-key)
+                    COMPREPLY=($(compgen -f "${cur}"))
+                    return 0
+                    ;;
+                *)
+                    COMPREPLY=()
+                    ;;
+            esac
+            COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )
+            return 0
+            ;;
+        taskix__subcmd__hook__subcmd__prompt)
             opts="-h --config --json --project --actor --executor --session --delegated-by --lease-token --expect-revision --idempotency-key --help"
             if [[ ${cur} == -* || ${COMP_CWORD} -eq 3 ]] ; then
                 COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") )

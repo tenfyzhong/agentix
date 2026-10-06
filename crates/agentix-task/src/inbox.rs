@@ -636,7 +636,7 @@ pub(crate) fn session(
         }) {
             continue;
         }
-        if command == "session.heartbeat" {
+        if matches!(command, "session.heartbeat" | "session.prompt") {
             if let Some(lease) = &mut state.inboxes[i].lease {
                 lease.lease_expires_at = now + DEFAULT_LEASE_SECONDS;
             }

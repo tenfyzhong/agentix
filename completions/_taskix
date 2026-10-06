@@ -2475,6 +2475,22 @@ _arguments "${_arguments_options[@]}" : \
 '--help[Print help]' \
 && ret=0
 ;;
+(prompt)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
 (session-end)
 _arguments "${_arguments_options[@]}" : \
 '--config=[]:CONFIG:_files' \
@@ -2544,6 +2560,10 @@ _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
 (session-start)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(prompt)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -3229,6 +3249,10 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
+(prompt)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
 (session-end)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
@@ -3531,6 +3555,7 @@ _taskix__subcmd__help__subcmd__hook_commands() {
 'record:Record visible user/assistant messages from a JSON array in the session Job' \
 'stop:Acknowledge turn completion without claiming Inbox work' \
 'session-start:Recover the session'\''s Tasks blocked by interruption or lease expiry into planning' \
+'prompt:Restore blocked Tasks owned by this session to planning before a new prompt' \
 'session-end:Record session shutdown and release its active Task leases' \
 'interrupt:Release an interrupted session'\''s Task leases while preserving its Plans' \
 'heartbeat:Renew all active Task leases owned by the session' \
@@ -3546,6 +3571,11 @@ _taskix__subcmd__help__subcmd__hook__subcmd__heartbeat_commands() {
 _taskix__subcmd__help__subcmd__hook__subcmd__interrupt_commands() {
     local commands; commands=()
     _describe -t commands 'taskix help hook interrupt commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__hook__subcmd__prompt_commands] )) ||
+_taskix__subcmd__help__subcmd__hook__subcmd__prompt_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help hook prompt commands' commands "$@"
 }
 (( $+functions[_taskix__subcmd__help__subcmd__hook__subcmd__record_commands] )) ||
 _taskix__subcmd__help__subcmd__hook__subcmd__record_commands() {
@@ -4106,6 +4136,7 @@ _taskix__subcmd__hook_commands() {
 'record:Record visible user/assistant messages from a JSON array in the session Job' \
 'stop:Acknowledge turn completion without claiming Inbox work' \
 'session-start:Recover the session'\''s Tasks blocked by interruption or lease expiry into planning' \
+'prompt:Restore blocked Tasks owned by this session to planning before a new prompt' \
 'session-end:Record session shutdown and release its active Task leases' \
 'interrupt:Release an interrupted session'\''s Task leases while preserving its Plans' \
 'heartbeat:Renew all active Task leases owned by the session' \
@@ -4124,6 +4155,7 @@ _taskix__subcmd__hook__subcmd__help_commands() {
 'record:Record visible user/assistant messages from a JSON array in the session Job' \
 'stop:Acknowledge turn completion without claiming Inbox work' \
 'session-start:Recover the session'\''s Tasks blocked by interruption or lease expiry into planning' \
+'prompt:Restore blocked Tasks owned by this session to planning before a new prompt' \
 'session-end:Record session shutdown and release its active Task leases' \
 'interrupt:Release an interrupted session'\''s Task leases while preserving its Plans' \
 'heartbeat:Renew all active Task leases owned by the session' \
@@ -4145,6 +4177,11 @@ _taskix__subcmd__hook__subcmd__help__subcmd__help_commands() {
 _taskix__subcmd__hook__subcmd__help__subcmd__interrupt_commands() {
     local commands; commands=()
     _describe -t commands 'taskix hook help interrupt commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__hook__subcmd__help__subcmd__prompt_commands] )) ||
+_taskix__subcmd__hook__subcmd__help__subcmd__prompt_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix hook help prompt commands' commands "$@"
 }
 (( $+functions[_taskix__subcmd__hook__subcmd__help__subcmd__record_commands] )) ||
 _taskix__subcmd__hook__subcmd__help__subcmd__record_commands() {
@@ -4170,6 +4207,11 @@ _taskix__subcmd__hook__subcmd__help__subcmd__stop_commands() {
 _taskix__subcmd__hook__subcmd__interrupt_commands() {
     local commands; commands=()
     _describe -t commands 'taskix hook interrupt commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__hook__subcmd__prompt_commands] )) ||
+_taskix__subcmd__hook__subcmd__prompt_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix hook prompt commands' commands "$@"
 }
 (( $+functions[_taskix__subcmd__hook__subcmd__record_commands] )) ||
 _taskix__subcmd__hook__subcmd__record_commands() {

@@ -77,6 +77,7 @@ async function prepareMeasuredPrompt(prompt, options, runner, routing, history =
             if (event) {
                 await routingReceipt(event, "clear", routing.cacheDir);
             }
+            if (prompt?.trim()) await checkedRunner(["hook", "prompt"], scoped);
             context = (await checkedRunner(["routing", "snapshot"], scoped)).result;
             ready = true;
             if (routing.telemetry) routing.telemetry.project_id = context.project_id;
@@ -108,9 +109,13 @@ export async function runHook(event, runner = runTaskix, routing = {}) {
     const options = { cwd: event.cwd, session: event.session_id };
     const enabled = !!jevConfig(routing.env);
     if (event.hook_event_name === "UserPromptSubmit") {
+        const recovered = !enabled && event.prompt?.trim()
+            ? await runner(["hook", "prompt"], options) : undefined;
         const memory = memoryContext(event.prompt, event.turn_id, options, runner, { ...routing, requireEnabled: true });
         if (!enabled) {
-            const content = await memory;
+            const context = recovered?.result?.tasks?.length ? (await runner(["context"], options)).result : undefined;
+            const recovery = context ? `Task leases restored into PLANNING. Recheck the preserved blocking reason, review the Plan, and explicitly start before execution. Recovery is not acceptance or Job approval.\n${workflowContext(context)}\n${JSON.stringify(skillContext(context))}` : undefined;
+            const content = [recovery, await memory].filter(Boolean).join("\n");
             return content ? { hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: content } } : {};
         }
         const prepared = await preparePrompt(event.prompt, options, runner, routing, [], event);
@@ -313,6 +318,7 @@ export function registerExtension(
             if (state.prompt) await recordMessages([state.prompt], runner, state.options, undefined, {turn_id:state.turn,source:host});
         }
         const options = optionsFor(ctx);
+        if (!jevConfig(routing.env) && event.prompt?.trim()) await runner(["hook", "prompt"], options);
         const memory = memoryContext(event.prompt, state?.turn || event.turnId || event.turn_id, options, runner, { ...routing, requireEnabled: true });
         let content;
         if (jevConfig(routing.env)) {

@@ -9,6 +9,7 @@ if (clock === "controlled") {
 }
 const started = performance.now();
 const result = await runHook({ hook_event_name: "UserPromptSubmit", session_id: session, cwd: directory, prompt: "Discuss routing" }, async args => {
+    if (args[0] === "hook" && args[1] === "prompt") return {result:{}};
     if (args[1] !== "snapshot") throw new Error("Unexpected lifecycle call");
     return { result: { project_id: "fixture", inbox_todos: [], routing: { complete: true, candidates: [] } } };
 }, {

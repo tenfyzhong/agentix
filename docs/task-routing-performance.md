@@ -9,14 +9,18 @@ real provider and reports acceptance separately from semantic accuracy.
 
 ## Hot path
 
-- Disabled or incomplete configuration: the added prompt hook makes no CLI or HTTP
-  call. Command-hook hosts still incur their normal Node startup overhead.
-- Enabled: one `routing snapshot` process imports Inbox edits, renews leases, and
+- Each nonblank prompt first runs one local `hook prompt` process to renew active
+  leases and recover this session's BLOCKED Tasks into planning. Disabled or
+  incomplete Jev configuration makes no routing or HTTP call. Command-hook hosts
+  still incur their normal Node startup overhead. If recovery changed a Task while
+  Jev is disabled, command-hook hosts read context once to expose the fresh planning
+  ownership to the model before it runs.
+- Enabled: after recovery, one `routing snapshot` process imports Inbox edits, renews leases, and
   returns bounded references, candidate summaries, and cancellation facts. Selecting
   a Job adds one `routing revision` process before delivering the route.
 - Tool hooks with a valid turn receipt run one live heartbeat and omit repeated
   candidate discovery and workflow injection. Cancellation checks remain active.
-- Prompt preparation and HTTP share an eight-second deadline. Transcripts are read
+- With Jev enabled, prompt recovery, preparation and HTTP share an eight-second deadline. Transcripts are read
   with a 256 KiB limit. Candidate overflow or truncated requirements/waiting reasons defer to the Agent. Historical excerpts are marked separately, and terminal DONE/CANCELLED Tasks are excluded from the 256 unfinished-task budget.
   Fallback returns bounded summaries directly to the current main Agent, capped at
   12,000 UTF-16 code units excluding host discussion and cancellation notices. It does not create a delegation

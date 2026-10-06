@@ -62,9 +62,8 @@ pub(crate) fn apply(
         "job.update" | "job.cancel" | "job.archive" | "job.unarchive" | "job.submit"
         | "job.approve" | "job.reject" | "job.followup" => update_job(state, request, options, now),
         "task.add" => add_task(state, request, options, now),
-        "session.start" | "session.end" | "session.interrupt" | "session.heartbeat" => {
-            session(state, request, now)
-        }
+        "session.start" | "session.prompt" | "session.end" | "session.interrupt"
+        | "session.heartbeat" => session(state, request, now),
         _ if command.starts_with("task.") || command == "plan.register" => {
             update_task(state, request, options, now)
         }
@@ -891,18 +890,30 @@ fn session(state: &mut Snapshot, request: &Value, now: i64) -> Result<Value> {
             };
             system_block(state, i, reason, now);
             changed.push(state.tasks[i].id.clone());
-        } else if command == "session.start"
-            && state.tasks[i].system_block
+        } else if (command == "session.prompt"
+            || (command == "session.start" && state.tasks[i].system_block))
             && state.tasks[i].status == TaskStatus::Blocked
         {
             let task = state.tasks[i].clone();
+            let job = &state.jobs[state.job_index(&task.job_id)?];
+            let project = &state.projects[state.project_index(&task.project_id)?];
+            if job.status != JobStatus::Active
+                || job.archived_at.is_some()
+                || project.archived_at.is_some()
+            {
+                continue;
+            }
             let req = json!({"executor":task.last_executor,"session":session,"delegated_by":task.delegated_by});
             if claim(state, i, &req, now).is_ok() {
+                // Restoring ownership is not evidence that the external obstacle is resolved.
+                if command == "session.prompt" {
+                    state.tasks[i].reason = task.reason;
+                }
                 state.tasks[i].revision += 1;
                 state.tasks[i].updated_at = now;
                 changed.push(task.id);
             }
-        } else if command == "session.heartbeat" {
+        } else if matches!(command, "session.heartbeat" | "session.prompt") {
             for lease in state
                 .leases
                 .iter_mut()

@@ -894,6 +894,96 @@ async fn session_resume_only_recovers_system_blocks_and_preserves_team_origin() 
 }
 
 #[tokio::test]
+async fn prompt_recovers_blocked_task_with_new_lease_and_requires_start() {
+    let f = Fixture::new().await;
+    let id = f.task("Wait for CI").await;
+    let original = f.start(&id, "codex:one").await;
+    f.service
+        .execute(
+            json!({"command":"task.block","task":id,"reason":"CI failed"}),
+            owner(&original),
+        )
+        .await
+        .unwrap();
+    f.service
+        .execute(
+            json!({"command":"session.prompt","session":"codex:one","executor":"agent:codex"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    let recovered = f
+        .service
+        .store()
+        .snapshot()
+        .await
+        .unwrap()
+        .task_result(&id)
+        .unwrap();
+    assert_eq!(recovered["status"], "IN_PROGRESS");
+    assert_eq!(recovered["phase"], "PLANNING");
+    assert_eq!(recovered["reason"], "CI failed");
+    assert_eq!(recovered["current_plan"], original["current_plan"]);
+    assert_eq!(recovered["lease"]["delegated_by"], "team:example");
+    assert_ne!(recovered["lease"]["token"], original["lease"]["token"]);
+    assert!(
+        f.service
+            .execute(json!({"command":"task.done","task":id}), owner(&recovered))
+            .await
+            .is_err()
+    );
+    f.service
+        .execute(json!({"command":"task.start","task":id}), owner(&recovered))
+        .await
+        .unwrap();
+    f.service
+        .execute(json!({"command":"task.done","task":id}), owner(&recovered))
+        .await
+        .unwrap();
+    assert_eq!(
+        f.service.store().snapshot().await.unwrap().jobs[0]
+            .status
+            .to_string(),
+        "PENDING_REVIEW"
+    );
+}
+
+#[tokio::test]
+async fn prompt_recovers_expiry_once_without_touching_other_sessions() {
+    let f = Fixture::new().await;
+    let id = f.task("Expired").await;
+    let original = f.start(&id, "codex:one").await;
+    let other = f.task("Other session").await;
+    f.start(&other, "codex:two").await;
+    f.clock.fetch_add(3600, Ordering::SeqCst);
+    let prompt = json!({"command":"session.prompt","session":"codex:one","executor":"agent:codex"});
+    f.service
+        .execute(prompt.clone(), WriteOptions::default())
+        .await
+        .unwrap();
+    let recovered = f
+        .service
+        .store()
+        .snapshot()
+        .await
+        .unwrap()
+        .task_result(&id)
+        .unwrap();
+    assert_eq!(recovered["phase"], "PLANNING");
+    assert_ne!(recovered["lease"]["token"], original["lease"]["token"]);
+    f.service
+        .execute(prompt, WriteOptions::default())
+        .await
+        .unwrap();
+    let state = f.service.store().snapshot().await.unwrap();
+    assert_eq!(
+        state.task_result(&id).unwrap()["lease"]["token"],
+        recovered["lease"]["token"]
+    );
+    assert_eq!(state.task_result(&other).unwrap()["status"], "BLOCKED");
+}
+
+#[tokio::test]
 async fn cancelled_only_jobs_are_not_completed_and_finished_jobs_reject_new_tasks() {
     let f = Fixture::new().await;
     let id = f.task("cancelled").await;
@@ -2997,4 +3087,88 @@ async fn quoted_authored_frontmatter_keys_round_trip_through_publication_and_syn
         assert_eq!(plan["body"], "# Plan\n");
         f.service.sync().await.unwrap();
     }
+}
+
+#[tokio::test]
+async fn prompt_preserves_waiting_terminal_and_foreign_executor_tasks() {
+    for transition in [
+        "task.wait",
+        "task.fail",
+        "task.cancel",
+        "task.done",
+        "task.block",
+    ] {
+        let f = Fixture::new().await;
+        let id = f.task("Guarded").await;
+        let original = f.start(&id, "codex:one").await;
+        f.service
+            .execute(
+                json!({"command":transition,"task":id,"reason":"Do not resume"}),
+                owner(&original),
+            )
+            .await
+            .unwrap();
+        let before = f
+            .service
+            .store()
+            .snapshot()
+            .await
+            .unwrap()
+            .task_result(&id)
+            .unwrap();
+        let executor = if transition == "task.block" {
+            "agent:claude"
+        } else {
+            "agent:codex"
+        };
+        f.service
+            .execute(
+                json!({"command":"session.prompt","session":"codex:one","executor":executor}),
+                WriteOptions::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            f.service
+                .store()
+                .snapshot()
+                .await
+                .unwrap()
+                .task_result(&id)
+                .unwrap(),
+            before
+        );
+    }
+}
+
+#[tokio::test]
+async fn prompt_keeps_an_existing_lease_and_does_not_claim_another_task() {
+    let f = Fixture::new().await;
+    let blocked = f.task("Blocked").await;
+    let claim = f.start(&blocked, "codex:one").await;
+    f.service
+        .execute(
+            json!({"command":"task.block","task":blocked,"reason":"CI failed"}),
+            owner(&claim),
+        )
+        .await
+        .unwrap();
+    let active = f.task("Active").await;
+    let claim = f.start(&active, "codex:one").await;
+    f.clock.fetch_add(10, Ordering::SeqCst);
+    f.service
+        .execute(
+            json!({"command":"session.prompt","session":"codex:one"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    let state = f.service.store().snapshot().await.unwrap();
+    let active = state.task_result(&active).unwrap();
+    assert_eq!(active["lease"]["token"], claim["lease"]["token"]);
+    assert_eq!(active["phase"], "EXECUTING");
+    assert!(
+        active["lease"]["lease_expires_at"].as_i64() > claim["lease"]["lease_expires_at"].as_i64()
+    );
+    assert_eq!(state.task_result(&blocked).unwrap()["status"], "BLOCKED");
 }
