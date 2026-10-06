@@ -542,6 +542,28 @@ Enable memory with `TASKIX_MEMORY_ENABLED=true` or `1`, then use `taskix reload`
 to reload the running service's startup configuration file for future work.
 `--config` selects the client configuration used to locate that service. Reload
 does not require a registered Project. Invalid configuration leaves the active
-configuration unchanged; storage paths and IPC limits require a restart.
+configuration unchanged; storage paths, IPC limits and logging changes require a restart.
 On Unix, only `serve` loads the login shell environment; restart after changing
 exported credentials, proxy settings, or memory enablement.
+
+### Service logs
+
+`taskix serve` writes tracing logs to stderr. Its optional `[logging]` and
+`[logging.file]` sections follow Agentix's configuration: `level = "info"`,
+`enabled = false`, `path = "~/.local/state/taskix/taskix.log"`,
+`rotation = "daily"`, and `max_files = 7`. Set `logging.file.enabled = true`
+to also write files; parent directories are created automatically. `RUST_LOG`
+overrides the configured filter. Normal CLI commands do not initialize logging.
+
+Rotation supports `never`, `minutely`, `hourly`, and `daily`. Rotated filenames
+append a UTC timestamp to the configured filename; log entries use local RFC 3339
+timestamps. File output has no ANSI colors and uses a non-blocking writer, flushed
+on graceful exit or startup failure after logging initialization. `max_files`
+limits retained rotated files, not bytes; `never` leaves one unbounded file.
+
+Logs include service startup, successful reload, shutdown, fatal errors, and
+changed background-operation errors. Repeated identical background errors are
+suppressed until recovery or a changed error. Logging starts after Unix login-shell
+re-execution, so environment-loading diagnostics still appear only on stderr.
+Changing logging configuration requires restarting the service; `taskix reload`
+rejects such changes without replacing the active configuration.

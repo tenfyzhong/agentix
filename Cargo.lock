@@ -3878,6 +3878,7 @@ dependencies = [
  "dirs",
  "nix",
  "reqwest",
+ "serde",
  "serde_json",
  "serde_yaml",
  "sqlx",
@@ -3885,6 +3886,9 @@ dependencies = [
  "time",
  "tokio",
  "toml",
+ "tracing",
+ "tracing-appender",
+ "tracing-subscriber",
 ]
 
 [[package]]

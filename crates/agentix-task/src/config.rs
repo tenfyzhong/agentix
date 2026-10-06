@@ -67,6 +67,8 @@ impl Config {
         // In particular, unavailable providers must not prevent board operations.
         if let Some(table) = value.as_table_mut() {
             table.remove("memory");
+            // Logging belongs to the resident service, not board operations.
+            table.remove("logging");
         }
         // Older releases stored a template locale and output format here.
         // Tolerate obsolete keys without exposing them; all output is Obsidian.
