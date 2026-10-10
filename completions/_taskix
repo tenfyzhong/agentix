@@ -1143,6 +1143,25 @@ _arguments "${_arguments_options[@]}" : \
 '--help[Print help]' \
 && ret=0
 ;;
+(mv)
+_arguments "${_arguments_options[@]}" : \
+'--root=[New workspace directory (defaults to the current directory)]:ROOT:_files -/' \
+'--remote=[Override the destination'\''s Git origin URL]:REMOTE:_default' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
 (list)
 _arguments "${_arguments_options[@]}" : \
 '--config=[]:CONFIG:_files' \
@@ -1228,6 +1247,10 @@ _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
 (register)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(mv)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -2940,6 +2963,10 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
+(mv)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
 (list)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
@@ -3884,6 +3911,7 @@ _taskix__subcmd__help__subcmd__project_commands() {
     local commands; commands=(
 'delete:Delete the Project, its work, and its entire generated document directory' \
 'register:Register a Project using its root directory and Git identity when available' \
+'mv:Rebind an existing Project after moving its workspace; preserve its ID and work' \
 'list:List unarchived Projects, or archived Projects with --archived' \
 'show:Show a Project'\''s identity, root directory, and archival state' \
 'archive:Archive a Project after all of its Jobs are closed' \
@@ -3905,6 +3933,11 @@ _taskix__subcmd__help__subcmd__project__subcmd__delete_commands() {
 _taskix__subcmd__help__subcmd__project__subcmd__list_commands() {
     local commands; commands=()
     _describe -t commands 'taskix help project list commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__project__subcmd__mv_commands] )) ||
+_taskix__subcmd__help__subcmd__project__subcmd__mv_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help project mv commands' commands "$@"
 }
 (( $+functions[_taskix__subcmd__help__subcmd__project__subcmd__register_commands] )) ||
 _taskix__subcmd__help__subcmd__project__subcmd__register_commands() {
@@ -4853,6 +4886,7 @@ _taskix__subcmd__project_commands() {
     local commands; commands=(
 'delete:Delete the Project, its work, and its entire generated document directory' \
 'register:Register a Project using its root directory and Git identity when available' \
+'mv:Rebind an existing Project after moving its workspace; preserve its ID and work' \
 'list:List unarchived Projects, or archived Projects with --archived' \
 'show:Show a Project'\''s identity, root directory, and archival state' \
 'archive:Archive a Project after all of its Jobs are closed' \
@@ -4876,6 +4910,7 @@ _taskix__subcmd__project__subcmd__help_commands() {
     local commands; commands=(
 'delete:Delete the Project, its work, and its entire generated document directory' \
 'register:Register a Project using its root directory and Git identity when available' \
+'mv:Rebind an existing Project after moving its workspace; preserve its ID and work' \
 'list:List unarchived Projects, or archived Projects with --archived' \
 'show:Show a Project'\''s identity, root directory, and archival state' \
 'archive:Archive a Project after all of its Jobs are closed' \
@@ -4904,6 +4939,11 @@ _taskix__subcmd__project__subcmd__help__subcmd__list_commands() {
     local commands; commands=()
     _describe -t commands 'taskix project help list commands' commands "$@"
 }
+(( $+functions[_taskix__subcmd__project__subcmd__help__subcmd__mv_commands] )) ||
+_taskix__subcmd__project__subcmd__help__subcmd__mv_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix project help mv commands' commands "$@"
+}
 (( $+functions[_taskix__subcmd__project__subcmd__help__subcmd__register_commands] )) ||
 _taskix__subcmd__project__subcmd__help__subcmd__register_commands() {
     local commands; commands=()
@@ -4923,6 +4963,11 @@ _taskix__subcmd__project__subcmd__help__subcmd__unarchive_commands() {
 _taskix__subcmd__project__subcmd__list_commands() {
     local commands; commands=()
     _describe -t commands 'taskix project list commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__project__subcmd__mv_commands] )) ||
+_taskix__subcmd__project__subcmd__mv_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix project mv commands' commands "$@"
 }
 (( $+functions[_taskix__subcmd__project__subcmd__register_commands] )) ||
 _taskix__subcmd__project__subcmd__register_commands() {

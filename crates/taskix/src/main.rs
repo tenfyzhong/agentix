@@ -213,6 +213,16 @@ enum ProjectCommand {
         #[arg(long, value_hint = clap::ValueHint::DirPath)]
         root: Option<PathBuf>,
     },
+    /// Rebind an existing Project after moving its workspace; preserve its ID and work.
+    Mv {
+        id: String,
+        /// New workspace directory (defaults to the current directory).
+        #[arg(long, value_hint = clap::ValueHint::DirPath)]
+        root: Option<PathBuf>,
+        /// Override the destination's Git origin URL.
+        #[arg(long)]
+        remote: Option<String>,
+    },
     /// List unarchived Projects, or archived Projects with --archived.
     List {
         #[arg(long)]
@@ -992,6 +1002,17 @@ async fn project(cli: &Cli, service: &Service, action: &ProjectCommand) -> Resul
                 cli,
                 service,
                 json!({"command":"project.register","name":name,"root":root,"remote":remote}),
+            )
+            .await
+        }
+        ProjectCommand::Mv { id, root, remote } => {
+            let root = root.clone().unwrap_or(std::env::current_dir()?);
+            let (root, discovered_remote) = git_identity(&root)?;
+            let remote = remote.clone().or(discovered_remote);
+            mutate(
+                cli,
+                service,
+                json!({"command":"project.move","project":id,"root":root,"remote":remote}),
             )
             .await
         }

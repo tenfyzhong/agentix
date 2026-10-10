@@ -38,6 +38,7 @@ pub(crate) fn apply(
     let result = match command {
         _ if command.starts_with("inbox.") => crate::inbox::apply(state, request, options, now),
         "project.register" => register_project(state, request, now),
+        "project.move" => move_project(state, request, options),
         "project.rename" | "project.relocate" => {
             crate::project_rename::rename(state, request, options)
         }
@@ -265,6 +266,27 @@ fn register_project(state: &mut Snapshot, request: &Value, now: i64) -> Result<V
     let result = serde_json::to_value(&project)?;
     state.projects.push(project);
     Ok(result)
+}
+
+fn move_project(state: &mut Snapshot, request: &Value, options: &WriteOptions) -> Result<Value> {
+    let index = state.project_index(required(request, "project")?)?;
+    let project = &mut state.projects[index];
+    check_revision(project.revision, options)?;
+    let root = std::path::Path::new(required(request, "root")?);
+    ensure!(
+        root.is_dir(),
+        "invalid: Project root must be an existing directory"
+    );
+    let root = root.canonicalize()?.to_string_lossy().into_owned();
+    let remote = match request.get("remote") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(remote)) if !remote.trim().is_empty() => Some(remote.clone()),
+        _ => bail!("invalid: remote must be a nonblank string or null"),
+    };
+    project.root = root;
+    project.remote = remote;
+    project.revision += 1;
+    Ok(serde_json::to_value(project)?)
 }
 
 fn archive_project(

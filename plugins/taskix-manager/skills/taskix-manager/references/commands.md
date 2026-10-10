@@ -37,6 +37,7 @@ Configuration defaults to `~/.config/taskix/config.toml`; `TASKIX_CONFIG` or `--
 
 ```sh
 taskix project register --json
+taskix project mv PROJECT_ID --root /new/workspace --json
 taskix job list --active --json
 taskix job list --pending-review --json
 taskix job create --project prj_ID --title 'Requirement' --goal 'Acceptance checks' --prompt 'Original user request' --executor agent:HOST --session HOST_SESSION --json
@@ -85,6 +86,19 @@ Task C must list both A and B in `dependencies`; A and B need no edge between th
 Job and Task note filenames receive an automatic `YYMMDD-seq-` prefix (UTC creation date, daily sequence padded to at least four digits, independent per project and type). Supply only the concise display name to `--name`; do not add the date or sequence yourself. Renaming, Plan updates, and archival keep the prefix.
 
 Use `job update --name` and `task update --name` to improve display names, including after completion. Every Task has one note in `Tasks/`, including Tasks without a published Plan. Plan revisions update its body in place, with status, revision, and local lifecycle timestamps in frontmatter. The agent freely chooses the body’s structure and content. Use `project archive PROJECT_ID` after closing all Jobs; `project list --archived` and `project unarchive PROJECT_ID` browse and restore projects. `AGENT_TASK_LANG` configures the skill’s language for task decomposition and authored text. Hooks and extensions expose it as `task_language`; taskix does not interpret it or store language configuration.
+
+After moving or renaming a workspace directory, run `project mv PROJECT_ID
+--root /new/workspace` before starting work there. The ID, its unambiguous prefix,
+or the existing Project name selects the original Project. `--root` defaults to
+the current directory; Git worktrees resolve to their common repository root.
+The command refreshes `remote` from the destination's Git origin (or clears it
+when no origin exists); `--remote URL` overrides that value. It updates root,
+remote and the directory index atomically, preserving IDs, Project name/key,
+document locations, Jobs, Tasks, Plans, history and archival state. A root already
+registered to another Project is rejected; Projects are not merged. The command
+supports `--expect-revision` and `--idempotency-key`. It updates Taskix metadata;
+move the actual workspace directory separately. If document publication reports
+`projection_pending`, repair the reported vault issue and run `taskix sync`.
 
 Project archival moves the complete note folder to `Archived Projects/<project>`
 under `documents.root`; `documents.archive_directory` configures that vault-relative

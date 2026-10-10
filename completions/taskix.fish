@@ -672,24 +672,25 @@ complete -c taskix -n "__fish_taskix_using_subcommand sync" -l idempotency-key -
 complete -c taskix -n "__fish_taskix_using_subcommand sync" -l pending -d 'Retry only pending document publications without a full rebuild'
 complete -c taskix -n "__fish_taskix_using_subcommand sync" -l json
 complete -c taskix -n "__fish_taskix_using_subcommand sync" -s h -l help -d 'Print help'
-complete -c taskix -n "__fish_taskix_using_subcommand project; and not __fish_seen_subcommand_from delete register list show archive unarchive help" -l config -r -F
-complete -c taskix -n "__fish_taskix_using_subcommand project; and not __fish_seen_subcommand_from delete register list show archive unarchive help" -l project -r
-complete -c taskix -n "__fish_taskix_using_subcommand project; and not __fish_seen_subcommand_from delete register list show archive unarchive help" -l actor -r
-complete -c taskix -n "__fish_taskix_using_subcommand project; and not __fish_seen_subcommand_from delete register list show archive unarchive help" -l executor -r
-complete -c taskix -n "__fish_taskix_using_subcommand project; and not __fish_seen_subcommand_from delete register list show archive unarchive help" -l session -r
-complete -c taskix -n "__fish_taskix_using_subcommand project; and not __fish_seen_subcommand_from delete register list show archive unarchive help" -l delegated-by -r
-complete -c taskix -n "__fish_taskix_using_subcommand project; and not __fish_seen_subcommand_from delete register list show archive unarchive help" -l lease-token -r
-complete -c taskix -n "__fish_taskix_using_subcommand project; and not __fish_seen_subcommand_from delete register list show archive unarchive help" -l expect-revision -r
-complete -c taskix -n "__fish_taskix_using_subcommand project; and not __fish_seen_subcommand_from delete register list show archive unarchive help" -l idempotency-key -r
-complete -c taskix -n "__fish_taskix_using_subcommand project; and not __fish_seen_subcommand_from delete register list show archive unarchive help" -l json
-complete -c taskix -n "__fish_taskix_using_subcommand project; and not __fish_seen_subcommand_from delete register list show archive unarchive help" -s h -l help -d 'Print help'
-complete -c taskix -n "__fish_taskix_using_subcommand project; and not __fish_seen_subcommand_from delete register list show archive unarchive help" -f -a "delete" -d 'Delete the Project, its work, and its entire generated document directory'
-complete -c taskix -n "__fish_taskix_using_subcommand project; and not __fish_seen_subcommand_from delete register list show archive unarchive help" -f -a "register" -d 'Register a Project using its root directory and Git identity when available'
-complete -c taskix -n "__fish_taskix_using_subcommand project; and not __fish_seen_subcommand_from delete register list show archive unarchive help" -f -a "list" -d 'List unarchived Projects, or archived Projects with --archived'
-complete -c taskix -n "__fish_taskix_using_subcommand project; and not __fish_seen_subcommand_from delete register list show archive unarchive help" -f -a "show" -d 'Show a Project\'s identity, root directory, and archival state'
-complete -c taskix -n "__fish_taskix_using_subcommand project; and not __fish_seen_subcommand_from delete register list show archive unarchive help" -f -a "archive" -d 'Archive a Project after all of its Jobs are closed'
-complete -c taskix -n "__fish_taskix_using_subcommand project; and not __fish_seen_subcommand_from delete register list show archive unarchive help" -f -a "unarchive" -d 'Restore an archived Project to the active project views'
-complete -c taskix -n "__fish_taskix_using_subcommand project; and not __fish_seen_subcommand_from delete register list show archive unarchive help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c taskix -n "__fish_taskix_using_subcommand project; and not __fish_seen_subcommand_from delete register mv list show archive unarchive help" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand project; and not __fish_seen_subcommand_from delete register mv list show archive unarchive help" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand project; and not __fish_seen_subcommand_from delete register mv list show archive unarchive help" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand project; and not __fish_seen_subcommand_from delete register mv list show archive unarchive help" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand project; and not __fish_seen_subcommand_from delete register mv list show archive unarchive help" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand project; and not __fish_seen_subcommand_from delete register mv list show archive unarchive help" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand project; and not __fish_seen_subcommand_from delete register mv list show archive unarchive help" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand project; and not __fish_seen_subcommand_from delete register mv list show archive unarchive help" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand project; and not __fish_seen_subcommand_from delete register mv list show archive unarchive help" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand project; and not __fish_seen_subcommand_from delete register mv list show archive unarchive help" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand project; and not __fish_seen_subcommand_from delete register mv list show archive unarchive help" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand project; and not __fish_seen_subcommand_from delete register mv list show archive unarchive help" -f -a "delete" -d 'Delete the Project, its work, and its entire generated document directory'
+complete -c taskix -n "__fish_taskix_using_subcommand project; and not __fish_seen_subcommand_from delete register mv list show archive unarchive help" -f -a "register" -d 'Register a Project using its root directory and Git identity when available'
+complete -c taskix -n "__fish_taskix_using_subcommand project; and not __fish_seen_subcommand_from delete register mv list show archive unarchive help" -f -a "mv" -d 'Rebind an existing Project after moving its workspace; preserve its ID and work'
+complete -c taskix -n "__fish_taskix_using_subcommand project; and not __fish_seen_subcommand_from delete register mv list show archive unarchive help" -f -a "list" -d 'List unarchived Projects, or archived Projects with --archived'
+complete -c taskix -n "__fish_taskix_using_subcommand project; and not __fish_seen_subcommand_from delete register mv list show archive unarchive help" -f -a "show" -d 'Show a Project\'s identity, root directory, and archival state'
+complete -c taskix -n "__fish_taskix_using_subcommand project; and not __fish_seen_subcommand_from delete register mv list show archive unarchive help" -f -a "archive" -d 'Archive a Project after all of its Jobs are closed'
+complete -c taskix -n "__fish_taskix_using_subcommand project; and not __fish_seen_subcommand_from delete register mv list show archive unarchive help" -f -a "unarchive" -d 'Restore an archived Project to the active project views'
+complete -c taskix -n "__fish_taskix_using_subcommand project; and not __fish_seen_subcommand_from delete register mv list show archive unarchive help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
 complete -c taskix -n "__fish_taskix_using_subcommand project; and __fish_seen_subcommand_from delete" -l config -r -F
 complete -c taskix -n "__fish_taskix_using_subcommand project; and __fish_seen_subcommand_from delete" -l project -r
 complete -c taskix -n "__fish_taskix_using_subcommand project; and __fish_seen_subcommand_from delete" -l actor -r
@@ -714,6 +715,19 @@ complete -c taskix -n "__fish_taskix_using_subcommand project; and __fish_seen_s
 complete -c taskix -n "__fish_taskix_using_subcommand project; and __fish_seen_subcommand_from register" -l idempotency-key -r
 complete -c taskix -n "__fish_taskix_using_subcommand project; and __fish_seen_subcommand_from register" -l json
 complete -c taskix -n "__fish_taskix_using_subcommand project; and __fish_seen_subcommand_from register" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand project; and __fish_seen_subcommand_from mv" -l root -d 'New workspace directory (defaults to the current directory)' -r -f -a "(__fish_complete_directories)"
+complete -c taskix -n "__fish_taskix_using_subcommand project; and __fish_seen_subcommand_from mv" -l remote -d 'Override the destination\'s Git origin URL' -r
+complete -c taskix -n "__fish_taskix_using_subcommand project; and __fish_seen_subcommand_from mv" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand project; and __fish_seen_subcommand_from mv" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand project; and __fish_seen_subcommand_from mv" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand project; and __fish_seen_subcommand_from mv" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand project; and __fish_seen_subcommand_from mv" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand project; and __fish_seen_subcommand_from mv" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand project; and __fish_seen_subcommand_from mv" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand project; and __fish_seen_subcommand_from mv" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand project; and __fish_seen_subcommand_from mv" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand project; and __fish_seen_subcommand_from mv" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand project; and __fish_seen_subcommand_from mv" -s h -l help -d 'Print help'
 complete -c taskix -n "__fish_taskix_using_subcommand project; and __fish_seen_subcommand_from list" -l config -r -F
 complete -c taskix -n "__fish_taskix_using_subcommand project; and __fish_seen_subcommand_from list" -l project -r
 complete -c taskix -n "__fish_taskix_using_subcommand project; and __fish_seen_subcommand_from list" -l actor -r
@@ -761,6 +775,7 @@ complete -c taskix -n "__fish_taskix_using_subcommand project; and __fish_seen_s
 complete -c taskix -n "__fish_taskix_using_subcommand project; and __fish_seen_subcommand_from unarchive" -s h -l help -d 'Print help'
 complete -c taskix -n "__fish_taskix_using_subcommand project; and __fish_seen_subcommand_from help" -f -a "delete" -d 'Delete the Project, its work, and its entire generated document directory'
 complete -c taskix -n "__fish_taskix_using_subcommand project; and __fish_seen_subcommand_from help" -f -a "register" -d 'Register a Project using its root directory and Git identity when available'
+complete -c taskix -n "__fish_taskix_using_subcommand project; and __fish_seen_subcommand_from help" -f -a "mv" -d 'Rebind an existing Project after moving its workspace; preserve its ID and work'
 complete -c taskix -n "__fish_taskix_using_subcommand project; and __fish_seen_subcommand_from help" -f -a "list" -d 'List unarchived Projects, or archived Projects with --archived'
 complete -c taskix -n "__fish_taskix_using_subcommand project; and __fish_seen_subcommand_from help" -f -a "show" -d 'Show a Project\'s identity, root directory, and archival state'
 complete -c taskix -n "__fish_taskix_using_subcommand project; and __fish_seen_subcommand_from help" -f -a "archive" -d 'Archive a Project after all of its Jobs are closed'
@@ -1571,6 +1586,7 @@ complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subc
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from obsidian" -f -a "setup" -d 'Install native Bases task boards (Obsidian 1.14+) and Taskix Sync, then reload the vault'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from project" -f -a "delete" -d 'Delete the Project, its work, and its entire generated document directory'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from project" -f -a "register" -d 'Register a Project using its root directory and Git identity when available'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from project" -f -a "mv" -d 'Rebind an existing Project after moving its workspace; preserve its ID and work'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from project" -f -a "list" -d 'List unarchived Projects, or archived Projects with --archived'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from project" -f -a "show" -d 'Show a Project\'s identity, root directory, and archival state'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from project" -f -a "archive" -d 'Archive a Project after all of its Jobs are closed'
