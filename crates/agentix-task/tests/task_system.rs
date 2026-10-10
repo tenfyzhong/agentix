@@ -46,6 +46,9 @@ mod project_resolution;
 #[path = "support/project_rename.rs"]
 mod project_rename;
 
+#[path = "support/project_move.rs"]
+mod project_move;
+
 #[path = "support/project_archive.rs"]
 mod project_archive;
 

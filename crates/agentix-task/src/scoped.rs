@@ -424,6 +424,19 @@ async fn load_query_context(
             "conflict: Project folder name is already registered"
         );
     }
+    if command == "project.move" {
+        let project = &state.projects[state.project_index(required(request, "project")?)?];
+        let collision: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM project_lookup WHERE canonical_root=? AND project_id<>?)",
+        )
+        .bind(crate::project_lookup::canonical_root(required(
+            request, "root",
+        )?)?)
+        .bind(&project.id)
+        .fetch_one(&mut *conn)
+        .await?;
+        ensure!(!collision, "conflict: Project root is already registered");
+    }
     let selected = json!(state.tasks.iter().map(|t| &t.id).collect::<Vec<_>>()).to_string();
     for job in &state.jobs {
         let row=sqlx::query("SELECT COUNT(*) AS eligible, COALESCE(SUM(json_extract(data,'$.status') IS NOT 'DONE'),0) AS incomplete FROM tasks WHERE job_id=? AND json_extract(data,'$.status') IS NOT 'CANCELLED' AND id NOT IN (SELECT value FROM json_each(?))")

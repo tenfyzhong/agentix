@@ -84,6 +84,16 @@ The projection CLI tests cross argument parsing, a new process per command, SQLi
 | Standalone backup release archive/checksums, independent formula selection, script source bottle install/pour and complete-platform publication guards | [backup release tests](../plugins/taskix-manager/tests/release-backup.test.mjs), [Homebrew tests](../plugins/taskix-manager/tests/homebrew.test.mjs); the actual Formula recipe and opt-in local SQLite/rclone round-trip plus bottle pour are tested in `tenfyzhong/homebrew-tap/tests/backup.test.mjs` |
 | Local Homebrew update artifact/profile/target selection and missing-binary preflight, exact local keg switching, stable/local distinction, preflight and failure propagation | [Make entry tests](../plugins/taskix-manager/tests/brew-local-install.test.mjs), [switch tests](../plugins/taskix-manager/tests/brew-local-switch.test.mjs), including opt-in isolated real Homebrew keg linking; artifact snapshot, dependency-free Formula and real Homebrew prebuilt-install tests live in `tenfyzhong/homebrew-tap/tests/` |
 
+Project workspace migration is covered by [library regression tests](../crates/agentix-task/tests/support/project_move.rs)
+and [CLI regression tests](../crates/taskix/tests/support/project_move.rs).
+They exercise the `mv` subcommand and rejection of `move`, a renamed Git repository,
+non-Git current-directory rebinding,
+Git worktree identity, origin refresh/removal and explicit remote, preserved
+work/leases/archival state, indexed conflict checks and concurrent migrations,
+stale revisions, invalid destinations, idempotent replay and pending Board
+publication recovery. These use isolated directories and SQLite databases;
+they do not move developer repositories or require live Git remotes.
+
 ## OMP skill discovery
 
 [Package tests](../plugins/taskix-manager/tests/package.test.mjs) verify the canonical plugin skill, absence of repository-root copies, and contained reference links in both the checkout and an installed npm tarball. The optional [native OMP test](../plugins/taskix-manager/tests/native-omp.test.mjs) starts an isolated RPC session and confirms `taskix-manager` appears in the host skill list and reads the full workflow and command reference through the native Read tool using `skill://` URIs. Run it with `AGENTIX_TEST_NATIVE_HOSTS=1`; it needs OMP and taskix on PATH, but sends no model requests and uses a temporary task database.

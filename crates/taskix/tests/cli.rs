@@ -21,6 +21,9 @@ mod scoped_reads;
 #[path = "support/project_resolution.rs"]
 mod project_resolution;
 
+#[path = "support/project_move.rs"]
+mod project_move;
+
 struct Cli {
     dir: TempDir,
     memory_enabled: bool,

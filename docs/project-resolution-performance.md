@@ -2,7 +2,7 @@
 
 ## Architecture and invariants
 
-`ProjectDirectory` separates filesystem/Git discovery from persistence. CLI implicit selection may register a non-Git directory; IM lookup remains read-only. Both use the same indexed service lookup. A `context` command lazily discovers identity once and reuses it after Inbox synchronization, while re-reading database state so cancellations and ownership changes remain visible. Explicit Project selection and owned work do not need directory discovery. Git remotes are queried only for explicit registration.
+`ProjectDirectory` separates filesystem/Git discovery from persistence. CLI implicit selection may register a non-Git directory; IM lookup remains read-only. Both use the same indexed service lookup. A `context` command lazily discovers identity once and reuses it after Inbox synchronization, while re-reading database state so cancellations and ownership changes remain visible. Explicit Project selection and owned work do not need directory discovery. Git remotes are queried only for explicit registration or workspace migration.
 
 Schema 14 maintains `project_lookup` in the same transaction as Project writes, with cascading deletion. Canonical roots and Unicode-lowercased keys are indexed independently. The migration builds these indexes once from existing Project metadata; ordinary startup does not rebuild them. Existing Project records and document paths are preserved. Root lookup materializes at most one Project, with the earliest legacy record winning if multiple stored aliases identify the same canonical directory.
 
