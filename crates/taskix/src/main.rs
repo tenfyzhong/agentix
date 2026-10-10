@@ -184,11 +184,8 @@ enum ObsidianCommand {
     Show { id: String },
     /// Query registered notes and authoritative status properties without lease credentials.
     Snapshot,
-    /// Install task views and reload the configured Obsidian vault when files change.
+    /// Install native Bases task boards (Obsidian 1.14+) and Taskix Sync, then reload the vault.
     Setup {
-        /// Use a local `TaskNotes` release directory instead of downloading the bundled version.
-        #[arg(long, value_hint = clap::ValueHint::DirPath)]
-        plugin_dir: Option<PathBuf>,
         /// Skip Obsidian CLI calls; close Obsidian before setup and reopen it afterward.
         #[arg(long)]
         no_reload: bool,
@@ -650,16 +647,10 @@ impl Cli {
     }
 }
 
-async fn setup_obsidian(
-    cli: &Cli,
-    plugin_dir: Option<&std::path::Path>,
-    no_reload: bool,
-) -> Result<Value> {
+async fn setup_obsidian(cli: &Cli, no_reload: bool) -> Result<Value> {
     let path = cli.config_path()?;
     let config = Config::load(&path)?;
-    Ok(response(
-        obsidian::setup(&config, &path, plugin_dir, no_reload).await?,
-    ))
+    Ok(response(obsidian::setup(&config, &path, no_reload).await?))
 }
 
 async fn run(cli: &Cli) -> Result<Value> {
@@ -705,13 +696,10 @@ async fn run_task_command(cli: &Cli) -> Result<Value> {
         return initialize(cli, init).await;
     }
     if let Command::Obsidian {
-        action: ObsidianCommand::Setup {
-            plugin_dir,
-            no_reload,
-        },
+        action: ObsidianCommand::Setup { no_reload },
     } = &cli.command
     {
-        return setup_obsidian(cli, plugin_dir.as_deref(), *no_reload).await;
+        return setup_obsidian(cli, *no_reload).await;
     }
     let config = Config::load(&cli.config_path()?)?;
     if matches!(

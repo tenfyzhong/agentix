@@ -44,7 +44,7 @@ and hook trust remain separate acceptance boundaries.
 | Claim → Plan → start → done; seven statuses, phase gates, failed transitions, revision checks, stale leases, expiry and resumption | [task_system.rs](../crates/agentix-task/tests/task_system.rs), [taskix CLI tests](../crates/taskix/tests/cli.rs) |
 | Competing processes, concurrent projection writers, crash after commit, exact idempotent replay, database identity and path validation | [taskix CLI tests](../crates/taskix/tests/cli.rs), [task_system.rs](../crates/agentix-task/tests/task_system.rs) |
 | Dependency validation, cross-Job prerequisites, one graph node for a shared prerequisite, seven colors, escaped labels, renamed/archived links, removal of legacy Dependencies prose | [job_graph.rs](../crates/agentix-task/tests/support/job_graph.rs), [CLI projection tests](../crates/taskix/tests/support/projections.rs) |
-| Task notes before planning; managed tags/dependencies; local timestamps; freeform bodies and custom properties, CRLF frontmatter, quoted property keys, metadata-only Plan rejection; Board metadata; old meta/Task-list/Plan-path migrations | [tasknotes.rs](../crates/agentix-task/tests/support/tasknotes.rs), [CLI projection tests](../crates/taskix/tests/support/projections.rs) |
+| Task notes before planning; managed tags/dependencies; local timestamps; freeform bodies and custom properties, CRLF frontmatter, quoted property keys, metadata-only Plan rejection; Board metadata; old meta/Task-list/Plan-path migrations | [native_bases.rs](../crates/agentix-task/tests/support/native_bases.rs), [CLI projection tests](../crates/taskix/tests/support/projections.rs) |
 | Legacy Dashboard migration to Bases, read-only formulas, scoped filters, activity ordering, unchanged-file preservation, archive visibility, destination conflicts and partial-publication retries | [dashboard.rs](../crates/agentix-task/tests/support/dashboard.rs), [CLI projection tests](../crates/taskix/tests/support/projections.rs) |
 | Job/Project deletion, active-lease and surviving-dependency rejection, cleanup retry after restart, unowned destination preservation after failed creation/renaming, owned files published before path registration, sequence retention, symlink boundaries | [deletion.rs](../crates/agentix-task/tests/support/deletion.rs), [taskix CLI tests](../crates/taskix/tests/cli.rs) |
 | Codex/Claude manifest-selected hook commands using real CLI; Stop retains ownership without intake; interruption and shutdown release planning/executing leases; new-token recovery | [integration.mjs](../plugins/taskix-manager/tests/integration.mjs) |
@@ -53,15 +53,15 @@ and hook trust remain separate acceptance boundaries.
 | Pi/OMP real TypeScript entrypoints, automatic identity/token injection, Plan writes with full IDs and resolved Task prefixes, ambiguous-prefix rejection, errors, aborted processes, retry identity including Job/Project deletion | [runtime.test.mjs](../plugins/taskix-manager/tests/runtime.test.mjs), [integration.mjs](../plugins/taskix-manager/tests/integration.mjs) |
 | Pi/OMP normal replies and automatic continuations retain executing leases; repeated SessionStart and old-session callbacks do not revoke current ownership | [lifecycle.test.mjs](../plugins/taskix-manager/tests/lifecycle.test.mjs), [integration.mjs](../plugins/taskix-manager/tests/integration.mjs) |
 | Heartbeat timing, cancellation of in-flight renewal, queued ticks, failed cleanup retry, and new prompts waiting for cleanup | [lifecycle.test.mjs](../plugins/taskix-manager/tests/lifecycle.test.mjs), [runtime.test.mjs](../plugins/taskix-manager/tests/runtime.test.mjs), using controlled timers and runners |
-| Marketplace resolution, hook discovery without duplicates, entrypoint selection, actual npm pack file list including TaskNotes guide/settings and local documentation links | [package.test.mjs](../plugins/taskix-manager/tests/package.test.mjs) |
+| Marketplace resolution, hook discovery without duplicates, entrypoint selection, actual npm pack file list including native Bases guide and Taskix Sync styles and local documentation links | [package.test.mjs](../plugins/taskix-manager/tests/package.test.mjs) |
 | IM task actions, lease/revision/owner checks, reasons, notifications, delivery retry and durable event cursors | [Engine tests](../crates/agentix-core/tests/engine.rs) |
 | IM dashboard → project Jobs → Job ↔ Task navigation; update ordering and Job status filters; consistent sentence-case Inbox/Job/Task status labels across filters, summaries, details and counts, preserving original state words and stored values; adjacent entry controls, footer state actions and legacy list paging; session association and released work; owner/conversation/attachment scoping; ordered menus; project/Job/task pagination and archives; long fenced Markdown, reasons and titles; unavailable-document fallbacks | [IM browsing Engine tests](../crates/agentix-core/tests/support/task_board.rs) |
 | Authored Task bodies and Job Goal/Notes in Obsidian, unchanged database/Plan hashes, and symlink escape rejection | [task_system.rs](../crates/agentix-task/tests/task_system.rs), `im_markdown_*` tests |
 | Telegram/Feishu dashboard and detail callbacks, section ordering and split Telegram browse messages through actual transports → Engine → authored documents → MarkdownV2/card payloads, project/dashboard return links, attached `/board` and `/jobs`, unchanged task state | [task_browse.rs](../crates/agentix/tests/support/task_browse.rs), run by [channel_codex_e2e.rs](../crates/agentix/tests/channel_codex_e2e.rs) |
 | Configured Telegram startup dashboard menu, exact primary order, alphabetical secondary commands and contextual labels | [application menu tests](../crates/agentix/src/main.rs), [Telegram API/menu tests](../crates/agentix-telegram/tests/telegram.rs), [Engine menu tests](../crates/agentix-core/tests/support/task_board.rs) |
 | Telegram/Feishu task actions and reason replies through transport → Engine → SQLite → documents → channel notification | [channel_codex_e2e.rs](../crates/agentix/tests/channel_codex_e2e.rs), with local channel API services |
-| Actual Dashboard columns/dates, archive filtering, native link navigation, TaskNotes Kanban columns/cards and task note recognition | [obsidian_smoke.rs](../crates/taskix/tests/obsidian_smoke.rs), opt-in desktop test |
-| TaskNotes installation, settings/status merging, plugin enablement, backups, repeat runs, malformed bundles/configuration, path protection, download errors, rollback, automatic vault reload, CLI targeting, shutdown saves, reload failure/timeout and `--no-reload` | [obsidian_setup.rs](../crates/taskix/tests/obsidian_setup.rs), [installer tests](../crates/taskix/src/obsidian.rs); local release fixtures, HTTP server and native fake Obsidian CLI (no live desktop) |
+| Actual Dashboard columns/dates, archive filtering, native link navigation, native Kanban columns/cards, unlimited Recent Jobs results and bounded scrolling | [obsidian_smoke.rs](../crates/taskix/tests/obsidian_smoke.rs), opt-in desktop test |
+| Embedded Taskix Sync installation, native Bases enablement, obsolete TaskNotes enablement removal, backups, repeat runs, malformed configuration, path protection, rollback, automatic vault reload, CLI targeting, shutdown saves, reload failure/timeout and `--no-reload` | [obsidian_setup.rs](../crates/taskix/tests/obsidian_setup.rs), [installer tests](../crates/taskix/src/obsidian.rs); isolated configuration fixtures and native fake Obsidian CLI (no live desktop) |
 
 The projection CLI tests cross argument parsing, a new process per command, SQLite persistence, and generated files. Library tests provide deterministic clocks and filesystem failure injection. Host integration tests run real taskix processes behind a minimal event API harness; controlled timer tests cover scheduling races without waiting a real minute.
 
@@ -90,7 +90,7 @@ The projection CLI tests cross argument parsing, a new process per command, SQLi
 
 ## Desktop and external acceptance
 
-The normal suite needs no live account, model, host installation, or desktop. To run native Obsidian checks, follow [task board validation](task-board.md#validation): open the selected vault in the foreground, enable Bases and TaskNotes with the seven statuses, and supply `TASKIX_OBSIDIAN_VAULT` and an existing `TASKIX_OBSIDIAN_PARENT`. The test checks generated link destinations through Obsidian's native navigation API; it does not claim physical mouse or keyboard automation in every theme.
+The normal suite needs no live account, model, host installation, or desktop. To run native Obsidian checks, follow [task board validation](task-board.md#validation): open the selected vault in the foreground, use Obsidian 1.14 or newer with Bases enabled, and supply `TASKIX_OBSIDIAN_VAULT` and an existing `TASKIX_OBSIDIAN_PARENT`. The test checks generated link destinations through Obsidian's native navigation API; it does not claim physical mouse or keyboard automation in every theme.
 
 Host installer discovery/trust, real model behavior, host events on actual terminal interruption/exit, live IM credentials/permissions, and a live external rmux daemon require environment acceptance. A mock event test establishes what the adapter does when the event arrives; it cannot establish that every host version emits it. Force-kill and missed-hook recovery retain the lease-expiry fallback. Multi-machine or network-filesystem coordination is outside the supported concurrency model.
 
@@ -104,7 +104,7 @@ CI runs the full workspace suite on Linux/macOS. Windows checks the workspace an
 | Snapshot identities, paths and lease omission | [Snapshot CLI tests](../crates/taskix/tests/support/obsidian_sync.rs) |
 | Human Job completion with unfinished or no Tasks, preserved terminal outcomes, lease revocation, stale revision rollback, individual Task completion and unchanged agent guards | [Obsidian completion tests](../crates/agentix-task/tests/support/obsidian_completion.rs), [real CLI completion test](../crates/taskix/tests/support/job_review.rs) |
 | Debouncing, ownership conflicts, revision fencing, timeout confirmation, rollback, newer edits, projection echoes and unload | [Sync engine tests](../plugins/taskix-manager/tests/obsidian-sync.test.mjs), [real CLI integration](../plugins/taskix-manager/tests/integration.mjs) |
-| Dual Boards, scoped filters, pinned columns, Job properties and pastel status presets | [TaskNotes projection tests](../crates/agentix-task/tests/support/tasknotes.rs), [setup tests](../crates/taskix/tests/obsidian_setup.rs) |
+| Native dual Boards, scoped filters, fixed status groups, Job properties and legacy Base migration | [Native Bases projection tests](../crates/agentix-task/tests/support/native_bases.rs), [setup tests](../crates/taskix/tests/obsidian_setup.rs) |
 | Embedded plugin installation, preserved settings, backups, malformed configuration and symlink rejection | [setup tests](../crates/taskix/tests/obsidian_setup.rs), [package tests](../plugins/taskix-manager/tests/package.test.mjs) |
 | Desktop rendering and saved frontmatter edits with a temporary plugin instance and isolated database | [opt-in Obsidian smoke test](../crates/taskix/tests/obsidian_smoke.rs) |
 
@@ -552,12 +552,11 @@ failure semantics.
 
 ### Environment proxy routing
 
-Agentix and Taskix run isolated subprocess fixtures with lowercase and uppercase
+Agentix runs isolated subprocess fixtures with lowercase and uppercase
 HTTP/HTTPS proxy variables, conflicting variables for the other request scheme,
 proxy authentication, HTTPS CONNECT rejection, and separate NO_PROXY/no_proxy bypass checks. Agentix's
 Telegram fixture also covers polling, menus, sends, edits and callback
-acknowledgements with a legacy TOML proxy that must have no effect. Taskix tests
-exercise the production TaskNotes download path. All listeners are local; these
+acknowledgements with a legacy TOML proxy that must have no effect. All listeners are local; these
 checks do not establish live provider/IM or service-manager environment behavior.
 
 ## CI test cost

@@ -442,7 +442,7 @@ fn concurrent_cli_jobs_preserve_notes_and_all_projections() {
     for ((path, task), job) in paths.iter().zip(&tasks).zip(&jobs) {
         let body = std::fs::read_to_string(path).unwrap();
         assert_eq!(body.matches("Keep my notes.").count(), 1);
-        assert!(body.contains("```base\n") && body.contains("tasknotesKanban"));
+        assert!(body.contains("```base\n") && body.contains("kanban"));
         assert!(body.contains(&format!("job_id == \"{job}\"")));
         let folder = path.parent().unwrap().parent().unwrap().join("Tasks");
         let note = std::fs::read_dir(folder)
@@ -522,7 +522,7 @@ async fn killed_cli_after_database_commit_replays_without_duplicates_and_repairs
         .to_owned();
     let path = cli.dir.path().join("vault/Tasks \u{2603}").join(path);
     let body = std::fs::read_to_string(&path).unwrap();
-    assert!(body.contains("```base\n") && body.contains("tasknotesKanban"));
+    assert!(body.contains("```base\n") && body.contains("kanban"));
     assert!(body.contains(&format!("job_id == \"{job}\"")));
     let folder = path.parent().unwrap().parent().unwrap().join("Tasks");
     let note = std::fs::read_dir(folder)
@@ -772,7 +772,7 @@ fn cli_creates_and_repairs_plugin_views_without_installing_obsidian_plugins() {
     let board = std::fs::read_to_string(directory.join("Board.md")).unwrap();
     assert!(!directory.join("Tasks.md").exists());
     assert!(board.starts_with("---\n"));
-    assert!(board.contains("tasknotesKanban"));
+    assert!(board.contains("kanban"));
     assert!(!board.contains("kanban-plugin:"));
     assert!(
         std::fs::read_dir(directory.join("Tasks"))

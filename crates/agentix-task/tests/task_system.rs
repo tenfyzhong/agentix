@@ -10,8 +10,8 @@ use tempfile::TempDir;
 #[path = "support/deletion.rs"]
 mod deletion;
 
-#[path = "support/tasknotes.rs"]
-mod tasknotes;
+#[path = "support/native_bases.rs"]
+mod native_bases;
 
 #[path = "support/job_prompt.rs"]
 mod job_prompt;
@@ -955,7 +955,7 @@ async fn projections_are_read_only_preserve_notes_and_archive_links() {
     f.service.sync().await.unwrap();
     let board = std::fs::read_to_string(&board_path).unwrap();
     assert!(!board.contains("manual state edit"));
-    assert!(board.contains("tasknotesKanban"));
+    assert!(board.contains("kanban"));
     assert!(!board.contains("|Project]]") && !board.contains("[Project]("));
     assert!(
         std::fs::read_to_string(&job_path)
@@ -1102,7 +1102,7 @@ async fn dashboard_stays_project_only_as_jobs_grow() {
         dashboard, before,
         "Job count must not change Obsidian Dashboard"
     );
-    assert!(dashboard.contains("link(file.path, note.name)"));
+    assert!(dashboard.contains("link(file.path, if(note.name, note.name, note.title))"));
     assert!(dashboard.contains("file.hasTag(\"agent/project\")"));
     assert!(!dashboard.contains("Kanban board"));
     assert!(!dashboard.contains("Projects/demo/meta"));
@@ -2228,7 +2228,7 @@ async fn jobs_layout_migrates_v4_active_and_archived_documents() {
     assert!(!root.join("Projects/demo/Jobs/Active").exists());
     assert!(!root.join("Projects/demo/Jobs/Archive").exists());
     let board = std::fs::read_to_string(root.join("Projects/demo/Board.md")).unwrap();
-    assert!(board.contains("tasknotesKanban"));
+    assert!(board.contains("kanban"));
     assert!(!board.contains("Jobs/Active/"));
     service.sync().await.unwrap();
     assert_eq!(service.store().snapshot().await.unwrap().jobs, after.jobs);

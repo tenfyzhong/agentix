@@ -100,26 +100,6 @@ function patchInbox(source, note, expected, properties) {
 
 const inboxKey = (filePath, id) => `${filePath}#${id}`;
 
-function recentJobsView(app, controller, container) {
-    // Resolve at view creation so TaskNotes can load after Taskix Sync.
-    const registration = app.internalPlugins?.plugins?.bases?.instance?.registrations?.tasknotesKanban;
-    if (!registration?.factory) throw new Error("Recent Jobs requires the TaskNotes Kanban view. Enable TaskNotes and reopen this Base.");
-    const view = registration.factory(controller, container);
-    const extract = view.dataAdapter.extractDataItems.bind(view.dataAdapter);
-    view.dataAdapter.extractDataItems = () => {
-        // Bases already sorted these entries. Limit independently per status,
-        // without changing shared query data or other TaskNotes views.
-        const counts = new Map();
-        return extract().filter(item => {
-            const status = item.properties.status;
-            const count = counts.get(status) || 0;
-            counts.set(status, count + 1);
-            return count < 10;
-        });
-    };
-    return view;
-}
-
 class SyncEngine {
     constructor(io) {
         this.io = io;
@@ -468,11 +448,6 @@ class TaskixSyncPlugin extends Plugin {
         this.memoryChecks = new Map();
         this.memoryTimers = new Map();
         this.memoryNotices = new Map();
-        this.registerBasesView("taskixRecentJobs", {
-            name: "Recent Jobs", icon: "columns-3",
-            factory: (controller, container) => recentJobsView(this.app, controller, container),
-            options: () => this.app.internalPlugins?.plugins?.bases?.instance?.registrations?.tasknotesKanban?.options?.() || [],
-        });
         this.addSettingTab(new TaskixSettings(this.app, this));
         this.addCommand({
             id: "refresh", name: "Check connection and refresh state",
@@ -494,6 +469,7 @@ class TaskixSyncPlugin extends Plugin {
             if (!this.engine?.watches(file.path)) return;
             this.engine.observe(file.path, cache.frontmatter);
             this.engine.observeInbox(file.path, data);
+            this.styleBoards();
         }));
         this.registerEvent(this.app.vault.on("modify", (file) => this.queueMemory(file)));
         this.registerEvent(this.app.vault.on("delete", (file) => {
@@ -507,8 +483,32 @@ class TaskixSyncPlugin extends Plugin {
             this.engine.forget(oldPath);
             return this.inspectFile(file);
         }));
-        this.registerEvent(this.app.workspace.on("file-open", (file) => { void this.inspectFile(file); }));
+        this.registerEvent(this.app.workspace.on("file-open", (file) => {
+            this.styleBoards();
+            void this.inspectFile(file);
+        }));
+        this.registerEvent(this.app.workspace.on("layout-change", () => this.styleBoards()));
         this.app.workspace.onLayoutReady(() => { if (!this.stopped) void this.connect(); });
+    }
+
+    styleBoards() {
+        for (const type of ["markdown", "bases"]) {
+            for (const leaf of this.app.workspace.getLeavesOfType(type)) {
+                const file = leaf.view.file;
+                let managed = false;
+                if (file && this.engine?.watches(file.path)) {
+                    if (type === "bases") {
+                        managed = ["Dashboard.base", "Recent Jobs.base"].some(name =>
+                            file.path === path.posix.join(this.engine.directory, name));
+                    } else {
+                        const properties = this.app.metadataCache.getFileCache(file)?.frontmatter;
+                        managed = properties?.["taskix-generated"] === true &&
+                            Array.isArray(properties.tags) && properties.tags.some(tag => ["agent/board", "agent/job"].includes(tag));
+                    }
+                }
+                leaf.view.containerEl.classList.toggle("taskix-board", managed);
+            }
+        }
     }
 
     isMemoryPath(filePath) {
@@ -650,6 +650,9 @@ class TaskixSyncPlugin extends Plugin {
     async connect() {
         this.clearMemoryTimers();
         this.engine?.dispose();
+        for (const type of ["markdown", "bases"]) {
+            for (const leaf of this.app.workspace.getLeavesOfType(type)) leaf.view.containerEl.classList.remove("taskix-board");
+        }
         for (const child of this.children) child.kill();
         const settings = { ...this.settings, vaultPath: this.app.vault.adapter.getBasePath() };
         const execute = (args) => runCli(settings, args, this.children);
@@ -711,6 +714,7 @@ class TaskixSyncPlugin extends Plugin {
         this.engine = engine;
         try {
             await engine.initialize();
+            this.styleBoards();
             for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
                 await this.inspectFile(leaf.view.file);
             }
@@ -744,6 +748,9 @@ class TaskixSyncPlugin extends Plugin {
         this.clearMemoryTimers();
         this.memoryNotices?.clear();
         this.engine?.dispose();
+        for (const type of ["markdown", "bases"]) {
+            for (const leaf of this.app.workspace.getLeavesOfType(type)) leaf.view.containerEl.classList.remove("taskix-board");
+        }
         for (const child of this.children || []) child.kill();
     }
 }
@@ -785,4 +792,3 @@ module.exports.commandFor = commandFor;
 module.exports.runCli = runCli;
 module.exports.parseInbox = parseInbox;
 module.exports.patchInbox = patchInbox;
-module.exports.recentJobsView = recentJobsView;

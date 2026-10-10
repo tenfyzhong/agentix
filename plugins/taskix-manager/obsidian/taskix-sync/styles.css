@@ -1,0 +1,6 @@
+/* Bound managed native Kanban views; Bases provides per-column scrolling. */
+.taskix-board .bases-view[data-view-type="kanban"] {
+    height: min(600px, 70vh);
+    max-height: min(600px, 70vh);
+    flex-shrink: 0;
+}

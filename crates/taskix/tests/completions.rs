@@ -2,6 +2,7 @@ use std::path::Path;
 use std::process::Command;
 
 #[test]
+#[allow(clippy::too_many_lines)] // Keep shell/config permutations and completion contracts together.
 fn completions_skip_configuration_and_task_state_and_match_checked_in_files() {
     let directory = tempfile::tempdir().unwrap();
     let missing = directory.path().join("missing.toml");
@@ -84,10 +85,14 @@ fn completions_skip_configuration_and_task_state_and_match_checked_in_files() {
                 "idempotency-key",
                 "ready",
                 "file",
-                "plugin-dir",
+                "no-reload",
             ] {
                 assert!(script.contains(option), "{shell}: missing {option}");
             }
+            assert!(
+                !script.contains("plugin-dir"),
+                "obsolete TaskNotes installation option"
+            );
             assert!(
                 !script.contains("worker"),
                 "internal worker must not be suggested to users"

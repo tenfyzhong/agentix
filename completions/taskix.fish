@@ -597,7 +597,7 @@ complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and not __fish_s
 complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show snapshot setup help" -f -a "connection" -d 'Read the Obsidian connection configuration without loading task records'
 complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show snapshot setup help" -f -a "show" -d 'Query one registered Task, Job, or Inbox entry by its exact ID'
 complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show snapshot setup help" -f -a "snapshot" -d 'Query registered notes and authoritative status properties without lease credentials'
-complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show snapshot setup help" -f -a "setup" -d 'Install task views and reload the configured Obsidian vault when files change'
+complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show snapshot setup help" -f -a "setup" -d 'Install native Bases task boards (Obsidian 1.14+) and Taskix Sync, then reload the vault'
 complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show snapshot setup help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
 complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and __fish_seen_subcommand_from connection" -l config -r -F
 complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and __fish_seen_subcommand_from connection" -l project -r
@@ -632,7 +632,6 @@ complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and __fish_seen_
 complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and __fish_seen_subcommand_from snapshot" -l idempotency-key -r
 complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and __fish_seen_subcommand_from snapshot" -l json
 complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and __fish_seen_subcommand_from snapshot" -s h -l help -d 'Print help'
-complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and __fish_seen_subcommand_from setup" -l plugin-dir -d 'Use a local `TaskNotes` release directory instead of downloading the bundled version' -r -f -a "(__fish_complete_directories)"
 complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and __fish_seen_subcommand_from setup" -l config -r -F
 complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and __fish_seen_subcommand_from setup" -l project -r
 complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and __fish_seen_subcommand_from setup" -l actor -r
@@ -648,7 +647,7 @@ complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and __fish_seen_
 complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and __fish_seen_subcommand_from help" -f -a "connection" -d 'Read the Obsidian connection configuration without loading task records'
 complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and __fish_seen_subcommand_from help" -f -a "show" -d 'Query one registered Task, Job, or Inbox entry by its exact ID'
 complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and __fish_seen_subcommand_from help" -f -a "snapshot" -d 'Query registered notes and authoritative status properties without lease credentials'
-complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and __fish_seen_subcommand_from help" -f -a "setup" -d 'Install task views and reload the configured Obsidian vault when files change'
+complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and __fish_seen_subcommand_from help" -f -a "setup" -d 'Install native Bases task boards (Obsidian 1.14+) and Taskix Sync, then reload the vault'
 complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and __fish_seen_subcommand_from help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
 complete -c taskix -n "__fish_taskix_using_subcommand doctor" -l config -r -F
 complete -c taskix -n "__fish_taskix_using_subcommand doctor" -l project -r
@@ -1569,7 +1568,7 @@ complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subc
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from obsidian" -f -a "connection" -d 'Read the Obsidian connection configuration without loading task records'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from obsidian" -f -a "show" -d 'Query one registered Task, Job, or Inbox entry by its exact ID'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from obsidian" -f -a "snapshot" -d 'Query registered notes and authoritative status properties without lease credentials'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from obsidian" -f -a "setup" -d 'Install task views and reload the configured Obsidian vault when files change'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from obsidian" -f -a "setup" -d 'Install native Bases task boards (Obsidian 1.14+) and Taskix Sync, then reload the vault'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from project" -f -a "delete" -d 'Delete the Project, its work, and its entire generated document directory'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from project" -f -a "register" -d 'Register a Project using its root directory and Git identity when available'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from project" -f -a "list" -d 'List unarchived Projects, or archived Projects with --archived'

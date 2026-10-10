@@ -64,12 +64,16 @@ async fn recent_jobs_base_is_independent_scoped_and_safe_to_regenerate() {
         assert!(filters.contains(&json!(filter)), "{filter}");
     }
     assert!(!source.contains("project_id"));
-    assert_eq!(base["views"][0]["type"], "taskixRecentJobs");
     assert_eq!(
-        base["views"][0]["pinnedColumns"],
+        base["formulas"]["name"],
+        "link(file.path, if(note.name, note.name, note.title))"
+    );
+    assert_eq!(base["views"][0]["type"], "kanban");
+    assert_eq!(
+        base["views"][0]["groupOrder"],
         json!(["ACTIVE", "PENDING_REVIEW", "COMPLETED", "CANCELLED"])
     );
-    assert_eq!(base["views"][0]["hideEmptyColumns"], true);
+    assert_eq!(base["views"][0]["hideEmptyColumns"], false);
     assert!(
         !filters
             .iter()
@@ -82,13 +86,16 @@ async fn recent_jobs_base_is_independent_scoped_and_safe_to_regenerate() {
         "COMPLETED",
         "CANCELLED",
     ]) {
-        assert_eq!(view["limit"], 10);
+        assert!(
+            view.get("limit").is_none(),
+            "all matching Jobs remain visible"
+        );
         assert_eq!(view["filters"], format!("note.status == {status:?}"));
     }
     assert_eq!(
         base["views"][0]["order"],
         json!([
-            "status",
+            "formula.name",
             "projects",
             "formula.updated",
             "formula.review_time"
@@ -116,6 +123,62 @@ async fn recent_jobs_base_is_independent_scoped_and_safe_to_regenerate() {
     );
     f.service.sync().await.unwrap();
     assert_eq!(source, std::fs::read_to_string(path).unwrap());
+}
+
+#[tokio::test]
+async fn incremental_sync_migrates_legacy_kanban_bases_without_losing_view_settings() {
+    let f = Fixture::new().await;
+    let root = f.service.config().output_dir();
+    for (file, kind) in [
+        ("Recent Jobs.base", "taskixRecentJobs"),
+        ("Dashboard.base", "tasknotesKanban"),
+    ] {
+        let path = root.join(file);
+        let mut base: Value =
+            serde_yaml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        base["formulas"]["name"] = json!("link(file.path, note.name)");
+        let index = usize::from(file == "Dashboard.base");
+        let view = &mut base["views"][index];
+        view.as_object_mut().unwrap().remove("groupOrder");
+        view["type"] = json!(kind);
+        view["name"] = json!("My board");
+        view["columnWidth"] = json!(420);
+        view["columnOrder"] = json!({"status":["PENDING_REVIEW", "ACTIVE"]});
+        view["pinnedColumns"] = json!(["ACTIVE", "PENDING_REVIEW"]);
+        view["hideEmptyColumns"] = json!(true);
+        if file == "Recent Jobs.base" {
+            for table in &mut base["views"].as_array_mut().unwrap()[1..] {
+                table["limit"] = json!(10);
+            }
+        }
+        std::fs::write(&path, serde_yaml::to_string(&base).unwrap()).unwrap();
+    }
+    f.task("Trigger incremental migration").await;
+    for file in ["Recent Jobs.base", "Dashboard.base"] {
+        let base: Value =
+            serde_yaml::from_str(&std::fs::read_to_string(root.join(file)).unwrap()).unwrap();
+        let index = usize::from(file == "Dashboard.base");
+        let view = &base["views"][index];
+        assert_eq!(
+            base["formulas"]["name"],
+            "link(file.path, if(note.name, note.name, note.title))"
+        );
+        assert_eq!(view["type"], "kanban");
+        assert_eq!(view["name"], "My board");
+        assert_eq!(view["columnWidth"], 420);
+        assert_eq!(view["groupOrder"], json!(["PENDING_REVIEW", "ACTIVE"]));
+        assert!(view.get("columnOrder").is_none());
+        assert!(view.get("pinnedColumns").is_none());
+        if file == "Recent Jobs.base" {
+            assert!(
+                base["views"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .all(|v| v.get("limit").is_none())
+            );
+        }
+    }
 }
 
 #[tokio::test]
@@ -189,7 +252,10 @@ async fn obsidian_dashboard_is_a_scoped_read_only_table_with_project_links() {
     let base: Value = serde_yaml::from_str(&text).unwrap();
     assert!(!root.join("Dashboard.md").exists());
     assert!(text.starts_with("# taskix-generated: dashboard\n"));
-    assert_eq!(base["formulas"]["name"], "link(file.path, note.name)");
+    assert_eq!(
+        base["formulas"]["name"],
+        "link(file.path, if(note.name, note.name, note.title))"
+    );
     assert_eq!(base["formulas"]["status"], "note.status");
     assert_eq!(base["formulas"]["updated"], "date(note.updated_at)");
     assert_eq!(base["properties"]["formula.name"]["displayName"], "Name");
@@ -329,7 +395,7 @@ async fn dashboard_review_board_and_project_boards_use_completion_descending_sor
         serde_yaml::from_str(&std::fs::read_to_string(root.join("Dashboard.base")).unwrap())
             .unwrap();
     let view = &base["views"][1];
-    assert_eq!(view["type"], "tasknotesKanban");
+    assert_eq!(view["type"], "kanban");
     assert_eq!(view["name"], "Pending review");
     assert_eq!(
         view["sort"][0],

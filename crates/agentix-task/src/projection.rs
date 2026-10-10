@@ -518,7 +518,7 @@ impl Service {
                 let (project_sequence, activity) = self.store.project_receipt(project).await?;
                 files.insert(
                     board_path.clone(),
-                    self.tasknotes_board(project, project_sequence, activity)?,
+                    self.native_board(project, project_sequence, activity)?,
                 );
                 paths.insert(format!("board:{}", project.id), board_path.clone());
             }
@@ -570,7 +570,7 @@ impl Service {
                 doc.push_str(&job_dependency_graph(self, &index, &job.id)?);
                 doc.push_str(&format!(
                     "\n### Task board\n\n```base\n{}\n```\n",
-                    self.tasknotes_base(project, "Task", &json!(TaskStatus::ALL), Some(&job.id))?
+                    self.native_base(project, "Task", &json!(TaskStatus::ALL), Some(&job.id))?
                 ));
                 doc.push_str(&format!(
                     "\n## {}\n\n<!-- taskix:notes:start -->\n{notes}\n<!-- taskix:notes:end -->\n",
@@ -623,21 +623,38 @@ impl Service {
         }
         // Bases query vault notes dynamically. Preserve registered view settings
         // during incremental publication, even when Obsidian removed comments.
-        let preserve_base = |key: &str, path: &str| -> Result<bool> {
-            Ok(selected.is_some()
-                && previous.get(key).is_some_and(|old| old == path)
-                && self.safe_path(path)?.is_file())
+        let preserve_base = |key: &str, path: &str| -> Result<Option<Option<String>>> {
+            let registered = previous.get(key).is_some_and(|old| old == path);
+            let absolute = self.safe_path(path)?;
+            if selected.is_some() && registered && absolute.is_file() {
+                return Ok(Some(migrate_legacy_base(&std::fs::read_to_string(
+                    absolute,
+                )?)?));
+            }
+            Ok(None)
         };
-        if includes("dashboard") && preserve_base("dashboard", "Dashboard.base")? {
-            paths.insert("dashboard".into(), "Dashboard.base".into());
-        } else if includes("dashboard") {
-            let (dashboard_path, dashboard) = self.dashboard()?;
-            files.insert(dashboard_path.clone(), dashboard);
-            paths.insert("dashboard".into(), dashboard_path);
+        if includes("dashboard") {
+            if let Some(migrated) = preserve_base("dashboard", "Dashboard.base")? {
+                if let Some(source) = migrated {
+                    files.insert("Dashboard.base".into(), source);
+                }
+                paths.insert("dashboard".into(), "Dashboard.base".into());
+            } else {
+                let (dashboard_path, dashboard) = self.dashboard()?;
+                files.insert(dashboard_path.clone(), dashboard);
+                paths.insert("dashboard".into(), dashboard_path);
+            }
         }
+
         if includes("pending-review") || includes("dashboard") {
-            if !preserve_base("pending-review", "Recent Jobs.base")? {
-                files.insert("Recent Jobs.base".into(), self.recent_jobs_base()?);
+            match preserve_base("pending-review", "Recent Jobs.base")? {
+                Some(Some(source)) => {
+                    files.insert("Recent Jobs.base".into(), source);
+                }
+                Some(None) => {}
+                None => {
+                    files.insert("Recent Jobs.base".into(), self.recent_jobs_base()?);
+                }
             }
             paths.insert("pending-review".into(), "Recent Jobs.base".into());
         }
@@ -812,7 +829,7 @@ impl Service {
                 "file.ext == \"md\"", "note[\"taskix-generated\"] == true",
                 "file.hasTag(\"agent/job\")", "archived != true"
             ]},
-            "formulas":{"name":"link(file.path, note.name)", "review_time":REVIEW_TIME_FORMULA, "updated":"date(note.updated_at).format(\"YYYY-MM-DD HH:mm:ss\")"},
+            "formulas":{"name":NAME_FORMULA, "review_time":REVIEW_TIME_FORMULA, "updated":"date(note.updated_at).format(\"YYYY-MM-DD HH:mm:ss\")"},
             "properties":{
                 "formula.name":{"displayName":"Job"},
                 "formula.updated":{"displayName":"Updated"},
@@ -837,7 +854,7 @@ impl Service {
                 "file.ext == \"md\"", "note[\"taskix-generated\"] == true"
             ]},
             "formulas": {
-                "name": "link(file.path, note.name)",
+                "name": NAME_FORMULA,
                 "status": "note.status", "updated": "date(note.updated_at)",
                 "review_time": REVIEW_TIME_FORMULA
             },
@@ -891,7 +908,7 @@ impl Service {
         Ok(properties)
     }
 
-    fn tasknotes_board(
+    fn native_board(
         &self,
         project: &crate::Project,
         sequence: i64,
@@ -916,13 +933,13 @@ impl Service {
         ] {
             doc.push_str(&format!(
                 "\n## {kind} board\n\n```base\n{}\n```\n",
-                self.tasknotes_base(project, kind, &statuses, None)?
+                self.native_base(project, kind, &statuses, None)?
             ));
         }
         Ok(doc)
     }
 
-    fn tasknotes_base(
+    fn native_base(
         &self,
         project: &crate::Project,
         kind: &str,
@@ -947,12 +964,13 @@ impl Service {
         ));
         let base = json!({
             "filters": {"and": filters},
+            "formulas": {"name": NAME_FORMULA},
             "views": [{
-                "type": "tasknotesKanban", "name": format!("{kind} board"),
-                "groupBy": {"property": "status", "direction": "ASC"},
-                "order": ["status"], "sort": completion_sort(),
-                "columnOrder": {"status": statuses}, "pinnedColumns": statuses,
-                "hideEmptyColumns": true, "columnWidth": 300
+                "type": "kanban", "name": format!("{kind} board"),
+                "groupBy": {"property": "note.status", "direction": "ASC"},
+                "order": ["formula.name", "status"], "sort": completion_sort(),
+                "groupOrder": statuses,
+                "hideEmptyColumns": false, "columnWidth": 300
             }]
         });
         Ok(serde_yaml::to_string(&base)?.trim_end().to_owned())
@@ -1370,6 +1388,67 @@ pub(crate) fn atomic_write(path: &Path, body: &str) -> Result<()> {
     Ok(())
 }
 
+// Only registered generated Bases reach this migration. Native views and
+// unrelated user settings keep their original bytes on subsequent syncs.
+fn migrate_legacy_base(source: &str) -> Result<Option<String>> {
+    let mut base: Value = serde_yaml::from_str(source)?;
+    let Some(views) = base.get_mut("views").and_then(Value::as_array_mut) else {
+        return Ok(None);
+    };
+    let recent = views.iter().any(|view| view["type"] == "taskixRecentJobs");
+    let mut changed = false;
+    for view in views {
+        if recent && let Some(object) = view.as_object_mut() {
+            object.remove("limit");
+        }
+        if !["tasknotesKanban", "taskixRecentJobs"]
+            .iter()
+            .any(|kind| view["type"] == *kind)
+        {
+            continue;
+        }
+        changed = true;
+        let order = view["columnOrder"]["status"]
+            .as_array()
+            .cloned()
+            .or_else(|| view["pinnedColumns"].as_array().cloned());
+        let object = view.as_object_mut().context("invalid legacy Base view")?;
+        object.insert("type".into(), json!("kanban"));
+        object.remove("columnOrder");
+        object.remove("pinnedColumns");
+        if !object.contains_key("groupOrder")
+            && let Some(order) = order
+        {
+            object.insert("groupOrder".into(), json!(order));
+        }
+        object.insert("hideEmptyColumns".into(), json!(false));
+        if let Some(order) = object.get_mut("order").and_then(Value::as_array_mut)
+            && order.first().is_some_and(|value| value == "status")
+        {
+            order[0] = json!("formula.name");
+        }
+    }
+    if !changed {
+        return Ok(None);
+    }
+    let formulas = base
+        .as_object_mut()
+        .context("invalid Base document")?
+        .entry("formulas")
+        .or_insert(json!({}))
+        .as_object_mut()
+        .context("invalid Base formulas")?;
+    if formulas
+        .get("name")
+        .is_none_or(|name| name == "link(file.path, note.name)")
+    {
+        formulas.insert("name".into(), json!(NAME_FORMULA));
+    }
+    Ok(Some(serde_yaml::to_string(&base)?))
+}
+
+const NAME_FORMULA: &str = "link(file.path, if(note.name, note.name, note.title))";
+
 const REVIEW_TIME_FORMULA: &str = "if(note.pending_review_at, date(note.pending_review_at).format(\"YYYY-MM-DD HH:mm:ss\"), \"\")";
 
 fn completion_sort() -> Value {
@@ -1384,17 +1463,16 @@ fn recent_jobs_views() -> Vec<Value> {
     let statuses = ["ACTIVE", "PENDING_REVIEW", "COMPLETED", "CANCELLED"];
     let sort = completion_sort();
     let mut views = vec![json!({
-        "type":"taskixRecentJobs", "name":"Recent jobs",
-        "groupBy":{"property":"status","direction":"ASC"},
-        "order":["status", "projects", "formula.updated", "formula.review_time"],
+        "type":"kanban", "name":"Recent jobs",
+        "groupBy":{"property":"note.status","direction":"ASC"},
+        "order":["formula.name", "projects", "formula.updated", "formula.review_time"],
         "sort":sort,
-        "columnOrder":{"status":statuses}, "pinnedColumns":statuses,
-        "hideEmptyColumns":true, "columnWidth":300
+        "groupOrder":statuses,
+        "hideEmptyColumns":false, "columnWidth":300
     })];
-    // Native Bases limits apply to the whole view, so each status gets its
-    // own table. The Taskix Sync Kanban adapter limits each column instead.
+    // Per-status tables remain available alongside the unlimited native board.
     views.extend(statuses.map(|status| json!({
-        "type":"table", "name":status, "limit":10,
+        "type":"table", "name":status,
         "filters":format!("note.status == {status:?}"),
         "order":["formula.name", "projects", "status", "formula.updated", "formula.review_time"],
         "sort":sort
@@ -1404,13 +1482,13 @@ fn recent_jobs_views() -> Vec<Value> {
 
 fn pending_review_view() -> Value {
     json!({
-        "type":"tasknotesKanban", "name":"Pending review",
+        "type":"kanban", "name":"Pending review",
         "filters":{"and":["file.hasTag(\"agent/job\")", "note.status == \"PENDING_REVIEW\"", "archived != true"]},
-        "groupBy":{"property":"status","direction":"ASC"},
-        "order":["status", "projects", "formula.review_time"],
+        "groupBy":{"property":"note.status","direction":"ASC"},
+        "order":["formula.name", "projects", "formula.review_time"],
         "sort":completion_sort(),
-        "columnOrder":{"status":["PENDING_REVIEW"]}, "pinnedColumns":["PENDING_REVIEW"],
-        "hideEmptyColumns":true, "columnWidth":300
+        "groupOrder":["PENDING_REVIEW"],
+        "hideEmptyColumns":false, "columnWidth":300
     })
 }
 
