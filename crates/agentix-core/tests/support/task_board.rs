@@ -2,8 +2,8 @@ use super::*;
 use agentix_task::{Service, WriteOptions};
 use serde_json::{Value, json};
 
-#[path = "inbox.rs"]
-mod inbox;
+#[path = "issues.rs"]
+mod issues;
 
 fn input(text: &str) -> InboundEnvelope {
     InboundEnvelope::text(
@@ -512,8 +512,9 @@ async fn disabled_task_board_has_no_board_menus_or_help_entries() {
             "dashboard",
             "board",
             "jobs",
-            "inboxes",
-            "inbox",
+            "issues",
+            "issue",
+            "milestones",
             "tasks",
             "task",
         ] {
@@ -545,8 +546,9 @@ async fn configured_menus_have_dashboard_and_attached_secondary_commands() {
         "/jobs",
         "/tasks [job-id]",
         "/task <id>",
-        "/inboxes [STATUS]",
-        "/inbox <content>",
+        "/issues [STATUS] [--milestone ID]",
+        "/issue <id> | new <description>",
+        "/milestones",
     ] {
         assert!(
             help.contains(&format!("**{usage}** — ")),
@@ -567,12 +569,21 @@ async fn configured_menus_have_dashboard_and_attached_secondary_commands() {
         assert_eq!(
             menu.commands
                 .iter()
-                .take(5)
+                .take(8)
                 .map(|c| c.name.as_str())
                 .collect::<Vec<_>>(),
-            ["cancel", "dashboard", "help", "rmux", "sessions"]
+            [
+                "cancel",
+                "dashboard",
+                "help",
+                "issue",
+                "issues",
+                "milestones",
+                "rmux",
+                "sessions"
+            ]
         );
-        let secondary: Vec<_> = menu.commands.iter().skip(5).collect();
+        let secondary: Vec<_> = menu.commands.iter().skip(8).collect();
         assert!(secondary.iter().all(|c| c.contextual));
         assert!(secondary.windows(2).all(|pair| pair[0].name < pair[1].name));
         for name in ["board", "jobs"] {

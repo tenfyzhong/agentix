@@ -1,5 +1,6 @@
 use std::fmt;
 
+use crate::{Issue, Milestone};
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -151,6 +152,8 @@ pub enum ReviewPolicy {
 pub struct Job {
     pub id: String,
     pub project_id: String,
+    #[serde(default)]
+    pub issue_id: Option<String>,
     pub title: String,
     #[serde(default)]
     pub name: String,
@@ -252,7 +255,9 @@ pub struct Snapshot {
     #[doc(hidden)]
     pub query_context: QueryContext,
     #[serde(default)]
-    pub inboxes: Vec<InboxEntry>,
+    pub issues: Vec<Issue>,
+    #[serde(default)]
+    pub milestones: Vec<Milestone>,
     #[serde(default)]
     pub document_sequences: std::collections::BTreeMap<String, u64>,
     pub projects: Vec<Project>,
@@ -267,8 +272,6 @@ pub struct QueryContext {
     pub(crate) registered_project: Option<String>,
     pub(crate) available_project_key: Option<String>,
     pub(crate) done_dependencies: Option<std::collections::BTreeSet<String>>,
-    pub(crate) cancelled_inboxes:
-        std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
     pub(crate) names: std::collections::BTreeMap<(String, String), Vec<(String, String)>>,
     pub(crate) sequences: std::collections::BTreeMap<(String, String), u64>,
     pub(crate) task_count: Option<i64>,
@@ -276,71 +279,22 @@ pub struct QueryContext {
     pub(crate) job_counts: std::collections::BTreeMap<String, (u64, u64)>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
-pub enum InboxStatus {
-    Todo,
-    #[serde(alias = "IN_PROGRESS")]
-    Active,
-    PendingReview,
-    #[serde(alias = "DONE")]
-    Completed,
-    Cancelled,
-}
-
-impl fmt::Display for InboxStatus {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::Todo => "TODO",
-            Self::Active => "ACTIVE",
-            Self::PendingReview => "PENDING_REVIEW",
-            Self::Completed => "COMPLETED",
-            Self::Cancelled => "CANCELLED",
-        })
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct InboxLease {
-    pub executor_ref: String,
-    pub session_ref: String,
-    pub token: String,
-    pub lease_expires_at: i64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct InboxEntry {
-    pub id: String,
-    pub project_id: String,
-    pub content: String,
-    #[serde(default)]
-    pub source: Option<String>,
-    #[serde(default)]
-    pub source_version: i64,
-    #[serde(default)]
-    pub content_pending: bool,
-    pub position: i64,
-    pub status: InboxStatus,
-    pub job_id: Option<String>,
-    pub lease: Option<InboxLease>,
-    pub actor_ref: String,
-    pub last_session: Option<String>,
-    pub revision: i64,
-    pub created_at: i64,
-    pub updated_at: i64,
-    pub deleted: bool,
-    /// False until the entry has appeared in a successfully published document.
-    pub published: bool,
-}
-
-impl InboxEntry {
-    #[must_use]
-    pub fn title(&self) -> &str {
-        self.content.lines().next().unwrap_or_default()
-    }
-}
-
 impl Snapshot {
+    pub fn issue_index(&self, id: &str) -> Result<usize> {
+        resolve(
+            self.issues.iter().map(|v| (v.id.as_str(), v.id.as_str())),
+            id,
+        )
+    }
+
+    pub fn milestone_index(&self, id: &str) -> Result<usize> {
+        resolve(
+            self.milestones
+                .iter()
+                .map(|v| (v.id.as_str(), v.id.as_str())),
+            id,
+        )
+    }
     /// Check dependency state from the same snapshot, including scoped SQL summaries.
     #[must_use]
     pub fn dependencies_done(&self, task: &Task) -> bool {

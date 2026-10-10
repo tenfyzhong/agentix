@@ -444,12 +444,6 @@ impl ChannelAdapter for OrderedChannel {
     async fn disable_actions(&self, message: &MessageRef) -> Result<(), ChannelError> {
         self.writes.disable(self.inner.as_ref(), message).await
     }
-    async fn read_inbox_message(
-        &self,
-        message: &MessageRef,
-    ) -> Result<Option<InboundEnvelope>, ChannelError> {
-        self.inner.read_inbox_message(message).await
-    }
     fn supports_command_menu_sync(&self) -> bool {
         self.inner.supports_command_menu_sync()
     }

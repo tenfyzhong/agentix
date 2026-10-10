@@ -28,6 +28,67 @@ fn adapter(server: &Server) -> SlackAdapter {
 }
 
 #[tokio::test]
+async fn issue_controls_send_opaque_tokens_through_the_slack_adapter() {
+    let mut server = Server::new(|_| (200, vec![], json!({"ok":true,"ts":"3.000001"}))).await;
+    let adapter = adapter(&server);
+    let mut view = OutboundView::text(
+        "Login Issue",
+        "Requirement: passkey login\nAcceptance criteria: users can log in\nIssue remains Active",
+    );
+    for (n, label) in [
+        "Start",
+        "Continue",
+        "New round",
+        "Edit requirement",
+        "Milestone",
+        "Submit",
+        "Accept",
+        "Reject",
+        "Cancel",
+    ]
+    .iter()
+    .enumerate()
+    {
+        view.actions.push(ActionButton {
+            label: (*label).into(),
+            token: format!("issue-token-{n}"),
+            style: if *label == "Cancel" {
+                ActionStyle::Danger
+            } else {
+                ActionStyle::Primary
+            },
+            disabled: false,
+        });
+    }
+    adapter
+        .send_sectioned(
+            &ConversationRef::new(ChannelKind::Slack, "T1:C1:1.000001"),
+            &view,
+        )
+        .await
+        .unwrap();
+    let request = server.requests.recv().await.unwrap();
+    assert_eq!(request.body["thread_ts"], "1.000001");
+    let tokens = request.body["blocks"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|b| b["type"] == "actions")
+        .flat_map(|b| b["elements"].as_array().unwrap())
+        .map(|b| b["value"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    for n in 0..9 {
+        assert!(tokens.contains(&format!("issue-token-{n}").as_str()));
+    }
+    assert!(
+        request.body["text"]
+            .as_str()
+            .unwrap()
+            .contains("Acceptance criteria")
+    );
+}
+
+#[tokio::test]
 async fn send_update_and_disable_use_bot_token_and_preserve_thread() {
     let mut server = Server::new(|_| (200, vec![], json!({"ok":true,"ts":"3.000001"}))).await;
     let adapter = adapter(&server);

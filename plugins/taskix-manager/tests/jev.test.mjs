@@ -13,7 +13,7 @@ test("jev_config_defaults_to_065_and_preserves_explicit_thresholds", () => {
 });
 
 const job = { id: "job_a", project_id: "p", status: "PENDING_REVIEW", revision: 3, prompt: "Fix login", title: "Login", conversation: [{ role: "assistant", text: "Ready to deliver" }] };
-const context = { project_id: "p", previous_job: job, inbox_todos: [] };
+const context = { project_id: "p", previous_job: job, issue_candidates: [] };
 const options = { session: "s", cwd: "/work" };
 function fixture(jobs = [job], tasks = []) {
     const calls = [];
@@ -171,16 +171,6 @@ test("changed_candidate_revision_falls_back_before_delivery",async()=>{
     assert.equal(result.decision.action,"agent");
 });
 
-test("inbox_ambiguity_falls_back_instead_of_silently_dropping_entries",async()=>{
-    const ctx={...context,inbox_todos:[{id:"inbox_a",content:"Fix login"}]};
-    const result=await routePrompt({prompt:"Fix login",context:ctx,options,env,runner:fixture().runner,fetch:async(_url,init)=>{
-        const data=response(JSON.parse(init.body),"new_job");
-        data.answers.inbox_0.confidence=.2;
-        return {ok:true,json:async()=>data};
-    }});
-    assert.equal(result.decision.action,"agent");
-});
-
 for (const [name, patch] of [["invalid_url",{TASKIX_JEV_URL:"file:///private/key"}], ["credential_url",{TASKIX_JEV_URL:"https://user:key@example.test"}], ["invalid_threshold",{TASKIX_JEV_MIN_CONFIDENCE:"NaN"}]]) {
     test(name,()=>assert.equal(jevConfig({...env,...patch}),undefined));
 }
@@ -207,17 +197,6 @@ test("foreign_archived_and_completed_jobs_are_never_candidates",async()=>{
 test("current_assignment_is_not_redirected_to_another_job",async()=>{
     const result=await routePrompt({prompt:"Another task",context:{...context,job_id:"job_b"},options,env,runner:fixture([job,{...job,id:"job_b",status:"ACTIVE"}]).runner,fetch:fetchFor("followup:job_a")});
     assert.equal(result.decision.action,"agent");
-});
-
-test("all_semantic_inbox_matches_are_preserved_as_ids",async()=>{
-    const ctx={...context,inbox_todos:[{id:"inbox_a",content:"Login"},{id:"inbox_b",content:"Regression tests"}]};
-    const result=await routePrompt({prompt:"Fix login with tests",context:ctx,options,env,runner:fixture().runner,fetch:async(_url,init)=>{
-        const req=JSON.parse(init.body),data=response(req,"new_job");
-        for(const id of ["inbox_0","inbox_1"])data.answers[id]={type:"choice",choice:"match",confidence:1,probabilities:{match:1,unrelated:0,uncertain:0}};
-        return {ok:true,json:async()=>data};
-    }});
-    assert.deepEqual(result.decision.inbox_ids,["inbox_a","inbox_b"]);
-    assert.ok(!JSON.stringify(result.context).includes("Regression tests"));
 });
 
 for (const [name, fetch] of [
@@ -327,8 +306,8 @@ test("request_budget_includes_questions_and_accepts_exact_boundary", async () =>
     body = undefined;
     assert.equal((await run(prompt + "x")).decision.reason, "context_too_large");
     assert.equal(body, undefined);
-    const inbox_todos = Array.from({ length: 32 }, (_, i) => ({ id: `inbox_${i}`, content: "small entry" }));
-    assert.equal((await run("x".repeat(18000), { ...context, inbox_todos })).decision.reason, "context_too_large");
+    const issue_candidates = Array.from({ length: 32 }, (_, i) => ({ id: `issue_${i}`, project_id: "p", status: "TODO", requirement: "small entry" }));
+    assert.equal((await run("x".repeat(18000), { ...context, issue_candidates })).decision.reason, "context_too_large");
     assert.equal(body, undefined, "question overhead must not bypass the budget");
 });
 

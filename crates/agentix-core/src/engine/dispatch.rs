@@ -92,6 +92,12 @@ impl From<&UiAction> for ActionRoute {
                     backend.map_or(WorkspaceMutation::AllBackends, WorkspaceMutation::Backend),
                 );
             }
+            UiAction::Issue(action) => {
+                route.session.clone_from(&action.session_id);
+                if action.command == "execute.workspace" {
+                    route.workspace_mutation = Some(WorkspaceMutation::AllBackends);
+                }
+            }
             UiAction::Multiplexer(..) | UiAction::TaskBrowse(_) => {}
         }
         route
@@ -351,9 +357,5 @@ impl Engine {
             .iter()
             .map(|(session, turn)| (session.clone(), turn.clone()))
             .collect()
-    }
-
-    pub async fn poll_inbox_sources(&self) -> Result<Vec<InboundEnvelope>, EngineError> {
-        self.tasks.view(self).poll_inbox_sources().await
     }
 }

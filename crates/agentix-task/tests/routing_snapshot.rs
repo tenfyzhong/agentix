@@ -227,7 +227,7 @@ async fn routing_revision_reads_only_identity_and_lifecycle() {
     let result = store.routing_revision(id).await.unwrap();
     assert_eq!(
         result,
-        json!({"id":id,"project_id":project,"revision":job["revision"],"status":"ACTIVE","archived_at":null})
+        json!({"id":id,"project_id":project,"revision":job["revision"],"status":"ACTIVE","archived_at":null,"issue_id":null})
     );
     assert_eq!(
         store.routing_revision("missing").await.unwrap(),
@@ -258,7 +258,7 @@ async fn routing_assignment_returns_references_without_task_bodies_or_leases() {
     let result = store.routing_assignment("routing").await.unwrap();
     assert_eq!(
         result,
-        json!({"project_id":project,"job_id":job["id"],"task_id":task["id"],"inbox_id":null})
+        json!({"project_id":project,"job_id":job["id"],"task_id":task["id"],"issue_id":null})
     );
     assert_eq!(
         store.routing_assignment("other").await.unwrap()["job_id"],
@@ -267,16 +267,16 @@ async fn routing_assignment_returns_references_without_task_bodies_or_leases() {
 }
 
 #[tokio::test]
-async fn routing_inbox_bounds_content_and_marks_incomplete() {
+async fn routing_issues_bounds_requirement_and_marks_incomplete() {
     let (_dir, store, project) = fixture().await;
     store
         .execute(
-            json!({"command":"inbox.add","project":project,"content":"界".repeat(10000)}),
+            json!({"command":"issue.create","project":project,"title":"Long requirement","requirement":"界".repeat(10000)}),
             WriteOptions::default(),
         )
         .await
         .unwrap();
-    let result = store.routing_inbox(&project).await.unwrap();
+    let result = store.routing_issues(&project).await.unwrap();
     assert_eq!(result["complete"], false);
     assert_eq!(result["entries"].as_array().unwrap().len(), 1);
     assert!(result.to_string().len() < 7000);

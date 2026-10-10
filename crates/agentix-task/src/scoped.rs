@@ -1,7 +1,7 @@
 //! Indexed reads for a mutation's relationship scope. The existing state machine
 //! still owns authorization and lifecycle rules; absent unrelated rows must never
 //! be interpreted as deletions, so the same scope is used for both sides of diff.
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use anyhow::{Context, Result, ensure};
 use serde::de::DeserializeOwned;
@@ -14,6 +14,8 @@ use crate::{Snapshot, Store, mutations::required};
 /// Timestamp lower bounds are inclusive; upper bounds are exclusive.
 #[derive(Debug, Default)]
 pub struct JobFilter {
+    pub issue_id: Option<String>,
+    pub unassociated: bool,
     pub status: Option<crate::JobStatus>,
     pub archived: Option<bool>,
     pub created_from: Option<i64>,
@@ -25,7 +27,6 @@ pub struct JobFilter {
 const SESSION_PROJECTS_QUERY: &str = "SELECT DISTINCT project_id FROM (
     SELECT json_extract(data,'$.project_id') AS project_id FROM tasks WHERE json_extract(data,'$.last_session')=?1
     UNION ALL SELECT project_id FROM jobs WHERE json_extract(data,'$.session_id')=?1
-    UNION ALL SELECT project_id FROM inbox_entries WHERE json_extract(data,'$.last_session')=?1
 ) LIMIT 2";
 
 pub(crate) async fn ids(
@@ -93,11 +94,11 @@ pub(crate) async fn entities<T: DeserializeOwned>(
 
 #[derive(Default)]
 pub(crate) struct Scope {
-    pub cancellations: BTreeMap<String, BTreeSet<String>>,
     pub projects: BTreeSet<String>,
     pub jobs: BTreeSet<String>,
     pub tasks: BTreeSet<String>,
-    pub inboxes: BTreeSet<String>,
+    pub issues: BTreeSet<String>,
+    pub milestones: BTreeSet<String>,
     pub extra_leases: BTreeSet<String>,
 }
 
@@ -123,20 +124,16 @@ impl Scope {
             )
             .await?,
         );
-        self.jobs.extend(ids(conn, "SELECT json_extract(data,'$.job_id') FROM inbox_entries WHERE id IN (SELECT value FROM json_each(?)) AND json_extract(data,'$.job_id') IS NOT NULL", &json!(self.inboxes).to_string()).await?);
+        self.issues.extend(ids(conn, "SELECT json_extract(data,'$.issue_id') FROM jobs WHERE id IN (SELECT value FROM json_each(?)) AND json_extract(data,'$.issue_id') IS NOT NULL", &json!(self.jobs).to_string()).await?);
+        self.milestones.extend(ids(conn, "SELECT json_extract(data,'$.milestone_id') FROM issues WHERE id IN (SELECT value FROM json_each(?)) AND json_extract(data,'$.milestone_id') IS NOT NULL", &json!(self.issues).to_string()).await?);
+        for (table, selected) in [("issues", &self.issues), ("milestones", &self.milestones)] {
+            self.projects.extend(ids(conn, &format!("SELECT project_id FROM {table} WHERE id IN (SELECT value FROM json_each(?))"), &json!(selected).to_string()).await?);
+        }
         self.projects.extend(
             ids(
                 conn,
                 "SELECT project_id FROM jobs WHERE id IN (SELECT value FROM json_each(?))",
                 &json!(self.jobs).to_string(),
-            )
-            .await?,
-        );
-        self.projects.extend(
-            ids(
-                conn,
-                "SELECT project_id FROM inbox_entries WHERE id IN (SELECT value FROM json_each(?))",
-                &json!(self.inboxes).to_string(),
             )
             .await?,
         );
@@ -164,14 +161,11 @@ impl Scope {
         let mut leases = self.tasks.clone();
         leases.extend(self.extra_leases.iter().cloned());
         Ok(Snapshot {
-            query_context: crate::QueryContext {
-                cancelled_inboxes: self.cancellations.clone(),
-                ..Default::default()
-            },
             projects: entities(conn, "projects", &self.projects).await?,
             jobs: entities(conn, "jobs", &self.jobs).await?,
             tasks: entities(conn, "tasks", &self.tasks).await?,
-            inboxes: entities(conn, "inbox_entries", &self.inboxes).await?,
+            issues: entities(conn, "issues", &self.issues).await?,
+            milestones: entities(conn, "milestones", &self.milestones).await?,
             plans: entities(conn, "plans", &plans).await?,
             leases: entities(conn, "task_leases", &leases).await?,
             ..Snapshot::default()
@@ -188,7 +182,8 @@ pub(crate) async fn request_scope(conn: &mut SqliteConnection, request: &Value) 
         ("job", "jobs"),
         ("task", "tasks"),
         ("dependency", "tasks"),
-        ("inbox", "inbox_entries"),
+        ("issue", "issues"),
+        ("milestone", "milestones"),
     ] {
         if let Some(id) = request[field].as_str() {
             let id = resolve(conn, table, id).await?;
@@ -199,8 +194,11 @@ pub(crate) async fn request_scope(conn: &mut SqliteConnection, request: &Value) 
                 "job" => {
                     scope.jobs.insert(id);
                 }
-                "inbox" => {
-                    scope.inboxes.insert(id);
+                "issue" => {
+                    scope.issues.insert(id);
+                }
+                "milestone" => {
+                    scope.milestones.insert(id);
                 }
                 _ => {
                     scope.tasks.insert(id);
@@ -228,40 +226,31 @@ pub(crate) async fn request_scope(conn: &mut SqliteConnection, request: &Value) 
             | "project.rename"
             | "project.relocate"
     );
-    let inbox_wide = command.starts_with("inbox.");
-    if project_wide || inbox_wide || crate::inbox::needs_job_inbox(request) {
-        if project_wide || command == "inbox.claim-next" {
-            scope.jobs.extend(
-                ids(
-                    conn,
-                    "SELECT id FROM jobs WHERE project_id IN (SELECT value FROM json_each(?))",
-                    &json!(scope.projects).to_string(),
-                )
-                .await?,
-            );
+    if project_wide {
+        for (table, selected) in [
+            ("issues", &mut scope.issues),
+            ("milestones", &mut scope.milestones),
+        ] {
+            selected.extend(ids(conn,&format!("SELECT id FROM {table} WHERE project_id IN (SELECT value FROM json_each(?))"),&json!(scope.projects).to_string()).await?);
         }
-        scope.inboxes.extend(
+    }
+    if command.starts_with("issue.") && command != "issue.create" {
+        scope.jobs.extend(ids(conn,"SELECT id FROM jobs WHERE json_extract(data,'$.issue_id') IN (SELECT value FROM json_each(?))",&json!(scope.issues).to_string()).await?);
+    }
+    if command == "milestone.delete"
+        || (command == "milestone.update" && request.get("name").is_some())
+    {
+        scope.issues.extend(ids(conn,"SELECT id FROM issues WHERE json_extract(data,'$.milestone_id') IN (SELECT value FROM json_each(?))",&json!(scope.milestones).to_string()).await?);
+    }
+    if project_wide {
+        scope.jobs.extend(
             ids(
                 conn,
-                "SELECT id FROM inbox_entries WHERE project_id IN (SELECT value FROM json_each(?))",
+                "SELECT id FROM jobs WHERE project_id IN (SELECT value FROM json_each(?))",
                 &json!(scope.projects).to_string(),
             )
             .await?,
         );
-        // Import must reject IDs belonging to a different Project as well.
-        if let Some(entries) = request["entries"].as_array() {
-            scope.inboxes.extend(
-                entries
-                    .iter()
-                    .filter_map(|e| e["id"].as_str())
-                    .map(str::to_owned),
-            );
-        }
-        if let Some(entries) = request["ids"].as_array() {
-            scope
-                .inboxes
-                .extend(entries.iter().filter_map(Value::as_str).map(str::to_owned));
-        }
         scope.parents(conn).await?;
     }
     // Whole-Job mutations and human acceptance inspect all Task records.
@@ -275,11 +264,10 @@ pub(crate) async fn request_scope(conn: &mut SqliteConnection, request: &Value) 
             | "project.delete"
             | "project.rename"
             | "project.relocate"
-    ) || inbox_wide
+    ) || command == "issue.cancel"
     {
         scope.job_tasks(conn).await?;
     }
-    scope.inboxes.extend(ids(conn,"SELECT id FROM inbox_entries WHERE json_extract(data,'$.job_id') IN (SELECT value FROM json_each(?))",&json!(scope.jobs).to_string()).await?);
     if matches!(
         command,
         "task.retry" | "task.reopen" | "job.delete" | "project.delete"
@@ -354,17 +342,6 @@ async fn session_scope(
         )
         .await?,
     );
-    scope.inboxes.extend(
-        ids(
-            conn,
-            "SELECT id FROM inbox_entries WHERE json_extract(data,'$.last_session')=?",
-            session,
-        )
-        .await?,
-    );
-    let cancelled=ids(conn,"SELECT inbox_entries.id FROM inbox_entries WHERE json_extract(data,'$.job_id') IN (SELECT job_id FROM tasks WHERE json_extract(data,'$.last_session')=?) AND json_extract(data,'$.status')='CANCELLED'",session).await?;
-    scope.inboxes.extend(cancelled.iter().cloned());
-    scope.cancellations.insert(session.into(), cancelled);
     Ok(())
 }
 
@@ -383,8 +360,9 @@ pub(crate) async fn load_request(
             | "task.add"
             | "job.delete"
             | "project.delete"
-            | "inbox.claim-next"
-            | "inbox.set-status"
+            | "issue.create"
+            | "milestone.create"
+            | "milestone.delete"
     ) && let Some(data) = sqlx::query_scalar::<_, String>(
         "SELECT value FROM projection_state WHERE key='document_sequences'",
     )
@@ -396,6 +374,7 @@ pub(crate) async fn load_request(
     Ok(state)
 }
 
+#[allow(clippy::too_many_lines)] // Keep indexed mutation summaries and naming reads auditable together.
 async fn load_query_context(
     conn: &mut SqliteConnection,
     state: &mut Snapshot,
@@ -449,12 +428,13 @@ async fn load_query_context(
             ),
         );
     }
-    let kind = if matches!(command, "task.add" | "task.update") {
+    let kind = if matches!(command, "issue.create" | "issue.update") {
+        Some("issue")
+    } else if matches!(command, "milestone.create" | "milestone.update") {
+        Some("milestone")
+    } else if matches!(command, "task.add" | "task.update") {
         Some("task")
-    } else if matches!(
-        command,
-        "job.create" | "job.update" | "inbox.claim-next" | "inbox.set-status"
-    ) {
+    } else if matches!(command, "job.create" | "job.update") {
         Some("job")
     } else {
         None
@@ -463,10 +443,15 @@ async fn load_query_context(
         && (request.get("name").is_some()
             || matches!(
                 command,
-                "task.add" | "job.create" | "inbox.claim-next" | "inbox.set-status"
+                "task.add" | "job.create" | "issue.create" | "milestone.create"
             ))
     {
-        let table = if kind == "task" { "tasks" } else { "jobs" };
+        let table = match kind {
+            "task" => "tasks",
+            "issue" => "issues",
+            "milestone" => "milestones",
+            _ => "jobs",
+        };
         let project_column = if kind == "task" {
             "json_extract(data,'$.project_id')"
         } else {
@@ -574,7 +559,7 @@ impl Store {
         Ok(state)
     }
 
-    /// List Jobs without loading their Tasks, Plans, or Inbox bodies.
+    /// List Jobs without loading their Tasks, Plans, or Issue bodies.
     pub async fn jobs(&self, project: Option<&str>) -> Result<Vec<crate::Job>> {
         self.filtered_jobs(project, &JobFilter::default()).await
     }
@@ -595,6 +580,14 @@ impl Store {
             query
                 .push(" AND json_extract(data,'$.status')=")
                 .push_bind(status.to_string());
+        }
+        if let Some(issue) = &filter.issue_id {
+            query
+                .push(" AND json_extract(data,'$.issue_id')=")
+                .push_bind(resolve(&mut tx, "issues", issue).await?);
+        }
+        if filter.unassociated {
+            query.push(" AND json_extract(data,'$.issue_id') IS NULL");
         }
         if let Some(archived) = filter.archived {
             query.push(if archived {
@@ -688,11 +681,6 @@ impl Store {
         let selected = ids(&mut tx, "SELECT id FROM projects WHERE ? IS NOT NULL", "").await?;
         entities(&mut tx, "projects", &selected).await
     }
-
-    pub(crate) async fn inbox_snapshot(&self, project: &str) -> Result<Snapshot> {
-        self.request_snapshot(&json!({"command":"inbox.sync","project":project}))
-            .await
-    }
 }
 
 async fn read_tasks(
@@ -771,6 +759,8 @@ mod tests {
             expected.push(serde_json::from_value::<crate::Job>(record).unwrap());
         }
         let filter = JobFilter {
+            issue_id: None,
+            unassociated: false,
             status: Some(crate::JobStatus::Completed),
             archived: Some(true),
             created_from: Some(100),
@@ -810,7 +800,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn session_project_history_uses_all_three_session_indexes() {
+    async fn session_project_history_uses_both_session_indexes() {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::open(&dir.path().join("tasks.sqlite3"))
             .await
@@ -821,7 +811,7 @@ mod tests {
             .await
             .unwrap();
         let details: Vec<String> = rows.iter().map(|row| row.get("detail")).collect();
-        for index in ["tasks_by_session", "jobs_by_session", "inbox_by_session"] {
+        for index in ["tasks_by_session", "jobs_by_session"] {
             assert!(
                 details
                     .iter()

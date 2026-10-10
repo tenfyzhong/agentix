@@ -369,14 +369,14 @@ fn whitespace_job_cancellation_preserves_terminal_tasks_in_desktop() {
 
 #[test]
 #[ignore = "requires an open TASKIX_OBSIDIAN_VAULT with Obsidian 1.14+ Bases enabled"]
-fn inbox_checkbox_sync_in_desktop() {
+fn issue_status_sync_in_desktop() {
     let _guard = DESKTOP_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let vault = std::env::var("TASKIX_OBSIDIAN_VAULT").expect("choose the test vault");
     let (f, project) = desktop_fixture(&vault);
     load_sync_plugin(&f);
-    exercise_inbox_bridge(&f, project["id"].as_str().unwrap());
+    exercise_issue_bridge(&f, project["id"].as_str().unwrap());
 }
 
 #[test]
@@ -529,8 +529,8 @@ fn desktop_fixture(vault: &str) -> (DesktopFixture, Value) {
     let root = PathBuf::from(info["root"].as_str().unwrap())
         .canonicalize()
         .unwrap();
-    let parent =
-        std::env::var("TASKIX_OBSIDIAN_PARENT").unwrap_or_else(|_| "00-Inbox/agent".into());
+    let parent = std::env::var("TASKIX_OBSIDIAN_PARENT")
+        .unwrap_or_else(|_| "Taskix-Acceptance/agent".into());
     let parent = root.join(parent).canonicalize().unwrap();
     assert!(
         parent.starts_with(&root),
@@ -617,7 +617,7 @@ fn exercise_plugin_views(vault: &str, dashboard_only: bool) {
         "create",
         task["id"].as_str().unwrap(),
         "--body",
-        "---\ntitle: Rendering acceptance plan\ntags:\n  - para/inbox\n---\n\n# Rendering acceptance plan\n\nVerify link navigation.",
+        "---\ntitle: Rendering acceptance plan\ntags:\n  - acceptance/plan\n---\n\n# Rendering acceptance plan\n\nVerify link navigation.",
         "--session",
         "smoke",
         "--lease-token",
@@ -880,152 +880,51 @@ fn exercise_status_bridge(
 }
 
 #[allow(clippy::too_many_lines)] // Keep the opt-in five-state workflow and assertions together.
-fn exercise_inbox_bridge(f: &DesktopFixture, project: &str) {
-    let entry = f.cli(&[
-        "inbox",
-        "add",
-        "--project",
-        project,
-        "--content",
-        "Manual Inbox smoke\nKeep details.",
-    ]);
-    let id = &entry["id"];
-    let lookup = format!("[...window.taskixSyncSmoke.engine.notes.values()].find(n=>n.id==={id})");
-    let note = wait_for(&f.vault, &lookup, |v| v["kind"] == "inbox");
-    // The ID query can see a commit before the CLI finishes writing the file.
-    // Wait for the displayed checkbox before simulating the next user click.
-    wait_for(
-        &f.vault,
-        "!window.taskixSyncSmoke.engine.running && !window.taskixSyncSmoke.engine.pending.size",
-        |v| v == true,
-    );
-    let path = &note["filePath"];
-    let edit = |from: &str, to: &str| {
-        wait_for(
-            &f.vault,
-            &format!(
-                "(async()=> !window.taskixSyncSmoke.engine.running && !window.taskixSyncSmoke.engine.pending.size && (await app.vault.read(app.vault.getAbstractFileByPath({path}))).includes({}))()",
-                json!(format!("- [{from}] Manual Inbox smoke"))
-            ),
-            |v| v == true,
-        );
-        obsidian(
-            &f.vault,
-            &format!(
-                "app.vault.process(app.vault.getAbstractFileByPath({path}), source=>source.replace({},{}))",
-                json!(format!("- [{from}] Manual Inbox smoke")),
-                json!(format!("- [{to}] Manual Inbox smoke"))
-            ),
-        );
-    };
-    edit(" ", "x");
-    wait_for(
-        &f.vault,
-        &format!(
-            "(async()=> ({{note:({lookup}),ready:window.taskixSyncSmoke.engine.ready,pending:[...window.taskixSyncSmoke.engine.pending.values()],notices:window.taskixSmokeNotices,source:await app.vault.read(app.vault.getAbstractFileByPath({path}))}}))()"
-        ),
-        |v| v["note"]["status"] == "COMPLETED",
-    );
-    assert_eq!(
-        f.cli(&["inbox", "list", "--project", project])[0]["status"],
-        "COMPLETED"
-    );
-    let notices = obsidian(&f.vault, "window.taskixSmokeNotices.length")
-        .as_u64()
-        .unwrap();
-    edit("x", "-");
-    wait_for(&f.vault, "window.taskixSmokeNotices.length", |v| {
-        v.as_u64().unwrap_or(0) > notices
-    });
-    wait_for(
-        &f.vault,
-        &format!(
-            "(async()=> (await app.vault.read(app.vault.getAbstractFileByPath({path}))).includes('- [x] Manual Inbox smoke'))()"
-        ),
-        |v| v == true,
-    );
-    edit("x", " ");
-    wait_for(&f.vault, &format!("({lookup})?.status"), |v| v == "TODO");
-    let rows = f.cli(&["inbox", "list", "--project", project]);
-    assert_eq!(rows[0]["status"], "TODO");
-    assert_eq!(rows[0]["content"], "Manual Inbox smoke\nKeep details.");
-    edit(" ", "/");
-    wait_for(&f.vault, &format!("({lookup})?.status"), |v| v == "ACTIVE");
-    let rows = f.cli(&["inbox", "list", "--project", project]);
-    assert!(
-        rows[0]["job_id"].is_null(),
-        "manual ACTIVE does not create a Job"
-    );
-    f.cli(&[
-        "inbox",
-        "claim-next",
-        "--project",
-        project,
-        "--executor",
-        "agent:test",
-        "--session",
-        "desktop-inbox",
-    ]);
-    let rows = f.cli(&["inbox", "list", "--project", project]);
-    let job = rows[0]["job_id"].as_str().unwrap();
-    let task = f.cli(&[
-        "task",
-        "add",
-        "--job",
-        job,
-        "--title",
-        "Review checkbox smoke",
-    ]);
-    let task_id = task["id"].as_str().unwrap();
-    let owned = f.cli(&[
-        "task",
-        "claim",
-        task_id,
-        "--session",
-        "desktop-inbox",
-        "--executor",
-        "agent:test",
-    ]);
-    let token = owned["lease"]["token"].as_str().unwrap();
-    f.cli(&[
-        "plan",
+fn exercise_issue_bridge(f: &DesktopFixture, project: &str) {
+    let issue = f.cli(&[
+        "issue",
         "create",
-        task_id,
-        "--body",
-        "Verify five Inbox states",
-        "--session",
-        "desktop-inbox",
-        "--lease-token",
-        token,
+        "--project",
+        project,
+        "--title",
+        "Manual Issue smoke",
+        "--requirement",
+        "Verify Issue status edits.",
+        "--acceptance",
+        "Human acceptance succeeds.",
     ]);
-    for command in ["start", "done"] {
-        f.cli(&[
-            "task",
-            command,
-            task_id,
-            "--session",
-            "desktop-inbox",
-            "--lease-token",
-            token,
-        ]);
-    }
+    let id = issue["id"].as_str().unwrap();
+    let lookup = format!(
+        "window.taskixSyncSmoke?.engine?.records?.get({})",
+        json!(id)
+    );
+    let note = wait_for(&f.vault, &lookup, |v| v["kind"] == "issue");
+    let path = note["path"].clone();
+    obsidian(
+        &f.vault,
+        &format!(
+            "(async()=>{{ const file=app.vault.getAbstractFileByPath({path}); const body=await app.vault.read(file); await app.vault.modify(file,body.replace('status: \"TODO\"','status: \"ACTIVE\"')); }})()"
+        ),
+    );
+    wait_for(&f.vault, &format!("({lookup})?.status"), |v| v == "ACTIVE");
+    assert_eq!(f.cli(&["issue", "show", id])["issue"]["status"], "ACTIVE");
+    f.cli(&["issue", "submit", id]);
     wait_for(&f.vault, &format!("({lookup})?.status"), |v| {
         v == "PENDING_REVIEW"
     });
-    wait_for(
+    obsidian(
         &f.vault,
-        "!window.taskixSyncSmoke.engine.running && !window.taskixSyncSmoke.engine.pending.size",
-        |v| v == true,
+        &format!(
+            "(async()=>{{ const file=app.vault.getAbstractFileByPath({path}); const body=await app.vault.read(file); await app.vault.modify(file,body.replace('status: \"PENDING_REVIEW\"','status: \"COMPLETED\"')); }})()"
+        ),
     );
-    for (from, to, status) in [
-        ("r", "/", "ACTIVE"),
-        ("/", "r", "PENDING_REVIEW"),
-        ("r", "x", "COMPLETED"),
-    ] {
-        edit(from, to);
-        wait_for(&f.vault, &format!("({lookup})?.status"), |v| v == status);
-        assert_eq!(f.cli(&["job", "show", job])["status"], status);
-    }
+    wait_for(&f.vault, &format!("({lookup})?.status"), |v| {
+        v == "COMPLETED"
+    });
+    assert_eq!(
+        f.cli(&["issue", "show", id])["issue"]["status"],
+        "COMPLETED"
+    );
 }
 
 #[test]

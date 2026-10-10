@@ -48,11 +48,11 @@ selection without a Jev evaluation is omitted. Disabled collection performs no I
 or null. `answer_count` counts recorded expected questions, including invalid or
 missing answers. Preparation/network failures can have zero recorded answers.
 
-`answers.question` is intent, route, review_policy, inbox_N, turn_N, recovery, outcome, or completion. The review_policy
+`answers.question` is intent, route, review_policy, issue, turn_N, recovery, outcome, or completion. The review_policy
 answer is recorded and gated only for work intent when the selected Job does not
 already require review. Other intents and existing required Jobs do not need an
-early policy classification. Lifecycle and discussion assessments are recorded under their own request kind. `subject_id` identifies the Inbox entry
-for an Inbox question. `choice` contains only a known option (including selected
+early policy classification. Lifecycle and discussion assessments are recorded under their own request kind. `subject_id` identifies the Issue entry
+for an Issue question. `choice` contains only a known option (including selected
 Job identity for followup/resume) or null. Confidence, selected probability and
 runner-up margin are nullable for invalid answers. `valid` is a boolean independent
 of the configured confidence gate. `issue` is null, invalid_answer,
@@ -64,7 +64,7 @@ appends preserve labels. Reports distinguish adoption from reviewed accuracy and
 score-gate counts from predicted adoption. `by_kind` aggregates request counts,
 called/accepted counts, adoption, reviewed accuracy and preparation duration.
 `by_question` aggregates answer counts and score-gate passes using each request's
-configured threshold; inbox_N and turn_N normalize to inbox and discussion.
+configured threshold; turn_N normalizes to discussion; issue is already a single-choice question.
 A question may pass while its request falls back on another question or guard.
 These are not independent human correctness labels. Existing JSON report fields
 remain available. The default text summary fits 80 columns and 23 lines for all

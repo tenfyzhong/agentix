@@ -9,7 +9,7 @@ test("native boards load without registering a custom Recent Jobs renderer", asy
 
 test("board styling follows managed notes and Bases without affecting personal boards", async () => {
     const { plugin, workspaceEvents, metadataEvents } = await connectionFixture();
-    plugin.engine = { watches: p => p.startsWith("11-Agents/"), directory: "11-Agents", dispose() {}, observe() {}, observeInbox() {} };
+    plugin.engine = { watches: p => p.startsWith("11-Agents/"), directory: "11-Agents", dispose() {}, observe() {}, observeIssue() {} };
     const leaf = (path, properties) => ({ view: {
         file: { path, properties },
         containerEl: { classList: { toggle(name, on) { this[name] = on; }, remove(name) { this[name] = false; } } },

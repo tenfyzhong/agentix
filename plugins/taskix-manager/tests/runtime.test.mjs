@@ -2,7 +2,22 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { buildArgs, runHook, registerExtension } from "../runtime.mjs";
 
-test("Job review and Inbox status commands receive idempotency keys without task lease tokens", async () => {
+test("host_instructions_preserve_one_issue_and_require_full_reread_guards", async () => {
+    const result=await runHook({hook_event_name:"SessionStart",session_id:"s",cwd:"/work"},async()=>({result:{issue_id:"issue_one",issue_candidates:[{id:"issue_one"}]}}));
+    const text=result.hookSpecificOutput.additionalContext;
+    assert.match(text,/one.*Issue|single.*Issue/);
+    assert.match(text,/obsidian sync/);
+    assert.match(text,/--issue-revision/);
+    assert.doesNotMatch(text,/inbox/i);
+});
+
+test("host_stops_withdrawn_issue_jobs_at_a_safe_boundary", async () => {
+    const result=await runHook({hook_event_name:"PreToolUse",session_id:"s",cwd:"/work"},async()=>({result:{issue_cancellations:[{id:"issue_one",job_id:"job_one"}]}}));
+    assert.match(result.hookSpecificOutput.additionalContext,/Issue.*cancelled/);
+    assert.match(result.hookSpecificOutput.additionalContext,/Stop work/);
+});
+
+test("Job review and Issue lifecycle commands receive idempotency keys without task lease tokens", async () => {
     for (const hostName of ["pi", "omp"]) {
         let tool;
         const calls = [];
@@ -11,8 +26,8 @@ test("Job review and Inbox status commands receive idempotency keys without task
                 calls.push({ args, options });
                 return { schema_version: 1, ok: true, result: { task_id: "task_one", lease: { token: "private" } } };
             });
-        for (const command of ["submit", "approve", "reject", "set-status"]) {
-            const args = command === "set-status" ? ["inbox", command, "inbox_one", "--status", "TODO"] : ["job", command, "job_one"];
+        for (const command of ["submit", "approve", "reject", "reopen"]) {
+            const args = command === "reopen" ? ["issue", command, "issue_one"] : ["job", command, "job_one"];
             await tool.execute(command, { args }, undefined, undefined,
                 { cwd: "/work", sessionManager: { getSessionId: () => "review" } });
             assert.ok(calls.at(-1).options.idempotencyKey);
@@ -468,7 +483,7 @@ for (const previous_job of [null, { id: "job_delivery", status: "PENDING_REVIEW"
             const calls = [];
             const result = await runHook({ hook_event_name, session_id: "s", cwd: "/work" }, async args => {
                 calls.push(args);
-                return { result: { previous_job, inbox_todos: [{ id: "inbox_candidate" }] } };
+                return { result: { previous_job, issue_candidates: [{ id: "issue_candidate" }] } };
             });
             assertGitDeliveryFollowupGuidance(result.hookSpecificOutput.additionalContext);
             assert.ok(calls.every(args => ["hook", "context"].includes(args[0])), "guidance must not mutate Jobs");

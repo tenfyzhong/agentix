@@ -18,6 +18,67 @@ use tokio_util::sync::CancellationToken;
 
 use support::MockFeishuApi;
 
+#[tokio::test]
+async fn issue_controls_send_opaque_tokens_through_the_feishu_adapter() {
+    let server = MockFeishuApi::start().await;
+    let client = LarkClient::builder("mock-app", "mock-secret")
+        .base_url(server.base_url())
+        .max_retries(1)
+        .build()
+        .unwrap();
+    let adapter = FeishuAdapter::with_client(client, ["ou_owner"]);
+    let mut view = OutboundView::text(
+        "Login Issue",
+        "Requirement: passkey login\nAcceptance criteria: users can log in\nIssue remains Active",
+    );
+    for (n, label) in [
+        "Start",
+        "Continue",
+        "New round",
+        "Edit requirement",
+        "Milestone",
+        "Submit",
+        "Accept",
+        "Reject",
+        "Cancel",
+    ]
+    .iter()
+    .enumerate()
+    {
+        view.actions.push(ActionButton {
+            label: (*label).into(),
+            token: format!("issue-token-{n}"),
+            style: if *label == "Cancel" {
+                ActionStyle::Danger
+            } else {
+                ActionStyle::Primary
+            },
+            disabled: false,
+        });
+    }
+    adapter
+        .send_sectioned(
+            &ConversationRef::new(ChannelKind::Feishu, "oc_mock_chat"),
+            &view,
+        )
+        .await
+        .unwrap();
+    let requests = server.requests().await;
+    let request = requests
+        .iter()
+        .find(|r| r.target.starts_with("/open-apis/im/v1/messages?"))
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_str(&request.body).unwrap();
+    let content: serde_json::Value =
+        serde_json::from_str(body["content"].as_str().unwrap()).unwrap();
+    let serialized = content.to_string();
+    for n in 0..9 {
+        assert!(serialized.contains(&format!("issue-token-{n}")));
+    }
+    assert!(serialized.contains("Acceptance criteria"));
+    assert!(!serialized.contains("issue_id"));
+}
+
 fn authorization_header(request: &support::CapturedRequest) -> &str {
     request
         .headers
@@ -1298,43 +1359,6 @@ async fn wait_for_feishu_message_request(server: &MockFeishuApi) {
     })
     .await
     .unwrap();
-}
-
-#[tokio::test]
-async fn feishu_reads_edited_inbox_source_with_sender_and_revision() {
-    let server = support::MockFeishuApi::start().await;
-    server.set_message("om_inbox", serde_json::json!({
-        "message_id":"om_inbox", "chat_id":"oc_test", "updated":true, "msg_type":"text", "update_time":"1788566500123",
-        "sender":{"id":"ou_owner","id_type":"open_id","sender_type":"user"},
-        "body":{"content":"{\"text\":\"/inbox Revised\"}"}
-    })).await;
-    let adapter = FeishuAdapter::with_client(
-        LarkClient::builder("mock-app", "mock-secret")
-            .base_url(server.base_url())
-            .max_retries(1)
-            .build()
-            .unwrap(),
-        ["ou_owner"],
-    );
-    let reference = MessageRef::new(
-        ConversationRef::new(ChannelKind::Feishu, "oc_test"),
-        "om_inbox",
-    );
-    let edit = adapter
-        .read_inbox_message(&reference)
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(edit.owner_id, "ou_owner");
-    assert_eq!(
-        serde_json::to_value(edit.payload).unwrap(),
-        serde_json::json!({"TextEdited":{"original_event_id":"om_inbox","version":1_788_566_500_123_i64,"text":"/inbox Revised"}})
-    );
-    let forged = MessageRef::new(
-        ConversationRef::new(ChannelKind::Feishu, "wrong-chat"),
-        "om_inbox",
-    );
-    assert!(adapter.read_inbox_message(&forged).await.unwrap().is_none());
 }
 
 #[tokio::test]

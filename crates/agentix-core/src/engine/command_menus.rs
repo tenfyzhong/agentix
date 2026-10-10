@@ -205,13 +205,15 @@ impl MenuContext {
                 "dashboard",
                 "Browse projects and task boards",
             ));
+            menu.commands.extend([
+                ChannelCommand::new("issues", "Browse project Issues"),
+                ChannelCommand::new("issue", "Create or open an Issue"),
+                ChannelCommand::new("milestones", "Browse project Milestones"),
+            ]);
             if attached {
                 menu.commands.extend([
                     ChannelCommand::new("board", "Show this session's task board").contextual(),
                     ChannelCommand::new("jobs", "Browse this session's jobs").contextual(),
-                    ChannelCommand::new("inboxes", "Browse this project's inbox").contextual(),
-                    ChannelCommand::new("inbox", "Append a requirement to this project's inbox")
-                        .contextual(),
                 ]);
             }
         }

@@ -69,9 +69,8 @@ pub async fn run_engine_loop_with_config(
         snapshots.clone(),
         notification_shutdown.clone(),
     )));
-    let (sources_tx, mut sources_rx) = mpsc::channel(32);
     let source_snapshots = snapshots.clone();
-    let source_poll = AbortOnDropHandle::new(tokio::spawn(async move {
+    let delivery_observer = AbortOnDropHandle::new(tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(30));
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
@@ -79,16 +78,6 @@ pub async fn run_engine_loop_with_config(
             let source_engine = source_snapshots.borrow().clone();
             if let Err(error) = source_engine.observe_delivery_state().await {
                 tracing::warn!(%error, "delivery state observation failed");
-            }
-            match source_engine.poll_inbox_sources().await {
-                Ok(edits) => {
-                    for envelope in edits {
-                        if sources_tx.send(envelope).await.is_err() {
-                            return;
-                        }
-                    }
-                }
-                Err(error) => tracing::warn!(%error, "Inbox source refresh failed"),
             }
         }
     }));
@@ -99,7 +88,7 @@ pub async fn run_engine_loop_with_config(
     let mut pool = EngineWorkers::new();
     let mut telemetry = tokio::time::interval(Duration::from_secs(30));
     telemetry.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    let (mut inbound_open, mut events_open, mut sources_open) = (true, true, true);
+    let (mut inbound_open, mut events_open) = (true, true);
     let mut configuration_open = true;
     let mut recover_pending = false;
     loop {
@@ -151,15 +140,7 @@ pub async fn run_engine_loop_with_config(
                     None => inbound_open = false,
                 }
             }
-            envelope = sources_rx.recv(), if sources_open && !pool.queue.is_full() => {
-                match envelope {
-                    Some(envelope) => if let Err(error) = pool.admit_inbound(&engine, envelope).await {
-                        tracing::error!(%error, "failed to persist source admission outcome");
-                        shutdown.cancel();
-                    },
-                    None => sources_open = false,
-                }
-            }
+
             work = engine.next_pending_prompt(), if !pool.queue.is_full() => {
                 pool.queue.try_push(work).expect("pending prompt capacity");
             }
@@ -182,8 +163,8 @@ pub async fn run_engine_loop_with_config(
     if let Err(error) = engine.cancel_pending_prompts().await {
         tracing::error!(%error, "failed to fence pending inputs at shutdown");
     }
-    source_poll.abort();
-    let _ = source_poll.await;
+    delivery_observer.abort();
+    let _ = delivery_observer.await;
     notification_shutdown.cancel();
     let _ = notifications.await;
     // Stop admission immediately, let acknowledged work settle, then cancel

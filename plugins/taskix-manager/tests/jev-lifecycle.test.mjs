@@ -7,7 +7,7 @@ const job = { id: "job_a", project_id: "p", status: "PENDING_REVIEW", revision: 
     title: "Login", prompt: "Fix login", review_policy: "required", conversation: [] };
 export function answers(request, choices) {
     return { answers: Object.fromEntries(Object.entries(request.questions).map(([id, question]) => {
-        const choice = choices[id] ?? (id.startsWith("inbox_") ? "unrelated" : "uncertain");
+        const choice = choices[id] ?? (id === "issue" ? "none" : "uncertain");
         return [id, { type: "choice", choice, confidence: .99,
             probabilities: Object.fromEntries(Object.keys(question.criteria).map(key => [key, key === choice ? 1 : 0])) }];
     })) };

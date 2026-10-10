@@ -1,5 +1,29 @@
 use super::*;
 
+#[tokio::test]
+async fn removed_association_fields_cannot_replay_a_legacy_receipt() {
+    let (_dir, store, state) = fixture().await;
+    let request = json!({"command":"job.update","job":state.jobs[0].id,"inbox_ids":[]});
+    let options = WriteOptions {
+        idempotency_key: Some("legacy-association".into()),
+        ..Default::default()
+    };
+    let fingerprint = hash_bytes(
+        serde_json::to_string(&json!({"request":request,"options":options}))
+            .unwrap()
+            .as_bytes(),
+    );
+    sqlx::query("INSERT INTO idempotency_keys(key,fingerprint,result) VALUES(?,?,?)")
+        .bind("legacy-association")
+        .bind(fingerprint)
+        .bind(json!({"result":state.jobs[0],"sequence":1,"projection_pending":null}).to_string())
+        .execute(&store.pool)
+        .await
+        .unwrap();
+    assert!(store.replay(&request, &options).await.is_err());
+    assert!(store.execute(request, options).await.is_err());
+}
+
 thread_local! {
     pub(crate) static VISITS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
@@ -263,7 +287,7 @@ async fn schema_nineteen_migrates_workspace_paths_and_preserves_history_and_curs
         .fetch_one(&migrated.pool)
         .await
         .unwrap();
-    assert_eq!(version, 21);
+    assert_eq!(version, 23);
     assert!(
         migrated
             .events(None, 0, 100)
@@ -551,7 +575,7 @@ async fn schema_sixteen_and_seventeen_upgrade_to_relative_document_paths() {
             .fetch_one(&reopened.pool)
             .await
             .unwrap();
-        assert_eq!(version, 21);
+        assert_eq!(version, 23);
         assert_eq!(
             reopened.snapshot().await.unwrap().projects,
             snapshot.projects
@@ -597,7 +621,7 @@ async fn assert_schema_fifteen_upgrade(has_memory: bool) {
         .fetch_one(&store.pool)
         .await
         .unwrap();
-    assert_eq!(version, 21);
+    assert_eq!(version, 23);
     assert!(
         store.event_policy(None, None, None).await.unwrap()["enabled"]
             .as_bool()
@@ -700,7 +724,7 @@ async fn indexed_changes_keep_event_order_and_latest_session_ties() {
             &mut tx,
             &before,
             &after,
-            "inbox.set-status",
+            "job.reject",
             &options,
             store.now(),
         )

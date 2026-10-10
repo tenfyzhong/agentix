@@ -8,8 +8,13 @@ pub enum AgentCommand {
     Dashboard,
     Board,
     Jobs,
-    Inboxes(Option<agentix_task::InboxStatus>),
-    Inbox(String),
+    Issues {
+        status: Option<agentix_task::IssueStatus>,
+        milestone: Option<String>,
+    },
+    Issue(String),
+    IssueNew(String),
+    Milestones,
     Tasks(Option<String>),
     Task(String),
     Sessions,
@@ -54,11 +59,12 @@ pub enum InputParseError {
     #[error("invalid fast mode: {0}")]
     InvalidFastMode(String),
     #[error(
-        "usage: /inboxes [STATUS]; use ALL, TODO, ACTIVE, PENDING_REVIEW, COMPLETED or CANCELLED"
+        "usage: /issues [STATUS] [--milestone ID]; use ALL, TODO, ACTIVE, PENDING_REVIEW, COMPLETED or CANCELLED"
     )]
-    InvalidInboxStatus,
+    InvalidIssueStatus,
 }
 
+#[allow(clippy::too_many_lines)] // Keep the command grammar in one dispatch table.
 pub fn parse_input(input: &str) -> Result<ParsedInput, InputParseError> {
     let input = input.trim();
     if input.is_empty() {
@@ -78,13 +84,27 @@ pub fn parse_input(input: &str) -> Result<ParsedInput, InputParseError> {
         "/dashboard" => AgentCommand::Dashboard,
         "/board" => AgentCommand::Board,
         "/jobs" => AgentCommand::Jobs,
-        "/inboxes" => parse_inboxes(parts)?,
-        "/inbox" => {
-            let content = input[raw_command.len()..].trim();
-            if content.is_empty() {
-                return Err(InputParseError::MissingArgument("/inbox <content>"));
+        "/issues" => parse_issues(parts)?,
+        "/milestones" if parts.next().is_none() => AgentCommand::Milestones,
+        "/issue" => {
+            let argument = input[raw_command.len()..].trim();
+            if argument == "new" || argument.is_empty() {
+                return Err(InputParseError::MissingArgument(
+                    "/issue <id> or /issue new <description>",
+                ));
             }
-            AgentCommand::Inbox(content.to_owned())
+            if let Some(content) = argument
+                .strip_prefix("new")
+                .filter(|tail| tail.starts_with(char::is_whitespace))
+            {
+                AgentCommand::IssueNew(content.trim().to_owned())
+            } else if argument.split_whitespace().count() == 1 {
+                AgentCommand::Issue(argument.to_owned())
+            } else {
+                return Err(InputParseError::MissingArgument(
+                    "/issue <id> or /issue new <description>",
+                ));
+            }
         }
         "/tasks" => AgentCommand::Tasks(parts.next().map(str::to_owned)),
         "/task" => AgentCommand::Task(
@@ -161,23 +181,36 @@ pub fn parse_input(input: &str) -> Result<ParsedInput, InputParseError> {
     Ok(ParsedInput::Command(parsed))
 }
 
-fn parse_inboxes<'a>(
-    mut parts: impl Iterator<Item = &'a str>,
-) -> Result<AgentCommand, InputParseError> {
-    use agentix_task::InboxStatus;
-    let status = match parts.next().map(str::to_ascii_uppercase).as_deref() {
-        None | Some("ALL") => None,
-        Some("TODO") => Some(InboxStatus::Todo),
-        Some("ACTIVE") => Some(InboxStatus::Active),
-        Some("PENDING_REVIEW") => Some(InboxStatus::PendingReview),
-        Some("COMPLETED") => Some(InboxStatus::Completed),
-        Some("CANCELLED") => Some(InboxStatus::Cancelled),
-        _ => return Err(InputParseError::InvalidInboxStatus),
+fn parse_issues<'a>(parts: impl Iterator<Item = &'a str>) -> Result<AgentCommand, InputParseError> {
+    use agentix_task::IssueStatus;
+    let mut parts = parts.peekable();
+    let status = if parts.peek().is_some_and(|v| *v != "--milestone") {
+        match parts.next().map(str::to_ascii_uppercase).as_deref() {
+            Some("ALL") => None,
+            Some("TODO") => Some(IssueStatus::Todo),
+            Some("ACTIVE") => Some(IssueStatus::Active),
+            Some("PENDING_REVIEW") => Some(IssueStatus::PendingReview),
+            Some("COMPLETED") => Some(IssueStatus::Completed),
+            Some("CANCELLED") => Some(IssueStatus::Cancelled),
+            _ => return Err(InputParseError::InvalidIssueStatus),
+        }
+    } else {
+        None
+    };
+    let milestone = match parts.next() {
+        None => None,
+        Some("--milestone") => Some(
+            parts
+                .next()
+                .ok_or(InputParseError::InvalidIssueStatus)?
+                .to_owned(),
+        ),
+        _ => return Err(InputParseError::InvalidIssueStatus),
     };
     if parts.next().is_some() {
-        return Err(InputParseError::InvalidInboxStatus);
+        return Err(InputParseError::InvalidIssueStatus);
     }
-    Ok(AgentCommand::Inboxes(status))
+    Ok(AgentCommand::Issues { status, milestone })
 }
 
 fn optional_remainder<'a>(parts: impl Iterator<Item = &'a str>) -> Option<String> {

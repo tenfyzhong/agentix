@@ -15,9 +15,9 @@ async function fixture(t, enabled = true) {
     t.after(() => rm(dir, { recursive: true, force: true }));
     const path = join(dir, "metrics.sqlite");
     const env = { TASKIX_JEV_ENABLED: "true", TASKIX_JEV_URL: "https://example.test", TASKIX_JEV_API_KEY: "private-key", TASKIX_JEV_MIN_CONFIDENCE: "0.9", TASKIX_JEV_METRICS_DB: path, ...(enabled ? { TASKIX_JEV_METRICS_ENABLED: "true" } : {}) };
-    const args = { env, prompt: "private prompt", options: { session: "session", cwd: dir }, context: { project_id: "p", inbox_todos: [{ id: "inbox_a", content: "private inbox" }], routing: { complete: true, candidates: [] } }, runner: () => assert.fail("unexpected CLI"), fetch: async (_url, init) => ({ ok: true, json: async () => ({ answers: Object.fromEntries(Object.entries(JSON.parse(init.body).questions).map(([id, q]) => {
-        const choice = id === "review_policy" ? "required" : id === "intent" ? "work" : id === "route" ? "new_job" : "unrelated";
-        return [id, { type: "choice", choice, confidence: id.startsWith("inbox_") ? .87 : .99, probabilities: Object.fromEntries(Object.keys(q.criteria).map(k => [k, k === choice ? 1 : 0])) }];
+    const args = { env, prompt: "private prompt", options: { session: "session", cwd: dir }, context: { project_id: "p", issue_candidates: [{ id: "issue_a", project_id: "p", status: "TODO", requirement: "private issue" }], routing: { complete: true, candidates: [] } }, runner: () => assert.fail("unexpected CLI"), fetch: async (_url, init) => ({ ok: true, json: async () => ({ answers: Object.fromEntries(Object.entries(JSON.parse(init.body).questions).map(([id, q]) => {
+        const choice = id === "review_policy" ? "required" : id === "intent" ? "work" : id === "route" ? "new_job" : "none";
+        return [id, { type: "choice", choice, confidence: id === "issue" ? .87 : .99, probabilities: Object.fromEntries(Object.keys(q.criteria).map(k => [k, k === choice ? 1 : 0])) }];
     })) }) }) };
     return { path, args };
 }
@@ -44,10 +44,10 @@ test("metrics_records_all_question_scores_without_prompt_or_credentials", async 
     assert.ok(request.duration_ms >= 0);
     const scores = await rows(f.path, "SELECT * FROM answers ORDER BY question");
     assert.equal(scores.length, 4);
-    assert.equal(scores[0].confidence, .87);
-    assert.equal(scores[0].issue, "low_confidence");
-    assert.equal(scores[1].issue, null);
-    assert.doesNotMatch((await readFile(f.path)).toString(), /private prompt|private inbox|private-key/);
+    assert.equal(scores.find(s => s.question === "issue").confidence, .87);
+    assert.equal(scores.find(s => s.question === "issue").issue, "low_confidence");
+    assert.equal(scores.find(s => s.question === "intent").issue, null);
+    assert.doesNotMatch((await readFile(f.path)).toString(), /private prompt|private issue|private-key/);
 });
 test("metrics_records_accepted_and_pre_request_fallback", async t => {
     const f = await fixture(t);
@@ -146,7 +146,7 @@ test("native_taskix_report_matches_plugin_database_and_preserves_read_only_data"
     assert.deepEqual(await readFile(f.path), before);
     const list = await run("list");
     const accepted = list.find(row => row.accepted);
-    assert.equal(accepted.answers.find(row => row.question === "inbox_0").subject_id, "inbox_a");
+    assert.equal(accepted.answers.find(row => row.question === "issue").subject_id, null);
     await run("label", accepted.id, "incorrect");
     assert.equal((await run("report")).totals.find(row => row.threshold === .85).reviewed_accuracy, 0);
     await routePrompt(f.args);
@@ -254,11 +254,11 @@ test("discussion_metrics_do_not_gate_on_inapplicable_work_policy", async t => {
     const f = await fixture(t);
     const { choiceAnswers } = await import("./support/jev.mjs");
     f.args.fetch = async (_url, init) => ({ ok: true, json: async () => choiceAnswers(JSON.parse(init.body), {
-        intent: "question", route: "new_job", review_policy: "uncertain", inbox_0: "unrelated",
+        intent: "question", route: "new_job", review_policy: "uncertain", issue: "none",
     }) });
     assert.equal((await routePrompt(f.args)).decision.action, "discussion");
     const scores = await rows(f.path, "SELECT question FROM answers ORDER BY question");
-    assert.deepEqual(scores.map(s => s.question), ["inbox_0", "intent", "route"]);
+    assert.deepEqual(scores.map(s => s.question), ["intent", "route"]);
 });
 
 test("metrics_records_lifecycle_kinds_and_discussion_once_including_fallback", async t => {

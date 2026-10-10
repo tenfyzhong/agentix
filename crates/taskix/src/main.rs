@@ -13,6 +13,7 @@ use clap::{Args, CommandFactory, Parser, Subcommand};
 use clap_complete::Shell;
 use serde_json::{Value, json};
 
+mod issues;
 #[cfg(any(unix, windows))]
 mod memory;
 mod memory_command;
@@ -53,6 +54,16 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Manage Project deliverables across multiple execution Jobs.
+    Issue {
+        #[command(subcommand)]
+        action: issues::IssueCommand,
+    },
+    /// Organize Issues into basic Project Milestones.
+    Milestone {
+        #[command(subcommand)]
+        action: issues::MilestoneCommand,
+    },
     /// Run Taskix services until interrupted.
     Serve,
     /// Reload configuration for future service work.
@@ -66,11 +77,6 @@ enum Command {
     Conversation {
         #[command(subcommand)]
         action: ConversationCommand,
-    },
-    /// Submit, inspect, claim, or cancel human requirements in a Project Inbox.
-    Inbox {
-        #[command(subcommand)]
-        action: InboxCommand,
     },
     /// Print a shell completion script without loading task configuration.
     Completions {
@@ -168,7 +174,7 @@ enum RoutingCommand {
         #[command(subcommand)]
         action: metrics::MetricsCommand,
     },
-    /// Refresh leases and Inbox edits and return bounded prompt routing context.
+    /// Refresh leases and Issue edits and return bounded prompt routing context.
     Snapshot,
     /// Read bounded ACTIVE and `PENDING_REVIEW` Jobs and their Tasks by exact Project ID.
     Candidates { project_id: String },
@@ -180,8 +186,10 @@ enum RoutingCommand {
 enum ObsidianCommand {
     /// Read the Obsidian connection configuration without loading task records.
     Connection,
-    /// Query one registered Task, Job, or Inbox entry by its exact ID.
+    /// Query one registered Task, Job, Issue, or Milestone by its exact ID.
     Show { id: String },
+    /// Import editable content from one registered Issue or Milestone note.
+    Sync { id: String },
     /// Query registered notes and authoritative status properties without lease credentials.
     Snapshot,
     /// Install native Bases task boards (Obsidian 1.14+) and Taskix Sync, then reload the vault.
@@ -236,34 +244,13 @@ enum ProjectCommand {
     Unarchive { id: String },
 }
 
-#[derive(Subcommand)]
-enum InboxCommand {
-    /// Append one requirement, preserving its complete Markdown content.
-    Add {
-        #[arg(long)]
-        content: String,
-    },
-    /// Import human edits and show visible Inbox entries in document order.
-    List,
-    /// Import submissions, cancellations, and withdrawals and repair the document.
-    Sync,
-    /// Atomically claim the next eligible requirement and create or resume its Job.
-    ClaimNext,
-    /// Release an owned Inbox lease so another agent can resume its existing Job.
-    Release { id: String },
-    /// Cancel a requirement and its unfinished work, preserving history.
-    Cancel { id: String },
-    /// Set a human Inbox status; linked completion requires a pending review.
-    SetStatus {
-        id: String,
-        #[arg(long, value_parser = ["TODO", "ACTIVE", "PENDING_REVIEW", "COMPLETED", "CANCELLED", "IN_PROGRESS", "DONE"])]
-        status: String,
-    },
-}
-
 #[derive(Args)]
 #[allow(clippy::struct_excessive_bools)] // Independent clap filter flags with explicit conflicts.
 struct JobList {
+    #[arg(long, conflicts_with = "unassociated")]
+    issue: Option<String>,
+    #[arg(long)]
+    unassociated: bool,
     #[arg(long,conflicts_with_all=["completed","archived","pending_review"])]
     active: bool,
     #[arg(long, conflicts_with_all = ["completed", "archived"])]
@@ -285,6 +272,14 @@ enum JobCommand {
     Followup {
         id: String,
         #[arg(long)]
+        issue: Option<String>,
+        /// Revision read from the selected Issue before association.
+        #[arg(long, requires = "issue")]
+        issue_revision: Option<i64>,
+        /// Requirement hash read from the selected Issue before association.
+        #[arg(long, requires = "issue")]
+        issue_content_hash: Option<String>,
+        #[arg(long)]
         prompt: String,
         /// Related session turns selected by Jev or the agent; repeat to include several.
         #[arg(long = "conversation-turn")]
@@ -294,9 +289,6 @@ enum JobCommand {
         /// Fingerprint of the target used by the discussion classifier.
         #[arg(long)]
         conversation_target: Option<String>,
-        /// Inbox TODO IDs selected by the agent through semantic matching; repeat for multiple entries.
-        #[arg(long = "inbox")]
-        inbox_ids: Vec<String>,
     },
     /// Submit an ACTIVE Job for review once all non-cancelled Tasks are DONE.
     Submit(CompletionId),
@@ -308,6 +300,14 @@ enum JobCommand {
     Delete { id: String },
     /// Create a Job with a title and acceptance goal in the selected Project.
     Create {
+        #[arg(long)]
+        issue: Option<String>,
+        /// Revision read from the selected Issue before association.
+        #[arg(long, requires = "issue")]
+        issue_revision: Option<i64>,
+        /// Requirement hash read from the selected Issue before association.
+        #[arg(long, requires = "issue")]
+        issue_content_hash: Option<String>,
         #[arg(long)]
         name: Option<String>,
         #[arg(long)]
@@ -325,15 +325,22 @@ enum JobCommand {
         /// Fingerprint of the target used by the discussion classifier.
         #[arg(long)]
         conversation_target: Option<String>,
-        /// Inbox TODO IDs selected by the agent through semantic matching; repeat for multiple entries.
-        #[arg(long = "inbox")]
-        inbox_ids: Vec<String>,
         #[arg(long, value_parser = ["required", "none"], default_value = "required")]
         review_policy: String,
     },
     /// Change a Job's display name, title, acceptance goal, or original prompt.
     Update {
         id: String,
+        #[arg(long, conflicts_with = "unlink_issue")]
+        issue: Option<String>,
+        /// Revision read from the selected Issue before association.
+        #[arg(long, requires = "issue")]
+        issue_revision: Option<i64>,
+        /// Requirement hash read from the selected Issue before association.
+        #[arg(long, requires = "issue")]
+        issue_content_hash: Option<String>,
+        #[arg(long)]
+        unlink_issue: bool,
         #[arg(long)]
         name: Option<String>,
         #[arg(long)]
@@ -343,9 +350,6 @@ enum JobCommand {
         /// Replace the original user prompt; an empty string clears it.
         #[arg(long)]
         prompt: Option<String>,
-        /// Inbox TODO IDs selected by the agent through semantic matching; repeat for multiple entries.
-        #[arg(long = "inbox")]
-        inbox_ids: Vec<String>,
         #[arg(long, value_parser = ["required", "none"])]
         review_policy: Option<String>,
     },
@@ -528,7 +532,7 @@ enum HookCommand {
         #[arg(long)]
         job: Option<String>,
     },
-    /// Acknowledge turn completion without claiming Inbox work.
+    /// Acknowledge turn completion without starting new work.
     Stop,
     /// Recover the session's Tasks blocked by interruption or lease expiry into planning.
     SessionStart,
@@ -781,6 +785,12 @@ async fn dispatch_task_command(cli: &Cli, service: &Service) -> Result<Value> {
         } => {
             return Ok(response(service.obsidian_note(id).await?));
         }
+        Command::Obsidian {
+            action: ObsidianCommand::Sync { id },
+        } => {
+            service.sync_delivery_document(id).await?;
+            return Ok(response(service.obsidian_note(id).await?));
+        }
         Command::Event {
             action: EventCommand::Policy(args),
         } => {
@@ -809,7 +819,8 @@ async fn dispatch_task_command(cli: &Cli, service: &Service) -> Result<Value> {
     service.store().reap_expired().await?;
     match &cli.command {
         Command::Conversation { action } => conversation(cli, service, action).await,
-        Command::Inbox { action } => inbox(cli, service, action).await,
+        Command::Issue { action } => issues::issue(cli, service, action).await,
+        Command::Milestone { action } => issues::milestone(cli, service, action).await,
         Command::Doctor => doctor(service).await,
         Command::Sync { pending } => {
             if *pending {
@@ -1059,26 +1070,28 @@ async fn resolve_project(cli: &Cli, service: &Service) -> Result<String> {
         .context("register this project first with taskix project register, or specify --project")
 }
 
+#[allow(clippy::too_many_lines)] // Keep the CLI-to-domain Job contract visible in one dispatch.
 async fn job(cli: &Cli, service: &Service, action: &JobCommand) -> Result<Value> {
     match action {
         JobCommand::Followup {
             id,
+            issue,
+            issue_revision,
+            issue_content_hash,
             prompt,
-            inbox_ids,
             conversation_turns,
             conversation_revision,
             conversation_target,
         } => {
-            mutate(
-                cli,
-                service,
-                json!({"command":"job.followup","job":id,"prompt":prompt,"inbox_ids":inbox_ids,"conversation_turns":conversation_turns,"conversation_revision":conversation_revision,"conversation_target":conversation_target}),
-            )
-            .await
+            let mut request = json!({"command":"job.followup","job":id,"prompt":prompt,"conversation_turns":conversation_turns,"conversation_revision":conversation_revision,"conversation_target":conversation_target});
+            request["issue_revision"] = json!(issue_revision);
+            request["issue_content_hash"] = json!(issue_content_hash);
+            if let Some(issue) = issue {
+                request["issue"] = json!(issue);
+            }
+            mutate(cli, service, request).await
         }
-        JobCommand::Submit(args) => {
-            mutate(cli, service, args.request("job.submit", "job")).await
-        }
+        JobCommand::Submit(args) => mutate(cli, service, args.request("job.submit", "job")).await,
         JobCommand::Approve { id } => {
             mutate(cli, service, json!({"command":"job.approve","job":id})).await
         }
@@ -1094,6 +1107,9 @@ async fn job(cli: &Cli, service: &Service, action: &JobCommand) -> Result<Value>
             mutate(cli, service, json!({"command":"job.delete","job":id})).await
         }
         JobCommand::Create {
+            issue,
+            issue_revision,
+            issue_content_hash,
             conversation_turns,
             conversation_revision,
             conversation_target,
@@ -1101,29 +1117,36 @@ async fn job(cli: &Cli, service: &Service, action: &JobCommand) -> Result<Value>
             goal,
             name,
             prompt,
-            inbox_ids,
             review_policy,
         } => {
             let project = resolve_project(cli, service).await?;
             mutate(
                 cli,
                 service,
-                json!({"command":"job.create","project":project,"title":title,"goal":goal,"name":name,"prompt":prompt,"inbox_ids":inbox_ids,"review_policy":review_policy,"conversation_turns":conversation_turns,"conversation_revision":conversation_revision,"conversation_target":conversation_target}),
+                json!({"command":"job.create","project":project,"title":title,"goal":goal,"name":name,"prompt":prompt,"issue":issue,"issue_revision":issue_revision,"issue_content_hash":issue_content_hash,"review_policy":review_policy,"conversation_turns":conversation_turns,"conversation_revision":conversation_revision,"conversation_target":conversation_target}),
             )
             .await
         }
         JobCommand::Update {
             id,
+            issue,
+            issue_revision,
+            issue_content_hash,
+            unlink_issue,
             title,
             goal,
             name,
             prompt,
-            inbox_ids,
             review_policy,
         } => {
             let mut request = json!({"command":"job.update","job":id});
-            if !inbox_ids.is_empty() {
-                request["inbox_ids"] = json!(inbox_ids);
+            request["issue_revision"] = json!(issue_revision);
+            request["issue_content_hash"] = json!(issue_content_hash);
+            if let Some(issue) = issue {
+                request["issue"] = json!(issue);
+            }
+            if *unlink_issue {
+                request["issue"] = Value::Null;
             }
             if let Some(review_policy) = review_policy {
                 request["review_policy"] = json!(review_policy);
@@ -1179,6 +1202,8 @@ async fn list_jobs(cli: &Cli, service: &Service, filters: &JobList) -> Result<Va
         (None, None)
     };
     let filter = agentix_task::JobFilter {
+        issue_id: filters.issue.clone(),
+        unassociated: filters.unassociated,
         status: if filters.active {
             Some(JobStatus::Active)
         } else if filters.pending_review {
@@ -1301,33 +1326,19 @@ async fn context(
     task: Option<&str>,
     job: Option<&str>,
 ) -> Result<Value> {
+    if service.store().has_pending_documents().await? {
+        service.sync_pending_documents().await?;
+    }
     let mut directory = None;
     let mut value = context_snapshot(cli, service, task, job, &mut directory).await?;
-    let mut todos = Vec::new();
     if let Some(project) = value["result"]["project_id"].as_str() {
-        let outcome = service
-            .execute(
-                json!({"command":"inbox.list","project":project}),
-                WriteOptions::default(),
-            )
-            .await?;
-        ensure!(
-            outcome.projection_pending.is_none(),
-            "Inbox synchronization pending: {:?}",
-            outcome.projection_pending
-        );
-        todos = outcome
-            .result
-            .as_array()
-            .context("invalid: Inbox list response")?
-            .iter()
-            .filter(|entry| entry["status"] == "TODO")
-            .cloned()
-            .collect();
-        // Import can cancel work and revoke leases; return the refreshed assignment.
-        value = context_snapshot(cli, service, task, job, &mut directory).await?;
+        let candidates = service.store().routing_issues(project).await?;
+        value["result"]["issue_candidates"] = candidates["entries"].clone();
+        value["result"]["issue_candidates_complete"] = candidates["complete"].clone();
+    } else {
+        value["result"]["issue_candidates"] = json!([]);
+        value["result"]["issue_candidates_complete"] = json!(false);
     }
-    value["result"]["inbox_todos"] = json!(todos);
     if let Some(session) = cli.session.as_deref() {
         let pending = service.store().discussion_index(session, 0, 8).await?;
         value["result"]["discussion"] = pending;
@@ -1355,18 +1366,10 @@ async fn context_snapshot(
             .find(|l| cli.session.as_deref() == Some(l.session_ref.as_str()))
             .and_then(|l| state.tasks.iter().find(|t| t.id == l.task_id))
     };
-    let owned_inbox = state.inboxes.iter().find(|e| {
-        e.lease
-            .as_ref()
-            .is_some_and(|l| cli.session.as_deref() == Some(l.session_ref.as_str()))
-    });
     let job = job
         .map(|id| state.job_index(id).map(|i| &state.jobs[i]))
         .transpose()?
-        .or_else(|| task.and_then(|t| state.jobs.iter().find(|j| j.id == t.job_id)))
-        .or_else(|| {
-            owned_inbox.and_then(|e| state.jobs.iter().find(|j| Some(&j.id) == e.job_id.as_ref()))
-        });
+        .or_else(|| task.and_then(|t| state.jobs.iter().find(|j| j.id == t.job_id)));
     let project = if let Some(job) = job {
         Some(state.projects[state.project_index(&job.project_id)?].clone())
     } else if let Some(id) = &cli.project {
@@ -1396,13 +1399,19 @@ async fn context_snapshot(
     } else {
         None
     };
-    let inbox_path = project
-        .as_ref()
-        .map(|p| service.inbox_path(p))
-        .transpose()?;
-    let cancellations = cli.session.as_deref().map_or_else(Vec::new, |session| {
-        state.cancelled_inboxes_for_session(session)
-    });
+    let issue_id = job.and_then(|j| j.issue_id.as_deref());
+    let issue = match issue_id {
+        Some(id) => service.store().routing_issue(id).await?,
+        None => Value::Null,
+    };
+    let milestone = match issue["milestone_id"].as_str() {
+        Some(id) => service.store().routing_milestone(id).await?,
+        None => Value::Null,
+    };
+    let cancellations = match cli.session.as_deref() {
+        Some(session) => service.store().issue_cancellations(session).await?,
+        None => json!([]),
+    };
     let plan = task.and_then(|t| {
         state
             .plans
@@ -1418,7 +1427,7 @@ async fn context_snapshot(
         })
         .transpose()?;
     Ok(response(
-        json!({"previous_job":previous_job,"project_id":project.map(|p|p.id),"job_id":job.map(|j|&j.id),"task_id":task.map(|t|&t.id),"task":task,"lease":lease,"plan_path":plan_path,"documents":service.config().documents,"context_owner":"external_agent_team","editable_regions":["Goal","Notes","Plan body"],"inbox":owned_inbox,"inbox_path":inbox_path,"inbox_cancellations":cancellations}),
+        json!({"previous_job":previous_job,"project_id":project.map(|p|p.id),"job_id":job.map(|j|&j.id),"task_id":task.map(|t|&t.id),"task":task,"lease":lease,"plan_path":plan_path,"documents":service.config().documents,"context_owner":"external_agent_team","editable_regions":["Goal","Notes","Plan body"],"issue_id":issue_id,"issue":issue,"milestone":milestone,"issue_cancellations":cancellations}),
     ))
 }
 
@@ -1485,29 +1494,6 @@ async fn hook(cli: &Cli, service: &Service, action: &HookCommand) -> Result<Valu
         HookCommand::Heartbeat => "session.heartbeat",
     };
     mutate(cli, service, json!({"command":command,"session":session})).await
-}
-
-async fn inbox(cli: &Cli, service: &Service, action: &InboxCommand) -> Result<Value> {
-    let request = match action {
-        InboxCommand::SetStatus { id, status } => {
-            json!({"command":"inbox.set-status","inbox":id,"status":status})
-        }
-        InboxCommand::Cancel { id } => json!({"command":"inbox.cancel","inbox":id}),
-        InboxCommand::Release { id } => json!({"command":"inbox.release","inbox":id}),
-        _ => {
-            let project = resolve_project(cli, service).await?;
-            match action {
-                InboxCommand::Add { content } => {
-                    json!({"command":"inbox.add","project":project,"content":content})
-                }
-                InboxCommand::List => json!({"command":"inbox.list","project":project}),
-                InboxCommand::Sync => json!({"command":"inbox.sync","project":project}),
-                InboxCommand::ClaimNext => json!({"command":"inbox.claim-next","project":project}),
-                _ => unreachable!(),
-            }
-        }
-    };
-    mutate(cli, service, request).await
 }
 
 fn date(value: &str) -> Result<i64> {

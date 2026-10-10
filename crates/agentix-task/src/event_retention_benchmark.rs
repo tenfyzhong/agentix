@@ -7,14 +7,7 @@ use std::{path::PathBuf, time::Instant};
 
 async fn digest(db: &mut sqlx::SqliteConnection, exclude: &str) -> Vec<u8> {
     let mut hash = Sha256::new();
-    for table in [
-        "projects",
-        "jobs",
-        "tasks",
-        "plans",
-        "task_leases",
-        "inbox_entries",
-    ] {
+    for table in ["projects", "jobs", "tasks", "plans", "task_leases"] {
         for row in sqlx::query(&format!("SELECT data FROM {table} WHERE id!=? AND COALESCE(json_extract(data,'$.project_id'),'')!=? ORDER BY id")).bind(exclude).bind(exclude).fetch_all(&mut *db).await.unwrap() {
             hash.update(row.get::<String, _>("data"));
         }

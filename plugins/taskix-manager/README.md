@@ -27,7 +27,7 @@ import cycle. Its entrypoint recognizes canonical and symlinked installation pat
 
 Fallback instructions refer to the workflow skill instead of repeating its full
 policy. Identity hints have priority over body excerpts. The renderer considers at
-most 32 Job and 32 Inbox entries, serializes each fragment once, and accounts for
+most 32 Job and 32 Issue candidates, serializes each fragment once, and accounts for
 JSON escaping and separators before appending it. Counts and `candidates_complete`
 make omitted evidence explicit. A discussion-only prompt needs no lifecycle write;
 Jev confidence thresholds and task ownership rules are unchanged.

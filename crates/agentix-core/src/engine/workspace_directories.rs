@@ -76,6 +76,17 @@ impl Engine {
         owner: &str,
         mutation: MultiplexerMutation,
     ) -> Result<(), EngineError> {
+        self.begin_directory_draft_at(conversation, owner, mutation, None)
+            .await
+    }
+
+    pub(super) async fn begin_directory_draft_at(
+        &self,
+        conversation: &ConversationRef,
+        owner: &str,
+        mutation: MultiplexerMutation,
+        initial_directory: Option<String>,
+    ) -> Result<(), EngineError> {
         self.cancel_directory_draft(conversation).await;
         self.tasks.take_input(conversation).await;
         self.interactions.take_session_input(conversation).await;
@@ -88,9 +99,12 @@ impl Engine {
         let home = runtime
             .resolve_directory("~", &runtime.default_directory())
             .await?;
-        let (raw, source) = self
-            .infer_directories(conversation, &mutation.target)
-            .await?;
+        let (raw, source) = if let Some(cwd) = initial_directory {
+            (vec![cwd], "Requested directory")
+        } else {
+            self.infer_directories(conversation, &mutation.target)
+                .await?
+        };
         let mut candidates = Vec::new();
         for path in raw {
             if !path.is_empty()
@@ -353,6 +367,11 @@ impl Engine {
         match action {
             DirectoryAction::Cancel => {
                 self.cancel_directory_draft(conversation).await;
+                self.tasks
+                    .issue_executions
+                    .lock()
+                    .await
+                    .remove(conversation);
                 self.show_multiplexer_root(conversation, owner).await
             }
             DirectoryAction::Preview => {

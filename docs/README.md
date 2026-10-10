@@ -4,6 +4,8 @@ Installation, configuration, commands, and other user guides live in the [GitHub
 
 ## Architecture and protocols
 
+- [Project Issues and Milestones](project-issues.md): durable requirements, multi-round Jobs, human acceptance, shared Bases, IM and upgrade contracts.
+
 - [Product design](product-design.md)
 - [Architecture and message flow](architecture.md)
 - [Native host protocol](host-protocol.md)

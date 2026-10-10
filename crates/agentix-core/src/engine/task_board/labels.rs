@@ -1,4 +1,4 @@
-use agentix_task::{InboxStatus, JobStatus, TaskPhase, TaskStatus};
+use agentix_task::{IssueStatus, JobStatus, TaskPhase, TaskStatus};
 
 pub(super) const fn job_status_label(status: JobStatus) -> &'static str {
     match status {
@@ -9,13 +9,13 @@ pub(super) const fn job_status_label(status: JobStatus) -> &'static str {
     }
 }
 
-pub(super) const fn inbox_status_label(status: InboxStatus) -> &'static str {
+pub(super) const fn issue_status_label(status: IssueStatus) -> &'static str {
     match status {
-        InboxStatus::Todo => task_status_label(TaskStatus::Todo),
-        InboxStatus::Active => job_status_label(JobStatus::Active),
-        InboxStatus::PendingReview => job_status_label(JobStatus::PendingReview),
-        InboxStatus::Completed => job_status_label(JobStatus::Completed),
-        InboxStatus::Cancelled => job_status_label(JobStatus::Cancelled),
+        IssueStatus::Todo => task_status_label(TaskStatus::Todo),
+        IssueStatus::Active => job_status_label(JobStatus::Active),
+        IssueStatus::PendingReview => job_status_label(JobStatus::PendingReview),
+        IssueStatus::Completed => job_status_label(JobStatus::Completed),
+        IssueStatus::Cancelled => job_status_label(JobStatus::Cancelled),
     }
 }
 
@@ -64,15 +64,15 @@ mod tests {
     }
 
     #[test]
-    fn inbox_labels_preserve_original_words_with_sentence_case() {
+    fn issue_labels_preserve_original_words_with_sentence_case() {
         for status in [
-            InboxStatus::Todo,
-            InboxStatus::Active,
-            InboxStatus::PendingReview,
-            InboxStatus::Completed,
-            InboxStatus::Cancelled,
+            IssueStatus::Todo,
+            IssueStatus::Active,
+            IssueStatus::PendingReview,
+            IssueStatus::Completed,
+            IssueStatus::Cancelled,
         ] {
-            assert_preserves_words(status, inbox_status_label(status));
+            assert_preserves_words(status, issue_status_label(status));
         }
     }
 

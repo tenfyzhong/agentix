@@ -481,6 +481,7 @@ struct FakeAgent {
     queued_prompts: Arc<Mutex<Vec<QueuedPrompt>>>,
     queue_supported: bool,
     read_only: bool,
+    workspace_session_cwd: Option<String>,
     subagent: bool,
     sessions: Arc<Mutex<Vec<SessionSummary>>>,
     rejected_attachments: Arc<Mutex<Vec<SessionId>>>,
@@ -527,6 +528,7 @@ impl FakeAgent {
             queued_prompts: Arc::new(Mutex::new(Vec::new())),
             queue_supported: false,
             read_only: false,
+            workspace_session_cwd: None,
             subagent: false,
             sessions: Arc::new(Mutex::new(
                 [
@@ -924,7 +926,11 @@ impl WorkspaceRuntimePort for FakeAgent {
                 id: SessionId::new("thr_mux_new"),
                 name: None,
                 preview: None,
-                cwd: Some("/work/new".into()),
+                cwd: Some(
+                    self.workspace_session_cwd
+                        .clone()
+                        .unwrap_or_else(|| "/work/new".into()),
+                ),
                 updated_at: Some(2),
                 status: SessionStatus::Idle,
                 terminal: None,
@@ -1010,14 +1016,12 @@ struct FakeChannel {
     skip_native_menu_sync: bool,
     fail_menu_updates: Arc<Mutex<bool>>,
     task_send_failures: Arc<Mutex<usize>>,
-    inbox_send_failures: Arc<Mutex<usize>>,
     command_send_failures: Arc<Mutex<usize>>,
     queue_send_failures: Arc<Mutex<usize>>,
     next_update_failures: Arc<Mutex<usize>>,
     next_send_failures: Arc<Mutex<usize>>,
     require_exit_notice_before_update: Arc<Mutex<bool>>,
     stall_updates: Arc<Mutex<bool>>,
-    inbox_source: Arc<Mutex<Option<InboundEnvelope>>>,
     reject_unchanged_updates: bool,
     next_send_gate: Arc<
         Mutex<
@@ -1068,12 +1072,6 @@ impl ChannelAdapter for FakeChannel {
         Ok(self.bot_identity.clone())
     }
 
-    async fn read_inbox_message(
-        &self,
-        _message: &MessageRef,
-    ) -> Result<Option<InboundEnvelope>, ChannelError> {
-        Ok(self.inbox_source.lock().unwrap().clone())
-    }
     fn streaming_update_interval(&self) -> std::time::Duration {
         self.streaming_interval
             .unwrap_or(std::time::Duration::from_secs(1))
@@ -1115,15 +1113,6 @@ impl ChannelAdapter for FakeChannel {
                 *failures -= 1;
                 return Err(ChannelError::Transport(
                     "injected queue notice failure".into(),
-                ));
-            }
-        }
-        if view.title == "Inbox submission" {
-            let mut failures = self.inbox_send_failures.lock().unwrap();
-            if *failures > 0 {
-                *failures -= 1;
-                return Err(ChannelError::Transport(
-                    "injected inbox delivery failure".into(),
                 ));
             }
         }
@@ -2893,7 +2882,17 @@ async fn help_groups_commands_by_level_in_alphabetical_order() {
                 let secondary = names(secondary);
                 let mut expected_primary = vec!["attach", "cancel", "help", "rmux", "sessions"];
                 if task_board {
-                    expected_primary.insert(2, "dashboard");
+                    expected_primary = vec![
+                        "attach",
+                        "cancel",
+                        "dashboard",
+                        "help",
+                        "issue",
+                        "issues",
+                        "milestones",
+                        "rmux",
+                        "sessions",
+                    ];
                 }
                 assert_eq!(primary, expected_primary);
                 for commands in [&primary, &secondary] {
@@ -2907,7 +2906,7 @@ async fn help_groups_commands_by_level_in_alphabetical_order() {
                         assert!(secondary.iter().any(|command| command == name));
                     }
                     assert_eq!(secondary.iter().any(|name| name == "model"), !read_only);
-                    for name in ["board", "inbox", "inboxes", "jobs", "task", "tasks"] {
+                    for name in ["board", "jobs", "task", "tasks"] {
                         assert_eq!(secondary.iter().any(|command| command == name), task_board);
                     }
                     assert_eq!(

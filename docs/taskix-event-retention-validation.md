@@ -19,7 +19,7 @@ TASKIX_BENCHMARK_BACKUP=/path/to/offline/tasks.sqlite3 \
 The test measures schema migration separately, creates a disposable benchmark
 Project/Job, measures 200 updates to that same Job without cleanup, then measures
 200 updates while a background worker compacts the original history. SHA-256
-checks cover canonical Project, Job, Task, Plan, lease and Inbox rows before/after
+checks cover canonical Project, Job, Task, Plan, lease and Issue rows before/after
 migration and cleanup (excluding only benchmark entities). The test also runs
 SQLite `integrity_check` and reports durable maintenance progress. Temporary copies
 are removed when the test exits. No event or conversation contents are printed.

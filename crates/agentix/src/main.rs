@@ -1061,8 +1061,9 @@ fn build_channels(
                             ("dashboard", "Browse projects and task boards"),
                             ("board", "Show this session's task board"),
                             ("jobs", "Browse this session's jobs"),
-                            ("inboxes", "Browse this project's inbox"),
-                            ("inbox", "Append a requirement to this project's inbox"),
+                            ("issues", "Browse Project issues"),
+                            ("issue", "Create, edit, execute or accept an Issue"),
+                            ("milestones", "Browse Project milestones"),
                         ]
                         .map(|(name, description)| {
                             agentix_core::ChannelCommand::new(name, description)

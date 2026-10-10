@@ -270,7 +270,7 @@ async fn browse_round_trip(telegram: bool) {
         before,
         "transport browsing must be read-only"
     );
-    inbox_round_trip(&browser, &service).await;
+    issue_round_trip(&browser, &service).await;
     shutdown.cancel();
     join_stack(stack).await;
 }
@@ -298,35 +298,24 @@ async fn prepare_browse_documents(service: &agentix_task::Service, id: &str) {
     std::fs::write(path, document).unwrap();
 }
 
-async fn inbox_round_trip(browser: &Browser, service: &agentix_task::Service) {
+async fn issue_round_trip(browser: &Browser, service: &agentix_task::Service) {
     let content =
-        "Transport requirement\n\n**Inbox detail** and `code`\n\n- [ ] nested acceptance check";
+        "Transport requirement\n\n**Issue detail** and `code`\n\n- [ ] nested acceptance check";
     let after = browser.requests().await.len();
-    browser.command(415, &format!("/inbox {content}")).await;
-    let receipt = browser.view(after, "View inbox entry").await;
-    let after = browser.requests().await.len();
-    browser
-        .click(416, &button_token(&receipt, "View inbox entry").unwrap())
+    browser.command(415, &format!("/issue new {content}")).await;
+    let detail = browser.view(after, "Edit requirement").await;
+    browser.assert_markdown(&detail, "Issue detail");
+    let list = browser
+        .follow(416, &detail, "Project issues", "Transport requirement")
         .await;
-    let entry = wait_for_value(|| async {
-        browser
-            .requests()
-            .await
-            .into_iter()
-            .skip(after)
-            .filter_map(|body| serde_json::from_str::<Value>(&body).ok())
-            .find(|view| markdown_content(view).is_some_and(|body| body.contains("Inbox detail")))
-            .map(|view| view.to_string())
-    })
-    .await;
-    browser.assert_markdown(&serde_json::from_str(&entry).unwrap(), "Inbox detail");
-    let after = browser.requests().await.len();
-    browser.command(417, "/inboxes").await;
-    let inbox = browser.view(after, "Transport requirement").await;
-    assert!(markdown_content(&inbox).unwrap().contains("Todo"));
+    assert!(markdown_content(&list).unwrap().contains("Todo"));
+    let detail = browser
+        .follow(417, &list, "Transport requirement", "Edit requirement")
+        .await;
+    browser.assert_markdown(&detail, "Issue detail");
     let state = service.store().snapshot().await.unwrap();
-    assert_eq!(state.inboxes.len(), 1);
-    assert_eq!(state.inboxes[0].content, content);
+    assert_eq!(state.issues.len(), 1);
+    assert_eq!(state.issues[0].requirement, content);
 }
 
 #[tokio::test]

@@ -1,0 +1,64 @@
+# Project Issues and Milestones
+
+Issue is the durable project requirement. Job is one execution round; Task remains the leased unit of execution with its existing state machine. A Project contains Issues and basic Milestones. Each Issue belongs to exactly one Project and optionally one Milestone from that Project. A Job may reference one Issue or remain independent. Many Jobs may implement one Issue, including parallel rounds. There is no Issue lease or automatic queue draining.
+
+## Persistence and mutations
+
+SQLite stores Issue requirement, acceptance criteria, notes, status, revision, content hash, lifecycle timestamps, and document identity. Milestones store a title/name, goal, order, optional due date, revision, and Project identity. Job `issue_id` is nullable. Indexed queries apply Project, status, Milestone, archive and association predicates before paging; IM pages contain six entries. Routing summaries expose at most 32 TODO/ACTIVE Issue candidates and mark incomplete evidence explicitly. Selected Issue bodies are synchronized and read in full before association.
+
+Association rejects cross-Project links and guards the selected Issue revision/content hash. Linking an already executing Job starts a TODO Issue; otherwise the first successful `task.start` starts it atomically with execution. Claim and Plan publication do not start the Issue. Terminal Jobs support historical association metadata without reopening execution. Reassigning/unlinking a Job never completes or resets either Issue.
+
+Issue changes participate in the same state-difference transaction, event log and durable document publication queue as Jobs and Tasks. Cancellation uses the existing Job cancellation and memory-source invalidation path. Publication records the document body hash only after successful file writes, together with registered paths and generation-checked acknowledgements. Pending generations survive failures and restarts.
+
+## Issue lifecycle
+
+| State | Meaning | Transition |
+| --- | --- | --- |
+| TODO | Requirement recorded; execution has not started | First successful Task start or explicit human activation → ACTIVE |
+| ACTIVE | Implementation or verification remains | Explicit submit → PENDING_REVIEW |
+| PENDING_REVIEW | User acceptance requested | Human approve → COMPLETED; reasoned rejection → ACTIVE |
+| COMPLETED | User accepted the requirement | Explicit reopen → TODO |
+| CANCELLED | Requirement stopped; unfinished associated work cancelled | Explicit reopen → TODO |
+
+TODO may also be submitted directly for an Issue implemented outside Taskix. Submission requires meaningful requirement and acceptance criteria and every associated Job to be COMPLETED or CANCELLED. Approval rechecks those conditions. A PENDING_REVIEW Job is unfinished and blocks Issue submission. Successful Job delivery, approval, rejection, interruption and lease expiry do not automatically change Issue acceptance state. Empty-Job Issues can be accepted after the same explicit submission and human verification.
+
+Human approval requires a `user:` actor. Agent execution cannot self-approve an Issue. Cancellation retains completed Task outcomes, revokes unfinished work's leases and preserves history. Reopening keeps prior Jobs and results; it does not rerun Tasks. Only terminal Issues can be archived. Project archival requires closed Jobs and terminal Issues. Milestone deletion requires explicitly unlinking its Issues first. Progress counts accepted Issues, total Issues and cancelled Issues separately; Milestones have no automatic status or scheduling/dependency engine.
+
+## Documents and shared Bases
+
+Each Project creates these directories and files:
+
+```text
+Projects/<project>/
+  Board.md
+  Issue.base
+  Milestones.base
+  Issues/YYMMDD-seq-name.md
+  Milestones/YYMMDD-seq-name.md
+  Jobs/...
+  Tasks/...
+```
+
+Issue documents use a single fixed template: Requirement, Acceptance Criteria, Notes, and Related Jobs. The three editable text sections have protected start/end markers. Managed frontmatter includes stable ID, Project/Milestone identity, status, revision and lifecycle dates. The body and SQLite facts are synchronized using registered identities and publication receipts; malformed or duplicated markers reject import. Deleting a note does not cancel its Issue. Copied notes are never accepted as an alternative identity.
+
+There is one shared `Issue.base` per Project. Its global filter selects the Project. Its Issue board, By Milestone and Pending review views select Issue notes. The Related Jobs view selects active and archived Job notes using `issue_id == this.id`, and requires the embedding note to be an Issue. Each Issue embeds that view. The Milestone Issues view uses `milestone_id == this.id` for the embedding Milestone. No separate per-Issue Job Base is generated.
+
+Taskix Sync offers **New Issue** only on the registered active Project's exact `Issues/` directory. The modal asks for a title and optional Milestone, invokes the same CLI creation template, and opens the generated document after metadata caching catches up. Archived, copied and nested directories do not qualify. Saved requirement/acceptance/notes edits import through a bounded debounce. Status/Milestone edits use revision guards and restore rejected managed properties while preserving authored content. Generated revision changes suppress publication echoes. Existing Task status semantics are unchanged.
+
+## Routing and IM
+
+An owned Job's associated Issue takes priority. An explicit Issue/Job selected through IM takes priority over model suggestions. Otherwise Jev can select one same-Project TODO/ACTIVE Issue using bounded summaries. Ambiguity, missing evidence, conflicts or service failure return the decision to the main Agent, which reads full details. No match produces an independent Job. Before linking, the selected document is synchronized, the full requirement/acceptance and Milestone context are read, and revision/hash guards are applied. Neither Jev nor hooks create Jobs or start Tasks on their own.
+
+`/issues [STATUS] [--milestone ID]` defaults to ALL and accepts the five case-insensitive Issue states. `/issue new <description>` uses the first line as the title and retains the full description as the requirement. `/issue ID` displays details, lifecycle controls and paginated related Jobs. `/milestones` shows the current Project's Milestones and progress. Without an attached Project, commands show a Project picker. Browse/edit/acceptance works without an agent session and on read-only attachments.
+
+Start/Continue/New round requires a writable same-Project session. The workflow can select an existing session, use the adapter's existing new-session capability, or create a workspace through the existing backend/directory picker. Selection is rechecked against fresh session workspace metadata. An owned Task on another Job prevents starting a different round. Continuing prioritizes the owned Job; multiple other active rounds require explicit selection. Attached-session completion resumes only the expected attachment epoch.
+
+Execution dispatch includes explicit Issue and, for continuation, Job provenance plus requirement and acceptance context. Pending edits/execution are bounded and guarded by owner, conversation generation, attachment epoch and entity revision. Foreign replies cannot consume another owner's pending edit. `/cancel`, stale controls and duplicate callbacks are fenced. Job delivery notices identify its Issue and offer another round while leaving the Issue ACTIVE. Issue review notices are scoped to the submitting conversation, without Project-wide fanout. Feishu, Telegram and Slack render the same opaque scoped controls through their existing adapters.
+
+## Upgrade and acceptance boundaries
+
+Schema 23 removes Inbox storage and runtime support completely; old commands, Job association flags, status aliases, source polling, parsers and menus are unavailable. There is no conversion to Issues or compatibility layer. Stop all old Taskix/Agentix writers and back up SQLite plus the matching document tree before upgrading the CLI, service and host/desktop plugins together.
+
+The one-time migration drops the old entity table and its indices, retires entity-specific receipts/events and queues a full document rebuild. Old registered document paths remain registered until successful cleanup, including archived paths. Earlier initialization-only receipts become one-time cleanup candidates; their files must retain matching generated Project identity before removal. Cleanup uses the normal vault path validation and durable generation acknowledgement. Failure remains retryable with `sync --pending`; unregistered same-name user files are preserved. Jobs, Tasks, Plans, their execution audit and original conversations remain intact, including Job events triggered by the old intake. No live database is upgraded during development acceptance.
+
+Reusable tests cover domain lifecycle and associations, SQL paging, body imports, template and shared Base definitions, routing guards, all four host integrations, IM owner/epoch/cancellation and execution workflows, and schema upgrade cleanup/retry/path safety. Adapter tests use local HTTP mocks; they prove payload/control integration, not live IM delivery. Isolated Obsidian acceptance verifies actual native Base filtering, generated-note opening, body edits and human status changes. Live acceptance and unit coverage are reported separately.

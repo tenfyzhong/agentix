@@ -39,7 +39,7 @@ requests and conflicting ownership defer. The 0.65 default confidence threshold,
 
 ## Performance review
 
-Routing intent, ownership, Inbox matching and review policy share one HTTP call.
+Routing intent, ownership, Issue matching and review policy share one HTTP call.
 A lifecycle checkpoint uses one HTTP call; the completion checkpoint is called before the final Task transition, after actual acceptance verification. It returns one atomic completion command, not Job approval. Direct standalone CLI calls continue to use their saved policy. Disabled assessment performs no CLI or
 network I/O. Snapshot and revision reads are bounded, with one optional read for
 an explicitly named omitted terminal Task. Requests do not fetch complete history.

@@ -6,6 +6,12 @@ const routed = { decision: { reason: "uncertain_or_conflicting" } };
 const decode = content => JSON.parse(content.slice(content.indexOf("\n") + 1));
 const candidate = id => ({ job: { id, status: "PENDING_REVIEW", title: "Login", prompt: "Fix login" } });
 
+test("fallback_preserves_explicit_im_issue_and_job_round_references",()=>{
+    const facts=decode(agentFallback({requested_issue_id:"issue_explicit",requested_job_id:"job_explicit"},routed));
+    assert.equal(facts.requested_issue_id,"issue_explicit");
+    assert.equal(facts.requested_job_id,"job_explicit");
+});
+
 test("fallback_is_compact_without_candidates_and_retains_ownership_rules", () => {
     const content = agentFallback({}, routed), facts = decode(content);
     assert.ok(content.length < 1200);
@@ -14,7 +20,7 @@ test("fallback_is_compact_without_candidates_and_retains_ownership_rules", () =>
     assert.match(content, /--expect-revision/);
     assert.match(content, /Preserve.*assignment/);
     assert.equal(facts.candidate_count, 0);
-    assert.equal(facts.inbox_count, 0);
+    assert.equal(facts.issue_count, 0);
     assert.equal(facts.candidates_complete, false);
     assert.equal(facts.full_sources_required, true);
     assert.deepEqual(facts.summaries, []);
@@ -25,7 +31,7 @@ test("fallback_preserves_assignment_and_uses_snapshot_candidates_without_leaking
         project_id: "prj_one", job_id: "job_owned", task_id: "task_owned", previous_job: { id: "job_previous" },
         task: { status: "WAITING_USER", reason: "Choose a region", lease: "secret_task" },
         routing: { complete: true, candidates: [candidate("job_candidate")] },
-        inbox_todos: [{ id: "inbox_one", content: "Add search", lease: "secret_inbox" }],
+        issue_candidates: [{ id: "issue_one", requirement: "Add search", lease: "secret_issue" }],
         lease: { token: "secret_lease" }, api_key: "secret_key",
     };
     const before = structuredClone(context);
@@ -37,11 +43,11 @@ test("fallback_preserves_assignment_and_uses_snapshot_candidates_without_leaking
     assert.equal(facts.project_id, "prj_one");
     assert.equal(facts.candidates_complete, true);
     assert.deepEqual(facts.candidate_ids, ["job_candidate"]);
-    assert.deepEqual(facts.inbox_ids, ["inbox_one"]);
+    assert.deepEqual(facts.issue_ids, ["issue_one"]);
     assert.deepEqual(facts.summaries, [
         { task_id: "task_owned", status: "WAITING_USER", reason: "Choose a region" },
         { job_id: "job_candidate", status: "PENDING_REVIEW", title: "Login", prompt: "Fix login" },
-        { inbox_id: "inbox_one", content: "Add search" },
+        { issue_id: "issue_one", requirement: "Add search" },
     ]);
     assert.doesNotMatch(content, /secret_/);
     assert.deepEqual(decode(agentFallback(context, { ...routed, candidates: [] })).candidate_ids, []);
@@ -54,19 +60,19 @@ for (const text of ["\u0000".repeat(256), "\"\\\n".repeat(256), "\u{1f600}".repe
             routing: { complete: false, candidates: Array.from({ length: 10000 }, (_, i) => ({
                 job: { id: `job_${i}`, status: "PENDING_REVIEW", title: text, prompt: text },
             })) },
-            inbox_todos: Array.from({ length: 10000 }, (_, i) => ({ id: `inbox_${i}`, content: text })),
+            issue_candidates: Array.from({ length: 10000 }, (_, i) => ({ id: `issue_${i}`, requirement: text })),
         };
         const content = agentFallback(context, routed), facts = decode(content);
         assert.ok(content.length <= 12000, `${content.length} exceeds budget`);
         assert.equal(facts.candidate_count, 10000);
-        assert.equal(facts.inbox_count, 10000);
+        assert.equal(facts.issue_count, 10000);
         assert.equal(facts.candidates_complete, false);
         assert.equal(facts.candidate_ids.length, 32);
-        assert.equal(facts.inbox_ids.length, 32);
+        assert.equal(facts.issue_ids.length, 32);
         assert.equal(facts.task_id, "task_owned");
         assert.ok(facts.summaries.some(summary => summary.task_id === "task_owned"));
         for (const summary of facts.summaries) {
-            for (const key of ["title", "prompt", "reason", "content"]) {
+            for (const key of ["title", "prompt", "reason", "requirement"]) {
                 if (summary[key]) assert.ok(summary[key].length <= 256);
             }
         }
@@ -79,20 +85,20 @@ test("fallback_budget_includes_escaped_references_and_invalid_fields", () => {
         project_id: id, job_id: id, task_id: id, previous_job: { id },
         task: { status: id.repeat(100), reason: null },
         routing: { candidates: Array.from({ length: 33 }, () => candidate(id)) },
-        inbox_todos: Array.from({ length: 33 }, () => ({ id, content: "text" })),
+        issue_candidates: Array.from({ length: 33 }, () => ({ id, requirement: "text" })),
     };
     const content = agentFallback(context, routed), facts = decode(content);
     assert.ok(content.length <= 12000);
     assert.equal(facts.job_id, id);
     assert.ok(facts.candidate_ids.length < 32);
-    assert.ok(facts.inbox_ids.length < 32);
+    assert.ok(facts.issue_ids.length < 32);
     const invalid = decode(agentFallback({ project_id: 3, job_id: "x".repeat(129),
-        routing: { candidates: [candidate(null)] }, inbox_todos: [{ id: "", content: false }],
+        routing: { candidates: [candidate(null)] }, issue_candidates: [{ id: "", requirement: false }],
     }, routed));
     assert.equal(invalid.project_id, undefined);
     assert.equal(invalid.job_id, undefined);
     assert.deepEqual(invalid.candidate_ids, []);
-    assert.deepEqual(invalid.inbox_ids, []);
+    assert.deepEqual(invalid.issue_ids, []);
 });
 
 // Opt-in diagnostic samples, never a timing threshold. No provider or task database.

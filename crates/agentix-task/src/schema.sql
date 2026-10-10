@@ -42,6 +42,20 @@ CREATE TABLE IF NOT EXISTS task_events (
 CREATE INDEX IF NOT EXISTS events_by_job ON task_events(job_id, sequence);
 CREATE INDEX IF NOT EXISTS tasks_by_job ON tasks(job_id);
 CREATE INDEX IF NOT EXISTS jobs_by_project ON jobs(project_id);
+CREATE TABLE IF NOT EXISTS milestones (
+    id TEXT PRIMARY KEY,
+    data TEXT NOT NULL CHECK (json_valid(data)),
+    project_id TEXT GENERATED ALWAYS AS (json_extract(data, '$.project_id')) STORED REFERENCES projects(id)
+);
+CREATE TABLE IF NOT EXISTS issues (
+    id TEXT PRIMARY KEY,
+    data TEXT NOT NULL CHECK (json_valid(data)),
+    project_id TEXT GENERATED ALWAYS AS (json_extract(data, '$.project_id')) STORED REFERENCES projects(id)
+);
+CREATE INDEX IF NOT EXISTS issues_by_project_status ON issues(project_id, json_extract(data, '$.status'), id);
+CREATE INDEX IF NOT EXISTS issues_by_milestone ON issues(json_extract(data, '$.milestone_id'), id);
+CREATE INDEX IF NOT EXISTS milestones_by_project_order ON milestones(project_id, json_extract(data, '$.order'), id);
+CREATE INDEX IF NOT EXISTS jobs_by_issue ON jobs(json_extract(data, '$.issue_id'), id);
 CREATE TABLE IF NOT EXISTS idempotency_keys (
     key TEXT PRIMARY KEY,
     fingerprint TEXT NOT NULL,
@@ -55,12 +69,6 @@ CREATE TABLE IF NOT EXISTS document_deletions (
     id TEXT PRIMARY KEY,
     data TEXT NOT NULL CHECK (json_valid(data))
 );
-CREATE TABLE IF NOT EXISTS inbox_entries (
-    id TEXT PRIMARY KEY,
-    data TEXT NOT NULL CHECK (json_valid(data)),
-    project_id TEXT GENERATED ALWAYS AS (json_extract(data, '$.project_id')) STORED REFERENCES projects(id)
-);
-CREATE INDEX IF NOT EXISTS inbox_by_project ON inbox_entries(project_id);
 CREATE INDEX IF NOT EXISTS projects_by_name ON projects(json_extract(data, '$.name'));
 CREATE INDEX IF NOT EXISTS tasks_by_project ON tasks(json_extract(data, '$.project_id'));
 CREATE INDEX IF NOT EXISTS tasks_by_project_activity ON tasks(json_extract(data, '$.project_id'), json_extract(data, '$.updated_at'));
@@ -75,10 +83,7 @@ CREATE INDEX IF NOT EXISTS tasks_by_session_job_activity ON tasks(json_extract(d
 CREATE INDEX IF NOT EXISTS tasks_by_job_session_activity ON tasks(job_id, json_extract(data, '$.updated_at')) WHERE json_extract(data, '$.last_session') IS NOT NULL;
 CREATE INDEX IF NOT EXISTS leases_by_session ON task_leases(session_ref);
 CREATE INDEX IF NOT EXISTS jobs_by_session ON jobs(json_extract(data, '$.session_id'));
-CREATE INDEX IF NOT EXISTS inbox_by_job ON inbox_entries(json_extract(data, '$.job_id'));
-CREATE INDEX IF NOT EXISTS inbox_by_session ON inbox_entries(json_extract(data, '$.last_session'));
 CREATE INDEX IF NOT EXISTS leases_by_expiry ON task_leases(json_extract(data, '$.lease_expires_at'));
-CREATE INDEX IF NOT EXISTS inbox_by_expiry ON inbox_entries(json_extract(data, '$.lease.lease_expires_at'));
 CREATE INDEX IF NOT EXISTS dependencies_by_dependency ON task_dependencies(dependency_id, task_id);
 CREATE INDEX IF NOT EXISTS events_by_project ON task_events(json_extract(data, '$.project_id'), sequence);
 CREATE TABLE IF NOT EXISTS document_registry (
@@ -247,11 +252,9 @@ BEGIN
     INSERT OR IGNORE INTO memory_job_cancellations(project_id,job_id,revision,cancelled_at)
     VALUES(json_extract(new.data,'$.project_id'),new.id,json_extract(new.data,'$.revision'),coalesce(json_extract(new.data,'$.cancelled_at'),json_extract(new.data,'$.updated_at')));
 END;
-PRAGMA user_version = 21;
+PRAGMA user_version = 23;
 PRAGMA application_id = 0x4158544b;
 CREATE INDEX IF NOT EXISTS jobs_by_followup_session ON jobs(json_extract(data, '$.followup_session_id'));
-CREATE INDEX IF NOT EXISTS inbox_by_lease_session ON inbox_entries(json_extract(data, '$.lease.session_ref'));
-CREATE INDEX IF NOT EXISTS inbox_by_source ON inbox_entries(json_extract(data, '$.source'));
 
 CREATE INDEX IF NOT EXISTS memory_sources_by_job ON memory_source_outbox(json_extract(snapshot,'$.job_id'),sequence);
 CREATE INDEX IF NOT EXISTS memory_sources_by_turn ON memory_source_outbox(session_id,turn_id);

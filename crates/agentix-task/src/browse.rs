@@ -1,4 +1,4 @@
-//! Read-only scopes for IM browsing; never load Plan or Inbox bodies.
+//! Read-only scopes for IM browsing; never load Plan or Issue bodies.
 use std::collections::BTreeSet;
 
 use anyhow::Result;

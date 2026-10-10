@@ -1,5 +1,5 @@
 use super::labels::{job_status_label, task_phase_label, task_status_label};
-use agentix_task::{BrowseScope, InboxStatus, JobStatus, TaskListItem, TaskStatus};
+use agentix_task::{BrowseScope, IssueStatus, JobStatus, TaskListItem, TaskStatus};
 
 use super::{
     ActionButton, ActionStyle, ConversationRef, EngineError, OutboundView, SessionId,
@@ -26,14 +26,37 @@ pub(crate) enum TaskBrowse {
         status: Option<JobStatus>,
         page: usize,
     },
-    Inboxes {
+    Issues {
         project: String,
-        status: Option<InboxStatus>,
+        status: Option<IssueStatus>,
+        milestone: Option<String>,
         page: usize,
     },
-    Inbox {
+    Issue {
         id: String,
-        status: Option<InboxStatus>,
+        status: Option<IssueStatus>,
+        milestone: Option<String>,
+        page: usize,
+    },
+    IssueProjects {
+        intent: super::IssueProjectIntent,
+        page: usize,
+    },
+    IssueProject {
+        project: String,
+        intent: super::IssueProjectIntent,
+    },
+    Milestones {
+        project: String,
+        page: usize,
+    },
+    IssueMilestones {
+        id: String,
+        revision: i64,
+        page: usize,
+    },
+    IssueJobs {
+        id: String,
         page: usize,
     },
     Job {
@@ -53,11 +76,16 @@ impl TaskBrowse {
             | Self::Jobs(page)
             | Self::LegacyTasks { page, .. }
             | Self::ProjectJobs { page, .. }
-            | Self::Inboxes { page, .. }
-            | Self::Inbox { page, .. }
+            | Self::Issues { page, .. }
+            | Self::Issue { page, .. }
             | Self::Board { page, .. }
             | Self::Job { page, .. }
+            | Self::IssueProjects { page, .. }
+            | Self::Milestones { page, .. }
+            | Self::IssueMilestones { page, .. }
+            | Self::IssueJobs { page, .. }
             | Self::Task { page, .. } => *page,
+            Self::IssueProject { .. } => 0,
         }
     }
 
@@ -68,11 +96,16 @@ impl TaskBrowse {
             | Self::Jobs(current)
             | Self::LegacyTasks { page: current, .. }
             | Self::ProjectJobs { page: current, .. }
-            | Self::Inboxes { page: current, .. }
-            | Self::Inbox { page: current, .. }
+            | Self::Issues { page: current, .. }
+            | Self::Issue { page: current, .. }
             | Self::Board { page: current, .. }
             | Self::Job { page: current, .. }
+            | Self::IssueProjects { page: current, .. }
+            | Self::Milestones { page: current, .. }
+            | Self::IssueMilestones { page: current, .. }
+            | Self::IssueJobs { page: current, .. }
             | Self::Task { page: current, .. } => *current = page,
+            Self::IssueProject { .. } => {}
         }
         target
     }
@@ -117,17 +150,42 @@ impl TaskBoardView<'_> {
                     .await
             }
             TaskBrowse::Jobs(page) => self.show_session_jobs(conversation, owner, page).await,
-            TaskBrowse::Inboxes {
+            TaskBrowse::Issues {
                 project,
                 status,
+                milestone,
                 page,
             } => {
-                self.show_inboxes(conversation, owner, &project, status, page)
+                self.show_issues(conversation, owner, &project, status, milestone, page)
                     .await
             }
-            TaskBrowse::Inbox { id, status, page } => {
-                self.show_inbox(conversation, owner, &id, status, page)
+            TaskBrowse::Issue {
+                id,
+                status,
+                milestone,
+                page,
+            } => {
+                self.show_issue(conversation, owner, &id, status, milestone, page)
                     .await
+            }
+            TaskBrowse::IssueProjects { intent, page } => {
+                self.show_issue_projects(conversation, owner, intent, page)
+                    .await
+            }
+            TaskBrowse::IssueProject { project, intent } => {
+                self.issue_project(conversation, owner, &project, intent)
+                    .await
+            }
+            TaskBrowse::Milestones { project, page } => {
+                self.show_milestones(conversation, owner, &project, page)
+                    .await
+            }
+            TaskBrowse::IssueMilestones { id, revision, page } => {
+                self.show_issue_milestones(conversation, owner, &id, revision, page)
+                    .await
+            }
+            TaskBrowse::IssueJobs { id, page } => {
+                self.show_issue_jobs(conversation, owner, &id, page).await
             }
             TaskBrowse::Job { id, page } => self.show_job(conversation, owner, &id, page).await,
             TaskBrowse::Task { id, page } => {
@@ -453,10 +511,11 @@ impl TaskBoardView<'_> {
         let buttons = vec![
             ("Dashboard".into(), TaskBrowse::Dashboard(0)),
             (
-                "Project inbox".into(),
-                TaskBrowse::Inboxes {
+                "Project issues".into(),
+                TaskBrowse::Issues {
                     project: project.id.clone(),
                     status: None,
+                    milestone: None,
                     page: 0,
                 },
             ),

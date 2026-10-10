@@ -32,6 +32,7 @@ mod session_switch;
 mod startup;
 mod subscription_cleanup;
 pub use subscription_cleanup::Reattachment;
+mod issue_flows;
 mod task_board;
 mod terminal_input;
 mod turn_flows;
@@ -48,7 +49,9 @@ use presentation::{
 };
 use session_service::{RestoredBindingStatus, SessionService};
 
-use task_board::{TaskAction, TaskBoardService, TaskBoardUi, TaskBrowse};
+use task_board::{
+    IssueAction, IssueProjectIntent, TaskAction, TaskBoardService, TaskBoardUi, TaskBrowse,
+};
 
 use coordinator::{InteractionCoordinator, MultiplexerController, TurnCoordinator};
 
@@ -157,6 +160,7 @@ enum UiAction {
         confirm: bool,
     },
     Task(TaskAction),
+    Issue(IssueAction),
     TaskBrowse(TaskBrowse),
     Attach(SessionId),
     QueueControl {
@@ -206,6 +210,7 @@ impl UiAction {
             | Self::SelectInput { interaction, .. }
             | Self::BeginCustomInput(interaction) => &interaction.session_id == session_id,
             Self::Multiplexer(..) | Self::MultiplexerLaunch(..) | Self::TaskBrowse(_) => false,
+            Self::Issue(action) => action.session_id.as_ref() == Some(session_id),
             Self::Task(action) => &action.session_id == session_id,
         }
     }
@@ -491,22 +496,7 @@ impl Engine {
                     )
                     .await
                 }
-                InboundPayload::TextEdited {
-                    original_event_id,
-                    version,
-                    text,
-                } => {
-                    self.tasks
-                        .view(self)
-                        .edit_inbox_message(
-                            &envelope.conversation,
-                            &envelope.owner_id,
-                            &original_event_id,
-                            version,
-                            &text,
-                        )
-                        .await
-                }
+                InboundPayload::TextEdited { .. } => Ok(()),
                 InboundPayload::Action { token, message } => {
                     self.handle_action(
                         &envelope.conversation,
@@ -557,6 +547,18 @@ impl Engine {
         text: &str,
         event_id: &str,
     ) -> Result<(), EngineError> {
+        if !text.trim_start().starts_with('/')
+            && let Some(pending) = self
+                .tasks
+                .take_owned_issue_input(conversation, owner_id)
+                .await?
+        {
+            return self
+                .tasks
+                .view(self)
+                .finish_issue_input(conversation, owner_id, pending, text)
+                .await;
+        }
         if self
             .handle_directory_text(conversation, owner_id, text)
             .await?
@@ -620,6 +622,7 @@ impl Engine {
         }
     }
 
+    #[allow(clippy::too_many_lines)] // Keep command dispatch aligned with the public command grammar.
     async fn handle_command(
         &self,
         conversation: &ConversationRef,
@@ -629,14 +632,35 @@ impl Engine {
     ) -> Result<(), EngineError> {
         let tasks = self.tasks.view(self);
         match command {
-            AgentCommand::Inboxes(status) => {
+            AgentCommand::Issues { status, milestone } => {
                 tasks
-                    .show_current_inboxes(conversation, owner_id, status)
+                    .issue_command(
+                        conversation,
+                        owner_id,
+                        IssueProjectIntent::List { status, milestone },
+                    )
                     .await?;
             }
-            AgentCommand::Inbox(content) => {
+            AgentCommand::Issue(id) => {
                 tasks
-                    .submit_inbox(conversation, owner_id, event_id, &content)
+                    .show_issue(conversation, owner_id, &id, None, None, 0)
+                    .await?;
+            }
+            AgentCommand::IssueNew(content) => {
+                tasks
+                    .issue_command(
+                        conversation,
+                        owner_id,
+                        IssueProjectIntent::Create {
+                            content,
+                            event: event_id.into(),
+                        },
+                    )
+                    .await?;
+            }
+            AgentCommand::Milestones => {
+                tasks
+                    .issue_command(conversation, owner_id, IssueProjectIntent::Milestones)
                     .await?;
             }
             AgentCommand::Dashboard => {
@@ -947,8 +971,13 @@ impl TaskBoardUi for Engine {
     fn sessions(&self) -> &SessionService {
         &self.sessions
     }
-    fn channels(&self) -> &HashMap<ChannelKind, Arc<dyn ChannelAdapter>> {
-        &self.delivery_channels
+    async fn conversation_owner(&self, conversation: &ConversationRef) -> Option<String> {
+        self.interactions
+            .owners
+            .lock()
+            .await
+            .get(conversation)
+            .cloned()
     }
     async fn send_view(
         &self,
@@ -968,6 +997,14 @@ impl TaskBoardUi for Engine {
         action: UiAction,
     ) -> String {
         Engine::issue_action(self, conversation, owner, group, action).await
+    }
+    async fn execute_issue(
+        &self,
+        conversation: &ConversationRef,
+        owner: &str,
+        action: IssueAction,
+    ) -> Result<(), EngineError> {
+        self.execute_issue_round(conversation, owner, action).await
     }
     async fn update_command_menu_best_effort(
         &self,
@@ -1064,15 +1101,6 @@ impl Engine {
         tracing::debug!(target: "agentix::telemetry", sequence = notification.sequence,
             attempt = notification.attempts, acknowledged, success = result.is_ok(), "task notification delivery");
         result.map(|_| ())
-    }
-
-    pub async fn refresh_inbox_sources(&self) -> Result<(), EngineError> {
-        for envelope in self.poll_inbox_sources().await? {
-            if let Err(error) = self.handle_inbound(envelope).await {
-                tracing::warn!(%error, "Inbox source synchronization failed");
-            }
-        }
-        Ok(())
     }
 }
 

@@ -27,7 +27,6 @@ async fn generated_documents_migrate_duplicate_timestamps_and_keep_authored_cont
                 .unwrap(),
         ),
         root.join("Projects/demo/Board.md"),
-        root.join("Projects/demo/Inbox.md"),
     ];
     for path in &paths {
         let doc = std::fs::read_to_string(path).unwrap();
@@ -72,12 +71,7 @@ async fn generated_documents_migrate_duplicate_timestamps_and_keep_authored_cont
         }
         assert!(props["created_at"].is_string());
         assert!(props["updated_at"].is_string());
-        if path.ends_with("Inbox.md") {
-            assert_eq!(props["created_at"], "2020-01-02T03:04:05+08:00");
-            assert_eq!(props["custom"], "keep");
-        } else {
-            assert_ne!(props["created_at"], "2020-01-02T03:04:05+08:00");
-        }
+        assert_ne!(props["created_at"], "2020-01-02T03:04:05+08:00");
         f.service.sync().await.unwrap();
         assert_eq!(doc, std::fs::read_to_string(path).unwrap());
     }

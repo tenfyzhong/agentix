@@ -21,7 +21,7 @@ pub enum MetricsCommand {
         #[arg(long, default_value_t = 50, value_parser = clap::value_parser!(u32).range(1..=1000))]
         limit: u32,
     },
-    /// Record human assessment of the full proposed route and Inbox selection.
+    /// Record human assessment of the full proposed route and Issue association.
     Label {
         request_id: String,
         #[arg(value_parser = ["correct", "incorrect"])]
@@ -167,8 +167,7 @@ async fn report(db: &mut SqliteConnection, path: &std::path::Path) -> Result<Val
     let by_question = rows(
         db,
         "SELECT
-        CASE WHEN question GLOB 'inbox_[0-9]*' THEN 'inbox'
-             WHEN question GLOB 'turn_[0-9]*' THEN 'discussion' ELSE question END AS question,
+        CASE WHEN question GLOB 'turn_[0-9]*' THEN 'discussion' ELSE question END AS question,
         COUNT(*) AS answers,
         SUM(CASE WHEN valid=1 AND choice!='uncertain' AND confidence>=r.threshold
             AND probability>=r.threshold AND margin>=0.2 THEN 1 ELSE 0 END) AS passed

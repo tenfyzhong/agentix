@@ -1,7 +1,7 @@
 //! Borrowed lookups for one state-difference transaction.
 use std::collections::HashMap;
 
-use crate::{InboxEntry, Job, Lease, Plan, Project, Snapshot, Task};
+use crate::{Issue, Job, Lease, Milestone, Plan, Project, Snapshot, Task};
 
 pub(crate) struct StateIndex<'a> {
     pub projects: HashMap<&'a str, &'a Project>,
@@ -9,7 +9,8 @@ pub(crate) struct StateIndex<'a> {
     pub tasks: HashMap<&'a str, &'a Task>,
     pub plans: HashMap<&'a str, &'a Plan>,
     pub leases: HashMap<&'a str, &'a Lease>,
-    pub inboxes: HashMap<&'a str, &'a InboxEntry>,
+    pub issues: HashMap<&'a str, &'a Issue>,
+    pub milestones: HashMap<&'a str, &'a Milestone>,
 }
 
 fn by_id<T>(items: &[T], id: impl Fn(&T) -> &str) -> HashMap<&str, &T> {
@@ -30,7 +31,8 @@ impl<'a> StateIndex<'a> {
             tasks: by_id(&state.tasks, |v| &v.id),
             plans: by_id(&state.plans, |v| &v.id),
             leases: by_id(&state.leases, |v| &v.task_id),
-            inboxes: by_id(&state.inboxes, |v| &v.id),
+            issues: by_id(&state.issues, |v| &v.id),
+            milestones: by_id(&state.milestones, |v| &v.id),
         }
     }
 }

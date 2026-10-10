@@ -681,6 +681,7 @@ impl Engine {
                 .insert(session_id.clone(), session);
             self.bind_subscribed_session(conversation, &session_id, old_active)
                 .await?;
+            Box::pin(self.resume_issue_execution(conversation, &session_id, true)).await?;
             format!("Attached · {}", self.session_label(&session_id).await)
         } else {
             "Created".into()

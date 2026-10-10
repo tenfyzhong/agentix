@@ -47,7 +47,7 @@ async fn metrics_report_list_and_label_without_task_database() {
         INSERT INTO answers VALUES ('r1', 'route', NULL, 'new_job', 0.99, 0.99, 0.98, 1, NULL);
         INSERT INTO requests VALUES ('r2', 2, 's', 't2', 'p', 'jev-test', 0.9, 7.0, 1, 0, 'agent', 'uncertain_or_conflicting', NULL, 2, 'routing');
         INSERT INTO answers VALUES ('r2', 'route', NULL, 'new_job', 0.99, 0.99, 0.98, 1, NULL);
-        INSERT INTO answers VALUES ('r2', 'inbox_0', 'inbox_a', 'unrelated', 0.87, 0.99, 0.98, 1, 'low_confidence');").execute(&mut db).await.unwrap();
+        INSERT INTO answers VALUES ('r2', 'issue', 'issue_a', 'none', 0.87, 0.99, 0.98, 1, 'low_confidence');").execute(&mut db).await.unwrap();
     db.close().await.unwrap();
     let report = command(&dir, &["routing", "metrics", "report", "--json"]);
     assert!(
@@ -109,7 +109,7 @@ async fn metrics_report_list_and_label_without_task_database() {
     let body: Value = serde_json::from_slice(&list.stdout).unwrap();
     assert_eq!(body["result"].as_array().unwrap().len(), 1);
     assert_eq!(body["result"][0]["id"], "r2");
-    assert_eq!(body["result"][0]["answers"][0]["subject_id"], "inbox_a");
+    assert_eq!(body["result"][0]["answers"][0]["subject_id"], "issue_a");
     assert!(
         command(&dir, &["routing", "metrics", "label", "r1", "incorrect"])
             .status
@@ -184,9 +184,9 @@ async fn metrics_groups_decision_kinds_and_questions_without_join_inflation() {
             .bind(id).bind(accepted).bind(review).bind(kind).execute(&mut db).await.unwrap();
     }
     sqlx::raw_sql(
-        "INSERT INTO answers VALUES ('r1','inbox_0',NULL,'match',0.99,0.99,0.99,1,NULL);
-        INSERT INTO answers VALUES ('r1','inbox_1',NULL,'match',0.2,0.2,0.1,1,'low_confidence');
-        INSERT INTO answers VALUES ('r2','inbox_0',NULL,NULL,NULL,NULL,NULL,0,'invalid_answer');",
+        "INSERT INTO answers VALUES ('r1','issue',NULL,'issue_a',0.99,0.99,0.99,1,NULL);
+        INSERT INTO answers VALUES ('r1','turn_0',NULL,'issue_a',0.2,0.2,0.1,1,'low_confidence');
+        INSERT INTO answers VALUES ('r2','issue',NULL,NULL,NULL,NULL,NULL,0,'invalid_answer');",
     )
     .execute(&mut db)
     .await
@@ -209,10 +209,16 @@ async fn metrics_groups_decision_kinds_and_questions_without_join_inflation() {
     assert_eq!(completion["requests"], 2);
     assert_eq!(completion["reviewed_accuracy"], 0.0);
     let questions = body["result"]["by_question"].as_array().unwrap();
-    assert_eq!(questions.len(), 1);
-    assert_eq!(questions[0]["question"], "inbox");
-    assert_eq!(questions[0]["answers"], 3);
-    assert_eq!(questions[0]["passed"], 1);
+    assert_eq!(questions.len(), 2);
+    let issue = questions.iter().find(|q| q["question"] == "issue").unwrap();
+    assert_eq!(issue["answers"], 2);
+    assert_eq!(issue["passed"], 1);
+    let discussion = questions
+        .iter()
+        .find(|q| q["question"] == "discussion")
+        .unwrap();
+    assert_eq!(discussion["answers"], 1);
+    assert_eq!(discussion["passed"], 0);
     assert_eq!(
         std::fs::read(dir.path().join("metrics.sqlite")).unwrap(),
         before
@@ -268,7 +274,7 @@ async fn metrics_legacy_read_is_compatible_and_full_summary_fits_a_screen() {
         "recovery",
         "outcome",
         "completion",
-        "turn_0",
+        "issue",
     ] {
         sqlx::query("INSERT INTO answers VALUES ('routing',?,NULL,'keep',0.9,0.9,0.9,1,NULL)")
             .bind(question)
@@ -277,8 +283,8 @@ async fn metrics_legacy_read_is_compatible_and_full_summary_fits_a_screen() {
             .unwrap();
     }
     for i in 0..100 {
-        sqlx::query("INSERT INTO answers VALUES ('routing',?,NULL,'match',0.9,0.9,0.9,1,NULL)")
-            .bind(format!("inbox_{i}"))
+        sqlx::query("INSERT INTO answers VALUES ('routing',?,NULL,'issue_a',0.9,0.9,0.9,1,NULL)")
+            .bind(format!("turn_{i}"))
             .execute(&mut db)
             .await
             .unwrap();
