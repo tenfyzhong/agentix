@@ -362,11 +362,16 @@ async fn job_graph_escapes_task_labels_as_literal_text() {
 }
 
 #[tokio::test]
-async fn job_graph_displays_all_seven_task_statuses_with_tasknotes_colors() {
-    let settings: Value = serde_json::from_str(include_str!(
-        "../../../../plugins/taskix-manager/obsidian/tasknotes-settings.json"
-    ))
-    .unwrap();
+async fn job_graph_displays_all_seven_task_statuses_with_status_colors() {
+    let colors = [
+        ("TODO", "#cbd5e1"),
+        ("IN_PROGRESS", "#bfdbfe"),
+        ("BLOCKED", "#fed7aa"),
+        ("WAITING_USER", "#ddd6fe"),
+        ("DONE", "#bbf7d0"),
+        ("FAILED", "#fecaca"),
+        ("CANCELLED", "#e2d7e7"),
+    ];
     let f = Fixture::new().await;
     populate_board_states(&f).await;
     let document = job_document(&f).await;
@@ -375,14 +380,7 @@ async fn job_graph_displays_all_seven_task_statuses_with_tasknotes_colors() {
     assert_eq!(state.tasks.len(), agentix_task::TaskStatus::ALL.len());
     for task in &state.tasks {
         let status = task.status.to_string();
-        let color = settings["customStatuses"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|setting| setting["value"] == status)
-            .unwrap()["color"]
-            .as_str()
-            .unwrap();
+        let color = colors.iter().find(|(value, _)| *value == status).unwrap().1;
         let node = diagram
             .lines()
             .find(|line| line.trim_start().starts_with(&format!("{}[", task.id)))

@@ -1,62 +1,15 @@
 use std::{fs, io::Write, path::Path, time::Duration};
 
-use agentix_task::{Config, expand_home};
+use agentix_task::Config;
 use anyhow::{Context, Result, bail, ensure};
 use serde_json::{Value, json};
 
-const VERSION: &str = "4.12.5";
-const PRESET: &str =
-    include_str!("../../../plugins/taskix-manager/obsidian/tasknotes-settings.json");
-const FILES: [&str; 3] = ["manifest.json", "main.js", "styles.css"];
-
-pub async fn setup(
-    config: &Config,
-    config_path: &Path,
-    plugin_dir: Option<&Path>,
-    no_reload: bool,
-) -> Result<Value> {
+pub async fn setup(config: &Config, config_path: &Path, no_reload: bool) -> Result<Value> {
     let root = config.documents.root.canonicalize()?.join(".obsidian");
     check_path(&root, "")?;
-    let mut changes = configuration_changes(&root, config_path)?;
+    let changes = configuration_changes(&root, config_path)?;
 
-    for name in FILES {
-        check_path(&root, &format!("plugins/tasknotes/{name}"))?;
-    }
-    let installed_manifest = root.join("plugins/tasknotes/manifest.json");
-    let already_installed =
-        installed_manifest.is_file() && root.join("plugins/tasknotes/main.js").is_file();
-    let install = plugin_dir.is_some() || !already_installed;
-    let version;
-    if install {
-        let bundle = if let Some(directory) = plugin_dir {
-            let directory = expand_home(directory)?;
-            FILES
-                .iter()
-                .map(|name| {
-                    fs::read(directory.join(name)).with_context(|| format!("read TaskNotes {name}"))
-                })
-                .collect::<Result<Vec<_>>>()?
-        } else {
-            download(&format!(
-                "https://github.com/callumalpass/tasknotes/releases/download/{VERSION}"
-            ))
-            .await?
-        };
-        version = validate_bundle(&bundle)?;
-        for (name, bytes) in FILES.iter().zip(bundle) {
-            changes.push(Change::new(
-                &root,
-                &format!("plugins/tasknotes/{name}"),
-                bytes,
-            )?);
-        }
-    } else {
-        version = validate_manifest(&fs::read(installed_manifest)?)?;
-        ensure!(
-            fs::metadata(root.join("plugins/tasknotes/main.js"))?.len() > 0,
-            "TaskNotes main.js is empty; reinstall using --plugin-dir"
-        );
-    }
+    let installed = !root.join("plugins/taskix-sync/main.js").is_file();
     let modified = changes
         .iter()
         .any(|c| c.before.as_deref() != Some(c.after.as_slice()));
@@ -104,12 +57,12 @@ pub async fn setup(
         false
     };
     let next_step = if reloaded {
-        "Obsidian reload requested. If Restricted mode is on, turn it off in Settings > Community plugins to load TaskNotes and Taskix Sync."
+        "Obsidian reload requested. If Restricted mode is on, turn it off in Settings > Community plugins to load Taskix Sync. Task boards require Obsidian 1.14 or newer with Bases enabled."
     } else {
-        "Open or restart Obsidian. If Restricted mode is on, turn it off in Settings > Community plugins to load TaskNotes and Taskix Sync."
+        "Open or restart Obsidian. If Restricted mode is on, turn it off in Settings > Community plugins to load Taskix Sync. Task boards require Obsidian 1.14 or newer with Bases enabled."
     };
     Ok(
-        json!({"vault":config.documents.root,"version":version,"installed":install,"sync_plugin":"taskix-sync","changed":modified,"backup":backup,"reloaded":reloaded,"reload_error":reload_error,"restart_required":!reloaded,"next_step":next_step}),
+        json!({"vault":config.documents.root,"min_obsidian_version":"1.14.0","installed":installed,"sync_plugin":"taskix-sync","changed":modified,"backup":backup,"reloaded":reloaded,"reload_error":reload_error,"restart_required":!reloaded,"next_step":next_step}),
     )
 }
 
@@ -120,9 +73,7 @@ fn publish(
     refresh_configuration: bool,
 ) -> Result<Option<std::path::PathBuf>> {
     if refresh_configuration {
-        changes.retain(|c| {
-            c.relative.starts_with("plugins/tasknotes/") && !c.relative.ends_with("data.json")
-        });
+        changes.clear();
         changes.extend(configuration_changes(root, config_path)?);
     }
     changes.retain(|c| c.before.as_deref() != Some(c.after.as_slice()));
@@ -132,14 +83,12 @@ fn publish(
 fn configuration_changes(root: &Path, config_path: &Path) -> Result<Vec<Change>> {
     let mut changes = Vec::new();
     sync_plugin(root, config_path, &mut changes)?;
-    let (settings, settings_before) = read_json(root, "plugins/tasknotes/data.json", json!({}))?;
-    changes.push(change(
-        "plugins/tasknotes/data.json",
-        settings_before,
-        &merge_settings(settings)?,
-    )?);
     let (mut community, community_before) = read_json(root, "community-plugins.json", json!([]))?;
-    enable_array(&mut community, "tasknotes")?;
+    // Keep installed files and personal settings; remove the obsolete dependency
+    // from this vault's enabled plugins without installing or loading TaskNotes.
+    if let Some(plugins) = community.as_array_mut() {
+        plugins.retain(|id| id != "tasknotes");
+    }
     enable_array(&mut community, "taskix-sync")?;
     changes.push(change(
         "community-plugins.json",
@@ -223,8 +172,8 @@ impl ObsidianCli {
         let enabled = enabled
             .as_array()
             .context("invalid Obsidian enabled plugin list")?;
-        // Stop the dependent plugin first. Record attempted disables too: a CLI
-        // timeout can arrive after the app already disabled the plugin.
+        // Record attempted disables too: a CLI timeout can arrive after the
+        // app already disabled the plugin. Stop TaskNotes during migration.
         for id in ["taskix-sync", "tasknotes"] {
             if enabled.iter().any(|plugin| plugin["id"] == id) {
                 self.suspended.push(id.into());
@@ -260,6 +209,10 @@ fn sync_plugin(root: &Path, config_path: &Path, changes: &mut Vec<Change>) -> Re
             "manifest.json",
             include_str!("../../../plugins/taskix-manager/obsidian/taskix-sync/manifest.json"),
         ),
+        (
+            "styles.css",
+            include_str!("../../../plugins/taskix-manager/obsidian/taskix-sync/styles.css"),
+        ),
     ] {
         changes.push(Change::new(
             root,
@@ -282,79 +235,6 @@ fn sync_plugin(root: &Path, config_path: &Path, changes: &mut Vec<Change>) -> Re
     Ok(())
 }
 
-fn merge_settings(mut settings: Value) -> Result<Value> {
-    let object = settings
-        .as_object_mut()
-        .context("TaskNotes settings must be a JSON object")?;
-    let preset: Value = serde_json::from_str(PRESET)?;
-    let mut statuses = object.get("customStatuses").cloned().unwrap_or(json!([]));
-    let statuses = statuses
-        .as_array_mut()
-        .context("customStatuses must be an array")?;
-    ensure!(
-        statuses
-            .iter()
-            .all(|s| s.is_object() && s["value"].is_string()),
-        "invalid custom status definition"
-    );
-    let mut values = std::collections::HashSet::new();
-    ensure!(
-        statuses
-            .iter()
-            .all(|s| values.insert(s["value"].as_str().unwrap_or_default())),
-        "duplicate custom status values"
-    );
-    for wanted in preset["customStatuses"]
-        .as_array()
-        .context("invalid bundled statuses")?
-    {
-        // Preserve unrelated status definitions and identity references in other views.
-        if let Some(existing) = statuses.iter_mut().find(|s| s["value"] == wanted["value"]) {
-            let id = existing.get("id").cloned();
-            existing.as_object_mut().context("invalid status")?.extend(
-                wanted
-                    .as_object()
-                    .context("invalid bundled status")?
-                    .clone(),
-            );
-            if let Some(id) = id {
-                existing["id"] = id;
-            }
-        } else {
-            statuses.push(wanted.clone());
-        }
-    }
-    let mut ids = std::collections::HashSet::new();
-    ensure!(
-        statuses.iter().all(|s| s["id"]
-            .as_str()
-            .is_some_and(|id| !id.is_empty() && ids.insert(id))),
-        "missing or duplicate custom status IDs"
-    );
-    object.insert("customStatuses".into(), json!(statuses));
-    for key in [
-        "taskIdentificationMethod",
-        "taskTag",
-        "openTaskAfterCreation",
-        "singleClickAction",
-        "defaultTaskStatus",
-    ] {
-        object.insert(key.into(), preset[key].clone());
-    }
-    let mapping = object
-        .entry("fieldMapping")
-        .or_insert(json!({}))
-        .as_object_mut()
-        .context("fieldMapping must be an object")?;
-    for (key, field) in preset["fieldMapping"]
-        .as_object()
-        .context("invalid bundled fieldMapping")?
-    {
-        mapping.insert(key.clone(), field.clone());
-    }
-    Ok(settings)
-}
-
 fn enable_array(value: &mut Value, id: &str) -> Result<()> {
     let array = value
         .as_array_mut()
@@ -367,61 +247,6 @@ fn enable_array(value: &mut Value, id: &str) -> Result<()> {
         array.push(json!(id));
     }
     Ok(())
-}
-
-fn validate_manifest(bytes: &[u8]) -> Result<String> {
-    let manifest: Value = serde_json::from_slice(bytes).context("invalid TaskNotes manifest")?;
-    ensure!(
-        manifest["id"] == "tasknotes",
-        "plugin manifest id must be tasknotes"
-    );
-    let version = manifest["version"]
-        .as_str()
-        .context("missing TaskNotes version")?;
-    let numbers = version
-        .split('.')
-        .map(str::parse::<u32>)
-        .collect::<std::result::Result<Vec<_>, _>>()?;
-    ensure!(
-        numbers.len() == 3 && numbers[0] == 4 && (numbers[1], numbers[2]) >= (12, 5),
-        "TaskNotes 4.12.5 or newer within major version 4 is required"
-    );
-    Ok(version.into())
-}
-fn validate_bundle(bundle: &[Vec<u8>]) -> Result<String> {
-    ensure!(
-        bundle.len() == 3 && !bundle[1].is_empty(),
-        "TaskNotes release is incomplete or main.js is empty"
-    );
-    validate_manifest(&bundle[0])
-}
-
-async fn download(base: &str) -> Result<Vec<Vec<u8>>> {
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_mins(1))
-        .user_agent("agentix-taskix")
-        .build()?;
-    let mut bundle = Vec::new();
-    for name in FILES {
-        let mut response = client
-            .get(format!("{base}/{name}"))
-            .send()
-            .await
-            .with_context(|| {
-                format!("download TaskNotes {name}; use --plugin-dir for an offline release")
-            })?
-            .error_for_status()?;
-        let mut bytes = Vec::new();
-        while let Some(chunk) = response.chunk().await? {
-            ensure!(
-                bytes.len() + chunk.len() <= 32 * 1024 * 1024,
-                "TaskNotes asset exceeds 32 MiB"
-            );
-            bytes.extend_from_slice(&chunk);
-        }
-        bundle.push(bytes);
-    }
-    Ok(bundle)
 }
 
 // Reject symlinks, including broken links, at every writable path component.
@@ -542,96 +367,8 @@ fn apply(root: &Path, changes: &[Change]) -> Result<Option<std::path::PathBuf>> 
 }
 
 #[cfg(test)]
-#[path = "../../../tests/support/environment_proxy.rs"]
-mod environment_proxy;
-
-#[cfg(test)]
 mod tests {
     use super::*;
-    use tokio::{
-        io::{AsyncReadExt, AsyncWriteExt},
-        net::TcpListener,
-    };
-
-    #[tokio::test]
-    async fn downloads_use_environment_proxies_and_no_proxy() {
-        for (variable, https) in [
-            ("http_proxy", false),
-            ("HTTP_PROXY", false),
-            ("https_proxy", true),
-            ("HTTPS_PROXY", true),
-        ] {
-            environment_proxy::check_routing(
-                "obsidian::tests::download_proxy_fixture",
-                variable,
-                https,
-                None,
-                if https { 1 } else { 3 },
-            )
-            .await;
-        }
-        for bypass_variable in ["NO_PROXY", "no_proxy"] {
-            environment_proxy::check_routing(
-                "obsidian::tests::download_proxy_fixture",
-                "HTTP_PROXY",
-                false,
-                Some(bypass_variable),
-                3,
-            )
-            .await;
-        }
-    }
-
-    #[tokio::test]
-    #[ignore = "runs in an isolated proxy environment"]
-    async fn download_proxy_fixture() {
-        let base = std::env::var("PROXY_TEST_URL").unwrap();
-        let result = download(&base).await;
-        if base.starts_with("https:") {
-            assert!(result.is_err());
-        } else {
-            assert_eq!(result.unwrap(), vec![b"proxied".to_vec(); 3]);
-        }
-    }
-
-    #[tokio::test]
-    async fn downloads_release_assets_and_reports_http_failures() {
-        for fail in [false, true] {
-            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let base = format!("http://{}", listener.local_addr().unwrap());
-            let server = tokio::spawn(async move {
-                for name in FILES {
-                    let (mut socket, _) = listener.accept().await.unwrap();
-                    let mut request = [0; 4096];
-                    let len = socket.read(&mut request).await.unwrap();
-                    assert!(
-                        String::from_utf8_lossy(&request[..len])
-                            .starts_with(&format!("GET /{name} "))
-                    );
-                    let status = if fail {
-                        "503 Service Unavailable"
-                    } else {
-                        "200 OK"
-                    };
-                    let response = format!(
-                        "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{name}",
-                        name.len()
-                    );
-                    socket.write_all(response.as_bytes()).await.unwrap();
-                    if fail {
-                        break;
-                    }
-                }
-            });
-            let result = download(&base).await;
-            if fail {
-                assert!(result.unwrap_err().to_string().contains("503"));
-            } else {
-                assert_eq!(result.unwrap(), FILES.map(|s| s.as_bytes().to_vec()));
-            }
-            server.await.unwrap();
-        }
-    }
 
     #[test]
     fn concurrent_configuration_changes_abort_before_writes() {

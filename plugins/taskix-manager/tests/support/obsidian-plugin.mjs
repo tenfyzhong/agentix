@@ -68,7 +68,7 @@ export async function fixture(overrides = {}) {
 }
 
 export async function connectionFixture(directory = "11-Agents", globals = {}) {
-    const notices = [], requests = [], commands = [], buttons = [];
+    const notices = [], requests = [], commands = [], buttons = [], views = [];
     const vaultEvents = new Map(), metadataEvents = new Map(), workspaceEvents = new Map();
     class TFile {}
     const file = new TFile();
@@ -116,11 +116,11 @@ export async function connectionFixture(directory = "11-Agents", globals = {}) {
     plugin.addSettingTab = (tab) => { settingsTab = tab; };
     plugin.addCommand = (command) => commands.push(command);
     plugin.registerEvent = () => {};
-    plugin.registerBasesView = () => {};
+    plugin.registerBasesView = (type) => views.push(type);
     await plugin.onload();
     settingsTab.display();
     return {
-        plugin, file, notices, requests, commands, vaultEvents, metadataEvents, workspaceEvents, button: buttons[0],
+        plugin, file, notices, requests, commands, views, vaultEvents, metadataEvents, workspaceEvents, button: buttons[0],
         reply(error, index = requests.length - 1, result) {
             result ??= requests[index].args.includes("show") ? null : { protocol_version: 1, documents: { root: "/vault", directory } };
             requests[index].callback(error ? new Error(error) : null, JSON.stringify(error

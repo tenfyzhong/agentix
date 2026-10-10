@@ -107,6 +107,8 @@ Read the [GitHub Wiki](https://github.com/tenfyzhong/agentix/wiki) for the full 
 - [Agent setup](https://github.com/tenfyzhong/agentix/wiki#user-content-set-up-your-environment): Pi, OMP, Claude Code, and Slack guides.
 - [Taskix workflows](https://github.com/tenfyzhong/agentix/wiki#user-content-optional-taskix-workflows): host plugins, Jobs and Tasks, Obsidian, memory, and backups.
 
+Obsidian task boards require **Obsidian 1.14 or newer** with the built-in Bases plugin. Run `taskix obsidian setup` to install Taskix Sync for status changes and bounded, scrollable boards. TaskNotes is no longer required. Recent Jobs includes all unarchived Jobs without a per-status limit.
+
 ## Development
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow, tests, and releases. Architecture, protocols, benchmarks, and implementation reviews are indexed in [Technical documentation](docs/README.md).

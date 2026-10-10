@@ -45,15 +45,15 @@ fn main() {
             }
         }
         "plugin:disable" => {
-            fs::create_dir_all(".obsidian/plugins/tasknotes").unwrap();
+            fs::create_dir_all(".obsidian/plugins/taskix-sync").unwrap();
             fs::write(
-                ".obsidian/plugins/tasknotes/data.json",
-                r#"{"calendarView":"month","taskTag":"old"}"#,
+                ".obsidian/plugins/taskix-sync/data.json",
+                r#"{"savedDuringShutdown":true}"#,
             )
             .unwrap();
             fs::write(".obsidian/community-plugins.json", r#"["other"]"#).unwrap();
             if scenario == "publication-fails" {
-                fs::write(".obsidian/plugins/tasknotes/data.json", "invalid").unwrap();
+                fs::write(".obsidian/plugins/taskix-sync/data.json", "invalid").unwrap();
             }
             if scenario == "disable-fails" {
                 eprintln!("Error: disable failed");
@@ -72,7 +72,7 @@ fn main() {
             println!("Enabled plugin");
         }
         "reload" => {
-            assert!(Path::new(".obsidian/plugins/tasknotes/main.js").is_file());
+            assert!(Path::new(".obsidian/plugins/taskix-sync/styles.css").is_file());
             assert!(Path::new(".obsidian/plugins/taskix-sync/main.js").is_file());
             match scenario.as_str() {
                 "reload-fails" | "loaded-reload-fails" => {

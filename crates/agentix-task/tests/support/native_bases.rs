@@ -190,7 +190,7 @@ fn named_base(document: &str, name: &str) -> Value {
         .skip(1)
         .map(|block| serde_yaml::from_str::<Value>(block.split_once("\n```").unwrap().0).unwrap())
         .find(|base| base["views"][0]["name"] == name)
-        .expect("named embedded TaskNotes Base")
+        .expect("named embedded native Bases Base")
 }
 
 fn base(document: &str) -> Value {
@@ -248,7 +248,7 @@ async fn job_task_board_is_last_in_tasks_and_scoped_to_its_job() {
     .unwrap();
     assert_eq!(job_base["views"], base(&project_board)["views"]);
     assert_eq!(
-        job_base["views"][0]["pinnedColumns"],
+        job_base["views"][0]["groupOrder"],
         json!(agentix_task::TaskStatus::ALL)
     );
     let im = f.service.job_markdown(&f.job).await.unwrap();
@@ -259,7 +259,7 @@ async fn job_task_board_is_last_in_tasks_and_scoped_to_its_job() {
 async fn job_task_board_sync_restores_missing_board_and_preserves_notes_after_archive() {
     let f = Fixture::new().await;
     let (_, empty) = job_board_document(&f).await;
-    assert_eq!(base(&empty)["views"][0]["type"], "tasknotesKanban");
+    assert_eq!(base(&empty)["views"][0]["type"], "kanban");
     let task = f.task("Finish work").await;
     let claim = f.start(&task, "job-board").await;
     f.service
@@ -329,10 +329,10 @@ async fn board_contains_project_metadata_and_is_the_only_project_link_target() {
     assert_eq!(props["tags"], json!(["agent/project", "agent/board"]));
     assert!(!root.join("Projects/demo/meta.md").exists());
     assert!(!board.contains("|Project]]") && !board.contains("[Project]("));
-    assert_eq!(base(&board)["views"][0]["type"], "tasknotesKanban");
+    assert_eq!(base(&board)["views"][0]["type"], "kanban");
     let dashboard = std::fs::read_to_string(root.join("Dashboard.base")).unwrap();
     assert!(!dashboard.contains("/meta"));
-    assert!(dashboard.contains("link(file.path, note.name)"));
+    assert!(dashboard.contains("link(file.path, if(note.name, note.name, note.title))"));
     let task_path = root.join("Projects/demo/Tasks/260905-0001-Linked task.md");
     assert_eq!(
         properties(&std::fs::read_to_string(task_path).unwrap())["projects"],
@@ -597,14 +597,14 @@ async fn tasks_exist_before_planning_and_jobs_reference_notes_directly() {
 }
 
 #[tokio::test]
-async fn tasknotes_views_use_scoped_frontmatter_and_preserve_every_status() {
+async fn native_bases_views_use_scoped_frontmatter_and_preserve_every_status() {
     let f = Fixture::new().await;
     populate_board_states(&f).await;
     let root = f.service.config().output_dir().join("Projects/demo");
     let doc = std::fs::read_to_string(root.join("Board.md")).unwrap();
     let config = base(&doc);
-    assert_eq!(config["views"][0]["type"], "tasknotesKanban");
-    assert_eq!(config["views"][0]["groupBy"]["property"], "status");
+    assert_eq!(config["views"][0]["type"], "kanban");
+    assert_eq!(config["views"][0]["groupBy"]["property"], "note.status");
     assert_eq!(
         config["filters"]["and"],
         json!([
@@ -618,15 +618,9 @@ async fn tasknotes_views_use_scoped_frontmatter_and_preserve_every_status() {
     assert!(!doc.contains("```tasks"));
     assert!(!doc.contains("- ["));
     let board = base(&std::fs::read_to_string(root.join("Board.md")).unwrap());
-    assert_eq!(
-        board["views"][0]["columnOrder"]["status"],
-        json!(task_status_names())
-    );
-    assert_eq!(board["views"][0]["hideEmptyColumns"], true);
-    assert_eq!(
-        board["views"][0]["pinnedColumns"],
-        json!(task_status_names())
-    );
+    assert_eq!(board["views"][0]["groupOrder"], json!(task_status_names()));
+    assert_eq!(board["views"][0]["hideEmptyColumns"], false);
+    assert_eq!(board["views"][0]["groupOrder"], json!(task_status_names()));
     let state = f.service.store().snapshot().await.unwrap();
     for task in &state.tasks {
         let filename = format!("260905-{:04}-{}.md", task.sequence, task.name);
@@ -986,10 +980,10 @@ async fn job_board_has_four_pinned_columns_and_job_display_properties() {
     assert!(board.find("name: Job board").unwrap() < board.find("name: Task board").unwrap());
     let base = named_base(&board, "Job board");
     let statuses = json!(["ACTIVE", "PENDING_REVIEW", "COMPLETED", "CANCELLED"]);
-    assert_eq!(base["views"][0]["type"], "tasknotesKanban");
-    assert_eq!(base["views"][0]["pinnedColumns"], statuses);
-    assert_eq!(base["views"][0]["columnOrder"]["status"], statuses);
-    assert_eq!(base["views"][0]["hideEmptyColumns"], true);
+    assert_eq!(base["views"][0]["type"], "kanban");
+    assert_eq!(base["views"][0]["groupOrder"], statuses);
+    assert_eq!(base["views"][0]["groupOrder"], statuses);
+    assert_eq!(base["views"][0]["hideEmptyColumns"], false);
     assert_eq!(base["views"][0]["columnWidth"], 300);
     assert_eq!(
         base["filters"]["and"],

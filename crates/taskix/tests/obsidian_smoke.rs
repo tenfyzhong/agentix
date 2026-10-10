@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 static DESKTOP_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn obsidian(vault: &str, expression: &str) -> Value {
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(30);
     loop {
         let mut child =
             Command::new(std::env::var("OBSIDIAN_BIN").unwrap_or_else(|_| "obsidian".into()))
@@ -24,7 +24,7 @@ fn obsidian(vault: &str, expression: &str) -> Value {
                 .stderr(std::process::Stdio::piped())
                 .spawn()
                 .expect("Obsidian CLI must be available and the vault open");
-        let attempt_deadline = Instant::now() + Duration::from_secs(2);
+        let attempt_deadline = Instant::now() + Duration::from_secs(15);
         let timed_out = loop {
             if child.try_wait().unwrap().is_some() {
                 break false;
@@ -147,11 +147,27 @@ impl DesktopFixture {
         obsidian_action(
             &self.vault,
             &format!(
-                "(async () => {{ const leaf = app.workspace.getLeafById({}); await leaf.setViewState({}); app.workspace.setActiveLeaf(leaf, {{focus:true}}); return true; }})()",
+                "(async () => {{ const leaf = app.workspace.getLeafById({}); await leaf.setViewState({}); await app.workspace.revealLeaf(leaf); app.workspace.setActiveLeaf(leaf, {{focus:true}}); return true; }})()",
                 self.leaf,
                 json!({"type":view_type,"state":{"file":path,"mode":"preview"}})
             ),
         );
+        if view_type == "markdown" {
+            // Reading view lazily mounts embedded Bases below long metadata/graphs.
+            let preview = format!(
+                "app.workspace.getLeafById({}).view.contentEl.querySelector('.markdown-preview-view')",
+                self.leaf
+            );
+            wait_for(&self.vault, &format!("!!({preview})?.scrollHeight"), |v| {
+                v == true
+            });
+            obsidian(
+                &self.vault,
+                &format!(
+                    "(()=>{{const el={preview};el.scrollTop=el.scrollHeight;return true;}})()"
+                ),
+            );
+        }
     }
 }
 
@@ -159,7 +175,7 @@ impl Drop for DesktopFixture {
     fn drop(&mut self) {
         // Do not panic a second time if the app was closed during a failed test.
         let expression = format!(
-            "(async () => {{ await app.plugins.unloadPlugin(\"taskix-sync-smoke\"); delete app.plugins.manifests[\"taskix-sync-smoke\"]; delete window.taskixSyncSmoke; if (window.taskixSmokeStatuses) {{app.plugins.plugins.tasknotes.statusManager.updateStatuses(window.taskixSmokeStatuses); delete window.taskixSmokeStatuses;}} if(window.taskixSmokeFieldMapping){{app.plugins.plugins.tasknotes.fieldMapper.updateMapping(window.taskixSmokeFieldMapping);delete window.taskixSmokeFieldMapping;}} app.workspace.getLeafById({})?.detach(); for (const leaf of ['markdown','bases'].flatMap(type=>app.workspace.getLeavesOfType(type))) {{ if (leaf.view.file?.path.startsWith({})) leaf.detach(); }} const original = app.workspace.getLeafById({}); if (original) app.workspace.setActiveLeaf(original, {{focus:true}}); return true; }})()",
+            "(async () => {{ await app.plugins.unloadPlugin(\"taskix-sync-smoke\"); delete app.plugins.manifests[\"taskix-sync-smoke\"]; delete window.taskixSyncSmoke; app.workspace.getLeafById({})?.detach(); for (const leaf of ['markdown','bases'].flatMap(type=>app.workspace.getLeavesOfType(type))) {{ if (leaf.view.file?.path.startsWith({})) leaf.detach(); }} const original = app.workspace.getLeafById({}); if (original) app.workspace.setActiveLeaf(original, {{focus:true}}); return true; }})()",
             self.leaf,
             json!(format!("{}/", self.relative)),
             self.original_leaf
@@ -168,33 +184,115 @@ impl Drop for DesktopFixture {
     }
 }
 
+// Bases virtualizes horizontally as well as vertically. Visit each column so
+// acceptance checks cover off-screen groups without depending on mounted cards.
+fn native_board_snapshot(f: &DesktopFixture, bottom: bool) -> Value {
+    let root = format!("app.workspace.getLeafById({}).view.contentEl", f.leaf);
+    let widths = obsidian(
+        &f.vault,
+        &format!(
+            "[...{root}.querySelectorAll('.bases-view[data-view-type=kanban]')].map(el=>el.scrollWidth)"
+        ),
+    );
+    let mut columns = Vec::new();
+    let mut cards = Vec::new();
+    let mut counts = Vec::new();
+    for (index, width) in widths.as_array().unwrap().iter().enumerate() {
+        obsidian(
+            &f.vault,
+            &format!(
+                "(()=>{{{root}.querySelectorAll('.bases-view[data-view-type=kanban]')[{index}].scrollIntoView({{block:'center',inline:'nearest'}});return true;}})()"
+            ),
+        );
+        let mut view_columns = Vec::new();
+        for offset in (0..=width.as_u64().unwrap() + 300).step_by(300) {
+            obsidian(
+                &f.vault,
+                &format!(
+                    "(()=>{{{root}.querySelectorAll('.bases-view[data-view-type=kanban]')[{index}].scrollLeft={offset};return true;}})()"
+                ),
+            );
+            std::thread::sleep(Duration::from_millis(100));
+            if bottom {
+                obsidian(
+                    &f.vault,
+                    &format!(
+                        "(()=>{{for(const el of {root}.querySelectorAll('.bases-kanban-container')[{index}].querySelectorAll('.bases-kanban-column-content')) el.scrollTop=el.scrollHeight;return true;}})()"
+                    ),
+                );
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            let rendered = obsidian(
+                &f.vault,
+                &format!(
+                    "[...{root}.querySelectorAll('.bases-kanban-container')[{index}].querySelectorAll('.bases-kanban-column')].filter(el=>el.querySelector('.bases-kanban-column-header[draggable]')).map(el=>({{status:el.querySelector('.bases-group-value').textContent,count:Number(el.querySelector('.bases-kanban-column-count').textContent),cards:[...el.querySelectorAll('.bases-kanban-card[draggable] .mod-title .internal-link')].map(link=>({{path:link.dataset.href,status:el.querySelector('.bases-group-value').textContent}}))}}))"
+                ),
+            );
+            for column in rendered.as_array().unwrap() {
+                if !view_columns.contains(&column["status"]) {
+                    view_columns.push(column["status"].clone());
+                    counts.push(json!({"status":column["status"],"count":column["count"]}));
+                }
+                for card in column["cards"].as_array().unwrap() {
+                    if !cards.contains(card) {
+                        cards.push(card.clone());
+                    }
+                }
+            }
+        }
+        columns.extend(view_columns);
+    }
+    json!({"columns":columns,"cards":cards,"counts":counts})
+}
+
+fn native_card_paths(board: &Value) -> Value {
+    json!(
+        board["cards"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|card| card["path"].clone())
+            .collect::<Vec<_>>()
+    )
+}
+
+fn wait_native_board(f: &DesktopFixture, predicate: impl Fn(&Value) -> bool) -> Value {
+    let deadline = Instant::now() + Duration::from_secs(30);
+    loop {
+        let value = native_board_snapshot(f, false);
+        if predicate(&value) {
+            return value;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "native board did not render: {value}"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    }
+}
+
 #[test]
-#[ignore = "requires TASKIX_OBSIDIAN_VAULT and enabled TaskNotes/Bases plugins in an open desktop vault"]
-fn tasknotes_renders_obsidian_and_resolves_task_note_links() {
+#[ignore = "requires TASKIX_OBSIDIAN_VAULT and enabled Obsidian 1.14+ Bases plugins in an open desktop vault"]
+fn native_bases_render_obsidian_and_resolves_task_note_links() {
     let _guard = DESKTOP_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let vault =
         std::env::var("TASKIX_OBSIDIAN_VAULT").expect("choose the open test vault explicitly");
     assert_eq!(
-        obsidian(&vault, "document.visibilityState"),
-        "visible",
-        "Bring the Obsidian vault window to the foreground before testing rendered views"
-    );
-    assert_eq!(
         obsidian(
             &vault,
-            "!!app.plugins.plugins.tasknotes && !!app.internalPlugins.getPluginById('bases')?.enabled && app.plugins.plugins.tasknotes.settings.taskTag === 'task'"
+            "!!app.internalPlugins.getPluginById('bases')?.enabled"
         ),
         true,
-        "Enable TaskNotes and Bases and configure the task tag and seven statuses before running this test"
+        "Enable Bases in Obsidian 1.14 or newer before running this test"
     );
     exercise_plugin_views(&vault, true);
     exercise_plugin_views(&vault, false);
 }
 
 #[test]
-#[ignore = "requires an open TASKIX_OBSIDIAN_VAULT with TaskNotes/Bases enabled"]
+#[ignore = "requires an open TASKIX_OBSIDIAN_VAULT with Obsidian 1.14+ Bases enabled"]
 fn taskix_sync_and_dual_boards_in_desktop() {
     let _guard = DESKTOP_LOCK
         .lock()
@@ -204,7 +302,7 @@ fn taskix_sync_and_dual_boards_in_desktop() {
 }
 
 #[test]
-#[ignore = "requires an open TASKIX_OBSIDIAN_VAULT with TaskNotes enabled"]
+#[ignore = "requires an open TASKIX_OBSIDIAN_VAULT with Obsidian 1.14+ Bases enabled"]
 fn whitespace_job_cancellation_preserves_terminal_tasks_in_desktop() {
     let _guard = DESKTOP_LOCK
         .lock()
@@ -270,7 +368,7 @@ fn whitespace_job_cancellation_preserves_terminal_tasks_in_desktop() {
 }
 
 #[test]
-#[ignore = "requires an open TASKIX_OBSIDIAN_VAULT with TaskNotes enabled"]
+#[ignore = "requires an open TASKIX_OBSIDIAN_VAULT with Obsidian 1.14+ Bases enabled"]
 fn inbox_checkbox_sync_in_desktop() {
     let _guard = DESKTOP_LOCK
         .lock()
@@ -282,7 +380,7 @@ fn inbox_checkbox_sync_in_desktop() {
 }
 
 #[test]
-#[ignore = "requires an open TASKIX_OBSIDIAN_VAULT with TaskNotes enabled"]
+#[ignore = "requires an open TASKIX_OBSIDIAN_VAULT with Obsidian 1.14+ Bases enabled"]
 fn id_queries_and_status_sync_in_desktop() {
     let _guard = DESKTOP_LOCK
         .lock()
@@ -363,10 +461,13 @@ fn exercise_dashboard(f: &mut DesktopFixture, project: &Value) {
                 .any(|link| link["name"] == "Rendering acceptance")
         })
     });
+    let year = obsidian(
+        &f.vault,
+        &format!("new Date({} * 1000).getFullYear()", project["created_at"]),
+    )
+    .to_string();
     assert!(
-        rendered["date"]
-            .as_str()
-            .is_some_and(|value| !value.is_empty()),
+        rendered["text"].as_str().unwrap().contains(&year),
         "missing activity date: {rendered}"
     );
     for header in ["Name", "Status", "Updated", "ACTIVE"] {
@@ -459,20 +560,6 @@ fn desktop_fixture(vault: &str) -> (DesktopFixture, Value) {
         output,
         metadata: tempfile::tempdir().unwrap(),
     };
-    obsidian(
-        vault,
-        &format!(
-            "(() => {{const manager=app.plugins.plugins.tasknotes.statusManager; window.taskixSmokeStatuses=manager.getAllStatuses(); const preset={}; manager.updateStatuses([...window.taskixSmokeStatuses.filter(s=>!preset.some(p=>p.value===s.value)),...preset]); return true;}})()",
-            serde_json::from_str::<Value>(include_str!(
-                "../../../plugins/taskix-manager/obsidian/tasknotes-settings.json"
-            ))
-            .unwrap()["customStatuses"]
-        ),
-    );
-    obsidian(
-        vault,
-        "(() => {const mapper=app.plugins.plugins.tasknotes.fieldMapper;window.taskixSmokeFieldMapping=structuredClone(mapper.getMapping());mapper.updateMapping({...window.taskixSmokeFieldMapping,dateCreated:'created_at',dateModified:'updated_at',completedDate:'completed_at'});return true;})()",
-    );
     f.cli(&[
         "init",
         "--root",
@@ -550,12 +637,9 @@ fn exercise_plugin_views(vault: &str, dashboard_only: bool) {
         project["key"].as_str().unwrap()
     );
     f.open(&board, "markdown");
-    let expression = format!(
-        "(() => {{const el=app.workspace.getLeafById({}).view.contentEl;return {{columns:[...el.querySelectorAll('.kanban-view__column')].map(e=>e.dataset.group),cards:[...el.querySelectorAll('.task-card')].map(e=>({{path:e.dataset.taskPath,status:e.dataset.status}}))}};}})()",
-        f.leaf
-    );
-    let rendered = wait_for(&f.vault, &expression, |v| {
+    let rendered = wait_native_board(&f, |v| {
         v["cards"].as_array().is_some_and(|a| a.len() == 3)
+            && v["columns"].as_array().is_some_and(|a| a.len() == 11)
     });
     assert_eq!(
         rendered["columns"],
@@ -584,7 +668,7 @@ fn exercise_plugin_views(vault: &str, dashboard_only: bool) {
     let job_path = format!("{}/{}", f.relative, job["document_path"].as_str().unwrap());
     f.open(&job_path, "markdown");
     let links = format!(
-        "(() => {{const el=app.workspace.getLeafById({}).view.contentEl;return [...new Set([...el.querySelectorAll('a.internal-link, .tasknotes-inline-widget[data-task-path]')].map(e=>e.dataset.taskPath??app.metadataCache.getFirstLinkpathDest(decodeURIComponent(e.getAttribute('data-href')??e.getAttribute('href')??''),{})?.path).filter(p=>p?.includes('/Tasks/')))];}})()",
+        "(() => {{const el=app.workspace.getLeafById({}).view.contentEl;return [...new Set([...el.querySelectorAll('.internal-link')].map(e=>app.metadataCache.getFirstLinkpathDest(decodeURIComponent(e.getAttribute('data-href')??e.getAttribute('href')??''),{})?.path).filter(p=>p?.includes('/Tasks/')))];}})()",
         f.leaf,
         json!(job_path)
     );
@@ -596,7 +680,7 @@ fn exercise_plugin_views(vault: &str, dashboard_only: bool) {
     let task_info = obsidian(
         &f.vault,
         &format!(
-            "(async()=>{{const path={};const t=await app.plugins.plugins.tasknotes.cacheManager.getTaskInfo(path);const file=app.vault.getAbstractFileByPath(path);return {{path:t?.path,status:t?.status,id:app.metadataCache.getFileCache(file)?.frontmatter?.id}};}})()",
+            "(() => {{const path={};const file=app.vault.getAbstractFileByPath(path);const fm=app.metadataCache.getFileCache(file)?.frontmatter;return {{path,status:fm?.status,id:fm?.id}};}})()",
             json!(path)
         ),
     );
@@ -609,6 +693,18 @@ fn exercise_plugin_views(vault: &str, dashboard_only: bool) {
         f.leaf
     );
     wait_for(&f.vault, &body, |v| v == true);
+    // Keep the TempDir alive through all app reads; Drop restores views first.
+    assert!(f.output.path().exists());
+}
+
+#[test]
+#[ignore = "requires a visible TASKIX_OBSIDIAN_VAULT with Mermaid diagram rendering enabled"]
+fn mermaid_state_machine_diagrams_render_in_desktop() {
+    let _guard = DESKTOP_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let vault = std::env::var("TASKIX_OBSIDIAN_VAULT").expect("choose the test vault");
+    let (mut f, _) = desktop_fixture(&vault);
     std::fs::write(
         f.output.path().join("State machines.md"),
         include_str!("../../../docs/task-state-machines.md"),
@@ -616,16 +712,21 @@ fn exercise_plugin_views(vault: &str, dashboard_only: bool) {
     .unwrap();
     let path = format!("{}/State machines.md", f.relative);
     f.open(&path, "markdown");
+    obsidian(
+        &f.vault,
+        &format!(
+            "(()=>{{app.workspace.getLeafById({}).view.contentEl.querySelector('.markdown-preview-view').scrollTop=0;return true;}})()",
+            f.leaf
+        ),
+    );
     wait_for(
         &f.vault,
         &format!(
-            "app.workspace.getLeafById({}).view.contentEl.querySelectorAll('.markdown-preview-view .mermaid > svg').length",
+            "(()=>{{const el=app.workspace.getLeafById({}).view.contentEl; return {{count:el.querySelectorAll('.markdown-preview-view .mermaid svg, .markdown-preview-view .block-language-mermaid svg').length,html:el.querySelector('.markdown-preview-view')?.innerHTML.slice(-6000)}};}})()",
             f.leaf
         ),
-        |v| v == 2,
+        |v| v["count"] == 3,
     );
-    // Keep the TempDir alive through all app reads; Drop restores views first.
-    assert!(f.output.path().exists());
 }
 
 #[allow(clippy::too_many_lines)] // Keep the desktop mutation, rollback and database assertions together.
@@ -635,6 +736,11 @@ fn load_sync_plugin(f: &DesktopFixture) {
     std::fs::write(
         plugin_dir.join("main.js"),
         include_str!("../../../plugins/taskix-manager/obsidian/taskix-sync/main.js"),
+    )
+    .unwrap();
+    std::fs::write(
+        plugin_dir.join("styles.css"),
+        include_str!("../../../plugins/taskix-manager/obsidian/taskix-sync/styles.css"),
     )
     .unwrap();
     let mut manifest: Value = serde_json::from_str(include_str!(
@@ -651,10 +757,12 @@ fn load_sync_plugin(f: &DesktopFixture) {
             "(async () => {{ app.plugins.manifests['taskix-sync-smoke']={manifest}; await app.plugins.loadPlugin('taskix-sync-smoke'); window.taskixSyncSmoke=app.plugins.plugins['taskix-sync-smoke']; return !!window.taskixSyncSmoke; }})()"
         ),
     );
-    wait_for(&f.vault, "!!window.taskixSyncSmoke?.engine?.ready", |v| {
-        v == true
-    });
-    obsidian(&f.vault, "window.taskixSyncSmoke.checkConnection()");
+    wait_for(
+        &f.vault,
+        "({ready:!!window.taskixSyncSmoke?.engine?.ready,loaded:!!window.taskixSyncSmoke,notices:[...activeDocument.querySelectorAll('.notice')].map(el=>el.textContent)})",
+        |v| v["ready"] == true,
+    );
+    obsidian_action(&f.vault, "window.taskixSyncSmoke.checkConnection()");
     wait_for(
         &f.vault,
         "[...activeDocument.querySelectorAll('.notice')].some(el=>el.textContent.includes('Connected to taskix.'))",
@@ -678,7 +786,7 @@ fn exercise_status_bridge(
         obsidian(&f.vault, "typeof window.taskixSyncSmoke.engine.io.snapshot"),
         "undefined"
     );
-    obsidian(
+    obsidian_action(
         &f.vault,
         &format!(
             "(async()=>{{for (const path of [{},{}]) await window.taskixSyncSmoke.inspectFile(app.vault.getAbstractFileByPath(path)); await window.taskixSyncSmoke.engine.flush(); return true;}})()",
@@ -765,7 +873,6 @@ fn exercise_status_bridge(
         f.cli(&["task", "show", unleased["id"].as_str().unwrap()])["status"],
         "BLOCKED"
     );
-    exercise_inbox_bridge(f, job["project_id"].as_str().unwrap());
     obsidian(
         &f.vault,
         "(async () => {await app.plugins.unloadPlugin(\"taskix-sync-smoke\"); delete app.plugins.manifests[\"taskix-sync-smoke\"]; delete window.taskixSyncSmoke; return true;})()",
@@ -845,6 +952,21 @@ fn exercise_inbox_bridge(f: &DesktopFixture, project: &str) {
     edit(" ", "/");
     wait_for(&f.vault, &format!("({lookup})?.status"), |v| v == "ACTIVE");
     let rows = f.cli(&["inbox", "list", "--project", project]);
+    assert!(
+        rows[0]["job_id"].is_null(),
+        "manual ACTIVE does not create a Job"
+    );
+    f.cli(&[
+        "inbox",
+        "claim-next",
+        "--project",
+        project,
+        "--executor",
+        "agent:test",
+        "--session",
+        "desktop-inbox",
+    ]);
+    let rows = f.cli(&["inbox", "list", "--project", project]);
     let job = rows[0]["job_id"].as_str().unwrap();
     let task = f.cli(&[
         "task",
@@ -907,7 +1029,7 @@ fn exercise_inbox_bridge(f: &DesktopFixture, project: &str) {
 }
 
 #[test]
-#[ignore = "requires a visible TASKIX_OBSIDIAN_VAULT with TaskNotes/Bases enabled"]
+#[ignore = "requires a visible TASKIX_OBSIDIAN_VAULT with Obsidian 1.14+ Bases enabled"]
 fn pending_review_dashboard_and_boards_sort_by_lifecycle_times() {
     let _guard = DESKTOP_LOCK
         .lock()
@@ -915,8 +1037,9 @@ fn pending_review_dashboard_and_boards_sort_by_lifecycle_times() {
     let vault = std::env::var("TASKIX_OBSIDIAN_VAULT").expect("choose the test vault");
     let (mut f, project) = desktop_fixture(&vault);
     let (first_job, first_task) = desktop_finished_job(&f, &project, "First");
+    std::thread::sleep(Duration::from_secs(1));
     let (second_job, second_task) = desktop_finished_job(&f, &project, "Second");
-    // Resubmitting the older file must place it after the newer file.
+    // The resubmitted Job has the newest update; Task completion times stay fixed.
     std::thread::sleep(Duration::from_secs(1));
     f.cli(&["task", "update", &first_task, "--name", "Updated first"]);
     f.cli(&["job", "reject", &first_job, "--reason", "Recheck"]);
@@ -939,21 +1062,17 @@ fn pending_review_dashboard_and_boards_sort_by_lifecycle_times() {
     f.open(&board, "markdown");
     let expression = |leaf: &Value| {
         format!(
-            "[...app.workspace.getLeafById({leaf}).view.contentEl.querySelectorAll('.task-card')].map(el=>el.dataset.taskPath)"
+            "[...app.workspace.getLeafById({leaf}).view.contentEl.querySelectorAll('.bases-kanban-card[draggable] .mod-title .internal-link')].map(el=>el.dataset.href)"
         )
     };
-    let cards = wait_for(&vault, &expression(&f.leaf), |cards| {
-        cards.as_array().is_some_and(|cards| cards.len() == 4)
-    });
-    assert_eq!(
-        cards,
-        json!([
-            path(&second_job),
-            path(&first_job),
-            path(&second_task),
-            path(&first_task)
-        ])
-    );
+    let expected_board = json!([
+        path(&first_job),
+        path(&second_job),
+        path(&second_task),
+        path(&first_task)
+    ]);
+    let board = wait_native_board(&f, |v| native_card_paths(v) == expected_board);
+    assert_eq!(native_card_paths(&board), expected_board);
     let dashboard = f.output.path().join("Dashboard.base");
     let mut base: Value =
         serde_yaml::from_str(&std::fs::read_to_string(&dashboard).unwrap()).unwrap();
@@ -964,7 +1083,7 @@ fn pending_review_dashboard_and_boards_sort_by_lifecycle_times() {
     let cards = wait_for(&vault, &expression(&f.leaf), |cards| {
         cards.as_array().is_some_and(|cards| cards.len() == 2)
     });
-    assert_eq!(cards, json!([path(&second_job), path(&first_job)]));
+    assert_eq!(cards, json!([path(&first_job), path(&second_job)]));
 
     // Recent Jobs includes all projects and retains Jobs after review transitions.
     let other_root = f.metadata.path().join("other-project");
@@ -1002,60 +1121,6 @@ fn pending_review_dashboard_and_boards_sort_by_lifecycle_times() {
         cards,
         json!([other_path, path(&first_job), path(&second_job)])
     );
-}
-
-#[test]
-#[ignore = "requires an open TASKIX_OBSIDIAN_VAULT with TaskNotes enabled"]
-fn tasknotes_reads_and_writes_canonical_timestamps() {
-    let _guard = DESKTOP_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let vault = std::env::var("TASKIX_OBSIDIAN_VAULT").expect("choose the test vault");
-    let (f, project) = desktop_fixture(&vault);
-    let (_job, task) = desktop_finished_job(&f, &project, "Canonical dates");
-    let plan = f.cli(&["plan", "show", &task]);
-    let path = format!("{}/{}", f.relative, plan["path"].as_str().unwrap());
-    let lookup = format!(
-        "app.plugins.plugins.tasknotes.cacheManager.getTaskInfo({})",
-        json!(path)
-    );
-    let info = wait_for(&vault, &lookup, |value| value["completedDate"].is_string());
-    let props = obsidian(
-        &vault,
-        &format!(
-            "app.metadataCache.getFileCache(app.vault.getAbstractFileByPath({}))?.frontmatter",
-            json!(path)
-        ),
-    );
-    assert_eq!(info["dateCreated"], props["created_at"]);
-    assert_eq!(info["dateModified"], props["updated_at"]);
-    assert_eq!(info["completedDate"], props["completed_at"]);
-    obsidian_action(
-        &vault,
-        &format!(
-            "(async()=>{{const plugin=app.plugins.plugins.tasknotes;const task=await {lookup};await plugin.taskService.updateTask(task,{{priority:'high'}});}})()"
-        ),
-    );
-    let props = wait_for(
-        &vault,
-        &format!(
-            "app.metadataCache.getFileCache(app.vault.getAbstractFileByPath({}))?.frontmatter",
-            json!(path)
-        ),
-        |value| value["priority"] == "high",
-    );
-    for key in ["created_at", "updated_at", "completed_at"] {
-        assert!(props[key].is_string(), "{key}");
-    }
-    for key in [
-        "dateCreated",
-        "dateModified",
-        "completedDate",
-        "created",
-        "updated",
-    ] {
-        assert!(props.get(key).is_none(), "{key}");
-    }
 }
 
 fn desktop_finished_job(f: &DesktopFixture, project: &Value, name: &str) -> (String, String) {
@@ -1106,7 +1171,7 @@ fn desktop_finished_job(f: &DesktopFixture, project: &Value, name: &str) -> (Str
 }
 
 #[test]
-#[ignore = "requires a visible TASKIX_OBSIDIAN_VAULT with TaskNotes/Bases enabled"]
+#[ignore = "requires a visible TASKIX_OBSIDIAN_VAULT with Obsidian 1.14+ Bases enabled"]
 fn recent_jobs_cards_show_project_and_local_review_time() {
     let _guard = DESKTOP_LOCK
         .lock()
@@ -1114,9 +1179,10 @@ fn recent_jobs_cards_show_project_and_local_review_time() {
     let vault = std::env::var("TASKIX_OBSIDIAN_VAULT").expect("choose the test vault");
     let (mut f, project) = desktop_fixture(&vault);
     let (job, _) = desktop_finished_job(&f, &project, "Card fields");
+    load_sync_plugin(&f);
     f.open(&format!("{}/Recent Jobs.base", f.relative), "bases");
     let expression = format!(
-        "[...app.workspace.getLeafById({}).view.contentEl.querySelectorAll('.task-card')].map(el=>el.innerText)",
+        "[...app.workspace.getLeafById({}).view.contentEl.querySelectorAll('.bases-kanban-card[draggable]')].map(el=>el.innerText)",
         f.leaf
     );
     let cards = wait_for(&vault, &expression, |v| {
@@ -1132,15 +1198,10 @@ fn recent_jobs_cards_show_project_and_local_review_time() {
     );
     let text = cards[0].as_str().unwrap();
     assert_eq!(
-        obsidian(
-            &vault,
-            &format!(
-                "[...app.workspace.getLeafById({}).view.contentEl.querySelectorAll('.kanban-view__column')].map(el=>el.dataset.group)",
-                f.leaf
-            )
-        ),
-        json!(["ACTIVE", "PENDING_REVIEW", "COMPLETED", "CANCELLED"]),
-        "keep all Job statuses, including empty ones, without Task-only columns"
+        wait_native_board(&f, |v| v["columns"]
+            .as_array()
+            .is_some_and(|a| a.len() == 4))["columns"],
+        json!(["ACTIVE", "PENDING_REVIEW", "COMPLETED", "CANCELLED"])
     );
     assert!(
         text.contains(expected.as_str().unwrap()),
@@ -1153,7 +1214,7 @@ fn recent_jobs_cards_show_project_and_local_review_time() {
     let links = obsidian(
         &vault,
         &format!(
-            "[...app.workspace.getLeafById({}).view.contentEl.querySelectorAll('.task-card a.internal-link')].map(el=>el.dataset.href)",
+            "[...app.workspace.getLeafById({}).view.contentEl.querySelectorAll('.bases-kanban-card[draggable] .internal-link')].map(el=>el.dataset.href)",
             f.leaf
         ),
     );
@@ -1168,8 +1229,8 @@ fn recent_jobs_cards_show_project_and_local_review_time() {
 }
 
 #[test]
-#[ignore = "requires an open TASKIX_OBSIDIAN_VAULT with TaskNotes and Taskix Sync enabled"]
-fn recent_jobs_limits_each_status_to_ten_cards() {
+#[ignore = "requires an open TASKIX_OBSIDIAN_VAULT with Obsidian 1.14+ Bases enabled"]
+fn recent_jobs_shows_all_cards_with_bounded_scrollable_height() {
     let _guard = DESKTOP_LOCK
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -1204,8 +1265,7 @@ fn recent_jobs_limits_each_status_to_ten_cards() {
             let job = f.cli(&["job", "show", &id]);
             let relative = job["document_path"].as_str().unwrap();
             let path = f.output.path().join(relative);
-            // Distinct fixture times make the newest-ten expectation independent
-            // of machine speed and also exercise canonical timestamp sorting.
+            // Distinct fixture times exercise canonical timestamp sorting.
             let source = std::fs::read_to_string(&path).unwrap();
             let source = source
                 .lines()
@@ -1220,23 +1280,55 @@ fn recent_jobs_limits_each_status_to_ten_cards() {
                 .join("\n")
                 + "\n";
             std::fs::write(path, source).unwrap();
-            if rank >= 2 {
-                expected.push(format!("{}/{relative}", f.relative));
-            }
+            expected.push(format!("{}/{relative}", f.relative));
         }
     }
+    load_sync_plugin(&f);
     f.open(&format!("{}/Recent Jobs.base", f.relative), "bases");
-    let expression = format!(
-        "[...app.workspace.getLeafById({}).view.contentEl.querySelectorAll('.task-card')].map(el=>el.dataset.taskPath)",
-        f.leaf
+    let layout = obsidian(
+        &vault,
+        &format!(
+            "(() => {{const root=app.workspace.getLeafById({}).view.containerEl; const board=root.querySelector('.bases-view[data-view-type=kanban]'); return {{managed:root.classList.contains('taskix-board'),height:board.clientHeight,max:Math.min(600,innerHeight*.7),columns:[...board.querySelectorAll('.bases-kanban-column-content')].filter(el=>el.closest('.bases-kanban-column').querySelector('.bases-kanban-column-header[draggable]')).map(el=>({{height:el.clientHeight,scroll:el.scrollHeight,overflow:getComputedStyle(el).overflowY}}))}};}})()",
+            f.leaf
+        ),
     );
-    let cards = wait_for(&vault, &expression, |v| {
-        v.as_array().is_some_and(|a| a.len() == 40)
+    assert_eq!(layout["managed"], true);
+    assert!(
+        layout["height"].as_f64().unwrap() <= layout["max"].as_f64().unwrap() + 1.0,
+        "{layout}"
+    );
+    for column in layout["columns"].as_array().unwrap() {
+        assert!(
+            column["scroll"].as_u64().unwrap() > column["height"].as_u64().unwrap(),
+            "{layout}"
+        );
+        assert_eq!(column["overflow"], "auto", "{layout}");
+    }
+    let rendered = wait_native_board(&f, |v| {
+        v["columns"].as_array().is_some_and(|a| a.len() == 4)
     });
-    let expected: Vec<_> = expected
-        .chunks(10)
-        .flat_map(|chunk| chunk.iter().rev())
-        .cloned()
-        .collect();
-    assert_eq!(cards, json!(expected));
+    assert_eq!(
+        rendered["counts"],
+        json!(statuses.map(|status| json!({"status":status,"count":12})))
+    );
+    // Visit both axes before verifying each status's oldest Job is reachable.
+    let oldest: Vec<_> = expected.chunks(12).map(|chunk| chunk[0].clone()).collect();
+    let root = format!("app.workspace.getLeafById({}).view.contentEl", f.leaf);
+    obsidian(
+        &vault,
+        &format!(
+            "(()=>{{for(const el of {root}.querySelectorAll('.bases-kanban-column-content')) el.scrollTop=el.scrollHeight;return true;}})()"
+        ),
+    );
+    let rendered = native_board_snapshot(&f, true);
+    for path in oldest {
+        assert!(
+            rendered["cards"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|card| card["path"] == path),
+            "missing {path}: {rendered}"
+        );
+    }
 }

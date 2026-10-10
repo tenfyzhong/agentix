@@ -112,7 +112,10 @@ fn legacy_dashboard_migration_preserves_conflicts_and_recovers_in_a_new_process(
     assert!(!root.join("Dashboard.md").exists());
     let base_text = fs::read_to_string(&base).unwrap();
     let parsed: Value = serde_yaml::from_str(&base_text).unwrap();
-    assert_eq!(parsed["formulas"]["name"], "link(file.path, note.name)");
+    assert_eq!(
+        parsed["formulas"]["name"],
+        "link(file.path, if(note.name, note.name, note.title))"
+    );
     assert_eq!(
         parsed["views"][0]["order"],
         json!(["formula.name", "formula.status", "formula.updated"])
@@ -380,18 +383,19 @@ fn cli_dependency_graph_and_task_notes_follow_cross_job_changes() {
 }
 
 #[test]
-fn cli_projects_every_status_to_mermaid_and_tasknotes_with_matching_colors() {
-    let settings: Value = serde_json::from_str(include_str!(
-        "../../../../plugins/taskix-manager/obsidian/tasknotes-settings.json"
-    ))
-    .unwrap();
+fn cli_projects_every_status_to_mermaid_and_native_boards() {
+    let colors = [
+        ("TODO", "#cbd5e1"),
+        ("IN_PROGRESS", "#bfdbfe"),
+        ("BLOCKED", "#fed7aa"),
+        ("WAITING_USER", "#ddd6fe"),
+        ("DONE", "#bbf7d0"),
+        ("FAILED", "#fecaca"),
+        ("CANCELLED", "#e2d7e7"),
+    ];
     let cli = Cli::new();
     let job = cli.job("Every state");
-    for setting in settings["customStatuses"].as_array().unwrap() {
-        let status = setting["value"].as_str().unwrap();
-        if ["ACTIVE", "PENDING_REVIEW", "COMPLETED"].contains(&status) {
-            continue;
-        }
+    for (status, color) in colors {
         let task = cli.task(&job, status);
         let claim = cli.claim(&task, status);
         let plan = cli.owned(
@@ -434,7 +438,6 @@ fn cli_projects_every_status_to_mermaid_and_tasknotes_with_matching_colors() {
         let graph = fs::read_to_string(job_path(&cli, &job)).unwrap();
         assert!(graph.contains(&format!("{status} · {status}")));
         assert!(graph.contains(&format!(":::status_{status}")));
-        let color = setting["color"].as_str().unwrap();
         assert!(graph.contains(&format!(
             "classDef status_{status} fill:{color},stroke:{color},color:#1f2937"
         )));

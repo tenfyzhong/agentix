@@ -729,7 +729,7 @@ async fn assert_task_projection(service: &agentix_task::Service, reason: &str) {
         .split_once("\n```")
         .unwrap()
         .0;
-    assert!(board.contains("tasknotesKanban"));
+    assert!(board.contains("type: kanban"));
     assert!(board.contains(&format!("job_id == \"{}\"", state.jobs[0].id)));
     let note = service.plan(&state.tasks[0].id).await.unwrap();
     assert_eq!(note["properties"]["id"], state.tasks[0].id);

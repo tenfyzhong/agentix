@@ -266,9 +266,9 @@ test("npm package contains all host manifests, hooks and resources but no tests"
         "extensions/omp.ts",
         "skills/taskix-manager/SKILL.md",
         "skills/taskix-manager/references/commands.md",
-        "obsidian/tasknotes-settings.json",
         "obsidian/taskix-sync/manifest.json",
         "obsidian/taskix-sync/main.js",
+        "obsidian/taskix-sync/styles.css",
         "README.md",
     ])
         assert.ok(files.includes(path), `missing packaged file: ${path}`);

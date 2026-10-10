@@ -14,13 +14,6 @@ impl Fixture {
         let dir = tempfile::tempdir().unwrap();
         let f = Self { dir };
         fs::create_dir_all(f.path("vault/.obsidian")).unwrap();
-        fs::create_dir_all(f.path("bundle")).unwrap();
-        f.write(
-            "bundle/manifest.json",
-            &json!({"id":"tasknotes","version":"4.12.5","minAppVersion":"1.10.0"}),
-        );
-        fs::write(f.path("bundle/main.js"), "// fixture plugin").unwrap();
-        fs::write(f.path("bundle/styles.css"), "/* fixture styles */").unwrap();
         let config = Config {
             schema_version: 1,
             storage: StorageConfig {
@@ -46,23 +39,14 @@ impl Fixture {
     fn read(&self, name: &str) -> Value {
         serde_json::from_slice(&fs::read(self.path(name)).unwrap()).unwrap()
     }
-    fn run(&self, bundle: bool, success: bool) -> Value {
-        self.run_with(bundle, success, &[], None)
+    fn run(&self, success: bool) -> Value {
+        self.run_with(success, &[], None)
     }
-    fn run_with(
-        &self,
-        bundle: bool,
-        success: bool,
-        args: &[&str],
-        scenario: Option<&str>,
-    ) -> Value {
+    fn run_with(&self, success: bool, args: &[&str], scenario: Option<&str>) -> Value {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_taskix"));
         cmd.arg("--config")
             .arg(self.path("config.toml"))
             .args(["--json", "obsidian", "setup"]);
-        if bundle {
-            cmd.arg("--plugin-dir").arg(self.path("bundle"));
-        }
         let bin = self.path("bin");
         fs::create_dir_all(&bin).unwrap();
         if let Some(scenario) = scenario {
@@ -84,77 +68,69 @@ impl Fixture {
 }
 
 #[test]
-fn installs_configures_preserves_settings_and_repeats_without_download_or_database() {
+fn setup_ignores_tasknotes_and_installs_only_native_bases_and_sync() {
     let f = Fixture::new();
     f.write(
         "vault/.obsidian/community-plugins.json",
-        &json!(["other-plugin"]),
+        &json!(["other", "tasknotes"]),
+    );
+    f.write(
+        "vault/.obsidian/plugins/tasknotes/manifest.json",
+        &json!({"id":"tasknotes", "version":"3.0.0"}),
+    );
+    let legacy = f.path("vault/.obsidian/plugins/tasknotes/data.json");
+    fs::write(&legacy, "legacy settings left untouched").unwrap();
+    let result = f.run(true)["result"].clone();
+    assert_eq!(result["min_obsidian_version"], "1.14.0");
+    assert_eq!(
+        f.read("vault/.obsidian/community-plugins.json"),
+        json!(["other", "taskix-sync"])
+    );
+    assert_eq!(
+        fs::read_to_string(legacy).unwrap(),
+        "legacy settings left untouched"
+    );
+    assert!(
+        f.path("vault/.obsidian/plugins/taskix-sync/styles.css")
+            .is_file()
+    );
+    assert!(!f.path("vault/.obsidian/plugins/tasknotes/main.js").exists());
+    assert!(!f.path("tasks.sqlite3").exists());
+}
+
+#[test]
+fn installs_native_bases_and_sync_offline_and_repeats_without_database() {
+    let f = Fixture::new();
+    f.write(
+        "vault/.obsidian/community-plugins.json",
+        &json!(["other-plugin", "tasknotes"]),
     );
     f.write(
         "vault/.obsidian/core-plugins.json",
         &json!({"graph":false,"file-explorer":true,"bases":false}),
     );
-    let authored = json!({"calendarView":"week","fieldMapping":{"priority":"importance","status":"state"},"customStatuses":[{"id":"personal","value":"REVIEW","label":"Review","color":"red"},{"id":"existing-todo","value":"TODO","label":"Old","autoArchive":true}]});
-    f.write("vault/.obsidian/plugins/tasknotes/data.json", &authored);
-    let result = f.run(true, true)["result"].clone();
+    let result = f.run(true)["result"].clone();
     assert_eq!(result["installed"], true);
     assert_eq!(result["restart_required"], true);
+    assert_eq!(result["min_obsidian_version"], "1.14.0");
     assert_eq!(
         f.read("vault/.obsidian/community-plugins.json"),
-        json!(["other-plugin", "tasknotes", "taskix-sync"])
+        json!(["other-plugin", "taskix-sync"])
     );
     assert_eq!(
         f.read("vault/.obsidian/core-plugins.json"),
         json!({"graph":false,"file-explorer":true,"bases":true})
     );
-    let settings = f.read("vault/.obsidian/plugins/tasknotes/data.json");
-    assert_eq!(settings["calendarView"], "week");
-    assert_eq!(settings["fieldMapping"]["priority"], "importance");
-    assert_eq!(settings["fieldMapping"]["status"], "status");
-    for (key, field) in [
-        ("dateCreated", "created_at"),
-        ("dateModified", "updated_at"),
-        ("completedDate", "completed_at"),
-    ] {
-        assert_eq!(settings["fieldMapping"][key], field);
-    }
-    assert_eq!(settings["taskTag"], "task");
-    assert_eq!(settings["taskIdentificationMethod"], "tag");
-    assert_eq!(settings["defaultTaskStatus"], "TODO");
-    assert_eq!(settings["openTaskAfterCreation"], "none");
-    assert_eq!(settings["singleClickAction"], "openNote");
-    let preset: Value = serde_json::from_str(include_str!(
-        "../../../plugins/taskix-manager/obsidian/tasknotes-settings.json"
-    ))
-    .unwrap();
-    let statuses = settings["customStatuses"].as_array().unwrap();
-    assert_eq!(statuses.len(), 11);
-    for expected in preset["customStatuses"].as_array().unwrap() {
-        let actual = statuses
-            .iter()
-            .find(|s| s["value"] == expected["value"])
-            .unwrap();
-        for key in ["color", "isCompleted", "autoArchive", "order"] {
-            assert_eq!(actual[key], expected[key]);
-        }
-    }
-    assert!(statuses.iter().any(|s| s == &authored["customStatuses"][0]));
     let backup = Path::new(result["backup"].as_str().unwrap());
     assert_eq!(
-        serde_json::from_slice::<Value>(
-            &fs::read(backup.join("plugins/tasknotes/data.json")).unwrap()
-        )
-        .unwrap(),
-        authored
+        serde_json::from_slice::<Value>(&fs::read(backup.join("community-plugins.json")).unwrap())
+            .unwrap(),
+        json!(["other-plugin", "tasknotes"])
     );
-    let before = fs::read(f.path("vault/.obsidian/plugins/tasknotes/data.json")).unwrap();
-    let repeat = f.run(false, true);
+    let repeat = f.run(true);
     assert_eq!(repeat["result"]["installed"], false);
     assert_eq!(repeat["result"]["changed"], false);
-    assert_eq!(
-        before,
-        fs::read(f.path("vault/.obsidian/plugins/tasknotes/data.json")).unwrap()
-    );
+    assert!(!f.path("vault/.obsidian/plugins/tasknotes").exists());
     assert!(!f.path("tasks.sqlite3").exists());
     assert!(!f.path("vault/Tasks").exists());
 }
@@ -166,7 +142,7 @@ fn enables_bases_in_legacy_array_without_losing_other_plugins() {
         "vault/.obsidian/core-plugins.json",
         &json!(["graph", "daily-notes"]),
     );
-    f.run(true, true);
+    f.run(true);
     assert_eq!(
         f.read("vault/.obsidian/core-plugins.json"),
         json!(["graph", "daily-notes", "bases"])
@@ -176,19 +152,15 @@ fn enables_bases_in_legacy_array_without_losing_other_plugins() {
 #[test]
 fn malformed_settings_or_plugin_lists_are_preserved_before_installation() {
     for (file, content) in [
-        ("plugins/tasknotes/data.json", "not json"),
-        ("plugins/tasknotes/data.json", "[]"),
         ("community-plugins.json", "{}"),
         ("plugins/taskix-sync/data.json", "[]"),
         ("core-plugins.json", "null"),
-        ("plugins/tasknotes/data.json", "{\"customStatuses\":false}"),
-        ("plugins/tasknotes/data.json", "{\"fieldMapping\":[]}"),
     ] {
         let f = Fixture::new();
         let path = f.path(&format!("vault/.obsidian/{file}"));
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, content).unwrap();
-        f.run(true, false);
+        f.run(false);
         assert_eq!(fs::read_to_string(path).unwrap(), content);
         assert!(!f.path("vault/.obsidian/plugins/tasknotes/main.js").exists());
         assert!(!f.path("tasks.sqlite3").exists());
@@ -196,31 +168,10 @@ fn malformed_settings_or_plugin_lists_are_preserved_before_installation() {
 }
 
 #[test]
-fn invalid_or_incomplete_bundles_leave_vault_unchanged() {
-    for bad in ["identity", "version", "missing", "empty"] {
-        let f = Fixture::new();
-        match bad {
-            "identity" => f.write(
-                "bundle/manifest.json",
-                &json!({"id":"other","version":"4.12.5"}),
-            ),
-            "version" => f.write(
-                "bundle/manifest.json",
-                &json!({"id":"tasknotes","version":"3.0.0"}),
-            ),
-            "missing" => fs::remove_file(f.path("bundle/main.js")).unwrap(),
-            _ => fs::write(f.path("bundle/main.js"), "").unwrap(),
-        }
-        f.run(true, false);
-        assert_eq!(fs::read_dir(f.path("vault/.obsidian")).unwrap().count(), 0);
-    }
-}
-
-#[test]
 fn non_vault_configuration_is_rejected_without_creating_task_state() {
     let f = Fixture::new();
     fs::remove_dir(f.path("vault/.obsidian")).unwrap();
-    let result = f.run(true, false);
+    let result = f.run(false);
     assert!(
         result["error"]["message"]
             .as_str()
@@ -236,9 +187,7 @@ fn symlinked_configuration_paths_cannot_change_external_files() {
     for relative in [
         ".obsidian",
         ".obsidian/plugins",
-        ".obsidian/plugins/tasknotes",
         ".obsidian/community-plugins.json",
-        ".obsidian/plugins/tasknotes/data.json",
         ".obsidian/plugins/taskix-sync",
         ".obsidian/plugins/taskix-sync/data.json",
     ] {
@@ -252,34 +201,19 @@ fn symlinked_configuration_paths_cannot_change_external_files() {
         }
         fs::create_dir_all(dest.parent().unwrap()).unwrap();
         std::os::unix::fs::symlink(&external, &dest).unwrap();
-        f.run(true, false);
+        f.run(false);
         assert_eq!(fs::read_dir(external).unwrap().count(), 1);
-    }
-}
-
-#[test]
-fn ambiguous_status_definitions_are_rejected_before_installation() {
-    for statuses in [
-        json!([{"id":"one","value":"TODO"},{"id":"two","value":"TODO"}]),
-        json!([{"id":"agent-todo","value":"REVIEW"}]),
-    ] {
-        let f = Fixture::new();
-        f.write(
-            "vault/.obsidian/plugins/tasknotes/data.json",
-            &json!({"customStatuses":statuses}),
-        );
-        f.run(true, false);
-        assert!(!f.path("vault/.obsidian/plugins/tasknotes/main.js").exists());
     }
 }
 
 #[test]
 fn installs_sync_plugin_with_absolute_paths_and_preserves_user_configuration() {
     let f = Fixture::new();
-    f.run(true, true);
+    f.run(true);
     let manifest = f.read("vault/.obsidian/plugins/taskix-sync/manifest.json");
     assert_eq!(manifest["id"], "taskix-sync");
     assert_eq!(manifest["isDesktopOnly"], true);
+    assert_eq!(manifest["minAppVersion"], "1.14.0");
     assert!(
         f.path("vault/.obsidian/plugins/taskix-sync/main.js")
             .is_file()
@@ -302,35 +236,18 @@ fn installs_sync_plugin_with_absolute_paths_and_preserves_user_configuration() {
     let custom =
         json!({"cliPath":"/custom/taskix", "configPath":"/custom/config.toml", "other":true});
     f.write("vault/.obsidian/plugins/taskix-sync/data.json", &custom);
-    f.run(false, true);
-    assert_eq!(f.run(false, true)["result"]["changed"], false);
+    f.run(true);
+    assert_eq!(f.run(true)["result"]["changed"], false);
     assert_eq!(
         f.read("vault/.obsidian/plugins/taskix-sync/data.json"),
         custom
     );
-    let settings = f.read("vault/.obsidian/plugins/tasknotes/data.json");
-    for (value, color) in [
-        ("ACTIVE", "#bfdbfe"),
-        ("PENDING_REVIEW", "#fed7aa"),
-        ("COMPLETED", "#bbf7d0"),
-    ] {
-        let status = settings["customStatuses"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|s| s["value"] == value)
-            .unwrap();
-        assert_eq!(status["color"], color);
-        assert_eq!(status["isCompleted"], value == "COMPLETED");
-        assert_eq!(status["excludeFromCycle"], true);
-        assert_eq!(status["autoArchive"], false);
-    }
 }
 
 #[test]
 fn setup_reloads_the_configured_vault_after_installing_files() {
     let f = Fixture::new();
-    let result = f.run_with(true, true, &[], Some("success"))["result"].clone();
+    let result = f.run_with(true, &[], Some("success"))["result"].clone();
     assert_eq!(result["reloaded"], true);
     assert_eq!(result["restart_required"], false);
     assert!(result["reload_error"].is_null());
@@ -340,7 +257,7 @@ fn setup_reloads_the_configured_vault_after_installing_files() {
     assert!(calls.contains("info=path"));
     assert!(calls.ends_with("reload\n"));
     fs::remove_file(f.path("vault/cli-calls")).unwrap();
-    let repeat = f.run_with(false, true, &[], Some("success"));
+    let repeat = f.run_with(true, &[], Some("success"));
     assert_eq!(repeat["result"]["changed"], false);
     assert_eq!(repeat["result"]["reloaded"], false);
     assert!(!f.path("vault/cli-calls").exists());
@@ -349,7 +266,7 @@ fn setup_reloads_the_configured_vault_after_installing_files() {
 #[test]
 fn setup_no_reload_does_not_contact_obsidian() {
     let f = Fixture::new();
-    let result = f.run_with(true, true, &["--no-reload"], Some("success"));
+    let result = f.run_with(true, &["--no-reload"], Some("success"));
     assert_eq!(result["result"]["reloaded"], false);
     assert_eq!(result["result"]["restart_required"], true);
     assert!(!f.path("vault/cli-calls").exists());
@@ -364,7 +281,7 @@ fn setup_reload_failures_keep_the_installation_and_explain_manual_recovery() {
         Some("reload-error-output"),
     ] {
         let f = Fixture::new();
-        let result = f.run_with(true, true, &[], scenario)["result"].clone();
+        let result = f.run_with(true, &[], scenario)["result"].clone();
         assert_eq!(result["reloaded"], false, "{scenario:?}: {result}");
         assert_eq!(result["restart_required"], true);
         assert!(
@@ -382,7 +299,10 @@ fn setup_reload_failures_keep_the_installation_and_explain_manual_recovery() {
             f.path("vault/.obsidian/plugins/taskix-sync/main.js")
                 .exists()
         );
-        assert!(f.path("vault/.obsidian/plugins/tasknotes/main.js").exists());
+        assert!(
+            f.path("vault/.obsidian/plugins/taskix-sync/styles.css")
+                .exists()
+        );
         if scenario == Some("wrong-vault") {
             let calls = fs::read_to_string(f.path("vault/cli-calls")).unwrap();
             assert!(!calls.contains("plugin:disable"));
@@ -396,31 +316,30 @@ fn setup_preserves_settings_saved_during_plugin_shutdown() {
     let f = Fixture::new();
     f.write(
         "vault/.obsidian/community-plugins.json",
-        &json!(["other", "tasknotes", "taskix-sync"]),
+        &json!(["other", "taskix-sync"]),
     );
-    let result = f.run_with(true, true, &[], Some("loaded"))["result"].clone();
+    let result = f.run_with(true, &[], Some("loaded"))["result"].clone();
     assert_eq!(result["reloaded"], true);
-    let settings = f.read("vault/.obsidian/plugins/tasknotes/data.json");
-    assert_eq!(settings["calendarView"], "month");
-    assert_eq!(settings["taskTag"], "task");
+    let settings = f.read("vault/.obsidian/plugins/taskix-sync/data.json");
+    assert_eq!(settings["savedDuringShutdown"], true);
     assert_eq!(
         f.read("vault/.obsidian/community-plugins.json"),
-        json!(["other", "tasknotes", "taskix-sync"])
+        json!(["other", "taskix-sync"])
     );
     let backup = Path::new(result["backup"].as_str().unwrap());
     assert_eq!(
         serde_json::from_slice::<Value>(
-            &fs::read(backup.join("plugins/tasknotes/data.json")).unwrap()
+            &fs::read(backup.join("plugins/taskix-sync/data.json")).unwrap()
         )
-        .unwrap()["taskTag"],
-        "old"
+        .unwrap()["savedDuringShutdown"],
+        true
     );
 }
 
 #[test]
 fn setup_restores_disabled_plugins_if_publication_fails() {
     let f = Fixture::new();
-    f.run_with(true, false, &[], Some("publication-fails"));
+    f.run_with(false, &[], Some("publication-fails"));
     let calls = fs::read_to_string(f.path("vault/cli-calls")).unwrap();
     assert!(calls.contains("plugin:enable"));
     assert!(!calls.contains("reload"));
@@ -429,7 +348,7 @@ fn setup_restores_disabled_plugins_if_publication_fails() {
 #[test]
 fn setup_reload_timeout_keeps_installed_files() {
     let f = Fixture::new();
-    let result = f.run_with(true, true, &[], Some("reload-timeout"))["result"].clone();
+    let result = f.run_with(true, &[], Some("reload-timeout"))["result"].clone();
     assert_eq!(result["restart_required"], true);
     assert!(
         result["reload_error"]
@@ -437,19 +356,22 @@ fn setup_reload_timeout_keeps_installed_files() {
             .unwrap()
             .contains("timed out")
     );
-    assert!(f.path("vault/.obsidian/plugins/tasknotes/main.js").exists());
+    assert!(
+        f.path("vault/.obsidian/plugins/taskix-sync/styles.css")
+            .exists()
+    );
 }
 
 #[test]
 fn setup_retains_desired_enabled_list_when_reload_or_shutdown_fails() {
     for scenario in ["loaded-reload-fails", "disable-fails"] {
         let f = Fixture::new();
-        let result = f.run_with(true, true, &[], Some(scenario))["result"].clone();
+        let result = f.run_with(true, &[], Some(scenario))["result"].clone();
         assert_eq!(result["restart_required"], true);
         assert!(result["reload_error"].is_string());
         assert_eq!(
             f.read("vault/.obsidian/community-plugins.json"),
-            json!(["other", "tasknotes", "taskix-sync"])
+            json!(["other", "taskix-sync"])
         );
     }
 }
@@ -463,7 +385,7 @@ fn setup_passes_vault_names_with_spaces_as_one_argument() {
     let mut config: Config = toml::from_str(&fs::read_to_string(&config_path).unwrap()).unwrap();
     config.documents.root = renamed.clone();
     fs::write(config_path, toml::to_string(&config).unwrap()).unwrap();
-    let result = f.run_with(true, true, &[], Some("success"))["result"].clone();
+    let result = f.run_with(true, &[], Some("success"))["result"].clone();
     assert_eq!(result["reloaded"], true);
     assert!(renamed.join("reloaded").exists());
 }
@@ -471,7 +393,7 @@ fn setup_passes_vault_names_with_spaces_as_one_argument() {
 #[test]
 fn setup_merges_configuration_initialized_when_the_cli_launches_obsidian() {
     let f = Fixture::new();
-    let result = f.run_with(true, true, &[], Some("startup-settings"))["result"].clone();
+    let result = f.run_with(true, &[], Some("startup-settings"))["result"].clone();
     assert_eq!(result["reloaded"], true);
     assert_eq!(
         f.read("vault/.obsidian/core-plugins.json"),
@@ -479,6 +401,6 @@ fn setup_merges_configuration_initialized_when_the_cli_launches_obsidian() {
     );
     assert_eq!(
         f.read("vault/.obsidian/community-plugins.json"),
-        json!(["other", "tasknotes", "taskix-sync"])
+        json!(["other", "taskix-sync"])
     );
 }
