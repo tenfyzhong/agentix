@@ -1,5 +1,16 @@
 use super::*;
 
+fn assert_board_root(document: &str, root: &std::path::Path) {
+    let properties: Value = serde_yaml::from_str(document.split("---").nth(1).unwrap()).unwrap();
+    let published =
+        agentix_task::expand_home(std::path::Path::new(properties["root"].as_str().unwrap()))
+            .unwrap();
+    assert_eq!(
+        published.canonicalize().unwrap(),
+        root.canonicalize().unwrap()
+    );
+}
+
 #[tokio::test]
 async fn project_move_preserves_work_and_updates_directory_lookup_and_board() {
     let f = Fixture::new().await;
@@ -56,7 +67,7 @@ async fn project_move_preserves_work_and_updates_directory_lookup_and_board() {
             .join("Projects/demo/Board.md"),
     )
     .unwrap();
-    assert!(board.contains(destination.path().canonicalize().unwrap().to_str().unwrap()));
+    assert_board_root(&board, destination.path());
     assert!(board.contains("git@example.com:renamed/repository.git"));
     assert_eq!(
         f.service.execute(request, options).await.unwrap().result,
@@ -262,10 +273,9 @@ async fn project_move_preserves_archival_state_and_recovers_pending_board_projec
     std::fs::remove_dir(&board).unwrap();
     std::fs::write(&board, source).unwrap();
     f.service.sync_pending_documents().await.unwrap();
-    assert!(
-        std::fs::read_to_string(&board)
-            .unwrap()
-            .contains(&current.root)
+    assert_board_root(
+        &std::fs::read_to_string(&board).unwrap(),
+        std::path::Path::new(&current.root),
     );
     assert!(!f.service.store().has_pending_documents().await.unwrap());
 }
