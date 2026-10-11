@@ -263,6 +263,7 @@ async fn metrics_legacy_read_is_compatible_and_full_summary_fits_a_screen() {
         "outcome",
         "review_policy",
         "completion",
+        "memory_triage",
     ] {
         sqlx::query("INSERT INTO requests VALUES (?,1,NULL,NULL,NULL,'jev',0.65,1,1,1,'selected',NULL,NULL,0,?)")
             .bind(kind).bind(kind).execute(&mut db).await.unwrap();
@@ -275,6 +276,7 @@ async fn metrics_legacy_read_is_compatible_and_full_summary_fits_a_screen() {
         "outcome",
         "completion",
         "issue",
+        "memory_triage",
     ] {
         sqlx::query("INSERT INTO answers VALUES ('routing',?,NULL,'keep',0.9,0.9,0.9,1,NULL)")
             .bind(question)
@@ -289,11 +291,21 @@ async fn metrics_legacy_read_is_compatible_and_full_summary_fits_a_screen() {
             .await
             .unwrap();
     }
+    sqlx::query("UPDATE requests SET action='skip' WHERE kind='memory_triage'")
+        .execute(&mut db)
+        .await
+        .unwrap();
     db.close().await.unwrap();
+    let output = command(&dir, &["routing", "metrics", "report", "--json"]);
+    assert!(output.status.success());
+    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["result"]["by_kind"].as_array().unwrap().len(), 7);
+    assert_eq!(report["result"]["memory_triage"]["requests"], 1);
+    assert_eq!(report["result"]["memory_triage"]["skipped"], 1);
     let output = command(&dir, &["routing", "metrics", "report"]);
     assert!(output.status.success());
     let text = String::from_utf8_lossy(&output.stdout);
-    assert!(text.lines().count() <= 23, "{text}");
+    assert!(text.lines().count() <= 24, "{text}");
     assert!(text.lines().all(|line| line.len() <= 80), "{text}");
     for kind in [
         "routing",
@@ -302,6 +314,7 @@ async fn metrics_legacy_read_is_compatible_and_full_summary_fits_a_screen() {
         "outcome",
         "review_policy",
         "completion",
+        "memory_triage",
     ] {
         assert!(text.contains(kind), "{text}");
     }

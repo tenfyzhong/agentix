@@ -67,7 +67,7 @@ called/accepted counts, adoption, reviewed accuracy and preparation duration.
 configured threshold; turn_N normalizes to discussion; issue is already a single-choice question.
 A question may pass while its request falls back on another question or guard.
 These are not independent human correctness labels. Existing JSON report fields
-remain available. The default text summary fits 80 columns and 23 lines for all
+remain available. The default text summary fits 80 columns and 24 lines for all
 supported kinds/questions; `--details` expands diagnostics and `--json` retains
 all data. Historical v1 data cannot reconstruct past unrecorded lifecycle calls. No prompt/history bodies, credentials,
 endpoint URLs, raw model responses or task leases belong in this schema.
@@ -104,3 +104,36 @@ outcomes, not completed work or model-call savings. Retries/chunks are separate
 evaluations. Disabled Jev does not emit requests. The compact report adds one
 skip/extract/fallback summary when such records exist. The Rust writer performs
 the same transactional v1 migration; a failed append rolls back migration too.
+
+
+## Runtime coverage
+
+| Request kind | Jev decision | Collector |
+| --- | --- | --- |
+| `routing` | Prompt intent, Job ownership, applicable review policy and Issue association | Shared host runtime and `routePrompt` |
+| `discussion` | Ownership of pending conversation turns | `selectDiscussion` |
+| `recovery` | Task recovery or explicit Task transition | `assessLifecycle` |
+| `outcome` | Continue, wait, block, fail or ready assessment | `assessLifecycle` |
+| `review_policy` | Scope-based review requirement | `assessLifecycle` |
+| `completion` | Whole-Job completion destination | `assessLifecycle` |
+| `memory_triage` | Skip or retain a chunk for memory extraction | Memory service `JevTriage` |
+
+All four agent hosts use the shared plugin collectors. Issue matching is an
+`issue` question within a routing request, not a separate provider call.
+The report groups recorded kinds dynamically; a missing row means no retained
+sample of that kind, not that the kind is unsupported. Enable both
+`TASKIX_JEV_ENABLED` and `TASKIX_JEV_METRICS_ENABLED` in each calling process,
+and use the same `TASKIX_JEV_METRICS_DB` to combine host and memory-service data.
+Disabled or invalid Jev configuration produces no evaluation record.
+Deterministic discussion selection without a provider call is also omitted.
+
+Offline replay tests and `scripts/taskix-memory-eval.py` keep their own evaluation
+results and do not append experiments to runtime metrics. Memory extraction and
+consolidation use their configured model provider, not Jev, and are outside this
+report. Runtime provider failures and preflight fallbacks are recorded when
+collection is enabled, subject to the bounded best-effort writer.
+
+The combined CLI regression covers all seven kinds and their compact/JSON views.
+A mocked HTTP triage regression verifies one persisted event per actual decision,
+including skip, extract, uncertainty, malformed answers, service errors and
+oversized input, with no source text or credentials in the metrics database.

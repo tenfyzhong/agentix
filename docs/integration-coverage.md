@@ -657,3 +657,19 @@ Additional Issue regression coverage:
 The fixtures check behavioral and materialization bounds. They do not establish production p95 latency, exhaustive interleavings, or 100% line/branch coverage. Full rebuild and cancellation costs grow with affected data by design. Live IM account delivery is outside the mocked adapter contract.
 
 Feishu, Telegram and Slack adapter HTTP tests validate local rendered controls. They do not prove live account delivery. The isolated Obsidian acceptance exercises actual native Base filtering and status/body writes; the optional desktop regression requires an explicitly selected open vault.
+
+
+## Jev metrics collection
+
+The seven runtime decision kinds are routing, discussion, recovery, outcome,
+review policy, completion and memory triage. Issue association is recorded as a
+question within routing. `plugins/taskix-manager/tests/jev-metrics.test.mjs`
+covers shared host collection, nested-helper deduplication, lifecycle/discussion
+fallbacks, schema compatibility and native CLI interoperability.
+`crates/taskix/tests/metrics.rs` verifies all seven kinds together in compact and
+JSON reports. `actual_triage_calls_record_success_and_fallback_metrics_once`
+uses local HTTP responses and a temporary database to verify memory-service
+collection for successful, uncertain, invalid, failed and oversized-input
+decisions, including the absence of source text and credentials.
+These tests do not measure real provider accuracy or guarantee retention when
+best-effort writes time out.

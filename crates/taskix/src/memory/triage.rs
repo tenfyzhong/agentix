@@ -284,6 +284,88 @@ mod tests {
         (source, lease)
     }
     #[tokio::test]
+    async fn actual_triage_calls_record_success_and_fallback_metrics_once() {
+        use sqlx::{Connection, Row};
+        let answer = |choice: &str| {
+            json!({"answers":{"memory_triage":{
+                "type":"choice","choice":choice,"confidence":0.99,
+                "probabilities":{"skip":if choice=="skip" {0.99} else {0.005},
+                    "extract":if choice=="extract" {0.99} else {0.005},
+                    "uncertain":if choice=="uncertain" {0.99} else {0.005}}
+            }}})
+        };
+        let server = mock_http::MockHttp::start(vec![
+            (200, answer("skip")),
+            (200, answer("extract")),
+            (200, answer("uncertain")),
+            (200, json!({"answers":{}})),
+            (503, json!({})),
+        ])
+        .await;
+        let mut env = environment();
+        env.insert("TASKIX_JEV_URL".into(), server.url.clone());
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("metrics.sqlite");
+        let gate = JevTriage {
+            config: JevConfig::read(|key| env.get(key).cloned()).unwrap(),
+            client: reqwest::Client::new(),
+            metrics: Some(path.clone()),
+        };
+        let (source, lease) = source_and_lease("Private source text");
+        for action in ["skip", "extract", "agent", "agent", "agent"] {
+            let result = gate.evaluate(&source, &lease).await.unwrap();
+            assert_eq!(result.audit["action"], action);
+        }
+        let (large_source, large_lease) = source_and_lease(&"界".repeat(11_000));
+        gate.evaluate(&large_source, &large_lease).await.unwrap();
+        assert_eq!(server.requests.lock().unwrap().len(), 5);
+        let mut db = sqlx::SqliteConnection::connect_with(
+            &sqlx::sqlite::SqliteConnectOptions::new().filename(&path),
+        )
+        .await
+        .unwrap();
+        let rows = sqlx::query(
+            "SELECT kind,called,accepted,action,reason,answer_count FROM requests ORDER BY rowid",
+        )
+        .fetch_all(&mut db)
+        .await
+        .unwrap();
+        assert_eq!(rows.len(), 6);
+        for (row, (action, called, accepted, answers, reason)) in rows.iter().zip([
+            ("skip", 1, 1, 1, None),
+            ("extract", 1, 1, 1, None),
+            ("agent", 1, 0, 1, Some("uncertain_choice")),
+            ("agent", 1, 0, 1, Some("invalid_answer")),
+            ("agent", 1, 0, 0, Some("service_unavailable")),
+            ("agent", 0, 0, 0, Some("context_too_large")),
+        ]) {
+            assert_eq!(row.get::<String, _>("kind"), "memory_triage");
+            assert_eq!(row.get::<String, _>("action"), action);
+            assert_eq!(row.get::<i64, _>("called"), called);
+            assert_eq!(row.get::<i64, _>("accepted"), accepted);
+            assert_eq!(row.get::<i64, _>("answer_count"), answers);
+            assert_eq!(row.get::<Option<String>, _>("reason").as_deref(), reason);
+        }
+        let scores = sqlx::query("SELECT question,subject_id FROM answers")
+            .fetch_all(&mut db)
+            .await
+            .unwrap();
+        assert_eq!(scores.len(), 4);
+        for score in scores {
+            assert_eq!(score.get::<String, _>("question"), "memory_triage");
+            assert_eq!(score.get::<String, _>("subject_id"), "receipt:1");
+        }
+        db.close().await.unwrap();
+        let data = std::fs::read(&path).unwrap();
+        assert!(
+            !data
+                .windows(b"Private source text".len())
+                .any(|w| w == b"Private source text")
+        );
+        assert!(!data.windows(b"test-key".len()).any(|w| w == b"test-key"));
+    }
+
+    #[tokio::test]
     async fn oversized_context_falls_back_without_request_and_metrics_failure_does_not_change_skip()
     {
         let server = mock_http::MockHttp::start(vec![(200,json!({"answers":{"memory_triage":{"type":"choice","choice":"skip","confidence":0.99,"probabilities":{"skip":0.99,"extract":0.005,"uncertain":0.005}}}}))]).await;
