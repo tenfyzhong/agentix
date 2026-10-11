@@ -112,3 +112,8 @@ test("fallback_rendering_benchmark", { skip: process.env.TASKIX_ROUTING_BENCH !=
         t.diagnostic(JSON.stringify({ candidates: count, iterations, meanMs: (performance.now() - start) / iterations, contextChars: content.length }));
     }
 });
+
+test("fallback_preserves_metadata_only_issue_titles_and_document_paths", () => {
+    const facts = decode(agentFallback({ issue_candidates: [{ id: "issue_one", title: "Add search", document_path: "Projects/demo/Issues/Search.md" }] }, routed));
+    assert.deepEqual(facts.summaries, [{ issue_id: "issue_one", title: "Add search", document_path: "Projects/demo/Issues/Search.md" }]);
+});

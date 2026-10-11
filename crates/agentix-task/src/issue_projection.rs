@@ -375,7 +375,12 @@ impl Service {
         path: &str,
         previous: &BTreeMap<String, String>,
     ) -> Result<String> {
-        let path = self.safe_path(previous.get(key).map_or(path, String::as_str))?;
+        let registered = self.safe_path(previous.get(key).map_or(path, String::as_str))?;
+        let path = if registered.exists() {
+            registered
+        } else {
+            self.safe_path(path)?
+        };
         if !path.exists() {
             return Ok(String::new());
         }
@@ -429,16 +434,18 @@ impl Service {
                 continue;
             }
             if source_hash != issue.content_hash {
+                let request = json!({"command":"issue.update","issue":issue.id,
+                    "content_hash":source_hash,"review_content_hash":content.review_hash()});
                 let outcome = self
                     .store()
-                    .execute(
-                        json!({"command":"issue.update","issue":issue.id,
-                    "content_hash":source_hash,"review_content_hash":content.review_hash()}),
+                    .execute_as(
+                        request.clone(),
                         WriteOptions {
                             actor_ref: "user:obsidian".into(),
                             expected_revision: Some(issue.revision),
                             ..WriteOptions::default()
                         },
+                        request,
                     )
                     .await?;
                 imported.insert(

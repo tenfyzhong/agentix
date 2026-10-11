@@ -139,6 +139,7 @@ impl Service {
 
     #[allow(clippy::too_many_lines)] // Keep document observation, replay and guarded writes in one boundary.
     pub async fn execute(&self, mut request: Value, mut options: WriteOptions) -> Result<Outcome> {
+        crate::issue::validate_public_hashes(&request)?;
         self.store.reap_expired().await?;
         let command_name = required(&request, "command")?.to_owned();
         let command = command_name.as_str();

@@ -37,6 +37,6 @@ export function agentFallback(context, routed) {
     }
     if (context.task) append(summaries, { task_id: reference(context.task_id), issue_id: reference(context.issue_id), status: short(context.task.status), reason: short(context.task.reason) });
     for (const c of candidates.slice(0, MAX_REFERENCES)) append(summaries, { job_id: reference(c.job.id), status: short(c.job.status), title: short(c.job.title), prompt: short(c.job.prompt) });
-    for (const e of issues.slice(0, MAX_REFERENCES)) append(summaries, { issue_id: reference(e.id), requirement: short(e.requirement), acceptance: short(e.acceptance) });
+    for (const e of issues.slice(0, MAX_REFERENCES)) append(summaries, { issue_id: reference(e.id), title: short(e.title), document_path: short(e.document_path), requirement: short(e.requirement), acceptance: short(e.acceptance) });
     return `${prefix},"candidate_ids":[${candidateIds.join(",")}],"issue_ids":[${issueIds.join(",")}],"summaries":[${summaries.join(",")}]}`;
 }

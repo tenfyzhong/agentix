@@ -1382,3 +1382,191 @@ async fn issue_content_update_and_project_rename_preserve_custom_prose_and_manag
     assert!(body.contains("Projects/Renamed project/Issue.base#Related Jobs"));
     assert!(body.contains("Keep this outside the template."));
 }
+
+async fn restore_legacy_issue_content(f: &Fixture, item: &Value) {
+    let mut conn = super::incremental::connection(f).await;
+    sqlx::query("DROP TRIGGER IF EXISTS issue_metadata_update")
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE issues SET data=json_set(data,'$.requirement','Allow users to sign in.','$.acceptance','- [ ] Valid users succeed.','$.notes','Keep browser sessions.') WHERE id=?")
+        .bind(item["id"].as_str().unwrap()).execute(&mut conn).await.unwrap();
+}
+
+#[tokio::test]
+async fn issue_public_requests_reject_caller_supplied_content_hashes() {
+    let f = Fixture::new().await;
+    let item = create_issue(&f).await;
+    for key in ["content_hash", "review_content_hash"] {
+        for hash in ["invalid/path", "deadbeef"] {
+            let mut request = json!({"command":"issue.update","issue":item["id"]});
+            request[key] = json!(hash);
+            assert!(
+                f.service
+                    .execute(request.clone(), WriteOptions::default())
+                    .await
+                    .is_err()
+            );
+            assert!(
+                f.service
+                    .store()
+                    .execute(request, WriteOptions::default())
+                    .await
+                    .is_err()
+            );
+        }
+    }
+    assert_eq!(
+        f.service
+            .store()
+            .issue_record(item["id"].as_str().unwrap())
+            .await
+            .unwrap()
+            .content_hash,
+        item["content_hash"]
+    );
+}
+
+#[tokio::test]
+async fn issue_rename_retry_after_old_file_removal_preserves_all_prose() {
+    let f = Fixture::new().await;
+    let item = create_issue(&f).await;
+    let id = item["id"].as_str().unwrap();
+    let renamed = f
+        .service
+        .execute(
+            json!({"command":"issue.update","issue":id,"name":"Renamed"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap()
+        .result;
+    let destination = f
+        .service
+        .config()
+        .output_dir()
+        .join(renamed["document_path"].as_str().unwrap());
+    let body = std::fs::read_to_string(&destination).unwrap();
+    let mut conn = super::incremental::connection(&f).await;
+    sqlx::query("UPDATE document_registry SET path=? WHERE key=?")
+        .bind(item["document_path"].as_str().unwrap())
+        .bind(format!("issue:{id}"))
+        .execute(&mut conn)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT OR REPLACE INTO pending_documents(key,generation) VALUES(?,'rename-crash')",
+    )
+    .bind(format!("issue:{id}"))
+    .execute(&mut conn)
+    .await
+    .unwrap();
+    f.service.sync_pending_documents().await.unwrap();
+    assert_eq!(std::fs::read_to_string(destination).unwrap(), body);
+}
+
+#[tokio::test]
+async fn issue_legacy_migration_handles_project_folder_rename_and_archive_relocation() {
+    for archive in [false, true] {
+        let f = Fixture::new().await;
+        let item = create_issue(&f).await;
+        restore_legacy_issue_content(&f, &item).await;
+        if archive {
+            let mut conn = super::incremental::connection(&f).await;
+            sqlx::query(
+                "UPDATE projects SET data=json_set(data,'$.archived_at',1790000000) WHERE id=?",
+            )
+            .bind(&f.project)
+            .execute(&mut conn)
+            .await
+            .unwrap();
+        } else {
+            let old = f.service.config().output_dir().join("Projects/demo");
+            let new = old.with_file_name("Moved project");
+            std::fs::rename(&old, &new).unwrap();
+            let note = new.join(
+                item["document_path"]
+                    .as_str()
+                    .unwrap()
+                    .strip_prefix("Projects/demo/")
+                    .unwrap(),
+            );
+            let source = std::fs::read_to_string(&note)
+                .unwrap()
+                .replace("Allow users to sign in.", "Offline edited request");
+            std::fs::write(note, source).unwrap();
+        }
+        f.service.sync().await.unwrap();
+        let current = f
+            .service
+            .store()
+            .issue_record(item["id"].as_str().unwrap())
+            .await
+            .unwrap();
+        assert!(current.document_path.starts_with(if archive {
+            "Archived Projects/"
+        } else {
+            "Projects/Moved project/"
+        }));
+        let content = f.service.issue_content(&current.id).await.unwrap();
+        assert_eq!(
+            content.requirement,
+            if archive {
+                "Allow users to sign in."
+            } else {
+                "Offline edited request"
+            }
+        );
+    }
+}
+
+#[tokio::test]
+async fn issue_legacy_migration_invalidates_review_and_keeps_terminal_content_guard() {
+    for status in ["PENDING_REVIEW", "COMPLETED", "CANCELLED"] {
+        let f = Fixture::new().await;
+        let item = create_issue(&f).await;
+        restore_legacy_issue_content(&f, &item).await;
+        let id = item["id"].as_str().unwrap();
+        let mut conn = super::incremental::connection(&f).await;
+        sqlx::query("UPDATE issues SET data=json_set(data,'$.status',?,'$.pending_review_at',1790000000) WHERE id=?")
+            .bind(status).bind(id).execute(&mut conn).await.unwrap();
+        let path = f
+            .service
+            .config()
+            .output_dir()
+            .join(item["document_path"].as_str().unwrap());
+        let changed = std::fs::read_to_string(&path)
+            .unwrap()
+            .replace("Allow users to sign in.", "Offline edited request");
+        std::fs::write(&path, &changed).unwrap();
+        let result = f.service.sync().await;
+        let current = f.service.store().issue_record(id).await.unwrap();
+        if status == "PENDING_REVIEW" {
+            result.unwrap();
+            assert_eq!(current.status, agentix_task::IssueStatus::Active);
+            assert!(current.pending_review_at.is_none());
+            assert!(current.revision > item["revision"].as_i64().unwrap());
+        } else {
+            assert!(
+                result
+                    .unwrap_err()
+                    .to_string()
+                    .contains("reopen terminal Issue")
+            );
+            assert_eq!(current.content_hash, item["content_hash"]);
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), changed);
+            f.service
+                .execute(
+                    json!({"command":"issue.reopen","issue":id}),
+                    WriteOptions::default(),
+                )
+                .await
+                .unwrap();
+            f.service.sync().await.unwrap();
+            assert_eq!(
+                f.service.issue_content(id).await.unwrap().requirement,
+                "Offline edited request"
+            );
+        }
+    }
+}

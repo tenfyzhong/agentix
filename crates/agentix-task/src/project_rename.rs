@@ -106,8 +106,26 @@ impl Service {
             requests.push((request, options));
         }
         for (request, options) in requests {
-            self.store().execute(request, options).await?;
+            self.import_project_folder_move(request, options).await?;
         }
+        Ok(())
+    }
+
+    async fn import_project_folder_move(
+        &self,
+        request: Value,
+        options: WriteOptions,
+    ) -> Result<()> {
+        let state = self.store().request_snapshot(&request).await?;
+        let id = required(&request, "project")?;
+        let project = &state.projects[state.project_index(id)?];
+        self.migrate_relocated_issue_content_locked(
+            id,
+            &project.document_directory(),
+            required(&request, "directory")?,
+        )
+        .await?;
+        self.store().execute(request, options).await?;
         Ok(())
     }
 }

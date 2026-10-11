@@ -206,9 +206,28 @@ impl Service {
     /// Upgrade one row at a time under both the vault lock and `SQLite` writer lock.
     /// A failed export leaves the legacy row intact for a later retry.
     pub(super) async fn migrate_issue_content_locked(&self) -> Result<()> {
+        self.migrate_issue_content_rows_locked(None).await
+    }
+
+    pub(crate) async fn migrate_relocated_issue_content_locked(
+        &self,
+        project: &str,
+        old: &str,
+        new: &str,
+    ) -> Result<()> {
+        self.migrate_issue_content_rows_locked(Some((project, old, new)))
+            .await
+    }
+
+    #[allow(clippy::too_many_lines)] // Preserve both file versions before committing each legacy row.
+    async fn migrate_issue_content_rows_locked(
+        &self,
+        relocation: Option<(&str, &str, &str)>,
+    ) -> Result<()> {
         loop {
             let mut tx = self.store().pool.begin_with("BEGIN IMMEDIATE").await?;
-            let row: Option<String> = sqlx::query_scalar("SELECT data FROM issues WHERE json_type(data,'$.requirement') IS NOT NULL OR json_type(data,'$.acceptance') IS NOT NULL OR json_type(data,'$.notes') IS NOT NULL LIMIT 1")
+            let row: Option<String> = sqlx::query_scalar("SELECT data FROM issues WHERE (json_type(data,'$.requirement') IS NOT NULL OR json_type(data,'$.acceptance') IS NOT NULL OR json_type(data,'$.notes') IS NOT NULL) AND (? IS NULL OR project_id=?) LIMIT 1")
+                .bind(relocation.map(|r| r.0)).bind(relocation.map(|r| r.0))
                 .fetch_optional(&mut *tx).await?;
             let Some(row) = row else {
                 tx.commit().await?;
@@ -224,6 +243,14 @@ impl Service {
                     .fetch_optional(&mut *tx)
                     .await?;
             let relative = registered.as_deref().unwrap_or(&issue.document_path);
+            let relocated;
+            let relative = if let Some((_, old, new)) = relocation {
+                relocated = std::path::Path::new(new)
+                    .join(std::path::Path::new(relative).strip_prefix(old)?);
+                relocated.to_str().context("invalid relocated Issue path")?
+            } else {
+                relative
+            };
             let path = self.safe_path(relative)?;
             let source = if path.exists() {
                 std::fs::read_to_string(&path)?
@@ -275,9 +302,44 @@ impl Service {
                 atomic_write(&path, &self.issue_document(&issue, &project, None, "")?)?;
                 std::fs::remove_file(journal)?;
             }
-            let preserved = current.unwrap_or(content);
-            issue.content_hash = preserved.hash();
-            issue.review_content_hash = preserved.review_hash();
+            issue.content_hash = content.hash();
+            issue.review_content_hash = content.review_hash();
+            // Terminal offline edits remain in the vault but are not adopted until reopen.
+            let preserved = if issue.status.terminal() {
+                content
+            } else {
+                current.unwrap_or(content)
+            };
+            if crate::issue::apply_content_hashes(
+                &mut issue,
+                &preserved.hash(),
+                &preserved.review_hash(),
+            )? {
+                issue.revision += 1;
+                issue.updated_at = self.store().now();
+                crate::store::append_event(
+                    &mut tx,
+                    crate::TaskEvent {
+                        project_id: Some(issue.project_id.clone()),
+                        revision: issue.revision,
+                        payload: json!({"id": issue.id, "status":issue.status}),
+                        ..crate::store::event(
+                            "issue.content_migrated",
+                            &WriteOptions {
+                                actor_ref: "system:migration".into(),
+                                ..WriteOptions::default()
+                            },
+                            self.store().now(),
+                        )
+                    },
+                )
+                .await?;
+                sqlx::query("INSERT OR REPLACE INTO pending_documents(key,generation) VALUES(?,?)")
+                    .bind(&key)
+                    .bind(crate::new_id("document"))
+                    .execute(&mut *tx)
+                    .await?;
+            }
             sqlx::query("UPDATE issues SET data=? WHERE id=?")
                 .bind(crate::stored_paths::to_string(&issue)?)
                 .bind(&issue.id)

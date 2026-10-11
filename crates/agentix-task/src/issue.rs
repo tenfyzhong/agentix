@@ -9,6 +9,39 @@ use crate::{
     new_id,
 };
 
+pub(crate) fn validate_public_hashes(request: &Value) -> Result<()> {
+    if matches!(
+        request["command"].as_str(),
+        Some("issue.create" | "issue.update")
+    ) {
+        ensure!(
+            request.get("content_hash").is_none() && request.get("review_content_hash").is_none(),
+            "invalid: Issue content hashes are reserved for document synchronization"
+        );
+    }
+    Ok(())
+}
+
+pub(crate) fn apply_content_hashes(
+    issue: &mut Issue,
+    hash: &str,
+    review_hash: &str,
+) -> Result<bool> {
+    let changed = issue.content_hash != hash;
+    ensure!(
+        !issue.status.terminal() || !changed,
+        "conflict: reopen terminal Issue before updating content"
+    );
+    if issue.status == IssueStatus::PendingReview && issue.review_content_hash != review_hash {
+        issue.status = IssueStatus::Active;
+        issue.pending_review_at = None;
+        issue.review_reason = None;
+    }
+    issue.content_hash = hash.into();
+    issue.review_content_hash = review_hash.into();
+    Ok(changed)
+}
+
 fn human(options: &WriteOptions) -> Result<()> {
     ensure!(
         options.actor_ref.starts_with("user:"),
@@ -167,26 +200,17 @@ pub(crate) fn apply(
             if request.get("title").is_some() {
                 issue.title = required(request, "title")?.into();
             }
-            if let Some(hash) = request["content_hash"].as_str() {
-                issue.content_hash = hash.into();
-            }
-            if let Some(hash) = request["review_content_hash"].as_str() {
-                issue.review_content_hash = hash.into();
-            }
+            apply_content_hashes(
+                issue,
+                request["content_hash"]
+                    .as_str()
+                    .unwrap_or(&original.content_hash),
+                request["review_content_hash"]
+                    .as_str()
+                    .unwrap_or(&original.review_content_hash),
+            )?;
             if request.get("milestone").is_some() {
                 issue.milestone_id = milestone;
-            }
-            let content_changed = issue.content_hash != original.content_hash;
-            ensure!(
-                !original.status.terminal() || !content_changed,
-                "conflict: reopen terminal Issue before updating content"
-            );
-            if original.status == IssueStatus::PendingReview
-                && issue.review_content_hash != original.review_content_hash
-            {
-                issue.status = IssueStatus::Active;
-                issue.pending_review_at = None;
-                issue.review_reason = None;
             }
         }
         "issue.start" => {

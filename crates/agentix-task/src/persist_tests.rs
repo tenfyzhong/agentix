@@ -787,3 +787,20 @@ async fn deleting_retained_events_does_not_regress_global_or_project_receipts() 
         .unwrap();
     assert!(outcome.sequence > latest);
 }
+
+#[tokio::test]
+async fn current_schema_open_does_not_wait_for_existing_writer() {
+    let (dir, store, _) = fixture().await;
+    let mut writer = store.pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+    let result = tokio::time::timeout(
+        Duration::from_secs(2),
+        Store::open(&dir.path().join("tasks.sqlite3")),
+    )
+    .await;
+    sqlx::query("ROLLBACK").execute(&mut *writer).await.unwrap();
+    assert!(
+        result.is_ok(),
+        "opening current schema must not take the writer lock"
+    );
+    result.unwrap().unwrap();
+}
