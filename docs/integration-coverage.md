@@ -645,7 +645,7 @@ Additional Issue regression coverage:
 
 | Contract | Reusable coverage |
 | --- | --- |
-| Root cross-Project table/Kanban filters, saved Base configuration, immutable Project properties, short Task Job links | `support/issue_documents.rs`, `support/job_graph.rs`, `obsidian-sync.test.mjs` |
+| Root cross-Project table/Kanban filters, saved Base configuration during incremental/full sync with or without generated comments, immutable Project properties, short Task Job links | `support/issue_documents.rs`, `support/job_graph.rs`, `obsidian-sync.test.mjs` |
 | New Milestone folder menu, fixed template and publication recovery | `obsidian-milestones.test.mjs`, `support/issue_documents.rs` |
 | Job `issue` wikilink resolution, generated `issue_id`, unlinking and rejection of foreign/copied notes | `obsidian-job-issues.test.mjs`, `support/issues.rs` |
 | Accepted-content freeze, pending-review invalidation, stale content revisions and pending/full-rebuild edit preservation | `support/issue_documents.rs` |

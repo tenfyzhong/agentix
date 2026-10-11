@@ -496,6 +496,7 @@ impl Service {
             let mut keys = BTreeSet::from([key.to_owned()]);
             if key == "dashboard" {
                 keys.insert("pending-review".into());
+                keys.insert("issues-dashboard".into());
             }
             if key.starts_with("task:") {
                 keys.extend(state.plans.iter().map(|p| format!("plan:{}", p.id)));

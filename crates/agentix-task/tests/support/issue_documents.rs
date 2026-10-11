@@ -88,6 +88,41 @@ async fn global_issue_base_keeps_saved_filters_through_mutation_and_full_sync() 
 }
 
 #[tokio::test]
+async fn global_issue_base_incremental_refresh_preserves_registered_views_with_or_without_marker() {
+    for marker in ["", "# taskix-generated: global-issues\n"] {
+        let f = Fixture::new().await;
+        let item = create_issue(&f).await;
+        let path = f.service.config().output_dir().join("Issue.base");
+        let mut base: Value = serde_yaml::from_str(&read(&f, "Issue.base")).unwrap();
+        base["views"][0]["name"] = json!("My saved view");
+        base["views"][0]["filters"] = json!({"and":["status == \"ACTIVE\""]});
+        let saved = format!("{marker}{}", serde_yaml::to_string(&base).unwrap());
+        std::fs::write(&path, &saved).unwrap();
+        let outcome = f
+            .service
+            .execute(
+                json!({"command":"issue.update","issue":item["id"],"title":"Updated requirement"}),
+                WriteOptions::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            outcome.projection_pending, None,
+            "registered Base must not block incremental publication"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            saved,
+            "incremental publication must preserve saved views"
+        );
+        f.service.sync_pending_documents().await.unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), saved);
+        f.service.sync().await.unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), saved);
+    }
+}
+
+#[tokio::test]
 async fn global_issue_base_upgrade_creates_missing_view_and_preserves_user_collision() {
     let f = Fixture::new().await;
     let path = f.service.config().output_dir().join("Issue.base");
