@@ -1,5 +1,5 @@
 //! Versioned notification summaries. Add fields here deliberately when consumers need them.
-use crate::{InboxEntry, Job, Project, Task};
+use crate::{Job, Project, Task};
 use serde_json::{Value, json};
 
 pub(crate) fn project(p: &Project) -> Value {
@@ -9,7 +9,7 @@ pub(crate) fn job(j: &Job) -> Value {
     compact_payload(
         &json!({"id":j.id,"title":j.title,"name":j.name,"status":j.status,
         "review_reason":j.review_reason,"archived_at":j.archived_at,"completed_at":j.completed_at,
-        "cancelled_at":j.cancelled_at,"pending_review_at":j.pending_review_at}),
+        "cancelled_at":j.cancelled_at,"pending_review_at":j.pending_review_at,"issue_id":j.issue_id}),
     )
 }
 pub(crate) fn task(t: &Task) -> Value {
@@ -18,10 +18,6 @@ pub(crate) fn task(t: &Task) -> Value {
         "phase":t.phase,"reason":t.reason,"completed_at":t.completed_at}),
     )
 }
-pub(crate) fn inbox(i: &InboxEntry) -> Value {
-    compact_payload(&json!({"id":i.id,"status":i.status,"deleted":i.deleted}))
-}
-
 /// Compatibility projection for historical snapshots and deletion records.
 /// Unknown shapes are explicitly marked, never retained as unbounded blobs.
 pub(crate) fn compact_payload(payload: &Value) -> Value {
@@ -38,7 +34,8 @@ pub(crate) fn compact_payload(payload: &Value) -> Value {
         Some("prj") => "project",
         Some("job") => "job",
         Some("task") => "task",
-        Some("inbox") => "inbox",
+        Some("issue") => "issue",
+        Some("milestone") => "milestone",
         _ => "unknown",
     };
     result["entity_type"] = json!(kind);
@@ -56,6 +53,8 @@ pub(crate) fn compact_payload(payload: &Value) -> Value {
         "completed_at",
         "cancelled_at",
         "pending_review_at",
+        "issue_id",
+        "milestone_id",
     ] {
         if let Some(value) = object.get(key) {
             if let Some(text) = value.as_str() {

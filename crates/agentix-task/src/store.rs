@@ -59,7 +59,7 @@ impl Store {
             .fetch_one(&pool)
             .await?;
         ensure!(
-            identity == 0x4158_544b && (14..=21).contains(&version),
+            identity == 0x4158_544b && (14..=23).contains(&version),
             "unsupported task database identity or schema for read-only lookup"
         );
         Ok(Self {
@@ -135,7 +135,7 @@ impl Store {
     async fn migrate(&self) -> Result<bool> {
         let current: (i64, i64, i64) = sqlx::query_as("SELECT (SELECT application_id FROM pragma_application_id), (SELECT user_version FROM pragma_user_version), (SELECT auto_vacuum FROM pragma_auto_vacuum)")
             .fetch_one(&self.pool).await?;
-        if current == (0x4158_544b, 21, 2) {
+        if current == (0x4158_544b, 23, 2) {
             return Ok(false);
         }
         if current.2 != 2 {
@@ -149,7 +149,7 @@ impl Store {
                 "invalid: task database must be a dedicated taskix database"
             );
             ensure!(
-                current.1 <= 21,
+                current.1 <= 23,
                 "unsupported task database schema version {}",
                 current.1
             );
@@ -172,7 +172,7 @@ impl Store {
             .fetch_one(&mut *tx)
             .await?;
         ensure!(
-            version <= 21,
+            version <= 23,
             "unsupported task database schema version {version}"
         );
         sqlx::raw_sql(include_str!("schema.sql"))
@@ -201,13 +201,7 @@ impl Store {
         if version > 0 && version < 7 {
             migrate_task_notes(&mut tx).await?;
         }
-        if version > 0 && version < 10 {
-            sqlx::query("UPDATE inbox_entries SET data = json_set(data, '$.status', CASE WHEN json_extract(data, '$.status') = 'DONE' THEN 'COMPLETED' WHEN EXISTS (SELECT 1 FROM jobs WHERE jobs.id = json_extract(inbox_entries.data, '$.job_id') AND json_extract(jobs.data, '$.status') = 'PENDING_REVIEW') THEN 'PENDING_REVIEW' ELSE 'ACTIVE' END, '$.revision', json_extract(data, '$.revision') + 1, '$.updated_at', ?) WHERE json_extract(data, '$.status') IN ('IN_PROGRESS', 'DONE')")
-                .bind(self.now()).execute(&mut *tx).await?;
-        }
         if version > 0 && version < 11 {
-            sqlx::query("UPDATE inbox_entries SET data = json_set(data, '$.source', (SELECT substr(key, 10) FROM idempotency_keys WHERE key LIKE 'im:inbox:%' AND json_extract(result, '$.result.id') = inbox_entries.id LIMIT 1)) WHERE json_extract(data, '$.source') IS NULL")
-                .execute(&mut *tx).await?;
             sqlx::query("UPDATE jobs SET data = json_set(data, '$.pending_review_at', COALESCE((SELECT json_extract(task_events.data, '$.occurred_at') FROM task_events WHERE task_events.job_id = jobs.id AND json_extract(task_events.data, '$.event_type') = 'job.pending_review' ORDER BY sequence DESC LIMIT 1), CASE WHEN json_extract(jobs.data, '$.status') = 'PENDING_REVIEW' THEN json_extract(jobs.data, '$.updated_at') END)) WHERE json_extract(data, '$.pending_review_at') IS NULL")
                 .execute(&mut *tx).await?;
         }
@@ -252,15 +246,24 @@ impl Store {
                 "'$.title', '$.goal', '$.prompt', '$.conversation'",
                 "1",
             ),
-            (
-                "inbox_entries",
-                "'$.content', '$.lease', '$.source'",
-                "json_extract(e.data, '$.published') = 1 AND json_extract(e.data, '$.deleted') IS NOT 1",
-            ),
+            ("issues", "'$.requirement', '$.acceptance', '$.notes'", "1"),
+            ("milestones", "'$.goal'", "1"),
         ] {
+            let entity = if table == "jobs" {
+                format!(
+                    "json_set(json_remove(e.data, {fields}), '$.issue_name', json_extract(i.data, '$.name'), '$.issue_path', json_extract(i.data, '$.document_path'))"
+                )
+            } else {
+                format!("json_remove(e.data, {fields})")
+            };
+            let issue_join = if table == "jobs" {
+                "LEFT JOIN issues i ON i.id = json_extract(e.data, '$.issue_id')"
+            } else {
+                ""
+            };
             let rows = sqlx::query(&format!(
-                "SELECT json_remove(e.data, {fields}) AS entity, COALESCE(json_extract(p.data, '$.document_directory'), 'Projects/'||json_extract(p.data, '$.key')) AS project_key \
-                 FROM {table} e LEFT JOIN projects p ON p.id = json_extract(e.data, '$.project_id') \
+                "SELECT {entity} AS entity, COALESCE(json_extract(p.data, '$.document_directory'), 'Projects/'||json_extract(p.data, '$.key')) AS project_key \
+                 FROM {table} e LEFT JOIN projects p ON p.id = json_extract(e.data, '$.project_id') {issue_join} \
                  WHERE {filter} ORDER BY e.rowid"
             ))
             .fetch_all(&mut *tx)
@@ -319,12 +322,13 @@ impl Store {
         let query = match id.split_once('_').map(|(kind, _)| kind) {
             Some("task") => "SELECT json_remove(data, '$.title') FROM tasks WHERE id = ?",
             Some("job") => {
-                "SELECT json_remove(data, '$.title', '$.goal', '$.prompt', '$.conversation') FROM jobs WHERE id = ?"
+                "SELECT json_set(json_remove(j.data, '$.title', '$.goal', '$.prompt', '$.conversation'), '$.issue_name', json_extract(i.data, '$.name'), '$.issue_path', json_extract(i.data, '$.document_path')) FROM jobs j LEFT JOIN issues i ON i.id = json_extract(j.data, '$.issue_id') WHERE j.id = ?"
             }
-            Some("inbox") => {
-                "SELECT json_remove(data, '$.content', '$.lease', '$.source') FROM inbox_entries WHERE id = ?"
+            Some("issue") => {
+                "SELECT json_remove(data,'$.requirement','$.acceptance','$.notes') FROM issues WHERE id=?"
             }
-            _ => anyhow::bail!("invalid: expected a task, job, or inbox ID"),
+            Some("milestone") => "SELECT json_remove(data,'$.goal') FROM milestones WHERE id=?",
+            _ => anyhow::bail!("invalid: expected a task, job, issue, or milestone ID"),
         };
         let mut tx = self.pool.begin().await?;
         let data: Option<String> = sqlx::query_scalar(query)
@@ -335,9 +339,6 @@ impl Store {
             return Ok(None);
         };
         let entity: Value = serde_json::from_str(&data)?;
-        if id.starts_with("inbox_") && (entity["deleted"] == true || entity["published"] != true) {
-            return Ok(None);
-        }
         let project = entity["project_id"]
             .as_str()
             .context("missing project ID")?;
@@ -360,6 +361,7 @@ impl Store {
         request: &Value,
         options: &WriteOptions,
     ) -> Result<Option<Outcome>> {
+        mutations::validate_request(request)?;
         let Some(key) = &options.idempotency_key else {
             return Ok(None);
         };
@@ -389,6 +391,7 @@ impl Store {
         options: WriteOptions,
         source: Value,
     ) -> Result<Outcome> {
+        mutations::validate_request(&request)?;
         let command = mutations::required(&request, "command")?.to_owned();
         crate::stored_paths::expand_roots(&mut request)?;
         let fingerprint = hash_bytes(
@@ -423,7 +426,6 @@ impl Store {
             self.now(),
         )
         .await?;
-        crate::inbox::refresh(&mut state, self.now());
         crate::deletion::check_pending_paths(&mut tx, &before, &state).await?;
         persist(&mut tx, &before, &state, &command, &options, self.now()).await?;
         if matches!(command.as_str(), "project.rename" | "project.relocate") {
@@ -451,25 +453,21 @@ impl Store {
     pub async fn reap_expired(&self) -> Result<usize> {
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
         let expired = crate::scoped::ids(&mut tx, "SELECT id FROM task_leases WHERE json_extract(data,'$.lease_expires_at')<=CAST(? AS INTEGER)", &self.now().to_string()).await?;
-        let inboxes = crate::scoped::ids(&mut tx, "SELECT id FROM inbox_entries WHERE json_extract(data,'$.lease.lease_expires_at')<=CAST(? AS INTEGER)", &self.now().to_string()).await?;
-        if expired.is_empty() && inboxes.is_empty() {
+        if expired.is_empty() {
             return Ok(0);
         }
         let mut scope = crate::scoped::Scope {
             tasks: expired.clone(),
-            inboxes,
             ..Default::default()
         };
         scope.parents(&mut tx).await?;
         scope.job_tasks(&mut tx).await?;
-        scope.inboxes.extend(crate::scoped::ids(&mut tx,"SELECT id FROM inbox_entries WHERE json_extract(data,'$.job_id') IN (SELECT value FROM json_each(?))", &json!(scope.jobs).to_string()).await?);
         let before = scope.load(&mut tx).await?;
         let mut state = before.clone();
         for task in &expired {
             let i = state.task_index(task)?;
             mutations::system_block(&mut state, i, "lease expired", self.now());
         }
-        crate::inbox::refresh(&mut state, self.now());
         if before != state {
             persist(
                 &mut tx,
@@ -633,6 +631,34 @@ async fn migrate_features(conn: &mut SqliteConnection, version: i64) -> Result<(
     }
     if version > 0 && version < 20 {
         crate::stored_paths::migrate(conn).await?;
+    }
+    if version < 23 {
+        // Retire the entity without converting requirements or touching execution history.
+        // Earlier publication recorded initialization instead of a registered path.
+        sqlx::query("INSERT OR IGNORE INTO document_registry(key,path) SELECT 'retired-intake:'||p.id,COALESCE(json_extract(p.data,'$.document_directory'),'Projects/'||json_extract(p.data,'$.key'))||'/Inbox.md' FROM projects p JOIN projection_state receipt ON receipt.key='inbox_initialized:'||p.id")
+            .execute(&mut *conn).await?;
+        sqlx::query("DELETE FROM projection_state WHERE key LIKE 'inbox_initialized:%'")
+            .execute(&mut *conn)
+            .await?;
+        sqlx::query("DROP TABLE IF EXISTS inbox_entries")
+            .execute(&mut *conn)
+            .await?;
+        sqlx::query("DELETE FROM idempotency_keys WHERE key LIKE 'im:inbox:%' OR json_extract(result,'$.result.id') LIKE 'inbox_%'").execute(&mut *conn).await?;
+        sqlx::query(
+            "DELETE FROM task_events WHERE json_extract(data,'$.payload.id') LIKE 'inbox_%'",
+        )
+        .execute(&mut *conn)
+        .await?;
+        sqlx::query("DELETE FROM pending_documents WHERE key LIKE 'inbox:%'")
+            .execute(&mut *conn)
+            .await?;
+        // Keep registered paths until successful publication acknowledges their removal.
+        sqlx::query(
+            "INSERT OR REPLACE INTO pending_documents(key,generation) VALUES ('rebuild',?)",
+        )
+        .bind(new_id("publication"))
+        .execute(&mut *conn)
+        .await?;
     }
     Ok(())
 }
@@ -894,7 +920,8 @@ async fn load(conn: &mut SqliteConnection) -> Result<Snapshot> {
             .fetch_optional(&mut *conn)
             .await?;
     Ok(Snapshot {
-        inboxes: read_entities(conn, "inbox_entries").await?,
+        issues: read_entities(conn, "issues").await?,
+        milestones: read_entities(conn, "milestones").await?,
         document_sequences: sequences
             .map(|v| serde_json::from_str(&v))
             .transpose()?
@@ -932,6 +959,7 @@ async fn persist(
     let old = crate::state_index::StateIndex::new(before);
     let new = crate::state_index::StateIndex::new(after);
     let recent = crate::state_index::recent_session_tasks(after);
+    crate::issue_store::persist(conn, before, after, (&old, &new), command, options, now).await?;
     for project in &after.projects {
         if old.projects.get(project.id.as_str()).copied() == Some(project) {
             continue;
@@ -968,16 +996,9 @@ async fn persist(
             match job.status {
                 crate::JobStatus::Completed => "job.completed",
                 crate::JobStatus::PendingReview => "job.pending_review",
-                crate::JobStatus::Active
-                    if command == "job.reject"
-                        || (command == "inbox.set-status"
-                            && old.jobs.get(job.id.as_str()).is_some_and(|job| {
-                                job.status == crate::JobStatus::PendingReview
-                            })) =>
-                {
-                    "job.rejected"
-                }
-                _ => command,
+                crate::JobStatus::Cancelled => "job.cancelled",
+                crate::JobStatus::Active if command == "job.reject" => "job.rejected",
+                crate::JobStatus::Active => command,
             }
         } else {
             command
@@ -1073,31 +1094,6 @@ async fn persist(
                 .await?;
         }
     }
-    for entry in &after.inboxes {
-        if old.inboxes.get(entry.id.as_str()).copied() == Some(entry) {
-            continue;
-        }
-        upsert(conn, "inbox_entries", &entry.id, entry).await?;
-        append_event(
-            conn,
-            TaskEvent {
-                project_id: Some(entry.project_id.clone()),
-                job_id: entry.job_id.clone(),
-                revision: entry.revision,
-                payload: crate::event_payload::inbox(entry),
-                ..event(command, options, now)
-            },
-        )
-        .await?;
-    }
-    for entry in &before.inboxes {
-        if !new.inboxes.contains_key(entry.id.as_str()) {
-            sqlx::query("DELETE FROM inbox_entries WHERE id = ?")
-                .bind(&entry.id)
-                .execute(&mut *conn)
-                .await?;
-        }
-    }
     crate::deletion::persist(conn, before, (&old, &new), command, options, now).await?;
     crate::publication::enqueue_changes(conn, before, after, command).await?;
     if before.document_sequences != after.document_sequences {
@@ -1107,7 +1103,7 @@ async fn persist(
     Ok(())
 }
 
-async fn upsert(
+pub(crate) async fn upsert(
     conn: &mut SqliteConnection,
     table: &str,
     id: &str,

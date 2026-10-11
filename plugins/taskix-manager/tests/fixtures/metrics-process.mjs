@@ -10,7 +10,7 @@ if (clock === "controlled") {
 const started = performance.now();
 const result = await runHook({ hook_event_name: "UserPromptSubmit", session_id: session, cwd: directory, prompt: "Discuss routing" }, async args => {
     if (args[1] !== "snapshot") throw new Error("Unexpected lifecycle call");
-    return { result: { project_id: "fixture", inbox_todos: [], routing: { complete: true, candidates: [] } } };
+    return { result: { project_id: "fixture", issue_candidates: [], routing: { complete: true, candidates: [] } } };
 }, {
     env: { TASKIX_JEV_ENABLED: "true", TASKIX_JEV_URL: "https://unused.test", TASKIX_JEV_API_KEY: "fixture-key", TASKIX_JEV_METRICS_ENABLED: mode, TASKIX_JEV_METRICS_DB: `${directory}/metrics.sqlite` },
     cacheDir: directory,

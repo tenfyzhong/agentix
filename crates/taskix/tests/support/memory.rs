@@ -314,6 +314,16 @@ fn memory_service_restores_read_only_notes_through_the_real_cli() {
         .unwrap();
     let document = cli.ok(&["memory", "document", relative]);
     assert_eq!(document["text"], text);
+    let props: Value = serde_yaml::from_str(text.split("---").nth(1).unwrap()).unwrap();
+    assert_eq!(
+        props["project"],
+        format!(
+            "[[Tasks ☃/Projects/{}/Board|{}]]",
+            project["key"].as_str().unwrap(),
+            project["name"].as_str().unwrap()
+        )
+    );
+    assert_eq!(props["project_id"], id);
     assert_eq!(document["path"], relative);
     let foreign = relative.replace(project["key"].as_str().unwrap(), "foreign-project");
     assert!(!cli.run(&["memory", "document", &foreign]).status.success());
@@ -330,8 +340,23 @@ fn memory_service_restores_read_only_notes_through_the_real_cli() {
         .join(format!("{memory_id}.md"));
     let archived_relative = archived_relative.to_str().unwrap();
     let archived_document = cli.ok(&["memory", "document", archived_relative]);
-    assert_eq!(archived_document["text"], text);
+    assert_eq!(
+        archived_document["text"],
+        text.replace("Tasks ☃/Projects/", "Archived Projects/")
+    );
     assert_eq!(archived_document["path"], archived_relative);
+    assert!(
+        archived_document["text"]
+            .as_str()
+            .unwrap()
+            .contains("Archived Projects/")
+    );
+    assert!(
+        archived_document["text"]
+            .as_str()
+            .unwrap()
+            .contains("/Board|")
+    );
     assert!(!path.exists());
     let daemon = Daemon(
         cli.command(&["serve"])
@@ -346,8 +371,9 @@ fn memory_service_restores_read_only_notes_through_the_real_cli() {
         std::thread::sleep(Duration::from_millis(20));
     }
     cli.ok(&["memory", "sync", "--project", id]);
-    drop(daemon);
     cli.ok(&["project", "unarchive", id]);
+    cli.ok(&["memory", "sync", "--project", id]);
+    drop(daemon);
     assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
 }
 

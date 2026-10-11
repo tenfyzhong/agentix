@@ -9,20 +9,21 @@ test("native boards load without registering a custom Recent Jobs renderer", asy
 
 test("board styling follows managed notes and Bases without affecting personal boards", async () => {
     const { plugin, workspaceEvents, metadataEvents } = await connectionFixture();
-    plugin.engine = { watches: p => p.startsWith("11-Agents/"), directory: "11-Agents", dispose() {}, observe() {}, observeInbox() {} };
+    plugin.engine = { watches: p => p.startsWith("11-Agents/"), directory: "11-Agents", dispose() {}, observe() {}, observeIssue() {} };
     const leaf = (path, properties) => ({ view: {
         file: { path, properties },
         containerEl: { classList: { toggle(name, on) { this[name] = on; }, remove(name) { this[name] = false; } } },
     } });
     const recent = leaf("11-Agents/Recent Jobs.base");
     const dashboard = leaf("11-Agents/Dashboard.base");
+    const issues = leaf("11-Agents/Issue.base");
     const personal = leaf("11-Agents/Personal.base");
     const job = leaf("11-Agents/Projects/Demo/Jobs/One.md", { "taskix-generated": true, tags: ["agent/job"] });
     const note = leaf("11-Agents/Personal.md", { tags: ["agent/job"] });
-    plugin.app.workspace.getLeavesOfType = type => type === "bases" ? [recent, dashboard, personal] : [job, note];
-    plugin.app.metadataCache.getFileCache = file => ({ frontmatter: file.properties });
+    plugin.app.workspace.getLeavesOfType = type => type === "bases" ? [recent, dashboard, issues, personal] : [job, note];
+    plugin.app.metadataCache.getFileCache = file => ({ frontmatter: file?.properties });
     workspaceEvents.get("layout-change")();
-    for (const item of [recent, dashboard, job]) assert.equal(item.view.containerEl.classList["taskix-board"], true);
+    for (const item of [recent, dashboard, issues, job]) assert.equal(item.view.containerEl.classList["taskix-board"], true);
     for (const item of [personal, note]) assert.equal(item.view.containerEl.classList["taskix-board"], false);
     recent.view.file.path = "Personal.base";
     workspaceEvents.get("layout-change")();

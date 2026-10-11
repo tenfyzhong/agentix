@@ -22,8 +22,14 @@ mod job_graph;
 #[path = "support/dashboard.rs"]
 mod dashboard;
 
-#[path = "support/inbox.rs"]
-mod inbox;
+#[path = "support/issues.rs"]
+mod issues;
+
+#[path = "support/issue_documents.rs"]
+mod issue_documents;
+
+#[path = "support/issue_upgrade.rs"]
+mod issue_upgrade;
 
 #[path = "support/job_review.rs"]
 mod job_review;
@@ -649,7 +655,7 @@ async fn legacy_executing_tasks_migrate_without_losing_their_lease_or_history() 
         .fetch_one(&mut db)
         .await
         .unwrap();
-    assert_eq!(version, 21);
+    assert_eq!(version, 23);
 }
 
 #[tokio::test]

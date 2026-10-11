@@ -250,8 +250,9 @@ impl SlackConfig {
             "dashboard",
             "board",
             "jobs",
-            "inboxes",
-            "inbox",
+            "issues",
+            "issue",
+            "milestones",
         ] {
             affixes.encode(name)?;
         }

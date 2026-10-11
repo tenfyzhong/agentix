@@ -1092,7 +1092,7 @@ async fn telegram_forwards_authorized_message_edits_with_original_identity() {
         .push_updates(vec![serde_json::json!({
             "update_id": 301, "edited_message": {"message_id": 11, "date": 1, "edit_date": 2,
             "chat": {"id": 42, "type": "private", "first_name": "Owner"},
-            "from": {"id": 42, "is_bot": false, "first_name": "Owner"}, "text": "/inbox Revised"}
+            "from": {"id": 42, "is_bot": false, "first_name": "Owner"}, "text": "/issue new Revised"}
         })])
         .await;
     let bot = Bot::new("test-token").set_api_url(server.api_url().parse().unwrap());
@@ -1110,7 +1110,7 @@ async fn telegram_forwards_authorized_message_edits_with_original_identity() {
     assert_ne!(envelope.event_id, "42:11");
     assert_eq!(
         serde_json::to_value(envelope.payload).unwrap(),
-        serde_json::json!({"TextEdited":{"original_event_id":"42:11","version":301,"text":"/inbox Revised"}})
+        serde_json::json!({"TextEdited":{"original_event_id":"42:11","version":301,"text":"/issue new Revised"}})
     );
 }
 
@@ -1212,6 +1212,68 @@ fn disabled_buttons_do_not_emit_clickable_actions() {
     ]))
     .unwrap();
     assert!(render_keyboard(&view.actions).is_none());
+}
+
+#[tokio::test]
+async fn issue_controls_send_opaque_tokens_through_the_telegram_adapter() {
+    let server = MockTelegramApi::start().await;
+    let bot = Bot::new("test-token").set_api_url(server.api_url().parse().unwrap());
+    let adapter = TelegramAdapter::with_bot(bot, TelegramPolicy::new([42]));
+    let mut view = OutboundView::text(
+        "Login Issue",
+        "Requirement: passkey login\nAcceptance criteria: users can log in\nIssue remains Active",
+    );
+    for (n, label) in [
+        "Start",
+        "Continue",
+        "New round",
+        "Edit requirement",
+        "Milestone",
+        "Submit",
+        "Accept",
+        "Reject",
+        "Cancel",
+    ]
+    .iter()
+    .enumerate()
+    {
+        view.actions.push(ActionButton {
+            label: (*label).into(),
+            token: format!("issue-token-{n}"),
+            style: if *label == "Cancel" {
+                ActionStyle::Danger
+            } else {
+                ActionStyle::Primary
+            },
+            disabled: false,
+        });
+    }
+    adapter
+        .send_sectioned(&ConversationRef::new(ChannelKind::Telegram, "42"), &view)
+        .await
+        .unwrap();
+    let requests = server.requests().await;
+    let request = requests
+        .iter()
+        .find(|r| r.target.to_ascii_lowercase().ends_with("sendmessage"))
+        .unwrap();
+    let body: serde_json::Value = serde_json::from_str(&request.body).unwrap();
+    let tokens = body["reply_markup"]["inline_keyboard"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|row| row.as_array().unwrap())
+        .map(|button| button["callback_data"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    for n in 0..9 {
+        assert!(tokens.contains(&format!("issue-token-{n}").as_str()));
+    }
+    assert!(
+        body["text"]
+            .as_str()
+            .unwrap()
+            .contains("Acceptance criteria")
+    );
 }
 
 #[tokio::test]

@@ -104,9 +104,10 @@ async fn memory_document(
     );
     let config = agentix_task::Config::load(config_path)?;
     let store = MemoryStore::open_read_only(&location.path).await?;
-    let (memory, text) = store.rendered_note(id).await?;
+    let memory = store.document_memory(id).await?;
     let tasks = agentix_task::Store::open_read_only(&location.task_path).await?;
     let project = tasks.project_result(&memory.project_id).await?;
+    let text = memory.rendered_note(&config.project_link(&project))?;
     let expected = config
         .vault_relative_path(std::path::Path::new(&project.document_directory()))
         .join("Memory")

@@ -71,13 +71,9 @@ async fn obsidian_export_ignores_authored_bodies() {
     service
         .store
         .execute(
-            json!({"command":"inbox.add","project":project,"content":"Submission"}),
+            json!({"command":"issue.create","project":project,"title":"Submission"}),
             WriteOptions::default(),
         )
-        .await
-        .unwrap();
-    sqlx::query("UPDATE inbox_entries SET data = json_set(data, '$.published', json('true'))")
-        .execute(&service.store.pool)
         .await
         .unwrap();
     let expected = service.obsidian_snapshot().await.unwrap();
@@ -87,7 +83,7 @@ async fn obsidian_export_ignores_authored_bodies() {
     for query in [
         "UPDATE tasks SET data = json_set(data, '$.title', json('{}'))",
         "UPDATE jobs SET data = json_set(data, '$.title', json('{}'), '$.goal', json('{}'), '$.prompt', json('{}'), '$.conversation', json('{}'))",
-        "UPDATE inbox_entries SET data = json_set(data, '$.content', json('{}'), '$.lease', json('{}'), '$.source', json('{}'))",
+        "UPDATE issues SET data = json_set(data, '$.requirement', json('{}'), '$.acceptance', json('{}'), '$.notes', json('{}'))",
     ] {
         sqlx::query(query)
             .execute(&service.store.pool)
@@ -95,33 +91,6 @@ async fn obsidian_export_ignores_authored_bodies() {
             .unwrap();
     }
     assert_eq!(service.obsidian_snapshot().await.unwrap(), expected);
-}
-
-#[tokio::test]
-async fn obsidian_export_normalizes_legacy_inbox_status() {
-    let (_dir, service, _) = export_fixture().await;
-    let project = service.store.projects().await.unwrap()[0].id.clone();
-    let inbox = service
-        .store
-        .execute(
-            json!({"command":"inbox.add","project":project,"content":"Submission"}),
-            WriteOptions::default(),
-        )
-        .await
-        .unwrap()
-        .result;
-    sqlx::query("UPDATE inbox_entries SET data = json_set(data, '$.published', json('true'), '$.status', 'IN_PROGRESS')")
-        .execute(&service.store.pool).await.unwrap();
-    let snapshot = service.obsidian_snapshot().await.unwrap();
-    assert_eq!(snapshot["notes"][2]["status"], "ACTIVE");
-    assert_eq!(snapshot["notes"][2]["properties"]["status"], "ACTIVE");
-    assert_eq!(
-        snapshot["notes"][2],
-        service
-            .obsidian_note(inbox["id"].as_str().unwrap())
-            .await
-            .unwrap()
-    );
 }
 
 #[tokio::test]

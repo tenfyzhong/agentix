@@ -91,7 +91,7 @@ export function historicalContext(events, time, project) {
     }
     const candidates = [...jobs.values()].filter(job => !job.archived_at && ["ACTIVE", "PENDING_REVIEW"].includes(job.status))
         .map(job => ({ job, tasks: [...tasks.values()].filter(task => task.job_id === job.id) }));
-    return { project_id: project, previous_job: null, inbox_todos: [],
+    return { project_id: project, previous_job: null, issue_candidates: [],
         routing: { complete: Number.isFinite(time), candidates } };
 }
 
@@ -99,7 +99,7 @@ export function reconstructHistory(data, jobs, events) {
     const byId = new Map(jobs.map(job => [job.id, job]));
     return { ...data,
         method: { source: "Historical event snapshots strictly before each user message", original_method: data.method,
-            limitations: "No historical Inbox, assignment lease or previous_job reconstruction; same-second events excluded; unavailable message times stay in denominator as incomplete snapshots" },
+            limitations: "No historical Issue, assignment lease or previous_job reconstruction; same-second events excluded; unavailable message times stay in denominator as incomplete snapshots" },
         cases: data.cases.map(sample => {
             const conversation = byId.get(sample.source_job_id)?.conversation || [];
             const previousId = sample.history?.at(-1)?.id;

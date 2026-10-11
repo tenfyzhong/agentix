@@ -13,8 +13,9 @@ async fn sync_live_slack_command_catalog_and_verify_idempotence() {
             ("dashboard", "Browse projects and task boards"),
             ("board", "Show this session's task board"),
             ("jobs", "Browse this session's jobs"),
-            ("inboxes", "Browse this project's inbox"),
-            ("inbox", "Append a requirement to this project's inbox"),
+            ("issues", "Browse project Issues"),
+            ("issue", "Inspect or create an Issue"),
+            ("milestones", "Browse project Milestones"),
         ]
         .map(|(name, description)| ChannelCommand::new(name, description)),
     );

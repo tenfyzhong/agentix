@@ -36,11 +36,12 @@ complete -c taskix -n "__fish_taskix_needs_command" -l idempotency-key -r
 complete -c taskix -n "__fish_taskix_needs_command" -l json
 complete -c taskix -n "__fish_taskix_needs_command" -s h -l help -d 'Print help'
 complete -c taskix -n "__fish_taskix_needs_command" -s V -l version -d 'Print version'
+complete -c taskix -n "__fish_taskix_needs_command" -f -a "issue" -d 'Manage Project deliverables across multiple execution Jobs'
+complete -c taskix -n "__fish_taskix_needs_command" -f -a "milestone" -d 'Organize Issues into basic Project Milestones'
 complete -c taskix -n "__fish_taskix_needs_command" -f -a "serve" -d 'Run Taskix services until interrupted'
 complete -c taskix -n "__fish_taskix_needs_command" -f -a "reload" -d 'Reload configuration for future service work'
 complete -c taskix -n "__fish_taskix_needs_command" -f -a "memory" -d 'Maintain and retrieve project memory through a local service'
 complete -c taskix -n "__fish_taskix_needs_command" -f -a "conversation" -d 'Inspect and attach session discussion turns'
-complete -c taskix -n "__fish_taskix_needs_command" -f -a "inbox" -d 'Submit, inspect, claim, or cancel human requirements in a Project Inbox'
 complete -c taskix -n "__fish_taskix_needs_command" -f -a "completions" -d 'Print a shell completion script without loading task configuration'
 complete -c taskix -n "__fish_taskix_needs_command" -f -a "init" -d 'Create configuration, initialize `SQLite` storage, and generate task documents'
 complete -c taskix -n "__fish_taskix_needs_command" -f -a "obsidian" -d 'Install and configure Obsidian task views in the configured vault'
@@ -55,6 +56,290 @@ complete -c taskix -n "__fish_taskix_needs_command" -f -a "routing" -d 'Read bou
 complete -c taskix -n "__fish_taskix_needs_command" -f -a "hook" -d 'Handle agent session lifecycle events and maintain Task leases'
 complete -c taskix -n "__fish_taskix_needs_command" -f -a "event" -d 'Inspect the ordered audit log of task coordination events'
 complete -c taskix -n "__fish_taskix_needs_command" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and not __fish_seen_subcommand_from create update list show start submit approve reject cancel reopen archive unarchive help" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and not __fish_seen_subcommand_from create update list show start submit approve reject cancel reopen archive unarchive help" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and not __fish_seen_subcommand_from create update list show start submit approve reject cancel reopen archive unarchive help" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and not __fish_seen_subcommand_from create update list show start submit approve reject cancel reopen archive unarchive help" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and not __fish_seen_subcommand_from create update list show start submit approve reject cancel reopen archive unarchive help" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and not __fish_seen_subcommand_from create update list show start submit approve reject cancel reopen archive unarchive help" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and not __fish_seen_subcommand_from create update list show start submit approve reject cancel reopen archive unarchive help" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and not __fish_seen_subcommand_from create update list show start submit approve reject cancel reopen archive unarchive help" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and not __fish_seen_subcommand_from create update list show start submit approve reject cancel reopen archive unarchive help" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and not __fish_seen_subcommand_from create update list show start submit approve reject cancel reopen archive unarchive help" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and not __fish_seen_subcommand_from create update list show start submit approve reject cancel reopen archive unarchive help" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and not __fish_seen_subcommand_from create update list show start submit approve reject cancel reopen archive unarchive help" -f -a "create" -d 'Create a project deliverable using the shared Issue document template'
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and not __fish_seen_subcommand_from create update list show start submit approve reject cancel reopen archive unarchive help" -f -a "update" -d 'Edit requirement, acceptance criteria, notes, or Milestone association'
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and not __fish_seen_subcommand_from create update list show start submit approve reject cancel reopen archive unarchive help" -f -a "list" -d 'List Issues with predicates applied before pagination'
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and not __fish_seen_subcommand_from create update list show start submit approve reject cancel reopen archive unarchive help" -f -a "show" -d 'Show a requirement, acceptance criteria, Milestone, and associated Jobs'
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and not __fish_seen_subcommand_from create update list show start submit approve reject cancel reopen archive unarchive help" -f -a "start" -d 'Mark a TODO Issue active without creating execution work'
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and not __fish_seen_subcommand_from create update list show start submit approve reject cancel reopen archive unarchive help" -f -a "submit" -d 'Submit a deliverable after every associated Job is terminal'
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and not __fish_seen_subcommand_from create update list show start submit approve reject cancel reopen archive unarchive help" -f -a "approve" -d 'Record human acceptance of an Issue awaiting review'
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and not __fish_seen_subcommand_from create update list show start submit approve reject cancel reopen archive unarchive help" -f -a "reject" -d 'Return an Issue to ACTIVE with a human rejection reason'
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and not __fish_seen_subcommand_from create update list show start submit approve reject cancel reopen archive unarchive help" -f -a "cancel" -d 'Cancel an Issue and revoke all related execution leases'
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and not __fish_seen_subcommand_from create update list show start submit approve reject cancel reopen archive unarchive help" -f -a "reopen" -d 'Reopen a terminal Issue while preserving all historical Jobs'
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and not __fish_seen_subcommand_from create update list show start submit approve reject cancel reopen archive unarchive help" -f -a "archive" -d 'Archive a completed or cancelled Issue document'
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and not __fish_seen_subcommand_from create update list show start submit approve reject cancel reopen archive unarchive help" -f -a "unarchive" -d 'Restore an archived Issue without changing its lifecycle'
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and not __fish_seen_subcommand_from create update list show start submit approve reject cancel reopen archive unarchive help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from create" -l title -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from create" -l name -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from create" -l requirement -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from create" -l acceptance -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from create" -l notes -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from create" -l milestone -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from create" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from create" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from create" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from create" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from create" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from create" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from create" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from create" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from create" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from create" -l unlink-milestone
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from create" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from create" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from update" -l title -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from update" -l name -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from update" -l requirement -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from update" -l acceptance -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from update" -l notes -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from update" -l milestone -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from update" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from update" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from update" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from update" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from update" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from update" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from update" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from update" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from update" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from update" -l unlink-milestone
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from update" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from update" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from list" -l status -r -f -a "TODO\t''
+ACTIVE\t''
+PENDING_REVIEW\t''
+COMPLETED\t''
+CANCELLED\t''
+ALL\t''"
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from list" -l milestone -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from list" -l after -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from list" -l limit -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from list" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from list" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from list" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from list" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from list" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from list" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from list" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from list" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from list" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from list" -l archived
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from list" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from list" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from show" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from show" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from show" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from show" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from show" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from show" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from show" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from show" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from show" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from show" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from show" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from start" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from start" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from start" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from start" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from start" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from start" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from start" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from start" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from start" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from start" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from start" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from submit" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from submit" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from submit" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from submit" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from submit" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from submit" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from submit" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from submit" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from submit" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from submit" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from submit" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from approve" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from approve" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from approve" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from approve" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from approve" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from approve" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from approve" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from approve" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from approve" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from approve" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from approve" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from reject" -l reason -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from reject" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from reject" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from reject" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from reject" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from reject" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from reject" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from reject" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from reject" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from reject" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from reject" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from reject" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from cancel" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from cancel" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from cancel" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from cancel" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from cancel" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from cancel" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from cancel" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from cancel" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from cancel" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from cancel" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from cancel" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from reopen" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from reopen" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from reopen" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from reopen" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from reopen" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from reopen" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from reopen" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from reopen" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from reopen" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from reopen" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from reopen" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from archive" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from archive" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from archive" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from archive" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from archive" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from archive" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from archive" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from archive" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from archive" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from archive" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from archive" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from unarchive" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from unarchive" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from unarchive" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from unarchive" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from unarchive" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from unarchive" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from unarchive" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from unarchive" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from unarchive" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from unarchive" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from unarchive" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from help" -f -a "create" -d 'Create a project deliverable using the shared Issue document template'
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from help" -f -a "update" -d 'Edit requirement, acceptance criteria, notes, or Milestone association'
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from help" -f -a "list" -d 'List Issues with predicates applied before pagination'
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from help" -f -a "show" -d 'Show a requirement, acceptance criteria, Milestone, and associated Jobs'
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from help" -f -a "start" -d 'Mark a TODO Issue active without creating execution work'
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from help" -f -a "submit" -d 'Submit a deliverable after every associated Job is terminal'
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from help" -f -a "approve" -d 'Record human acceptance of an Issue awaiting review'
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from help" -f -a "reject" -d 'Return an Issue to ACTIVE with a human rejection reason'
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from help" -f -a "cancel" -d 'Cancel an Issue and revoke all related execution leases'
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from help" -f -a "reopen" -d 'Reopen a terminal Issue while preserving all historical Jobs'
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from help" -f -a "archive" -d 'Archive a completed or cancelled Issue document'
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from help" -f -a "unarchive" -d 'Restore an archived Issue without changing its lifecycle'
+complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show delete help" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show delete help" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show delete help" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show delete help" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show delete help" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show delete help" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show delete help" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show delete help" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show delete help" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show delete help" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show delete help" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show delete help" -f -a "create" -d 'Create a basic Project Milestone'
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show delete help" -f -a "update" -d 'Edit a Milestone\'s title, goal, order, or optional due date'
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show delete help" -f -a "list" -d 'List Milestones in Project order'
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show delete help" -f -a "show" -d 'Show a Milestone and Issue acceptance counts'
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show delete help" -f -a "delete" -d 'Delete a Milestone after unlinking or reassigning its Issues'
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show delete help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from create" -l title -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from create" -l name -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from create" -l goal -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from create" -l order -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from create" -l due-date -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from create" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from create" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from create" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from create" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from create" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from create" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from create" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from create" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from create" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from create" -l clear-due-date
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from create" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from create" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from update" -l title -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from update" -l name -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from update" -l goal -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from update" -l order -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from update" -l due-date -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from update" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from update" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from update" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from update" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from update" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from update" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from update" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from update" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from update" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from update" -l clear-due-date
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from update" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from update" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from list" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from list" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from list" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from list" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from list" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from list" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from list" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from list" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from list" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from list" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from list" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from show" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from show" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from show" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from show" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from show" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from show" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from show" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from show" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from show" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from show" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from show" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from delete" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from delete" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from delete" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from delete" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from delete" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from delete" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from delete" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from delete" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from delete" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from delete" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from delete" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from help" -f -a "create" -d 'Create a basic Project Milestone'
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from help" -f -a "update" -d 'Edit a Milestone\'s title, goal, order, or optional due date'
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from help" -f -a "list" -d 'List Milestones in Project order'
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from help" -f -a "show" -d 'Show a Milestone and Issue acceptance counts'
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from help" -f -a "delete" -d 'Delete a Milestone after unlinking or reassigning its Issues'
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
 complete -c taskix -n "__fish_taskix_using_subcommand serve" -l config -r -F
 complete -c taskix -n "__fish_taskix_using_subcommand serve" -l project -r
 complete -c taskix -n "__fish_taskix_using_subcommand serve" -l actor -r
@@ -446,118 +731,6 @@ complete -c taskix -n "__fish_taskix_using_subcommand conversation; and __fish_s
 complete -c taskix -n "__fish_taskix_using_subcommand conversation; and __fish_seen_subcommand_from help" -f -a "show" -d 'Read a turn\'s original messages and current binding'
 complete -c taskix -n "__fish_taskix_using_subcommand conversation; and __fish_seen_subcommand_from help" -f -a "attach" -d 'Attach selected discussion turns to an ACTIVE session Job'
 complete -c taskix -n "__fish_taskix_using_subcommand conversation; and __fish_seen_subcommand_from help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel set-status help" -l config -r -F
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel set-status help" -l project -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel set-status help" -l actor -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel set-status help" -l executor -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel set-status help" -l session -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel set-status help" -l delegated-by -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel set-status help" -l lease-token -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel set-status help" -l expect-revision -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel set-status help" -l idempotency-key -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel set-status help" -l json
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel set-status help" -s h -l help -d 'Print help'
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel set-status help" -f -a "add" -d 'Append one requirement, preserving its complete Markdown content'
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel set-status help" -f -a "list" -d 'Import human edits and show visible Inbox entries in document order'
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel set-status help" -f -a "sync" -d 'Import submissions, cancellations, and withdrawals and repair the document'
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel set-status help" -f -a "claim-next" -d 'Atomically claim the next eligible requirement and create or resume its Job'
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel set-status help" -f -a "release" -d 'Release an owned Inbox lease so another agent can resume its existing Job'
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel set-status help" -f -a "cancel" -d 'Cancel a requirement and its unfinished work, preserving history'
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel set-status help" -f -a "set-status" -d 'Set a human Inbox status; linked completion requires a pending review'
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and not __fish_seen_subcommand_from add list sync claim-next release cancel set-status help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from add" -l content -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from add" -l config -r -F
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from add" -l project -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from add" -l actor -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from add" -l executor -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from add" -l session -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from add" -l delegated-by -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from add" -l lease-token -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from add" -l expect-revision -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from add" -l idempotency-key -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from add" -l json
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from add" -s h -l help -d 'Print help'
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from list" -l config -r -F
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from list" -l project -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from list" -l actor -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from list" -l executor -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from list" -l session -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from list" -l delegated-by -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from list" -l lease-token -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from list" -l expect-revision -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from list" -l idempotency-key -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from list" -l json
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from list" -s h -l help -d 'Print help'
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from sync" -l config -r -F
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from sync" -l project -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from sync" -l actor -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from sync" -l executor -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from sync" -l session -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from sync" -l delegated-by -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from sync" -l lease-token -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from sync" -l expect-revision -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from sync" -l idempotency-key -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from sync" -l json
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from sync" -s h -l help -d 'Print help'
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from claim-next" -l config -r -F
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from claim-next" -l project -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from claim-next" -l actor -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from claim-next" -l executor -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from claim-next" -l session -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from claim-next" -l delegated-by -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from claim-next" -l lease-token -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from claim-next" -l expect-revision -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from claim-next" -l idempotency-key -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from claim-next" -l json
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from claim-next" -s h -l help -d 'Print help'
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from release" -l config -r -F
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from release" -l project -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from release" -l actor -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from release" -l executor -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from release" -l session -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from release" -l delegated-by -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from release" -l lease-token -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from release" -l expect-revision -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from release" -l idempotency-key -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from release" -l json
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from release" -s h -l help -d 'Print help'
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from cancel" -l config -r -F
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from cancel" -l project -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from cancel" -l actor -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from cancel" -l executor -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from cancel" -l session -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from cancel" -l delegated-by -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from cancel" -l lease-token -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from cancel" -l expect-revision -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from cancel" -l idempotency-key -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from cancel" -l json
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from cancel" -s h -l help -d 'Print help'
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from set-status" -l status -r -f -a "TODO\t''
-ACTIVE\t''
-PENDING_REVIEW\t''
-COMPLETED\t''
-CANCELLED\t''
-IN_PROGRESS\t''
-DONE\t''"
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from set-status" -l config -r -F
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from set-status" -l project -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from set-status" -l actor -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from set-status" -l executor -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from set-status" -l session -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from set-status" -l delegated-by -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from set-status" -l lease-token -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from set-status" -l expect-revision -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from set-status" -l idempotency-key -r
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from set-status" -l json
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from set-status" -s h -l help -d 'Print help'
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from help" -f -a "add" -d 'Append one requirement, preserving its complete Markdown content'
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from help" -f -a "list" -d 'Import human edits and show visible Inbox entries in document order'
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from help" -f -a "sync" -d 'Import submissions, cancellations, and withdrawals and repair the document'
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from help" -f -a "claim-next" -d 'Atomically claim the next eligible requirement and create or resume its Job'
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from help" -f -a "release" -d 'Release an owned Inbox lease so another agent can resume its existing Job'
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from help" -f -a "cancel" -d 'Cancel a requirement and its unfinished work, preserving history'
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from help" -f -a "set-status" -d 'Set a human Inbox status; linked completion requires a pending review'
-complete -c taskix -n "__fish_taskix_using_subcommand inbox; and __fish_seen_subcommand_from help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
 complete -c taskix -n "__fish_taskix_using_subcommand completions" -l config -r -F
 complete -c taskix -n "__fish_taskix_using_subcommand completions" -l project -r
 complete -c taskix -n "__fish_taskix_using_subcommand completions" -l actor -r
@@ -583,22 +756,23 @@ complete -c taskix -n "__fish_taskix_using_subcommand init" -l expect-revision -
 complete -c taskix -n "__fish_taskix_using_subcommand init" -l idempotency-key -r
 complete -c taskix -n "__fish_taskix_using_subcommand init" -l json
 complete -c taskix -n "__fish_taskix_using_subcommand init" -s h -l help -d 'Print help'
-complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show snapshot setup help" -l config -r -F
-complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show snapshot setup help" -l project -r
-complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show snapshot setup help" -l actor -r
-complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show snapshot setup help" -l executor -r
-complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show snapshot setup help" -l session -r
-complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show snapshot setup help" -l delegated-by -r
-complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show snapshot setup help" -l lease-token -r
-complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show snapshot setup help" -l expect-revision -r
-complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show snapshot setup help" -l idempotency-key -r
-complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show snapshot setup help" -l json
-complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show snapshot setup help" -s h -l help -d 'Print help'
-complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show snapshot setup help" -f -a "connection" -d 'Read the Obsidian connection configuration without loading task records'
-complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show snapshot setup help" -f -a "show" -d 'Query one registered Task, Job, or Inbox entry by its exact ID'
-complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show snapshot setup help" -f -a "snapshot" -d 'Query registered notes and authoritative status properties without lease credentials'
-complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show snapshot setup help" -f -a "setup" -d 'Install native Bases task boards (Obsidian 1.14+) and Taskix Sync, then reload the vault'
-complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show snapshot setup help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show sync snapshot setup help" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show sync snapshot setup help" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show sync snapshot setup help" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show sync snapshot setup help" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show sync snapshot setup help" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show sync snapshot setup help" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show sync snapshot setup help" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show sync snapshot setup help" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show sync snapshot setup help" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show sync snapshot setup help" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show sync snapshot setup help" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show sync snapshot setup help" -f -a "connection" -d 'Read the Obsidian connection configuration without loading task records'
+complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show sync snapshot setup help" -f -a "show" -d 'Query one registered Task, Job, Issue, or Milestone by its exact ID'
+complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show sync snapshot setup help" -f -a "sync" -d 'Import editable content from one registered Issue or Milestone note'
+complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show sync snapshot setup help" -f -a "snapshot" -d 'Query registered notes and authoritative status properties without lease credentials'
+complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show sync snapshot setup help" -f -a "setup" -d 'Install native Bases task boards (Obsidian 1.14+) and Taskix Sync, then reload the vault'
+complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and not __fish_seen_subcommand_from connection show sync snapshot setup help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
 complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and __fish_seen_subcommand_from connection" -l config -r -F
 complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and __fish_seen_subcommand_from connection" -l project -r
 complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and __fish_seen_subcommand_from connection" -l actor -r
@@ -621,6 +795,17 @@ complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and __fish_seen_
 complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and __fish_seen_subcommand_from show" -l idempotency-key -r
 complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and __fish_seen_subcommand_from show" -l json
 complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and __fish_seen_subcommand_from show" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and __fish_seen_subcommand_from sync" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and __fish_seen_subcommand_from sync" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and __fish_seen_subcommand_from sync" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and __fish_seen_subcommand_from sync" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and __fish_seen_subcommand_from sync" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and __fish_seen_subcommand_from sync" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and __fish_seen_subcommand_from sync" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and __fish_seen_subcommand_from sync" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and __fish_seen_subcommand_from sync" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and __fish_seen_subcommand_from sync" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and __fish_seen_subcommand_from sync" -s h -l help -d 'Print help'
 complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and __fish_seen_subcommand_from snapshot" -l config -r -F
 complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and __fish_seen_subcommand_from snapshot" -l project -r
 complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and __fish_seen_subcommand_from snapshot" -l actor -r
@@ -645,7 +830,8 @@ complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and __fish_seen_
 complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and __fish_seen_subcommand_from setup" -l json
 complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and __fish_seen_subcommand_from setup" -s h -l help -d 'Print help'
 complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and __fish_seen_subcommand_from help" -f -a "connection" -d 'Read the Obsidian connection configuration without loading task records'
-complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and __fish_seen_subcommand_from help" -f -a "show" -d 'Query one registered Task, Job, or Inbox entry by its exact ID'
+complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and __fish_seen_subcommand_from help" -f -a "show" -d 'Query one registered Task, Job, Issue, or Milestone by its exact ID'
+complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and __fish_seen_subcommand_from help" -f -a "sync" -d 'Import editable content from one registered Issue or Milestone note'
 complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and __fish_seen_subcommand_from help" -f -a "snapshot" -d 'Query registered notes and authoritative status properties without lease credentials'
 complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and __fish_seen_subcommand_from help" -f -a "setup" -d 'Install native Bases task boards (Obsidian 1.14+) and Taskix Sync, then reload the vault'
 complete -c taskix -n "__fish_taskix_using_subcommand obsidian; and __fish_seen_subcommand_from help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
@@ -805,11 +991,13 @@ complete -c taskix -n "__fish_taskix_using_subcommand job; and not __fish_seen_s
 complete -c taskix -n "__fish_taskix_using_subcommand job; and not __fish_seen_subcommand_from followup submit approve reject delete create update list show cancel archive unarchive help" -f -a "archive" -d 'Archive a closed Job and move its document to the archive'
 complete -c taskix -n "__fish_taskix_using_subcommand job; and not __fish_seen_subcommand_from followup submit approve reject delete create update list show cancel archive unarchive help" -f -a "unarchive" -d 'Restore an archived Job document without changing its completion status'
 complete -c taskix -n "__fish_taskix_using_subcommand job; and not __fish_seen_subcommand_from followup submit approve reject delete create update list show cancel archive unarchive help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from followup" -l issue -r
+complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from followup" -l issue-revision -d 'Revision read from the selected Issue before association' -r
+complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from followup" -l issue-content-hash -d 'Requirement hash read from the selected Issue before association' -r
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from followup" -l prompt -r
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from followup" -l conversation-turn -d 'Related session turns selected by Jev or the agent; repeat to include several' -r
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from followup" -l conversation-revision -r
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from followup" -l conversation-target -d 'Fingerprint of the target used by the discussion classifier' -r
-complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from followup" -l inbox -d 'Inbox TODO IDs selected by the agent through semantic matching; repeat for multiple entries' -r
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from followup" -l config -r -F
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from followup" -l project -r
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from followup" -l actor -r
@@ -869,6 +1057,9 @@ complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subco
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from delete" -l idempotency-key -r
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from delete" -l json
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from delete" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from create" -l issue -r
+complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from create" -l issue-revision -d 'Revision read from the selected Issue before association' -r
+complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from create" -l issue-content-hash -d 'Requirement hash read from the selected Issue before association' -r
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from create" -l name -r
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from create" -l title -r
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from create" -l goal -r
@@ -876,7 +1067,6 @@ complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subco
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from create" -l conversation-turn -d 'Related session turns selected by Jev or the agent; repeat to include several' -r
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from create" -l conversation-revision -r
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from create" -l conversation-target -d 'Fingerprint of the target used by the discussion classifier' -r
-complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from create" -l inbox -d 'Inbox TODO IDs selected by the agent through semantic matching; repeat for multiple entries' -r
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from create" -l review-policy -r -f -a "required\t''
 none\t''"
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from create" -l config -r -F
@@ -890,11 +1080,13 @@ complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subco
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from create" -l idempotency-key -r
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from create" -l json
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from create" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from update" -l issue -r
+complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from update" -l issue-revision -d 'Revision read from the selected Issue before association' -r
+complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from update" -l issue-content-hash -d 'Requirement hash read from the selected Issue before association' -r
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from update" -l name -r
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from update" -l title -r
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from update" -l goal -r
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from update" -l prompt -d 'Replace the original user prompt; an empty string clears it' -r
-complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from update" -l inbox -d 'Inbox TODO IDs selected by the agent through semantic matching; repeat for multiple entries' -r
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from update" -l review-policy -r -f -a "required\t''
 none\t''"
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from update" -l config -r -F
@@ -906,8 +1098,10 @@ complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subco
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from update" -l lease-token -r
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from update" -l expect-revision -r
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from update" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from update" -l unlink-issue
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from update" -l json
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from update" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from list" -l issue -r
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from list" -l period -r
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from list" -l created-from -r
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from list" -l created-to -r
@@ -920,6 +1114,7 @@ complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subco
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from list" -l lease-token -r
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from list" -l expect-revision -r
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from list" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from list" -l unassociated
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from list" -l active
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from list" -l pending-review
 complete -c taskix -n "__fish_taskix_using_subcommand job; and __fish_seen_subcommand_from list" -l completed
@@ -1317,7 +1512,7 @@ complete -c taskix -n "__fish_taskix_using_subcommand routing; and not __fish_se
 complete -c taskix -n "__fish_taskix_using_subcommand routing; and not __fish_seen_subcommand_from metrics snapshot candidates revision help" -l json
 complete -c taskix -n "__fish_taskix_using_subcommand routing; and not __fish_seen_subcommand_from metrics snapshot candidates revision help" -s h -l help -d 'Print help'
 complete -c taskix -n "__fish_taskix_using_subcommand routing; and not __fish_seen_subcommand_from metrics snapshot candidates revision help" -f -a "metrics" -d 'Inspect optional Jev statistics without loading the task database'
-complete -c taskix -n "__fish_taskix_using_subcommand routing; and not __fish_seen_subcommand_from metrics snapshot candidates revision help" -f -a "snapshot" -d 'Refresh leases and Inbox edits and return bounded prompt routing context'
+complete -c taskix -n "__fish_taskix_using_subcommand routing; and not __fish_seen_subcommand_from metrics snapshot candidates revision help" -f -a "snapshot" -d 'Refresh leases and Issue edits and return bounded prompt routing context'
 complete -c taskix -n "__fish_taskix_using_subcommand routing; and not __fish_seen_subcommand_from metrics snapshot candidates revision help" -f -a "candidates" -d 'Read bounded ACTIVE and `PENDING_REVIEW` Jobs and their Tasks by exact Project ID'
 complete -c taskix -n "__fish_taskix_using_subcommand routing; and not __fish_seen_subcommand_from metrics snapshot candidates revision help" -f -a "revision" -d 'Read only identity and lifecycle fields by exact Job ID'
 complete -c taskix -n "__fish_taskix_using_subcommand routing; and not __fish_seen_subcommand_from metrics snapshot candidates revision help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
@@ -1334,7 +1529,7 @@ complete -c taskix -n "__fish_taskix_using_subcommand routing; and __fish_seen_s
 complete -c taskix -n "__fish_taskix_using_subcommand routing; and __fish_seen_subcommand_from metrics" -s h -l help -d 'Print help'
 complete -c taskix -n "__fish_taskix_using_subcommand routing; and __fish_seen_subcommand_from metrics" -f -a "report" -d 'Show adoption, fallback reasons, reviewed accuracy, and threshold comparisons'
 complete -c taskix -n "__fish_taskix_using_subcommand routing; and __fish_seen_subcommand_from metrics" -f -a "list" -d 'Show recent requests and their individual answer scores'
-complete -c taskix -n "__fish_taskix_using_subcommand routing; and __fish_seen_subcommand_from metrics" -f -a "label" -d 'Record human assessment of the full proposed route and Inbox selection'
+complete -c taskix -n "__fish_taskix_using_subcommand routing; and __fish_seen_subcommand_from metrics" -f -a "label" -d 'Record human assessment of the full proposed route and Issue association'
 complete -c taskix -n "__fish_taskix_using_subcommand routing; and __fish_seen_subcommand_from metrics" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
 complete -c taskix -n "__fish_taskix_using_subcommand routing; and __fish_seen_subcommand_from snapshot" -l config -r -F
 complete -c taskix -n "__fish_taskix_using_subcommand routing; and __fish_seen_subcommand_from snapshot" -l project -r
@@ -1370,7 +1565,7 @@ complete -c taskix -n "__fish_taskix_using_subcommand routing; and __fish_seen_s
 complete -c taskix -n "__fish_taskix_using_subcommand routing; and __fish_seen_subcommand_from revision" -l json
 complete -c taskix -n "__fish_taskix_using_subcommand routing; and __fish_seen_subcommand_from revision" -s h -l help -d 'Print help'
 complete -c taskix -n "__fish_taskix_using_subcommand routing; and __fish_seen_subcommand_from help" -f -a "metrics" -d 'Inspect optional Jev statistics without loading the task database'
-complete -c taskix -n "__fish_taskix_using_subcommand routing; and __fish_seen_subcommand_from help" -f -a "snapshot" -d 'Refresh leases and Inbox edits and return bounded prompt routing context'
+complete -c taskix -n "__fish_taskix_using_subcommand routing; and __fish_seen_subcommand_from help" -f -a "snapshot" -d 'Refresh leases and Issue edits and return bounded prompt routing context'
 complete -c taskix -n "__fish_taskix_using_subcommand routing; and __fish_seen_subcommand_from help" -f -a "candidates" -d 'Read bounded ACTIVE and `PENDING_REVIEW` Jobs and their Tasks by exact Project ID'
 complete -c taskix -n "__fish_taskix_using_subcommand routing; and __fish_seen_subcommand_from help" -f -a "revision" -d 'Read only identity and lifecycle fields by exact Job ID'
 complete -c taskix -n "__fish_taskix_using_subcommand routing; and __fish_seen_subcommand_from help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
@@ -1386,7 +1581,7 @@ complete -c taskix -n "__fish_taskix_using_subcommand hook; and not __fish_seen_
 complete -c taskix -n "__fish_taskix_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start session-end interrupt heartbeat help" -l json
 complete -c taskix -n "__fish_taskix_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start session-end interrupt heartbeat help" -s h -l help -d 'Print help'
 complete -c taskix -n "__fish_taskix_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start session-end interrupt heartbeat help" -f -a "record" -d 'Record visible user/assistant messages from a JSON array in the session Job'
-complete -c taskix -n "__fish_taskix_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start session-end interrupt heartbeat help" -f -a "stop" -d 'Acknowledge turn completion without claiming Inbox work'
+complete -c taskix -n "__fish_taskix_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start session-end interrupt heartbeat help" -f -a "stop" -d 'Acknowledge turn completion without starting new work'
 complete -c taskix -n "__fish_taskix_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start session-end interrupt heartbeat help" -f -a "session-start" -d 'Recover the session\'s Tasks blocked by interruption or lease expiry into planning'
 complete -c taskix -n "__fish_taskix_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start session-end interrupt heartbeat help" -f -a "session-end" -d 'Record session shutdown and release its active Task leases'
 complete -c taskix -n "__fish_taskix_using_subcommand hook; and not __fish_seen_subcommand_from record stop session-start session-end interrupt heartbeat help" -f -a "interrupt" -d 'Release an interrupted session\'s Task leases while preserving its Plans'
@@ -1461,7 +1656,7 @@ complete -c taskix -n "__fish_taskix_using_subcommand hook; and __fish_seen_subc
 complete -c taskix -n "__fish_taskix_using_subcommand hook; and __fish_seen_subcommand_from heartbeat" -l json
 complete -c taskix -n "__fish_taskix_using_subcommand hook; and __fish_seen_subcommand_from heartbeat" -s h -l help -d 'Print help'
 complete -c taskix -n "__fish_taskix_using_subcommand hook; and __fish_seen_subcommand_from help" -f -a "record" -d 'Record visible user/assistant messages from a JSON array in the session Job'
-complete -c taskix -n "__fish_taskix_using_subcommand hook; and __fish_seen_subcommand_from help" -f -a "stop" -d 'Acknowledge turn completion without claiming Inbox work'
+complete -c taskix -n "__fish_taskix_using_subcommand hook; and __fish_seen_subcommand_from help" -f -a "stop" -d 'Acknowledge turn completion without starting new work'
 complete -c taskix -n "__fish_taskix_using_subcommand hook; and __fish_seen_subcommand_from help" -f -a "session-start" -d 'Recover the session\'s Tasks blocked by interruption or lease expiry into planning'
 complete -c taskix -n "__fish_taskix_using_subcommand hook; and __fish_seen_subcommand_from help" -f -a "session-end" -d 'Record session shutdown and release its active Task leases'
 complete -c taskix -n "__fish_taskix_using_subcommand hook; and __fish_seen_subcommand_from help" -f -a "interrupt" -d 'Release an interrupted session\'s Task leases while preserving its Plans'
@@ -1530,25 +1725,43 @@ complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_sub
 complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from help" -f -a "maintain" -d 'Preview historical payload compaction and optional age-based pruning'
 complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from help" -f -a "list" -d 'List events after a sequence cursor, optionally filtered by Job and limited in count'
 complete -c taskix -n "__fish_taskix_using_subcommand event; and __fish_seen_subcommand_from help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from serve reload memory conversation inbox completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "serve" -d 'Run Taskix services until interrupted'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from serve reload memory conversation inbox completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "reload" -d 'Reload configuration for future service work'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from serve reload memory conversation inbox completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "memory" -d 'Maintain and retrieve project memory through a local service'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from serve reload memory conversation inbox completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "conversation" -d 'Inspect and attach session discussion turns'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from serve reload memory conversation inbox completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "inbox" -d 'Submit, inspect, claim, or cancel human requirements in a Project Inbox'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from serve reload memory conversation inbox completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "completions" -d 'Print a shell completion script without loading task configuration'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from serve reload memory conversation inbox completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "init" -d 'Create configuration, initialize `SQLite` storage, and generate task documents'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from serve reload memory conversation inbox completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "obsidian" -d 'Install and configure Obsidian task views in the configured vault'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from serve reload memory conversation inbox completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "doctor" -d 'Check for missing Plan files and documents that are behind the event log'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from serve reload memory conversation inbox completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "sync" -d 'Regenerate task documents from the current database state'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from serve reload memory conversation inbox completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "project" -d 'Register, inspect, archive, or delete Projects shared across worktrees'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from serve reload memory conversation inbox completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "job" -d 'Manage Jobs that group Tasks for an independently deliverable requirement'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from serve reload memory conversation inbox completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "task" -d 'Manage Task dependencies, ownership leases, and execution status'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from serve reload memory conversation inbox completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "plan" -d 'Publish, revise, or inspect the execution Plan in a Task note'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from serve reload memory conversation inbox completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "context" -d 'Show Task, Job, lease, Plan, and document context for a session or explicit IDs'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from serve reload memory conversation inbox completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "routing" -d 'Read bounded routing facts for host-side classifiers'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from serve reload memory conversation inbox completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "hook" -d 'Handle agent session lifecycle events and maintain Task leases'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from serve reload memory conversation inbox completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "event" -d 'Inspect the ordered audit log of task coordination events'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from serve reload memory conversation inbox completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from issue milestone serve reload memory conversation completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "issue" -d 'Manage Project deliverables across multiple execution Jobs'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from issue milestone serve reload memory conversation completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "milestone" -d 'Organize Issues into basic Project Milestones'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from issue milestone serve reload memory conversation completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "serve" -d 'Run Taskix services until interrupted'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from issue milestone serve reload memory conversation completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "reload" -d 'Reload configuration for future service work'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from issue milestone serve reload memory conversation completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "memory" -d 'Maintain and retrieve project memory through a local service'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from issue milestone serve reload memory conversation completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "conversation" -d 'Inspect and attach session discussion turns'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from issue milestone serve reload memory conversation completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "completions" -d 'Print a shell completion script without loading task configuration'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from issue milestone serve reload memory conversation completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "init" -d 'Create configuration, initialize `SQLite` storage, and generate task documents'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from issue milestone serve reload memory conversation completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "obsidian" -d 'Install and configure Obsidian task views in the configured vault'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from issue milestone serve reload memory conversation completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "doctor" -d 'Check for missing Plan files and documents that are behind the event log'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from issue milestone serve reload memory conversation completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "sync" -d 'Regenerate task documents from the current database state'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from issue milestone serve reload memory conversation completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "project" -d 'Register, inspect, archive, or delete Projects shared across worktrees'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from issue milestone serve reload memory conversation completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "job" -d 'Manage Jobs that group Tasks for an independently deliverable requirement'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from issue milestone serve reload memory conversation completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "task" -d 'Manage Task dependencies, ownership leases, and execution status'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from issue milestone serve reload memory conversation completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "plan" -d 'Publish, revise, or inspect the execution Plan in a Task note'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from issue milestone serve reload memory conversation completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "context" -d 'Show Task, Job, lease, Plan, and document context for a session or explicit IDs'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from issue milestone serve reload memory conversation completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "routing" -d 'Read bounded routing facts for host-side classifiers'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from issue milestone serve reload memory conversation completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "hook" -d 'Handle agent session lifecycle events and maintain Task leases'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from issue milestone serve reload memory conversation completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "event" -d 'Inspect the ordered audit log of task coordination events'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and not __fish_seen_subcommand_from issue milestone serve reload memory conversation completions init obsidian doctor sync project job task plan context routing hook event help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from issue" -f -a "create" -d 'Create a project deliverable using the shared Issue document template'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from issue" -f -a "update" -d 'Edit requirement, acceptance criteria, notes, or Milestone association'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from issue" -f -a "list" -d 'List Issues with predicates applied before pagination'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from issue" -f -a "show" -d 'Show a requirement, acceptance criteria, Milestone, and associated Jobs'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from issue" -f -a "start" -d 'Mark a TODO Issue active without creating execution work'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from issue" -f -a "submit" -d 'Submit a deliverable after every associated Job is terminal'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from issue" -f -a "approve" -d 'Record human acceptance of an Issue awaiting review'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from issue" -f -a "reject" -d 'Return an Issue to ACTIVE with a human rejection reason'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from issue" -f -a "cancel" -d 'Cancel an Issue and revoke all related execution leases'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from issue" -f -a "reopen" -d 'Reopen a terminal Issue while preserving all historical Jobs'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from issue" -f -a "archive" -d 'Archive a completed or cancelled Issue document'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from issue" -f -a "unarchive" -d 'Restore an archived Issue without changing its lifecycle'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from milestone" -f -a "create" -d 'Create a basic Project Milestone'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from milestone" -f -a "update" -d 'Edit a Milestone\'s title, goal, order, or optional due date'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from milestone" -f -a "list" -d 'List Milestones in Project order'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from milestone" -f -a "show" -d 'Show a Milestone and Issue acceptance counts'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from milestone" -f -a "delete" -d 'Delete a Milestone after unlinking or reassigning its Issues'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from memory" -f -a "status" -d 'Inspect queue, index coverage and provider availability'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from memory" -f -a "doctor" -d 'Inspect service configuration and local availability without a model request'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from memory" -f -a "sync" -d 'Restore one page of read-only project memory notes from the database'
@@ -1573,15 +1786,9 @@ complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subc
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from conversation" -f -a "list" -d 'Read pending turns in source order, including their selection revision'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from conversation" -f -a "show" -d 'Read a turn\'s original messages and current binding'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from conversation" -f -a "attach" -d 'Attach selected discussion turns to an ACTIVE session Job'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from inbox" -f -a "add" -d 'Append one requirement, preserving its complete Markdown content'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from inbox" -f -a "list" -d 'Import human edits and show visible Inbox entries in document order'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from inbox" -f -a "sync" -d 'Import submissions, cancellations, and withdrawals and repair the document'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from inbox" -f -a "claim-next" -d 'Atomically claim the next eligible requirement and create or resume its Job'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from inbox" -f -a "release" -d 'Release an owned Inbox lease so another agent can resume its existing Job'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from inbox" -f -a "cancel" -d 'Cancel a requirement and its unfinished work, preserving history'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from inbox" -f -a "set-status" -d 'Set a human Inbox status; linked completion requires a pending review'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from obsidian" -f -a "connection" -d 'Read the Obsidian connection configuration without loading task records'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from obsidian" -f -a "show" -d 'Query one registered Task, Job, or Inbox entry by its exact ID'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from obsidian" -f -a "show" -d 'Query one registered Task, Job, Issue, or Milestone by its exact ID'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from obsidian" -f -a "sync" -d 'Import editable content from one registered Issue or Milestone note'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from obsidian" -f -a "snapshot" -d 'Query registered notes and authoritative status properties without lease credentials'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from obsidian" -f -a "setup" -d 'Install native Bases task boards (Obsidian 1.14+) and Taskix Sync, then reload the vault'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from project" -f -a "delete" -d 'Delete the Project, its work, and its entire generated document directory'
@@ -1624,11 +1831,11 @@ complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subc
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from plan" -f -a "revise" -d 'Replace the Plan body in the same Task note while holding its lease'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from plan" -f -a "show" -d 'Show the current Plan\'s metadata and absolute file path for a Task'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from routing" -f -a "metrics" -d 'Inspect optional Jev statistics without loading the task database'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from routing" -f -a "snapshot" -d 'Refresh leases and Inbox edits and return bounded prompt routing context'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from routing" -f -a "snapshot" -d 'Refresh leases and Issue edits and return bounded prompt routing context'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from routing" -f -a "candidates" -d 'Read bounded ACTIVE and `PENDING_REVIEW` Jobs and their Tasks by exact Project ID'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from routing" -f -a "revision" -d 'Read only identity and lifecycle fields by exact Job ID'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from hook" -f -a "record" -d 'Record visible user/assistant messages from a JSON array in the session Job'
-complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from hook" -f -a "stop" -d 'Acknowledge turn completion without claiming Inbox work'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from hook" -f -a "stop" -d 'Acknowledge turn completion without starting new work'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from hook" -f -a "session-start" -d 'Recover the session\'s Tasks blocked by interruption or lease expiry into planning'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from hook" -f -a "session-end" -d 'Record session shutdown and release its active Task leases'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from hook" -f -a "interrupt" -d 'Release an interrupted session\'s Task leases while preserving its Plans'

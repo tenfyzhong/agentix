@@ -38,7 +38,488 @@ _taskix() {
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:taskix-command-$line[1]:"
         case $line[1] in
-            (serve)
+            (issue)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_taskix__subcmd__issue_commands" \
+"*::: :->issue" \
+&& ret=0
+
+    case $state in
+    (issue)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskix-issue-command-$line[1]:"
+        case $line[1] in
+            (create)
+_arguments "${_arguments_options[@]}" : \
+'--title=[]:TITLE:_default' \
+'--name=[]:NAME:_default' \
+'--requirement=[]:REQUIREMENT:_default' \
+'--acceptance=[]:ACCEPTANCE:_default' \
+'--notes=[]:NOTES:_default' \
+'(--unlink-milestone)--milestone=[]:MILESTONE:_default' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--unlink-milestone[]' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(update)
+_arguments "${_arguments_options[@]}" : \
+'--title=[]:TITLE:_default' \
+'--name=[]:NAME:_default' \
+'--requirement=[]:REQUIREMENT:_default' \
+'--acceptance=[]:ACCEPTANCE:_default' \
+'--notes=[]:NOTES:_default' \
+'(--unlink-milestone)--milestone=[]:MILESTONE:_default' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--unlink-milestone[]' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+'--status=[]:STATUS:(TODO ACTIVE PENDING_REVIEW COMPLETED CANCELLED ALL)' \
+'--milestone=[]:MILESTONE:_default' \
+'--after=[]:AFTER:_default' \
+'--limit=[]:LIMIT:_default' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--archived[]' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(show)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(start)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(submit)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(approve)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(reject)
+_arguments "${_arguments_options[@]}" : \
+'--reason=[]:REASON:_default' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(cancel)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(reopen)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(archive)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(unarchive)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_taskix__subcmd__issue__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskix-issue-help-command-$line[1]:"
+        case $line[1] in
+            (create)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(update)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(show)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(start)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(submit)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(approve)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(reject)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(cancel)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(reopen)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(archive)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(unarchive)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(milestone)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+":: :_taskix__subcmd__milestone_commands" \
+"*::: :->milestone" \
+&& ret=0
+
+    case $state in
+    (milestone)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskix-milestone-command-$line[1]:"
+        case $line[1] in
+            (create)
+_arguments "${_arguments_options[@]}" : \
+'--title=[]:TITLE:_default' \
+'--name=[]:NAME:_default' \
+'--goal=[]:GOAL:_default' \
+'--order=[]:ORDER:_default' \
+'(--clear-due-date)--due-date=[]:DUE_DATE:_default' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--clear-due-date[]' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(update)
+_arguments "${_arguments_options[@]}" : \
+'--title=[]:TITLE:_default' \
+'--name=[]:NAME:_default' \
+'--goal=[]:GOAL:_default' \
+'--order=[]:ORDER:_default' \
+'(--clear-due-date)--due-date=[]:DUE_DATE:_default' \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--clear-due-date[]' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+&& ret=0
+;;
+(show)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(delete)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+":: :_taskix__subcmd__milestone__subcmd__help_commands" \
+"*::: :->help" \
+&& ret=0
+
+    case $state in
+    (help)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskix-milestone-help-command-$line[1]:"
+        case $line[1] in
+            (create)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(update)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(show)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(delete)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(help)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+        esac
+    ;;
+esac
+;;
+(serve)
 _arguments "${_arguments_options[@]}" : \
 '--config=[]:CONFIG:_files' \
 '--project=[]:PROJECT:_default' \
@@ -692,199 +1173,6 @@ esac
     ;;
 esac
 ;;
-(inbox)
-_arguments "${_arguments_options[@]}" : \
-'--config=[]:CONFIG:_files' \
-'--project=[]:PROJECT:_default' \
-'--actor=[]:ACTOR:_default' \
-'--executor=[]:EXECUTOR:_default' \
-'--session=[]:SESSION:_default' \
-'--delegated-by=[]:DELEGATED_BY:_default' \
-'--lease-token=[]:LEASE_TOKEN:_default' \
-'--expect-revision=[]:EXPECT_REVISION:_default' \
-'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
-'--json[]' \
-'-h[Print help]' \
-'--help[Print help]' \
-":: :_taskix__subcmd__inbox_commands" \
-"*::: :->inbox" \
-&& ret=0
-
-    case $state in
-    (inbox)
-        words=($line[1] "${words[@]}")
-        (( CURRENT += 1 ))
-        curcontext="${curcontext%:*:*}:taskix-inbox-command-$line[1]:"
-        case $line[1] in
-            (add)
-_arguments "${_arguments_options[@]}" : \
-'--content=[]:CONTENT:_default' \
-'--config=[]:CONFIG:_files' \
-'--project=[]:PROJECT:_default' \
-'--actor=[]:ACTOR:_default' \
-'--executor=[]:EXECUTOR:_default' \
-'--session=[]:SESSION:_default' \
-'--delegated-by=[]:DELEGATED_BY:_default' \
-'--lease-token=[]:LEASE_TOKEN:_default' \
-'--expect-revision=[]:EXPECT_REVISION:_default' \
-'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
-'--json[]' \
-'-h[Print help]' \
-'--help[Print help]' \
-&& ret=0
-;;
-(list)
-_arguments "${_arguments_options[@]}" : \
-'--config=[]:CONFIG:_files' \
-'--project=[]:PROJECT:_default' \
-'--actor=[]:ACTOR:_default' \
-'--executor=[]:EXECUTOR:_default' \
-'--session=[]:SESSION:_default' \
-'--delegated-by=[]:DELEGATED_BY:_default' \
-'--lease-token=[]:LEASE_TOKEN:_default' \
-'--expect-revision=[]:EXPECT_REVISION:_default' \
-'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
-'--json[]' \
-'-h[Print help]' \
-'--help[Print help]' \
-&& ret=0
-;;
-(sync)
-_arguments "${_arguments_options[@]}" : \
-'--config=[]:CONFIG:_files' \
-'--project=[]:PROJECT:_default' \
-'--actor=[]:ACTOR:_default' \
-'--executor=[]:EXECUTOR:_default' \
-'--session=[]:SESSION:_default' \
-'--delegated-by=[]:DELEGATED_BY:_default' \
-'--lease-token=[]:LEASE_TOKEN:_default' \
-'--expect-revision=[]:EXPECT_REVISION:_default' \
-'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
-'--json[]' \
-'-h[Print help]' \
-'--help[Print help]' \
-&& ret=0
-;;
-(claim-next)
-_arguments "${_arguments_options[@]}" : \
-'--config=[]:CONFIG:_files' \
-'--project=[]:PROJECT:_default' \
-'--actor=[]:ACTOR:_default' \
-'--executor=[]:EXECUTOR:_default' \
-'--session=[]:SESSION:_default' \
-'--delegated-by=[]:DELEGATED_BY:_default' \
-'--lease-token=[]:LEASE_TOKEN:_default' \
-'--expect-revision=[]:EXPECT_REVISION:_default' \
-'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
-'--json[]' \
-'-h[Print help]' \
-'--help[Print help]' \
-&& ret=0
-;;
-(release)
-_arguments "${_arguments_options[@]}" : \
-'--config=[]:CONFIG:_files' \
-'--project=[]:PROJECT:_default' \
-'--actor=[]:ACTOR:_default' \
-'--executor=[]:EXECUTOR:_default' \
-'--session=[]:SESSION:_default' \
-'--delegated-by=[]:DELEGATED_BY:_default' \
-'--lease-token=[]:LEASE_TOKEN:_default' \
-'--expect-revision=[]:EXPECT_REVISION:_default' \
-'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
-'--json[]' \
-'-h[Print help]' \
-'--help[Print help]' \
-':id:_default' \
-&& ret=0
-;;
-(cancel)
-_arguments "${_arguments_options[@]}" : \
-'--config=[]:CONFIG:_files' \
-'--project=[]:PROJECT:_default' \
-'--actor=[]:ACTOR:_default' \
-'--executor=[]:EXECUTOR:_default' \
-'--session=[]:SESSION:_default' \
-'--delegated-by=[]:DELEGATED_BY:_default' \
-'--lease-token=[]:LEASE_TOKEN:_default' \
-'--expect-revision=[]:EXPECT_REVISION:_default' \
-'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
-'--json[]' \
-'-h[Print help]' \
-'--help[Print help]' \
-':id:_default' \
-&& ret=0
-;;
-(set-status)
-_arguments "${_arguments_options[@]}" : \
-'--status=[]:STATUS:(TODO ACTIVE PENDING_REVIEW COMPLETED CANCELLED IN_PROGRESS DONE)' \
-'--config=[]:CONFIG:_files' \
-'--project=[]:PROJECT:_default' \
-'--actor=[]:ACTOR:_default' \
-'--executor=[]:EXECUTOR:_default' \
-'--session=[]:SESSION:_default' \
-'--delegated-by=[]:DELEGATED_BY:_default' \
-'--lease-token=[]:LEASE_TOKEN:_default' \
-'--expect-revision=[]:EXPECT_REVISION:_default' \
-'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
-'--json[]' \
-'-h[Print help]' \
-'--help[Print help]' \
-':id:_default' \
-&& ret=0
-;;
-(help)
-_arguments "${_arguments_options[@]}" : \
-":: :_taskix__subcmd__inbox__subcmd__help_commands" \
-"*::: :->help" \
-&& ret=0
-
-    case $state in
-    (help)
-        words=($line[1] "${words[@]}")
-        (( CURRENT += 1 ))
-        curcontext="${curcontext%:*:*}:taskix-inbox-help-command-$line[1]:"
-        case $line[1] in
-            (add)
-_arguments "${_arguments_options[@]}" : \
-&& ret=0
-;;
-(list)
-_arguments "${_arguments_options[@]}" : \
-&& ret=0
-;;
-(sync)
-_arguments "${_arguments_options[@]}" : \
-&& ret=0
-;;
-(claim-next)
-_arguments "${_arguments_options[@]}" : \
-&& ret=0
-;;
-(release)
-_arguments "${_arguments_options[@]}" : \
-&& ret=0
-;;
-(cancel)
-_arguments "${_arguments_options[@]}" : \
-&& ret=0
-;;
-(set-status)
-_arguments "${_arguments_options[@]}" : \
-&& ret=0
-;;
-(help)
-_arguments "${_arguments_options[@]}" : \
-&& ret=0
-;;
-        esac
-    ;;
-esac
-;;
-        esac
-    ;;
-esac
-;;
 (completions)
 _arguments "${_arguments_options[@]}" : \
 '--config=[]:CONFIG:_files' \
@@ -978,6 +1266,23 @@ _arguments "${_arguments_options[@]}" : \
 ':id:_default' \
 && ret=0
 ;;
+(sync)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
 (snapshot)
 _arguments "${_arguments_options[@]}" : \
 '--config=[]:CONFIG:_files' \
@@ -1028,6 +1333,10 @@ _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
 (show)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(sync)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -1308,11 +1617,13 @@ _arguments "${_arguments_options[@]}" : \
         case $line[1] in
             (followup)
 _arguments "${_arguments_options[@]}" : \
+'--issue=[]:ISSUE:_default' \
+'--issue-revision=[Revision read from the selected Issue before association]:ISSUE_REVISION:_default' \
+'--issue-content-hash=[Requirement hash read from the selected Issue before association]:ISSUE_CONTENT_HASH:_default' \
 '--prompt=[]:PROMPT:_default' \
 '*--conversation-turn=[Related session turns selected by Jev or the agent; repeat to include several]:CONVERSATION_TURNS:_default' \
 '--conversation-revision=[]:CONVERSATION_REVISION:_default' \
 '--conversation-target=[Fingerprint of the target used by the discussion classifier]:CONVERSATION_TARGET:_default' \
-'*--inbox=[Inbox TODO IDs selected by the agent through semantic matching; repeat for multiple entries]:INBOX_IDS:_default' \
 '--config=[]:CONFIG:_files' \
 '--project=[]:PROJECT:_default' \
 '--actor=[]:ACTOR:_default' \
@@ -1401,6 +1712,9 @@ _arguments "${_arguments_options[@]}" : \
 ;;
 (create)
 _arguments "${_arguments_options[@]}" : \
+'--issue=[]:ISSUE:_default' \
+'--issue-revision=[Revision read from the selected Issue before association]:ISSUE_REVISION:_default' \
+'--issue-content-hash=[Requirement hash read from the selected Issue before association]:ISSUE_CONTENT_HASH:_default' \
 '--name=[]:NAME:_default' \
 '--title=[]:TITLE:_default' \
 '--goal=[]:GOAL:_default' \
@@ -1408,7 +1722,6 @@ _arguments "${_arguments_options[@]}" : \
 '*--conversation-turn=[Related session turns selected by Jev or the agent; repeat to include several]:CONVERSATION_TURNS:_default' \
 '--conversation-revision=[]:CONVERSATION_REVISION:_default' \
 '--conversation-target=[Fingerprint of the target used by the discussion classifier]:CONVERSATION_TARGET:_default' \
-'*--inbox=[Inbox TODO IDs selected by the agent through semantic matching; repeat for multiple entries]:INBOX_IDS:_default' \
 '--review-policy=[]:REVIEW_POLICY:(required none)' \
 '--config=[]:CONFIG:_files' \
 '--project=[]:PROJECT:_default' \
@@ -1426,11 +1739,13 @@ _arguments "${_arguments_options[@]}" : \
 ;;
 (update)
 _arguments "${_arguments_options[@]}" : \
+'(--unlink-issue)--issue=[]:ISSUE:_default' \
+'--issue-revision=[Revision read from the selected Issue before association]:ISSUE_REVISION:_default' \
+'--issue-content-hash=[Requirement hash read from the selected Issue before association]:ISSUE_CONTENT_HASH:_default' \
 '--name=[]:NAME:_default' \
 '--title=[]:TITLE:_default' \
 '--goal=[]:GOAL:_default' \
 '--prompt=[Replace the original user prompt; an empty string clears it]:PROMPT:_default' \
-'*--inbox=[Inbox TODO IDs selected by the agent through semantic matching; repeat for multiple entries]:INBOX_IDS:_default' \
 '--review-policy=[]:REVIEW_POLICY:(required none)' \
 '--config=[]:CONFIG:_files' \
 '--project=[]:PROJECT:_default' \
@@ -1441,6 +1756,7 @@ _arguments "${_arguments_options[@]}" : \
 '--lease-token=[]:LEASE_TOKEN:_default' \
 '--expect-revision=[]:EXPECT_REVISION:_default' \
 '--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--unlink-issue[]' \
 '--json[]' \
 '-h[Print help]' \
 '--help[Print help]' \
@@ -1449,6 +1765,7 @@ _arguments "${_arguments_options[@]}" : \
 ;;
 (list)
 _arguments "${_arguments_options[@]}" : \
+'(--unassociated)--issue=[]:ISSUE:_default' \
 '--period=[]:PERIOD:_default' \
 '--created-from=[]:CREATED_FROM:_default' \
 '--created-to=[]:CREATED_TO:_default' \
@@ -1461,6 +1778,7 @@ _arguments "${_arguments_options[@]}" : \
 '--lease-token=[]:LEASE_TOKEN:_default' \
 '--expect-revision=[]:EXPECT_REVISION:_default' \
 '--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--unassociated[]' \
 '(--completed --archived --pending-review)--active[]' \
 '(--completed --archived)--pending-review[]' \
 '(--archived)--completed[]' \
@@ -2715,7 +3033,107 @@ _arguments "${_arguments_options[@]}" : \
         (( CURRENT += 1 ))
         curcontext="${curcontext%:*:*}:taskix-help-command-$line[1]:"
         case $line[1] in
-            (serve)
+            (issue)
+_arguments "${_arguments_options[@]}" : \
+":: :_taskix__subcmd__help__subcmd__issue_commands" \
+"*::: :->issue" \
+&& ret=0
+
+    case $state in
+    (issue)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskix-help-issue-command-$line[1]:"
+        case $line[1] in
+            (create)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(update)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(show)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(start)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(submit)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(approve)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(reject)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(cancel)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(reopen)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(archive)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(unarchive)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(milestone)
+_arguments "${_arguments_options[@]}" : \
+":: :_taskix__subcmd__help__subcmd__milestone_commands" \
+"*::: :->milestone" \
+&& ret=0
+
+    case $state in
+    (milestone)
+        words=($line[1] "${words[@]}")
+        (( CURRENT += 1 ))
+        curcontext="${curcontext%:*:*}:taskix-help-milestone-command-$line[1]:"
+        case $line[1] in
+            (create)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(update)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(list)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(show)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(delete)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+        esac
+    ;;
+esac
+;;
+(serve)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -2851,50 +3269,6 @@ _arguments "${_arguments_options[@]}" : \
     ;;
 esac
 ;;
-(inbox)
-_arguments "${_arguments_options[@]}" : \
-":: :_taskix__subcmd__help__subcmd__inbox_commands" \
-"*::: :->inbox" \
-&& ret=0
-
-    case $state in
-    (inbox)
-        words=($line[1] "${words[@]}")
-        (( CURRENT += 1 ))
-        curcontext="${curcontext%:*:*}:taskix-help-inbox-command-$line[1]:"
-        case $line[1] in
-            (add)
-_arguments "${_arguments_options[@]}" : \
-&& ret=0
-;;
-(list)
-_arguments "${_arguments_options[@]}" : \
-&& ret=0
-;;
-(sync)
-_arguments "${_arguments_options[@]}" : \
-&& ret=0
-;;
-(claim-next)
-_arguments "${_arguments_options[@]}" : \
-&& ret=0
-;;
-(release)
-_arguments "${_arguments_options[@]}" : \
-&& ret=0
-;;
-(cancel)
-_arguments "${_arguments_options[@]}" : \
-&& ret=0
-;;
-(set-status)
-_arguments "${_arguments_options[@]}" : \
-&& ret=0
-;;
-        esac
-    ;;
-esac
-;;
 (completions)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
@@ -2920,6 +3294,10 @@ _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
 (show)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(sync)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -3307,11 +3685,12 @@ esac
 (( $+functions[_taskix_commands] )) ||
 _taskix_commands() {
     local commands; commands=(
+'issue:Manage Project deliverables across multiple execution Jobs' \
+'milestone:Organize Issues into basic Project Milestones' \
 'serve:Run Taskix services until interrupted' \
 'reload:Reload configuration for future service work' \
 'memory:Maintain and retrieve project memory through a local service' \
 'conversation:Inspect and attach session discussion turns' \
-'inbox:Submit, inspect, claim, or cancel human requirements in a Project Inbox' \
 'completions:Print a shell completion script without loading task configuration' \
 'init:Create configuration, initialize \`SQLite\` storage, and generate task documents' \
 'obsidian:Install and configure Obsidian task views in the configured vault' \
@@ -3457,11 +3836,12 @@ _taskix__subcmd__event__subcmd__policy_commands() {
 (( $+functions[_taskix__subcmd__help_commands] )) ||
 _taskix__subcmd__help_commands() {
     local commands; commands=(
+'issue:Manage Project deliverables across multiple execution Jobs' \
+'milestone:Organize Issues into basic Project Milestones' \
 'serve:Run Taskix services until interrupted' \
 'reload:Reload configuration for future service work' \
 'memory:Maintain and retrieve project memory through a local service' \
 'conversation:Inspect and attach session discussion turns' \
-'inbox:Submit, inspect, claim, or cancel human requirements in a Project Inbox' \
 'completions:Print a shell completion script without loading task configuration' \
 'init:Create configuration, initialize \`SQLite\` storage, and generate task documents' \
 'obsidian:Install and configure Obsidian task views in the configured vault' \
@@ -3551,7 +3931,7 @@ _taskix__subcmd__help__subcmd__help_commands() {
 _taskix__subcmd__help__subcmd__hook_commands() {
     local commands; commands=(
 'record:Record visible user/assistant messages from a JSON array in the session Job' \
-'stop:Acknowledge turn completion without claiming Inbox work' \
+'stop:Acknowledge turn completion without starting new work' \
 'session-start:Recover the session'\''s Tasks blocked by interruption or lease expiry into planning' \
 'session-end:Record session shutdown and release its active Task leases' \
 'interrupt:Release an interrupted session'\''s Task leases while preserving its Plans' \
@@ -3589,58 +3969,88 @@ _taskix__subcmd__help__subcmd__hook__subcmd__stop_commands() {
     local commands; commands=()
     _describe -t commands 'taskix help hook stop commands' commands "$@"
 }
-(( $+functions[_taskix__subcmd__help__subcmd__inbox_commands] )) ||
-_taskix__subcmd__help__subcmd__inbox_commands() {
-    local commands; commands=(
-'add:Append one requirement, preserving its complete Markdown content' \
-'list:Import human edits and show visible Inbox entries in document order' \
-'sync:Import submissions, cancellations, and withdrawals and repair the document' \
-'claim-next:Atomically claim the next eligible requirement and create or resume its Job' \
-'release:Release an owned Inbox lease so another agent can resume its existing Job' \
-'cancel:Cancel a requirement and its unfinished work, preserving history' \
-'set-status:Set a human Inbox status; linked completion requires a pending review' \
-    )
-    _describe -t commands 'taskix help inbox commands' commands "$@"
-}
-(( $+functions[_taskix__subcmd__help__subcmd__inbox__subcmd__add_commands] )) ||
-_taskix__subcmd__help__subcmd__inbox__subcmd__add_commands() {
-    local commands; commands=()
-    _describe -t commands 'taskix help inbox add commands' commands "$@"
-}
-(( $+functions[_taskix__subcmd__help__subcmd__inbox__subcmd__cancel_commands] )) ||
-_taskix__subcmd__help__subcmd__inbox__subcmd__cancel_commands() {
-    local commands; commands=()
-    _describe -t commands 'taskix help inbox cancel commands' commands "$@"
-}
-(( $+functions[_taskix__subcmd__help__subcmd__inbox__subcmd__claim-next_commands] )) ||
-_taskix__subcmd__help__subcmd__inbox__subcmd__claim-next_commands() {
-    local commands; commands=()
-    _describe -t commands 'taskix help inbox claim-next commands' commands "$@"
-}
-(( $+functions[_taskix__subcmd__help__subcmd__inbox__subcmd__list_commands] )) ||
-_taskix__subcmd__help__subcmd__inbox__subcmd__list_commands() {
-    local commands; commands=()
-    _describe -t commands 'taskix help inbox list commands' commands "$@"
-}
-(( $+functions[_taskix__subcmd__help__subcmd__inbox__subcmd__release_commands] )) ||
-_taskix__subcmd__help__subcmd__inbox__subcmd__release_commands() {
-    local commands; commands=()
-    _describe -t commands 'taskix help inbox release commands' commands "$@"
-}
-(( $+functions[_taskix__subcmd__help__subcmd__inbox__subcmd__set-status_commands] )) ||
-_taskix__subcmd__help__subcmd__inbox__subcmd__set-status_commands() {
-    local commands; commands=()
-    _describe -t commands 'taskix help inbox set-status commands' commands "$@"
-}
-(( $+functions[_taskix__subcmd__help__subcmd__inbox__subcmd__sync_commands] )) ||
-_taskix__subcmd__help__subcmd__inbox__subcmd__sync_commands() {
-    local commands; commands=()
-    _describe -t commands 'taskix help inbox sync commands' commands "$@"
-}
 (( $+functions[_taskix__subcmd__help__subcmd__init_commands] )) ||
 _taskix__subcmd__help__subcmd__init_commands() {
     local commands; commands=()
     _describe -t commands 'taskix help init commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__issue_commands] )) ||
+_taskix__subcmd__help__subcmd__issue_commands() {
+    local commands; commands=(
+'create:Create a project deliverable using the shared Issue document template' \
+'update:Edit requirement, acceptance criteria, notes, or Milestone association' \
+'list:List Issues with predicates applied before pagination' \
+'show:Show a requirement, acceptance criteria, Milestone, and associated Jobs' \
+'start:Mark a TODO Issue active without creating execution work' \
+'submit:Submit a deliverable after every associated Job is terminal' \
+'approve:Record human acceptance of an Issue awaiting review' \
+'reject:Return an Issue to ACTIVE with a human rejection reason' \
+'cancel:Cancel an Issue and revoke all related execution leases' \
+'reopen:Reopen a terminal Issue while preserving all historical Jobs' \
+'archive:Archive a completed or cancelled Issue document' \
+'unarchive:Restore an archived Issue without changing its lifecycle' \
+    )
+    _describe -t commands 'taskix help issue commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__issue__subcmd__approve_commands] )) ||
+_taskix__subcmd__help__subcmd__issue__subcmd__approve_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help issue approve commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__issue__subcmd__archive_commands] )) ||
+_taskix__subcmd__help__subcmd__issue__subcmd__archive_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help issue archive commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__issue__subcmd__cancel_commands] )) ||
+_taskix__subcmd__help__subcmd__issue__subcmd__cancel_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help issue cancel commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__issue__subcmd__create_commands] )) ||
+_taskix__subcmd__help__subcmd__issue__subcmd__create_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help issue create commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__issue__subcmd__list_commands] )) ||
+_taskix__subcmd__help__subcmd__issue__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help issue list commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__issue__subcmd__reject_commands] )) ||
+_taskix__subcmd__help__subcmd__issue__subcmd__reject_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help issue reject commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__issue__subcmd__reopen_commands] )) ||
+_taskix__subcmd__help__subcmd__issue__subcmd__reopen_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help issue reopen commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__issue__subcmd__show_commands] )) ||
+_taskix__subcmd__help__subcmd__issue__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help issue show commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__issue__subcmd__start_commands] )) ||
+_taskix__subcmd__help__subcmd__issue__subcmd__start_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help issue start commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__issue__subcmd__submit_commands] )) ||
+_taskix__subcmd__help__subcmd__issue__subcmd__submit_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help issue submit commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__issue__subcmd__unarchive_commands] )) ||
+_taskix__subcmd__help__subcmd__issue__subcmd__unarchive_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help issue unarchive commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__issue__subcmd__update_commands] )) ||
+_taskix__subcmd__help__subcmd__issue__subcmd__update_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help issue update commands' commands "$@"
 }
 (( $+functions[_taskix__subcmd__help__subcmd__job_commands] )) ||
 _taskix__subcmd__help__subcmd__job_commands() {
@@ -3852,11 +4262,48 @@ _taskix__subcmd__help__subcmd__memory__subcmd__work_commands() {
     local commands; commands=()
     _describe -t commands 'taskix help memory work commands' commands "$@"
 }
+(( $+functions[_taskix__subcmd__help__subcmd__milestone_commands] )) ||
+_taskix__subcmd__help__subcmd__milestone_commands() {
+    local commands; commands=(
+'create:Create a basic Project Milestone' \
+'update:Edit a Milestone'\''s title, goal, order, or optional due date' \
+'list:List Milestones in Project order' \
+'show:Show a Milestone and Issue acceptance counts' \
+'delete:Delete a Milestone after unlinking or reassigning its Issues' \
+    )
+    _describe -t commands 'taskix help milestone commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__milestone__subcmd__create_commands] )) ||
+_taskix__subcmd__help__subcmd__milestone__subcmd__create_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help milestone create commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__milestone__subcmd__delete_commands] )) ||
+_taskix__subcmd__help__subcmd__milestone__subcmd__delete_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help milestone delete commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__milestone__subcmd__list_commands] )) ||
+_taskix__subcmd__help__subcmd__milestone__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help milestone list commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__milestone__subcmd__show_commands] )) ||
+_taskix__subcmd__help__subcmd__milestone__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help milestone show commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__milestone__subcmd__update_commands] )) ||
+_taskix__subcmd__help__subcmd__milestone__subcmd__update_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help milestone update commands' commands "$@"
+}
 (( $+functions[_taskix__subcmd__help__subcmd__obsidian_commands] )) ||
 _taskix__subcmd__help__subcmd__obsidian_commands() {
     local commands; commands=(
 'connection:Read the Obsidian connection configuration without loading task records' \
-'show:Query one registered Task, Job, or Inbox entry by its exact ID' \
+'show:Query one registered Task, Job, Issue, or Milestone by its exact ID' \
+'sync:Import editable content from one registered Issue or Milestone note' \
 'snapshot:Query registered notes and authoritative status properties without lease credentials' \
 'setup:Install native Bases task boards (Obsidian 1.14+) and Taskix Sync, then reload the vault' \
     )
@@ -3881,6 +4328,11 @@ _taskix__subcmd__help__subcmd__obsidian__subcmd__show_commands() {
 _taskix__subcmd__help__subcmd__obsidian__subcmd__snapshot_commands() {
     local commands; commands=()
     _describe -t commands 'taskix help obsidian snapshot commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__obsidian__subcmd__sync_commands] )) ||
+_taskix__subcmd__help__subcmd__obsidian__subcmd__sync_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help obsidian sync commands' commands "$@"
 }
 (( $+functions[_taskix__subcmd__help__subcmd__plan_commands] )) ||
 _taskix__subcmd__help__subcmd__plan_commands() {
@@ -3963,7 +4415,7 @@ _taskix__subcmd__help__subcmd__reload_commands() {
 _taskix__subcmd__help__subcmd__routing_commands() {
     local commands; commands=(
 'metrics:Inspect optional Jev statistics without loading the task database' \
-'snapshot:Refresh leases and Inbox edits and return bounded prompt routing context' \
+'snapshot:Refresh leases and Issue edits and return bounded prompt routing context' \
 'candidates:Read bounded ACTIVE and \`PENDING_REVIEW\` Jobs and their Tasks by exact Project ID' \
 'revision:Read only identity and lifecycle fields by exact Job ID' \
     )
@@ -3979,7 +4431,7 @@ _taskix__subcmd__help__subcmd__routing__subcmd__metrics_commands() {
     local commands; commands=(
 'report:Show adoption, fallback reasons, reviewed accuracy, and threshold comparisons' \
 'list:Show recent requests and their individual answer scores' \
-'label:Record human assessment of the full proposed route and Inbox selection' \
+'label:Record human assessment of the full proposed route and Issue association' \
     )
     _describe -t commands 'taskix help routing metrics commands' commands "$@"
 }
@@ -4130,7 +4582,7 @@ _taskix__subcmd__help__subcmd__task__subcmd__wait_commands() {
 _taskix__subcmd__hook_commands() {
     local commands; commands=(
 'record:Record visible user/assistant messages from a JSON array in the session Job' \
-'stop:Acknowledge turn completion without claiming Inbox work' \
+'stop:Acknowledge turn completion without starting new work' \
 'session-start:Recover the session'\''s Tasks blocked by interruption or lease expiry into planning' \
 'session-end:Record session shutdown and release its active Task leases' \
 'interrupt:Release an interrupted session'\''s Task leases while preserving its Plans' \
@@ -4148,7 +4600,7 @@ _taskix__subcmd__hook__subcmd__heartbeat_commands() {
 _taskix__subcmd__hook__subcmd__help_commands() {
     local commands; commands=(
 'record:Record visible user/assistant messages from a JSON array in the session Job' \
-'stop:Acknowledge turn completion without claiming Inbox work' \
+'stop:Acknowledge turn completion without starting new work' \
 'session-start:Recover the session'\''s Tasks blocked by interruption or lease expiry into planning' \
 'session-end:Record session shutdown and release its active Task leases' \
 'interrupt:Release an interrupted session'\''s Task leases while preserving its Plans' \
@@ -4217,113 +4669,173 @@ _taskix__subcmd__hook__subcmd__stop_commands() {
     local commands; commands=()
     _describe -t commands 'taskix hook stop commands' commands "$@"
 }
-(( $+functions[_taskix__subcmd__inbox_commands] )) ||
-_taskix__subcmd__inbox_commands() {
-    local commands; commands=(
-'add:Append one requirement, preserving its complete Markdown content' \
-'list:Import human edits and show visible Inbox entries in document order' \
-'sync:Import submissions, cancellations, and withdrawals and repair the document' \
-'claim-next:Atomically claim the next eligible requirement and create or resume its Job' \
-'release:Release an owned Inbox lease so another agent can resume its existing Job' \
-'cancel:Cancel a requirement and its unfinished work, preserving history' \
-'set-status:Set a human Inbox status; linked completion requires a pending review' \
-'help:Print this message or the help of the given subcommand(s)' \
-    )
-    _describe -t commands 'taskix inbox commands' commands "$@"
-}
-(( $+functions[_taskix__subcmd__inbox__subcmd__add_commands] )) ||
-_taskix__subcmd__inbox__subcmd__add_commands() {
-    local commands; commands=()
-    _describe -t commands 'taskix inbox add commands' commands "$@"
-}
-(( $+functions[_taskix__subcmd__inbox__subcmd__cancel_commands] )) ||
-_taskix__subcmd__inbox__subcmd__cancel_commands() {
-    local commands; commands=()
-    _describe -t commands 'taskix inbox cancel commands' commands "$@"
-}
-(( $+functions[_taskix__subcmd__inbox__subcmd__claim-next_commands] )) ||
-_taskix__subcmd__inbox__subcmd__claim-next_commands() {
-    local commands; commands=()
-    _describe -t commands 'taskix inbox claim-next commands' commands "$@"
-}
-(( $+functions[_taskix__subcmd__inbox__subcmd__help_commands] )) ||
-_taskix__subcmd__inbox__subcmd__help_commands() {
-    local commands; commands=(
-'add:Append one requirement, preserving its complete Markdown content' \
-'list:Import human edits and show visible Inbox entries in document order' \
-'sync:Import submissions, cancellations, and withdrawals and repair the document' \
-'claim-next:Atomically claim the next eligible requirement and create or resume its Job' \
-'release:Release an owned Inbox lease so another agent can resume its existing Job' \
-'cancel:Cancel a requirement and its unfinished work, preserving history' \
-'set-status:Set a human Inbox status; linked completion requires a pending review' \
-'help:Print this message or the help of the given subcommand(s)' \
-    )
-    _describe -t commands 'taskix inbox help commands' commands "$@"
-}
-(( $+functions[_taskix__subcmd__inbox__subcmd__help__subcmd__add_commands] )) ||
-_taskix__subcmd__inbox__subcmd__help__subcmd__add_commands() {
-    local commands; commands=()
-    _describe -t commands 'taskix inbox help add commands' commands "$@"
-}
-(( $+functions[_taskix__subcmd__inbox__subcmd__help__subcmd__cancel_commands] )) ||
-_taskix__subcmd__inbox__subcmd__help__subcmd__cancel_commands() {
-    local commands; commands=()
-    _describe -t commands 'taskix inbox help cancel commands' commands "$@"
-}
-(( $+functions[_taskix__subcmd__inbox__subcmd__help__subcmd__claim-next_commands] )) ||
-_taskix__subcmd__inbox__subcmd__help__subcmd__claim-next_commands() {
-    local commands; commands=()
-    _describe -t commands 'taskix inbox help claim-next commands' commands "$@"
-}
-(( $+functions[_taskix__subcmd__inbox__subcmd__help__subcmd__help_commands] )) ||
-_taskix__subcmd__inbox__subcmd__help__subcmd__help_commands() {
-    local commands; commands=()
-    _describe -t commands 'taskix inbox help help commands' commands "$@"
-}
-(( $+functions[_taskix__subcmd__inbox__subcmd__help__subcmd__list_commands] )) ||
-_taskix__subcmd__inbox__subcmd__help__subcmd__list_commands() {
-    local commands; commands=()
-    _describe -t commands 'taskix inbox help list commands' commands "$@"
-}
-(( $+functions[_taskix__subcmd__inbox__subcmd__help__subcmd__release_commands] )) ||
-_taskix__subcmd__inbox__subcmd__help__subcmd__release_commands() {
-    local commands; commands=()
-    _describe -t commands 'taskix inbox help release commands' commands "$@"
-}
-(( $+functions[_taskix__subcmd__inbox__subcmd__help__subcmd__set-status_commands] )) ||
-_taskix__subcmd__inbox__subcmd__help__subcmd__set-status_commands() {
-    local commands; commands=()
-    _describe -t commands 'taskix inbox help set-status commands' commands "$@"
-}
-(( $+functions[_taskix__subcmd__inbox__subcmd__help__subcmd__sync_commands] )) ||
-_taskix__subcmd__inbox__subcmd__help__subcmd__sync_commands() {
-    local commands; commands=()
-    _describe -t commands 'taskix inbox help sync commands' commands "$@"
-}
-(( $+functions[_taskix__subcmd__inbox__subcmd__list_commands] )) ||
-_taskix__subcmd__inbox__subcmd__list_commands() {
-    local commands; commands=()
-    _describe -t commands 'taskix inbox list commands' commands "$@"
-}
-(( $+functions[_taskix__subcmd__inbox__subcmd__release_commands] )) ||
-_taskix__subcmd__inbox__subcmd__release_commands() {
-    local commands; commands=()
-    _describe -t commands 'taskix inbox release commands' commands "$@"
-}
-(( $+functions[_taskix__subcmd__inbox__subcmd__set-status_commands] )) ||
-_taskix__subcmd__inbox__subcmd__set-status_commands() {
-    local commands; commands=()
-    _describe -t commands 'taskix inbox set-status commands' commands "$@"
-}
-(( $+functions[_taskix__subcmd__inbox__subcmd__sync_commands] )) ||
-_taskix__subcmd__inbox__subcmd__sync_commands() {
-    local commands; commands=()
-    _describe -t commands 'taskix inbox sync commands' commands "$@"
-}
 (( $+functions[_taskix__subcmd__init_commands] )) ||
 _taskix__subcmd__init_commands() {
     local commands; commands=()
     _describe -t commands 'taskix init commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__issue_commands] )) ||
+_taskix__subcmd__issue_commands() {
+    local commands; commands=(
+'create:Create a project deliverable using the shared Issue document template' \
+'update:Edit requirement, acceptance criteria, notes, or Milestone association' \
+'list:List Issues with predicates applied before pagination' \
+'show:Show a requirement, acceptance criteria, Milestone, and associated Jobs' \
+'start:Mark a TODO Issue active without creating execution work' \
+'submit:Submit a deliverable after every associated Job is terminal' \
+'approve:Record human acceptance of an Issue awaiting review' \
+'reject:Return an Issue to ACTIVE with a human rejection reason' \
+'cancel:Cancel an Issue and revoke all related execution leases' \
+'reopen:Reopen a terminal Issue while preserving all historical Jobs' \
+'archive:Archive a completed or cancelled Issue document' \
+'unarchive:Restore an archived Issue without changing its lifecycle' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'taskix issue commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__issue__subcmd__approve_commands] )) ||
+_taskix__subcmd__issue__subcmd__approve_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix issue approve commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__issue__subcmd__archive_commands] )) ||
+_taskix__subcmd__issue__subcmd__archive_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix issue archive commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__issue__subcmd__cancel_commands] )) ||
+_taskix__subcmd__issue__subcmd__cancel_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix issue cancel commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__issue__subcmd__create_commands] )) ||
+_taskix__subcmd__issue__subcmd__create_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix issue create commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__issue__subcmd__help_commands] )) ||
+_taskix__subcmd__issue__subcmd__help_commands() {
+    local commands; commands=(
+'create:Create a project deliverable using the shared Issue document template' \
+'update:Edit requirement, acceptance criteria, notes, or Milestone association' \
+'list:List Issues with predicates applied before pagination' \
+'show:Show a requirement, acceptance criteria, Milestone, and associated Jobs' \
+'start:Mark a TODO Issue active without creating execution work' \
+'submit:Submit a deliverable after every associated Job is terminal' \
+'approve:Record human acceptance of an Issue awaiting review' \
+'reject:Return an Issue to ACTIVE with a human rejection reason' \
+'cancel:Cancel an Issue and revoke all related execution leases' \
+'reopen:Reopen a terminal Issue while preserving all historical Jobs' \
+'archive:Archive a completed or cancelled Issue document' \
+'unarchive:Restore an archived Issue without changing its lifecycle' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'taskix issue help commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__issue__subcmd__help__subcmd__approve_commands] )) ||
+_taskix__subcmd__issue__subcmd__help__subcmd__approve_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix issue help approve commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__issue__subcmd__help__subcmd__archive_commands] )) ||
+_taskix__subcmd__issue__subcmd__help__subcmd__archive_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix issue help archive commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__issue__subcmd__help__subcmd__cancel_commands] )) ||
+_taskix__subcmd__issue__subcmd__help__subcmd__cancel_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix issue help cancel commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__issue__subcmd__help__subcmd__create_commands] )) ||
+_taskix__subcmd__issue__subcmd__help__subcmd__create_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix issue help create commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__issue__subcmd__help__subcmd__help_commands] )) ||
+_taskix__subcmd__issue__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix issue help help commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__issue__subcmd__help__subcmd__list_commands] )) ||
+_taskix__subcmd__issue__subcmd__help__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix issue help list commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__issue__subcmd__help__subcmd__reject_commands] )) ||
+_taskix__subcmd__issue__subcmd__help__subcmd__reject_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix issue help reject commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__issue__subcmd__help__subcmd__reopen_commands] )) ||
+_taskix__subcmd__issue__subcmd__help__subcmd__reopen_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix issue help reopen commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__issue__subcmd__help__subcmd__show_commands] )) ||
+_taskix__subcmd__issue__subcmd__help__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix issue help show commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__issue__subcmd__help__subcmd__start_commands] )) ||
+_taskix__subcmd__issue__subcmd__help__subcmd__start_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix issue help start commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__issue__subcmd__help__subcmd__submit_commands] )) ||
+_taskix__subcmd__issue__subcmd__help__subcmd__submit_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix issue help submit commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__issue__subcmd__help__subcmd__unarchive_commands] )) ||
+_taskix__subcmd__issue__subcmd__help__subcmd__unarchive_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix issue help unarchive commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__issue__subcmd__help__subcmd__update_commands] )) ||
+_taskix__subcmd__issue__subcmd__help__subcmd__update_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix issue help update commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__issue__subcmd__list_commands] )) ||
+_taskix__subcmd__issue__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix issue list commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__issue__subcmd__reject_commands] )) ||
+_taskix__subcmd__issue__subcmd__reject_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix issue reject commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__issue__subcmd__reopen_commands] )) ||
+_taskix__subcmd__issue__subcmd__reopen_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix issue reopen commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__issue__subcmd__show_commands] )) ||
+_taskix__subcmd__issue__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix issue show commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__issue__subcmd__start_commands] )) ||
+_taskix__subcmd__issue__subcmd__start_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix issue start commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__issue__subcmd__submit_commands] )) ||
+_taskix__subcmd__issue__subcmd__submit_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix issue submit commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__issue__subcmd__unarchive_commands] )) ||
+_taskix__subcmd__issue__subcmd__unarchive_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix issue unarchive commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__issue__subcmd__update_commands] )) ||
+_taskix__subcmd__issue__subcmd__update_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix issue update commands' commands "$@"
 }
 (( $+functions[_taskix__subcmd__job_commands] )) ||
 _taskix__subcmd__job_commands() {
@@ -4759,11 +5271,91 @@ _taskix__subcmd__memory__subcmd__work_commands() {
     local commands; commands=()
     _describe -t commands 'taskix memory work commands' commands "$@"
 }
+(( $+functions[_taskix__subcmd__milestone_commands] )) ||
+_taskix__subcmd__milestone_commands() {
+    local commands; commands=(
+'create:Create a basic Project Milestone' \
+'update:Edit a Milestone'\''s title, goal, order, or optional due date' \
+'list:List Milestones in Project order' \
+'show:Show a Milestone and Issue acceptance counts' \
+'delete:Delete a Milestone after unlinking or reassigning its Issues' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'taskix milestone commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__milestone__subcmd__create_commands] )) ||
+_taskix__subcmd__milestone__subcmd__create_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix milestone create commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__milestone__subcmd__delete_commands] )) ||
+_taskix__subcmd__milestone__subcmd__delete_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix milestone delete commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__milestone__subcmd__help_commands] )) ||
+_taskix__subcmd__milestone__subcmd__help_commands() {
+    local commands; commands=(
+'create:Create a basic Project Milestone' \
+'update:Edit a Milestone'\''s title, goal, order, or optional due date' \
+'list:List Milestones in Project order' \
+'show:Show a Milestone and Issue acceptance counts' \
+'delete:Delete a Milestone after unlinking or reassigning its Issues' \
+'help:Print this message or the help of the given subcommand(s)' \
+    )
+    _describe -t commands 'taskix milestone help commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__milestone__subcmd__help__subcmd__create_commands] )) ||
+_taskix__subcmd__milestone__subcmd__help__subcmd__create_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix milestone help create commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__milestone__subcmd__help__subcmd__delete_commands] )) ||
+_taskix__subcmd__milestone__subcmd__help__subcmd__delete_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix milestone help delete commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__milestone__subcmd__help__subcmd__help_commands] )) ||
+_taskix__subcmd__milestone__subcmd__help__subcmd__help_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix milestone help help commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__milestone__subcmd__help__subcmd__list_commands] )) ||
+_taskix__subcmd__milestone__subcmd__help__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix milestone help list commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__milestone__subcmd__help__subcmd__show_commands] )) ||
+_taskix__subcmd__milestone__subcmd__help__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix milestone help show commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__milestone__subcmd__help__subcmd__update_commands] )) ||
+_taskix__subcmd__milestone__subcmd__help__subcmd__update_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix milestone help update commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__milestone__subcmd__list_commands] )) ||
+_taskix__subcmd__milestone__subcmd__list_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix milestone list commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__milestone__subcmd__show_commands] )) ||
+_taskix__subcmd__milestone__subcmd__show_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix milestone show commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__milestone__subcmd__update_commands] )) ||
+_taskix__subcmd__milestone__subcmd__update_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix milestone update commands' commands "$@"
+}
 (( $+functions[_taskix__subcmd__obsidian_commands] )) ||
 _taskix__subcmd__obsidian_commands() {
     local commands; commands=(
 'connection:Read the Obsidian connection configuration without loading task records' \
-'show:Query one registered Task, Job, or Inbox entry by its exact ID' \
+'show:Query one registered Task, Job, Issue, or Milestone by its exact ID' \
+'sync:Import editable content from one registered Issue or Milestone note' \
 'snapshot:Query registered notes and authoritative status properties without lease credentials' \
 'setup:Install native Bases task boards (Obsidian 1.14+) and Taskix Sync, then reload the vault' \
 'help:Print this message or the help of the given subcommand(s)' \
@@ -4779,7 +5371,8 @@ _taskix__subcmd__obsidian__subcmd__connection_commands() {
 _taskix__subcmd__obsidian__subcmd__help_commands() {
     local commands; commands=(
 'connection:Read the Obsidian connection configuration without loading task records' \
-'show:Query one registered Task, Job, or Inbox entry by its exact ID' \
+'show:Query one registered Task, Job, Issue, or Milestone by its exact ID' \
+'sync:Import editable content from one registered Issue or Milestone note' \
 'snapshot:Query registered notes and authoritative status properties without lease credentials' \
 'setup:Install native Bases task boards (Obsidian 1.14+) and Taskix Sync, then reload the vault' \
 'help:Print this message or the help of the given subcommand(s)' \
@@ -4811,6 +5404,11 @@ _taskix__subcmd__obsidian__subcmd__help__subcmd__snapshot_commands() {
     local commands; commands=()
     _describe -t commands 'taskix obsidian help snapshot commands' commands "$@"
 }
+(( $+functions[_taskix__subcmd__obsidian__subcmd__help__subcmd__sync_commands] )) ||
+_taskix__subcmd__obsidian__subcmd__help__subcmd__sync_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix obsidian help sync commands' commands "$@"
+}
 (( $+functions[_taskix__subcmd__obsidian__subcmd__setup_commands] )) ||
 _taskix__subcmd__obsidian__subcmd__setup_commands() {
     local commands; commands=()
@@ -4825,6 +5423,11 @@ _taskix__subcmd__obsidian__subcmd__show_commands() {
 _taskix__subcmd__obsidian__subcmd__snapshot_commands() {
     local commands; commands=()
     _describe -t commands 'taskix obsidian snapshot commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__obsidian__subcmd__sync_commands] )) ||
+_taskix__subcmd__obsidian__subcmd__sync_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix obsidian sync commands' commands "$@"
 }
 (( $+functions[_taskix__subcmd__plan_commands] )) ||
 _taskix__subcmd__plan_commands() {
@@ -4993,7 +5596,7 @@ _taskix__subcmd__reload_commands() {
 _taskix__subcmd__routing_commands() {
     local commands; commands=(
 'metrics:Inspect optional Jev statistics without loading the task database' \
-'snapshot:Refresh leases and Inbox edits and return bounded prompt routing context' \
+'snapshot:Refresh leases and Issue edits and return bounded prompt routing context' \
 'candidates:Read bounded ACTIVE and \`PENDING_REVIEW\` Jobs and their Tasks by exact Project ID' \
 'revision:Read only identity and lifecycle fields by exact Job ID' \
 'help:Print this message or the help of the given subcommand(s)' \
@@ -5009,7 +5612,7 @@ _taskix__subcmd__routing__subcmd__candidates_commands() {
 _taskix__subcmd__routing__subcmd__help_commands() {
     local commands; commands=(
 'metrics:Inspect optional Jev statistics without loading the task database' \
-'snapshot:Refresh leases and Inbox edits and return bounded prompt routing context' \
+'snapshot:Refresh leases and Issue edits and return bounded prompt routing context' \
 'candidates:Read bounded ACTIVE and \`PENDING_REVIEW\` Jobs and their Tasks by exact Project ID' \
 'revision:Read only identity and lifecycle fields by exact Job ID' \
 'help:Print this message or the help of the given subcommand(s)' \
@@ -5031,7 +5634,7 @@ _taskix__subcmd__routing__subcmd__help__subcmd__metrics_commands() {
     local commands; commands=(
 'report:Show adoption, fallback reasons, reviewed accuracy, and threshold comparisons' \
 'list:Show recent requests and their individual answer scores' \
-'label:Record human assessment of the full proposed route and Inbox selection' \
+'label:Record human assessment of the full proposed route and Issue association' \
     )
     _describe -t commands 'taskix routing help metrics commands' commands "$@"
 }
@@ -5065,7 +5668,7 @@ _taskix__subcmd__routing__subcmd__metrics_commands() {
     local commands; commands=(
 'report:Show adoption, fallback reasons, reviewed accuracy, and threshold comparisons' \
 'list:Show recent requests and their individual answer scores' \
-'label:Record human assessment of the full proposed route and Inbox selection' \
+'label:Record human assessment of the full proposed route and Issue association' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'taskix routing metrics commands' commands "$@"
@@ -5075,7 +5678,7 @@ _taskix__subcmd__routing__subcmd__metrics__subcmd__help_commands() {
     local commands; commands=(
 'report:Show adoption, fallback reasons, reviewed accuracy, and threshold comparisons' \
 'list:Show recent requests and their individual answer scores' \
-'label:Record human assessment of the full proposed route and Inbox selection' \
+'label:Record human assessment of the full proposed route and Issue association' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'taskix routing metrics help commands' commands "$@"

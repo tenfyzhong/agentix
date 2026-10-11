@@ -6,8 +6,8 @@ use tempfile::TempDir;
 #[path = "support/projections.rs"]
 mod projections;
 
-#[path = "support/inbox.rs"]
-mod inbox;
+#[path = "support/issues.rs"]
+mod issues;
 
 #[path = "support/job_review.rs"]
 mod job_review;
@@ -1289,7 +1289,7 @@ fn routing_reads_bounded_candidates_and_revision_without_mutation() {
 }
 
 #[test]
-fn routing_snapshot_renews_assignment_and_imports_human_cancellation() {
+fn routing_snapshot_renews_assignment_and_reports_issue_cancellation() {
     let cli = Cli::new();
     let job = cli.job("Route work");
     let task = cli.task(&job, "Owned task");
@@ -1298,24 +1298,22 @@ fn routing_snapshot_renews_assignment_and_imports_human_cancellation() {
         .as_str()
         .unwrap()
         .to_owned();
-    let entry = cli.ok(&[
-        "inbox",
-        "add",
+    let item = cli.ok(&[
+        "issue",
+        "create",
         "--project",
         &project,
-        "--content",
+        "--title",
         "Route work",
+        "--requirement",
+        "Deliver",
     ]);
     cli.ok(&[
         "job",
         "update",
         &job,
-        "--inbox",
-        entry["id"].as_str().unwrap(),
-        "--executor",
-        "agent:codex",
-        "--session",
-        "routing-snapshot",
+        "--issue",
+        item["id"].as_str().unwrap(),
     ]);
     let snapshot = cli.ok(&["routing", "snapshot", "--session", "routing-snapshot"]);
     assert_eq!(snapshot["job_id"], job);
@@ -1323,15 +1321,12 @@ fn routing_snapshot_renews_assignment_and_imports_human_cancellation() {
     assert_eq!(snapshot["routing"]["candidates"][0]["job"]["id"], job);
     assert_eq!(snapshot["routing"]["complete"], true);
     assert!(snapshot.get("lease").is_none());
-    let context = cli.ok(&["context", "--session", "routing-snapshot"]);
-    let path = context["inbox_path"].as_str().unwrap();
-    let body = std::fs::read_to_string(path).unwrap();
-    assert!(body.contains("- [/]"));
-    std::fs::write(path, body.replace("- [/]", "- [-]")).unwrap();
+    assert_eq!(snapshot["issue_id"], item["id"]);
+    cli.ok(&["issue", "cancel", item["id"].as_str().unwrap()]);
     let cancelled = cli.ok(&["routing", "snapshot", "--session", "routing-snapshot"]);
     assert_eq!(cancelled["job_id"], Value::Null);
     assert_eq!(cancelled["task_id"], Value::Null);
-    assert_eq!(cancelled["inbox_cancellations"][0]["job_id"], job);
+    assert_eq!(cancelled["issue_cancellations"][0]["job_id"], job);
     assert_eq!(cancelled["routing"]["candidates"], json!([]));
 }
 

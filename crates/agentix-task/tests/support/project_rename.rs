@@ -27,15 +27,7 @@ async fn project_folder_rename_preserves_identity_content_and_tracking() {
         format!("{plan_body}\nUnpublished plan edit.\n"),
     )
     .unwrap();
-    let inbox = fs::read_to_string(old.join("Inbox.md")).unwrap();
-    fs::write(
-        old.join("Inbox.md"),
-        inbox.replace(
-            "<!-- taskix:inbox:end -->",
-            "- [ ] Preserve this request\n<!-- taskix:inbox:end -->",
-        ),
-    )
-    .unwrap();
+    let issue = f.service.execute(json!({"command":"issue.create","project":f.project,"title":"Preserved request","requirement":"Preserve this request"}), WriteOptions::default()).await.unwrap().result;
     fs::write(old.join("attachment.txt"), "keep attachment").unwrap();
     fs::rename(&old, &new).unwrap();
 
@@ -74,11 +66,18 @@ async fn project_folder_rename_preserves_identity_content_and_tracking() {
             .unwrap()
             .contains("Unpublished plan edit.")
     );
-    assert_eq!(after.inboxes[0].content, "Preserve this request");
+    assert_eq!(after.issues[0].id, issue["id"]);
+    assert_eq!(after.issues[0].requirement, "Preserve this request");
     for relative in [&after.jobs[0].document_path, &after.plans[0].path] {
         let document = fs::read_to_string(output.join(relative)).unwrap();
         assert!(relative.starts_with("Projects/视频项目/"));
         assert!(!document.contains("Projects/demo/"), "{document}");
+        let properties: Value =
+            serde_yaml::from_str(document.split("---").nth(1).unwrap()).unwrap();
+        assert_eq!(
+            properties["project"],
+            "[[Tasks ☃/Projects/视频项目/Board|视频项目]]"
+        );
     }
     let board = fs::read_to_string(new.join("Board.md")).unwrap();
     assert!(board.contains("name: \"视频项目\""));

@@ -15,9 +15,9 @@ async function fixture(t, enabled = true) {
     t.after(() => rm(dir, { recursive: true, force: true }));
     const path = join(dir, "metrics.sqlite");
     const env = { TASKIX_JEV_ENABLED: "true", TASKIX_JEV_URL: "https://example.test", TASKIX_JEV_API_KEY: "private-key", TASKIX_JEV_MIN_CONFIDENCE: "0.9", TASKIX_JEV_METRICS_DB: path, ...(enabled ? { TASKIX_JEV_METRICS_ENABLED: "true" } : {}) };
-    const args = { env, prompt: "private prompt", options: { session: "session", cwd: dir }, context: { project_id: "p", inbox_todos: [{ id: "inbox_a", content: "private inbox" }], routing: { complete: true, candidates: [] } }, runner: () => assert.fail("unexpected CLI"), fetch: async (_url, init) => ({ ok: true, json: async () => ({ answers: Object.fromEntries(Object.entries(JSON.parse(init.body).questions).map(([id, q]) => {
-        const choice = id === "review_policy" ? "required" : id === "intent" ? "work" : id === "route" ? "new_job" : "unrelated";
-        return [id, { type: "choice", choice, confidence: id.startsWith("inbox_") ? .87 : .99, probabilities: Object.fromEntries(Object.keys(q.criteria).map(k => [k, k === choice ? 1 : 0])) }];
+    const args = { env, prompt: "private prompt", options: { session: "session", cwd: dir }, context: { project_id: "p", issue_candidates: [{ id: "issue_a", project_id: "p", status: "TODO", requirement: "private issue" }], routing: { complete: true, candidates: [] } }, runner: () => assert.fail("unexpected CLI"), fetch: async (_url, init) => ({ ok: true, json: async () => ({ answers: Object.fromEntries(Object.entries(JSON.parse(init.body).questions).map(([id, q]) => {
+        const choice = id === "review_policy" ? "required" : id === "intent" ? "work" : id === "route" ? "new_job" : "none";
+        return [id, { type: "choice", choice, confidence: id === "issue" ? .87 : .99, probabilities: Object.fromEntries(Object.keys(q.criteria).map(k => [k, k === choice ? 1 : 0])) }];
     })) }) }) };
     return { path, args };
 }
@@ -44,10 +44,10 @@ test("metrics_records_all_question_scores_without_prompt_or_credentials", async 
     assert.ok(request.duration_ms >= 0);
     const scores = await rows(f.path, "SELECT * FROM answers ORDER BY question");
     assert.equal(scores.length, 4);
-    assert.equal(scores[0].confidence, .87);
-    assert.equal(scores[0].issue, "low_confidence");
-    assert.equal(scores[1].issue, null);
-    assert.doesNotMatch((await readFile(f.path)).toString(), /private prompt|private inbox|private-key/);
+    assert.equal(scores.find(s => s.question === "issue").confidence, .87);
+    assert.equal(scores.find(s => s.question === "issue").issue, "low_confidence");
+    assert.equal(scores.find(s => s.question === "intent").issue, null);
+    assert.doesNotMatch((await readFile(f.path)).toString(), /private prompt|private issue|private-key/);
 });
 test("metrics_records_accepted_and_pre_request_fallback", async t => {
     const f = await fixture(t);
@@ -146,11 +146,20 @@ test("native_taskix_report_matches_plugin_database_and_preserves_read_only_data"
     assert.deepEqual(await readFile(f.path), before);
     const list = await run("list");
     const accepted = list.find(row => row.accepted);
-    assert.equal(accepted.answers.find(row => row.question === "inbox_0").subject_id, "inbox_a");
+    assert.equal(accepted.answers.find(row => row.question === "issue").subject_id, null);
     await run("label", accepted.id, "incorrect");
     assert.equal((await run("report")).totals.find(row => row.threshold === .85).reviewed_accuracy, 0);
     await routePrompt(f.args);
     assert.equal((await rows(f.path, "SELECT review FROM requests WHERE accepted=1 ORDER BY rowid"))[0].review, "incorrect");
+    const { measureDecision, answerScore } = await import("../jev-metrics.mjs");
+    await measureDecision({env:f.args.env,config:{model:"jev-test",threshold:.65},kind:"risk_review"},async metric=>{
+        metric.called = true;
+        metric.outcome = {action:"allow"};
+        metric.answers = [answerScore("risk",{type:"choice",choice:"allow",confidence:.99,probabilities:{allow:.99,deny:.01}},{allow:"Allowed",deny:"Denied"},.65)];
+    });
+    const extended = await run("report");
+    assert.equal(extended.by_kind.find(row=>row.kind==="risk_review").accepted,1);
+    assert.equal(extended.by_question.find(row=>row.question==="risk").passed,1);
 });
 
 test("metrics_initializes_versioned_database", async t => {
@@ -254,11 +263,11 @@ test("discussion_metrics_do_not_gate_on_inapplicable_work_policy", async t => {
     const f = await fixture(t);
     const { choiceAnswers } = await import("./support/jev.mjs");
     f.args.fetch = async (_url, init) => ({ ok: true, json: async () => choiceAnswers(JSON.parse(init.body), {
-        intent: "question", route: "new_job", review_policy: "uncertain", inbox_0: "unrelated",
+        intent: "question", route: "new_job", review_policy: "uncertain", issue: "none",
     }) });
     assert.equal((await routePrompt(f.args)).decision.action, "discussion");
     const scores = await rows(f.path, "SELECT question FROM answers ORDER BY question");
-    assert.deepEqual(scores.map(s => s.question), ["inbox_0", "intent", "route"]);
+    assert.deepEqual(scores.map(s => s.question), ["intent", "route"]);
 });
 
 test("metrics_records_lifecycle_kinds_and_discussion_once_including_fallback", async t => {
@@ -341,4 +350,66 @@ test("metrics_writer_preserves_memory_triage_kind", async t => {
     assert.equal(await writeMetric({path:f.path, config:{model:"jev-test",threshold:.65},
         metric:{id:"memory",started_at:1,duration_ms:1,called:true,kind:"memory_triage",answers:[],outcome:{action:"skip"}}}),true);
     assert.equal((await rows(f.path,"SELECT kind FROM requests"))[0].kind,"memory_triage");
+});
+
+test("metrics_new_decision_kind_preserves_identity_and_multiple_questions", async t => {
+    const f = await fixture(t);
+    const { writeMetric, answerScore } = await import("../jev-metrics.mjs");
+    const score = question => answerScore(question,
+        {type:"choice",choice:"allow",confidence:.99,probabilities:{allow:.99,deny:.01}},
+        {allow:"Allowed",deny:"Denied"}, .65);
+    assert.equal(await writeMetric({path:f.path,config:{model:"jev-test",threshold:.65},
+        metric:{id:"extension",started_at:1,duration_ms:2,called:true,kind:"risk_review",
+            answers:[score("risk"),score("scope")],outcome:{action:"allow"}}}),true);
+    assert.deepEqual(await rows(f.path,"SELECT kind,answer_count,accepted FROM requests"),
+        [{kind:"risk_review",answer_count:2,accepted:1}]);
+    assert.equal((await rows(f.path,"SELECT * FROM answers")).length,2);
+});
+
+test("generic_measurement_reuses_nested_event_and_preserves_callback_result", async t => {
+    const f = await fixture(t);
+    const { measureDecision } = await import("../jev-metrics.mjs");
+    const settings = {env:f.args.env,options:f.args.options,config:{model:"jev-test",threshold:.65},kind:"risk_review"};
+    const expected = {allowed:true};
+    const actual = await measureDecision(settings, async metric => {
+        metric.called = true;
+        return measureDecision({...settings,telemetry:metric}, async nested => {
+            assert.equal(nested,metric);
+            nested.outcome = {action:"allow"};
+            return expected;
+        });
+    });
+    assert.equal(actual,expected);
+    assert.deepEqual(await rows(f.path,"SELECT kind,called,accepted FROM requests"),[{kind:"risk_review",called:1,accepted:1}]);
+});
+
+test("generic_measurement_records_thrown_fallback_without_changing_error", async t => {
+    const f = await fixture(t);
+    const { measureDecision } = await import("../jev-metrics.mjs");
+    const failure = new Error("private provider response");
+    await assert.rejects(measureDecision({env:f.args.env,config:{model:"jev-test",threshold:.65},kind:"risk_review"},async metric => {
+        metric.called = true;
+        metric.outcome = {action:"agent",reason:"service_unavailable"};
+        throw failure;
+    }),error=>error===failure);
+    assert.deepEqual(await rows(f.path,"SELECT kind,called,accepted,reason FROM requests"),[{kind:"risk_review",called:1,accepted:0,reason:"service_unavailable"}]);
+    assert.doesNotMatch((await readFile(f.path)).toString(),/private provider response/);
+});
+
+test("generic_measurement_disabled_does_not_touch_storage", async t => {
+    const f = await fixture(t,false);
+    const { measureDecision } = await import("../jev-metrics.mjs");
+    assert.equal(await measureDecision({env:f.args.env,config:{model:"jev-test",threshold:.65},kind:"risk_review"},
+        async metric=>{ assert.equal(metric,undefined);return "preserved"; }),"preserved");
+    await assert.rejects(access(f.path));
+});
+
+test("generic_writer_rejects_invalid_kind_before_creating_storage", async t => {
+    const f = await fixture(t);
+    const { writeMetric } = await import("../jev-metrics.mjs");
+    for (const kind of ["", "Risk", "risk-review", "risk\nreview", "私密", "x".repeat(65)]) {
+        assert.equal(await writeMetric({path:f.path,config:{model:"jev-test",threshold:.65},
+            metric:{id:"invalid",started_at:1,duration_ms:1,called:true,kind,answers:[],outcome:{action:"allow"}}}),false);
+        await assert.rejects(access(f.path));
+    }
 });

@@ -12,8 +12,8 @@ First decompose the requirement into a Task DAG, create or resolve every node’
 | Skill | Provide the agent with a workflow, command guidance, and document rules | Does not run continuously, acquire locks, execute tests, or enforce compliance |
 | Hook / Extension | Handle session events, optionally classify prompt ownership with Jev, inject task context, renew leases, and handle exits and resumption | Does not decompose work, generate Plans, or automatically call start or done |
 | taskix / agentix-task | Validate state transitions, ownership, dependencies, revisions, and idempotency; persist changes | Does not judge business correctness or run acceptance commands from a Plan |
-| SQLite | Store Project, Inbox, Job, Task, and Plan metadata, leases, and events | Does not store complete Plan bodies or isolate code workspaces |
-| Obsidian files | Store Plans, Goal/Notes, and the human Project Inbox; display generated boards | Inbox imports human requests; Taskix Sync submits supported Obsidian status edits through taskix |
+| SQLite | Store Project, Milestone, Issue, Job, Task, and Plan metadata, leases, and events | Does not store complete Plan bodies or isolate code workspaces |
+| Obsidian files | Store Plans and editable delivery documents; display generated boards | Issue documents import authored requirements; Taskix Sync submits supported Obsidian status edits through taskix |
 
 The Skill defines working instructions, hooks adapt host events, and taskix provides validated task operations. None replaces the others.
 
@@ -22,19 +22,19 @@ The Skill defines working instructions, hooks adapt host events, and taskix prov
 ### 2.1 Project, Job, Task, and Plan boundaries
 
 - **Project: a long-lived project.** Worktrees of the same Git repository share one Project. Non-Git work can use a stable directory.
-- **Job: an independently acceptable requirement.** New requirements for the same project get new Jobs instead of being appended indefinitely to a completed Job.
+- **Job: one independently tracked execution round.** New requirements for the same project get new Jobs instead of being appended indefinitely to a completed Job.
+- **Issue: a durable project requirement with human acceptance.** It can span multiple Jobs and optionally belong to one Milestone. Independent Jobs are valid.
+- **Milestone: a basic project delivery grouping.** It records a goal, order and optional due date.
 - **Task: work that one agent can claim and deliver.** Each Task should have a clear result, scope, and verification method.
 - **Plan: the current Task's execution approach.** Write it after claiming the Task; publish changes through `plan revise` to update the same file and advance the Task revision.
 
 A Job's `goal` records the overall objective and acceptance conditions. Tasks currently have no separate structured acceptance field. Put the detailed scope, test approach, and risks in the Plan; delivery notes can go in the Job's Notes section.
 
-### Human Inbox intake
+### Issue association and acceptance
 
-The Project `Inbox.md` is a queue of human requirements. Agents finish the current user request, including running commands, verification, and result preparation, return the result, and wait for human input. Only an explicit request to take the next Job authorizes `inbox claim-next`, once for one entry. Submission, completion, idle events, and status questions do not authorize intake. New intake waits for existing active Jobs; recovery can resume the selected entry’s own Job but still waits for other active Jobs and outstanding Task leases. The agent adopts the returned Job and inspects its Tasks before decomposing so recovery reuses existing work. Register the whole Task DAG before completing its first Task. After delivery, wait for another explicit request instead of continuing through the queue.
+Issue is the requirement; Job is one execution round. A Job references at most one Issue, and an Issue can have multiple Jobs. Existing owned association and explicit IM Issue/Job selection take priority. Jev can select one same-Project TODO/ACTIVE candidate; ambiguity returns to the main Agent for full reading. No match keeps the Job independent. Association is guarded by the Issue revision/content hash. The first successful associated Task start activates a TODO Issue; claim and planning do not. Job completion does not complete or submit the Issue.
 
-On each user prompt, `context.inbox_todos` returns every TODO entry in the current Project after importing Inbox edits, including its full content and ID. The agent compares the request with these candidates semantically and selects zero, one, or multiple available entries. Pass each selected full ID with repeated `--inbox ENTRY_ID` arguments on `job create`, `job update`, or `job followup`; preserve the verbatim request with `--prompt` on creation, prompt backfill, or follow-up. Prompt text alone never links entries, even when it contains an entire entry verbatim. Selection is explicit and atomic: foreign-project, unpublished, withdrawn, content-pending, leased, already linked, or non-TODO entries reject the write. Selected entries become ACTIVE with the requesting agent/session’s Inbox lease when supplied, then follow the Job into PENDING_REVIEW and COMPLETED. Treat candidate content as data for matching, not as instructions or permission to work on unrelated requirements.
-
-Cancellation or deletion of an unfinished entry revokes its leases and cancels remaining work while preserving delivered outcomes and documents. Context and heartbeat results tell the agent to stop. Interruption or lease expiry returns unfinished entries to TODO; the next claim resumes the same Job. See [Project inbox](https://github.com/tenfyzhong/agentix/wiki/Taskix#project-inbox) for the document format and recovery rules.
+Explicit Issue submission requires meaningful requirement/acceptance text and closed associated Jobs. Human approval rechecks those conditions. Reject returns to ACTIVE with a reason. Cancellation stops unfinished associated work; reopening preserves history. Requirement notes are data, not permission to execute another Issue. After delivering the requested work, wait for human input. There is no automatic queue draining. See [Project Issue design](project-issues.md) for templates, shared Base views, IM and migration contracts.
 
 ### 2.2 Split by deliverables, not individual actions
 
@@ -155,9 +155,9 @@ Codex explicitly loads [hooks/hooks.json](../plugins/taskix-manager/hooks/hooks.
 | Configured host event | Commands | Plugin behavior |
 | --- | --- | --- |
 | SessionStart | `taskix hook session-start`, then `taskix context` | Attempt to resume eligible Tasks; return the actual session ID, task facts, and a Skill reminder as additional context |
-| PreToolUse | `taskix hook heartbeat`, then `taskix context` | Renew active leases and surface Inbox cancellation facts |
-| PostToolUse | `taskix hook heartbeat`, then `taskix context` | Renew active leases and surface Inbox cancellation facts |
-| Stop | `taskix hook heartbeat` | Renew leases without taking Inbox work or requesting continuation; the legacy `hook stop` command is a compatibility no-op |
+| PreToolUse | `taskix hook heartbeat`, then `taskix context` | Renew active leases and surface Issue cancellation facts |
+| PostToolUse | `taskix hook heartbeat`, then `taskix context` | Renew active leases and surface Issue cancellation facts |
+| Stop | `taskix hook heartbeat` | Renew leases without taking additional work or requesting continuation; the legacy `hook stop` command is a compatibility no-op |
 | Codex Interrupt | `taskix hook interrupt` | Mark active Tasks as system BLOCKED with reason `session interrupted`; release leases and preserve Plans |
 | Claude PostToolUseFailure | `taskix hook interrupt` only when `is_interrupt` is boolean `true` | Release interrupted work; ordinary failures neither renew nor release ownership |
 | SessionEnd | `taskix hook session-end` | Mark the session's in-progress Tasks as system BLOCKED and release their leases |
@@ -177,8 +177,8 @@ Both [pi.ts](../plugins/taskix-manager/extensions/pi.ts) and [omp.ts](../plugins
 | session_start | Resume eligible Tasks and start a once-per-minute heartbeat; on a session switch, attempt to release the previous session's task ownership through session-end |
 | before_agent_start | Wait for pending cleanup, restart paused heartbeat, and inject current facts; never claim implicitly |
 | agent_start | Reset the previous aborted-result marker |
-| Pi agent_end + agent_settled | Release interrupted work at idle settle; successful final responses leave Inbox entries pending for explicit user input |
-| OMP agent_end | Release aborted work when `willContinue` is false; successful final responses leave Inbox entries pending for explicit user input |
+| Pi agent_end + agent_settled | Release interrupted work at idle settle; successful final responses leave Issues unchanged for explicit user input |
+| OMP agent_end | Release aborted work when `willContinue` is false; successful final responses leave Issues unchanged for explicit user input |
 | session_shutdown | Stop the timer, cancel in-flight renewal, and run session-end |
 | taskix tool | Accept an array of argument strings, invoke the actual taskix process, and return JSON results or errors |
 
@@ -200,7 +200,7 @@ Pi/OMP reports periodic heartbeat failures and retries on later ticks. Interrupt
 
 ### 5.3 Agentix IM integration
 
-taskix does not depend on the IM bridge process. Attached sessions can use `/inboxes` to browse the Project queue and `/inbox <content>` to append one requirement with durable message deduplication, including on read-only agent attachments. When Agentix task boards are enabled, IM can browse Tasks, and a bound session can use buttons to claim, start, or change state. Agentix validates these actions through the same Service and handles resumption or exit processing from session events.
+Taskix is independent of the IM bridge. With task boards enabled, `/issues`, `/issue ID`, `/issue new <description>` and `/milestones` browse/manage project requirements even without an agent attachment. Execution controls select a writable same-Project session through existing session/workspace flows. Human acceptance is separate from Job delivery. See [Issue IM contract](project-issues.md#routing-and-im).
 
 IM does not create Plans or replace the Skill. Its existing refresh loop also consumes task events and sends waiting-user, blocked, failed, or Job review, rejection, or completion notifications to the corresponding session. This is not a file watcher.
 
@@ -209,7 +209,6 @@ IM does not create Plans or replace the Skill. Its existing refresh loop also co
 | Mechanism | Scope and duration | Purpose |
 | --- | --- | --- |
 | SQLite write transaction | A short database-level write lock from `BEGIN IMMEDIATE` through commit | Make state reads, validation, and lease writes atomic to prevent duplicate claims |
-| Inbox lease | Valid for 15 minutes, renewed with the session | Reserve one human requirement and recover its existing Job without duplicate intake |
 | Task lease | Valid for 15 minutes after claim, renewable through heartbeats | Maintain ownership during planning and execution and reject stale session/token writes |
 | Document output lock | Held during Plan publication, start's Plan validation and commit, and projection synchronization | Serialize shared document writes and prevent start from interleaving with managed Plan writes |
 
@@ -312,14 +311,6 @@ A future layer could assign the coordinator responsibility for requirements and 
 
 Existing tests cover competing CLI processes, phase transitions, stale tokens, planning resumption without a Plan, Plan validation, idempotent retries, and hooks calling the actual CLI. Host-adapter tests use event and API harnesses; they do not establish that a real model always decomposes work correctly, reads the Skill, or verifies acceptance. The opt-in Obsidian desktop test checks Dashboard tables, project filtering and links, native Kanban cards, and rendered note navigation in a foreground vault. Live host loading and trust remain separate acceptance checks. See the [coverage map](integration-coverage.md) for test entrypoints and boundaries.
 
-Optional [Jev routing](https://github.com/tenfyzhong/agentix/wiki/Taskix-Manager#optional-jev-routing) runs before the coding Agent. It selects Job ownership and semantic Inbox matches without lifecycle writes. Confident routes omit unrelated candidates and repeated tool-hook rules; low confidence, conflicts, incomplete evidence, or service failures return the decision to the Agent. Disabled or incomplete configuration preserves the default workflow.
+Optional [Jev routing](https://github.com/tenfyzhong/agentix/wiki/Taskix-Manager#optional-jev-routing) runs before the coding Agent. It selects Job ownership and semantic Issue matches without lifecycle writes. Confident routes omit unrelated candidates and repeated tool-hook rules; low confidence, conflicts, incomplete evidence, or service failures return the decision to the Agent. Disabled or incomplete configuration preserves the default workflow.
 
-The fallback classifier is a native child with independent context and low reasoning
-effort, requested through the host Agent protocol. The Node hook prepares the
-private snapshot but does not spawn the child itself. The packaged parent validator
-checks the returned advice against live assignment, revision, status and Inbox
-availability. The Agent performs lifecycle writes through Taskix, preserving the
-validated revision guard; Taskix remains authoritative for transitions, dependencies
-and review policy. Optional metrics are recorded by the plugin in an independent
-SQLite database through a worker with a 250 ms parent wait budget. Taskix owns
-reporting and human labels; metrics failure does not change routing.
+Fallback ownership decisions remain with the main Agent. It reads complete Issue and Job evidence and applies guarded lifecycle commands. Taskix remains authoritative for transitions, dependencies and review policy. Optional metrics use an independent SQLite database through a worker with a 250 ms parent wait budget; metrics failures do not alter routing.

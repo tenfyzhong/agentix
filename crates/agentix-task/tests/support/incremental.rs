@@ -100,22 +100,9 @@ async fn session_project_history_does_not_deserialize_unrelated_records() {
 async fn session_project_history_combines_and_deduplicates_sources() {
     let f = Fixture::new().await;
     let task = f.task("Task history").await;
-    let inbox = f
-        .service
-        .execute(
-            json!({"command":"inbox.add","project":f.project,"content":"Inbox history"}),
-            WriteOptions::default(),
-        )
-        .await
-        .unwrap()
-        .result["id"]
-        .as_str()
-        .unwrap()
-        .to_owned();
     let associations = [
         ("tasks", "last_session", task.as_str()),
         ("jobs", "session_id", f.job.as_str()),
-        ("inbox_entries", "last_session", inbox.as_str()),
     ];
     let mut conn = connection(&f).await;
     for (table, field, id) in associations {
@@ -562,12 +549,13 @@ async fn job_approval_preserves_registered_bases_saved_without_comments() {
         );
     }
     f.service.sync().await.unwrap();
-    for (path, _) in saved {
-        assert!(
-            fs::read_to_string(path)
-                .unwrap()
-                .starts_with("# taskix-generated:")
-        );
+    for (path, contents) in saved {
+        let actual = fs::read_to_string(&path).unwrap();
+        if path.file_name().unwrap() == "Recent Jobs.base" {
+            assert_eq!(actual, contents);
+        } else {
+            assert!(actual.starts_with("# taskix-generated:"));
+        }
     }
 }
 

@@ -19,6 +19,8 @@ mod tests;
 
 #[path = "projection_index.rs"]
 mod index;
+#[path = "issue_projection.rs"]
+mod issue_documents;
 use index::ProjectionIndex;
 
 #[derive(Clone)]
@@ -70,11 +72,11 @@ impl Service {
                 )?;
                 format!("{project_key}/Tasks/{filename}.md")
             }
-            "job" => entity["document_path"]
+            "job" | "issue" | "milestone" => entity["document_path"]
                 .as_str()
                 .context("missing job path")?
                 .to_owned(),
-            _ => format!("{project_key}/Inbox.md"),
+            _ => anyhow::bail!("invalid: unsupported note kind"),
         };
         self.safe_path(&relative)?;
         let path = self
@@ -84,22 +86,25 @@ impl Service {
             .replace('\\', "/")
             .trim_start_matches("./")
             .to_owned();
-        let status = if kind == "inbox" {
-            serde_json::to_value(serde_json::from_value::<crate::InboxStatus>(
-                entity["status"].clone(),
-            )?)?
-        } else {
-            entity["status"].clone()
-        };
+        let status = entity["status"].clone();
         let mut properties = json!({"status":status, "revision":entity["revision"]});
         if kind == "task" {
             for key in ["phase", "dependencies"] {
                 properties[key] = entity[key].clone();
             }
         } else if kind == "job" {
+            properties["issue_id"] = entity["issue_id"].clone();
+            properties["issue"] =
+                match (entity["issue_path"].as_str(), entity["issue_name"].as_str()) {
+                    (Some(path), Some(name)) => json!(self.link(path, name)),
+                    _ => Value::Null,
+                };
             properties["review_reason"] = entity["review_reason"].clone();
+        } else if kind == "issue" {
+            properties["review_reason"] = entity["review_reason"].clone();
+            properties["milestone_id"] = entity["milestone_id"].clone();
         }
-        if kind != "inbox" {
+        {
             for key in ["created_at", "updated_at", "completed_at"] {
                 properties[key] = optional_local_timestamp(entity[key].as_i64())?;
             }
@@ -130,7 +135,8 @@ impl Service {
         Ok(json!({"documents":self.config.documents,"notes":notes}))
     }
 
-    pub async fn execute(&self, request: Value, options: WriteOptions) -> Result<Outcome> {
+    #[allow(clippy::too_many_lines)] // Keep document observation, replay and guarded writes in one boundary.
+    pub async fn execute(&self, request: Value, mut options: WriteOptions) -> Result<Outcome> {
         self.store.reap_expired().await?;
         let command = required(&request, "command")?;
         if matches!(command, "plan.create" | "plan.revise") {
@@ -142,10 +148,7 @@ impl Service {
             {
                 return Ok(outcome);
             }
-            let deferred = (command == "inbox.set-status")
-                .then(|| outcome.result["id"].as_str())
-                .flatten();
-            if let Err(error) = self.sync_pending(deferred).await {
+            if let Err(error) = self.sync_pending().await {
                 outcome.projection_pending = Some(error.to_string());
             }
             if matches!(command, "project.archive" | "project.unarchive") {
@@ -158,39 +161,35 @@ impl Service {
             return Ok(outcome);
         }
         let state = self.store.request_snapshot(&request).await?;
-        let projects = crate::inbox_document::request_projects(&state, &request);
-        let needs_inbox = crate::inbox::needs_job_inbox(&request)
-            || command.starts_with("inbox.")
-            || state
-                .inboxes
-                .iter()
-                .any(|e| projects.contains(&e.project_id));
-        // Inbox work must observe human withdrawals before committing. Unrelated
-        // metadata retains its existing commit-before-projection recovery path.
-        let lock = if command == "task.start" || needs_inbox {
+        let needs_issues = !state.issues.is_empty()
+            || command.starts_with("issue.")
+            || command.starts_with("milestone.");
+        let lock = if command == "task.start" || needs_issues {
             Some(self.lock_output().await?)
         } else {
             None
         };
-        if needs_inbox
-            && !matches!(command, "project.delete" | "job.delete")
-            && self.store.replay(&request, &options).await?.is_none()
-        {
-            // The explicit status command owns this entry's checkbox intent.
-            // Still import content, order, withdrawals and other cancellations.
-            let deferred = if command == "inbox.set-status" {
-                Some(
-                    state.inboxes[crate::inbox::index(&state, required(&request, "inbox")?)?]
-                        .id
-                        .as_str(),
-                )
-            } else {
-                None
-            };
-            // Publishing the old checkbox here would look like a second edit
-            // to the Obsidian listener while its status command is in flight.
-            self.reconcile_inboxes_locked(Some(&projects), deferred, deferred.is_none())
-                .await?;
+        if needs_issues && !matches!(command, "project.delete" | "job.delete") {
+            let imported = self.reconcile_issue_documents_locked(Some(&state)).await?;
+            if let Some((before, after)) = request["issue"]
+                .as_str()
+                .or_else(|| request["milestone"].as_str())
+                .and_then(|id| imported.get(id))
+            {
+                // Rebase only across our own serialized authoring import.
+                // An externally changed revision must still fail its guard.
+                let writes_authored_content = match command {
+                    "issue.update" => ["requirement", "acceptance", "notes"]
+                        .iter()
+                        .any(|field| request.get(field).is_some()),
+                    "milestone.update" => request.get("goal").is_some(),
+                    "issue.approve" => true,
+                    _ => false,
+                };
+                if !writes_authored_content && options.expected_revision == Some(*before) {
+                    options.expected_revision = Some(*after);
+                }
+            }
         }
         // Replays must remain valid even if the Plan file subsequently disappears.
         if command == "task.start" && self.store.replay(&request, &options).await?.is_none() {
@@ -213,21 +212,27 @@ impl Service {
                 "invalid: current Plan is empty"
             );
         }
-        let inbox_status = command == "inbox.set-status";
         let recording = command == "session.record";
         let project_archive = matches!(command, "project.archive" | "project.unarchive");
+        let notify_session = if matches!(
+            command,
+            "session.start" | "session.heartbeat" | "session.end"
+        ) {
+            request["session"].as_str().map(str::to_owned)
+        } else {
+            None
+        };
         let mut outcome = self.store.execute(request, options).await?;
+        if let Some(session) = notify_session {
+            outcome.result["issue_cancellations"] =
+                self.store.issue_cancellations(&session).await?;
+        }
         drop(lock);
         // Session drafts produce no documents and must not depend on vault access.
         if outcome.result["staged"] == true || (recording && outcome.result["unchanged"] == true) {
             return Ok(outcome);
         }
-        // A reopened entry still has its old [-] on disk until projection.
-        // Do not import that stale mark as a new cancellation of this write.
-        let deferred = inbox_status
-            .then(|| outcome.result["id"].as_str())
-            .flatten();
-        if let Err(error) = self.sync_pending(deferred).await {
+        if let Err(error) = self.sync_pending().await {
             outcome.projection_pending = Some(error.to_string());
         }
         if project_archive {
@@ -262,38 +267,45 @@ impl Service {
     }
 
     pub async fn sync(&self) -> Result<()> {
-        self.sync_with_deferred_status(None).await
+        self.sync_all().await
     }
 
     pub async fn sync_pending_documents(&self) -> Result<()> {
-        self.sync_pending(None).await
+        self.sync_pending().await
     }
 
-    async fn sync_with_deferred_status(&self, deferred: Option<&str>) -> Result<()> {
+    /// Import one registered delivery note without loading the whole vault.
+    pub async fn sync_delivery_document(&self, id: &str) -> Result<()> {
+        let command = if id.starts_with("issue_") {
+            json!({"command":"issue.update","issue":id})
+        } else if id.starts_with("milestone_") {
+            json!({"command":"milestone.update","milestone":id})
+        } else {
+            anyhow::bail!("invalid: expected an Issue or Milestone ID");
+        };
+        {
+            let _lock = self.lock_output().await?;
+            let state = self.store.request_snapshot(&command).await?;
+            self.reconcile_issue_documents_locked(Some(&state)).await?;
+        }
+        self.sync_pending().await
+    }
+
+    async fn sync_all(&self) -> Result<()> {
         let _lock = self.lock_output().await?;
-        self.reconcile_inboxes_locked(None, deferred, true).await?;
+        self.reconcile_issue_documents_locked(None).await?;
         self.store.reap_expired().await?;
         self.render_locked().await
     }
 
-    async fn sync_pending(&self, deferred: Option<&str>) -> Result<()> {
+    async fn sync_pending(&self) -> Result<()> {
         let _lock = self.lock_output().await?;
         self.cleanup_deleted_documents().await?;
         if self.store.rebuild_pending().await? {
-            self.reconcile_inboxes_locked(None, deferred, true).await?;
+            Box::pin(self.reconcile_issue_documents_locked(None)).await?;
             return self.render_locked().await;
         }
         let mut error = None;
-        let mut failed_inboxes = BTreeSet::new();
-        for project in self.store.pending_inboxes().await? {
-            if let Err(failure) = self
-                .reconcile_inboxes_locked(Some(&BTreeSet::from([project.clone()])), deferred, true)
-                .await
-            {
-                failed_inboxes.insert(format!("inbox:{project}"));
-                error.get_or_insert(failure);
-            }
-        }
         // Capture generations after import. Bound queue memory and try each
         // document once; concurrent later generations remain durable for retry.
         let mut cursor = String::new();
@@ -304,9 +316,6 @@ impl Service {
             }
             for (key, generation) in pending {
                 cursor.clone_from(&key);
-                if failed_inboxes.contains(&key) {
-                    continue;
-                }
                 if let Err(failure) = self.render_pending_document(&key, generation).await {
                     error.get_or_insert(failure);
                 }
@@ -316,11 +325,17 @@ impl Service {
     }
 
     async fn render_pending_document(&self, key: &str, generation: String) -> Result<()> {
-        let state = self.store.projection_snapshot(key).await?;
-        // Inbox publication acknowledges its own pre-render generation. A new
-        // generation arriving after that pass must wait for its next import.
-        if key.starts_with("inbox:") && !state.projects.is_empty() {
-            return Ok(());
+        let mut state = self.store.projection_snapshot(key).await?;
+        if key.starts_with("issue:") || key.starts_with("milestone:") {
+            state
+                .issues
+                .retain(|issue| key == format!("issue:{}", issue.id));
+            state
+                .milestones
+                .retain(|milestone| key == format!("milestone:{}", milestone.id));
+            // Keep reconciliation's transaction future out of every caller's inline state.
+            Box::pin(self.reconcile_issue_documents_locked(Some(&state))).await?;
+            state = self.store.projection_snapshot(key).await?;
         }
         self.render_state_locked(
             &state,
@@ -349,15 +364,11 @@ impl Service {
             outcome.result["absolute_path"] =
                 json!(self.safe_path(required(&outcome.result, "path")?)?);
             drop(lock);
-            if let Err(error) = self.sync_pending(None).await {
+            if let Err(error) = self.sync_pending().await {
                 outcome.projection_pending = Some(error.to_string());
             }
             return Ok(outcome);
         }
-        let state = self.store.request_snapshot(&request).await?;
-        let projects = crate::inbox_document::request_projects(&state, &request);
-        self.reconcile_inboxes_locked(Some(&projects), None, true)
-            .await?;
         let state = self.store.request_snapshot(&request).await?;
         let task = &state.tasks[state.task_index(required(&request, "task")?)?];
         let command = required(&request, "command")?;
@@ -416,7 +427,7 @@ impl Service {
             .await?;
         outcome.result["absolute_path"] = json!(path);
         drop(lock);
-        if let Err(error) = self.sync_pending(None).await {
+        if let Err(error) = self.sync_pending().await {
             outcome.projection_pending = Some(error.to_string());
         }
         Ok(outcome)
@@ -467,12 +478,8 @@ impl Service {
     #[allow(clippy::too_many_lines)]
     async fn render_locked(&self) -> Result<()> {
         self.cleanup_deleted_documents().await?;
-        let mut pending = self.store.pending_documents().await?;
+        let pending = self.store.pending_documents().await?;
         let state = self.store.snapshot().await?;
-        pending.retain(|key, _| {
-            key.strip_prefix("inbox:")
-                .is_none_or(|id| !state.projects.iter().any(|p| p.id == id))
-        });
         self.render_state_locked(&state, None, &pending).await
     }
 
@@ -489,6 +496,7 @@ impl Service {
             let mut keys = BTreeSet::from([key.to_owned()]);
             if key == "dashboard" {
                 keys.insert("pending-review".into());
+                keys.insert("issues-dashboard".into());
             }
             if key.starts_with("task:") {
                 keys.extend(state.plans.iter().map(|p| format!("plan:{}", p.id)));
@@ -512,6 +520,7 @@ impl Service {
             .await?;
         let mut paths = BTreeMap::new();
         let mut files = BTreeMap::new();
+        self.render_delivery_documents(state, selected, &previous, &mut files, &mut paths)?;
         for project in &state.projects {
             let board_path = format!("{}/Board.md", project.document_directory());
             if includes(&format!("board:{}", project.id)) {
@@ -556,10 +565,17 @@ impl Service {
                 };
                 let mut properties = split_properties(&existing)?.0;
                 properties.as_object_mut().unwrap().extend(
-                    self.job_properties(job, project)?
-                        .as_object()
-                        .unwrap()
-                        .clone(),
+                    self.job_properties(
+                        job,
+                        project,
+                        state
+                            .issues
+                            .iter()
+                            .find(|issue| Some(&issue.id) == job.issue_id.as_ref()),
+                    )?
+                    .as_object()
+                    .unwrap()
+                    .clone(),
                 );
                 for field in ["goal", "prompt", "conversation", "document_path", "name"] {
                     properties.as_object_mut().unwrap().remove(field);
@@ -623,13 +639,26 @@ impl Service {
         }
         // Bases query vault notes dynamically. Preserve registered view settings
         // during incremental publication, even when Obsidian removed comments.
+        let mut project_filters = Vec::new();
+        for project in &state.projects {
+            let board = self.base_link(&format!("{}/Board.md", project.document_directory()));
+            for path in [board.as_str(), board.trim_end_matches(".md")] {
+                for field in ["note.projects", "projects"] {
+                    project_filters.push((
+                        format!("{field}.contains(link({}))", json!(path)),
+                        format!("(project_id == {})", json!(project.id)),
+                    ));
+                }
+            }
+        }
         let preserve_base = |key: &str, path: &str| -> Result<Option<Option<String>>> {
             let registered = previous.get(key).is_some_and(|old| old == path);
             let absolute = self.safe_path(path)?;
-            if selected.is_some() && registered && absolute.is_file() {
-                return Ok(Some(migrate_legacy_base(&std::fs::read_to_string(
-                    absolute,
-                )?)?));
+            if (selected.is_some() || key == "pending-review") && registered && absolute.is_file() {
+                return Ok(Some(migrate_legacy_base(
+                    &std::fs::read_to_string(absolute)?,
+                    &project_filters,
+                )?));
             }
             Ok(None)
         };
@@ -644,6 +673,22 @@ impl Service {
                 files.insert(dashboard_path.clone(), dashboard);
                 paths.insert("dashboard".into(), dashboard_path);
             }
+        }
+
+        if includes("dashboard") {
+            // Preserve saved global filters and views during full synchronization too.
+            let registered = previous
+                .get("issues-dashboard")
+                .is_some_and(|path| path == "Issue.base");
+            if !registered || !self.safe_path("Issue.base")?.is_file() {
+                files.insert("Issue.base".into(), self.global_issue_base()?);
+            } else if let Some(source) = migrate_legacy_base(
+                &std::fs::read_to_string(self.safe_path("Issue.base")?)?,
+                &project_filters,
+            )? {
+                files.insert("Issue.base".into(), source);
+            }
+            paths.insert("issues-dashboard".into(), "Issue.base".into());
         }
 
         if includes("pending-review") || includes("dashboard") {
@@ -666,8 +711,14 @@ impl Service {
                 let existing = std::fs::read_to_string(&path)?;
                 let owned = if relative == "Dashboard.base" {
                     existing.starts_with("# taskix-generated: dashboard\n")
+                } else if relative == "Issue.base" {
+                    existing.starts_with("# taskix-generated: global-issues\n")
                 } else if relative == "Recent Jobs.base" {
                     existing.starts_with("# taskix-generated: pending-review\n")
+                } else if relative.ends_with("/Issue.base")
+                    || relative.ends_with("/Milestones.base")
+                {
+                    existing.lines().next() == contents.lines().next()
                 } else {
                     let (old, _) = split_properties(&existing)?;
                     let (new, _) = split_properties(contents)?;
@@ -685,9 +736,21 @@ impl Service {
             atomic_write(&self.safe_path(&path)?, &contents)?;
         }
         let current: BTreeSet<_> = paths.values().collect();
-        for old in previous.values().filter(|old| !current.contains(old)) {
+        for (key, old) in previous.iter().filter(|(_, old)| !current.contains(old)) {
             let path = self.safe_path(old)?;
             if path.exists() {
+                if let Some(project) = key.strip_prefix("retired-intake:") {
+                    let source = std::fs::read_to_string(&path)?;
+                    // An initialization receipt alone does not own a user's replacement file.
+                    let owned = split_properties(&source).is_ok_and(|(properties, _)| {
+                        properties["project_id"] == project
+                            && source
+                                .contains(&format!("<!-- taskix:inbox:start project={project} -->"))
+                    });
+                    if !owned {
+                        continue;
+                    }
+                }
                 std::fs::remove_file(&path)?;
                 // Remove only empty generated ancestors; leave user files intact.
                 let mut parent = path.parent();
@@ -703,6 +766,21 @@ impl Service {
             }
         }
         let mut metadata = crate::publication::PublicationMetadata::default();
+        for milestone in &state.milestones {
+            if paths.contains_key(&format!("milestone:{}", milestone.id)) {
+                metadata.deliveries.insert(
+                    milestone.id.clone(),
+                    crate::store::hash_bytes(milestone.goal.as_bytes()),
+                );
+            }
+        }
+        for issue in &state.issues {
+            if paths.contains_key(&format!("issue:{}", issue.id)) {
+                metadata
+                    .deliveries
+                    .insert(issue.id.clone(), issue.content_hash.clone());
+            }
+        }
         for plan in &state.plans {
             if !paths.contains_key(&format!("plan:{}", plan.id)) {
                 continue;
@@ -833,7 +911,7 @@ impl Service {
             "properties":{
                 "formula.name":{"displayName":"Job"},
                 "formula.updated":{"displayName":"Updated"},
-                "projects":{"displayName":"Project"},
+                "note.project":{"displayName":"Project"},
                 "formula.review_time":{"displayName":"Pending review since"}
             },
             "views": recent_jobs_views()
@@ -880,7 +958,12 @@ impl Service {
         ))
     }
 
-    fn job_properties(&self, job: &crate::Job, project: &crate::Project) -> Result<Value> {
+    fn job_properties(
+        &self,
+        job: &crate::Job,
+        project: &crate::Project,
+        issue: Option<&crate::Issue>,
+    ) -> Result<Value> {
         let mut properties = serde_json::to_value(job)?;
         for field in [
             "created_at",
@@ -900,10 +983,10 @@ impl Service {
             json!(["agent/job"])
         };
         properties["title"] = json!(job.name);
-        properties["projects"] = json!([self.link(
-            &format!("{}/Board.md", project.document_directory()),
-            &project.name,
-        )]);
+        properties["project"] = json!(self.config.project_link(project));
+        properties["issue"] = issue.map_or(Value::Null, |issue| {
+            json!(self.link(&issue.document_path, &issue.name))
+        });
         properties["archived"] = json!(job.archived_at.is_some() || project.archived_at.is_some());
         Ok(properties)
     }
@@ -921,11 +1004,9 @@ impl Service {
         );
         doc.push_str(&Self::header(&title));
         doc.push_str(&format!(
-            "\n{}\n",
-            self.link(
-                &format!("{}/Inbox.md", project.document_directory()),
-                "Inbox"
-            )
+            "\n## Issues\n\n![[{}#Issue board]]\n\n## Milestones\n\n![[{}]]\n",
+            self.base_link(&format!("{}/Issue.base", project.document_directory())),
+            self.base_link(&format!("{}/Milestones.base", project.document_directory()))
         ));
         for (kind, statuses) in [
             ("Job", json!(crate::JobStatus::ALL)),
@@ -999,24 +1080,18 @@ impl Service {
         };
         let project = index.project(&task.project_id)?;
         let job = index.job(&task.job_id)?;
-        let wiki = |path: &str| {
-            format!(
-                "[[{}]]",
-                self.config
-                    .vault_relative_path(Path::new(path))
-                    .to_string_lossy()
-                    .replace('\\', "/")
-                    .trim_start_matches("./")
-                    .trim_end_matches(".md")
-            )
-        };
+        let job_filename = Path::new(&job.document_path)
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .context("Job document path has no valid filename")?;
         let mut generated = task_state_properties(task)?;
         generated.as_object_mut().unwrap().extend(json!({
             "id":task.id,"task_id":task.id,"plan_id":task.current_plan,"job_id":task.job_id,"project_id":task.project_id,
+            "project":self.config.project_link(project),
             "sequence":task.sequence,
             "agent":task.last_executor.as_deref().and_then(crate::model::agent_name),"session_id":task.last_session,
             "archived":job.archived_at.is_some() || project.archived_at.is_some(),
-            "projects":[wiki(&format!("{}/Board.md",project.document_directory()))],"job":wiki(&job.document_path)
+            "job":format!("[[{job_filename}]]")
         }).as_object().unwrap().clone());
         authored.as_object_mut().unwrap().remove("version");
         if authored["title"].is_null() || authored["title"] == authored["name"] {
@@ -1051,28 +1126,31 @@ impl Service {
     }
 
     pub(crate) fn link(&self, to: &str, label: &str) -> String {
-        let escaped_label = escape(label);
-        let needs_plain_label = escaped_label != label;
-        let label = escaped_label;
-        let to = self
-            .config
-            .vault_relative_path(Path::new(to))
-            .to_string_lossy()
-            .replace('\\', "/");
-        let to = to.trim_start_matches("./").trim_end_matches(".md");
-        if needs_plain_label {
-            // Obsidian aliases do not decode HTML entities. Keep labels
-            // with reserved characters outside a stable wiki link.
-            let label = label
-                .replace('\\', "&#92;")
-                .replace('*', "&#42;")
-                .replace('_', "&#95;")
-                .replace('`', "&#96;")
-                .replace('~', "&#126;");
-            format!("[[{to}|Open]] {label}")
-        } else {
-            format!("[[{to}|{label}]]")
-        }
+        document_link(&self.config, to, label)
+    }
+}
+
+pub(crate) fn document_link(config: &Config, to: &str, label: &str) -> String {
+    let escaped_label = escape(label);
+    let needs_plain_label = escaped_label != label;
+    let label = escaped_label;
+    let to = config
+        .vault_relative_path(Path::new(to))
+        .to_string_lossy()
+        .replace('\\', "/");
+    let to = to.trim_start_matches("./").trim_end_matches(".md");
+    if needs_plain_label {
+        // Obsidian aliases do not decode HTML entities. Keep labels
+        // with reserved characters outside a stable wiki link.
+        let label = label
+            .replace('\\', "&#92;")
+            .replace('*', "&#42;")
+            .replace('_', "&#95;")
+            .replace('`', "&#96;")
+            .replace('~', "&#126;");
+        format!("[[{to}|Open]] {label}")
+    } else {
+        format!("[[{to}|{label}]]")
     }
 }
 
@@ -1121,6 +1199,13 @@ fn task_state_properties(task: &Task) -> Result<Value> {
 fn frontmatter(mut properties: Value) -> String {
     #[cfg(test)]
     tests::FRONTMATTER_CALLS.with(|calls| calls.set(calls.get() + 1));
+    if properties["id"].as_str().is_some_and(|id| {
+        ["issue_", "job_", "task_", "milestone_"]
+            .iter()
+            .any(|prefix| id.starts_with(prefix))
+    }) {
+        properties.as_object_mut().unwrap().remove("projects");
+    }
     normalize_timestamp_properties(&mut properties);
     properties["taskix-generated"] = json!(true);
     let mut result = String::from("---\n");
@@ -1156,17 +1241,6 @@ fn normalize_timestamp_properties(properties: &mut Value) -> bool {
         }
     }
     changed
-}
-
-pub(crate) fn normalize_document_timestamps(source: &str) -> Result<String> {
-    let (mut properties, body) = split_properties(source)?;
-    if !normalize_timestamp_properties(&mut properties) {
-        return Ok(source.to_owned());
-    }
-    Ok(format!(
-        "{}\n{body}",
-        frontmatter(properties).trim_end_matches('\n')
-    ))
 }
 
 pub(crate) fn split_properties(body: &str) -> Result<(Value, &str)> {
@@ -1390,13 +1464,104 @@ pub(crate) fn atomic_write(path: &Path, body: &str) -> Result<()> {
 
 // Only registered generated Bases reach this migration. Native views and
 // unrelated user settings keep their original bytes on subsequent syncs.
-fn migrate_legacy_base(source: &str) -> Result<Option<String>> {
+fn migrate_project_columns(value: &mut Value) -> bool {
+    let mut changed = false;
+    if let Some(object) = value.as_object_mut() {
+        if let Some(properties) = object.get_mut("properties").and_then(Value::as_object_mut) {
+            for (old, new) in [
+                ("projects", "project"),
+                ("note.projects", "note.project"),
+                ("project_id", "project"),
+                ("note.project_id", "note.project"),
+            ] {
+                if let Some(value) = properties.remove(old) {
+                    properties.entry(new).or_insert(value);
+                    changed = true;
+                }
+            }
+        }
+        for (key, value) in object {
+            if key == "order" {
+                if let Some(columns) = value.as_array_mut() {
+                    for column in columns {
+                        if matches!(
+                            column.as_str(),
+                            Some("projects" | "note.projects" | "project_id" | "note.project_id")
+                        ) {
+                            *column = json!(
+                                column
+                                    .as_str()
+                                    .unwrap()
+                                    .replace("projects", "project")
+                                    .replace("project_id", "project")
+                            );
+                            changed = true;
+                        }
+                    }
+                }
+            } else if (key == "property" || key == "column")
+                && matches!(
+                    value.as_str(),
+                    Some("projects" | "note.projects" | "project_id" | "note.project_id")
+                )
+            {
+                *value = json!(
+                    value
+                        .as_str()
+                        .unwrap()
+                        .replace("projects", "project")
+                        .replace("project_id", "project")
+                );
+                changed = true;
+            } else {
+                changed |= migrate_project_columns(value);
+            }
+        }
+    } else if let Some(items) = value.as_array_mut() {
+        for item in items {
+            changed |= migrate_project_columns(item);
+        }
+    }
+    changed
+}
+
+fn migrate_project_filters(value: &mut Value, replacements: &[(String, String)]) -> bool {
+    let mut changed = false;
+    match value {
+        Value::String(text) => {
+            for (old, new) in replacements {
+                if text.contains(old) {
+                    *text = text.replace(old, new);
+                    changed = true;
+                }
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                changed |= migrate_project_filters(item, replacements);
+            }
+        }
+        Value::Object(object) => {
+            for item in object.values_mut() {
+                changed |= migrate_project_filters(item, replacements);
+            }
+        }
+        _ => {}
+    }
+    changed
+}
+
+fn migrate_legacy_base(
+    source: &str,
+    project_filters: &[(String, String)],
+) -> Result<Option<String>> {
     let mut base: Value = serde_yaml::from_str(source)?;
+    let mut changed = migrate_project_columns(&mut base);
+    changed |= migrate_project_filters(&mut base, project_filters);
     let Some(views) = base.get_mut("views").and_then(Value::as_array_mut) else {
         return Ok(None);
     };
     let recent = views.iter().any(|view| view["type"] == "taskixRecentJobs");
-    let mut changed = false;
     for view in views {
         if recent && let Some(object) = view.as_object_mut() {
             object.remove("limit");
@@ -1465,18 +1630,20 @@ fn recent_jobs_views() -> Vec<Value> {
     let mut views = vec![json!({
         "type":"kanban", "name":"Recent jobs",
         "groupBy":{"property":"note.status","direction":"ASC"},
-        "order":["formula.name", "projects", "formula.updated", "formula.review_time"],
+        "order":["formula.name", "project", "formula.updated", "formula.review_time"],
         "sort":sort,
         "groupOrder":statuses,
         "hideEmptyColumns":false, "columnWidth":300
     })];
     // Per-status tables remain available alongside the unlimited native board.
-    views.extend(statuses.map(|status| json!({
-        "type":"table", "name":status,
-        "filters":format!("note.status == {status:?}"),
-        "order":["formula.name", "projects", "status", "formula.updated", "formula.review_time"],
-        "sort":sort
-    })));
+    views.extend(statuses.map(|status| {
+        json!({
+            "type":"table", "name":status,
+            "filters":format!("note.status == {status:?}"),
+            "order":["formula.name", "project", "status", "formula.updated", "formula.review_time"],
+            "sort":sort
+        })
+    }));
     views
 }
 
@@ -1485,7 +1652,7 @@ fn pending_review_view() -> Value {
         "type":"kanban", "name":"Pending review",
         "filters":{"and":["file.hasTag(\"agent/job\")", "note.status == \"PENDING_REVIEW\"", "archived != true"]},
         "groupBy":{"property":"note.status","direction":"ASC"},
-        "order":["formula.name", "projects", "formula.review_time"],
+        "order":["formula.name", "project", "formula.review_time"],
         "sort":completion_sort(),
         "groupOrder":["PENDING_REVIEW"],
         "hideEmptyColumns":false, "columnWidth":300

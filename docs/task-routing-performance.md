@@ -11,7 +11,7 @@ real provider and reports acceptance separately from semantic accuracy.
 
 - Disabled or incomplete configuration: the added prompt hook makes no CLI or HTTP
   call. Command-hook hosts still incur their normal Node startup overhead.
-- Enabled: one `routing snapshot` process imports Inbox edits, renews leases, and
+- Enabled: one `routing snapshot` process imports Issue edits, renews leases, and
   returns bounded references, candidate summaries, and cancellation facts. Selecting
   a Job adds one `routing revision` process before delivering the route.
 - Tool hooks with a valid turn receipt run one live heartbeat and omit repeated
@@ -90,7 +90,7 @@ snapshots and one missing-context case. All three known requests spanning multip
 independent Jobs deferred to the main Agent. The largest serialized request was
 29,731 bytes, within the conservative 30,000-byte guard for the 32k-token ceiling.
 Historical reconstruction uses only evidence preceding each prompt and retains
-incomplete cases; it cannot reconstruct every historical Inbox or lease state.
+incomplete cases; it cannot reconstruct every historical requirement or lease state.
 Credentials came from the user's interactive fish login environment. Replay did
 not change Job/Task ownership. The default threshold was 0.90 during this
 evaluation and was subsequently changed to 0.65. These results do not establish
@@ -165,7 +165,7 @@ CLI stale-write tests and live-host boundaries.
 The 2026-09-22 compact-instruction regression measured the same small hook fixtures
 before and after removing duplicated workflow prose:
 
-| Visible candidates | Inbox entries | Before (code units) | After (code units) |
+| Visible candidates | Requirement candidates | Before (code units) | After (code units) |
 | --- | --- | --- | --- |
 | 0 | 1 | 2,556 | 833 |
 | 1 | 1 | 2,645 | 922 |
@@ -247,7 +247,7 @@ Taskix event exports. It uses UUIDv7 user-message timestamps instead of delayed
 conversation capture times, excludes events in the message's second, and never
 reactivates completed Jobs. Same-turn replies and other-session history are
 excluded. Missing message timestamps remain incomplete cases in the denominator.
-Historical Inbox, assignment leases and previous-job ranking are not reconstructed.
+Historical requirement, assignment leases and previous-job ranking are not reconstructed.
 Later conversation attachments must not be used to inject future ownership labels.
 For snapshot parity, `tests/jev-snapshot-replay.mjs` runs the checkout's actual
 JOBS and TASKS SQL over the historical records in memory. This applies the same

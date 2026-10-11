@@ -46,9 +46,9 @@ fn rejects_foreign_owners_teams_bots_and_unmentioned_channels() {
 }
 
 #[test]
-fn edited_inbox_uses_original_message_identity_and_microsecond_version() {
+fn edited_requirement_uses_original_message_identity_and_microsecond_version() {
     let edited = event(
-        json!({"type":"message","subtype":"message_changed","channel":"D1","channel_type":"im","message":{"user":"U1","text":"/inbox edited &amp; kept","ts":"1.000001","edited":{"ts":"2.000002"}}}),
+        json!({"type":"message","subtype":"message_changed","channel":"D1","channel_type":"im","message":{"user":"U1","text":"/issue new edited &amp; kept","ts":"1.000001","edited":{"ts":"2.000002"}}}),
     );
     let input = normalize_event(&edited, "T1", "BOT", &["U1".into()]).unwrap();
     assert_eq!(
@@ -56,7 +56,7 @@ fn edited_inbox_uses_original_message_identity_and_microsecond_version() {
         InboundPayload::TextEdited {
             original_event_id: "T1:1.000001:D1".into(),
             version: 2_000_002,
-            text: "/inbox edited & kept".into()
+            text: "/issue new edited & kept".into()
         }
     );
 }
@@ -102,16 +102,16 @@ fn slash_command_gateway_preserves_prompts_and_routes_commands() {
 #[test]
 fn mention_removal_preserves_quoted_bot_mentions_and_editing_away_the_prefix() {
     let message = event(
-        json!({"type":"app_mention","channel":"C1","user":"U1","text":"<@BOT> /inbox keep <@BOT> in the requirement","ts":"1.000001"}),
+        json!({"type":"app_mention","channel":"C1","user":"U1","text":"<@BOT> /issue new keep <@BOT> in the requirement","ts":"1.000001"}),
     );
     assert_eq!(
         normalize_event(&message, "T1", "BOT", &["U1".into()])
             .unwrap()
             .payload,
-        InboundPayload::Text("/inbox keep <@BOT> in the requirement".into())
+        InboundPayload::Text("/issue new keep <@BOT> in the requirement".into())
     );
     let edited = event(
-        json!({"type":"message","subtype":"message_changed","channel":"C1","previous_message":{"text":"<@BOT> /inbox old"},"message":{"user":"U1","text":"/inbox new","ts":"1.000001","edited":{"ts":"2.000001"}}}),
+        json!({"type":"message","subtype":"message_changed","channel":"C1","previous_message":{"text":"<@BOT> /issue new old"},"message":{"user":"U1","text":"/issue new new","ts":"1.000001","edited":{"ts":"2.000001"}}}),
     );
     assert!(normalize_event(&edited, "T1", "BOT", &["U1".into()]).is_some());
 }

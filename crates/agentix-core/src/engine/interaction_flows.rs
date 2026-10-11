@@ -8,6 +8,14 @@ use super::{
 };
 
 impl Engine {
+    pub(super) async fn clear_reply_inputs(&self, conversation: &ConversationRef) {
+        self.cancel_directory_draft(conversation).await;
+        self.tasks.take_input(conversation).await;
+        self.tasks.take_issue_input(conversation).await;
+        self.interactions.take_session_input(conversation).await;
+        self.interactions.take_reply_mode(conversation).await;
+    }
+
     pub(super) async fn cancel_pending_reply(
         &self,
         conversation: &ConversationRef,
@@ -26,6 +34,12 @@ impl Engine {
             self.interactions.actions.lock().await.retain(|a| !matches!(a, UiAction::TerminalInput { session_id, .. } if session_id == &session));
         }
         self.tasks.take_input(conversation).await;
+        self.tasks.take_issue_input(conversation).await;
+        self.tasks
+            .issue_executions
+            .lock()
+            .await
+            .remove(conversation);
         self.interactions.take_session_input(conversation).await;
         if let Some(interaction) = self.interactions.take_reply_mode(conversation).await {
             self.show_input_question(conversation, owner_id, &interaction)
@@ -310,6 +324,11 @@ impl Engine {
                     .run_task_action(conversation, owner_id, action)
                     .await?;
             }
+            UiAction::Issue(action) => {
+                tasks
+                    .run_issue_action(conversation, owner_id, action)
+                    .await?;
+            }
             UiAction::TaskBrowse(action) => {
                 tasks.browse_tasks(conversation, owner_id, action).await?;
             }
@@ -551,6 +570,7 @@ impl Engine {
             .lock()
             .await
             .insert(interaction.clone(), pending);
+        self.clear_reply_inputs(conversation).await;
         self.interactions
             .reply_modes
             .lock()

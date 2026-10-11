@@ -3,13 +3,13 @@ use anyhow::{Result, ensure};
 use serde_json::{Value, json};
 
 use crate::{Service, Store, WriteOptions};
-use std::{collections::BTreeSet, path::Path};
+use std::path::Path;
 
 // Fetch one sentinel beyond each limit so callers never mistake partial coverage
 // for an exhaustive candidate set. Text is bounded before it leaves SQLite.
 const JOBS: &str = "SELECT json_object(
     'id',id,'project_id',project_id,'status',json_extract(data,'$.status'),
-    'revision',json_extract(data,'$.revision'),
+    'revision',json_extract(data,'$.revision'),'issue_id',json_extract(data,'$.issue_id'),
     'title',substr(json_extract(data,'$.title'),1,300),
     'prompt',substr(json_extract(data,'$.prompt'),1,4000),
     'goal',substr(json_extract(data,'$.goal'),1,2000),
@@ -60,51 +60,42 @@ ORDER BY job_id,rowid LIMIT 257";
 impl Store {
     /// Read only current assignment references; never expose lease credentials.
     pub async fn routing_assignment(&self, session: &str) -> Result<Value> {
-        let mut tx = self.pool.begin().await?;
         let task: Option<String> = sqlx::query_scalar(
             "SELECT json_object(
-            'project_id',j.project_id,'job_id',t.job_id,'task_id',t.id,'inbox_id',NULL)
+            'project_id',j.project_id,'job_id',t.job_id,'task_id',t.id,
+            'issue_id',json_extract(j.data,'$.issue_id'))
             FROM task_leases l JOIN tasks t ON t.id=l.id JOIN jobs j ON j.id=t.job_id
             WHERE l.session_ref=?1 AND json_extract(l.data,'$.lease_expires_at')>?2
             ORDER BY l.rowid LIMIT 1",
         )
         .bind(session)
         .bind(self.now())
-        .fetch_optional(&mut *tx)
+        .fetch_optional(&self.pool)
         .await?;
-        let inbox: Option<String> = sqlx::query_scalar("SELECT json_object(
-            'project_id',project_id,'job_id',json_extract(data,'$.job_id'),'task_id',NULL,'inbox_id',id)
-            FROM inbox_entries WHERE json_extract(data,'$.last_session')=?1
-            AND json_extract(data,'$.lease.session_ref')=?1
-            AND json_extract(data,'$.lease.lease_expires_at')>?2 ORDER BY rowid LIMIT 1")
-            .bind(session).bind(self.now()).fetch_optional(&mut *tx).await?;
-        tx.commit().await?;
-        let mut assignment: Value = task
+        Ok(task
             .as_deref()
-            .or(inbox.as_deref())
             .map(serde_json::from_str)
             .transpose()?
             .unwrap_or_else(
-                || json!({"project_id":null,"job_id":null,"task_id":null,"inbox_id":null}),
-            );
-        if let Some(inbox) = inbox {
-            let inbox: Value = serde_json::from_str(&inbox)?;
-            assignment["inbox_id"] = inbox["inbox_id"].clone();
-        }
-        Ok(assignment)
+                || json!({"project_id":null,"job_id":null,"task_id":null,"issue_id":null}),
+            ))
     }
 
-    /// Read bounded TODO summaries. Ineligible or truncated entries require investigation.
-    pub async fn routing_inbox(&self, project: &str) -> Result<Value> {
+    /// Read bounded TODO/ACTIVE requirements. Always reread a selected Issue before linking.
+    pub async fn routing_issues(&self, project: &str) -> Result<Value> {
         let rows: Vec<String> = sqlx::query_scalar(
             "SELECT json_object(
-            'id',id,'content',substr(json_extract(data,'$.content'),1,2000),
-            'truncated',length(json_extract(data,'$.content'))>2000
-                OR COALESCE(json_extract(data,'$.published'),0)=0
-                OR COALESCE(json_extract(data,'$.deleted'),0)!=0
-                OR COALESCE(json_extract(data,'$.content_pending'),0)!=0
-                OR json_extract(data,'$.lease') IS NOT NULL)
-            FROM inbox_entries WHERE project_id=? AND json_extract(data,'$.status')='TODO'
+            'id',id,'project_id',project_id,'status',json_extract(data,'$.status'),
+            'revision',json_extract(data,'$.revision'),'content_hash',json_extract(data,'$.content_hash'),
+            'milestone_id',json_extract(data,'$.milestone_id'),
+            'title',substr(json_extract(data,'$.title'),1,300),
+            'requirement',substr(json_extract(data,'$.requirement'),1,2000),
+            'acceptance',substr(json_extract(data,'$.acceptance'),1,2000),
+            'truncated',COALESCE(length(json_extract(data,'$.title'))>300,0)
+                OR COALESCE(length(json_extract(data,'$.requirement'))>2000,0)
+                OR COALESCE(length(json_extract(data,'$.acceptance'))>2000,0))
+            FROM issues WHERE project_id=? AND json_extract(data,'$.status') IN ('TODO','ACTIVE')
+                AND json_extract(data,'$.archived_at') IS NULL
             ORDER BY rowid LIMIT 33",
         )
         .bind(project)
@@ -121,12 +112,64 @@ impl Store {
         Ok(json!({"entries":entries,"complete":complete}))
     }
 
+    /// Only this session's Jobs can produce withdrawal notices.
+    pub async fn issue_cancellations(&self, session: &str) -> Result<Value> {
+        let rows: Vec<String> = sqlx::query_scalar(
+            "WITH candidates AS (
+                SELECT id FROM jobs WHERE json_extract(data,'$.session_id')=?1
+                UNION SELECT id FROM jobs WHERE json_extract(data,'$.followup_session_id')=?1
+                UNION SELECT job_id FROM tasks WHERE json_extract(data,'$.last_session')=?1
+            ) SELECT json_object('id',i.id,'job_id',j.id)
+            FROM candidates c CROSS JOIN jobs j ON j.id=c.id
+            JOIN issues i ON i.id=json_extract(j.data,'$.issue_id')
+            WHERE json_extract(i.data,'$.status')='CANCELLED'
+            ORDER BY json_extract(i.data,'$.cancelled_at') DESC,i.id DESC,j.id DESC LIMIT 32",
+        )
+        .bind(session)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(json!(
+            rows.iter()
+                .map(|r| serde_json::from_str::<Value>(r))
+                .collect::<std::result::Result<Vec<_>, _>>()?
+        ))
+    }
+
+    /// Point-read a current association with the same bounded text as candidates.
+    pub async fn routing_issue(&self, id: &str) -> Result<Value> {
+        let row: Option<String> = sqlx::query_scalar(
+            "SELECT json_set(json_remove(data,'$.notes'),
+                '$.title',substr(json_extract(data,'$.title'),1,300),
+                '$.requirement',substr(json_extract(data,'$.requirement'),1,2000),
+                '$.acceptance',substr(json_extract(data,'$.acceptance'),1,2000)) FROM issues WHERE id=?",
+        ).bind(id).fetch_optional(&self.pool).await?;
+        Ok(row
+            .map(|r| serde_json::from_str(&r))
+            .transpose()?
+            .unwrap_or(Value::Null))
+    }
+
+    pub async fn routing_milestone(&self, id: &str) -> Result<Value> {
+        let row: Option<String> = sqlx::query_scalar(
+            "SELECT json_set(data,'$.title',substr(json_extract(data,'$.title'),1,300),
+                '$.goal',substr(json_extract(data,'$.goal'),1,2000)) FROM milestones WHERE id=?",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row
+            .map(|r| serde_json::from_str(&r))
+            .transpose()?
+            .unwrap_or(Value::Null))
+    }
+
     /// Revalidate an exact Job ID without reading its prompt or conversation.
     pub async fn routing_revision(&self, job: &str) -> Result<Value> {
         let row: Option<String> = sqlx::query_scalar(
             "SELECT json_object(
             'id',id,'project_id',project_id,'revision',json_extract(data,'$.revision'),
-            'status',json_extract(data,'$.status'),'archived_at',json_extract(data,'$.archived_at')
+            'status',json_extract(data,'$.status'),'archived_at',json_extract(data,'$.archived_at'),
+            'issue_id',json_extract(data,'$.issue_id')
         ) FROM jobs WHERE id=?",
         )
         .bind(job)
@@ -177,7 +220,7 @@ impl Store {
 }
 
 impl Service {
-    /// Refresh human Inbox changes and leases, then return bounded classifier input.
+    /// Refresh leases, then return bounded classifier input without a vault-wide import.
     pub async fn routing_snapshot(
         &self,
         session: &str,
@@ -194,11 +237,6 @@ impl Service {
                 None => self.project_for_session(None, Some(session)).await?,
             }
         };
-        if let Some(project) = &project {
-            let _lock = self.lock_output().await?;
-            self.reconcile_inboxes_locked(Some(&BTreeSet::from([project.id.clone()])), None, true)
-                .await?;
-        }
         options.session_ref = Some(session.into());
         let heartbeat = self
             .execute(
@@ -208,30 +246,38 @@ impl Service {
             .await?;
         ensure!(
             heartbeat.projection_pending.is_none(),
-            "Inbox synchronization pending"
+            "Taskix synchronization pending"
         );
-        // Import and expiry can revoke the assignment; never reuse the initial IDs.
+        // Expiry can revoke the assignment; never reuse the initial IDs.
         let mut context = self.store().routing_assignment(session).await?;
-        context["inbox_cancellations"] = heartbeat.result["inbox_cancellations"].clone();
+        context["issue_cancellations"] = self.store().issue_cancellations(session).await?;
+        context["issue"] = match context["issue_id"].as_str() {
+            Some(id) => self.store().routing_issue(id).await?,
+            None => Value::Null,
+        };
+        context["milestone"] = match context["issue"]["milestone_id"].as_str() {
+            Some(id) => self.store().routing_milestone(id).await?,
+            None => Value::Null,
+        };
         context["documents"] = serde_json::to_value(&self.config().documents)?;
         context["context_owner"] = json!("external_agent_team");
         context["editable_regions"] = json!(["Goal", "Notes", "Plan body"]);
         if let Some(project) = project {
             let mut candidates = self.store().routing_candidates(&project.id).await?;
-            let inbox = self.store().routing_inbox(&project.id).await?;
+            let issues = self.store().routing_issues(&project.id).await?;
             let same_project =
                 context["project_id"].is_null() || context["project_id"] == project.id;
             candidates["complete"] = json!(
                 candidates["complete"] == true
-                    && inbox["complete"] == true
+                    && issues["complete"] == true
                     && same_project
                     && project.archived_at.is_none()
             );
             context["project_id"] = json!(project.id);
-            context["inbox_todos"] = inbox["entries"].clone();
+            context["issue_candidates"] = issues["entries"].clone();
             context["routing"] = candidates;
         } else {
-            context["inbox_todos"] = json!([]);
+            context["issue_candidates"] = json!([]);
             context["routing"] = json!({"complete":false,"candidates":[]});
         }
         Ok(context)

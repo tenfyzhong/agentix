@@ -63,6 +63,8 @@ async fn projection_keeps_complete_content_and_reason_in_body_only() {
     assert!(metadata.get("reason").is_none());
     assert_eq!(metadata["id"], memory.id);
     assert_eq!(metadata["project_id"], "project");
+    assert_eq!(metadata["project"], "[[Agents/Projects/demo/Board|demo]]");
+    assert!(metadata.get("projects").is_none());
     assert_eq!(metadata["revision"], memory.revision);
     assert_eq!(metadata["status"], "active");
     assert!(body.contains("## content\n"));
@@ -135,6 +137,10 @@ async fn projection_restores_all_file_edits_without_changing_memory() {
     for edited in [
         original.replace("Use the regional endpoint", "Use the European endpoint"),
         original.replace("project_id: project", "project_id: foreign"),
+        original.replace(
+            "project_id: project",
+            "project_id: project\nprojects: [legacy]",
+        ),
         original.replace("user_assertion", "inference"),
         format!("{original}\nExtra human notes\n"),
         "invalid YAML and arbitrary content".into(),
@@ -400,4 +406,37 @@ async fn pending_projection_prioritizes_changes_and_full_sync_repairs_external_e
             .published,
         0
     );
+}
+
+#[tokio::test]
+async fn projection_project_link_refresh_preserves_memory_revision_and_content() {
+    let (dir, store, projection, id) = fixture().await;
+    projection.sync("project", "", 20).await.unwrap();
+    let before = store.show("project", &id, None).await.unwrap();
+    for (directory, link) in [
+        (
+            "Agents/Projects/demo/Memory",
+            "[[Agents/Projects/demo/Board|项目名称]]",
+        ),
+        (
+            "Archive/项目名称/Memory",
+            "[[Archive/项目名称/Board|项目名称]]",
+        ),
+    ] {
+        let projection = MemoryProjection::new(store.clone(), dir.path(), Path::new(directory))
+            .unwrap()
+            .with_project_link(link.to_owned());
+        projection.sync("project", "", 20).await.unwrap();
+        let text = std::fs::read_to_string(projection.path(&id).unwrap()).unwrap();
+        let metadata: serde_json::Value =
+            serde_yaml::from_str(text.split("---").nth(1).unwrap()).unwrap();
+        assert_eq!(metadata["project"], link);
+        assert_eq!(metadata["project_id"], "project");
+        assert_eq!(store.show("project", &id, None).await.unwrap(), before);
+        assert_eq!(text, before.rendered_note(link).unwrap());
+        assert_eq!(
+            projection.sync("project", "", 20).await.unwrap().published,
+            0
+        );
+    }
 }

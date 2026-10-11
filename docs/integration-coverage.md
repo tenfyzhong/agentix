@@ -39,7 +39,7 @@ and hook trust remain separate acceptance boundaries.
 | Non-Git exact-root ownership, automatic registration/reuse, explicit overrides, same-name directories, Git/worktree/subdirectory identity, one discovery per context, symlink aliases, concurrent first visits, and projection-failure recovery | [Project resolution CLI tests](../crates/taskix/tests/support/project_resolution.rs), [taskix CLI tests](../crates/taskix/tests/cli.rs) |
 | Obsidian Project folder renames, stable workspace/IDs/leases, moved Plan/Job paths and authored content, archives/dependencies, duplicate/name conflicts and publication retry | [Project rename tests](../crates/agentix-task/tests/support/project_rename.rs), [CLI context and note path tests](../crates/taskix/tests/support/obsidian_sync.rs), [plugin folder event tests](../plugins/taskix-manager/tests/obsidian-sync.test.mjs); plugin events are mocked, not live desktop acceptance |
 | Relative document storage, schema-18 absolute archive migration, schema-19 home-prefix migration, abbreviated Board roots and legacy identity compatibility, expanded workspace lookups/replay/events and cursor preservation, cleanup paths, transactional rollback, two successive vault moves and active/archive directory changes | [Relative path tests](../crates/agentix-task/tests/support/relative_paths.rs), [Migration tests](../crates/agentix-task/src/persist_tests.rs), [CLI projection tests](../crates/taskix/tests/support/projections.rs); `real_backup_relative_paths_survive_two_vault_moves` requires an offline backup via `TASKIX_RELATIVE_PATHS_BACKUP` |
-| Indexed root/name query plans, unrelated malformed Project isolation, schema-13 migration, canonical root aliases, Unicode name collision/deletion, and existing session history/cancellation behavior | [Project resolution storage tests](../crates/agentix-task/tests/support/project_resolution.rs), [Incremental tests](../crates/agentix-task/tests/support/incremental.rs), [Inbox CLI tests](../crates/taskix/tests/support/inbox.rs) |
+| Indexed root/name query plans, unrelated malformed Project isolation, schema-13 migration, canonical root aliases, Unicode name collision/deletion, and existing session history/cancellation behavior | [Project resolution storage tests](../crates/agentix-task/tests/support/project_resolution.rs), [Incremental tests](../crates/agentix-task/tests/support/incremental.rs) |
 | First/repeated non-Git context latency at 1, 1,000 and 10,000 unrelated Projects | [Manual scaling benchmark](../crates/taskix/tests/support/project_resolution.rs), [measurement method and results](project-resolution-performance.md) |
 | Claim → Plan → start → done; seven statuses, phase gates, failed transitions, revision checks, stale leases, expiry and resumption | [task_system.rs](../crates/agentix-task/tests/task_system.rs), [taskix CLI tests](../crates/taskix/tests/cli.rs) |
 | Competing processes, concurrent projection writers, crash after commit, exact idempotent replay, database identity and path validation | [taskix CLI tests](../crates/taskix/tests/cli.rs), [task_system.rs](../crates/agentix-task/tests/task_system.rs) |
@@ -48,14 +48,13 @@ and hook trust remain separate acceptance boundaries.
 | Legacy Dashboard migration to Bases, read-only formulas, scoped filters, activity ordering, unchanged-file preservation, archive visibility, destination conflicts and partial-publication retries | [dashboard.rs](../crates/agentix-task/tests/support/dashboard.rs), [CLI projection tests](../crates/taskix/tests/support/projections.rs) |
 | Job/Project deletion, active-lease and surviving-dependency rejection, cleanup retry after restart, unowned destination preservation after failed creation/renaming, owned files published before path registration, sequence retention, symlink boundaries | [deletion.rs](../crates/agentix-task/tests/support/deletion.rs), [taskix CLI tests](../crates/taskix/tests/cli.rs) |
 | Codex/Claude manifest-selected hook commands using real CLI; Stop retains ownership without intake; interruption and shutdown release planning/executing leases; new-token recovery | [integration.mjs](../plugins/taskix-manager/tests/integration.mjs) |
-| Manual Inbox intake after each Job: completion/idle events leave pending entries without Jobs, explicit claim creates one Job, and legacy `hook stop` cannot claim | [Inbox CLI tests](../crates/taskix/tests/support/inbox.rs), [inbox.test.mjs](../plugins/taskix-manager/tests/inbox.test.mjs), [integration.mjs](../plugins/taskix-manager/tests/integration.mjs) |
 | Claude ordinary failures, missing flags, and string `"true"` do not release or renew; only boolean `true` requests interruption | [lifecycle.test.mjs](../plugins/taskix-manager/tests/lifecycle.test.mjs), [integration.mjs](../plugins/taskix-manager/tests/integration.mjs) |
 | Pi/OMP real TypeScript entrypoints, automatic identity/token injection, Plan writes with full IDs and resolved Task prefixes, ambiguous-prefix rejection, errors, aborted processes, retry identity including Job/Project deletion | [runtime.test.mjs](../plugins/taskix-manager/tests/runtime.test.mjs), [integration.mjs](../plugins/taskix-manager/tests/integration.mjs) |
 | Pi/OMP normal replies and automatic continuations retain executing leases; repeated SessionStart and old-session callbacks do not revoke current ownership | [lifecycle.test.mjs](../plugins/taskix-manager/tests/lifecycle.test.mjs), [integration.mjs](../plugins/taskix-manager/tests/integration.mjs) |
 | Heartbeat timing, cancellation of in-flight renewal, queued ticks, failed cleanup retry, and new prompts waiting for cleanup | [lifecycle.test.mjs](../plugins/taskix-manager/tests/lifecycle.test.mjs), [runtime.test.mjs](../plugins/taskix-manager/tests/runtime.test.mjs), using controlled timers and runners |
 | Marketplace resolution, hook discovery without duplicates, entrypoint selection, actual npm pack file list including native Bases guide and Taskix Sync styles and local documentation links | [package.test.mjs](../plugins/taskix-manager/tests/package.test.mjs) |
 | IM task actions, lease/revision/owner checks, reasons, notifications, delivery retry and durable event cursors | [Engine tests](../crates/agentix-core/tests/engine.rs) |
-| IM dashboard → project Jobs → Job ↔ Task navigation; update ordering and Job status filters; consistent sentence-case Inbox/Job/Task status labels across filters, summaries, details and counts, preserving original state words and stored values; adjacent entry controls, footer state actions and legacy list paging; session association and released work; owner/conversation/attachment scoping; ordered menus; project/Job/task pagination and archives; long fenced Markdown, reasons and titles; unavailable-document fallbacks | [IM browsing Engine tests](../crates/agentix-core/tests/support/task_board.rs) |
+| IM dashboard → project Jobs → Job ↔ Task navigation; update ordering and Job status filters; consistent sentence-case Issue/Job/Task status labels across filters, summaries, details and counts, preserving original state words and stored values; adjacent entry controls, footer state actions and legacy list paging; session association and released work; owner/conversation/attachment scoping; ordered menus; project/Job/task pagination and archives; long fenced Markdown, reasons and titles; unavailable-document fallbacks | [IM browsing Engine tests](../crates/agentix-core/tests/support/task_board.rs) |
 | Authored Task bodies and Job Goal/Notes in Obsidian, unchanged database/Plan hashes, and symlink escape rejection | [task_system.rs](../crates/agentix-task/tests/task_system.rs), `im_markdown_*` tests |
 | Telegram/Feishu dashboard and detail callbacks, section ordering and split Telegram browse messages through actual transports → Engine → authored documents → MarkdownV2/card payloads, project/dashboard return links, attached `/board` and `/jobs`, unchanged task state | [task_browse.rs](../crates/agentix/tests/support/task_browse.rs), run by [channel_codex_e2e.rs](../crates/agentix/tests/channel_codex_e2e.rs) |
 | Configured Telegram startup dashboard menu, exact primary order, alphabetical secondary commands and contextual labels | [application menu tests](../crates/agentix/src/main.rs), [Telegram API/menu tests](../crates/agentix-telegram/tests/telegram.rs), [Engine menu tests](../crates/agentix-core/tests/support/task_board.rs) |
@@ -110,7 +109,7 @@ CI runs the full workspace suite on Linux/macOS. Windows checks the workspace an
 
 | Behavior | Reusable tests |
 | --- | --- |
-| Automatic review readiness, rejection and resubmission, approval timestamps/events, Inbox gating, schema 8 migration | [Job review tests](../crates/agentix-task/tests/support/job_review.rs), [Inbox tests](../crates/agentix-task/tests/support/inbox.rs), [CLI review tests](../crates/taskix/tests/support/job_review.rs) |
+| Automatic review readiness, rejection and resubmission, approval timestamps/events, Issue submission gating, schema upgrade | [Job review tests](../crates/agentix-task/tests/support/job_review.rs), [CLI review tests](../crates/taskix/tests/support/job_review.rs) |
 | Snapshot identities, paths and lease omission | [Snapshot CLI tests](../crates/taskix/tests/support/obsidian_sync.rs) |
 | Human Job completion with unfinished or no Tasks, preserved terminal outcomes, lease revocation, stale revision rollback, individual Task completion and unchanged agent guards | [Obsidian completion tests](../crates/agentix-task/tests/support/obsidian_completion.rs), [real CLI completion test](../crates/taskix/tests/support/job_review.rs) |
 | Debouncing, ownership conflicts, revision fencing, timeout confirmation, rollback, newer edits, projection echoes and unload | [Sync engine tests](../plugins/taskix-manager/tests/obsidian-sync.test.mjs), [real CLI integration](../plugins/taskix-manager/tests/integration.mjs) |
@@ -175,7 +174,7 @@ Pi/OMP FIFO submission.
 | `/queue`, `/queue resume`, `/queue clear` | Core queue/control and scoped-button tests, native queue-stack tests, runtime persistence tests; both IM transports query every native backend's empty queue |
 | Session commands and `/cancel` | Core command gating, model/reasoning choice, rename input, plan/custom input and cancellation tests; native control command matrix; both IM transports query `/status` and reject `/fork` for Pi/OMP/Claude |
 | `/rmux [backend]` and workspace actions | Core backend-selection/navigation/mutation tests, registry qualification tests, typed rmux SDK/local-socket tests; no external rmux daemon is required by the normal suite |
-| `/dashboard`, `/board`, `/jobs`, `/tasks`, `/task`, `/inboxes`, `/inbox` and task actions | Task browse/action round trips through both mocked IM APIs, SQLite and document projection; task-board and Inbox suites above cover state/ownership rules |
+| `/dashboard`, `/board`, `/jobs`, `/tasks`, `/task`, `/issues`, `/issue`, `/milestones` and task actions | Task browse/action round trips through both mocked IM APIs, SQLite and document projection; task-board and Issue suites above cover state/ownership rules |
 | Native callbacks and transport policy | Telegram/Feishu suites cover owner/mention/claim policy, action acknowledgement, payloads, retry/pacing, and Feishu long-connection frames; Engine tests cover stale/foreign action rejection |
 
 | Native/plugin interface | Behavioral evidence |
@@ -522,7 +521,7 @@ fish -lic 'env TASKIX_JEV_REPLAY_INPUT=/absolute/private/input.json TASKIX_JEV_R
 ```
 
 Use prior conversation only and document candidate-state reconstruction, selection
-rules, missing Tasks/Inbox, and sampling limits. Acceptance and agreement with a
+rules, missing Tasks/Issues, and sampling limits. Acceptance and agreement with a
 source Job are not substitutes for human-reviewed correctness. Private inputs and
 outputs must remain outside committed source. This replay gathers telemetry directly
 without inserting observations into the ordinary routing metrics database.
@@ -631,3 +630,51 @@ A live upload and download comparison has been verified against one configured
 S3-compatible destination. Other backend examples describe rclone capabilities;
 they have not each been tested with this script. This is not a claim of live
 acceptance across all rclone providers.
+
+## Project Issue acceptance
+
+| Contract | Reusable coverage |
+| --- | --- |
+| Five Issue states, guarded association, multi-round delivery, human acceptance, cancellation and basic Milestones | [Issue domain tests](../crates/agentix-task/tests/support/issues.rs) |
+| Fixed editable template, body/hash/revision publication, shared Issue Base and Milestone queries | [Issue documents](../crates/agentix-task/tests/support/issue_documents.rs), [Obsidian plugin tests](../plugins/taskix-manager/tests/obsidian-issues.test.mjs) |
+| Removed old intake surface; registered active/archive cleanup with retry and vault path safety; preserve execution history | [Upgrade tests](../crates/agentix-task/tests/support/issue_upgrade.rs), [CLI tests](../crates/taskix/tests/support/issues.rs) |
+| Owner/epoch/revision fencing, SQL pagination, session/workspace execution, edits and human review | [IM Issue workflows](../crates/agentix-core/tests/support/issues.rs) |
+| Explicit Issue/Job routing precedence and four-host provenance | [Jev Issue tests](../plugins/taskix-manager/tests/jev-issues.test.mjs), host hook/extension tests |
+
+Additional Issue regression coverage:
+
+| Contract | Reusable coverage |
+| --- | --- |
+| Root cross-Project table/Kanban filters, saved Base configuration during incremental/full sync with or without generated comments, immutable Project properties, short Task Job links | `support/issue_documents.rs`, `support/job_graph.rs`, `obsidian-sync.test.mjs` |
+| New Milestone folder menu, fixed template and publication recovery | `obsidian-milestones.test.mjs`, `support/issue_documents.rs` |
+| Job `issue` wikilink resolution, generated `issue_id`, unlinking and rejection of foreign/copied notes | `obsidian-job-issues.test.mjs`, `support/issues.rs` |
+| Accepted-content freeze, pending-review invalidation, stale content revisions and pending/full-rebuild edit preservation | `support/issue_documents.rs` |
+| Issue mutations exclude related Job bodies while acceptance still rejects active Jobs | `scoped::tests::issue_mutations_do_not_hydrate_related_job_bodies` |
+| Frozen full/scoped Milestone snapshots render with a closed database; empty, archived and mixed-status progress agrees with detail and paged APIs | `milestone_rendering_uses_frozen_full_and_scoped_snapshots_without_database_reads`, `milestone_progress_matches_detail_pages_and_full_rebuild_with_archived_issues` |
+| SQL Milestone pagination, Unicode preview bounds, progress and stale page clamping | `milestone_pages_bound_goals_and_preserve_progress_and_order` |
+| Reply-mode replacement, Issue review notification, deleted historical Issue delivery and newest-first cancellation notices | `agentix-core/tests/support/issues.rs`, `agentix-task/src/routing.rs` |
+
+The fixtures check behavioral and materialization bounds. They do not establish production p95 latency, exhaustive interleavings, or 100% line/branch coverage. Full rebuild and cancellation costs grow with affected data by design. Live IM account delivery is outside the mocked adapter contract.
+
+Feishu, Telegram and Slack adapter HTTP tests validate local rendered controls. They do not prove live account delivery. The isolated Obsidian acceptance exercises actual native Base filtering and status/body writes; the optional desktop regression requires an explicitly selected open vault.
+
+
+## Jev metrics collection
+
+The seven runtime decision kinds are routing, discussion, recovery, outcome,
+review policy, completion and memory triage. Issue association is recorded as a
+question within routing. `plugins/taskix-manager/tests/jev-metrics.test.mjs`
+covers shared host collection, nested-helper deduplication, lifecycle/discussion
+fallbacks, schema compatibility and native CLI interoperability.
+`crates/taskix/tests/metrics.rs` verifies all seven kinds together in compact and
+JSON reports. `actual_triage_calls_record_success_and_fallback_metrics_once`
+uses local HTTP responses and a temporary database to verify memory-service
+collection for successful, uncertain, invalid, failed and oversized-input
+decisions, including the absence of source text and credentials.
+Generic collector regressions additionally verify new decision kinds with multiple
+answers, automatic CLI aggregation, nested-measurement deduplication, invalid kind
+rejection before I/O, unchanged callback errors and atomic answer rollback.
+These tests do not measure real provider accuracy or guarantee retention when
+best-effort writes time out.
+
+Project display links: Issue document, project rename/archive, memory projection and real memory CLI tests cover managed `project` Board links, unchanged `project_id`, incremental/full Base display-column migration with saved filters, and read-only memory metadata refresh without revision changes.

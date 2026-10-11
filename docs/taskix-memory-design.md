@@ -475,7 +475,7 @@ model; subsequent background or manual compact performs the semantic split.
 
 Task schema 21 records entry into `CANCELLED` in a durable cancellation outbox,
 inside the same SQLite transaction as the Job update. A database trigger covers
-CLI cancellation, Inbox cancellation and withdrawal, including existing writers
+CLI cancellation, Issue cancellation, including existing writers
 that already hold a connection. The history survives reopening and deletion of
 the Job and ordinary event retention. Migration captures currently cancelled
 legacy Jobs once; cancellations followed by reopening before this upgrade cannot

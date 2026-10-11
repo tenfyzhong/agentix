@@ -57,6 +57,16 @@ fn default_archive_directory() -> PathBuf {
 }
 
 impl Config {
+    /// Managed project-name link to the current Board, including archived locations.
+    #[must_use]
+    pub fn project_link(&self, project: &crate::Project) -> String {
+        crate::projection::document_link(
+            self,
+            &format!("{}/Board.md", project.document_directory()),
+            &project.name,
+        )
+    }
+
     pub fn load(path: &Path) -> Result<Self> {
         let path = expand_home(path)?;
         let mut value: toml::Value = toml::from_str(

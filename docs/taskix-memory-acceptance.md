@@ -384,7 +384,7 @@ attachment, cancellation before receipt replay, mixed evidence, compacted child
 facts, no superseded-version resurrection, lifecycle bypass rejection and schema
 3 provenance backfill. `agentix-task/tests/memory_sources.rs` verifies durable
 cancellation events, idempotency and migration of existing cancelled Jobs.
-Task-system Inbox tests cover checkbox cancellation, withdrawal and reopening
+Task-system Issue tests cover requirement cancellation and reopening
 without losing cancellation history. Daemon regressions verify that a query sees
 cancellation before background polling and that offline candidate filtering does
 not mutate the memory database. Backup regressions verify schema 4 round trips. API regressions reject deep answers

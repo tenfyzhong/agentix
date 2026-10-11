@@ -3,7 +3,7 @@
   "name": "Taskix Sync",
   "version": "0.3.0",
   "minAppVersion": "1.14.0",
-  "description": "Synchronize Task and Job status edits with taskix, restoring rejected changes.",
+  "description": "Synchronize Taskix states and Issue documents, restoring rejected changes.",
   "author": "tenfyzhong",
   "isDesktopOnly": true
 }

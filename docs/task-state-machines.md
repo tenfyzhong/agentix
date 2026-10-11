@@ -1,4 +1,4 @@
-# Task, Job and Inbox state machines
+# Task, Job and Issue state machines
 
 SQLite enforces these transitions. The desktop Taskix Sync plugin submits saved Obsidian `status` edits through the same CLI; a rejected edit is restored and produces a notification. See [Obsidian setup and supported edits](https://github.com/tenfyzhong/agentix/wiki/Obsidian#status-edits).
 
@@ -56,14 +56,14 @@ stateDiagram-v2
     PENDING_REVIEW --> COMPLETED: job approve (verification passed)
     PENDING_REVIEW --> ACTIVE: job reject --reason (verification failed)
     PENDING_REVIEW --> ACTIVE: task reopen
-    COMPLETED --> ACTIVE: task reopen / Inbox set-status TODO
+    COMPLETED --> ACTIVE: task reopen
     ACTIVE --> CANCELLED: job cancel
     PENDING_REVIEW --> CANCELLED: job cancel
     note right of PENDING_REVIEW
         Verification is pending.
-        Explicitly requested next Inbox work may start.
+        An explicitly requested independent or associated Job may start.
     end note
-    CANCELLED --> ACTIVE: task retry / reopen / Inbox set-status TODO
+    CANCELLED --> ACTIVE: task retry / reopen
     classDef active fill:#bfdbfe,stroke:#bfdbfe,color:#1f2937
     classDef review fill:#fed7aa,stroke:#fed7aa,color:#1f2937
     classDef completed fill:#bbf7d0,stroke:#bbf7d0,color:#1f2937
@@ -80,41 +80,23 @@ Readiness means at least one non-CANCELLED Task exists and every such Task is DO
 
 Approval alone sets `completed_at` and emits `job.completed`. Submission emits `job.pending_review`; rejection emits `job.rejected`. Resubmission and approval clear the current review reason; events retain the history. The CLI checks state and readiness, while the reviewer is responsible for performing acceptance checks. Agents must not approve their own delivery unless the user explicitly authorizes them to perform that verification.
 
-PENDING_REVIEW is unfinished: it cannot be archived, blocks Project archival but does not block explicitly requested new Inbox intake, and sets its Inbox entry PENDING_REVIEW without a lease. Rejection returns that entry to ACTIVE for explicit recovery of its existing Job. Approval checks it off. COMPLETED and CANCELLED Jobs may be archived/unarchived; archival is an independent property, not another status. Database schema 9 preserves historical COMPLETED Jobs.
+PENDING_REVIEW is unfinished: it cannot be archived and blocks Project archival and submission of its associated Issue. Job approval and readiness never complete an Issue. COMPLETED and CANCELLED Jobs may be archived/unarchived; archival is an independent property. Historical COMPLETED Jobs remain completed after upgrades.
 
-## Inbox item
-
-| Checkbox | State |
-| --- | --- |
-| `- [ ]` | TODO |
-| `- [/]` | ACTIVE |
-| `- [r]` | PENDING_REVIEW |
-| `- [x]` | COMPLETED |
-| `- [-]` | CANCELLED |
+## Issue
 
 ```mermaid
 stateDiagram-v2
-    [*] --> TODO: submission
-    TODO --> ACTIVE: explicit claim-next / set-status ACTIVE
-    ACTIVE --> TODO: release / interruption / lease expiry / queue without active leases
-    ACTIVE --> PENDING_REVIEW: Tasks ready / submit ready Job / mark unlinked item
-    PENDING_REVIEW --> ACTIVE: verification rejected
-    PENDING_REVIEW --> TODO: queue for recovery (reject review)
-    PENDING_REVIEW --> COMPLETED: verification approved / complete unlinked item
-    TODO --> PENDING_REVIEW: mark unlinked item
-    TODO --> COMPLETED: complete an unlinked item
-    ACTIVE --> COMPLETED: complete an unlinked item
-    TODO --> CANCELLED: cancellation / withdrawal
-    ACTIVE --> CANCELLED: cancellation / withdrawal
-    PENDING_REVIEW --> CANCELLED: cancellation / withdrawal
-    COMPLETED --> ACTIVE: reopen with slash
-    CANCELLED --> ACTIVE: reopen with slash
-    COMPLETED --> TODO: reopen with blank checkbox
-    CANCELLED --> TODO: reopen with blank checkbox
+    [*] --> TODO: issue create
+    TODO --> ACTIVE: first successful associated Task start / human activation
+    TODO --> PENDING_REVIEW: explicit submit
+    ACTIVE --> PENDING_REVIEW: explicit submit
+    PENDING_REVIEW --> ACTIVE: human reject with reason
+    PENDING_REVIEW --> COMPLETED: human approve
+    TODO --> CANCELLED: cancel
+    ACTIVE --> CANCELLED: cancel
+    PENDING_REVIEW --> CANCELLED: cancel
+    COMPLETED --> TODO: explicit reopen
+    CANCELLED --> TODO: explicit reopen
 ```
 
-The connected plugin submits checkbox edits through `inbox set-status` with revision checks and idempotency keys. Failed edits restore the matching checkbox and notify the user. Job readiness automatically sets the Inbox item PENDING_REVIEW; review rejection and approval map to ACTIVE and COMPLETED. An explicit TODO represents queued/released work, even when its existing Job remains ACTIVE.
-
-Manual status changes never create Jobs or claim agent leases. Unlinked items can be marked ACTIVE or PENDING_REVIEW and completed directly. Activation resumes an existing linked Job; submitting or completing linked work retains the Job readiness and review checks. Explicit intake creates the Job for an eligible unlinked entry. Agents still need an explicit intake request to claim unleased TODO/ACTIVE entries, then follow the Task claim/Plan/start workflow. Reopening preserves Task outcomes and does not rerun DONE Tasks. Archived work must be unarchived first; withdrawn entries cannot be revived. Cancelled entries must be reopened before completion, and completed entries before cancellation.
-
-Schema 10 migrates legacy Inbox IN_PROGRESS/DONE values to ACTIVE/COMPLETED and restores pending review from the linked Job. The CLI accepts legacy names as aliases; synchronization updates receipts and checkbox symbols. Plain CLI sync retains cancellation/withdrawal import but does not replay other status changes from checkbox drift.
+Submission and approval require meaningful requirement/acceptance criteria and every associated Job to be COMPLETED or CANCELLED. Approval rechecks readiness and requires a human actor. Zero-Job Issues can follow the same offline acceptance workflow. A Job ending never completes or resets its Issue. Cancellation revokes unfinished Jobs/Tasks and their leases while preserving delivered outcomes. Reopening preserves history. There is no Issue lease; several Jobs can implement one Issue. The Task state machine above remains unchanged. See [Project Issue design](project-issues.md).

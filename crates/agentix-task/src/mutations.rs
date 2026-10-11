@@ -23,12 +23,25 @@ pub(crate) fn check_revision(revision: i64, options: &WriteOptions) -> Result<()
     Ok(())
 }
 
+pub(crate) fn validate_request(request: &Value) -> Result<()> {
+    ensure!(
+        request.get("inbox_ids").is_none() && request.get("inbox").is_none(),
+        "invalid: unsupported association field"
+    );
+    ensure!(
+        !required(request, "command")?.starts_with("inbox."),
+        "invalid: unsupported command"
+    );
+    Ok(())
+}
+
 pub(crate) fn apply(
     state: &mut Snapshot,
     request: &Value,
     options: &WriteOptions,
     now: i64,
 ) -> Result<Value> {
+    validate_request(request)?;
     let command = required(request, "command")?;
     ensure!(
         request.get("completion_policy").is_none()
@@ -36,7 +49,10 @@ pub(crate) fn apply(
         "invalid: completion_policy requires task.done, task.cancel or job.submit"
     );
     let result = match command {
-        _ if command.starts_with("inbox.") => crate::inbox::apply(state, request, options, now),
+        _ if command.starts_with("issue.") => crate::issue::apply(state, request, options, now),
+        _ if command.starts_with("milestone.") => {
+            crate::issue::milestone(state, request, options, now)
+        }
         "project.register" => register_project(state, request, now),
         "project.move" => move_project(state, request, options),
         "project.rename" | "project.relocate" => {
@@ -71,8 +87,10 @@ pub(crate) fn apply(
         }
         _ => bail!("invalid: unknown command {command}"),
     }?;
-    if crate::inbox::needs_job_inbox(request) {
-        crate::inbox::link_selected(state, required(&result, "id")?, request, options, now)?;
+    if matches!(command, "job.create" | "job.update" | "job.followup") {
+        let id = required(&result, "id")?;
+        crate::issue::associate(state, id, request, now)?;
+        return Ok(serde_json::to_value(&state.jobs[state.job_index(id)?])?);
     }
     Ok(result)
 }
@@ -127,6 +145,7 @@ pub(crate) fn create_job(
         name,
         id,
         project_id: project.id.clone(),
+        issue_id: None,
         title: required(request, "title")?.into(),
         goal: request["goal"].as_str().unwrap_or_default().into(),
         prompt: request["prompt"].as_str().unwrap_or_default().into(),
@@ -162,6 +181,9 @@ fn add_task(
 ) -> Result<Value> {
     let job_index = state.job_index(required(request, "job")?)?;
     let job = &state.jobs[job_index];
+    if let Some(issue) = &job.issue_id {
+        crate::issue::writable(state, issue)?;
+    }
     ensure!(
         state.projects[state.project_index(&job.project_id)?]
             .archived_at
@@ -306,6 +328,13 @@ fn archive_project(
     if archive {
         ensure!(
             !state
+                .issues
+                .iter()
+                .any(|issue| issue.project_id == project.id && !issue.status.terminal()),
+            "conflict: complete or cancel all Issues before archiving Project"
+        );
+        ensure!(
+            !state
                 .jobs
                 .iter()
                 .any(|j| j.project_id == project.id && !j.status.terminal()),
@@ -337,6 +366,9 @@ fn update_job(
         return review_job(state, i, request, now, options.actor_ref == "user:obsidian");
     }
     if command == "job.followup" {
+        if let Some(issue) = &state.jobs[i].issue_id {
+            crate::issue::writable(state, issue)?;
+        }
         return followup_job(state, i, request, options, now);
     }
     if command == "job.cancel" {
@@ -380,17 +412,27 @@ fn update_job(
     };
     let project_directory =
         state.projects[state.project_index(&state.jobs[i].project_id)?].document_directory();
+    let association_only = request.get("issue").is_some()
+        && request.as_object().is_some_and(|fields| {
+            fields.keys().all(|key| {
+                matches!(
+                    key.as_str(),
+                    "command" | "job" | "issue" | "issue_revision" | "issue_content_hash"
+                )
+            })
+        });
     let job = &mut state.jobs[i];
     match command {
         "job.update" => {
             ensure!(
                 (job.status == JobStatus::Active
+                    || association_only
                     || (renamed.is_some()
                         && request.get("title").is_none()
                         && request.get("goal").is_none()
                         && request.get("prompt").is_none()
                         && request.get("review_policy").is_none()))
-                    && job.archived_at.is_none(),
+                    && (job.archived_at.is_none() || association_only),
                 "conflict: Job is closed"
             );
             if let Some(name) = renamed {
@@ -499,6 +541,10 @@ fn update_task(
     match command {
         "task.claim" => claim(state, i, request, now)?,
         "task.start" => {
+            if let Some(issue) = state.jobs[j].issue_id.clone() {
+                let index = crate::issue::writable(state, &issue)?;
+                crate::issue::activate(state, index, now);
+            }
             ensure!(
                 task.phase == Some(TaskPhase::Planning),
                 "conflict: Task must be in PLANNING before start"
@@ -750,7 +796,7 @@ fn job_ready(state: &Snapshot, job_id: &str) -> bool {
         && tasks.all(|t| t.status == TaskStatus::Done)
 }
 
-fn entity_name(
+pub(crate) fn entity_name(
     state: &Snapshot,
     project: &str,
     kind: &str,
@@ -888,7 +934,6 @@ fn aggregate_job(state: &mut Snapshot, index: usize, was_ready: bool, now: i64) 
 fn session(state: &mut Snapshot, request: &Value, now: i64) -> Result<Value> {
     let session = required(request, "session")?;
     let command = required(request, "command")?;
-    crate::inbox::session(state, session, request["executor"].as_str(), command, now);
     let mut changed = Vec::new();
     for i in 0..state.tasks.len() {
         if state.tasks[i].last_session.as_deref() != Some(session)
@@ -934,12 +979,7 @@ fn session(state: &mut Snapshot, request: &Value, now: i64) -> Result<Value> {
             }
         }
     }
-    let cancellations: Vec<_> = state
-        .cancelled_inboxes_for_session(session)
-        .into_iter()
-        .map(|entry| json!({"id":entry.id,"job_id":entry.job_id}))
-        .collect();
-    Ok(json!({"session_ref":session,"tasks":changed,"inbox_cancellations":cancellations}))
+    Ok(json!({"session_ref":session,"tasks":changed}))
 }
 
 pub(crate) fn system_block(state: &mut Snapshot, index: usize, reason: &str, now: i64) {

@@ -4,13 +4,38 @@ import { mkdtemp, rm, readFile, writeFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runHook, registerExtension } from "../runtime.mjs";
+import { choiceAnswers } from "./support/jev.mjs";
+
+for (const host of ["codex","claude","pi","omp"]) test(`${host}_explicit_im_issue_is_reread_even_when_not_in_candidate_page`,async t=>{
+    const cacheDir=await mkdtemp(join(tmpdir(),"taskix-im-issue-"));t.after(()=>rm(cacheDir,{recursive:true,force:true}));
+    const issue={id:"issue_requested",project_id:"p",revision:4,content_hash:"fresh",status:"TODO",title:"Login",requirement:"Passkey login",acceptance:"Users can log in"};
+    const calls=[];
+    const runner=async args=>{
+        calls.push(args);
+        if(args[0]==="routing")return {result:{project_id:"p",issue_candidates:[],routing:{complete:true,candidates:[]}}};
+        if(args[0]==="obsidian")return {result:{id:issue.id}};
+        if(args[0]==="issue")return {result:{issue,milestone:null}};
+        if(args[0]==="hook")return {result:{}};
+        assert.fail(`Unexpected operation ${args}`);
+    };
+    const routing={env,cacheDir,fetch:async(_url,init)=>({ok:true,json:async()=>choiceAnswers(JSON.parse(init.body),{intent:"work",route:"new_job",issue:"none",review_policy:"required"})})};
+    const prompt=`Taskix Issue request: ${issue.id}\nImplement passkey login.`;
+    let content;
+    if(host==="codex"||host==="claude")content=(await runHook({session_id:"s",cwd:"/work",turn_id:"t",hook_event_name:"UserPromptSubmit",prompt},runner,routing)).hookSpecificOutput.additionalContext;
+    else {
+        const handlers=new Map();registerExtension({on:(n,h)=>handlers.set(n,h),registerTool(){}},host,runner,globalThis,undefined,routing);
+        content=(await handlers.get("before_agent_start")({prompt},{cwd:"/work",sessionManager:{getSessionId:()=>"s"}})).message.content;
+    }
+    assert.match(content,/issue_requested/);
+    assert.deepEqual(calls.filter(a=>["obsidian","issue"].includes(a[0])),[["obsidian","sync",issue.id],["issue","show",issue.id]]);
+});
 
 const env = { TASKIX_JEV_ENABLED: "true", TASKIX_JEV_URL: "https://jev.test/v1/systemone", TASKIX_JEV_API_KEY: "private" };
 const job = {id:"job_a",project_id:"p",revision:1,status:"PENDING_REVIEW",title:"Login",prompt:"Fix login",review_policy:"required"};
 async function fixture(t, choice="followup:job_a") {
     const cacheDir=await mkdtemp(join(tmpdir(),"taskix-routing-test-"));
     t.after(()=>rm(cacheDir,{recursive:true,force:true}));
-    const context={project_id:"p",previous_job:job,inbox_todos:[{id:"inbox_other",content:"Unrelated Inbox body"}]};
+    const context={project_id:"p",previous_job:job,issue_candidates:[{id:"issue_other",project_id:"p",status:"TODO",requirement:"Unrelated Issue body"}]};
     const calls=[];
     let requests=0;
     const runner=async args=>{
@@ -19,7 +44,7 @@ async function fixture(t, choice="followup:job_a") {
         if(args[1]==="snapshot")return {result:{...context,routing:{complete:true,candidates:[{job,tasks:[]}]}}};
         if(args[1]==="candidates")return {result:{complete:true,candidates:[{job,tasks:[]}]}};
         if(args[1]==="revision")return {result:job};
-        if(args[0]==="hook")return {result:{inbox_cancellations:context.inbox_cancellations || []}};
+        if(args[0]==="hook")return {result:{issue_cancellations:context.issue_cancellations || []}};
         assert.fail(`Unexpected write ${args}`);
     };
     const routing={env,cacheDir,fetch:async(_url,init)=>{
@@ -28,7 +53,7 @@ async function fixture(t, choice="followup:job_a") {
         return {ok:true,json:async()=>({answers:Object.fromEntries(Object.entries(q).map(([id,v])=>{
             const discussion=choice==="discussion"||choice.startsWith("discussion:");
             const owner=discussion?(choice.includes(":")?Object.keys(q.route.criteria).find(k=>k.endsWith(":"+choice.split(":")[1])):"new_job"):choice;
-            const selected=id==="review_policy"?"required":id==="intent"?(discussion?"question":"work"):id==="route"?owner:"unrelated";
+            const selected=id==="review_policy"?"required":id==="intent"?(discussion?"question":"work"):id==="route"?owner:"none";
             return [id,{type:"choice",choice:selected,confidence:.99,probabilities:Object.fromEntries(Object.keys(v.criteria).map(k=>[k,k===selected?1:0]))}];
         }))})};
     }};
@@ -39,14 +64,14 @@ async function fixture(t, choice="followup:job_a") {
 test("hook_routes_before_model_and_suppresses_repeated_tool_context",async t=>{
     const f=await fixture(t);
     const start=await runHook({...f.event,hook_event_name:"SessionStart"},f.runner,f.routing);
-    assert.ok(!start.hookSpecificOutput.additionalContext.includes("Unrelated Inbox body"));
+    assert.ok(!start.hookSpecificOutput.additionalContext.includes("Unrelated Issue body"));
     const prompt=await runHook({...f.event,hook_event_name:"UserPromptSubmit",prompt:"Create PR"},f.runner,f.routing);
     assert.match(prompt.hookSpecificOutput.additionalContext,/job followup/);
-    assert.ok(!prompt.hookSpecificOutput.additionalContext.includes("Unrelated Inbox body"));
+    assert.ok(!prompt.hookSpecificOutput.additionalContext.includes("Unrelated Issue body"));
     assert.ok(prompt.hookSpecificOutput.additionalContext.length<1800);
     for(let i=0;i<3;i++)assert.deepEqual(await runHook({...f.event,hook_event_name:"PreToolUse"},f.runner,f.routing),{});
     assert.equal(f.requests(),1);
-    f.context.inbox_cancellations=[{id:"inbox_cancelled",job_id:"job_a"}];
+    f.context.issue_cancellations=[{id:"issue_cancelled",job_id:"job_a"}];
     const cancel=await runHook({...f.event,hook_event_name:"PostToolUse"},f.runner,f.routing);
     assert.match(cancel.hookSpecificOutput.additionalContext,/cancelled/);
 });
@@ -55,7 +80,7 @@ test("uncertain_prompt_returns_to_main_agent_and_next_turn_is_not_suppressed",as
     const f=await fixture(t,"uncertain");
     const prompt=await runHook({...f.event,hook_event_name:"UserPromptSubmit",prompt:"Continue"},f.runner,f.routing);
     assert.match(prompt.hookSpecificOutput.additionalContext,/Agent/);
-    assert.match(prompt.hookSpecificOutput.additionalContext,/Unrelated Inbox body/);
+    assert.match(prompt.hookSpecificOutput.additionalContext,/Unrelated Issue body/);
     assert.match(prompt.hookSpecificOutput.additionalContext,/current Agent/);
     assert.doesNotMatch(prompt.hookSpecificOutput.additionalContext,/Delegate once|Snapshot:/);
     assert.deepEqual(await runHook({...f.event,hook_event_name:"PreToolUse"},f.runner,f.routing),{});
@@ -68,7 +93,7 @@ test("disabled_prompt_hook_does_not_change_existing_injection",async t=>{
     f.routing.env={};
     assert.deepEqual(await runHook({...f.event,hook_event_name:"UserPromptSubmit",prompt:"Create PR"},f.runner,f.routing),{});
     const tool=await runHook({...f.event,hook_event_name:"PreToolUse"},f.runner,f.routing);
-    assert.match(tool.hookSpecificOutput.additionalContext,/Unrelated Inbox body/);
+    assert.match(tool.hookSpecificOutput.additionalContext,/Unrelated Issue body/);
     assert.equal(f.requests(),0);
 });
 
@@ -77,7 +102,7 @@ for(const host of ["pi","omp"])test(`${host}_classifies_before_agent_start`,asyn
     registerExtension({on:(n,h)=>handlers.set(n,h),registerTool(){}},host,f.runner,globalThis,undefined,f.routing);
     const result=await handlers.get("before_agent_start")({prompt:"Implement search"},{cwd:"/work",sessionManager:{getSessionId:()=>"session"}});
     assert.match(result.message.content,/new_job/);
-    assert.ok(!result.message.content.includes("Unrelated Inbox body"));
+    assert.ok(!result.message.content.includes("Unrelated Issue body"));
     assert.equal(f.requests(),1);
 });
 
@@ -127,7 +152,7 @@ for (const hook of ["PreToolUse", "PostToolUse"]) test(`${hook}_routed_turn_uses
     const f = await fixture(t);
     await runHook({ ...f.event, hook_event_name: "UserPromptSubmit", prompt: "Create PR" }, f.runner, f.routing);
     f.calls.length = 0;
-    f.context.inbox_cancellations = [{ id: "cancelled_entry", job_id: "job_a" }];
+    f.context.issue_cancellations = [{ id: "cancelled_entry", job_id: "job_a" }];
     const result = await runHook({ ...f.event, hook_event_name: hook }, f.runner, f.routing);
     assert.deepEqual(f.calls, [["hook", "heartbeat"]]);
     assert.match(result.hookSpecificOutput.additionalContext, /cancelled_entry/);
@@ -137,7 +162,7 @@ test("older_heartbeat_without_cancellations_retains_live_context_check", async t
     const f = await fixture(t);
     await runHook({ ...f.event, hook_event_name: "UserPromptSubmit", prompt: "Create PR" }, f.runner, f.routing);
     f.calls.length = 0;
-    f.context.inbox_cancellations = [{ id: "legacy_cancel", job_id: "job_a" }];
+    f.context.issue_cancellations = [{ id: "legacy_cancel", job_id: "job_a" }];
     const runner = async args => {
         const result = await f.runner(args);
         return args[0] === "hook" ? { result: {} } : result;
@@ -153,15 +178,15 @@ test("agent_fallback_has_a_total_budget_and_preserves_assignment_references", as
     f.context.task_id = "task_owned";
     f.context.task = { id: "task_owned", reason: "界".repeat(100000) };
     f.context.previous_job = { ...job, prompt: "x".repeat(100000) };
-    f.context.inbox_todos = Array.from({ length: 32 }, (_, i) => ({ id: `inbox_${i}`, content: "界".repeat(10000) }));
+    f.context.issue_candidates = Array.from({ length: 32 }, (_, i) => ({ id: `issue_${i}`, project_id: "p",status: "TODO",requirement: "界".repeat(10000) }));
     const output = await runHook({ ...f.event, hook_event_name: "UserPromptSubmit", prompt: "Continue" }, f.runner, f.routing);
     const content = output.hookSpecificOutput.additionalContext;
     assert.ok(content.length <= 12000, `fallback injected ${content.length} characters`);
     const facts = JSON.parse(content.slice(content.lastIndexOf("\n") + 1));
     assert.equal(facts.task_id, "task_owned");
     assert.equal(facts.job_id, "job_a");
-    assert.equal(facts.inbox_count, 32);
-    assert.equal(facts.inbox_ids.length, 32);
+    assert.equal(facts.issue_count, 32);
+    assert.equal(facts.issue_ids.length, 32);
     assert.equal(facts.full_sources_required, true);
     assert.ok(!(await readdir(f.routing.cacheDir)).some(name => name.endsWith(".snapshot.json")));
 });
@@ -298,7 +323,7 @@ test("older_cli_without_snapshot_defers_and_retains_legacy_tool_context", async 
     assert.match(prompt.hookSpecificOutput.additionalContext, /taskix context/);
     assert.equal(f.requests(), 0);
     const tool = await runHook({ ...f.event, hook_event_name: "PreToolUse" }, runner, f.routing);
-    assert.match(tool.hookSpecificOutput.additionalContext, /Unrelated Inbox body/);
+    assert.match(tool.hookSpecificOutput.additionalContext, /Unrelated Issue body/);
     assert.deepEqual(f.calls, [["hook", "heartbeat"], ["context"]]);
 });
 
@@ -342,7 +367,7 @@ for (const host of ["codex", "claude", "pi", "omp"]) {
             assert.match(content, /taskix context/);
             assert.match(content, /--expect-revision/);
             assert.match(content, /job_a/);
-            assert.match(content, /inbox_other/);
+            assert.match(content, /issue_other/);
             assert.doesNotMatch(content, /Delegate once|Snapshot:|routing-classifier|routing-decision|private/);
             assert.ok(content.length <= 12000);
             assert.ok(!(await readdir(f.routing.cacheDir)).some(name => name.endsWith(".snapshot.json")));

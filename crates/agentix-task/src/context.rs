@@ -65,35 +65,22 @@ impl Store {
         if let Some(job) = job {
             scope.jobs.insert(resolve(&mut tx, "jobs", job).await?);
         }
-        if let Some(session) = session {
-            scope.inboxes = ids(&mut tx, "SELECT id FROM inbox_entries WHERE json_extract(data,'$.lease.session_ref')=? ORDER BY rowid LIMIT 1", session).await?;
-        }
         scope.parents(&mut tx).await?;
         let tasks: Vec<crate::Task> = entities(&mut tx, "tasks", &scope.tasks).await?;
         let plans = tasks
             .iter()
             .filter_map(|t| t.current_plan.clone())
             .collect();
-        let mut state = Snapshot {
+        let state = Snapshot {
             projects: entities(&mut tx, "projects", &scope.projects).await?,
             jobs: entities(&mut tx, "jobs", &scope.jobs).await?,
             leases: entities(&mut tx, "task_leases", &scope.tasks).await?,
             plans: entities(&mut tx, "plans", &plans).await?,
+            issues: entities(&mut tx, "issues", &scope.issues).await?,
+            milestones: entities(&mut tx, "milestones", &scope.milestones).await?,
             tasks,
             ..Snapshot::default()
         };
-        if let Some(session) = session {
-            let cancelled = ids(&mut tx, "SELECT id FROM inbox_entries WHERE json_extract(data,'$.status')='CANCELLED' AND id IN (
-                SELECT id FROM inbox_entries WHERE json_extract(data,'$.last_session')=?1
-                UNION SELECT id FROM inbox_entries WHERE json_extract(data,'$.job_id') IN (SELECT job_id FROM tasks WHERE json_extract(data,'$.last_session')=?1)
-            )", session).await?;
-            scope.inboxes.extend(cancelled.iter().cloned());
-            state
-                .query_context
-                .cancelled_inboxes
-                .insert(session.to_owned(), cancelled);
-        }
-        state.inboxes = entities(&mut tx, "inbox_entries", &scope.inboxes).await?;
         Ok(state)
     }
 

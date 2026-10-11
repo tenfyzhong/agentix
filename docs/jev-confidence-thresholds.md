@@ -74,7 +74,7 @@ before changing the recommendation.
 The corpus was used for context tuning and includes repeated events. At `0.50`,
 the 712 accepted rows represent 518 groups when deduplicated by exact session,
 message time, and prompt. Rows are therefore not independent observations.
-Historical reconstruction also cannot recover every Inbox or lease state.
+Historical reconstruction also cannot recover every requirement or lease state.
 
 These results support a configuration recommendation for the evaluated context
 implementation. They do not establish a production error rate, latency benefit,

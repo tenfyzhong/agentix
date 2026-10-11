@@ -148,6 +148,26 @@ pub(crate) fn rename(
     project.key = name.into();
     project.revision += 1;
     let result = serde_json::to_value(&*project)?;
+    for (path, revision) in state
+        .issues
+        .iter_mut()
+        .filter(|issue| issue.project_id == project.id)
+        .map(|issue| (&mut issue.document_path, &mut issue.revision))
+        .chain(
+            state
+                .milestones
+                .iter_mut()
+                .filter(|milestone| milestone.project_id == project.id)
+                .map(|milestone| (&mut milestone.document_path, &mut milestone.revision)),
+        )
+    {
+        *path = format!(
+            "{new}{}",
+            path.strip_prefix(&old)
+                .context("invalid Issue or Milestone document path")?
+        );
+        *revision += 1;
+    }
     for job in state
         .jobs
         .iter_mut()

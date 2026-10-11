@@ -6,11 +6,14 @@ use tokio::sync::Mutex;
 use agentix_task::{JobStatus, Service, Snapshot, Task, TaskPhase, TaskStatus, WriteOptions};
 
 mod browse;
-mod inbox;
+mod issues;
 mod labels;
 #[cfg(test)]
 mod tests;
 pub(super) use browse::TaskBrowse;
+pub(super) use issues::{
+    IssueAction, IssueProjectIntent, PendingIssueExecution, PendingIssueInput,
+};
 use labels::{task_phase_label, task_status_label};
 use serde_json::json;
 
@@ -45,6 +48,8 @@ pub(super) struct TaskBoardService {
     pub(super) output: crate::OutputConfig,
     conversations: ConversationCache,
     inputs: Arc<Mutex<HashMap<ConversationRef, PendingTaskInput>>>,
+    issue_inputs: Arc<Mutex<HashMap<ConversationRef, PendingIssueInput>>>,
+    pub(super) issue_executions: Arc<Mutex<HashMap<ConversationRef, PendingIssueExecution>>>,
     refresh: Arc<Mutex<()>>,
     state: crate::SqliteState,
     pub(super) consumer: String,
@@ -56,7 +61,8 @@ pub(super) struct TaskBoardService {
 pub(super) trait TaskBoardUi: Send + Sync {
     fn agent(&self) -> &dyn crate::AgentAdapter;
     fn sessions(&self) -> &super::SessionService;
-    fn channels(&self) -> &HashMap<crate::ChannelKind, Arc<dyn crate::ChannelAdapter>>;
+    async fn clear_reply_inputs(&self, conversation: &ConversationRef);
+    async fn conversation_owner(&self, conversation: &ConversationRef) -> Option<String>;
     async fn send_view(
         &self,
         conversation: &ConversationRef,
@@ -70,6 +76,12 @@ pub(super) trait TaskBoardUi: Send + Sync {
         action: UiAction,
     ) -> String;
     async fn update_command_menu_best_effort(&self, conversation: &ConversationRef, attached: bool);
+    async fn execute_issue(
+        &self,
+        conversation: &ConversationRef,
+        owner: &str,
+        action: IssueAction,
+    ) -> Result<(), EngineError>;
 }
 
 pub(super) struct TaskBoardView<'a> {
@@ -85,6 +97,8 @@ impl TaskBoardService {
             state,
             conversations: Arc::default(),
             inputs: Arc::default(),
+            issue_inputs: Arc::default(),
+            issue_executions: Arc::default(),
             refresh: Arc::default(),
             consumer: "default".into(),
         }
@@ -93,6 +107,8 @@ impl TaskBoardService {
     pub(super) fn inherit_runtime(&mut self, previous: &Self) {
         self.conversations = previous.conversations.clone();
         self.inputs = previous.inputs.clone();
+        self.issue_inputs = previous.issue_inputs.clone();
+        self.issue_executions = previous.issue_executions.clone();
         self.refresh = previous.refresh.clone();
     }
 
@@ -105,6 +121,26 @@ impl TaskBoardService {
 
     pub(super) fn view<'a>(&'a self, ui: &'a dyn TaskBoardUi) -> TaskBoardView<'a> {
         TaskBoardView { service: self, ui }
+    }
+    pub(super) async fn take_issue_input(
+        &self,
+        conversation: &ConversationRef,
+    ) -> Option<PendingIssueInput> {
+        self.issue_inputs.lock().await.remove(conversation)
+    }
+    pub(super) async fn take_owned_issue_input(
+        &self,
+        conversation: &ConversationRef,
+        owner: &str,
+    ) -> Result<Option<PendingIssueInput>, EngineError> {
+        let mut inputs = self.issue_inputs.lock().await;
+        if inputs
+            .get(conversation)
+            .is_some_and(|pending| pending.owner != owner)
+        {
+            return Err(EngineError::InvalidAction);
+        }
+        Ok(inputs.remove(conversation))
     }
 }
 
@@ -364,6 +400,7 @@ impl TaskBoardView<'_> {
             action.command.as_str(),
             "task.block" | "task.wait" | "task.fail"
         ) {
+            self.ui.clear_reply_inputs(conversation).await;
             self.service.inputs.lock().await.insert(
                 conversation.clone(),
                 PendingTaskInput {
@@ -506,6 +543,7 @@ impl TaskBoardView<'_> {
                     | "job.completed"
                     | "job.pending_review"
                     | "job.rejected"
+                    | "issue.pending_review"
             ) && let Some(session) = event.session_ref.as_deref()
                 && let Ok(session) = self
                     .ui
@@ -523,7 +561,19 @@ impl TaskBoardView<'_> {
                         .or_else(|| event.payload["review_reason"].as_str())
                         .unwrap_or("")
                 );
-                Some((conversation, OutboundView::text("Task update", body)))
+                let mut view = OutboundView::text("Task update", body);
+                if let Some(owner) = self.ui.conversation_owner(&conversation).await {
+                    let issue = event.payload["issue_id"].as_str().or_else(|| {
+                        (event.event_type == "issue.pending_review")
+                            .then(|| event.payload["id"].as_str())
+                            .flatten()
+                    });
+                    if let Some(id) = issue {
+                        self.add_issue_notification(&conversation, &owner, &mut view, id)
+                            .await?;
+                    }
+                }
+                Some((conversation, view))
             } else {
                 None
             };

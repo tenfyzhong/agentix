@@ -74,7 +74,7 @@ async fn project_archive_moves_entire_folder_and_restores_paths() {
             .contains("Archived Projects/demo/Tasks/")
     );
     let board = fs::read_to_string(archived.join("Board.md")).unwrap();
-    assert!(board.contains("Archived Projects/demo/Inbox"));
+    assert!(board.contains("Archived Projects/demo/Issue.base"));
     let reopened = Service::open(f.service.config().clone()).await.unwrap();
     reopened.sync().await.unwrap();
     reopened

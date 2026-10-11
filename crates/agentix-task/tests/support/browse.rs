@@ -54,7 +54,7 @@ async fn project_and_detail_scopes_ignore_other_projects_and_plan_bodies() {
         assert_eq!(state.jobs.len(), 1);
         assert_eq!(state.jobs[0].id, f.job);
         assert!(state.plans.is_empty());
-        assert!(state.inboxes.is_empty());
+        assert!(state.issues.is_empty());
         assert_eq!(state.leases.len(), 1);
         assert_eq!(state.leases[0].task_id, task);
     }

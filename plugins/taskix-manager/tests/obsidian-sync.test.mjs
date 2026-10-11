@@ -481,7 +481,7 @@ test("Obsidian ignores events outside the configured taskix directory", async (t
     const f = await connectionFixture(); t.after(() => f.plugin.onunload());
     const connecting = f.plugin.connect(); f.reply(); await connecting;
     for (const path of ["Daily/New.md", "11-Agents-copy/Task.md", "Task.md"]) {
-        f.metadataEvents.get("changed")({ path }, "<!-- taskix:inbox:start project=prj_copy -->", {
+        f.metadataEvents.get("changed")({ path }, "Ordinary note outside managed folders", {
             frontmatter: { id: "task_copy", status: "TODO", revision: 1 },
         });
         f.vaultEvents.get("rename")({ path }, path.replace(".md", "-old.md"));

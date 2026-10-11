@@ -14,6 +14,7 @@ use crate::{
 pub(crate) struct PublicationMetadata {
     pub plans: Vec<PublishedPlan>,
     pub goals: BTreeMap<String, String>,
+    pub deliveries: BTreeMap<String, String>,
 }
 
 #[derive(serde::Serialize)]
@@ -23,25 +24,39 @@ pub(crate) struct PublishedPlan {
     pub hash: String,
 }
 
+#[allow(clippy::too_many_lines)] // Publication keys describe one atomic state difference.
 pub(crate) async fn enqueue_changes(
     conn: &mut SqliteConnection,
     before: &Snapshot,
     after: &Snapshot,
-    command: &str,
+    _command: &str,
 ) -> Result<()> {
-    if command == "inbox.publish" {
-        return Ok(());
-    }
     let mut keys = BTreeSet::new();
     let old_projects: BTreeMap<_, _> = before.projects.iter().map(|v| (&v.id, v)).collect();
     let old_jobs: BTreeMap<_, _> = before.jobs.iter().map(|v| (&v.id, v)).collect();
     let old_tasks: BTreeMap<_, _> = before.tasks.iter().map(|v| (&v.id, v)).collect();
-    let old_inboxes: BTreeMap<_, _> = before.inboxes.iter().map(|v| (&v.id, v)).collect();
+    let old_issues: BTreeMap<_, _> = before.issues.iter().map(|v| (&v.id, v)).collect();
+    let old_milestones: BTreeMap<_, _> = before.milestones.iter().map(|v| (&v.id, v)).collect();
     let mut dependents = BTreeSet::new();
     for project in &after.projects {
         if old_projects.get(&project.id).copied() != Some(project) {
             keys.insert(format!("board:{}", project.id));
-            keys.insert(format!("inbox:{}", project.id));
+            keys.insert(format!("issue-base:{}", project.id));
+            keys.insert(format!("milestone-base:{}", project.id));
+            keys.extend(
+                after
+                    .issues
+                    .iter()
+                    .filter(|issue| issue.project_id == project.id)
+                    .map(|issue| format!("issue:{}", issue.id)),
+            );
+            keys.extend(
+                after
+                    .milestones
+                    .iter()
+                    .filter(|milestone| milestone.project_id == project.id)
+                    .map(|milestone| format!("milestone:{}", milestone.id)),
+            );
             for job in after.jobs.iter().filter(|j| j.project_id == project.id) {
                 keys.insert(format!("job:{}", job.id));
             }
@@ -73,7 +88,6 @@ pub(crate) async fn enqueue_changes(
                 keys.insert(format!("task:{task}"));
             }
             dependents.extend(tasks);
-            keys.insert(format!("inbox:{}", job.project_id));
         }
     }
     for task in &after.tasks {
@@ -89,10 +103,65 @@ pub(crate) async fn enqueue_changes(
     for job in related_jobs {
         keys.insert(format!("job:{job}"));
     }
-    for entry in &after.inboxes {
-        if old_inboxes.get(&entry.id).copied() != Some(entry) {
-            keys.insert(format!("inbox:{}", entry.project_id));
+    for issue in &after.issues {
+        let old = old_issues.get(&issue.id).copied();
+        if old == Some(issue) {
+            continue;
         }
+        keys.insert(format!("issue:{}", issue.id));
+        if old.is_some_and(|old| old.name != issue.name || old.document_path != issue.document_path)
+        {
+            keys.extend(
+                ids(
+                    conn,
+                    "SELECT id FROM jobs WHERE json_extract(data,'$.issue_id')=?",
+                    &issue.id,
+                )
+                .await?
+                .into_iter()
+                .map(|id| format!("job:{id}")),
+            );
+        }
+        keys.insert(format!("board:{}", issue.project_id));
+        keys.insert(format!("issue-base:{}", issue.project_id));
+        for milestone in issue
+            .milestone_id
+            .iter()
+            .chain(old.and_then(|old| old.milestone_id.as_ref()))
+        {
+            keys.insert(format!("milestone:{milestone}"));
+        }
+    }
+    for milestone in &after.milestones {
+        if old_milestones.get(&milestone.id).copied() == Some(milestone) {
+            continue;
+        }
+        keys.insert(format!("milestone:{}", milestone.id));
+        if old_milestones.get(&milestone.id).is_some_and(|old| {
+            old.name != milestone.name || old.document_path != milestone.document_path
+        }) {
+            keys.extend(
+                after
+                    .issues
+                    .iter()
+                    .filter(|issue| issue.milestone_id.as_ref() == Some(&milestone.id))
+                    .map(|issue| format!("issue:{}", issue.id)),
+            );
+        }
+        keys.insert(format!("milestone-base:{}", milestone.project_id));
+        keys.insert(format!("board:{}", milestone.project_id));
+    }
+    let milestones: BTreeSet<_> = after
+        .milestones
+        .iter()
+        .map(|milestone| &milestone.id)
+        .collect();
+    for milestone in before
+        .milestones
+        .iter()
+        .filter(|milestone| !milestones.contains(&milestone.id))
+    {
+        keys.insert(format!("milestone:{}", milestone.id));
     }
     let jobs: BTreeSet<_> = after.jobs.iter().map(|j| &j.id).collect();
     let tasks: BTreeSet<_> = after.tasks.iter().map(|t| &t.id).collect();
@@ -100,7 +169,6 @@ pub(crate) async fn enqueue_changes(
     for job in before.jobs.iter().filter(|j| !jobs.contains(&j.id)) {
         keys.insert(format!("job:{}", job.id));
         keys.insert(format!("board:{}", job.project_id));
-        keys.insert(format!("inbox:{}", job.project_id));
     }
     for task in before.tasks.iter().filter(|t| !tasks.contains(&t.id)) {
         keys.insert(format!("task:{}", task.id));
@@ -110,7 +178,22 @@ pub(crate) async fn enqueue_changes(
     }
     for project in before.projects.iter().filter(|p| !projects.contains(&p.id)) {
         keys.insert(format!("board:{}", project.id));
-        keys.insert(format!("inbox:{}", project.id));
+        keys.insert(format!("issue-base:{}", project.id));
+        keys.insert(format!("milestone-base:{}", project.id));
+        keys.extend(
+            before
+                .issues
+                .iter()
+                .filter(|issue| issue.project_id == project.id)
+                .map(|issue| format!("issue:{}", issue.id)),
+        );
+        keys.extend(
+            before
+                .milestones
+                .iter()
+                .filter(|milestone| milestone.project_id == project.id)
+                .map(|milestone| format!("milestone:{}", milestone.id)),
+        );
     }
     if !keys.is_empty() {
         keys.insert("dashboard".into());
@@ -177,15 +260,6 @@ impl Store {
         )
     }
 
-    pub(crate) async fn pending_inboxes(&self) -> Result<BTreeSet<String>> {
-        let keys: Vec<String> = sqlx::query_scalar(
-            "SELECT key FROM pending_documents WHERE key>='inbox:' AND key<'inbox;'",
-        )
-        .fetch_all(&self.pool)
-        .await?;
-        Ok(keys.into_iter().map(|key| key[6..].to_owned()).collect())
-    }
-
     pub(crate) async fn rebuild_pending(&self) -> Result<bool> {
         Ok(
             sqlx::query_scalar(
@@ -214,6 +288,10 @@ impl Store {
         if !metadata.goals.is_empty() {
             sqlx::query("INSERT INTO projection_state(key,value) SELECT 'goal:'||key,json_quote(value) FROM json_each(?) WHERE true ON CONFLICT(key) DO UPDATE SET value=excluded.value")
                 .bind(serde_json::to_string(&metadata.goals)?).execute(&mut *tx).await?;
+        }
+        if !metadata.deliveries.is_empty() {
+            sqlx::query("INSERT INTO projection_state(key,value) SELECT 'delivery:'||key,json_quote(value) FROM json_each(?) WHERE true ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+                .bind(serde_json::to_string(&metadata.deliveries)?).execute(&mut *tx).await?;
         }
         if !remove.is_empty() {
             sqlx::query(
@@ -249,18 +327,28 @@ impl Store {
             Some(("task", id)) => {
                 scope.tasks.insert(id.into());
             }
+            Some(("issue", id)) => {
+                scope.issues.insert(id.into());
+            }
+            Some(("milestone", id)) => {
+                scope.milestones.insert(id.into());
+            }
             Some(("job", id)) => {
                 scope.jobs.insert(id.into());
                 scope.job_tasks(&mut tx).await?;
                 scope.tasks.extend(ids(&mut tx,"SELECT dependency_id FROM task_dependencies WHERE task_id IN (SELECT value FROM json_each(?))",&json!(scope.tasks).to_string()).await?);
             }
-            Some(("board" | "inbox", id)) => {
+            Some(("board" | "issue-base" | "milestone-base", id)) => {
                 scope.projects.insert(id.into());
             }
             _ => (),
         }
         scope.parents(&mut tx).await?;
-        let state = scope.load(&mut tx).await?;
+        let mut state = scope.load(&mut tx).await?;
+        if let Some(("milestone", id)) = key.split_once(':') {
+            state.query_context.milestone_progress =
+                crate::issue_read::milestone_progress(&mut tx, &[id.to_owned()]).await?;
+        }
         tx.commit().await?;
         Ok(state)
     }

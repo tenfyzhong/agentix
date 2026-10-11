@@ -27,7 +27,6 @@ async fn generated_documents_migrate_duplicate_timestamps_and_keep_authored_cont
                 .unwrap(),
         ),
         root.join("Projects/demo/Board.md"),
-        root.join("Projects/demo/Inbox.md"),
     ];
     for path in &paths {
         let doc = std::fs::read_to_string(path).unwrap();
@@ -72,12 +71,7 @@ async fn generated_documents_migrate_duplicate_timestamps_and_keep_authored_cont
         }
         assert!(props["created_at"].is_string());
         assert!(props["updated_at"].is_string());
-        if path.ends_with("Inbox.md") {
-            assert_eq!(props["created_at"], "2020-01-02T03:04:05+08:00");
-            assert_eq!(props["custom"], "keep");
-        } else {
-            assert_ne!(props["created_at"], "2020-01-02T03:04:05+08:00");
-        }
+        assert_ne!(props["created_at"], "2020-01-02T03:04:05+08:00");
         f.service.sync().await.unwrap();
         assert_eq!(doc, std::fs::read_to_string(path).unwrap());
     }
@@ -335,8 +329,8 @@ async fn board_contains_project_metadata_and_is_the_only_project_link_target() {
     assert!(dashboard.contains("link(file.path, if(note.name, note.name, note.title))"));
     let task_path = root.join("Projects/demo/Tasks/260905-0001-Linked task.md");
     assert_eq!(
-        properties(&std::fs::read_to_string(task_path).unwrap())["projects"],
-        json!(["[[Tasks ☃/Projects/demo/Board]]"])
+        properties(&std::fs::read_to_string(task_path).unwrap())["project_id"],
+        json!(f.project)
     );
     f.service
         .execute(
@@ -1000,10 +994,7 @@ async fn job_board_has_four_pinned_columns_and_job_display_properties() {
     let document = std::fs::read_to_string(&path).unwrap();
     let props = properties(&document);
     assert_eq!(props["title"], job.name);
-    assert_eq!(
-        props["projects"],
-        json!(["[[Tasks ☃/Projects/demo/Board|demo]]"])
-    );
+    assert_eq!(props["project_id"], json!(f.project));
     assert_eq!(props["archived"], false);
     assert!(props["created_at"].is_string());
     assert!(props.get("dateCreated").is_none());

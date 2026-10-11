@@ -3,6 +3,45 @@ use agentix_core::{
     RenderKey, SessionCommand, SessionId, SqliteState, chunk_text, parse_input,
 };
 
+#[test]
+fn issue_commands_preserve_requirements_validate_filters_and_remove_inbox_aliases() {
+    use agentix_task::IssueStatus;
+    assert_eq!(
+        parse_input("/issue@agentix new Login\nFull requirement").unwrap(),
+        ParsedInput::Command(AgentCommand::IssueNew("Login\nFull requirement".into()))
+    );
+    assert_eq!(
+        parse_input("/issues pending_review --milestone milestone_one").unwrap(),
+        ParsedInput::Command(AgentCommand::Issues {
+            status: Some(IssueStatus::PendingReview),
+            milestone: Some("milestone_one".into())
+        })
+    );
+    assert_eq!(
+        parse_input("/issues ALL").unwrap(),
+        ParsedInput::Command(AgentCommand::Issues {
+            status: None,
+            milestone: None
+        })
+    );
+    assert_eq!(
+        parse_input("/milestones").unwrap(),
+        ParsedInput::Command(AgentCommand::Milestones)
+    );
+    for invalid in [
+        "/inbox requirement",
+        "/inboxes",
+        "/issues BLOCKED",
+        "/issues TODO ALL",
+        "/issues --milestone",
+        "/issue new",
+        "/issue first second",
+        "/milestones extra",
+    ] {
+        assert!(parse_input(invalid).is_err(), "{invalid}");
+    }
+}
+
 #[tokio::test]
 async fn uncertain_event_count_excludes_completed_and_retryable_inputs_and_survives_restart() {
     let dir = tempfile::tempdir().unwrap();

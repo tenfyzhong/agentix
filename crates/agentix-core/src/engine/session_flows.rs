@@ -95,6 +95,7 @@ impl Engine {
         Ok(())
     }
 
+    #[allow(clippy::too_many_lines)] // Present both command levels and capability-specific help together.
     pub(super) async fn available_commands(&self, conversation: &ConversationRef) -> String {
         let session = self.sessions.current(conversation).await;
         let read_only = if let Some(session) = &session {
@@ -125,6 +126,17 @@ impl Engine {
             );
         }
         if self.tasks.backend.is_some() {
+            commands.extend([
+                (
+                    "/issues [STATUS] [--milestone ID]",
+                    "Browse Project issues; choose a Project when unattached.",
+                ),
+                (
+                    "/issue <id> | new <description>",
+                    "Create, read, edit, execute or accept an Issue.",
+                ),
+                ("/milestones", "Browse Project milestones and their Issues."),
+            ]);
             commands.push((
                 "/dashboard",
                 "Browse projects; click a project to open its board.",
@@ -172,11 +184,6 @@ impl Engine {
                         "List tasks for the current session or a job.",
                     ),
                     ("/task <id>", "Read a task and its Markdown details."),
-                    (
-                        "/inboxes [STATUS]",
-                        "Current project's human queue; filter by status",
-                    ),
-                    ("/inbox <content>", "Append a human requirement"),
                 ]);
             }
         }
@@ -453,6 +460,7 @@ impl Engine {
         )
         .await?;
         self.show_queued_questions(conversation, session_id).await?;
+        Box::pin(self.resume_issue_execution(conversation, session_id, false)).await?;
         Ok(())
     }
 
@@ -790,6 +798,7 @@ impl Engine {
             return self.request_new_session(conversation, &session).await;
         }
         if matches!(command, SessionCommand::Rename(None)) {
+            self.clear_reply_inputs(conversation).await;
             self.interactions.session_inputs.lock().await.insert(
                 conversation.clone(),
                 PendingSessionInput::Rename(session.clone()),

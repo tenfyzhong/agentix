@@ -1,6 +1,6 @@
 "use strict";
 
-const { Plugin, PluginSettingTab, Setting, Notice, TFile, parseYaml } = require("obsidian");
+const { Plugin, PluginSettingTab, Setting, Notice, TFile, Modal, parseYaml } = require("obsidian");
 const { execFile } = require("node:child_process");
 const { randomUUID } = require("node:crypto");
 const { realpathSync } = require("node:fs");
@@ -15,9 +15,6 @@ function localTimestamp(seconds) {
 }
 
 function commandFor(note, target) {
-    if (note.kind === "inbox" && ["TODO", "ACTIVE", "PENDING_REVIEW", "COMPLETED", "CANCELLED"].includes(target)) {
-        return ["inbox", "set-status", note.id, "--status", target];
-    }
     const reason = `Status changed in Obsidian: ${note.status} -> ${target}`;
     let command;
     if (note.kind === "task") {
@@ -37,6 +34,13 @@ function commandFor(note, target) {
             if (target === "ACTIVE") command = "reject";
             if (target === "COMPLETED") command = "approve";
         }
+    } else if (note.kind === "issue") {
+        if (["TODO", "ACTIVE"].includes(note.status) && target === "PENDING_REVIEW") command = "submit";
+        if (note.status === "TODO" && target === "ACTIVE") command = "start";
+        if (note.status === "PENDING_REVIEW" && target === "COMPLETED") command = "approve";
+        if (note.status === "PENDING_REVIEW" && target === "ACTIVE") command = "reject";
+        if (["COMPLETED", "CANCELLED"].includes(note.status) && target === "TODO") command = "reopen";
+        if (["TODO", "ACTIVE", "PENDING_REVIEW"].includes(note.status) && target === "CANCELLED") command = "cancel";
     }
     if (typeof target !== "string" || typeof command !== "string") {
         throw new Error(`Unsupported ${note.kind} transition: ${note.status} -> ${String(target)}`);
@@ -48,58 +52,6 @@ function commandFor(note, target) {
 
 const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
-// Offsets refer to the original document so rollback can preserve every byte
-// outside this entry's checkbox and generated state receipt.
-function parseInbox(source, project) {
-    const starts = [...source.matchAll(/^<!-- taskix:inbox:start project=([^\r\n]+) -->\r?$/gm)];
-    const ends = [...source.matchAll(/^<!-- taskix:inbox:end -->\r?$/gm)];
-    if (starts.length !== 1 || ends.length !== 1 || starts[0].index >= ends[0].index ||
-        (project && starts[0][1] !== project)) throw new Error("Invalid Inbox project or managed region");
-    const rows = [], ids = new Set();
-    const start = starts[0].index + starts[0][0].length;
-    const region = source.slice(start, ends[0].index);
-    let fence;
-    for (const line of region.matchAll(/[^\n]+/g)) {
-        const text = line[0].replace(/\r$/, "");
-        const delimiter = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(text);
-        if (fence) {
-            if (delimiter && delimiter[1][0] === fence[0] && delimiter[1].length >= fence.length && !delimiter[2].trim()) fence = null;
-            continue;
-        }
-        if (delimiter) { fence = delimiter[1]; continue; }
-        if (!text.startsWith("- [")) continue;
-        const identity = / <!-- taskix:entry:(inbox_[0-9a-f]{32}) -->/g;
-        const matches = [...text.matchAll(identity)];
-        if (matches.length === 0) {
-            if (text.includes("<!-- taskix:entry:")) throw new Error("Invalid Inbox entry identity");
-            continue; // New submissions are registered by inbox sync.
-        }
-        if (matches.length !== 1 || ids.has(matches[0][1])) throw new Error("Duplicate Inbox entry identity");
-        ids.add(matches[0][1]);
-        const receipt = / <!-- taskix:entry-state (TODO|ACTIVE|PENDING_REVIEW|COMPLETED|CANCELLED|IN_PROGRESS|DONE)(?: revision=(\d+))? -->/.exec(text);
-        if (!receipt || !/^- \[.\] /.test(text)) throw new Error("Invalid Inbox status receipt or checkbox");
-        const checkbox = text[3];
-        const status = { " ": "TODO", "/": "ACTIVE", r: "PENDING_REVIEW", p: "PENDING_REVIEW", x: "COMPLETED", X: "COMPLETED", "-": "CANCELLED" }[checkbox] || checkbox;
-        rows.push({ id: matches[0][1], project_id: starts[0][1], status, revision: Number(receipt[2] || 0),
-            checkboxOffset: start + line.index + 3,
-            receiptOffset: start + line.index + receipt.index, receiptLength: receipt[0].length });
-    }
-    if (fence) throw new Error("Unclosed Inbox code fence");
-    return rows;
-}
-
-function patchInbox(source, note, expected, properties) {
-    const row = parseInbox(source, note.project_id).find((entry) => entry.id === note.id);
-    if (!row || row.id !== expected.id || row.revision !== expected.revision || row.status !== expected.status) return source;
-    const checkbox = { TODO: " ", ACTIVE: "/", PENDING_REVIEW: "r", COMPLETED: "x", CANCELLED: "-" }[properties.status];
-    if (!checkbox) throw new Error(`Invalid Inbox state: ${properties.status}`);
-    const receipt = ` <!-- taskix:entry-state ${properties.status} revision=${properties.revision} -->`;
-    const next = source.slice(0, row.receiptOffset) + receipt + source.slice(row.receiptOffset + row.receiptLength);
-    return next.slice(0, row.checkboxOffset) + checkbox + next.slice(row.checkboxOffset + 1);
-}
-
-const inboxKey = (filePath, id) => `${filePath}#${id}`;
-
 class SyncEngine {
     constructor(io) {
         this.io = io;
@@ -107,7 +59,6 @@ class SyncEngine {
         this.pending = new Map();
         this.timers = new Map();
         this.generations = new Map();
-        this.inboxErrors = new Map();
         this.disposed = false;
         this.ready = false;
         this.running = null;
@@ -131,7 +82,7 @@ class SyncEngine {
         }
         if (note.path !== (intent.filePath || intent.path) ||
             (intent.project_id && note.project_id !== intent.project_id)) return null;
-        const item = note.kind === "inbox" ? { ...note, filePath: note.path, path: inboxKey(note.path, note.id) } : note;
+        const item = note;
         if (!this.disposed && this.generations.get(intent.path) === intent.generation) this.remember(item);
         return item;
     }
@@ -158,14 +109,13 @@ class SyncEngine {
     async reconcile() {
         for await (const file of this.io.openNotes?.() || []) {
             this.observe(file.path, file.properties, true);
-            if (file.source) this.observeInbox(file.path, file.source, true);
         }
         await this.flush();
     }
 
-    observe(filePath, properties, reconcileOnly = false, inboxFile) {
+    observe(filePath, properties, reconcileOnly = false) {
         if (!this.ready || this.disposed || !properties) return;
-        const kind = typeof properties.id === "string" && /^(task|job|inbox)_/.exec(properties.id)?.[1];
+        const kind = typeof properties.id === "string" && /^(task|job|issue)_/.exec(properties.id)?.[1];
         if (!kind || !Number.isInteger(properties.revision) ||
             (kind === "task" && properties.task_id !== properties.id)) return;
         const queued = this.pending.get(filePath);
@@ -176,12 +126,17 @@ class SyncEngine {
         // A newer projection may already lag behind the database by the time
         // this queue runs. Reconcile it instead of replaying it as user intent.
         // A subsequent status edit at that queued revision is still an edit.
-        const projection = kind !== "inbox" && note &&
+        const projection = note &&
             properties.revision > (queued?.revision ?? note.revision);
         if (this.inFlight?.path === filePath && properties.revision > this.inFlight.revision &&
             equal(properties.status, this.inFlight.target)) return;
         if (!reconcileOnly && note && properties.revision === note.revision &&
-            equal(properties.status, note.status) && this.inFlight?.path !== filePath) {
+            equal(properties.status, note.status) &&
+            (kind !== "job" || (equal(properties.issue ?? null, note.properties?.issue ?? null) &&
+                equal(properties.issue_id ?? null, note.properties?.issue_id ?? null))) &&
+            (kind !== "issue" || (equal(properties.milestone_id ?? null, note.properties?.milestone_id ?? null) &&
+                equal(properties.milestone ?? null, note.properties?.milestone ?? null))) &&
+            this.inFlight?.path !== filePath) {
             // One CLI write projects every note. Do not let that projection
             // discard a different note's already queued user edit.
             if (this.inFlight && this.pending.has(filePath)) return;
@@ -193,13 +148,19 @@ class SyncEngine {
         }
         const previous = this.pending.get(filePath);
         if (previous && equal(previous.rawTarget, properties.status) &&
-            previous.revision === properties.revision) return;
+            previous.revision === properties.revision &&
+            (kind !== "job" || equal(previous.issueLink, properties.issue ?? null)) &&
+            (kind !== "issue" || (equal(previous.milestone, properties.milestone_id ?? null) &&
+                equal(previous.milestoneLink, properties.milestone ?? null)))) return;
         const generation = (this.generations.get(filePath) || 0) + 1;
         this.generations.set(filePath, generation);
         this.pending.set(filePath, {
-            ...note, kind, id: properties.id, path: filePath, filePath: inboxFile || note?.filePath,
+            ...note, kind, id: properties.id, path: filePath,
             project_id: properties.project_id || note?.project_id,
             revision: properties.revision, rawTarget: properties.status,
+            issueLink: kind === "job" ? properties.issue ?? null : undefined,
+            milestone: kind === "issue" ? properties.milestone_id ?? null : undefined,
+            milestoneLink: kind === "issue" ? properties.milestone ?? null : undefined,
             target: typeof properties.status === "string" ? properties.status.trim() : properties.status,
             reconcileOnly: reconcileOnly || Boolean(projection),
             generation, key: randomUUID(), ready: false,
@@ -211,46 +172,6 @@ class SyncEngine {
             if (intent) intent.ready = true;
             void this.drain();
         }, 300));
-    }
-
-    observeInbox(filePath, source, reconcileOnly = false) {
-        if (!this.ready || this.disposed) return;
-        const notes = [...this.notes.values()].filter((note) => note.kind === "inbox" && note.filePath === filePath);
-        if (!notes.length && !source.includes("<!-- taskix:inbox:start project=")) return;
-        try {
-            const rows = parseInbox(source, notes[0]?.project_id);
-            this.clearInboxError(filePath);
-            const present = new Set(rows.map((row) => row.id));
-            for (const note of [...notes, ...this.pending.values()]) {
-                if (note.filePath === filePath && !present.has(note.id)) this.forget(note.path);
-            }
-            for (const row of rows) this.observe(inboxKey(filePath, row.id), row, reconcileOnly, filePath);
-        } catch (error) {
-            // Discard pending intents from a malformed file; never guess which
-            // duplicate ID to update or treat a broken region as withdrawal.
-            this.forget(filePath, true);
-            this.deferInboxError(filePath, error.message);
-        }
-    }
-
-    clearInboxError(filePath) {
-        clearTimeout(this.inboxErrors.get(filePath)?.timer);
-        this.inboxErrors.delete(filePath);
-    }
-
-    deferInboxError(filePath, message) {
-        const previous = this.inboxErrors.get(filePath);
-        if (previous?.message === message && previous.notified) return;
-        this.clearInboxError(filePath);
-        const error = { message, notified: false, timer: null };
-        this.inboxErrors.set(filePath, error);
-        // Partial editor buffers are unsafe to synchronize, but usually recover
-        // as typing continues. Report only after a quiet period, once per error.
-        error.timer = setTimeout(() => {
-            error.timer = null;
-            error.notified = true;
-            this.notify(`Inbox synchronization paused for ${filePath}: ${message}`);
-        }, 5000);
     }
 
     async flush() {
@@ -309,6 +230,41 @@ class SyncEngine {
             if (this.disposed || this.generations.get(intent.path) !== intent.generation) return;
             if (!current) { this.notes.delete(intent.path); return; }
             intent.status ??= current.status;
+            if (!intent.reconcileOnly && intent.kind === "job" &&
+                !equal(current.properties?.issue ?? null, intent.issueLink)) {
+                if (current.revision !== intent.revision) throw new Error("The taskix revision changed. Review the latest state before retrying.");
+                const issue = await this.resolveIssueLink(current, intent.issueLink);
+                if (this.disposed || this.generations.get(intent.path) !== intent.generation) return;
+                if (issue !== (current.properties?.issue_id ?? null)) {
+                    const result = await this.io.execute(["job", "update", intent.id,
+                        ...(issue ? ["--issue", issue] : ["--unlink-issue"]),
+                        "--expect-revision", String(intent.revision), "--idempotency-key", `${intent.key}:issue`]);
+                    if (this.disposed) return;
+                    if (result.result?.id !== intent.id || !Number.isInteger(result.result.revision)) throw new Error("Invalid taskix mutation result");
+                    committed = true;
+                    intent.revision = result.result.revision;
+                    current = await this.lookup(intent);
+                }
+            }
+            if (!intent.reconcileOnly && intent.kind === "issue" &&
+                !equal(current.properties?.milestone ?? null, intent.milestoneLink) &&
+                equal(current.properties?.milestone_id ?? null, intent.milestone)) {
+                intent.milestone = await this.resolveMilestoneLink(current, intent.milestoneLink);
+                if (this.disposed || this.generations.get(intent.path) !== intent.generation) return;
+            }
+            if (!intent.reconcileOnly && intent.kind === "issue" &&
+                !equal(current.properties?.milestone_id ?? null, intent.milestone)) {
+                if (current.revision !== intent.revision) throw new Error("The taskix revision changed. Review the latest state before retrying.");
+                if (intent.milestone !== null && typeof intent.milestone !== "string") throw new Error("Milestone must be an ID or empty.");
+                const result = await this.io.execute(["issue", "update", intent.id,
+                    ...(intent.milestone ? ["--milestone", intent.milestone] : ["--unlink-milestone"]),
+                    "--expect-revision", String(intent.revision), "--idempotency-key", `${intent.key}:milestone`]);
+                if (this.disposed) return;
+                if (result.result?.id !== intent.id || !Number.isInteger(result.result.revision)) throw new Error("Invalid taskix mutation result");
+                committed = true;
+                intent.revision = result.result.revision;
+                current = await this.lookup(intent);
+            }
             if (!intent.reconcileOnly && current.status !== intent.target) {
                 if (current.revision !== intent.revision) throw new Error("The taskix revision changed. Review the latest state before retrying.");
                 const args = commandFor(current, intent.target);
@@ -361,7 +317,10 @@ class SyncEngine {
             if (current?.id === intent.id) await this.restore(current, intent);
             if (committed && !confirmed) {
                 this.notify(`State saved; the latest projection could not be read: ${error.message}`);
-            } else if (!confirmed || current?.status !== intent.target) {
+            } else if (!confirmed || current?.status !== intent.target ||
+                (intent.kind === "job" && !equal(current?.properties?.issue ?? null, intent.issueLink)) ||
+                (intent.kind === "issue" && !equal(current?.properties?.milestone ?? null, intent.milestoneLink)) ||
+                (intent.kind === "issue" && !equal(current?.properties?.milestone_id ?? null, intent.milestone))) {
                 this.notify(`Could not change ${intent.kind} to ${String(intent.target)}: ${error.message}${confirmed ? "" : " The result could not be confirmed; the last known state is shown."}`);
             }
         }
@@ -386,11 +345,36 @@ class SyncEngine {
         }
     }
 
-    forget(filePath, preserveInboxError = false) {
-        if (!preserveInboxError) this.clearInboxError(filePath);
-        for (const note of [...this.notes.values(), ...this.pending.values(), ...(this.inFlight ? [this.inFlight] : [])]) {
-            if (note.filePath === filePath) this.forget(note.path);
+    async resolveIssueLink(note, link) {
+        if (link === null || link === "") return null;
+        if (typeof link !== "string") throw new Error("Issue must be one note link or empty.");
+        const match = /^\[\[([^|\]#]+)(?:\|[^\]]*)?\]\]$/.exec(link.trim());
+        if (!match) throw new Error("Issue must link to a registered Issue in this Project.");
+        const target = await this.io.resolveLink(match[1], note.path);
+        if (!target || !/^issue_/.test(target.id || "")) throw new Error("Issue link is missing or does not identify a registered Issue.");
+        const issue = await this.io.lookup(target.id);
+        if (!issue || issue.kind !== "issue" || issue.project_id !== note.project_id || issue.path !== target.path) {
+            throw new Error("Issue link is copied, unregistered, or belongs to another Project.");
         }
+        return issue.id;
+    }
+
+    async resolveMilestoneLink(note, link) {
+        if (link === null || link === "") return null;
+        if (typeof link !== "string") throw new Error("Milestone must be one note link or empty.");
+        const match = /^\[\[([^|\]#]+)(?:\|[^\]]*)?\]\]$/.exec(link.trim());
+        if (!match) throw new Error("Milestone must link to a registered Milestone in this Project.");
+        const normalize = value => value.replace(/\\/g, "/").replace(/\.md$/, "");
+        const target = normalize(match[1]);
+        const { result } = await this.io.execute(["milestone", "list", "--project", note.project_id]);
+        const choices = Array.isArray(result) ? result.filter(item => item.project_id === note.project_id &&
+            [normalize(path.posix.join(this.directory, item.document_path)), normalize(item.document_path),
+                normalize(path.posix.basename(item.document_path))].includes(target)) : [];
+        if (choices.length !== 1) throw new Error("Milestone link is missing, ambiguous, or belongs to another Project.");
+        return choices[0].id;
+    }
+
+    forget(filePath) {
         this.pending.delete(filePath);
         this.notes.delete(filePath);
         clearTimeout(this.timers.get(filePath));
@@ -411,7 +395,6 @@ class SyncEngine {
         this.timers.clear();
         this.notes.clear();
         this.generations.clear();
-        for (const filePath of this.inboxErrors.keys()) this.clearInboxError(filePath);
     }
 }
 
@@ -448,12 +431,27 @@ class TaskixSyncPlugin extends Plugin {
         this.memoryChecks = new Map();
         this.memoryTimers = new Map();
         this.memoryNotices = new Map();
+        this.deliveryTimers = new Map();
+        this.deliveryBodies = new Map();
+        this.deliveryQueue = Promise.resolve();
         this.addSettingTab(new TaskixSettings(this.app, this));
         this.addCommand({
             id: "refresh", name: "Check connection and refresh state",
             callback: () => this.checkConnection(),
         });
         this.registerEvent(this.app.workspace.on("file-menu", (menu, file) => {
+            if (Array.isArray(file.children) && ["Issues", "Milestones"].includes(path.posix.basename(file.path))) {
+                const parent = path.posix.dirname(file.path);
+                const projectBoard = this.app.vault.getAbstractFileByPath(path.posix.join(parent, "Board.md"));
+                const properties = projectBoard && this.app.metadataCache.getFileCache(projectBoard)?.frontmatter;
+                if (this.engine?.watches(file.path) && properties?.["taskix-generated"] === true &&
+                    /^prj_/.test(properties.id) && properties.status === "ACTIVE") {
+                    const milestone = path.posix.basename(file.path) === "Milestones";
+                    menu.addItem(item => item.setTitle(milestone ? "New Milestone" : "New Issue").setIcon("plus")
+                        .onClick(() => milestone ? this.prepareMilestone(properties.id, file.path) : this.prepareIssue(properties.id, file.path)));
+                }
+                return;
+            }
             const board = Array.isArray(file.children)
                 ? this.app.vault.getAbstractFileByPath(path.posix.join(file.path, "Board.md")) : file;
             if (!board || path.posix.basename(board.path) !== "Board.md" || !this.engine?.watches(board.path)) return;
@@ -468,7 +466,7 @@ class TaskixSyncPlugin extends Plugin {
         this.registerEvent(this.app.metadataCache.on("changed", (file, data, cache) => {
             if (!this.engine?.watches(file.path)) return;
             this.engine.observe(file.path, cache.frontmatter);
-            this.engine.observeInbox(file.path, data);
+            this.queueDelivery(file.path, data, cache.frontmatter);
             this.styleBoards();
         }));
         this.registerEvent(this.app.vault.on("modify", (file) => this.queueMemory(file)));
@@ -498,12 +496,16 @@ class TaskixSyncPlugin extends Plugin {
                 let managed = false;
                 if (file && this.engine?.watches(file.path)) {
                     if (type === "bases") {
-                        managed = ["Dashboard.base", "Recent Jobs.base"].some(name =>
+                        managed = ["Dashboard.base", "Recent Jobs.base", "Issue.base"].some(name =>
                             file.path === path.posix.join(this.engine.directory, name));
+                        if (!managed && ["Issue.base", "Milestones.base"].includes(path.posix.basename(file.path))) {
+                            const board = this.app.vault.getAbstractFileByPath(path.posix.join(path.posix.dirname(file.path), "Board.md"));
+                            managed = this.app.metadataCache.getFileCache(board)?.frontmatter?.["taskix-generated"] === true;
+                        }
                     } else {
                         const properties = this.app.metadataCache.getFileCache(file)?.frontmatter;
                         managed = properties?.["taskix-generated"] === true &&
-                            Array.isArray(properties.tags) && properties.tags.some(tag => ["agent/board", "agent/job"].includes(tag));
+                            Array.isArray(properties.tags) && properties.tags.some(tag => ["agent/board", "agent/job", "agent/issue", "agent/milestone"].includes(tag));
                     }
                 }
                 leaf.view.containerEl.classList.toggle("taskix-board", managed);
@@ -515,6 +517,204 @@ class TaskixSyncPlugin extends Plugin {
         if (!this.engine?.watches(filePath)) return false;
         const relative = path.posix.relative(this.engine.directory, filePath);
         return /^(?:[^/]+\/)+Memory\/mem_(?:[0-9]{12}_)?[0-9a-f]{32}\.md$/.test(relative);
+    }
+
+    queueDelivery(filePath, source, properties) {
+        if (!/^(issue|milestone)_/.test(properties?.id || "")) return;
+        clearTimeout(this.deliveryTimers.get(filePath));
+        this.deliveryTimers.set(filePath, setTimeout(() => {
+            this.deliveryTimers.delete(filePath);
+            this.deliveryQueue = this.deliveryQueue.then(() => this.syncDelivery(filePath, source, properties));
+        }, 750));
+        while (this.deliveryTimers.size > 128) {
+            const oldest = this.deliveryTimers.keys().next().value;
+            clearTimeout(this.deliveryTimers.get(oldest)); this.deliveryTimers.delete(oldest);
+        }
+    }
+
+    async syncDelivery(filePath, source, properties) {
+        const engine = this.engine;
+        if (!engine?.watches(filePath) || engine.disposed || this.stopped || properties?.["taskix-generated"] !== true) return;
+        try {
+            const keys = properties.id.startsWith("issue_") ? ["requirement", "acceptance", "notes"] : ["goal"];
+            const bodies = keys.map(key => {
+                const start = `<!-- taskix:${key}:start -->`, end = `<!-- taskix:${key}:end -->`;
+                const lines = source.split(/\r?\n/);
+                const starts = lines.flatMap((line, index) => line === start ? [index] : []);
+                const ends = lines.flatMap((line, index) => line === end ? [index] : []);
+                if (starts.length !== 1 || ends.length !== 1 || starts[0] >= ends[0]) throw new Error(`Restore ${key} markers before sync.`);
+                return lines.slice(starts[0] + 1, ends[0]).join("\n");
+            });
+            const body = JSON.stringify(bodies);
+            if (this.deliveryBodies.get(filePath) === body) return;
+            await engine.flush();
+            if (engine !== this.engine || engine.disposed || this.stopped) return;
+            await runCli({ ...this.settings, vaultPath: this.app.vault.adapter.getBasePath() },
+                ["obsidian", "sync", properties.id], this.children);
+            if (engine === this.engine && !engine.disposed) {
+                this.deliveryBodies.delete(filePath);
+                this.deliveryBodies.set(filePath, body);
+                while (this.deliveryBodies.size > 128) this.deliveryBodies.delete(this.deliveryBodies.keys().next().value);
+            }
+        } catch (error) {
+            if (engine === this.engine && !engine.disposed && !this.stopped) new Notice(`Could not synchronize delivery content: ${error.message}`, 10000);
+        }
+    }
+
+    clearDeliveryTimers() {
+        for (const timer of this.deliveryTimers?.values() || []) clearTimeout(timer);
+        this.deliveryTimers?.clear();
+        this.deliveryBodies?.clear();
+    }
+
+    async prepareMilestone(id, folderPath) {
+        try {
+            const settings = { ...this.settings, vaultPath: this.app.vault.adapter.getBasePath() };
+            const { result: project } = await runCli(settings, ["project", "show", id], this.children);
+            const directory = project?.document_directory || `Projects/${project?.key}`;
+            if (project?.id !== id || project.archived_at != null || !Number.isInteger(project.revision) ||
+                typeof directory !== "string" || directory.startsWith("/") || /^[A-Za-z]:/.test(directory) ||
+                directory.replace(/\\/g, "/").split("/").includes("..") ||
+                folderPath !== path.posix.join(this.engine.directory, directory.replace(/\\/g, "/"), "Milestones")) {
+                throw new Error("This Milestones folder does not match a registered active Project.");
+            }
+            if (!this.stopped) this.openMilestoneDialog(project, folderPath);
+        } catch (error) {
+            if (!this.stopped) new Notice(`Could not create Milestone: ${error.message}`, 10000);
+        }
+    }
+
+    async prepareIssue(id, folderPath) {
+        try {
+            const settings = { ...this.settings, vaultPath: this.app.vault.adapter.getBasePath() };
+            const { result: project } = await runCli(settings, ["project", "show", id], this.children);
+            const directory = project?.document_directory || `Projects/${project?.key}`;
+            if (project?.id !== id || project.archived_at != null || !Number.isInteger(project.revision) ||
+                typeof directory !== "string" || directory.startsWith("/") || /^[A-Za-z]:/.test(directory) ||
+                directory.replace(/\\/g, "/").split("/").includes("..") ||
+                folderPath !== path.posix.join(this.engine.directory, directory.replace(/\\/g, "/"), "Issues")) {
+                throw new Error("This Issues folder does not match a registered active Project.");
+            }
+            const { result: milestones } = await runCli(settings, ["milestone", "list", "--project", id], this.children);
+            if (!Array.isArray(milestones)) throw new Error("Invalid Milestone list.");
+            if (!this.stopped) this.openIssueDialog(project, folderPath, milestones);
+        } catch (error) {
+            if (!this.stopped) new Notice(`Could not create Issue: ${error.message}`, 10000);
+        }
+    }
+
+    openMilestoneDialog(project, folderPath) {
+        const plugin = this;
+        class MilestoneDialog extends Modal {
+            onOpen() {
+                this.contentEl.createEl("h2", { text: "New Milestone" });
+                const fields = { title: "", goal: "" };
+                let key = randomUUID();
+                new Setting(this.contentEl).setName("Title").addText(text => text.onChange(value => {
+                    if (value !== fields.title) key = randomUUID();
+                    fields.title = value;
+                }));
+                new Setting(this.contentEl).setName("Goal (optional)").addText(text => text.onChange(value => {
+                    if (value !== fields.goal) key = randomUUID();
+                    fields.goal = value;
+                }));
+                new Setting(this.contentEl).addButton(button => {
+                    button.setButtonText("Create Milestone").setCta().onClick(async () => {
+                        if (this.saving || !fields.title.trim()) return;
+                        this.saving = true;
+                        button.setDisabled(true);
+                        try {
+                            await plugin.createMilestone(project, folderPath, fields, key);
+                            this.close();
+                        } catch (error) {
+                            new Notice(`Could not create Milestone: ${error.message}`, 10000);
+                            this.saving = false;
+                            button.setDisabled(false);
+                        }
+                    });
+                });
+            }
+            onClose() { this.contentEl.empty(); }
+        }
+        new MilestoneDialog(this.app).open();
+    }
+
+    openIssueDialog(project, folderPath, milestones) {
+        const plugin = this;
+        class IssueDialog extends Modal {
+            onOpen() {
+                this.contentEl.createEl("h2", { text: "New Issue" });
+                const fields = { title: "", milestone: "" };
+                let key = randomUUID();
+                new Setting(this.contentEl).setName("Title").addText(text => text.onChange(value => {
+                    if (value !== fields.title) key = randomUUID();
+                    fields.title = value;
+                }));
+                new Setting(this.contentEl).setName("Milestone").addDropdown(dropdown => {
+                    dropdown.addOption("", "None");
+                    for (const milestone of milestones) dropdown.addOption(milestone.id, milestone.title);
+                    dropdown.onChange(value => {
+                        if (value !== fields.milestone) key = randomUUID();
+                        fields.milestone = value;
+                    });
+                });
+                new Setting(this.contentEl).addButton(button => {
+                    button.setButtonText("Create Issue").setCta().onClick(async () => {
+                        if (this.saving || !fields.title.trim()) return;
+                        this.saving = true;
+                        button.setDisabled(true);
+                        try {
+                            await plugin.createIssue(project, folderPath, fields, key);
+                            this.close();
+                        } catch (error) {
+                            new Notice(`Could not create Issue: ${error.message}`, 10000);
+                            this.saving = false;
+                            button.setDisabled(false);
+                        }
+                    });
+                });
+            }
+            onClose() { this.contentEl.empty(); }
+        }
+        new IssueDialog(this.app).open();
+    }
+
+    async createIssue(project, folderPath, fields, key) {
+        return this.createDelivery("Issue", project, folderPath, fields, key);
+    }
+
+    async createMilestone(project, folderPath, fields, key) {
+        return this.createDelivery("Milestone", project, folderPath, fields, key);
+    }
+
+    async createDelivery(kind, project, folderPath, fields, key) {
+        if (!fields.title?.trim()) throw new Error(`${kind} title is required.`);
+        const settings = { ...this.settings, vaultPath: this.app.vault.adapter.getBasePath() };
+        const args = [kind.toLowerCase(), "create", "--project", project.id, "--title", fields.title.trim(), "--idempotency-key", key];
+        if (kind === "Issue" && fields.milestone) args.push("--milestone", fields.milestone);
+        if (kind === "Milestone" && fields.goal?.trim()) args.push("--goal", fields.goal.trim());
+        const response = await runCli(settings, args, this.children);
+        if (this.stopped) return response;
+        if (response.projection_pending) {
+            new Notice(`${kind} created; document publication is pending: ${response.projection_pending}. Run taskix sync after resolving the conflict.`, 10000);
+            return response;
+        }
+        const delivery = response.result;
+        const relative = delivery?.document_path?.replace(/\\/g, "/");
+        const filePath = relative && path.posix.join(this.engine.directory, relative);
+        if (delivery?.project_id !== project.id || typeof relative !== "string" || relative.startsWith("/") ||
+            /^[A-Za-z]:/.test(relative) || relative.split("/").includes("..") || path.posix.dirname(filePath) !== folderPath) {
+            throw new Error(`${kind} created, but the returned document path does not match this Project. Refresh the Project before opening it.`);
+        }
+        let file = this.app.vault.getAbstractFileByPath(filePath);
+        for (let attempt = 0; !file && attempt < 20 && !this.stopped; attempt++) {
+            await new Promise(resolve => setTimeout(resolve, 100));
+            file = this.app.vault.getAbstractFileByPath(filePath);
+        }
+        if (this.stopped) return response;
+        if (file) await this.app.workspace.getLeaf(false).openFile(file);
+        else new Notice(`${kind} created. Refresh the vault before opening its document.`, 10000);
+        return response;
     }
 
     async archiveProject(id, archive, boardPath) {
@@ -641,13 +841,13 @@ class TaskixSyncPlugin extends Plugin {
             const source = await this.app.vault.read(file);
             const match = /^(?:\uFEFF)?---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(source);
             engine.observe(file.path, match ? parseYaml(match[1]) : null, true);
-            engine.observeInbox(file.path, source, true);
         } catch (error) {
             engine.notify(`Could not check ${file.path}: ${error.message}`);
         }
     }
 
     async connect() {
+        this.clearDeliveryTimers();
         this.clearMemoryTimers();
         this.engine?.dispose();
         for (const type of ["markdown", "bases"]) {
@@ -660,7 +860,6 @@ class TaskixSyncPlugin extends Plugin {
             const file = this.app.vault.getAbstractFileByPath(filePath);
             if (!(file instanceof TFile)) return null;
             const content = await this.app.vault.read(file);
-            if (note.kind === "inbox") return parseInbox(content, note.project_id).find((entry) => entry.id === note.id);
             const match = /^(?:\uFEFF)?---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(content);
             return match ? parseYaml(match[1]) : null;
         };
@@ -675,6 +874,12 @@ class TaskixSyncPlugin extends Plugin {
                 }
                 return result;
             },
+            resolveLink: (link, sourcePath) => {
+                const file = this.app.metadataCache.getFirstLinkpathDest(link, sourcePath);
+                if (!(file instanceof TFile)) return null;
+                const properties = this.app.metadataCache.getFileCache(file)?.frontmatter;
+                return { path: file.path, id: properties?.id };
+            },
             lookup: async (id) => {
                 const { result } = await execute(["obsidian", "show", id]);
                 if (result) {
@@ -686,10 +891,6 @@ class TaskixSyncPlugin extends Plugin {
             patch: async (filePath, expected, properties, note) => {
                 const file = this.app.vault.getAbstractFileByPath(filePath);
                 if (!(file instanceof TFile) || engine.disposed) return false;
-                if (note.kind === "inbox") {
-                    await this.app.vault.process(file, (source) => engine.disposed ? source : patchInbox(source, note, expected, properties));
-                    return true;
-                }
                 let updated = false;
                 await this.app.fileManager.processFrontMatter(file, (frontmatter) => {
                     if (engine.disposed || frontmatter.id !== expected.id ||
@@ -745,6 +946,7 @@ class TaskixSyncPlugin extends Plugin {
 
     onunload() {
         this.stopped = true;
+        this.clearDeliveryTimers();
         this.clearMemoryTimers();
         this.memoryNotices?.clear();
         this.engine?.dispose();
@@ -790,5 +992,3 @@ module.exports = TaskixSyncPlugin;
 module.exports.SyncEngine = SyncEngine;
 module.exports.commandFor = commandFor;
 module.exports.runCli = runCli;
-module.exports.parseInbox = parseInbox;
-module.exports.patchInbox = patchInbox;

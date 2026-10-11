@@ -7,10 +7,41 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { runHook, runTaskix } from "../runtime.mjs";
+import { registerExtension } from "../runtime.mjs";
 import { loadPlugin, copy } from "./support/obsidian-plugin.mjs";
 
 // Run through cargo test -p taskix, which prepends the compiled binary directory
 // to PATH. Each fixture uses an isolated configuration and database.
+
+for (const host of ["codex","claude","pi","omp"]) {
+    test(`${host} Issue route rereads the real document and guards association before start`,async t=>{
+        const f=await fixture(t), session=`issue-route:${host}`;
+        const item=await f.run(["issue","create","--project",f.project.id,"--title","Login","--requirement","Allow login","--acceptance","Valid users sign in"]);
+        const env={TASKIX_JEV_ENABLED:"true",TASKIX_JEV_URL:"https://fixture.test/jev",TASKIX_JEV_API_KEY:"fixture"};
+        const routing={env,cacheDir:f.dir,fetch:async(_url,init)=>({ok:true,json:async()=>choiceAnswers(JSON.parse(init.body),{intent:"work",route:`resume:${f.job.id}`,issue:item.id})})};
+        let content;
+        if(["codex","claude"].includes(host)) {
+            content=(await runHook({hook_event_name:"UserPromptSubmit",session_id:session,cwd:f.dir,prompt:"Allow login"},runTaskix,routing)).hookSpecificOutput.additionalContext;
+        } else {
+            const handlers=new Map();
+            registerExtension({on:(name,fn)=>handlers.set(name,fn),registerTool(){}},host,runTaskix,globalThis,undefined,routing);
+            content=(await handlers.get("before_agent_start")({prompt:"Allow login"},{cwd:f.dir,sessionManager:{getSessionId:()=>session}})).message.content;
+        }
+        assert.match(content,/Taskix route: resume/);
+        assert.match(content,new RegExp(`--issue ${item.id} --issue-revision ${item.revision} --issue-content-hash ${item.content_hash}`));
+        assert.equal((await f.run(["job","show",f.job.id])).issue_id,null,"routing is read-only");
+        const current=await f.run(["job","show",f.job.id]);
+        const options={session,executor:`agent:${host}`};
+        await f.run(["job","update",f.job.id,"--issue",item.id,"--issue-revision",String(item.revision),"--issue-content-hash",item.content_hash,"--expect-revision",String(current.revision)],options);
+        assert.equal((await f.run(["issue","show",item.id])).issue.status,"TODO");
+        const task=await f.run(["task","add","--job",f.job.id,"--title","Deliver login"],options);
+        const claimed=await f.run(["task","claim",task.id],options),owner={...options,token:claimed.lease.token};
+        await f.run(["plan","create",task.id,"--body","# Verify login"],owner);
+        await f.run(["task","start",task.id],owner);
+        assert.equal((await f.run(["issue","show",item.id])).issue.status,"ACTIVE");
+        await f.run(["issue","cancel",item.id]);
+    });
+}
 
 async function fixture(t, session) {
     const dir = await mkdtemp(join(tmpdir(), "task-plugin \u{2603} "));
@@ -115,59 +146,63 @@ test("Obsidian bridge uses real CLI revisions, lease guards and manual Job revie
     assert.equal(notices.length, 1);
 });
 
-test("Inbox bridge edits real Markdown, enforces Job review and reopens completed work", async (t) => {
+test("Issue bridge preserves Markdown, waits for every Job and requires separate human acceptance", async t => {
     const f = await fixture(t);
-    await f.run(["job", "cancel", f.job.id]);
-    const entry = await f.run(["inbox", "add", "--project", f.project.id, "--content", "Deliver\nPreserve these details."]);
-    const claimed = await f.run(["inbox", "claim-next", "--project", f.project.id], { session: "inbox-worker", executor: "agent:test" });
-    const task = await f.run(["task", "add", "--job", claimed.job.id, "--title", "Implementation"]);
-    const { SyncEngine, runCli, parseInbox, patchInbox } = loadPlugin();
-    const execute = (args) => runCli({ cliPath: "taskix", configPath: process.env.TASKIX_CONFIG, vaultPath: f.root }, args);
-    const lookup = async (id) => (await execute(["obsidian", "show", id])).result;
-    const note = await lookup(entry.id);
-    const path = join(f.root, note.path);
-    const notices = [];
-    const engine = new SyncEngine({
-        connection: async () => (await execute(["obsidian", "connection"])).result,
-        lookup, execute, notice: (message) => notices.push(message),
-        openNotes: async function* () { yield { path: note.path, source: await readFile(path, "utf8") }; },
-        read: async () => parseInbox(await readFile(path, "utf8"), f.project.id).find((row) => row.id === entry.id),
-        patch: async (_path, expected, properties, row) => {
-            await writeFile(path, patchInbox(await readFile(path, "utf8"), row, expected, properties));
+    const issue = await f.run(["issue", "create", "--project", f.project.id, "--title", "Login",
+        "--requirement", "Original requirement", "--acceptance", "Valid users sign in"]);
+    await f.run(["job", "update", f.job.id, "--issue", issue.id]);
+    const second = await f.run(["job", "create", "--project", f.project.id, "--title", "Second round", "--issue", issue.id]);
+    const task = await f.run(["task", "add", "--job", f.job.id, "--title", "Implementation"]);
+    const owner = {session:"issue-worker",executor:"agent:test"};
+    const claim = await f.run(["task", "claim", task.id], owner); owner.token=claim.lease.token;
+    await f.run(["plan", "create", task.id, "--body", "Verify login"], owner);
+    await f.run(["task", "start", task.id], owner);
+    assert.equal((await f.run(["issue", "show", issue.id])).issue.status, "ACTIVE");
+    await f.run(["task", "done", task.id], owner);
+    assert.equal((await f.run(["job", "show", f.job.id])).status, "PENDING_REVIEW");
+    assert.equal((await f.run(["issue", "show", issue.id])).issue.status, "ACTIVE");
+    const {SyncEngine,runCli} = loadPlugin();
+    const execute = args => runCli({cliPath:"taskix",configPath:process.env.TASKIX_CONFIG,vaultPath:f.root},args);
+    const lookup = async id => (await execute(["obsidian", "show", id])).result;
+    const note = await lookup(issue.id), path=join(f.root,note.path), notices=[];
+    const read = async () => {
+        const source=await readFile(path,"utf8");
+        return {...copy((await lookup(issue.id)).properties), id:issue.id,
+            status:/^status: "([^"\n]+)"$/m.exec(source)[1], revision:Number(/^revision: (\d+)$/m.exec(source)[1])};
+    };
+    const engine=new SyncEngine({
+        connection:async ()=>(await execute(["obsidian","connection"])).result,
+        lookup,execute,notice:message=>notices.push(message),
+        openNotes:async function*(){yield {path:note.path,properties:await read()};},read,
+        patch:async (_path,expected,properties)=>{
+            const current=await read();
+            if(current.status!==expected.status || current.revision!==expected.revision)return false;
+            const source=await readFile(path,"utf8");
+            await writeFile(path,source.replace(/^status: .*$/m,`status: "${properties.status}"`).replace(/^revision: .*$/m,`revision: ${properties.revision}`));
+            return true;
         },
     });
-    t.after(() => engine.dispose());
-    await engine.initialize();
-    const edit = async (from, to) => {
-        const source = (await readFile(path, "utf8")).replace(`- [${from}] Deliver`, `- [${to}] Deliver`);
-        await writeFile(path, source); engine.observeInbox(note.path, source); await engine.flush();
+    t.after(()=>engine.dispose()); await engine.initialize();
+    const edit=async status=>{
+        await writeFile(path,(await readFile(path,"utf8")).replace(/^status: .*$/m,`status: "${status}"`));
+        engine.observe(note.path,await read()); await engine.flush();
     };
-    await edit("/", "x");
-    assert.equal((await f.run(["job", "show", claimed.job.id])).status, "ACTIVE");
-    assert.match(notices[0], /all Tasks must be DONE, FAILED or CANCELLED/);
-    assert.match(await readFile(path, "utf8"), /- \[\/\] Deliver/);
-    const owner = { session: "inbox-worker", executor: "agent:test" };
-    const claim = await f.run(["task", "claim", task.id], owner); owner.token = claim.lease.token;
-    await f.run(["plan", "create", task.id, "--body", "Verify"], owner);
-    await f.run(["task", "start", task.id], owner); await f.run(["task", "done", task.id], owner);
-    await engine.initialize();
-    assert.match(await readFile(path, "utf8"), /- \[r\] Deliver/);
-    await edit("r", "/");
-    assert.equal((await f.run(["job", "show", claimed.job.id])).status, "ACTIVE");
-    await edit("/", "r");
-    assert.equal((await f.run(["job", "show", claimed.job.id])).status, "PENDING_REVIEW");
-    await edit("r", "x");
-    assert.equal((await f.run(["job", "show", claimed.job.id])).status, "COMPLETED");
-    await edit("x", "/");
-    assert.equal((await f.run(["job", "show", claimed.job.id])).status, "ACTIVE");
-    await edit("/", " ");
-    await edit(" ", "-");
-    assert.equal((await f.run(["job", "show", claimed.job.id])).status, "CANCELLED");
-    await edit("-", " ");
-    assert.equal((await f.run(["inbox", "list", "--project", f.project.id]))[0].status, "TODO");
-    assert.equal((await f.run(["task", "show", task.id])).status, "DONE");
-    assert.match(await readFile(path, "utf8"), /Preserve these details/);
-    assert.equal(notices.length, 1);
+    await edit("PENDING_REVIEW");
+    assert.equal((await read()).status,"ACTIVE");
+    assert.equal(notices.length,1);
+    await execute(["job","approve",f.job.id]);
+    await execute(["job","cancel",second.id]);
+    await writeFile(path,(await readFile(path,"utf8")).replace("Original requirement","Authored requirement"));
+    await edit("PENDING_REVIEW");
+    assert.equal((await f.run(["issue","show",issue.id])).issue.status,"PENDING_REVIEW");
+    await edit("COMPLETED");
+    assert.equal((await f.run(["issue","show",issue.id])).issue.status,"COMPLETED");
+    await edit("TODO");
+    assert.equal((await f.run(["issue","show",issue.id])).issue.status,"TODO");
+    assert.equal((await f.run(["job","show",f.job.id])).status,"COMPLETED");
+    assert.equal((await f.run(["task","show",task.id])).status,"DONE");
+    assert.match(await readFile(path,"utf8"),/Authored requirement/);
+    assert.equal(notices.length,1);
 });
 
 function taskLanguage(t, language) {
@@ -280,7 +315,8 @@ for (const host of ["pi", "omp"]) {
         assert.equal(note.properties.status, "DONE");
         assert.equal(note.properties.id, task.id);
         assert.ok(note.path.includes("/Tasks/"));
-        assert.equal(body.includes("[["), true);
+        assert.ok(body.includes(`project_id: ${JSON.stringify(job.project_id)}`));
+        assert.doesNotMatch(body, /^projects:/m);
         assert.equal((await f.run(["doctor"])).healthy, true);
     });
 }
@@ -319,75 +355,54 @@ test("tool retries preserve identity after claim, Plan revision and lease-releas
 });
 
 for (const host of ["codex", "claude"]) {
-    test(`${host} real Stop hooks leave pending entries unclaimed until manual intake`, async (t) => {
+    test(`${host} real Stop hooks leave unstarted Issues for an explicit request`, async t => {
         const f = await fixture(t);
         const options = { session: `session:${host}`, executor: `agent:${host}`, cwd: f.dir };
-        const previous = await f.run(["task", "add", "--job", f.job.id, "--title", "Previous work"], options);
-        const owner = await f.run(["task", "claim", previous.id], options);
-        const leased = { ...options, token: owner.lease.token };
-        await f.run(["plan", "create", previous.id, "--body", "# Deliver"], leased);
-        await f.run(["task", "start", previous.id], leased);
-        await f.run(["task", "done", previous.id], leased);
-        await f.run(["job", "approve", f.job.id]);
-        const entry = await f.run(["inbox", "add", "--project", f.project.id, "--content", "Await user review"]);
-        const queue = await f.run(["inbox", "list", "--project", f.project.id]);
+        const item = await f.run(["issue", "create", "--project", f.project.id, "--title", "Await explicit execution"]);
+        const before = await f.run(["issue", "show", item.id]);
         for (let i = 0; i < 2; i++) {
-            assert.deepEqual(await runHook({
-                hook_event_name: "Stop", session_id: options.session, cwd: f.dir,
-                ...(host === "codex" ? { turn_id: `turn-${i}` } : {}),
-            }), {});
+            assert.deepEqual(await runHook({hook_event_name:"Stop",session_id:options.session,cwd:f.dir,
+                ...(host === "codex" ? {turn_id:`turn-${i}`} : {})}), {});
         }
-        assert.deepEqual(await f.run(["inbox", "list", "--project", f.project.id]), queue);
-        assert.equal((await f.run(["context"], options)).inbox, null);
-        const next = await f.run(["inbox", "claim-next", "--project", f.project.id], options);
-        assert.equal(next.entry.id, entry.id);
-        await f.run(["inbox", "cancel", entry.id]);
+        assert.deepEqual(await f.run(["issue", "show", item.id]), before);
+        assert.equal((await f.run(["context"], options)).issue_id, null);
+        assert.equal(before.jobs.length, 0);
     });
 }
 
 for (const host of ["pi", "omp"]) {
-    test(`${host} real Inbox Jobs require explicit intake after each completion`, async (t) => {
-        const f = await fixture(t);
-        const x = await extension(t, f, host);
-        async function finish(job) {
-            const task = await x.invoke(["task", "add", "--job", job, "--title", "Deliver"]);
-            await x.invoke(["task", "claim", task.id]);
-            await x.invoke(["plan", "create", task.id, "--body", "# Deliver and verify"]);
-            await x.invoke(["task", "start", task.id]);
-            await x.invoke(["task", "done", task.id]);
-        }
-        async function settle() {
-            await x.handlers.get("agent_end")({ messages: [{ role: "assistant", stopReason: "stop" }] }, x.ctx);
-            if (host === "pi") await x.handlers.get("agent_settled")({}, x.ctx);
-        }
-        await finish(f.job.id);
-        await f.run(["job", "approve", f.job.id]);
-        const first = await f.run(["inbox", "add", "--project", f.project.id, "--content", "First request"]);
-        const second = await f.run(["inbox", "add", "--project", f.project.id, "--content", "Second request"]);
-        for (const entry of [first, second]) {
-            await settle();
-            await settle();
-            let current = await f.run(["context"], { session: x.ctx.sessionManager.getSessionId() });
-            assert.equal(current.inbox, null);
-            assert.equal(x.messages.length, 0);
-            const queue = await f.run(["inbox", "list", "--project", f.project.id]);
-            assert.equal(queue.find(row => row.id === entry.id).status, "TODO");
-            assert.equal(queue.find(row => row.id === entry.id).job_id, null);
-            const claimed = await x.invoke(["inbox", "claim-next", "--project", f.project.id]);
-            assert.equal(claimed.entry.id, entry.id);
-            current = await f.run(["context"], { session: x.ctx.sessionManager.getSessionId() });
-            assert.equal(current.inbox.id, entry.id);
-            if (entry.id === first.id) {
-                await finish(current.job_id);
-                assert.equal((await f.run(["job", "show", current.job_id])).status, "PENDING_REVIEW");
-                await f.run(["job", "approve", current.job_id]);
-            }
-            else await f.run(["inbox", "cancel", entry.id]);
-        }
-        const heartbeat = await f.run(["hook", "heartbeat"], { session: x.ctx.sessionManager.getSessionId() });
-        assert.ok(heartbeat.inbox_cancellations.some(entry => entry.id === second.id));
-        await settle();
-        assert.equal(x.messages.length, 0);
+    test(`${host} real Issue stays active across Jobs and stops cancelled execution`, async t => {
+        const f = await fixture(t), x = await extension(t,f,host);
+        const item=await f.run(["issue","create","--project",f.project.id,"--title","Login", "--requirement","Allow login","--acceptance","Valid users sign in"]);
+        const first=await x.invoke(["job","create","--project",f.project.id,"--title","First round","--issue",item.id]);
+        const second=await x.invoke(["job","create","--project",f.project.id,"--title","Second round","--issue",item.id]);
+        const begin=async job=>{
+            const task=await x.invoke(["task","add","--job",job,"--title","Deliver"]);
+            await x.invoke(["task","claim",task.id]);
+            await x.invoke(["plan","create",task.id,"--body","# Deliver and verify"]);
+            await x.invoke(["task","start",task.id]);
+            return task;
+        };
+        const task=await begin(first.id);
+        let current=await f.run(["context"],{session:x.ctx.sessionManager.getSessionId()});
+        assert.equal(current.issue_id,item.id);
+        assert.equal(current.issue.status,"ACTIVE");
+        assert.equal(current.issue.requirement,"Allow login");
+        await x.invoke(["task","done",task.id]);
+        await f.run(["job","approve",first.id]);
+        assert.equal((await f.run(["issue","show",item.id])).issue.status,"ACTIVE");
+        await assert.rejects(f.run(["issue","submit",item.id]),/terminal/);
+        const secondTask=await begin(second.id);
+        await f.run(["issue","cancel",item.id]);
+        const heartbeat=await f.run(["hook","heartbeat"],{session:x.ctx.sessionManager.getSessionId()});
+        assert.ok(heartbeat.issue_cancellations.some(i=>i.id===item.id && i.job_id===second.id));
+        assert.equal((await f.run(["job","show",first.id])).status,"COMPLETED");
+        assert.equal((await f.run(["task","show",secondTask.id])).status,"CANCELLED");
+        await assert.rejects(x.invoke(["task","done",secondTask.id]),/lease|terminal|cancelled|status/i);
+        await x.handlers.get("agent_end")({messages:[{role:"assistant",stopReason:"stop"}]},x.ctx);
+        if(host==="pi") await x.handlers.get("agent_settled")({},x.ctx);
+        assert.equal(x.messages.length,0);
+        assert.equal((await f.run(["issue","show",item.id])).jobs.length,2);
     });
     for (const entity of ["job", "project"]) {
         test(`${host} ${entity} deletion replays its committed result without duplicate events`, async (t) => {
