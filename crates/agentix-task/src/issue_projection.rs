@@ -22,6 +22,48 @@ impl Service {
             .to_owned()
     }
 
+    pub(super) fn global_issue_base(&self) -> Result<String> {
+        let folder_filter = |path: &Path| {
+            let folder = path.to_string_lossy().replace('\\', "/");
+            format!("file.inFolder({})", json!(folder.trim_start_matches("./")))
+        };
+        let active = json!({"and":["archived != true"]});
+        let columns = json!([
+            "formula.name",
+            "projects",
+            "status",
+            "milestone",
+            "updated_at"
+        ]);
+        let base = json!({
+            "filters":{"and":[
+                {"or":[folder_filter(&self.config.documents.directory.join("Projects")), folder_filter(&self.config.documents.archive_directory)]},
+                "file.ext == \"md\"", "note[\"taskix-generated\"] == true", "file.hasTag(\"agent/issue\")"
+            ]},
+            "formulas":{"name":NAME_FORMULA},
+            "properties":{
+                "formula.name":{"displayName":"Issue"},
+                "note.projects":{"displayName":"Project"},
+                "note.status":{"displayName":"Status"},
+                "note.milestone":{"displayName":"Milestone"},
+                "note.updated_at":{"displayName":"Updated"}
+            },
+            "views":[
+                {"type":"table","name":"Issues","filters":active,"order":columns,"sort":completion_sort()},
+                {"type":"kanban","name":"By status","filters":active,"order":columns,"sort":completion_sort(),
+                    "groupBy":{"property":"note.status","direction":"ASC"},"groupOrder":IssueStatus::ALL,
+                    "hideEmptyColumns":false,"columnWidth":300},
+                {"type":"table","name":"By project","filters":active,"order":columns,"sort":completion_sort(),
+                    "groupBy":{"property":"note.projects","direction":"ASC"}},
+                {"type":"table","name":"Archived","filters":{"and":["archived == true"]},"order":columns,"sort":completion_sort()}
+            ]
+        });
+        Ok(format!(
+            "# taskix-generated: global-issues\n{}",
+            serde_yaml::to_string(&base)?
+        ))
+    }
+
     fn issue_base(project: &Project) -> Result<String> {
         let issue_filters = json!({"and":["file.hasTag(\"agent/issue\")","archived != true"]});
         let board = |name: &str, filters: Value, statuses: Value| {
@@ -98,6 +140,10 @@ impl Service {
         }
         managed["tags"] = json!(["agent/issue"]);
         managed["title"] = json!(issue.name);
+        managed["projects"] = json!([self.link(
+            &format!("{}/Board.md", project.document_directory()),
+            &project.name,
+        )]);
         managed["archived"] = json!(issue.archived_at.is_some() || project.archived_at.is_some());
         managed["milestone"] = milestone.map_or(Value::Null, |milestone| {
             json!(self.link(&milestone.document_path, &milestone.name))

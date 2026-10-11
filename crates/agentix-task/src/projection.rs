@@ -629,6 +629,17 @@ impl Service {
             }
         }
 
+        if includes("dashboard") {
+            // Preserve saved global filters and views during full synchronization too.
+            let registered = previous
+                .get("issues-dashboard")
+                .is_some_and(|path| path == "Issue.base");
+            if !registered || !self.safe_path("Issue.base")?.is_file() {
+                files.insert("Issue.base".into(), self.global_issue_base()?);
+            }
+            paths.insert("issues-dashboard".into(), "Issue.base".into());
+        }
+
         if includes("pending-review") || includes("dashboard") {
             match preserve_base("pending-review", "Recent Jobs.base")? {
                 Some(Some(source)) => {
@@ -649,6 +660,8 @@ impl Service {
                 let existing = std::fs::read_to_string(&path)?;
                 let owned = if relative == "Dashboard.base" {
                     existing.starts_with("# taskix-generated: dashboard\n")
+                } else if relative == "Issue.base" {
+                    existing.starts_with("# taskix-generated: global-issues\n")
                 } else if relative == "Recent Jobs.base" {
                     existing.starts_with("# taskix-generated: pending-review\n")
                 } else if relative.ends_with("/Issue.base")

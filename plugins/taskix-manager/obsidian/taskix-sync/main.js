@@ -460,7 +460,7 @@ class TaskixSyncPlugin extends Plugin {
                 let managed = false;
                 if (file && this.engine?.watches(file.path)) {
                     if (type === "bases") {
-                        managed = ["Dashboard.base", "Recent Jobs.base"].some(name =>
+                        managed = ["Dashboard.base", "Recent Jobs.base", "Issue.base"].some(name =>
                             file.path === path.posix.join(this.engine.directory, name));
                         if (!managed && ["Issue.base", "Milestones.base"].includes(path.posix.basename(file.path))) {
                             const board = this.app.vault.getAbstractFileByPath(path.posix.join(path.posix.dirname(file.path), "Board.md"));

@@ -26,6 +26,8 @@ Human approval requires a `user:` actor. Agent execution cannot self-approve an 
 
 ## Documents and shared Bases
 
+The root `Issue.base`, beside `Dashboard.base`, aggregates generated Issue notes across all Projects. It provides **Issues** (table), **By status** (Kanban), **By project** (grouped table), and **Archived** views. The first three exclude archived Issues and Projects. Use the native Bases filter menu to combine **Project**, **Status**, and **Milestone** filters; Project values are named Board links. There is no item limit. Saved filters and views survive both incremental and full synchronization, even when Obsidian removes the generated comment. Run `taskix sync` after upgrading to create the missing root Base. An unrelated existing `Issue.base` is preserved and reported as a conflict.
+
 Each Project creates these directories and files:
 
 ```text

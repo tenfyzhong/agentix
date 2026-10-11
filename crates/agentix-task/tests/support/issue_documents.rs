@@ -1,6 +1,131 @@
 use super::*;
 
 #[tokio::test]
+async fn global_issue_base_exposes_cross_project_table_board_and_archive_filters() {
+    let f = Fixture::new().await;
+    let first = create_issue(&f).await;
+    std::fs::create_dir_all(f.dir.path().join("second")).unwrap();
+    let second_project = f.service.execute(json!({"command":"project.register","root":f.dir.path().join("second"),"name":"Second"}), WriteOptions::default()).await.unwrap().result;
+    let second = f
+        .service
+        .execute(
+            json!({"command":"issue.create","project":second_project["id"],"title":"Second issue"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap()
+        .result;
+    let source = read(&f, "Issue.base");
+    let base: Value = serde_yaml::from_str(&source).unwrap();
+    assert!(
+        f.service
+            .config()
+            .output_dir()
+            .join("Dashboard.base")
+            .exists()
+    );
+    assert_eq!(
+        base["filters"]["and"][0]["or"],
+        json!([
+            "file.inFolder(\"Tasks ☃/Projects\")",
+            "file.inFolder(\"Archived Projects\")"
+        ])
+    );
+    assert!(base["filters"].to_string().contains("agent/issue"));
+    assert!(!base["filters"].to_string().contains(&f.project));
+    let views = base["views"].as_array().unwrap();
+    assert!(
+        views
+            .iter()
+            .any(|v| v["type"] == "table" && v["name"] == "Issues")
+    );
+    let board = views.iter().find(|v| v["type"] == "kanban").unwrap();
+    assert_eq!(board["groupOrder"], json!(agentix_task::IssueStatus::ALL));
+    for view in views {
+        assert!(view.get("limit").is_none());
+        assert!(
+            view["order"]
+                .as_array()
+                .unwrap()
+                .contains(&json!("projects"))
+        );
+        assert!(view["order"].as_array().unwrap().contains(&json!("status")));
+    }
+    assert!(
+        views
+            .iter()
+            .any(|v| v["filters"] == json!({"and":["archived == true"]}))
+    );
+    for (item, project) in [
+        (&first, f.project.as_str()),
+        (&second, second_project["id"].as_str().unwrap()),
+    ] {
+        let doc = read(&f, item["document_path"].as_str().unwrap());
+        assert!(doc.contains(project));
+        assert!(
+            doc.contains("projects:"),
+            "Issues expose human-readable Project links for filtering"
+        );
+    }
+}
+
+#[tokio::test]
+async fn global_issue_base_keeps_saved_filters_through_mutation_and_full_sync() {
+    let f = Fixture::new().await;
+    let item = create_issue(&f).await;
+    let mut base: Value = serde_yaml::from_str(&read(&f, "Issue.base")).unwrap();
+    base["views"][0]["filters"] =
+        json!({"and":[format!("project_id == {}",json!(f.project)),"status == \"ACTIVE\""]});
+    let saved = serde_yaml::to_string(&base).unwrap();
+    let path = f.service.config().output_dir().join("Issue.base");
+    std::fs::write(&path, &saved).unwrap();
+    f.service
+        .execute(
+            json!({"command":"issue.update","issue":item["id"],"title":"Updated requirement"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    f.service.sync().await.unwrap();
+    assert_eq!(std::fs::read_to_string(path).unwrap(), saved);
+}
+
+#[tokio::test]
+async fn global_issue_base_upgrade_creates_missing_view_and_preserves_user_collision() {
+    let f = Fixture::new().await;
+    let path = f.service.config().output_dir().join("Issue.base");
+    let mut registry = f
+        .service
+        .store()
+        .metadata("documents")
+        .await
+        .unwrap()
+        .unwrap();
+    registry
+        .as_object_mut()
+        .unwrap()
+        .retain(|_, value| value != "Issue.base");
+    f.service
+        .store()
+        .set_metadata("documents", &registry)
+        .await
+        .unwrap();
+    std::fs::write(&path, "views: []\n").unwrap();
+    let result = f.service.sync().await;
+    assert!(
+        result.is_err(),
+        "an existing user Base must not be replaced"
+    );
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "views: []\n");
+    std::fs::remove_file(&path).unwrap();
+    f.service.sync().await.unwrap();
+    assert!(
+        path.exists(),
+        "existing installations receive the root Issue Base on sync"
+    );
+}
+
+#[tokio::test]
 async fn milestone_goal_authoring_survives_sync_and_metadata_updates() {
     let f = Fixture::new().await;
     let milestone = f.service.execute(json!({"command":"milestone.create","project":f.project,"title":"MVP","goal":"Original goal"}), WriteOptions::default()).await.unwrap().result;
