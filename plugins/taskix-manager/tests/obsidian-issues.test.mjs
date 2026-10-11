@@ -166,3 +166,59 @@ test("Issue creation does not create a blank note when its projection is not cac
     assert.equal(linked, false);
     assert.match(f.notices.at(-1).message, /created.*Refresh/);
 });
+
+for (const kind of ["issue", "milestone"]) {
+    test(`${kind}_editing_waits_five_idle_seconds_and_cancels_on_unload`, async t => {
+        t.mock.timers.enable({ apis: ["setTimeout"] });
+        const f = await connectionFixture();
+        t.after(() => f.plugin.onunload());
+        const calls = [];
+        f.plugin.syncDelivery = async (...args) => calls.push(args);
+        const filePath = `11-Agents/Projects/Demo/${kind}.md`;
+        const properties = { id: `${kind}_one`, "taskix-generated": true };
+        const flush = async () => { await f.plugin.deliveryQueue; };
+        f.plugin.queueDelivery(filePath, "first edit", properties);
+        t.mock.timers.tick(4999); await flush();
+        assert.equal(calls.length, 0);
+        f.plugin.queueDelivery(filePath, "latest edit", properties);
+        t.mock.timers.tick(4999); await flush();
+        assert.equal(calls.length, 0);
+        t.mock.timers.tick(1); await flush();
+        assert.equal(calls.length, 1);
+        assert.equal(calls[0][1], "latest edit");
+        f.plugin.queueDelivery(filePath, "cancelled edit", properties);
+        f.plugin.onunload();
+        t.mock.timers.tick(5000); await flush();
+        assert.equal(calls.length, 1);
+    });
+}
+
+for (const kind of ["issue", "milestone"]) {
+    test(`${kind}_pending_delivery_survives_unload_and_recovers_closed_note`, async t => {
+        t.mock.timers.enable({ apis: ["setTimeout"] });
+        const storage = new Map();
+        const first = await connectionFixture("11-Agents", {}, { storage });
+        const filePath = `11-Agents/Projects/Demo/${kind}.md`;
+        const props = { id: `${kind}_one`, "taskix-generated": true };
+        const keys = kind === "issue" ? ["requirement", "acceptance", "notes"] : ["goal"];
+        const body = keys.map(key => `<!-- taskix:${key}:start -->\nSaved content\n<!-- taskix:${key}:end -->`).join("\n");
+        first.plugin.queueDelivery(filePath, body, props);
+        first.plugin.onunload();
+        const second = await connectionFixture("11-Agents", {}, { storage });
+        t.after(() => second.plugin.onunload());
+        second.file.path = filePath;
+        second.plugin.app.vault.getAbstractFileByPath = path => path === filePath ? second.file : null;
+        second.plugin.app.vault.read = async () => `---\n${JSON.stringify(props)}\n---\n${body}`;
+        second.plugin.engine = { directory: "11-Agents", watches: () => true, observe() {}, flush: async () => {}, dispose() {} };
+        await second.plugin.recoverDeliveries(second.plugin.engine);
+        t.mock.timers.tick(5000);
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(second.requests.length, 1);
+        second.reply(null, undefined, { id: props.id });
+        await second.plugin.deliveryQueue;
+        assert.deepEqual([...second.plugin.pendingDeliveries], []);
+        const third = await connectionFixture("11-Agents", {}, { storage });
+        t.after(() => third.plugin.onunload());
+        assert.equal(third.plugin.pendingDeliveries.size, 0);
+    });
+}

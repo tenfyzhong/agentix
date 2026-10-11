@@ -6,6 +6,9 @@ const { randomUUID } = require("node:crypto");
 const { realpathSync } = require("node:fs");
 const path = require("node:path");
 
+const CONTENT_EDIT_DELAY_MS = 5000;
+const PENDING_DELIVERIES_KEY = "taskix-sync-pending-deliveries";
+
 function localTimestamp(seconds) {
     const date = new Date(seconds * 1000);
     const offset = -date.getTimezoneOffset();
@@ -434,6 +437,19 @@ class TaskixSyncPlugin extends Plugin {
         this.deliveryTimers = new Map();
         this.deliveryBodies = new Map();
         this.deliveryQueue = Promise.resolve();
+        const pending = this.app.loadLocalStorage(PENDING_DELIVERIES_KEY);
+        this.pendingDeliveries = new Set(Array.isArray(pending) ? pending.filter(value => typeof value === "string") : []);
+        this.deliveryVersions = new Map();
+        this.mergeNoticeObservers = new Map();
+        if (typeof document !== "undefined") this.watchMergeNotices(document);
+        this.app.workspace.iterateAllLeaves(leaf => this.watchMergeNotices(leaf.view.containerEl.ownerDocument));
+        this.registerEvent(this.app.workspace.on("window-open", (_workspaceWindow, win) => {
+            this.watchMergeNotices(win.document);
+        }));
+        this.registerEvent(this.app.workspace.on("window-close", (_workspaceWindow, win) => {
+            this.mergeNoticeObservers.get(win.document)?.disconnect();
+            this.mergeNoticeObservers.delete(win.document);
+        }));
         this.addSettingTab(new TaskixSettings(this.app, this));
         this.addCommand({
             id: "refresh", name: "Check connection and refresh state",
@@ -489,6 +505,37 @@ class TaskixSyncPlugin extends Plugin {
         this.app.workspace.onLayoutReady(() => { if (!this.stopped) void this.connect(); });
     }
 
+    watchMergeNotices(doc) {
+        if (!doc?.body || !doc.defaultView?.MutationObserver || this.mergeNoticeObservers.has(doc)) return;
+        const filter = notice => {
+            const message = notice.querySelector(".notice-message")?.textContent;
+            // Match only Obsidian's normal automatic-merge notice, never failures.
+            const match = /^“(.+)” has been modified externally, merging changes automatically\.$/s.exec(message || "");
+            if (!match || !this.engine?.watches(match[1]) || this.engine.disposed) return;
+            const file = this.app.vault.getAbstractFileByPath(match[1]);
+            const properties = file && this.app.metadataCache.getFileCache(file)?.frontmatter;
+            if (properties?.["taskix-generated"] !== true || !/^(?:prj|job|task|issue|milestone|mem)_/.test(properties.id || "")) return;
+            notice.remove();
+        };
+        const observer = new doc.defaultView.MutationObserver(records => {
+            if (this.stopped) return;
+            const notices = new Set();
+            for (const record of records) {
+                const parent = record.target?.nodeType === 1 ? record.target : record.target?.parentElement;
+                const current = parent?.closest(".notice");
+                if (current) notices.add(current);
+                for (const node of record.addedNodes) {
+                    if (node.nodeType !== 1) continue;
+                    if (node.matches(".notice")) notices.add(node);
+                    for (const notice of node.querySelectorAll(".notice")) notices.add(notice);
+                }
+            }
+            for (const notice of notices) filter(notice);
+        });
+        observer.observe(doc.body, { childList: true, subtree: true, characterData: true });
+        this.mergeNoticeObservers.set(doc, observer);
+    }
+
     styleBoards() {
         for (const type of ["markdown", "bases"]) {
             for (const leaf of this.app.workspace.getLeavesOfType(type)) {
@@ -519,22 +566,44 @@ class TaskixSyncPlugin extends Plugin {
         return /^(?:[^/]+\/)+Memory\/mem_(?:[0-9]{12}_)?[0-9a-f]{32}\.md$/.test(relative);
     }
 
+    persistPendingDeliveries() {
+        // Vault-scoped local storage is synchronous; closing during debounce must not lose work.
+        this.app.saveLocalStorage(PENDING_DELIVERIES_KEY, [...this.pendingDeliveries]);
+    }
+
+    async recoverDeliveries(engine) {
+        for (const filePath of [...this.pendingDeliveries]) {
+            if (this.stopped || this.engine !== engine || engine.disposed) return;
+            if (engine.watches(filePath)) await this.inspectFile(this.app.vault.getAbstractFileByPath(filePath));
+        }
+    }
+
     queueDelivery(filePath, source, properties) {
-        if (!/^(issue|milestone)_/.test(properties?.id || "")) return;
+        if (!/^(issue|milestone)_/.test(properties?.id || "") || properties?.["taskix-generated"] !== true) return;
+        this.pendingDeliveries.add(filePath);
+        this.persistPendingDeliveries();
+        const version = (this.deliveryVersions.get(filePath) || 0) + 1;
+        this.deliveryVersions.set(filePath, version);
         clearTimeout(this.deliveryTimers.get(filePath));
         this.deliveryTimers.set(filePath, setTimeout(() => {
             this.deliveryTimers.delete(filePath);
-            this.deliveryQueue = this.deliveryQueue.then(() => this.syncDelivery(filePath, source, properties));
-        }, 750));
+            this.deliveryQueue = this.deliveryQueue.then(() => this.syncDelivery(filePath, source, properties, version));
+        }, CONTENT_EDIT_DELAY_MS));
         while (this.deliveryTimers.size > 128) {
             const oldest = this.deliveryTimers.keys().next().value;
             clearTimeout(this.deliveryTimers.get(oldest)); this.deliveryTimers.delete(oldest);
         }
     }
 
-    async syncDelivery(filePath, source, properties) {
+    async syncDelivery(filePath, source, properties, version = this.deliveryVersions.get(filePath)) {
         const engine = this.engine;
         if (!engine?.watches(filePath) || engine.disposed || this.stopped || properties?.["taskix-generated"] !== true) return;
+        if (version !== this.deliveryVersions.get(filePath)) return;
+        const acknowledge = () => {
+            if (this.engine !== engine || engine.disposed || this.stopped || version !== this.deliveryVersions.get(filePath)) return;
+            this.pendingDeliveries.delete(filePath);
+            this.persistPendingDeliveries();
+        };
         try {
             const keys = properties.id.startsWith("issue_") ? ["requirement", "acceptance", "notes"] : ["goal"];
             const bodies = keys.map(key => {
@@ -546,7 +615,7 @@ class TaskixSyncPlugin extends Plugin {
                 return lines.slice(starts[0] + 1, ends[0]).join("\n");
             });
             const body = JSON.stringify(bodies);
-            if (this.deliveryBodies.get(filePath) === body) return;
+            if (this.deliveryBodies.get(filePath) === body) { acknowledge(); return; }
             await engine.flush();
             if (engine !== this.engine || engine.disposed || this.stopped) return;
             await runCli({ ...this.settings, vaultPath: this.app.vault.adapter.getBasePath() },
@@ -554,6 +623,7 @@ class TaskixSyncPlugin extends Plugin {
             if (engine === this.engine && !engine.disposed) {
                 this.deliveryBodies.delete(filePath);
                 this.deliveryBodies.set(filePath, body);
+                acknowledge();
                 while (this.deliveryBodies.size > 128) this.deliveryBodies.delete(this.deliveryBodies.keys().next().value);
             }
         } catch (error) {
@@ -755,7 +825,7 @@ class TaskixSyncPlugin extends Plugin {
         this.memoryTimers.set(filePath, setTimeout(() => {
             this.memoryTimers.delete(filePath);
             if (this.engine === engine && !engine.disposed && file.path === filePath) void this.checkMemory(file);
-        }, 750));
+        }, CONTENT_EDIT_DELAY_MS));
         while (this.memoryTimers.size > 128) {
             const oldest = this.memoryTimers.keys().next().value;
             clearTimeout(this.memoryTimers.get(oldest));
@@ -840,7 +910,10 @@ class TaskixSyncPlugin extends Plugin {
         try {
             const source = await this.app.vault.read(file);
             const match = /^(?:\uFEFF)?---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/.exec(source);
-            engine.observe(file.path, match ? parseYaml(match[1]) : null, true);
+            const properties = match ? parseYaml(match[1]) : null;
+            if (this.stopped || this.engine !== engine || engine.disposed) return;
+            engine.observe(file.path, properties, true);
+            this.queueDelivery(file.path, source, properties);
         } catch (error) {
             engine.notify(`Could not check ${file.path}: ${error.message}`);
         }
@@ -915,6 +988,7 @@ class TaskixSyncPlugin extends Plugin {
         this.engine = engine;
         try {
             await engine.initialize();
+            await this.recoverDeliveries(engine);
             this.styleBoards();
             for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
                 await this.inspectFile(leaf.view.file);
@@ -946,6 +1020,8 @@ class TaskixSyncPlugin extends Plugin {
 
     onunload() {
         this.stopped = true;
+        for (const observer of this.mergeNoticeObservers?.values() || []) observer.disconnect();
+        this.mergeNoticeObservers?.clear();
         this.clearDeliveryTimers();
         this.clearMemoryTimers();
         this.memoryNotices?.clear();

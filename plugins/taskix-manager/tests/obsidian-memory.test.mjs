@@ -156,21 +156,21 @@ test("memory saves debounce until typing stops and notices are limited per file"
         save(); t.mock.timers.tick(100); await flushEvents();
     }
     assert.equal(f.calls.length, 0);
-    t.mock.timers.tick(649); await flushEvents();
+    t.mock.timers.tick(4899); await flushEvents();
     assert.equal(f.calls.length, 0);
     t.mock.timers.tick(1); await flushEvents();
     assert.equal(f.calls.length, 1);
     assert.equal(f.content, "Canonical database memory");
     assert.equal(f.notices.length, 1);
-    save(); t.mock.timers.tick(750); await flushEvents();
+    save(); t.mock.timers.tick(5000); await flushEvents();
     assert.equal(f.content, "Canonical database memory");
     assert.equal(f.notices.length, 1);
     t.mock.timers.tick(30000);
-    save(); t.mock.timers.tick(750); await flushEvents();
+    save(); t.mock.timers.tick(5000); await flushEvents();
     assert.equal(f.notices.length, 2);
     // Preserve the managed directory; change only the memory ID.
     f.file.path = `11-Agents/Projects/demo/Memory/mem_${"b".repeat(32)}.md`;
-    save(); t.mock.timers.tick(750); await flushEvents();
+    save(); t.mock.timers.tick(5000); await flushEvents();
     assert.equal(f.notices.length, 3);
 });
 
@@ -180,7 +180,7 @@ test("unloading cancels pending memory checks", async t => {
     f.content = "edit";
     f.vaultEvents.get("modify")(f.file);
     f.plugin.onunload();
-    t.mock.timers.tick(1000); await flushEvents();
+    t.mock.timers.tick(5000); await flushEvents();
     assert.equal(f.calls.length, 0);
     assert.equal(f.content, "edit");
 });
