@@ -237,8 +237,10 @@ pub(crate) async fn request_scope(conn: &mut SqliteConnection, request: &Value) 
     if command == "issue.cancel" {
         scope.jobs.extend(ids(conn,"SELECT id FROM jobs WHERE json_extract(data,'$.issue_id') IN (SELECT value FROM json_each(?))",&json!(scope.issues).to_string()).await?);
     }
-    if command == "milestone.delete"
-        || (command == "milestone.update" && request.get("name").is_some())
+    if matches!(
+        command,
+        "milestone.delete" | "milestone.archive" | "milestone.unarchive"
+    ) || (command == "milestone.update" && request.get("name").is_some())
     {
         scope.issues.extend(ids(conn,"SELECT id FROM issues WHERE json_extract(data,'$.milestone_id') IN (SELECT value FROM json_each(?))",&json!(scope.milestones).to_string()).await?);
     }
@@ -415,6 +417,16 @@ async fn load_query_context(
         .fetch_one(&mut *conn)
         .await?;
         ensure!(!collision, "conflict: Project root is already registered");
+    }
+    if command == "milestone.complete" {
+        for milestone in &state.milestones {
+            let active: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM issues WHERE json_extract(data,'$.milestone_id')=? AND json_extract(data,'$.status') NOT IN ('COMPLETED','CANCELLED'))")
+                .bind(&milestone.id).fetch_one(&mut *conn).await?;
+            state
+                .query_context
+                .milestone_active_issues
+                .insert(milestone.id.clone(), active);
+        }
     }
     if matches!(command, "issue.submit" | "issue.approve") {
         for issue in &state.issues {

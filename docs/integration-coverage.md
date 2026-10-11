@@ -635,7 +635,7 @@ acceptance across all rclone providers.
 
 | Contract | Reusable coverage |
 | --- | --- |
-| Five Issue states, guarded association, multi-round delivery, human acceptance, cancellation and basic Milestones | [Issue domain tests](../crates/agentix-task/tests/support/issues.rs) |
+| Five Issue states, guarded association, multi-round delivery, human acceptance, cancellation and manual Milestone lifecycle | [Issue domain tests](../crates/agentix-task/tests/support/issues.rs) |
 | Fixed editable template, body/hash/revision publication, shared Issue Base and Milestone queries | [Issue documents](../crates/agentix-task/tests/support/issue_documents.rs), [Obsidian plugin tests](../plugins/taskix-manager/tests/obsidian-issues.test.mjs) |
 | Removed old intake surface; registered active/archive cleanup with retry and vault path safety; preserve execution history | [Upgrade tests](../crates/agentix-task/tests/support/issue_upgrade.rs), [CLI tests](../crates/taskix/tests/support/issues.rs) |
 | Owner/epoch/revision fencing, SQL pagination, session/workspace execution, edits and human review | [IM Issue workflows](../crates/agentix-core/tests/support/issues.rs) |
@@ -678,3 +678,10 @@ These tests do not measure real provider accuracy or guarantee retention when
 best-effort writes time out.
 
 Project display links: Issue document, project rename/archive, memory projection and real memory CLI tests cover managed `project` Board links, unchanged `project_id`, incremental/full Base display-column migration with saved filters, and read-only memory metadata refresh without revision changes.
+
+Milestone status regressions cover legacy schema defaults and write guards, explicit
+start/complete/cancel/reopen, unfinished-Issue completion rejection, non-cascading
+cancellation, independent archive/restore, revision guards, and default Base filter
+migration/preservation. CLI lifecycle tests and `obsidian-milestones.test.mjs` verify
+command routing and restoration after rejected status edits. These use isolated
+databases and mocked Obsidian APIs; they do not assert live deployment acceptance.

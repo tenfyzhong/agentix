@@ -98,9 +98,44 @@ impl Service {
         ))
     }
 
+    fn migrate_milestones_base(source: String, project: &Project) -> Result<String> {
+        let mut base: Value = serde_yaml::from_str(&source)?;
+        let Some(views) = base["views"].as_array_mut() else {
+            return Ok(source);
+        };
+        let Some(view) = views
+            .iter_mut()
+            .find(|view| view["name"] == "Milestones" && view["type"] == "table")
+        else {
+            return Ok(source);
+        };
+        let Some(order) = view["order"].as_array_mut() else {
+            return Ok(source);
+        };
+        if order
+            .iter()
+            .any(|column| column == "status" || column == "note.status")
+        {
+            return Ok(source);
+        }
+        order.insert(usize::from(!order.is_empty()), json!("status"));
+        let legacy = json!({"and":["file.hasTag(\"agent/milestone\")", format!("project_id == {}", json!(project.id))]});
+        if base["filters"] == legacy {
+            base["filters"]["and"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({"or":["status == \"PLANNED\"", "status == \"ACTIVE\""]}));
+        }
+        Ok(format!(
+            "# taskix-generated: milestones:{}\n{}",
+            project.id,
+            serde_yaml::to_string(&base)?
+        ))
+    }
+
     fn milestones_base(project: &Project) -> Result<String> {
-        let base = json!({"filters":{"and":["file.hasTag(\"agent/milestone\")",format!("project_id == {}",json!(project.id))]},
-            "formulas":{"name":NAME_FORMULA},"views":[{"type":"table","name":"Milestones","order":["formula.name","order","due_date","completed_issues","total_issues","cancelled_issues"],
+        let base = json!({"filters":{"and":["file.hasTag(\"agent/milestone\")",format!("project_id == {}",json!(project.id)), {"or":["status == \"PLANNED\"", "status == \"ACTIVE\""]}]},
+            "formulas":{"name":NAME_FORMULA},"views":[{"type":"table","name":"Milestones","order":["formula.name","status","order","due_date","completed_issues","total_issues","cancelled_issues"],
                 "sort":[{"column":"order","direction":"ASC"},{"column":"file.name","direction":"ASC"}]}]});
         Ok(format!(
             "# taskix-generated: milestones:{}\n{}",
@@ -240,11 +275,19 @@ impl Service {
         for field in ["goal", "name", "document_path"] {
             managed.as_object_mut().unwrap().remove(field);
         }
-        for field in ["created_at", "updated_at"] {
+        for field in [
+            "created_at",
+            "updated_at",
+            "started_at",
+            "completed_at",
+            "cancelled_at",
+            "archived_at",
+        ] {
             managed[field] = optional_local_timestamp(managed[field].as_i64())?;
         }
         managed["project"] = json!(self.config.project_link(project));
         managed["tags"] = json!(["agent/milestone"]);
+        managed["archived"] = json!(milestone.archived_at.is_some());
         managed["title"] = json!(milestone.name);
         managed["total_issues"] = json!(progress.total);
         managed["completed_issues"] = json!(progress.completed);
@@ -317,7 +360,12 @@ impl Service {
                 }
                 let path = format!("{}/{name}", project.document_directory());
                 let body = if previous.contains_key(&key) && self.safe_path(&path)?.exists() {
-                    std::fs::read_to_string(self.safe_path(&path)?)?
+                    let existing = std::fs::read_to_string(self.safe_path(&path)?)?;
+                    if kind == "milestone-base" {
+                        Self::migrate_milestones_base(existing, project)?
+                    } else {
+                        existing
+                    }
                 } else {
                     body
                 };

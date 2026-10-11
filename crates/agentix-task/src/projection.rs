@@ -106,6 +106,11 @@ impl Service {
             properties["review_reason"] = entity["review_reason"].clone();
             properties["milestone_id"] = entity["milestone_id"].clone();
         }
+        if kind == "milestone" {
+            properties["started_at"] = optional_local_timestamp(entity["started_at"].as_i64())?;
+            properties["archived_at"] = optional_local_timestamp(entity["archived_at"].as_i64())?;
+            properties["archived"] = json!(entity["archived_at"].is_i64());
+        }
         {
             for key in ["created_at", "updated_at", "completed_at"] {
                 properties[key] = optional_local_timestamp(entity[key].as_i64())?;

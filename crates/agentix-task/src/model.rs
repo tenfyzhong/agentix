@@ -273,6 +273,7 @@ pub struct QueryContext {
     pub(crate) milestone_progress:
         std::collections::BTreeMap<String, crate::issue_read::MilestoneProgress>,
     /// Acceptance checks without materializing related Job content.
+    pub(crate) milestone_active_issues: std::collections::BTreeMap<String, bool>,
     pub(crate) issue_active_jobs: std::collections::BTreeMap<String, bool>,
     pub(crate) registered_project: Option<String>,
     pub(crate) available_project_key: Option<String>,

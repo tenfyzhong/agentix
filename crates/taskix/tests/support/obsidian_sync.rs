@@ -116,11 +116,17 @@ async fn id_queries_ignore_unrelated_records_and_preserve_task_show_contract() {
     // Valid database rows that cannot deserialize as entities prove these reads
     // never load unrelated tables or the entire tasks table.
     for table in ["tasks", "jobs", "projects", "issues", "milestones", "plans"] {
-        sqlx::query(&format!("INSERT INTO {table}(id,data) VALUES (?, '{{}}')"))
+        let data = if table == "milestones" {
+            r#"{"status":"PLANNED"}"#
+        } else {
+            "{}"
+        };
+        sqlx::query(&format!("INSERT INTO {table}(id,data) VALUES (?, ?)"))
             .bind(format!(
                 "{}_ffffffffffffffffffffffffffffffff",
                 table.trim_end_matches('s')
             ))
+            .bind(data)
             .execute(&mut db)
             .await
             .unwrap();

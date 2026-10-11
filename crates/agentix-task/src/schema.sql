@@ -259,7 +259,21 @@ BEGIN SELECT RAISE(ABORT, 'Issue content belongs in Obsidian; upgrade the client
 CREATE TRIGGER IF NOT EXISTS issue_metadata_update BEFORE UPDATE OF data ON issues
 WHEN json_type(NEW.data,'$.requirement') IS NOT NULL OR json_type(NEW.data,'$.acceptance') IS NOT NULL OR json_type(NEW.data,'$.notes') IS NOT NULL
 BEGIN SELECT RAISE(ABORT, 'Issue content belongs in Obsidian; upgrade the client'); END;
-PRAGMA user_version = 24;
+-- Older connected writers must not drop or corrupt Milestone lifecycle metadata.
+CREATE TRIGGER IF NOT EXISTS milestone_status_insert BEFORE INSERT ON milestones
+WHEN json_type(NEW.data, '$.status') IS NOT 'text'
+    OR json_extract(NEW.data, '$.status') NOT IN ('PLANNED', 'ACTIVE', 'COMPLETED', 'CANCELLED')
+BEGIN
+    SELECT RAISE(ABORT, 'invalid Milestone status; upgrade Agentix and Taskix together');
+END;
+CREATE TRIGGER IF NOT EXISTS milestone_status_update BEFORE UPDATE OF data ON milestones
+WHEN json_type(NEW.data, '$.status') IS NOT 'text'
+    OR json_extract(NEW.data, '$.status') NOT IN ('PLANNED', 'ACTIVE', 'COMPLETED', 'CANCELLED')
+BEGIN
+    SELECT RAISE(ABORT, 'invalid Milestone status; upgrade Agentix and Taskix together');
+END;
+
+PRAGMA user_version = 25;
 PRAGMA application_id = 0x4158544b;
 CREATE INDEX IF NOT EXISTS jobs_by_followup_session ON jobs(json_extract(data, '$.followup_session_id'));
 

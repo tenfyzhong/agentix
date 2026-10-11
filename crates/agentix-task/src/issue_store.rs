@@ -30,7 +30,7 @@ pub(crate) async fn persist(
                 project_id: Some(stage.project_id.clone()),
                 revision: stage.revision,
                 payload: crate::event_payload::compact_payload(
-                    &json!({"id":stage.id,"title":stage.title}),
+                    &json!({"id":stage.id,"title":stage.title,"status":stage.status}),
                 ),
                 ..event(command, options, now)
             },

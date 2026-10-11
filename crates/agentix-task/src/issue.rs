@@ -3,7 +3,7 @@ use anyhow::{Result, bail, ensure};
 use serde_json::{Value, json};
 
 use crate::{
-    Issue, IssueStatus, JobStatus, Milestone, Snapshot, TaskStatus, WriteOptions,
+    Issue, IssueStatus, JobStatus, Milestone, MilestoneStatus, Snapshot, TaskStatus, WriteOptions,
     mutations::{check_revision, entity_name, required},
     naming::numbered_name,
     new_id,
@@ -454,6 +454,11 @@ pub(crate) fn milestone(
         );
         let sequence = sequence(state, &project.id, "milestone", now)?;
         let milestone = Milestone {
+            status: MilestoneStatus::Planned,
+            started_at: None,
+            completed_at: None,
+            cancelled_at: None,
+            archived_at: None,
             id: new_id("milestone"),
             project_id: project.id.clone(),
             title: title.into(),
@@ -489,6 +494,15 @@ pub(crate) fn milestone(
             .is_none(),
         "conflict: Project is archived"
     );
+    if command != "milestone.unarchive" {
+        ensure!(
+            original.archived_at.is_none(),
+            "conflict: Milestone is archived"
+        );
+    }
+    if !matches!(command, "milestone.update" | "milestone.delete") {
+        return milestone_transition(state, i, command, now);
+    }
     if command == "milestone.delete" {
         ensure!(
             !state
@@ -545,6 +559,88 @@ pub(crate) fn milestone(
     if request.get("due_date").is_some() {
         milestone.due_date = date;
     }
+    milestone.revision += 1;
+    milestone.updated_at = now;
+    Ok(json!(milestone))
+}
+
+fn milestone_transition(
+    state: &mut Snapshot,
+    index: usize,
+    command: &str,
+    now: i64,
+) -> Result<Value> {
+    let original = &state.milestones[index];
+    let directory = state.projects[state.project_index(&original.project_id)?].document_directory();
+    match command {
+        "milestone.start" => {
+            ensure!(
+                original.status == MilestoneStatus::Planned,
+                "conflict: only a PLANNED Milestone can be started"
+            );
+            state.milestones[index].status = MilestoneStatus::Active;
+            state.milestones[index].started_at = Some(now);
+        }
+        "milestone.complete" | "milestone.cancel" => {
+            ensure!(
+                !original.status.terminal(),
+                "conflict: reopen terminal Milestone first"
+            );
+            if command == "milestone.complete" {
+                ensure!(
+                    !state
+                        .query_context
+                        .milestone_active_issues
+                        .get(&original.id)
+                        .copied()
+                        .unwrap_or(false)
+                        && !state
+                            .issues
+                            .iter()
+                            .any(|issue| issue.milestone_id.as_deref()
+                                == Some(original.id.as_str())
+                                && !issue.status.terminal()),
+                    "conflict: Milestone has unfinished Issues; complete, cancel or reassign them first"
+                );
+                state.milestones[index].status = MilestoneStatus::Completed;
+                state.milestones[index].completed_at = Some(now);
+            } else {
+                state.milestones[index].status = MilestoneStatus::Cancelled;
+                state.milestones[index].cancelled_at = Some(now);
+            }
+        }
+        "milestone.reopen" => {
+            ensure!(
+                original.status.terminal(),
+                "conflict: only terminal Milestones can be reopened"
+            );
+            let milestone = &mut state.milestones[index];
+            milestone.status = MilestoneStatus::Planned;
+            milestone.started_at = None;
+            milestone.completed_at = None;
+            milestone.cancelled_at = None;
+        }
+        "milestone.archive" | "milestone.unarchive" => {
+            let archive = command == "milestone.archive";
+            ensure!(
+                archive == original.archived_at.is_none(),
+                "conflict: Milestone archive state unchanged"
+            );
+            ensure!(
+                original.status.terminal(),
+                "conflict: complete or cancel Milestone before archiving"
+            );
+            let milestone = &mut state.milestones[index];
+            milestone.archived_at = archive.then_some(now);
+            milestone.document_path = format!(
+                "{directory}/Milestones/{}{}.md",
+                if archive { "Archived/" } else { "" },
+                numbered_name(&milestone.name, milestone.created_at, milestone.sequence)?
+            );
+        }
+        _ => bail!("invalid: unknown command {command}"),
+    }
+    let milestone = &mut state.milestones[index];
     milestone.revision += 1;
     milestone.updated_at = now;
     Ok(json!(milestone))
