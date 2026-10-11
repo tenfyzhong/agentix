@@ -63,6 +63,13 @@ impl Service {
             }
             let source = self.safe_path(&old)?;
             let destination = self.safe_path(&new)?;
+            // Export legacy prose at its actual location before path persistence strips its model fields.
+            self.migrate_relocated_issue_content_locked(
+                &project.id,
+                &old,
+                if source.exists() { &old } else { &new },
+            )
+            .await?;
             if source.exists() {
                 // Legacy vault-root output can already occupy the absolute target.
                 if !destination.exists() || source.canonicalize()? != destination.canonicalize()? {

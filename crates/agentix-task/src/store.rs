@@ -59,7 +59,7 @@ impl Store {
             .fetch_one(&pool)
             .await?;
         ensure!(
-            identity == 0x4158_544b && (14..=23).contains(&version),
+            identity == 0x4158_544b && (14..=24).contains(&version),
             "unsupported task database identity or schema for read-only lookup"
         );
         Ok(Self {
@@ -135,7 +135,7 @@ impl Store {
     async fn migrate(&self) -> Result<bool> {
         let current: (i64, i64, i64) = sqlx::query_as("SELECT (SELECT application_id FROM pragma_application_id), (SELECT user_version FROM pragma_user_version), (SELECT auto_vacuum FROM pragma_auto_vacuum)")
             .fetch_one(&self.pool).await?;
-        if current == (0x4158_544b, 23, 2) {
+        if current == (0x4158_544b, 24, 2) {
             return Ok(false);
         }
         if current.2 != 2 {
@@ -149,7 +149,7 @@ impl Store {
                 "invalid: task database must be a dedicated taskix database"
             );
             ensure!(
-                current.1 <= 23,
+                current.1 <= 24,
                 "unsupported task database schema version {}",
                 current.1
             );
@@ -172,7 +172,7 @@ impl Store {
             .fetch_one(&mut *tx)
             .await?;
         ensure!(
-            version <= 23,
+            version <= 24,
             "unsupported task database schema version {version}"
         );
         sqlx::raw_sql(include_str!("schema.sql"))
@@ -352,6 +352,7 @@ impl Store {
     }
 
     pub async fn execute(&self, request: Value, options: WriteOptions) -> Result<Outcome> {
+        crate::issue::validate_public_hashes(&request)?;
         self.reap_expired().await?;
         self.execute_as(request.clone(), options, request).await
     }
@@ -631,6 +632,10 @@ async fn migrate_features(conn: &mut SqliteConnection, version: i64) -> Result<(
     }
     if version > 0 && version < 20 {
         crate::stored_paths::migrate(conn).await?;
+    }
+    if version < 24 {
+        sqlx::query("UPDATE idempotency_keys SET result=json_remove(result,'$.result.requirement','$.result.acceptance','$.result.notes') WHERE json_extract(result,'$.result.id') GLOB 'issue_*'")
+            .execute(&mut *conn).await?;
     }
     if version < 23 {
         // Retire the entity without converting requirements or touching execution history.

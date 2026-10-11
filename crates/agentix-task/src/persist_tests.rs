@@ -287,7 +287,7 @@ async fn schema_nineteen_migrates_workspace_paths_and_preserves_history_and_curs
         .fetch_one(&migrated.pool)
         .await
         .unwrap();
-    assert_eq!(version, 23);
+    assert_eq!(version, 24);
     assert!(
         migrated
             .events(None, 0, 100)
@@ -575,7 +575,7 @@ async fn schema_sixteen_and_seventeen_upgrade_to_relative_document_paths() {
             .fetch_one(&reopened.pool)
             .await
             .unwrap();
-        assert_eq!(version, 23);
+        assert_eq!(version, 24);
         assert_eq!(
             reopened.snapshot().await.unwrap().projects,
             snapshot.projects
@@ -621,7 +621,7 @@ async fn assert_schema_fifteen_upgrade(has_memory: bool) {
         .fetch_one(&store.pool)
         .await
         .unwrap();
-    assert_eq!(version, 23);
+    assert_eq!(version, 24);
     assert!(
         store.event_policy(None, None, None).await.unwrap()["enabled"]
             .as_bool()
@@ -786,4 +786,21 @@ async fn deleting_retained_events_does_not_regress_global_or_project_receipts() 
         .await
         .unwrap();
     assert!(outcome.sequence > latest);
+}
+
+#[tokio::test]
+async fn current_schema_open_does_not_wait_for_existing_writer() {
+    let (dir, store, _) = fixture().await;
+    let mut writer = store.pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+    let result = tokio::time::timeout(
+        Duration::from_secs(2),
+        Store::open(&dir.path().join("tasks.sqlite3")),
+    )
+    .await;
+    sqlx::query("ROLLBACK").execute(&mut *writer).await.unwrap();
+    assert!(
+        result.is_ok(),
+        "opening current schema must not take the writer lock"
+    );
+    result.unwrap().unwrap();
 }
