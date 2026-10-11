@@ -6,6 +6,8 @@ const { randomUUID } = require("node:crypto");
 const { realpathSync } = require("node:fs");
 const path = require("node:path");
 
+const CONTENT_EDIT_DELAY_MS = 5000;
+
 function localTimestamp(seconds) {
     const date = new Date(seconds * 1000);
     const offset = -date.getTimezoneOffset();
@@ -434,6 +436,15 @@ class TaskixSyncPlugin extends Plugin {
         this.deliveryTimers = new Map();
         this.deliveryBodies = new Map();
         this.deliveryQueue = Promise.resolve();
+        this.mergeNoticeObservers = new Map();
+        if (typeof document !== "undefined") this.watchMergeNotices(document);
+        this.registerEvent(this.app.workspace.on("window-open", (_workspaceWindow, win) => {
+            this.watchMergeNotices(win.document);
+        }));
+        this.registerEvent(this.app.workspace.on("window-close", (_workspaceWindow, win) => {
+            this.mergeNoticeObservers.get(win.document)?.disconnect();
+            this.mergeNoticeObservers.delete(win.document);
+        }));
         this.addSettingTab(new TaskixSettings(this.app, this));
         this.addCommand({
             id: "refresh", name: "Check connection and refresh state",
@@ -489,6 +500,37 @@ class TaskixSyncPlugin extends Plugin {
         this.app.workspace.onLayoutReady(() => { if (!this.stopped) void this.connect(); });
     }
 
+    watchMergeNotices(doc) {
+        if (!doc?.body || !doc.defaultView?.MutationObserver || this.mergeNoticeObservers.has(doc)) return;
+        const filter = notice => {
+            const message = notice.querySelector(".notice-message")?.textContent;
+            // Match only Obsidian's normal automatic-merge notice, never failures.
+            const match = /^“(.+)” has been modified externally, merging changes automatically\.$/s.exec(message || "");
+            if (!match || !this.engine?.watches(match[1]) || this.engine.disposed) return;
+            const file = this.app.vault.getAbstractFileByPath(match[1]);
+            const properties = file && this.app.metadataCache.getFileCache(file)?.frontmatter;
+            if (properties?.["taskix-generated"] !== true || !/^(?:prj|job|task|issue|milestone|mem)_/.test(properties.id || "")) return;
+            notice.remove();
+        };
+        const observer = new doc.defaultView.MutationObserver(records => {
+            if (this.stopped) return;
+            const notices = new Set();
+            for (const record of records) {
+                const parent = record.target?.nodeType === 1 ? record.target : record.target?.parentElement;
+                const current = parent?.closest(".notice");
+                if (current) notices.add(current);
+                for (const node of record.addedNodes) {
+                    if (node.nodeType !== 1) continue;
+                    if (node.matches(".notice")) notices.add(node);
+                    for (const notice of node.querySelectorAll(".notice")) notices.add(notice);
+                }
+            }
+            for (const notice of notices) filter(notice);
+        });
+        observer.observe(doc.body, { childList: true, subtree: true, characterData: true });
+        this.mergeNoticeObservers.set(doc, observer);
+    }
+
     styleBoards() {
         for (const type of ["markdown", "bases"]) {
             for (const leaf of this.app.workspace.getLeavesOfType(type)) {
@@ -525,7 +567,7 @@ class TaskixSyncPlugin extends Plugin {
         this.deliveryTimers.set(filePath, setTimeout(() => {
             this.deliveryTimers.delete(filePath);
             this.deliveryQueue = this.deliveryQueue.then(() => this.syncDelivery(filePath, source, properties));
-        }, 750));
+        }, CONTENT_EDIT_DELAY_MS));
         while (this.deliveryTimers.size > 128) {
             const oldest = this.deliveryTimers.keys().next().value;
             clearTimeout(this.deliveryTimers.get(oldest)); this.deliveryTimers.delete(oldest);
@@ -755,7 +797,7 @@ class TaskixSyncPlugin extends Plugin {
         this.memoryTimers.set(filePath, setTimeout(() => {
             this.memoryTimers.delete(filePath);
             if (this.engine === engine && !engine.disposed && file.path === filePath) void this.checkMemory(file);
-        }, 750));
+        }, CONTENT_EDIT_DELAY_MS));
         while (this.memoryTimers.size > 128) {
             const oldest = this.memoryTimers.keys().next().value;
             clearTimeout(this.memoryTimers.get(oldest));
@@ -946,6 +988,8 @@ class TaskixSyncPlugin extends Plugin {
 
     onunload() {
         this.stopped = true;
+        for (const observer of this.mergeNoticeObservers?.values() || []) observer.disconnect();
+        this.mergeNoticeObservers?.clear();
         this.clearDeliveryTimers();
         this.clearMemoryTimers();
         this.memoryNotices?.clear();

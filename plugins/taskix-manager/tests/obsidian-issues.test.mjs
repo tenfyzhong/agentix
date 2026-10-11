@@ -166,3 +166,29 @@ test("Issue creation does not create a blank note when its projection is not cac
     assert.equal(linked, false);
     assert.match(f.notices.at(-1).message, /created.*Refresh/);
 });
+
+for (const kind of ["issue", "milestone"]) {
+    test(`${kind} editing waits five idle seconds and cancels on unload`, async t => {
+        t.mock.timers.enable({ apis: ["setTimeout"] });
+        const f = await connectionFixture();
+        t.after(() => f.plugin.onunload());
+        const calls = [];
+        f.plugin.syncDelivery = async (...args) => calls.push(args);
+        const filePath = `11-Agents/Projects/Demo/${kind}.md`;
+        const properties = { id: `${kind}_one`, "taskix-generated": true };
+        const flush = async () => { await f.plugin.deliveryQueue; };
+        f.plugin.queueDelivery(filePath, "first edit", properties);
+        t.mock.timers.tick(4999); await flush();
+        assert.equal(calls.length, 0);
+        f.plugin.queueDelivery(filePath, "latest edit", properties);
+        t.mock.timers.tick(4999); await flush();
+        assert.equal(calls.length, 0);
+        t.mock.timers.tick(1); await flush();
+        assert.equal(calls.length, 1);
+        assert.equal(calls[0][1], "latest edit");
+        f.plugin.queueDelivery(filePath, "cancelled edit", properties);
+        f.plugin.onunload();
+        t.mock.timers.tick(5000); await flush();
+        assert.equal(calls.length, 1);
+    });
+}
