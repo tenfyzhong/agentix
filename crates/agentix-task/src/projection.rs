@@ -610,7 +610,7 @@ impl Service {
                 );
                 String::new()
             };
-            let doc = self.task_document(&index, task, plan, &existing)?;
+            let doc = Self::task_document(&index, task, plan, &existing)?;
             files.insert(path.clone(), doc);
             paths.insert(key, path.clone());
             if let Some(plan) = plan {
@@ -1037,7 +1037,6 @@ impl Service {
     }
 
     fn task_document(
-        &self,
         index: &ProjectionIndex<'_>,
         task: &Task,
         plan: Option<&Plan>,
@@ -1059,24 +1058,17 @@ impl Service {
         };
         let project = index.project(&task.project_id)?;
         let job = index.job(&task.job_id)?;
-        let wiki = |path: &str| {
-            format!(
-                "[[{}]]",
-                self.config
-                    .vault_relative_path(Path::new(path))
-                    .to_string_lossy()
-                    .replace('\\', "/")
-                    .trim_start_matches("./")
-                    .trim_end_matches(".md")
-            )
-        };
+        let job_filename = Path::new(&job.document_path)
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .context("Job document path has no valid filename")?;
         let mut generated = task_state_properties(task)?;
         generated.as_object_mut().unwrap().extend(json!({
             "id":task.id,"task_id":task.id,"plan_id":task.current_plan,"job_id":task.job_id,"project_id":task.project_id,
             "sequence":task.sequence,
             "agent":task.last_executor.as_deref().and_then(crate::model::agent_name),"session_id":task.last_session,
             "archived":job.archived_at.is_some() || project.archived_at.is_some(),
-            "job":wiki(&job.document_path)
+            "job":format!("[[{job_filename}]]")
         }).as_object().unwrap().clone());
         authored.as_object_mut().unwrap().remove("version");
         if authored["title"].is_null() || authored["title"] == authored["name"] {

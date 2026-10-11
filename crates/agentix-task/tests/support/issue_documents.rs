@@ -562,3 +562,53 @@ async fn registered_bases_migrate_project_columns_without_losing_saved_filters()
         "note.project_id"
     );
 }
+
+#[tokio::test]
+async fn task_job_property_uses_filename_after_creation_sync_and_job_rename() {
+    let f = Fixture::new().await;
+    let task = f.task("Linked task").await;
+    let note = f.service.obsidian_note(&task).await.unwrap();
+    let path = f
+        .service
+        .config()
+        .documents
+        .root
+        .join(note["path"].as_str().unwrap());
+    for name in [None, Some("Issue 项目管理"), Some("Renamed delivery")] {
+        if let Some(name) = name {
+            f.service
+                .execute(
+                    json!({"command":"job.update","job":f.job,"name":name}),
+                    WriteOptions::default(),
+                )
+                .await
+                .unwrap();
+        }
+        let job = f.service.store().job_record(&f.job).await.unwrap();
+        let stem = std::path::Path::new(&job.document_path)
+            .file_stem()
+            .unwrap()
+            .to_str()
+            .unwrap();
+        let expected = format!("[[{stem}]]");
+        let source = std::fs::read_to_string(&path).unwrap();
+        let mut props: Value = serde_yaml::from_str(source.split("---").nth(1).unwrap()).unwrap();
+        assert_eq!(props["job"], expected);
+        assert_eq!(props["job_id"], f.job);
+        props["job"] = json!(format!(
+            "[[Tasks ☃/{}]]",
+            job.document_path.trim_end_matches(".md")
+        ));
+        let body = source.splitn(3, "---").nth(2).unwrap();
+        std::fs::write(
+            &path,
+            format!("---\n{}---{}", serde_yaml::to_string(&props).unwrap(), body),
+        )
+        .unwrap();
+        f.service.sync().await.unwrap();
+        let source = std::fs::read_to_string(&path).unwrap();
+        let props: Value = serde_yaml::from_str(source.split("---").nth(1).unwrap()).unwrap();
+        assert_eq!(props["job"], expected);
+        assert_eq!(props["job_id"], f.job);
+    }
+}
