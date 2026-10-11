@@ -222,9 +222,9 @@ mod tests {
     async fn generic_collector_rolls_back_all_answers_on_duplicate_question() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("metrics.db");
-        let collector = MetricsCollector::new(path.clone());
         let mut metric = DecisionMetric::new("risk_review", "jev-test", 0.65);
-        assert!(collector.record(&metric).await);
+        // Exercise transaction correctness independently of the best-effort deadline.
+        append_metric(&path, &metric).await.unwrap();
         for _ in 0..2 {
             metric.answers.push(AnswerMetric {
                 question: "risk".into(),
@@ -237,7 +237,11 @@ mod tests {
                 issue: None,
             });
         }
-        assert!(!collector.record(&metric).await);
+        let error = append_metric(&path, &metric).await.unwrap_err();
+        assert!(
+            error.to_string().contains("UNIQUE constraint failed"),
+            "{error}"
+        );
         let mut db = SqliteConnection::connect_with(&SqliteConnectOptions::new().filename(&path))
             .await
             .unwrap();
