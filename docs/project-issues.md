@@ -141,8 +141,15 @@ engine or automatic advancement is introduced.
 Schema 25 fills existing Milestones with PLANNED and queues a document rebuild.
 Upgrade Agentix and Taskix together; older binaries reject the new schema, and
 SQLite triggers reject already-connected legacy writers that omit the status.
-New `Milestones.base` files default to PLANNED or ACTIVE within their Project and
-show the status column. Existing default tables without that column gain it and
+New `Milestones.base` tables default to PLANNED or ACTIVE within their Project and
+include both the Milestones table and a Milestone board grouped by status. The board
+orders columns as PLANNED, ACTIVE, COMPLETED, CANCELLED and shows due dates and Issue
+counts. Its four status columns remain visible, including empty columns, and its
+contents are not restricted by the table's open-stage filter. Dragging uses the
+same lifecycle validation as CLI commands. The old default global status filter
+moves to table views during synchronization. Existing registered Bases gain the status
+board without replacing customized tables, filters or existing status boards.
+Existing default tables without that column gain it and
 the new filter; customized filters are preserved. Later filter edits survive sync.
 CLI lists and IM browsing retain all statuses, including terminal stages.
 

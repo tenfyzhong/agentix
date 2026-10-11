@@ -685,3 +685,7 @@ cancellation, independent archive/restore, revision guards, and default Base fil
 migration/preservation. CLI lifecycle tests and `obsidian-milestones.test.mjs` verify
 command routing and restoration after rejected status edits. These use isolated
 databases and mocked Obsidian APIs; they do not assert live deployment acceptance.
+
+Milestone Base tests also cover table/Kanban coexistence, table-only open-stage filters and unrestricted status boards,
+four-state column ordering, and upgrading renamed/customized tables without
+duplicating or resetting a saved status board.

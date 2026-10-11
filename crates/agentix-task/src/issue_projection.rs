@@ -98,33 +98,70 @@ impl Service {
         ))
     }
 
+    fn milestone_status_board() -> Value {
+        json!({"type":"kanban","name":"Milestone board",
+            "groupBy":{"property":"note.status","direction":"ASC"},
+            "groupOrder":["PLANNED","ACTIVE","COMPLETED","CANCELLED"],
+            "order":["formula.name","status","due_date","completed_issues","total_issues","cancelled_issues"],
+            "sort":[{"column":"order","direction":"ASC"},{"column":"file.name","direction":"ASC"}],
+            "hideEmptyColumns":false,"columnWidth":300})
+    }
+
     fn migrate_milestones_base(source: String, project: &Project) -> Result<String> {
         let mut base: Value = serde_yaml::from_str(&source)?;
+        let scope = json!({"and":["file.hasTag(\"agent/milestone\")",format!("project_id == {}",json!(project.id))]});
+        let open = json!({"or":["status == \"PLANNED\"", "status == \"ACTIVE\""]});
+        let mut old_filtered = scope.clone();
+        old_filtered["and"]
+            .as_array_mut()
+            .unwrap()
+            .push(open.clone());
+        let move_filter = base["filters"] == old_filtered;
+        let default_scope = base["filters"] == scope;
         let Some(views) = base["views"].as_array_mut() else {
             return Ok(source);
         };
-        let Some(view) = views
+        let mut changed = move_filter;
+        let mut legacy_table = false;
+        if let Some(order) = views
             .iter_mut()
             .find(|view| view["name"] == "Milestones" && view["type"] == "table")
-        else {
-            return Ok(source);
-        };
-        let Some(order) = view["order"].as_array_mut() else {
-            return Ok(source);
-        };
-        if order
-            .iter()
-            .any(|column| column == "status" || column == "note.status")
+            .and_then(|view| view["order"].as_array_mut())
+            && !order
+                .iter()
+                .any(|column| column == "status" || column == "note.status")
         {
+            order.insert(usize::from(!order.is_empty()), json!("status"));
+            changed = true;
+            legacy_table = true;
+        }
+        if move_filter || (legacy_table && default_scope) {
+            for view in views.iter_mut().filter(|view| view["type"] == "table") {
+                let filters = view
+                    .get("filters")
+                    .filter(|value| !value.is_null())
+                    .cloned();
+                view["filters"] = filters.map_or_else(
+                    || json!({"and":[open]}),
+                    |filters| json!({"and":[filters,open]}),
+                );
+            }
+        }
+        if !views.iter().any(|view| {
+            view["type"] == "kanban"
+                && matches!(
+                    view["groupBy"]["property"].as_str(),
+                    Some("status" | "note.status")
+                )
+        }) {
+            views.push(Self::milestone_status_board());
+            changed = true;
+        }
+        if !changed {
             return Ok(source);
         }
-        order.insert(usize::from(!order.is_empty()), json!("status"));
-        let legacy = json!({"and":["file.hasTag(\"agent/milestone\")", format!("project_id == {}", json!(project.id))]});
-        if base["filters"] == legacy {
-            base["filters"]["and"]
-                .as_array_mut()
-                .unwrap()
-                .push(json!({"or":["status == \"PLANNED\"", "status == \"ACTIVE\""]}));
+        if move_filter {
+            base["filters"] = scope;
         }
         Ok(format!(
             "# taskix-generated: milestones:{}\n{}",
@@ -134,9 +171,9 @@ impl Service {
     }
 
     fn milestones_base(project: &Project) -> Result<String> {
-        let base = json!({"filters":{"and":["file.hasTag(\"agent/milestone\")",format!("project_id == {}",json!(project.id)), {"or":["status == \"PLANNED\"", "status == \"ACTIVE\""]}]},
-            "formulas":{"name":NAME_FORMULA},"views":[{"type":"table","name":"Milestones","order":["formula.name","status","order","due_date","completed_issues","total_issues","cancelled_issues"],
-                "sort":[{"column":"order","direction":"ASC"},{"column":"file.name","direction":"ASC"}]}]});
+        let base = json!({"filters":{"and":["file.hasTag(\"agent/milestone\")",format!("project_id == {}",json!(project.id))]},
+            "formulas":{"name":NAME_FORMULA},"views":[{"type":"table","name":"Milestones","filters":{"and":[{"or":["status == \"PLANNED\"", "status == \"ACTIVE\""]}]},"order":["formula.name","status","order","due_date","completed_issues","total_issues","cancelled_issues"],
+                "sort":[{"column":"order","direction":"ASC"},{"column":"file.name","direction":"ASC"}]},Self::milestone_status_board()]});
         Ok(format!(
             "# taskix-generated: milestones:{}\n{}",
             project.id,
