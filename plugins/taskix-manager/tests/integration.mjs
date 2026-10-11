@@ -315,7 +315,8 @@ for (const host of ["pi", "omp"]) {
         assert.equal(note.properties.status, "DONE");
         assert.equal(note.properties.id, task.id);
         assert.ok(note.path.includes("/Tasks/"));
-        assert.equal(body.includes("[["), true);
+        assert.ok(body.includes(`project_id: ${JSON.stringify(job.project_id)}`));
+        assert.doesNotMatch(body, /^projects:/m);
         assert.equal((await f.run(["doctor"])).healthy, true);
     });
 }
