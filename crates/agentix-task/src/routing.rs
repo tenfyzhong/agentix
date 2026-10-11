@@ -89,11 +89,8 @@ impl Store {
             'revision',json_extract(data,'$.revision'),'content_hash',json_extract(data,'$.content_hash'),
             'milestone_id',json_extract(data,'$.milestone_id'),
             'title',substr(json_extract(data,'$.title'),1,300),
-            'requirement',substr(json_extract(data,'$.requirement'),1,2000),
-            'acceptance',substr(json_extract(data,'$.acceptance'),1,2000),
-            'truncated',COALESCE(length(json_extract(data,'$.title'))>300,0)
-                OR COALESCE(length(json_extract(data,'$.requirement'))>2000,0)
-                OR COALESCE(length(json_extract(data,'$.acceptance'))>2000,0))
+            'document_path',json_extract(data,'$.document_path'),
+            'truncated',COALESCE(length(json_extract(data,'$.title'))>300,0))
             FROM issues WHERE project_id=? AND json_extract(data,'$.status') IN ('TODO','ACTIVE')
                 AND json_extract(data,'$.archived_at') IS NULL
             ORDER BY rowid LIMIT 33",
@@ -138,11 +135,12 @@ impl Store {
     /// Point-read a current association with the same bounded text as candidates.
     pub async fn routing_issue(&self, id: &str) -> Result<Value> {
         let row: Option<String> = sqlx::query_scalar(
-            "SELECT json_set(json_remove(data,'$.notes'),
-                '$.title',substr(json_extract(data,'$.title'),1,300),
-                '$.requirement',substr(json_extract(data,'$.requirement'),1,2000),
-                '$.acceptance',substr(json_extract(data,'$.acceptance'),1,2000)) FROM issues WHERE id=?",
-        ).bind(id).fetch_optional(&self.pool).await?;
+            "SELECT json_set(json_remove(data,'$.requirement','$.acceptance','$.notes'),
+                '$.title',substr(json_extract(data,'$.title'),1,300)) FROM issues WHERE id=?",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
         Ok(row
             .map(|r| serde_json::from_str(&r))
             .transpose()?

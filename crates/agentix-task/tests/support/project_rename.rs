@@ -67,7 +67,9 @@ async fn project_folder_rename_preserves_identity_content_and_tracking() {
             .contains("Unpublished plan edit.")
     );
     assert_eq!(after.issues[0].id, issue["id"]);
-    assert_eq!(after.issues[0].requirement, "Preserve this request");
+    let id = &after.issues[0].id;
+    let content = f.service.issue_content(id).await.unwrap();
+    assert_eq!(content.requirement, "Preserve this request");
     for relative in [&after.jobs[0].document_path, &after.plans[0].path] {
         let document = fs::read_to_string(output.join(relative)).unwrap();
         assert!(relative.starts_with("Projects/视频项目/"));

@@ -267,7 +267,7 @@ async fn issue_requires_every_job_terminal_and_human_acceptance() {
 }
 
 #[tokio::test]
-async fn issue_offline_delivery_requires_authored_acceptance() {
+async fn issue_offline_delivery_accepts_title_only() {
     let f = Fixture::new().await;
     let blank = f
         .service
@@ -278,17 +278,13 @@ async fn issue_offline_delivery_requires_authored_acceptance() {
         .await
         .unwrap()
         .result;
-    assert!(
-        f.service
-            .execute(
-                json!({"command":"issue.submit","issue":blank["id"]}),
-                WriteOptions::default()
-            )
-            .await
-            .unwrap_err()
-            .to_string()
-            .contains("acceptance")
-    );
+    f.service
+        .execute(
+            json!({"command":"issue.submit","issue":blank["id"]}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
     let item = issue(&f).await;
     f.service
         .execute(
@@ -823,7 +819,7 @@ async fn issue_and_milestone_follow_project_rename_archive_and_delete() {
 }
 
 #[tokio::test]
-async fn issue_rejects_placeholder_acceptance_and_invalid_creation_fields() {
+async fn issue_accepts_placeholder_content_but_rejects_invalid_creation_fields() {
     let f = Fixture::new().await;
     let item=f.service.execute(json!({"command":"issue.create","project":f.project,"title":"Unspecified",
         "requirement":"<!-- Describe the requirement. -->","acceptance":"<!-- Define acceptance criteria. -->"}),WriteOptions::default()).await.unwrap().result;
@@ -834,7 +830,7 @@ async fn issue_rejects_placeholder_acceptance_and_invalid_creation_fields() {
                 WriteOptions::default()
             )
             .await
-            .is_err()
+            .is_ok()
     );
     for field in ["requirement", "acceptance", "notes"] {
         let mut request = json!({"command":"issue.create","project":f.project,"title":"Invalid"});

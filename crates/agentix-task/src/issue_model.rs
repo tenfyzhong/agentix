@@ -47,9 +47,8 @@ pub struct Issue {
     pub title: String,
     pub name: String,
     pub sequence: u64,
-    pub requirement: String,
-    pub acceptance: String,
-    pub notes: String,
+    #[serde(default)]
+    pub review_content_hash: String,
     pub content_hash: String,
     pub status: IssueStatus,
     pub review_reason: Option<String>,
@@ -78,4 +77,13 @@ pub struct Milestone {
     pub created_at: i64,
     pub updated_at: i64,
     pub document_path: String,
+}
+
+/// Authored Issue sections read from the vault, never persisted in an Issue row.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct IssueContent {
+    pub requirement: String,
+    pub acceptance: String,
+    pub notes: String,
 }

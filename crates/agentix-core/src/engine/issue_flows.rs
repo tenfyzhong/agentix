@@ -495,13 +495,13 @@ fn issue_error(error: impl std::fmt::Display) -> EngineError {
 
 fn issue_prompt(item: &agentix_task::Issue, job: Option<&str>) -> String {
     format!(
-        "Taskix Issue request: {}\n{}Implement this Issue's requirement and verify its acceptance criteria. Read issue show {} and its Milestone goal before execution. Preserve the Issue association using its current revision and content hash. Follow the normal Task claim, Plan, start and verification workflow. Job completion leaves this Issue active; human Issue acceptance is separate.\n\nRequirement:\n{}\n\nAcceptance criteria:\n{}",
+        "Taskix Issue request: {}\n{}Implement this Issue's requirement and verify its acceptance criteria. Read issue show {} and its Milestone goal before execution. Preserve the Issue association using its current revision and content hash. Follow the normal Task claim, Plan, start and verification workflow. Job completion leaves this Issue active; human Issue acceptance is separate.\n\nTitle: {}\nObsidian document: {}",
         item.id,
         job.map_or_else(String::new, |id| format!(
             "Continue ACTIVE Job {id} for this Issue. "
         )),
         item.id,
-        item.requirement,
-        item.acceptance
+        item.title,
+        item.document_path
     )
 }

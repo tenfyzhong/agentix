@@ -267,11 +267,11 @@ async fn routing_assignment_returns_references_without_task_bodies_or_leases() {
 }
 
 #[tokio::test]
-async fn routing_issues_bounds_requirement_and_marks_incomplete() {
+async fn routing_issues_bounds_titles_and_exposes_document_references() {
     let (_dir, store, project) = fixture().await;
     store
         .execute(
-            json!({"command":"issue.create","project":project,"title":"Long requirement","requirement":"界".repeat(10000)}),
+            json!({"command":"issue.create","project":project,"title":"界".repeat(1000)}),
             WriteOptions::default(),
         )
         .await
@@ -280,6 +280,8 @@ async fn routing_issues_bounds_requirement_and_marks_incomplete() {
     assert_eq!(result["complete"], false);
     assert_eq!(result["entries"].as_array().unwrap().len(), 1);
     assert!(result.to_string().len() < 7000);
+    assert!(result["entries"][0].get("requirement").is_none());
+    assert!(result["entries"][0]["document_path"].is_string());
 }
 
 #[tokio::test]

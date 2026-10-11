@@ -19,6 +19,8 @@ mod tests;
 
 #[path = "projection_index.rs"]
 mod index;
+#[path = "issue_content.rs"]
+mod issue_content;
 #[path = "issue_projection.rs"]
 mod issue_documents;
 use index::ProjectionIndex;
@@ -136,9 +138,10 @@ impl Service {
     }
 
     #[allow(clippy::too_many_lines)] // Keep document observation, replay and guarded writes in one boundary.
-    pub async fn execute(&self, request: Value, mut options: WriteOptions) -> Result<Outcome> {
+    pub async fn execute(&self, mut request: Value, mut options: WriteOptions) -> Result<Outcome> {
         self.store.reap_expired().await?;
-        let command = required(&request, "command")?;
+        let command_name = required(&request, "command")?.to_owned();
+        let command = command_name.as_str();
         if matches!(command, "plan.create" | "plan.revise") {
             return self.write_plan(request, options).await;
         }
@@ -169,7 +172,21 @@ impl Service {
         } else {
             None
         };
-        if needs_issues && !matches!(command, "project.delete" | "job.delete") {
+        if needs_issues
+            && !matches!(
+                command,
+                "project.delete"
+                    | "job.delete"
+                    | "issue.start"
+                    | "issue.submit"
+                    | "issue.approve"
+                    | "issue.reject"
+                    | "issue.cancel"
+                    | "issue.reopen"
+                    | "issue.archive"
+                    | "issue.unarchive"
+            )
+        {
             let imported = self.reconcile_issue_documents_locked(Some(&state)).await?;
             if let Some((before, after)) = request["issue"]
                 .as_str()
@@ -222,7 +239,11 @@ impl Service {
         } else {
             None
         };
-        let mut outcome = self.store.execute(request, options).await?;
+        let source = request.clone();
+        self.prepare_issue_content(&mut request, &options).await?;
+        // Keep the file journal on an ambiguous commit failure. The next locked
+        // pass removes it only after checking committed metadata and receipts.
+        let mut outcome = self.store.execute_as(request, options, source).await?;
         if let Some(session) = notify_session {
             outcome.result["issue_cancellations"] =
                 self.store.issue_cancellations(&session).await?;
@@ -263,6 +284,8 @@ impl Service {
         self.migrate_legacy_archive_folders_locked().await?;
         self.reconcile_project_folders_locked().await?;
         self.relocate_archived_projects_locked().await?;
+        self.migrate_issue_content_locked().await?;
+        self.cleanup_issue_content_journals_locked().await?;
         Ok(lock)
     }
 
@@ -326,7 +349,7 @@ impl Service {
 
     async fn render_pending_document(&self, key: &str, generation: String) -> Result<()> {
         let mut state = self.store.projection_snapshot(key).await?;
-        if key.starts_with("issue:") || key.starts_with("milestone:") {
+        if key.starts_with("milestone:") {
             state
                 .issues
                 .retain(|issue| key == format!("issue:{}", issue.id));
@@ -807,6 +830,14 @@ impl Service {
         self.store
             .acknowledge_documents(pending, &paths, &removed, sequence, &metadata)
             .await?;
+        for issue in &state.issues {
+            if paths.contains_key(&format!("issue:{}", issue.id)) {
+                let journal = self.issue_content_path(issue)?;
+                if journal.exists() {
+                    std::fs::remove_file(journal)?;
+                }
+            }
+        }
         Ok(())
     }
 

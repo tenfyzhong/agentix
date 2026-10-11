@@ -252,7 +252,14 @@ BEGIN
     INSERT OR IGNORE INTO memory_job_cancellations(project_id,job_id,revision,cancelled_at)
     VALUES(json_extract(new.data,'$.project_id'),new.id,json_extract(new.data,'$.revision'),coalesce(json_extract(new.data,'$.cancelled_at'),json_extract(new.data,'$.updated_at')));
 END;
-PRAGMA user_version = 23;
+CREATE INDEX IF NOT EXISTS issues_with_legacy_content ON issues(id) WHERE json_type(data,'$.requirement') IS NOT NULL OR json_type(data,'$.acceptance') IS NOT NULL OR json_type(data,'$.notes') IS NOT NULL;
+CREATE TRIGGER IF NOT EXISTS issue_metadata_insert BEFORE INSERT ON issues
+WHEN json_type(NEW.data,'$.requirement') IS NOT NULL OR json_type(NEW.data,'$.acceptance') IS NOT NULL OR json_type(NEW.data,'$.notes') IS NOT NULL
+BEGIN SELECT RAISE(ABORT, 'Issue content belongs in Obsidian; upgrade the client'); END;
+CREATE TRIGGER IF NOT EXISTS issue_metadata_update BEFORE UPDATE OF data ON issues
+WHEN json_type(NEW.data,'$.requirement') IS NOT NULL OR json_type(NEW.data,'$.acceptance') IS NOT NULL OR json_type(NEW.data,'$.notes') IS NOT NULL
+BEGIN SELECT RAISE(ABORT, 'Issue content belongs in Obsidian; upgrade the client'); END;
+PRAGMA user_version = 24;
 PRAGMA application_id = 0x4158544b;
 CREATE INDEX IF NOT EXISTS jobs_by_followup_session ON jobs(json_extract(data, '$.followup_session_id'));
 

@@ -182,7 +182,7 @@ pub async fn issue(cli: &Cli, service: &Service, command: &IssueCommand) -> Resu
                     .await?,
             ));
         }
-        IssueCommand::Show { id } => return Ok(response(service.store().issue_detail(id).await?)),
+        IssueCommand::Show { id } => return Ok(response(service.issue_detail(id).await?)),
         IssueCommand::Start { id } => json!({"command":"issue.start","issue":id}),
         IssueCommand::Submit { id } => json!({"command":"issue.submit","issue":id}),
         IssueCommand::Approve { id } => json!({"command":"issue.approve","issue":id}),

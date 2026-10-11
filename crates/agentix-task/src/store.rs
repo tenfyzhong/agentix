@@ -59,7 +59,7 @@ impl Store {
             .fetch_one(&pool)
             .await?;
         ensure!(
-            identity == 0x4158_544b && (14..=23).contains(&version),
+            identity == 0x4158_544b && (14..=24).contains(&version),
             "unsupported task database identity or schema for read-only lookup"
         );
         Ok(Self {
@@ -172,7 +172,7 @@ impl Store {
             .fetch_one(&mut *tx)
             .await?;
         ensure!(
-            version <= 23,
+            version <= 24,
             "unsupported task database schema version {version}"
         );
         sqlx::raw_sql(include_str!("schema.sql"))
@@ -631,6 +631,10 @@ async fn migrate_features(conn: &mut SqliteConnection, version: i64) -> Result<(
     }
     if version > 0 && version < 20 {
         crate::stored_paths::migrate(conn).await?;
+    }
+    if version < 24 {
+        sqlx::query("UPDATE idempotency_keys SET result=json_remove(result,'$.result.requirement','$.result.acceptance','$.result.notes') WHERE json_extract(result,'$.result.id') GLOB 'issue_*'")
+            .execute(&mut *conn).await?;
     }
     if version < 23 {
         // Retire the entity without converting requirements or touching execution history.

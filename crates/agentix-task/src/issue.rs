@@ -37,44 +37,6 @@ fn milestone_project(state: &Snapshot, id: Option<&str>, project: &str) -> Resul
     Ok(())
 }
 
-fn content_hash(issue: &Issue) -> String {
-    crate::store::hash_bytes(
-        json!([issue.requirement, issue.acceptance, issue.notes])
-            .to_string()
-            .as_bytes(),
-    )
-}
-
-fn text(request: &Value, field: &str) -> Result<String> {
-    match request.get(field) {
-        None => Ok(String::new()),
-        Some(Value::String(text)) => Ok(text.clone()),
-        _ => bail!("invalid: {field} must be text"),
-    }
-}
-
-fn authored(text: &str) -> bool {
-    let mut visible = String::new();
-    let mut remainder = text;
-    while let Some((before, comment)) = remainder.split_once("<!--") {
-        visible.push_str(before);
-        let Some((_, after)) = comment.split_once("-->") else {
-            return false;
-        };
-        remainder = after;
-    }
-    visible.push_str(remainder);
-    visible.lines().any(|line| {
-        let line = line.trim();
-        !line.starts_with('#')
-            && !line
-                .trim_start_matches("- [ ]")
-                .trim_start_matches("- [x]")
-                .trim()
-                .is_empty()
-    })
-}
-
 fn sequence(state: &Snapshot, project: &str, kind: &str, now: i64) -> Result<u64> {
     let current = state
         .query_context
@@ -101,6 +63,12 @@ pub(crate) fn apply(
     now: i64,
 ) -> Result<Value> {
     let command = required(request, "command")?;
+    ensure!(
+        ["requirement", "acceptance", "notes"]
+            .iter()
+            .all(|key| request.get(key).is_none()),
+        "invalid: Issue content must be written through the document service"
+    );
     if command == "issue.create" {
         let project = &state.projects[state.project_index(required(request, "project")?)?];
         ensure!(
@@ -118,8 +86,10 @@ pub(crate) fn apply(
         let sequence = sequence(state, &project.id, "issue", now)?;
         let milestone_id = optional_id(state, request, "milestone")?;
         milestone_project(state, milestone_id.as_deref(), &project.id)?;
-        let mut issue = Issue {
-            id: new_id("issue"),
+        let issue = Issue {
+            id: request["id"]
+                .as_str()
+                .map_or_else(|| new_id("issue"), str::to_owned),
             project_id: project.id.clone(),
             milestone_id,
             title: title.into(),
@@ -130,10 +100,11 @@ pub(crate) fn apply(
             ),
             name,
             sequence,
-            requirement: text(request, "requirement")?,
-            acceptance: text(request, "acceptance")?,
-            notes: text(request, "notes")?,
-            content_hash: String::new(),
+            content_hash: request["content_hash"].as_str().unwrap_or_default().into(),
+            review_content_hash: request["review_content_hash"]
+                .as_str()
+                .unwrap_or_default()
+                .into(),
             status: IssueStatus::Todo,
             review_reason: None,
             revision: 1,
@@ -145,7 +116,6 @@ pub(crate) fn apply(
             cancelled_at: None,
             archived_at: None,
         };
-        issue.content_hash = content_hash(&issue);
         let result = json!(issue);
         state.issues.push(issue);
         return Ok(result);
@@ -197,37 +167,27 @@ pub(crate) fn apply(
             if request.get("title").is_some() {
                 issue.title = required(request, "title")?.into();
             }
-            for (field, target) in [
-                ("requirement", &mut issue.requirement),
-                ("acceptance", &mut issue.acceptance),
-                ("notes", &mut issue.notes),
-            ] {
-                if let Some(value) = request.get(field) {
-                    *target = value
-                        .as_str()
-                        .ok_or_else(|| anyhow::anyhow!("invalid: {field} must be text"))?
-                        .into();
-                }
+            if let Some(hash) = request["content_hash"].as_str() {
+                issue.content_hash = hash.into();
+            }
+            if let Some(hash) = request["review_content_hash"].as_str() {
+                issue.review_content_hash = hash.into();
             }
             if request.get("milestone").is_some() {
                 issue.milestone_id = milestone;
             }
-            let content_changed = issue.requirement != original.requirement
-                || issue.acceptance != original.acceptance
-                || issue.notes != original.notes;
+            let content_changed = issue.content_hash != original.content_hash;
             ensure!(
                 !original.status.terminal() || !content_changed,
                 "conflict: reopen terminal Issue before updating content"
             );
             if original.status == IssueStatus::PendingReview
-                && (issue.requirement != original.requirement
-                    || issue.acceptance != original.acceptance)
+                && issue.review_content_hash != original.review_content_hash
             {
                 issue.status = IssueStatus::Active;
                 issue.pending_review_at = None;
                 issue.review_reason = None;
             }
-            issue.content_hash = content_hash(issue);
         }
         "issue.start" => {
             human(options)?;
@@ -242,10 +202,6 @@ pub(crate) fn apply(
             ensure!(
                 matches!(original.status, IssueStatus::Todo | IssueStatus::Active),
                 "conflict: Issue must be TODO or ACTIVE to submit"
-            );
-            ensure!(
-                authored(&original.requirement) && authored(&original.acceptance),
-                "invalid: requirement and acceptance criteria are required"
             );
             terminal_jobs(state, &original.id)?;
             state.issues[index].status = IssueStatus::PendingReview;

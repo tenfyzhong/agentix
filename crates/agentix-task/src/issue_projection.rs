@@ -109,7 +109,32 @@ impl Service {
         ))
     }
 
-    fn issue_document(
+    fn issue_body_metadata(
+        &self,
+        body: &str,
+        old_title: &str,
+        issue: &Issue,
+        project: &Project,
+    ) -> String {
+        let mut body = body.replacen(
+            &format!("# {old_title}\n"),
+            &format!("# {}\n", issue.name),
+            1,
+        );
+        if let Some(section) = body.find("\n## Related Jobs\n")
+            && let Some(start) = body[section..].find("![[")
+        {
+            let start = section + start;
+            if let Some(end) = body[start..].find("#Related Jobs]]") {
+                let end = start + end + "#Related Jobs]]".len();
+                let link = self.base_link(&format!("{}/Issue.base", project.document_directory()));
+                body.replace_range(start..end, &format!("![[{link}#Related Jobs]]"));
+            }
+        }
+        body
+    }
+
+    pub(super) fn issue_document(
         &self,
         issue: &Issue,
         project: &Project,
@@ -117,6 +142,10 @@ impl Service {
         existing: &str,
     ) -> Result<String> {
         let mut properties = split_properties(existing)?.0;
+        let old_title = properties["title"]
+            .as_str()
+            .unwrap_or(&issue.name)
+            .to_owned();
         let mut managed = serde_json::to_value(issue)?;
         for field in [
             "requirement",
@@ -150,34 +179,52 @@ impl Service {
             .unwrap()
             .extend(managed.as_object().unwrap().clone());
         let mut doc = frontmatter(properties);
-        doc.push_str(&Self::header(&issue.name));
-        for (label, key, body, hint) in [
+        let staged = self.issue_content_path(issue)?.exists();
+        if !existing.is_empty() && !staged {
+            // Status/metadata publication preserves arbitrary authored prose verbatim.
+            let body = split_properties(existing)?.1;
+            doc.push_str(&self.issue_body_metadata(body, &old_title, issue, project));
+            return Ok(doc);
+        }
+        let content = self.projected_issue_content(issue, existing)?;
+        let mut body = if existing.is_empty() {
+            Self::header(&issue.name)
+        } else {
+            split_properties(existing)?.1.to_owned()
+        };
+        for (label, key, value, hint) in [
             (
                 "Requirement",
                 "requirement",
-                issue.requirement.as_str(),
+                content.requirement.as_str(),
                 REQUIREMENT_HINT,
             ),
             (
                 "Acceptance Criteria",
                 "acceptance",
-                issue.acceptance.as_str(),
+                content.acceptance.as_str(),
                 ACCEPTANCE_HINT,
             ),
-            ("Notes", "notes", issue.notes.as_str(), ""),
+            ("Notes", "notes", content.notes.as_str(), ""),
         ] {
-            if !existing.is_empty() {
-                section(existing, key)?.context("missing Issue section")?;
+            let value = if value.is_empty() { hint } else { value };
+            let start = format!("<!-- taskix:{key}:start -->");
+            let end = format!("<!-- taskix:{key}:end -->");
+            if existing.is_empty() {
+                body.push_str(&format!("\n## {label}\n\n{start}\n{value}\n{end}\n"));
+            } else {
+                let a = body.find(&start).context("missing Issue section start")? + start.len();
+                let b = body[a..].find(&end).context("missing Issue section end")? + a;
+                body.replace_range(a..b, &format!("\n{value}\n"));
             }
-            let body = if body.is_empty() { hint } else { body };
-            doc.push_str(&format!(
-                "\n## {label}\n\n<!-- taskix:{key}:start -->\n{body}\n<!-- taskix:{key}:end -->\n"
+        }
+        if existing.is_empty() {
+            body.push_str(&format!(
+                "\n## Related Jobs\n\n![[{}#Related Jobs]]\n",
+                self.base_link(&format!("{}/Issue.base", project.document_directory()))
             ));
         }
-        doc.push_str(&format!(
-            "\n## Related Jobs\n\n![[{}#Related Jobs]]\n",
-            self.base_link(&format!("{}/Issue.base", project.document_directory()))
-        ));
+        doc.push_str(&self.issue_body_metadata(&body, &old_title, issue, project));
         Ok(doc)
     }
 
@@ -321,7 +368,7 @@ impl Service {
         Ok(())
     }
 
-    fn delivery_source(
+    pub(super) fn delivery_source(
         &self,
         key: &str,
         id: &str,
@@ -376,44 +423,24 @@ impl Service {
                 properties["id"] == issue.id && properties["taskix-generated"] == true,
                 "conflict: Issue document identity changed"
             );
-            let requirement =
-                section(&source, "requirement")?.context("missing Issue requirement")?;
-            let acceptance = section(&source, "acceptance")?.context("missing Issue acceptance")?;
-            let notes = section(&source, "notes")?.context("missing Issue notes")?;
-            let requirement = if requirement == REQUIREMENT_HINT {
-                String::new()
-            } else {
-                requirement
-            };
-            let acceptance = if acceptance == ACCEPTANCE_HINT {
-                String::new()
-            } else {
-                acceptance
-            };
-            let source_hash = crate::store::hash_bytes(
-                json!([requirement, acceptance, notes])
-                    .to_string()
-                    .as_bytes(),
-            );
-            let receipt = self
-                .store()
-                .metadata(&format!("delivery:{}", issue.id))
-                .await?;
-            if receipt.as_ref().and_then(Value::as_str) == Some(source_hash.as_str()) {
-                // The last published body cannot override a committed replacement after a crash.
+            let content = self.projected_issue_content(&issue, &source)?;
+            let source_hash = content.hash();
+            if self.issue_content_path(&issue)?.exists() {
                 continue;
             }
-            ensure!(
-                self.store().document_generation(&key).await?.is_none()
-                    || source_hash == issue.content_hash,
-                "conflict: Issue content was edited while document publication is pending; resolve the content conflict before sync"
-            );
-            if requirement != issue.requirement
-                || acceptance != issue.acceptance
-                || notes != issue.notes
-            {
-                let outcome = self.store().execute(json!({"command":"issue.update","issue":issue.id,"requirement":requirement,"acceptance":acceptance,"notes":notes}),
-                    WriteOptions{actor_ref:"user:obsidian".into(),expected_revision:Some(issue.revision),..WriteOptions::default()}).await?;
+            if source_hash != issue.content_hash {
+                let outcome = self
+                    .store()
+                    .execute(
+                        json!({"command":"issue.update","issue":issue.id,
+                    "content_hash":source_hash,"review_content_hash":content.review_hash()}),
+                        WriteOptions {
+                            actor_ref: "user:obsidian".into(),
+                            expected_revision: Some(issue.revision),
+                            ..WriteOptions::default()
+                        },
+                    )
+                    .await?;
                 imported.insert(
                     issue.id,
                     (
