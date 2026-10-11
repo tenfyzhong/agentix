@@ -47,7 +47,7 @@ async fn global_issue_base_exposes_cross_project_table_board_and_archive_filters
             view["order"]
                 .as_array()
                 .unwrap()
-                .contains(&json!("projects"))
+                .contains(&json!("project_id"))
         );
         assert!(view["order"].as_array().unwrap().contains(&json!("status")));
     }
@@ -62,10 +62,7 @@ async fn global_issue_base_exposes_cross_project_table_board_and_archive_filters
     ] {
         let doc = read(&f, item["document_path"].as_str().unwrap());
         assert!(doc.contains(project));
-        assert!(
-            doc.contains("projects:"),
-            "Issues expose human-readable Project links for filtering"
-        );
+        assert!(!doc.contains("projects:"), "Issues expose only project_id");
     }
 }
 
@@ -478,4 +475,90 @@ async fn job_issue_links_match_bridge_and_follow_renames_and_unlink() {
     let note = f.service.obsidian_note(&f.job).await.unwrap();
     assert!(note["properties"]["issue"].is_null());
     assert!(note["properties"]["issue_id"].is_null());
+}
+
+#[tokio::test]
+async fn entity_project_metadata_drops_legacy_links_and_preserves_project_id() {
+    let f = Fixture::new().await;
+    let issue = create_issue(&f).await;
+    let milestone = f
+        .service
+        .execute(
+            json!({"command":"milestone.create","project":f.project,"title":"MVP"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap()
+        .result;
+    let task = f.task("Metadata").await;
+    let snapshot = f.service.obsidian_snapshot().await.unwrap();
+    let ids = [
+        &f.job,
+        issue["id"].as_str().unwrap(),
+        milestone["id"].as_str().unwrap(),
+        &task,
+    ];
+    let mut paths = Vec::new();
+    for id in ids {
+        let note = snapshot["notes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|n| n["id"] == id)
+            .unwrap();
+        let path = f
+            .service
+            .config()
+            .documents
+            .root
+            .join(note["path"].as_str().unwrap());
+        let source = std::fs::read_to_string(&path).unwrap();
+        let mut props: Value = serde_yaml::from_str(source.split("---").nth(1).unwrap()).unwrap();
+        assert!(
+            props.get("projects").is_none(),
+            "new {id} has no projects field"
+        );
+        props["projects"] = json!(["[[Legacy Project]]"]);
+        props["custom"] = json!("keep");
+        let body = source.splitn(3, "---").nth(2).unwrap();
+        std::fs::write(
+            &path,
+            format!("---\n{}---{}", serde_yaml::to_string(&props).unwrap(), body),
+        )
+        .unwrap();
+        paths.push(path);
+    }
+    f.service.sync().await.unwrap();
+    for path in paths {
+        let source = std::fs::read_to_string(path).unwrap();
+        let props: Value = serde_yaml::from_str(source.split("---").nth(1).unwrap()).unwrap();
+        assert!(props.get("projects").is_none());
+        assert_eq!(props["project_id"], f.project);
+        assert_eq!(props["custom"], "keep");
+    }
+}
+
+#[tokio::test]
+async fn registered_bases_migrate_project_columns_without_losing_saved_filters() {
+    let f = Fixture::new().await;
+    let path = f.service.config().output_dir().join("Issue.base");
+    let mut base: Value = serde_yaml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    base["views"][0]["order"] = json!(["formula.name", "projects", "status"]);
+    base["views"][0]["filters"] = json!({"and":["status == \"ACTIVE\"", "projects.contains(link(\"Tasks ☃/Projects/demo/Board\"))"]});
+    base["views"][2]["groupBy"]["property"] = json!("note.projects");
+    std::fs::write(&path, serde_yaml::to_string(&base).unwrap()).unwrap();
+    f.service.sync().await.unwrap();
+    let migrated: Value = serde_yaml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    assert_eq!(
+        migrated["views"][0]["order"],
+        json!(["formula.name", "project_id", "status"])
+    );
+    assert_eq!(
+        migrated["views"][0]["filters"],
+        json!({"and":["status == \"ACTIVE\"", format!("(project_id == {})", json!(f.project))]})
+    );
+    assert_eq!(
+        migrated["views"][2]["groupBy"]["property"],
+        "note.project_id"
+    );
 }

@@ -63,6 +63,7 @@ async fn projection_keeps_complete_content_and_reason_in_body_only() {
     assert!(metadata.get("reason").is_none());
     assert_eq!(metadata["id"], memory.id);
     assert_eq!(metadata["project_id"], "project");
+    assert!(metadata.get("projects").is_none());
     assert_eq!(metadata["revision"], memory.revision);
     assert_eq!(metadata["status"], "active");
     assert!(body.contains("## content\n"));
@@ -135,6 +136,10 @@ async fn projection_restores_all_file_edits_without_changing_memory() {
     for edited in [
         original.replace("Use the regional endpoint", "Use the European endpoint"),
         original.replace("project_id: project", "project_id: foreign"),
+        original.replace(
+            "project_id: project",
+            "project_id: project\nprojects: [legacy]",
+        ),
         original.replace("user_assertion", "inference"),
         format!("{original}\nExtra human notes\n"),
         "invalid YAML and arbitrary content".into(),

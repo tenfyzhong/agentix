@@ -329,8 +329,8 @@ async fn board_contains_project_metadata_and_is_the_only_project_link_target() {
     assert!(dashboard.contains("link(file.path, if(note.name, note.name, note.title))"));
     let task_path = root.join("Projects/demo/Tasks/260905-0001-Linked task.md");
     assert_eq!(
-        properties(&std::fs::read_to_string(task_path).unwrap())["projects"],
-        json!(["[[Tasks ☃/Projects/demo/Board]]"])
+        properties(&std::fs::read_to_string(task_path).unwrap())["project_id"],
+        json!(f.project)
     );
     f.service
         .execute(
@@ -994,10 +994,7 @@ async fn job_board_has_four_pinned_columns_and_job_display_properties() {
     let document = std::fs::read_to_string(&path).unwrap();
     let props = properties(&document);
     assert_eq!(props["title"], job.name);
-    assert_eq!(
-        props["projects"],
-        json!(["[[Tasks ☃/Projects/demo/Board|demo]]"])
-    );
+    assert_eq!(props["project_id"], json!(f.project));
     assert_eq!(props["archived"], false);
     assert!(props["created_at"].is_string());
     assert!(props.get("dateCreated").is_none());

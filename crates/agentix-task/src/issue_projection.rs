@@ -30,7 +30,7 @@ impl Service {
         let active = json!({"and":["archived != true"]});
         let columns = json!([
             "formula.name",
-            "projects",
+            "project_id",
             "status",
             "milestone",
             "updated_at"
@@ -43,7 +43,7 @@ impl Service {
             "formulas":{"name":NAME_FORMULA},
             "properties":{
                 "formula.name":{"displayName":"Issue"},
-                "note.projects":{"displayName":"Project"},
+                "note.project_id":{"displayName":"Project"},
                 "note.status":{"displayName":"Status"},
                 "note.milestone":{"displayName":"Milestone"},
                 "note.updated_at":{"displayName":"Updated"}
@@ -54,7 +54,7 @@ impl Service {
                     "groupBy":{"property":"note.status","direction":"ASC"},"groupOrder":IssueStatus::ALL,
                     "hideEmptyColumns":false,"columnWidth":300},
                 {"type":"table","name":"By project","filters":active,"order":columns,"sort":completion_sort(),
-                    "groupBy":{"property":"note.projects","direction":"ASC"}},
+                    "groupBy":{"property":"note.project_id","direction":"ASC"}},
                 {"type":"table","name":"Archived","filters":{"and":["archived == true"]},"order":columns,"sort":completion_sort()}
             ]
         });
@@ -140,10 +140,6 @@ impl Service {
         }
         managed["tags"] = json!(["agent/issue"]);
         managed["title"] = json!(issue.name);
-        managed["projects"] = json!([self.link(
-            &format!("{}/Board.md", project.document_directory()),
-            &project.name,
-        )]);
         managed["archived"] = json!(issue.archived_at.is_some() || project.archived_at.is_some());
         managed["milestone"] = milestone.map_or(Value::Null, |milestone| {
             json!(self.link(&milestone.document_path, &milestone.name))

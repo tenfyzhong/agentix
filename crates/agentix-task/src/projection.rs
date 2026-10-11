@@ -619,13 +619,26 @@ impl Service {
         }
         // Bases query vault notes dynamically. Preserve registered view settings
         // during incremental publication, even when Obsidian removed comments.
+        let mut project_filters = Vec::new();
+        for project in &state.projects {
+            let board = self.base_link(&format!("{}/Board.md", project.document_directory()));
+            for path in [board.as_str(), board.trim_end_matches(".md")] {
+                for field in ["note.projects", "projects"] {
+                    project_filters.push((
+                        format!("{field}.contains(link({}))", json!(path)),
+                        format!("(project_id == {})", json!(project.id)),
+                    ));
+                }
+            }
+        }
         let preserve_base = |key: &str, path: &str| -> Result<Option<Option<String>>> {
             let registered = previous.get(key).is_some_and(|old| old == path);
             let absolute = self.safe_path(path)?;
             if selected.is_some() && registered && absolute.is_file() {
-                return Ok(Some(migrate_legacy_base(&std::fs::read_to_string(
-                    absolute,
-                )?)?));
+                return Ok(Some(migrate_legacy_base(
+                    &std::fs::read_to_string(absolute)?,
+                    &project_filters,
+                )?));
             }
             Ok(None)
         };
@@ -649,6 +662,11 @@ impl Service {
                 .is_some_and(|path| path == "Issue.base");
             if !registered || !self.safe_path("Issue.base")?.is_file() {
                 files.insert("Issue.base".into(), self.global_issue_base()?);
+            } else if let Some(source) = migrate_legacy_base(
+                &std::fs::read_to_string(self.safe_path("Issue.base")?)?,
+                &project_filters,
+            )? {
+                files.insert("Issue.base".into(), source);
             }
             paths.insert("issues-dashboard".into(), "Issue.base".into());
         }
@@ -873,7 +891,7 @@ impl Service {
             "properties":{
                 "formula.name":{"displayName":"Job"},
                 "formula.updated":{"displayName":"Updated"},
-                "projects":{"displayName":"Project"},
+                "note.project_id":{"displayName":"Project"},
                 "formula.review_time":{"displayName":"Pending review since"}
             },
             "views": recent_jobs_views()
@@ -948,10 +966,6 @@ impl Service {
         properties["issue"] = issue.map_or(Value::Null, |issue| {
             json!(self.link(&issue.document_path, &issue.name))
         });
-        properties["projects"] = json!([self.link(
-            &format!("{}/Board.md", project.document_directory()),
-            &project.name,
-        )]);
         properties["archived"] = json!(job.archived_at.is_some() || project.archived_at.is_some());
         Ok(properties)
     }
@@ -1062,7 +1076,7 @@ impl Service {
             "sequence":task.sequence,
             "agent":task.last_executor.as_deref().and_then(crate::model::agent_name),"session_id":task.last_session,
             "archived":job.archived_at.is_some() || project.archived_at.is_some(),
-            "projects":[wiki(&format!("{}/Board.md",project.document_directory()))],"job":wiki(&job.document_path)
+            "job":wiki(&job.document_path)
         }).as_object().unwrap().clone());
         authored.as_object_mut().unwrap().remove("version");
         if authored["title"].is_null() || authored["title"] == authored["name"] {
@@ -1167,6 +1181,13 @@ fn task_state_properties(task: &Task) -> Result<Value> {
 fn frontmatter(mut properties: Value) -> String {
     #[cfg(test)]
     tests::FRONTMATTER_CALLS.with(|calls| calls.set(calls.get() + 1));
+    if properties["id"].as_str().is_some_and(|id| {
+        ["issue_", "job_", "task_", "milestone_"]
+            .iter()
+            .any(|prefix| id.starts_with(prefix))
+    }) {
+        properties.as_object_mut().unwrap().remove("projects");
+    }
     normalize_timestamp_properties(&mut properties);
     properties["taskix-generated"] = json!(true);
     let mut result = String::from("---\n");
@@ -1425,13 +1446,85 @@ pub(crate) fn atomic_write(path: &Path, body: &str) -> Result<()> {
 
 // Only registered generated Bases reach this migration. Native views and
 // unrelated user settings keep their original bytes on subsequent syncs.
-fn migrate_legacy_base(source: &str) -> Result<Option<String>> {
+fn migrate_project_columns(value: &mut Value) -> bool {
+    let mut changed = false;
+    if let Some(object) = value.as_object_mut() {
+        if let Some(properties) = object.get_mut("properties").and_then(Value::as_object_mut) {
+            for (old, new) in [
+                ("projects", "project_id"),
+                ("note.projects", "note.project_id"),
+            ] {
+                if let Some(value) = properties.remove(old) {
+                    properties.entry(new).or_insert(value);
+                    changed = true;
+                }
+            }
+        }
+        for (key, value) in object {
+            if key == "order" {
+                if let Some(columns) = value.as_array_mut() {
+                    for column in columns {
+                        if column == "projects" || column == "note.projects" {
+                            *column =
+                                json!(column.as_str().unwrap().replace("projects", "project_id"));
+                            changed = true;
+                        }
+                    }
+                }
+            } else if (key == "property" || key == "column")
+                && (value == "projects" || value == "note.projects")
+            {
+                *value = json!(value.as_str().unwrap().replace("projects", "project_id"));
+                changed = true;
+            } else {
+                changed |= migrate_project_columns(value);
+            }
+        }
+    } else if let Some(items) = value.as_array_mut() {
+        for item in items {
+            changed |= migrate_project_columns(item);
+        }
+    }
+    changed
+}
+
+fn migrate_project_filters(value: &mut Value, replacements: &[(String, String)]) -> bool {
+    let mut changed = false;
+    match value {
+        Value::String(text) => {
+            for (old, new) in replacements {
+                if text.contains(old) {
+                    *text = text.replace(old, new);
+                    changed = true;
+                }
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                changed |= migrate_project_filters(item, replacements);
+            }
+        }
+        Value::Object(object) => {
+            for item in object.values_mut() {
+                changed |= migrate_project_filters(item, replacements);
+            }
+        }
+        _ => {}
+    }
+    changed
+}
+
+fn migrate_legacy_base(
+    source: &str,
+    project_filters: &[(String, String)],
+) -> Result<Option<String>> {
     let mut base: Value = serde_yaml::from_str(source)?;
+    let mut changed = migrate_project_columns(&mut base);
+    changed |= migrate_project_filters(&mut base, project_filters);
     let Some(views) = base.get_mut("views").and_then(Value::as_array_mut) else {
         return Ok(None);
     };
     let recent = views.iter().any(|view| view["type"] == "taskixRecentJobs");
-    let mut changed = false;
     for view in views {
         if recent && let Some(object) = view.as_object_mut() {
             object.remove("limit");
@@ -1500,7 +1593,7 @@ fn recent_jobs_views() -> Vec<Value> {
     let mut views = vec![json!({
         "type":"kanban", "name":"Recent jobs",
         "groupBy":{"property":"note.status","direction":"ASC"},
-        "order":["formula.name", "projects", "formula.updated", "formula.review_time"],
+        "order":["formula.name", "project_id", "formula.updated", "formula.review_time"],
         "sort":sort,
         "groupOrder":statuses,
         "hideEmptyColumns":false, "columnWidth":300
@@ -1509,7 +1602,7 @@ fn recent_jobs_views() -> Vec<Value> {
     views.extend(statuses.map(|status| json!({
         "type":"table", "name":status,
         "filters":format!("note.status == {status:?}"),
-        "order":["formula.name", "projects", "status", "formula.updated", "formula.review_time"],
+        "order":["formula.name", "project_id", "status", "formula.updated", "formula.review_time"],
         "sort":sort
     })));
     views
@@ -1520,7 +1613,7 @@ fn pending_review_view() -> Value {
         "type":"kanban", "name":"Pending review",
         "filters":{"and":["file.hasTag(\"agent/job\")", "note.status == \"PENDING_REVIEW\"", "archived != true"]},
         "groupBy":{"property":"note.status","direction":"ASC"},
-        "order":["formula.name", "projects", "formula.review_time"],
+        "order":["formula.name", "project_id", "formula.review_time"],
         "sort":completion_sort(),
         "groupOrder":["PENDING_REVIEW"],
         "hideEmptyColumns":false, "columnWidth":300

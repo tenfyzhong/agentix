@@ -63,7 +63,7 @@ async fn recent_jobs_base_is_independent_scoped_and_safe_to_regenerate() {
     ] {
         assert!(filters.contains(&json!(filter)), "{filter}");
     }
-    assert!(!source.contains("project_id"));
+    assert!(!base["filters"].to_string().contains("project_id"));
     assert_eq!(
         base["formulas"]["name"],
         "link(file.path, if(note.name, note.name, note.title))"
@@ -96,7 +96,7 @@ async fn recent_jobs_base_is_independent_scoped_and_safe_to_regenerate() {
         base["views"][0]["order"],
         json!([
             "formula.name",
-            "projects",
+            "project_id",
             "formula.updated",
             "formula.review_time"
         ])
