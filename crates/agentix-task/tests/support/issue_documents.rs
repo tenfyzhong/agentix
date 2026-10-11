@@ -428,3 +428,54 @@ async fn issue_empty_project_creates_folders_for_context_menu_creation() {
     assert!(output.join("Projects/demo/Issues").is_dir());
     assert!(output.join("Projects/demo/Milestones").is_dir());
 }
+
+#[tokio::test]
+async fn job_issue_links_match_bridge_and_follow_renames_and_unlink() {
+    let f = Fixture::new().await;
+    let item = create_issue(&f).await;
+    let before = f.service.obsidian_note(&f.job).await.unwrap();
+    assert!(before["properties"].get("issue").is_some());
+    assert!(before["properties"]["issue"].is_null());
+    f.service
+        .execute(
+            json!({"command":"job.update","job":f.job,"issue":item["id"]}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    for name in ["Login", "Renamed requirement"] {
+        f.service
+            .execute(
+                json!({"command":"issue.update","issue":item["id"],"name":name}),
+                WriteOptions::default(),
+            )
+            .await
+            .unwrap();
+        let note = f.service.obsidian_note(&f.job).await.unwrap();
+        assert_eq!(note["properties"]["issue_id"], item["id"]);
+        assert!(note["properties"]["issue"].as_str().unwrap().contains(name));
+        let job = f.service.store().job_record(&f.job).await.unwrap();
+        let source = read(&f, &job.document_path);
+        let front = source.split("---").nth(1).unwrap();
+        let properties: Value = serde_yaml::from_str(front).unwrap();
+        assert_eq!(properties["issue"], note["properties"]["issue"]);
+        let snapshot = f.service.obsidian_snapshot().await.unwrap();
+        let exported = snapshot["notes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|n| n["id"] == f.job)
+            .unwrap();
+        assert_eq!(exported["properties"]["issue"], properties["issue"]);
+    }
+    f.service
+        .execute(
+            json!({"command":"job.update","job":f.job,"issue":null}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    let note = f.service.obsidian_note(&f.job).await.unwrap();
+    assert!(note["properties"]["issue"].is_null());
+    assert!(note["properties"]["issue_id"].is_null());
+}

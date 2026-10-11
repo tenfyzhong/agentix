@@ -249,9 +249,21 @@ impl Store {
             ("issues", "'$.requirement', '$.acceptance', '$.notes'", "1"),
             ("milestones", "'$.goal'", "1"),
         ] {
+            let entity = if table == "jobs" {
+                format!(
+                    "json_set(json_remove(e.data, {fields}), '$.issue_name', json_extract(i.data, '$.name'), '$.issue_path', json_extract(i.data, '$.document_path'))"
+                )
+            } else {
+                format!("json_remove(e.data, {fields})")
+            };
+            let issue_join = if table == "jobs" {
+                "LEFT JOIN issues i ON i.id = json_extract(e.data, '$.issue_id')"
+            } else {
+                ""
+            };
             let rows = sqlx::query(&format!(
-                "SELECT json_remove(e.data, {fields}) AS entity, COALESCE(json_extract(p.data, '$.document_directory'), 'Projects/'||json_extract(p.data, '$.key')) AS project_key \
-                 FROM {table} e LEFT JOIN projects p ON p.id = json_extract(e.data, '$.project_id') \
+                "SELECT {entity} AS entity, COALESCE(json_extract(p.data, '$.document_directory'), 'Projects/'||json_extract(p.data, '$.key')) AS project_key \
+                 FROM {table} e LEFT JOIN projects p ON p.id = json_extract(e.data, '$.project_id') {issue_join} \
                  WHERE {filter} ORDER BY e.rowid"
             ))
             .fetch_all(&mut *tx)
@@ -310,7 +322,7 @@ impl Store {
         let query = match id.split_once('_').map(|(kind, _)| kind) {
             Some("task") => "SELECT json_remove(data, '$.title') FROM tasks WHERE id = ?",
             Some("job") => {
-                "SELECT json_remove(data, '$.title', '$.goal', '$.prompt', '$.conversation') FROM jobs WHERE id = ?"
+                "SELECT json_set(json_remove(j.data, '$.title', '$.goal', '$.prompt', '$.conversation'), '$.issue_name', json_extract(i.data, '$.name'), '$.issue_path', json_extract(i.data, '$.document_path')) FROM jobs j LEFT JOIN issues i ON i.id = json_extract(j.data, '$.issue_id') WHERE j.id = ?"
             }
             Some("issue") => {
                 "SELECT json_remove(data,'$.requirement','$.acceptance','$.notes') FROM issues WHERE id=?"

@@ -93,6 +93,12 @@ impl Service {
                 properties[key] = entity[key].clone();
             }
         } else if kind == "job" {
+            properties["issue_id"] = entity["issue_id"].clone();
+            properties["issue"] =
+                match (entity["issue_path"].as_str(), entity["issue_name"].as_str()) {
+                    (Some(path), Some(name)) => json!(self.link(path, name)),
+                    _ => Value::Null,
+                };
             properties["review_reason"] = entity["review_reason"].clone();
         } else if kind == "issue" {
             properties["review_reason"] = entity["review_reason"].clone();
@@ -539,10 +545,17 @@ impl Service {
                 };
                 let mut properties = split_properties(&existing)?.0;
                 properties.as_object_mut().unwrap().extend(
-                    self.job_properties(job, project)?
-                        .as_object()
-                        .unwrap()
-                        .clone(),
+                    self.job_properties(
+                        job,
+                        project,
+                        state
+                            .issues
+                            .iter()
+                            .find(|issue| Some(&issue.id) == job.issue_id.as_ref()),
+                    )?
+                    .as_object()
+                    .unwrap()
+                    .clone(),
                 );
                 for field in ["goal", "prompt", "conversation", "document_path", "name"] {
                     properties.as_object_mut().unwrap().remove(field);
@@ -907,7 +920,12 @@ impl Service {
         ))
     }
 
-    fn job_properties(&self, job: &crate::Job, project: &crate::Project) -> Result<Value> {
+    fn job_properties(
+        &self,
+        job: &crate::Job,
+        project: &crate::Project,
+        issue: Option<&crate::Issue>,
+    ) -> Result<Value> {
         let mut properties = serde_json::to_value(job)?;
         for field in [
             "created_at",
@@ -927,6 +945,9 @@ impl Service {
             json!(["agent/job"])
         };
         properties["title"] = json!(job.name);
+        properties["issue"] = issue.map_or(Value::Null, |issue| {
+            json!(self.link(&issue.document_path, &issue.name))
+        });
         properties["projects"] = json!([self.link(
             &format!("{}/Board.md", project.document_directory()),
             &project.name,

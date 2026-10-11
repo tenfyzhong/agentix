@@ -132,6 +132,8 @@ class SyncEngine {
             equal(properties.status, this.inFlight.target)) return;
         if (!reconcileOnly && note && properties.revision === note.revision &&
             equal(properties.status, note.status) &&
+            (kind !== "job" || (equal(properties.issue ?? null, note.properties?.issue ?? null) &&
+                equal(properties.issue_id ?? null, note.properties?.issue_id ?? null))) &&
             (kind !== "issue" || (equal(properties.milestone_id ?? null, note.properties?.milestone_id ?? null) &&
                 equal(properties.milestone ?? null, note.properties?.milestone ?? null))) &&
             this.inFlight?.path !== filePath) {
@@ -147,6 +149,7 @@ class SyncEngine {
         const previous = this.pending.get(filePath);
         if (previous && equal(previous.rawTarget, properties.status) &&
             previous.revision === properties.revision &&
+            (kind !== "job" || equal(previous.issueLink, properties.issue ?? null)) &&
             (kind !== "issue" || (equal(previous.milestone, properties.milestone_id ?? null) &&
                 equal(previous.milestoneLink, properties.milestone ?? null)))) return;
         const generation = (this.generations.get(filePath) || 0) + 1;
@@ -155,6 +158,7 @@ class SyncEngine {
             ...note, kind, id: properties.id, path: filePath,
             project_id: properties.project_id || note?.project_id,
             revision: properties.revision, rawTarget: properties.status,
+            issueLink: kind === "job" ? properties.issue ?? null : undefined,
             milestone: kind === "issue" ? properties.milestone_id ?? null : undefined,
             milestoneLink: kind === "issue" ? properties.milestone ?? null : undefined,
             target: typeof properties.status === "string" ? properties.status.trim() : properties.status,
@@ -226,6 +230,22 @@ class SyncEngine {
             if (this.disposed || this.generations.get(intent.path) !== intent.generation) return;
             if (!current) { this.notes.delete(intent.path); return; }
             intent.status ??= current.status;
+            if (!intent.reconcileOnly && intent.kind === "job" &&
+                !equal(current.properties?.issue ?? null, intent.issueLink)) {
+                if (current.revision !== intent.revision) throw new Error("The taskix revision changed. Review the latest state before retrying.");
+                const issue = await this.resolveIssueLink(current, intent.issueLink);
+                if (this.disposed || this.generations.get(intent.path) !== intent.generation) return;
+                if (issue !== (current.properties?.issue_id ?? null)) {
+                    const result = await this.io.execute(["job", "update", intent.id,
+                        ...(issue ? ["--issue", issue] : ["--unlink-issue"]),
+                        "--expect-revision", String(intent.revision), "--idempotency-key", `${intent.key}:issue`]);
+                    if (this.disposed) return;
+                    if (result.result?.id !== intent.id || !Number.isInteger(result.result.revision)) throw new Error("Invalid taskix mutation result");
+                    committed = true;
+                    intent.revision = result.result.revision;
+                    current = await this.lookup(intent);
+                }
+            }
             if (!intent.reconcileOnly && intent.kind === "issue" &&
                 !equal(current.properties?.milestone ?? null, intent.milestoneLink) &&
                 equal(current.properties?.milestone_id ?? null, intent.milestone)) {
@@ -298,6 +318,7 @@ class SyncEngine {
             if (committed && !confirmed) {
                 this.notify(`State saved; the latest projection could not be read: ${error.message}`);
             } else if (!confirmed || current?.status !== intent.target ||
+                (intent.kind === "job" && !equal(current?.properties?.issue ?? null, intent.issueLink)) ||
                 (intent.kind === "issue" && !equal(current?.properties?.milestone ?? null, intent.milestoneLink)) ||
                 (intent.kind === "issue" && !equal(current?.properties?.milestone_id ?? null, intent.milestone))) {
                 this.notify(`Could not change ${intent.kind} to ${String(intent.target)}: ${error.message}${confirmed ? "" : " The result could not be confirmed; the last known state is shown."}`);
@@ -322,6 +343,20 @@ class SyncEngine {
                 this.notify(`Could not restore ${note.path}: ${error.message}`);
             }
         }
+    }
+
+    async resolveIssueLink(note, link) {
+        if (link === null || link === "") return null;
+        if (typeof link !== "string") throw new Error("Issue must be one note link or empty.");
+        const match = /^\[\[([^|\]#]+)(?:\|[^\]]*)?\]\]$/.exec(link.trim());
+        if (!match) throw new Error("Issue must link to a registered Issue in this Project.");
+        const target = await this.io.resolveLink(match[1], note.path);
+        if (!target || !/^issue_/.test(target.id || "")) throw new Error("Issue link is missing or does not identify a registered Issue.");
+        const issue = await this.io.lookup(target.id);
+        if (!issue || issue.kind !== "issue" || issue.project_id !== note.project_id || issue.path !== target.path) {
+            throw new Error("Issue link is copied, unregistered, or belongs to another Project.");
+        }
+        return issue.id;
     }
 
     async resolveMilestoneLink(note, link) {
@@ -838,6 +873,12 @@ class TaskixSyncPlugin extends Plugin {
                     throw new Error("taskix must be configured for this Obsidian vault.");
                 }
                 return result;
+            },
+            resolveLink: (link, sourcePath) => {
+                const file = this.app.metadataCache.getFirstLinkpathDest(link, sourcePath);
+                if (!(file instanceof TFile)) return null;
+                const properties = this.app.metadataCache.getFileCache(file)?.frontmatter;
+                return { path: file.path, id: properties?.id };
             },
             lookup: async (id) => {
                 const { result } = await execute(["obsidian", "show", id]);

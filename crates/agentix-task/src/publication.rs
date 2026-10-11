@@ -109,6 +109,16 @@ pub(crate) async fn enqueue_changes(
             continue;
         }
         keys.insert(format!("issue:{}", issue.id));
+        if old.is_some_and(|old| old.name != issue.name || old.document_path != issue.document_path)
+        {
+            keys.extend(
+                after
+                    .jobs
+                    .iter()
+                    .filter(|job| job.issue_id.as_ref() == Some(&issue.id))
+                    .map(|job| format!("job:{}", job.id)),
+            );
+        }
         keys.insert(format!("board:{}", issue.project_id));
         keys.insert(format!("issue-base:{}", issue.project_id));
         for milestone in issue
