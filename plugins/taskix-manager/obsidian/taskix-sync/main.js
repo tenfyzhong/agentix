@@ -37,6 +37,13 @@ function commandFor(note, target) {
             if (target === "ACTIVE") command = "reject";
             if (target === "COMPLETED") command = "approve";
         }
+    } else if (note.kind === "milestone") {
+        if (note.status === "PLANNED" && target === "ACTIVE") command = "start";
+        if (["PLANNED", "ACTIVE"].includes(note.status)) {
+            if (target === "COMPLETED") command = "complete";
+            if (target === "CANCELLED") command = "cancel";
+        }
+        if (["COMPLETED", "CANCELLED"].includes(note.status) && target === "PLANNED") command = "reopen";
     } else if (note.kind === "issue") {
         if (["TODO", "ACTIVE"].includes(note.status) && target === "PENDING_REVIEW") command = "submit";
         if (note.status === "TODO" && target === "ACTIVE") command = "start";
@@ -118,7 +125,7 @@ class SyncEngine {
 
     observe(filePath, properties, reconcileOnly = false) {
         if (!this.ready || this.disposed || !properties) return;
-        const kind = typeof properties.id === "string" && /^(task|job|issue)_/.exec(properties.id)?.[1];
+        const kind = typeof properties.id === "string" && /^(task|job|issue|milestone)_/.exec(properties.id)?.[1];
         if (!kind || !Number.isInteger(properties.revision) ||
             (kind === "task" && properties.task_id !== properties.id)) return;
         const queued = this.pending.get(filePath);
@@ -545,7 +552,7 @@ class TaskixSyncPlugin extends Plugin {
                     if (type === "bases") {
                         managed = ["Dashboard.base", "Recent Jobs.base", "Issue.base"].some(name =>
                             file.path === path.posix.join(this.engine.directory, name));
-                        if (!managed && ["Issue.base", "Milestones.base"].includes(path.posix.basename(file.path))) {
+                        if (!managed && ["Issue.base", "Milestone.base"].includes(path.posix.basename(file.path))) {
                             const board = this.app.vault.getAbstractFileByPath(path.posix.join(path.posix.dirname(file.path), "Board.md"));
                             managed = this.app.metadataCache.getFileCache(board)?.frontmatter?.["taskix-generated"] === true;
                         }

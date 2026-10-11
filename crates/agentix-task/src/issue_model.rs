@@ -63,8 +63,35 @@ pub struct Issue {
     pub document_path: String,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+pub enum MilestoneStatus {
+    #[default]
+    Planned,
+    Active,
+    Completed,
+    Cancelled,
+}
+
+impl MilestoneStatus {
+    #[must_use]
+    pub const fn terminal(self) -> bool {
+        matches!(self, Self::Completed | Self::Cancelled)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Milestone {
+    #[serde(default)]
+    pub status: MilestoneStatus,
+    #[serde(default)]
+    pub started_at: Option<i64>,
+    #[serde(default)]
+    pub completed_at: Option<i64>,
+    #[serde(default)]
+    pub cancelled_at: Option<i64>,
+    #[serde(default)]
+    pub archived_at: Option<i64>,
     pub id: String,
     pub project_id: String,
     pub title: String,

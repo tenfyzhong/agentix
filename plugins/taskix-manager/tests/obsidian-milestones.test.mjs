@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { connectionFixture } from "./support/obsidian-plugin.mjs";
+import { connectionFixture, loadPlugin, fixture, copy } from "./support/obsidian-plugin.mjs";
 
 test("direct managed Milestones folder exposes New Milestone", async () => {
     const f = await connectionFixture();
@@ -80,4 +80,28 @@ test("Milestone creation rejects blank titles and foreign returned documents", a
     const pending = f.plugin.createMilestone(project, folder, { title: "MVP" }, "foreign");
     f.reply(null, undefined, { id: "milestone_one", project_id: "prj_other", document_path: "Projects/Other/Milestones/MVP.md" });
     await assert.rejects(pending, /does not match this Project/);
+});
+
+test("Milestone status edits map to explicit lifecycle commands", () => {
+    const { commandFor } = loadPlugin();
+    for (const [from, to, command] of [["PLANNED", "ACTIVE", "start"], ["PLANNED", "COMPLETED", "complete"], ["ACTIVE", "COMPLETED", "complete"], ["ACTIVE", "CANCELLED", "cancel"], ["COMPLETED", "PLANNED", "reopen"], ["CANCELLED", "PLANNED", "reopen"]]) {
+        assert.deepEqual(Array.from(commandFor({kind: "milestone", id: "milestone_one", status: from}, to)), ["milestone", command, "milestone_one"]);
+    }
+    assert.throws(() => commandFor({kind: "milestone", id: "milestone_one", status: "COMPLETED"}, "ACTIVE"));
+});
+
+test("Milestone status edit restores rejected completion with revision guards", async t => {
+    const f = await fixture(); t.after(() => f.engine.dispose());
+    Object.assign(f.row, {kind: "milestone", id: "milestone_one", status: "ACTIVE"});
+    Object.assign(f.row.properties, {status: "ACTIVE"});
+    Object.assign(f.files.get(f.row.path), {id: "milestone_one", status: "ACTIVE"});
+    await f.engine.initialize();
+    f.io.execute = async args => { f.calls.push(copy(args)); throw new Error("Milestone has unfinished Issues"); };
+    const file = f.files.get(f.row.path);
+    file.status = "COMPLETED";
+    f.engine.observe(f.row.path, copy(file)); await f.engine.flush();
+    assert.equal(f.calls[0]?.[1], "complete");
+    assert.ok(f.calls[0].includes("--expect-revision"));
+    assert.equal(file.status, "ACTIVE");
+    assert.match(f.notices.at(-1), /unfinished Issues/);
 });

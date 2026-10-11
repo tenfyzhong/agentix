@@ -349,3 +349,28 @@ fn issue_cli_allows_title_only_status_changes_without_body_markers() {
         "# Simple issue\n"
     );
 }
+
+#[test]
+fn milestone_cli_supports_manual_lifecycle_and_archive() {
+    let cli = Cli::new();
+    let project = cli.ok(&["project", "register", "--name", "Demo"]);
+    let stage = cli.ok(&[
+        "milestone",
+        "create",
+        "--project",
+        project["id"].as_str().unwrap(),
+        "--title",
+        "Release",
+    ]);
+    let id = stage["id"].as_str().unwrap();
+    for (command, status) in [
+        ("start", "ACTIVE"),
+        ("complete", "COMPLETED"),
+        ("archive", "COMPLETED"),
+        ("unarchive", "COMPLETED"),
+        ("reopen", "PLANNED"),
+        ("cancel", "CANCELLED"),
+    ] {
+        assert_eq!(cli.ok(&["milestone", command, id])["status"], status);
+    }
+}

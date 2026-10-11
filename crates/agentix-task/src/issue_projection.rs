@@ -98,10 +98,82 @@ impl Service {
         ))
     }
 
+    fn milestone_status_board() -> Value {
+        json!({"type":"kanban","name":"Milestone board",
+            "groupBy":{"property":"note.status","direction":"ASC"},
+            "groupOrder":["PLANNED","ACTIVE","COMPLETED","CANCELLED"],
+            "order":["formula.name","status","due_date","completed_issues","total_issues","cancelled_issues"],
+            "sort":[{"column":"order","direction":"ASC"},{"column":"file.name","direction":"ASC"}],
+            "hideEmptyColumns":false,"columnWidth":300})
+    }
+
+    fn migrate_milestones_base(source: String, project: &Project) -> Result<String> {
+        let mut base: Value = serde_yaml::from_str(&source)?;
+        let scope = json!({"and":["file.hasTag(\"agent/milestone\")",format!("project_id == {}",json!(project.id))]});
+        let open = json!({"or":["status == \"PLANNED\"", "status == \"ACTIVE\""]});
+        let mut old_filtered = scope.clone();
+        old_filtered["and"]
+            .as_array_mut()
+            .unwrap()
+            .push(open.clone());
+        let move_filter = base["filters"] == old_filtered;
+        let default_scope = base["filters"] == scope;
+        let Some(views) = base["views"].as_array_mut() else {
+            return Ok(source);
+        };
+        let mut changed = move_filter;
+        let mut legacy_table = false;
+        if let Some(order) = views
+            .iter_mut()
+            .find(|view| view["name"] == "Milestones" && view["type"] == "table")
+            .and_then(|view| view["order"].as_array_mut())
+            && !order
+                .iter()
+                .any(|column| column == "status" || column == "note.status")
+        {
+            order.insert(usize::from(!order.is_empty()), json!("status"));
+            changed = true;
+            legacy_table = true;
+        }
+        if move_filter || (legacy_table && default_scope) {
+            for view in views.iter_mut().filter(|view| view["type"] == "table") {
+                let filters = view
+                    .get("filters")
+                    .filter(|value| !value.is_null())
+                    .cloned();
+                view["filters"] = filters.map_or_else(
+                    || json!({"and":[open]}),
+                    |filters| json!({"and":[filters,open]}),
+                );
+            }
+        }
+        if !views.iter().any(|view| {
+            view["type"] == "kanban"
+                && matches!(
+                    view["groupBy"]["property"].as_str(),
+                    Some("status" | "note.status")
+                )
+        }) {
+            views.push(Self::milestone_status_board());
+            changed = true;
+        }
+        if !changed {
+            return Ok(source);
+        }
+        if move_filter {
+            base["filters"] = scope;
+        }
+        Ok(format!(
+            "# taskix-generated: milestones:{}\n{}",
+            project.id,
+            serde_yaml::to_string(&base)?
+        ))
+    }
+
     fn milestones_base(project: &Project) -> Result<String> {
         let base = json!({"filters":{"and":["file.hasTag(\"agent/milestone\")",format!("project_id == {}",json!(project.id))]},
-            "formulas":{"name":NAME_FORMULA},"views":[{"type":"table","name":"Milestones","order":["formula.name","order","due_date","completed_issues","total_issues","cancelled_issues"],
-                "sort":[{"column":"order","direction":"ASC"},{"column":"file.name","direction":"ASC"}]}]});
+            "formulas":{"name":NAME_FORMULA},"views":[{"type":"table","name":"Milestones","filters":{"and":[{"or":["status == \"PLANNED\"", "status == \"ACTIVE\""]}]},"order":["formula.name","status","order","due_date","completed_issues","total_issues","cancelled_issues"],
+                "sort":[{"column":"order","direction":"ASC"},{"column":"file.name","direction":"ASC"}]},Self::milestone_status_board()]});
         Ok(format!(
             "# taskix-generated: milestones:{}\n{}",
             project.id,
@@ -240,11 +312,19 @@ impl Service {
         for field in ["goal", "name", "document_path"] {
             managed.as_object_mut().unwrap().remove(field);
         }
-        for field in ["created_at", "updated_at"] {
+        for field in [
+            "created_at",
+            "updated_at",
+            "started_at",
+            "completed_at",
+            "cancelled_at",
+            "archived_at",
+        ] {
             managed[field] = optional_local_timestamp(managed[field].as_i64())?;
         }
         managed["project"] = json!(self.config.project_link(project));
         managed["tags"] = json!(["agent/milestone"]);
+        managed["archived"] = json!(milestone.archived_at.is_some());
         managed["title"] = json!(milestone.name);
         managed["total_issues"] = json!(progress.total);
         managed["completed_issues"] = json!(progress.completed);
@@ -307,7 +387,7 @@ impl Service {
                 ("issue-base", "Issue.base", Self::issue_base(project)?),
                 (
                     "milestone-base",
-                    "Milestones.base",
+                    "Milestone.base",
                     Self::milestones_base(project)?,
                 ),
             ] {
@@ -316,11 +396,8 @@ impl Service {
                     continue;
                 }
                 let path = format!("{}/{name}", project.document_directory());
-                let body = if previous.contains_key(&key) && self.safe_path(&path)?.exists() {
-                    std::fs::read_to_string(self.safe_path(&path)?)?
-                } else {
-                    body
-                };
+                let body =
+                    self.preserved_delivery_base(previous.get(&key), &path, kind, project, body)?;
                 files.insert(path.clone(), body);
                 paths.insert(key, path);
             }
@@ -366,6 +443,30 @@ impl Service {
             paths.insert(key, milestone.document_path.clone());
         }
         Ok(())
+    }
+
+    fn preserved_delivery_base(
+        &self,
+        previous: Option<&String>,
+        path: &str,
+        kind: &str,
+        project: &Project,
+        default: String,
+    ) -> Result<String> {
+        let source = if self.safe_path(path)?.exists() {
+            path
+        } else {
+            previous.map_or(path, String::as_str)
+        };
+        if previous.is_none() || !self.safe_path(source)?.exists() {
+            return Ok(default);
+        }
+        let existing = std::fs::read_to_string(self.safe_path(source)?)?;
+        if kind == "milestone-base" {
+            Self::migrate_milestones_base(existing, project)
+        } else {
+            Ok(existing)
+        }
     }
 
     pub(super) fn delivery_source(

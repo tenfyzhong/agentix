@@ -250,23 +250,29 @@ complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_sub
 complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from help" -f -a "archive" -d 'Archive a completed or cancelled Issue document'
 complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from help" -f -a "unarchive" -d 'Restore an archived Issue without changing its lifecycle'
 complete -c taskix -n "__fish_taskix_using_subcommand issue; and __fish_seen_subcommand_from help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
-complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show delete help" -l config -r -F
-complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show delete help" -l project -r
-complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show delete help" -l actor -r
-complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show delete help" -l executor -r
-complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show delete help" -l session -r
-complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show delete help" -l delegated-by -r
-complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show delete help" -l lease-token -r
-complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show delete help" -l expect-revision -r
-complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show delete help" -l idempotency-key -r
-complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show delete help" -l json
-complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show delete help" -s h -l help -d 'Print help'
-complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show delete help" -f -a "create" -d 'Create a basic Project Milestone'
-complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show delete help" -f -a "update" -d 'Edit a Milestone\'s title, goal, order, or optional due date'
-complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show delete help" -f -a "list" -d 'List Milestones in Project order'
-complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show delete help" -f -a "show" -d 'Show a Milestone and Issue acceptance counts'
-complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show delete help" -f -a "delete" -d 'Delete a Milestone after unlinking or reassigning its Issues'
-complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show delete help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show start complete cancel reopen archive unarchive delete help" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show start complete cancel reopen archive unarchive delete help" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show start complete cancel reopen archive unarchive delete help" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show start complete cancel reopen archive unarchive delete help" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show start complete cancel reopen archive unarchive delete help" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show start complete cancel reopen archive unarchive delete help" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show start complete cancel reopen archive unarchive delete help" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show start complete cancel reopen archive unarchive delete help" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show start complete cancel reopen archive unarchive delete help" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show start complete cancel reopen archive unarchive delete help" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show start complete cancel reopen archive unarchive delete help" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show start complete cancel reopen archive unarchive delete help" -f -a "create" -d 'Create a basic Project Milestone'
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show start complete cancel reopen archive unarchive delete help" -f -a "update" -d 'Edit a Milestone\'s title, goal, order, or optional due date'
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show start complete cancel reopen archive unarchive delete help" -f -a "list" -d 'List Milestones in Project order'
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show start complete cancel reopen archive unarchive delete help" -f -a "show" -d 'Show a Milestone and Issue acceptance counts'
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show start complete cancel reopen archive unarchive delete help" -f -a "start" -d 'Start a planned Milestone'
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show start complete cancel reopen archive unarchive delete help" -f -a "complete" -d 'Complete a Milestone after every associated Issue is terminal'
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show start complete cancel reopen archive unarchive delete help" -f -a "cancel" -d 'Cancel a Milestone without cancelling its Issues or Jobs'
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show start complete cancel reopen archive unarchive delete help" -f -a "reopen" -d 'Reopen a terminal Milestone as planned'
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show start complete cancel reopen archive unarchive delete help" -f -a "archive" -d 'Archive a terminal Milestone without changing its status'
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show start complete cancel reopen archive unarchive delete help" -f -a "unarchive" -d 'Restore an archived Milestone without changing its status'
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show start complete cancel reopen archive unarchive delete help" -f -a "delete" -d 'Delete a Milestone after unlinking or reassigning its Issues'
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and not __fish_seen_subcommand_from create update list show start complete cancel reopen archive unarchive delete help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
 complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from create" -l title -r
 complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from create" -l name -r
 complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from create" -l goal -r
@@ -323,6 +329,72 @@ complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen
 complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from show" -l idempotency-key -r
 complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from show" -l json
 complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from show" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from start" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from start" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from start" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from start" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from start" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from start" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from start" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from start" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from start" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from start" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from start" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from complete" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from complete" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from complete" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from complete" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from complete" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from complete" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from complete" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from complete" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from complete" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from complete" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from complete" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from cancel" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from cancel" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from cancel" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from cancel" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from cancel" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from cancel" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from cancel" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from cancel" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from cancel" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from cancel" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from cancel" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from reopen" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from reopen" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from reopen" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from reopen" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from reopen" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from reopen" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from reopen" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from reopen" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from reopen" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from reopen" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from reopen" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from archive" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from archive" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from archive" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from archive" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from archive" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from archive" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from archive" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from archive" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from archive" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from archive" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from archive" -s h -l help -d 'Print help'
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from unarchive" -l config -r -F
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from unarchive" -l project -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from unarchive" -l actor -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from unarchive" -l executor -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from unarchive" -l session -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from unarchive" -l delegated-by -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from unarchive" -l lease-token -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from unarchive" -l expect-revision -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from unarchive" -l idempotency-key -r
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from unarchive" -l json
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from unarchive" -s h -l help -d 'Print help'
 complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from delete" -l config -r -F
 complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from delete" -l project -r
 complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from delete" -l actor -r
@@ -338,6 +410,12 @@ complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen
 complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from help" -f -a "update" -d 'Edit a Milestone\'s title, goal, order, or optional due date'
 complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from help" -f -a "list" -d 'List Milestones in Project order'
 complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from help" -f -a "show" -d 'Show a Milestone and Issue acceptance counts'
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from help" -f -a "start" -d 'Start a planned Milestone'
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from help" -f -a "complete" -d 'Complete a Milestone after every associated Issue is terminal'
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from help" -f -a "cancel" -d 'Cancel a Milestone without cancelling its Issues or Jobs'
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from help" -f -a "reopen" -d 'Reopen a terminal Milestone as planned'
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from help" -f -a "archive" -d 'Archive a terminal Milestone without changing its status'
+complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from help" -f -a "unarchive" -d 'Restore an archived Milestone without changing its status'
 complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from help" -f -a "delete" -d 'Delete a Milestone after unlinking or reassigning its Issues'
 complete -c taskix -n "__fish_taskix_using_subcommand milestone; and __fish_seen_subcommand_from help" -f -a "help" -d 'Print this message or the help of the given subcommand(s)'
 complete -c taskix -n "__fish_taskix_using_subcommand serve" -l config -r -F
@@ -1761,6 +1839,12 @@ complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subc
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from milestone" -f -a "update" -d 'Edit a Milestone\'s title, goal, order, or optional due date'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from milestone" -f -a "list" -d 'List Milestones in Project order'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from milestone" -f -a "show" -d 'Show a Milestone and Issue acceptance counts'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from milestone" -f -a "start" -d 'Start a planned Milestone'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from milestone" -f -a "complete" -d 'Complete a Milestone after every associated Issue is terminal'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from milestone" -f -a "cancel" -d 'Cancel a Milestone without cancelling its Issues or Jobs'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from milestone" -f -a "reopen" -d 'Reopen a terminal Milestone as planned'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from milestone" -f -a "archive" -d 'Archive a terminal Milestone without changing its status'
+complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from milestone" -f -a "unarchive" -d 'Restore an archived Milestone without changing its status'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from milestone" -f -a "delete" -d 'Delete a Milestone after unlinking or reassigning its Issues'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from memory" -f -a "status" -d 'Inspect queue, index coverage and provider availability'
 complete -c taskix -n "__fish_taskix_using_subcommand help; and __fish_seen_subcommand_from memory" -f -a "doctor" -d 'Inspect service configuration and local availability without a model request'

@@ -142,6 +142,18 @@ pub enum MilestoneCommand {
     List,
     /// Show a Milestone and Issue acceptance counts.
     Show { id: String },
+    /// Start a planned Milestone.
+    Start { id: String },
+    /// Complete a Milestone after every associated Issue is terminal.
+    Complete { id: String },
+    /// Cancel a Milestone without cancelling its Issues or Jobs.
+    Cancel { id: String },
+    /// Reopen a terminal Milestone as planned.
+    Reopen { id: String },
+    /// Archive a terminal Milestone without changing its status.
+    Archive { id: String },
+    /// Restore an archived Milestone without changing its status.
+    Unarchive { id: String },
     /// Delete a Milestone after unlinking or reassigning its Issues.
     Delete { id: String },
 }
@@ -217,6 +229,14 @@ pub async fn milestone(cli: &Cli, service: &Service, command: &MilestoneCommand)
         }
         MilestoneCommand::Show { id } => {
             return Ok(response(service.store().milestone_detail(id).await?));
+        }
+        MilestoneCommand::Start { id } => json!({"command":"milestone.start","milestone":id}),
+        MilestoneCommand::Complete { id } => json!({"command":"milestone.complete","milestone":id}),
+        MilestoneCommand::Cancel { id } => json!({"command":"milestone.cancel","milestone":id}),
+        MilestoneCommand::Reopen { id } => json!({"command":"milestone.reopen","milestone":id}),
+        MilestoneCommand::Archive { id } => json!({"command":"milestone.archive","milestone":id}),
+        MilestoneCommand::Unarchive { id } => {
+            json!({"command":"milestone.unarchive","milestone":id})
         }
         MilestoneCommand::Delete { id } => json!({"command":"milestone.delete","milestone":id}),
     };

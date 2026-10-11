@@ -458,6 +458,108 @@ _arguments "${_arguments_options[@]}" : \
 ':id:_default' \
 && ret=0
 ;;
+(start)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(complete)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(cancel)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(reopen)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(archive)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
+(unarchive)
+_arguments "${_arguments_options[@]}" : \
+'--config=[]:CONFIG:_files' \
+'--project=[]:PROJECT:_default' \
+'--actor=[]:ACTOR:_default' \
+'--executor=[]:EXECUTOR:_default' \
+'--session=[]:SESSION:_default' \
+'--delegated-by=[]:DELEGATED_BY:_default' \
+'--lease-token=[]:LEASE_TOKEN:_default' \
+'--expect-revision=[]:EXPECT_REVISION:_default' \
+'--idempotency-key=[]:IDEMPOTENCY_KEY:_default' \
+'--json[]' \
+'-h[Print help]' \
+'--help[Print help]' \
+':id:_default' \
+&& ret=0
+;;
 (delete)
 _arguments "${_arguments_options[@]}" : \
 '--config=[]:CONFIG:_files' \
@@ -500,6 +602,30 @@ _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
 (show)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(start)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(complete)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(cancel)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(reopen)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(archive)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(unarchive)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
@@ -3125,6 +3251,30 @@ _arguments "${_arguments_options[@]}" : \
 _arguments "${_arguments_options[@]}" : \
 && ret=0
 ;;
+(start)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(complete)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(cancel)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(reopen)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(archive)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
+(unarchive)
+_arguments "${_arguments_options[@]}" : \
+&& ret=0
+;;
 (delete)
 _arguments "${_arguments_options[@]}" : \
 && ret=0
@@ -4269,9 +4419,30 @@ _taskix__subcmd__help__subcmd__milestone_commands() {
 'update:Edit a Milestone'\''s title, goal, order, or optional due date' \
 'list:List Milestones in Project order' \
 'show:Show a Milestone and Issue acceptance counts' \
+'start:Start a planned Milestone' \
+'complete:Complete a Milestone after every associated Issue is terminal' \
+'cancel:Cancel a Milestone without cancelling its Issues or Jobs' \
+'reopen:Reopen a terminal Milestone as planned' \
+'archive:Archive a terminal Milestone without changing its status' \
+'unarchive:Restore an archived Milestone without changing its status' \
 'delete:Delete a Milestone after unlinking or reassigning its Issues' \
     )
     _describe -t commands 'taskix help milestone commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__milestone__subcmd__archive_commands] )) ||
+_taskix__subcmd__help__subcmd__milestone__subcmd__archive_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help milestone archive commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__milestone__subcmd__cancel_commands] )) ||
+_taskix__subcmd__help__subcmd__milestone__subcmd__cancel_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help milestone cancel commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__milestone__subcmd__complete_commands] )) ||
+_taskix__subcmd__help__subcmd__milestone__subcmd__complete_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help milestone complete commands' commands "$@"
 }
 (( $+functions[_taskix__subcmd__help__subcmd__milestone__subcmd__create_commands] )) ||
 _taskix__subcmd__help__subcmd__milestone__subcmd__create_commands() {
@@ -4288,10 +4459,25 @@ _taskix__subcmd__help__subcmd__milestone__subcmd__list_commands() {
     local commands; commands=()
     _describe -t commands 'taskix help milestone list commands' commands "$@"
 }
+(( $+functions[_taskix__subcmd__help__subcmd__milestone__subcmd__reopen_commands] )) ||
+_taskix__subcmd__help__subcmd__milestone__subcmd__reopen_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help milestone reopen commands' commands "$@"
+}
 (( $+functions[_taskix__subcmd__help__subcmd__milestone__subcmd__show_commands] )) ||
 _taskix__subcmd__help__subcmd__milestone__subcmd__show_commands() {
     local commands; commands=()
     _describe -t commands 'taskix help milestone show commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__milestone__subcmd__start_commands] )) ||
+_taskix__subcmd__help__subcmd__milestone__subcmd__start_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help milestone start commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__help__subcmd__milestone__subcmd__unarchive_commands] )) ||
+_taskix__subcmd__help__subcmd__milestone__subcmd__unarchive_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix help milestone unarchive commands' commands "$@"
 }
 (( $+functions[_taskix__subcmd__help__subcmd__milestone__subcmd__update_commands] )) ||
 _taskix__subcmd__help__subcmd__milestone__subcmd__update_commands() {
@@ -5278,10 +5464,31 @@ _taskix__subcmd__milestone_commands() {
 'update:Edit a Milestone'\''s title, goal, order, or optional due date' \
 'list:List Milestones in Project order' \
 'show:Show a Milestone and Issue acceptance counts' \
+'start:Start a planned Milestone' \
+'complete:Complete a Milestone after every associated Issue is terminal' \
+'cancel:Cancel a Milestone without cancelling its Issues or Jobs' \
+'reopen:Reopen a terminal Milestone as planned' \
+'archive:Archive a terminal Milestone without changing its status' \
+'unarchive:Restore an archived Milestone without changing its status' \
 'delete:Delete a Milestone after unlinking or reassigning its Issues' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'taskix milestone commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__milestone__subcmd__archive_commands] )) ||
+_taskix__subcmd__milestone__subcmd__archive_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix milestone archive commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__milestone__subcmd__cancel_commands] )) ||
+_taskix__subcmd__milestone__subcmd__cancel_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix milestone cancel commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__milestone__subcmd__complete_commands] )) ||
+_taskix__subcmd__milestone__subcmd__complete_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix milestone complete commands' commands "$@"
 }
 (( $+functions[_taskix__subcmd__milestone__subcmd__create_commands] )) ||
 _taskix__subcmd__milestone__subcmd__create_commands() {
@@ -5300,10 +5507,31 @@ _taskix__subcmd__milestone__subcmd__help_commands() {
 'update:Edit a Milestone'\''s title, goal, order, or optional due date' \
 'list:List Milestones in Project order' \
 'show:Show a Milestone and Issue acceptance counts' \
+'start:Start a planned Milestone' \
+'complete:Complete a Milestone after every associated Issue is terminal' \
+'cancel:Cancel a Milestone without cancelling its Issues or Jobs' \
+'reopen:Reopen a terminal Milestone as planned' \
+'archive:Archive a terminal Milestone without changing its status' \
+'unarchive:Restore an archived Milestone without changing its status' \
 'delete:Delete a Milestone after unlinking or reassigning its Issues' \
 'help:Print this message or the help of the given subcommand(s)' \
     )
     _describe -t commands 'taskix milestone help commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__milestone__subcmd__help__subcmd__archive_commands] )) ||
+_taskix__subcmd__milestone__subcmd__help__subcmd__archive_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix milestone help archive commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__milestone__subcmd__help__subcmd__cancel_commands] )) ||
+_taskix__subcmd__milestone__subcmd__help__subcmd__cancel_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix milestone help cancel commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__milestone__subcmd__help__subcmd__complete_commands] )) ||
+_taskix__subcmd__milestone__subcmd__help__subcmd__complete_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix milestone help complete commands' commands "$@"
 }
 (( $+functions[_taskix__subcmd__milestone__subcmd__help__subcmd__create_commands] )) ||
 _taskix__subcmd__milestone__subcmd__help__subcmd__create_commands() {
@@ -5325,10 +5553,25 @@ _taskix__subcmd__milestone__subcmd__help__subcmd__list_commands() {
     local commands; commands=()
     _describe -t commands 'taskix milestone help list commands' commands "$@"
 }
+(( $+functions[_taskix__subcmd__milestone__subcmd__help__subcmd__reopen_commands] )) ||
+_taskix__subcmd__milestone__subcmd__help__subcmd__reopen_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix milestone help reopen commands' commands "$@"
+}
 (( $+functions[_taskix__subcmd__milestone__subcmd__help__subcmd__show_commands] )) ||
 _taskix__subcmd__milestone__subcmd__help__subcmd__show_commands() {
     local commands; commands=()
     _describe -t commands 'taskix milestone help show commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__milestone__subcmd__help__subcmd__start_commands] )) ||
+_taskix__subcmd__milestone__subcmd__help__subcmd__start_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix milestone help start commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__milestone__subcmd__help__subcmd__unarchive_commands] )) ||
+_taskix__subcmd__milestone__subcmd__help__subcmd__unarchive_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix milestone help unarchive commands' commands "$@"
 }
 (( $+functions[_taskix__subcmd__milestone__subcmd__help__subcmd__update_commands] )) ||
 _taskix__subcmd__milestone__subcmd__help__subcmd__update_commands() {
@@ -5340,10 +5583,25 @@ _taskix__subcmd__milestone__subcmd__list_commands() {
     local commands; commands=()
     _describe -t commands 'taskix milestone list commands' commands "$@"
 }
+(( $+functions[_taskix__subcmd__milestone__subcmd__reopen_commands] )) ||
+_taskix__subcmd__milestone__subcmd__reopen_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix milestone reopen commands' commands "$@"
+}
 (( $+functions[_taskix__subcmd__milestone__subcmd__show_commands] )) ||
 _taskix__subcmd__milestone__subcmd__show_commands() {
     local commands; commands=()
     _describe -t commands 'taskix milestone show commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__milestone__subcmd__start_commands] )) ||
+_taskix__subcmd__milestone__subcmd__start_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix milestone start commands' commands "$@"
+}
+(( $+functions[_taskix__subcmd__milestone__subcmd__unarchive_commands] )) ||
+_taskix__subcmd__milestone__subcmd__unarchive_commands() {
+    local commands; commands=()
+    _describe -t commands 'taskix milestone unarchive commands' commands "$@"
 }
 (( $+functions[_taskix__subcmd__milestone__subcmd__update_commands] )) ||
 _taskix__subcmd__milestone__subcmd__update_commands() {

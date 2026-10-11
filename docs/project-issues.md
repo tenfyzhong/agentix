@@ -4,7 +4,7 @@ Issue is the durable project requirement. Job is one execution round; Task remai
 
 ## Persistence and mutations
 
-SQLite stores only Issue metadata: identity, title/name, associations, status, revision, content hashes, lifecycle timestamps, and document location. Requirement, Acceptance Criteria and Notes live only in the Obsidian Markdown document; they are absent from Issue rows and persisted command replay results. `issue show` and IM detail read those sections on demand. Routing uses bounded titles and document references rather than loading prose into SQLite. Milestones store a title/name, goal, order, optional due date, revision, and Project identity. Job `issue_id` is nullable. Indexed queries apply Project, status, Milestone, archive and association predicates before paging; IM pages contain six entries. Routing summaries expose at most 32 TODO/ACTIVE Issue candidates and mark incomplete evidence explicitly. Selected Issue bodies are synchronized and read in full before association.
+SQLite stores only Issue metadata: identity, title/name, associations, status, revision, content hashes, lifecycle timestamps, and document location. Requirement, Acceptance Criteria and Notes live only in the Obsidian Markdown document; they are absent from Issue rows and persisted command replay results. `issue show` and IM detail read those sections on demand. Routing uses bounded titles and document references rather than loading prose into SQLite. Milestones store a title/name, goal, order, optional due date, lifecycle status/timestamps, independent archive timestamp, revision, and Project identity. Job `issue_id` is nullable. Indexed queries apply Project, status, Milestone, archive and association predicates before paging; IM pages contain six entries. Routing summaries expose at most 32 TODO/ACTIVE Issue candidates and mark incomplete evidence explicitly. Selected Issue bodies are synchronized and read in full before association.
 
 Association rejects cross-Project links and guards the selected Issue revision/content hash. Linking an already executing Job starts a TODO Issue; otherwise the first successful `task.start` starts it atomically with execution. Claim and Plan publication do not start the Issue. Terminal Jobs support historical association metadata without reopening execution. Reassigning/unlinking a Job never completes or resets either Issue.
 
@@ -68,6 +68,94 @@ Explicit synchronization or CLI content updates that change Requirement or Accep
 
 Human approval requires a `user:` actor. Agent execution cannot self-approve an Issue. Cancellation retains completed Task outcomes, revokes unfinished work's leases and preserves history. Reopening keeps prior Jobs and results; it does not rerun Tasks. Only terminal Issues can be archived. Project archival requires closed Jobs and terminal Issues. Milestone deletion requires explicitly unlinking its Issues first. Progress counts accepted Issues, total Issues and cancelled Issues separately; Milestones have no automatic status or scheduling/dependency engine.
 
+## Milestone lifecycle
+
+```mermaid
+stateDiagram-v2
+    [*] --> PLANNED: create
+    PLANNED --> ACTIVE: start
+    PLANNED --> COMPLETED: complete [all Issues terminal]
+    ACTIVE --> COMPLETED: complete [all Issues terminal]
+    PLANNED --> CANCELLED: cancel
+    ACTIVE --> CANCELLED: cancel
+    COMPLETED --> PLANNED: reopen
+    CANCELLED --> PLANNED: reopen
+
+    note right of COMPLETED
+        No linked Issue may be TODO, ACTIVE or PENDING_REVIEW.
+        An empty Milestone can complete.
+        Completed and cancelled Issue counts remain separate.
+    end note
+    note right of CANCELLED
+        Associated Issues, Jobs and Tasks are unchanged.
+    end note
+```
+
+| Command (`taskix milestone ...`) | From | To | Preconditions / effect |
+| --- | --- | --- | --- |
+| `create` | No Milestone | PLANNED | Project is not archived; a title is required. |
+| `start ID` | PLANNED | ACTIVE | Sets `started_at`. |
+| `complete ID` | PLANNED or ACTIVE | COMPLETED | Every linked Issue is COMPLETED or CANCELLED; sets `completed_at`. |
+| `cancel ID` | PLANNED or ACTIVE | CANCELLED | Sets `cancelled_at`; no cascade to linked work. |
+| `reopen ID` | COMPLETED or CANCELLED | PLANNED | Clears `started_at`, `completed_at` and `cancelled_at`; preserves Issue associations and history. |
+| `archive ID` | COMPLETED or CANCELLED, unarchived | Same status, archived | Sets `archived_at`; moves the note into `Milestones/Archived/`. |
+| `unarchive ID` | COMPLETED or CANCELLED, archived | Same status, unarchived | Clears `archived_at`; restores the note under `Milestones/`. |
+
+The Project must be unarchived for these commands. Except for `unarchive`, the
+Milestone must also be unarchived. Use `--expect-revision REVISION` to reject stale
+writes; Obsidian status edits supply this guard automatically. Creation initializes revision 1; each subsequent
+successful mutation increments the revision and updates `updated_at`.
+
+Only the lifecycle arrows above are supported: ACTIVE cannot move directly back
+to PLANNED, and a terminal Milestone cannot move directly to ACTIVE or to the other
+terminal state. Reopen first, then start, complete or cancel as appropriate.
+Repeating a transition against its target state is rejected; replaying the same
+idempotency key returns its original result. There is no PENDING_REVIEW state.
+
+Archival is an independent dimension, not a fifth status:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Unarchived
+    Unarchived --> Archived: archive [status is terminal]
+    Archived --> Unarchived: unarchive
+
+    note right of Archived
+        Status remains COMPLETED or CANCELLED.
+        Unarchive before reopening.
+    end note
+```
+
+Completion validates linked Issues at that moment. Subsequent Issue creation,
+reassignment or reopening does not automatically change the Milestone's status.
+Issue progress never starts or completes a Milestone automatically. Deletion is
+separate from lifecycle transitions: unlink or reassign all Issues before deleting
+an unarchived Milestone.
+
+Completion uses an indexed SQL existence query in the same write transaction,
+without loading every linked Issue into memory. Linked Issue notes refresh their
+Milestone links after archive/unarchive. The Obsidian plugin submits status edits
+through the same CLI and restores rejected changes. No scheduling, dependency
+engine or automatic advancement is introduced.
+
+Schema 25 fills existing Milestones with PLANNED and queues a document rebuild.
+Upgrade Agentix and Taskix together; older binaries reject the new schema, and
+SQLite triggers reject already-connected legacy writers that omit the status.
+Synchronization renames the registered legacy `Milestones.base` to `Milestone.base`,
+preserving saved views and updating the generated Board embed.
+
+New `Milestone.base` tables default to PLANNED or ACTIVE within their Project and
+include both the Milestones table and a Milestone board grouped by status. The board
+orders columns as PLANNED, ACTIVE, COMPLETED, CANCELLED and shows due dates and Issue
+counts. Its four status columns remain visible, including empty columns, and its
+contents are not restricted by the table's open-stage filter. Dragging uses the
+same lifecycle validation as CLI commands. The old default global status filter
+moves to table views during synchronization. Existing registered Bases gain the status
+board without replacing customized tables, filters or existing status boards.
+Existing default tables without that column gain it and
+the new filter; customized filters are preserved. Later filter edits survive sync.
+CLI lists and IM browsing retain all statuses, including terminal stages.
+
 ## Documents and shared Bases
 
 Issue, Job, Task, Memory and Milestone properties retain the immutable `project_id` for Project membership and add a managed `project` wikilink, for example `[[11-Agents/Projects/agentix/Board|agentix]]`. The link displays the Project name and opens its Board; editing it does not reassign the entity. Synchronization derives it from the current Project name and Board location, including renamed and archived Projects. The former `projects` list remains removed. Built-in Base Project columns and grouping use `project`, while stable-ID filters continue to use `project_id`. Existing registered Bases migrate their display columns without changing saved filters. Recent Jobs preserves saved views during incremental and full synchronization. Run `taskix sync` after upgrading to refresh existing task documents and Base columns; the memory service refreshes its notes during its bounded full projection pass, or explicitly run `taskix memory sync --project PROJECT_ID`.
@@ -82,7 +170,7 @@ Each Project creates these directories and files:
 Projects/<project>/
   Board.md
   Issue.base
-  Milestones.base
+  Milestone.base
   Issues/YYMMDD-seq-name.md
   Milestones/YYMMDD-seq-name.md
   Jobs/...

@@ -59,7 +59,7 @@ impl Store {
             .fetch_one(&pool)
             .await?;
         ensure!(
-            identity == 0x4158_544b && (14..=24).contains(&version),
+            identity == 0x4158_544b && (14..=25).contains(&version),
             "unsupported task database identity or schema for read-only lookup"
         );
         Ok(Self {
@@ -135,7 +135,7 @@ impl Store {
     async fn migrate(&self) -> Result<bool> {
         let current: (i64, i64, i64) = sqlx::query_as("SELECT (SELECT application_id FROM pragma_application_id), (SELECT user_version FROM pragma_user_version), (SELECT auto_vacuum FROM pragma_auto_vacuum)")
             .fetch_one(&self.pool).await?;
-        if current == (0x4158_544b, 24, 2) {
+        if current == (0x4158_544b, 25, 2) {
             return Ok(false);
         }
         if current.2 != 2 {
@@ -149,7 +149,7 @@ impl Store {
                 "invalid: task database must be a dedicated taskix database"
             );
             ensure!(
-                current.1 <= 24,
+                current.1 <= 25,
                 "unsupported task database schema version {}",
                 current.1
             );
@@ -172,12 +172,15 @@ impl Store {
             .fetch_one(&mut *tx)
             .await?;
         ensure!(
-            version <= 24,
+            version <= 25,
             "unsupported task database schema version {version}"
         );
         sqlx::raw_sql(include_str!("schema.sql"))
             .execute(&mut *tx)
             .await?;
+        if version < 25 {
+            migrate_milestone_status(&mut tx).await?;
+        }
         sqlx::query(
             "INSERT OR IGNORE INTO memory_source_identity(singleton,instance_id) VALUES (1,?)",
         )
@@ -618,6 +621,17 @@ impl Store {
             .await?;
         Ok(())
     }
+}
+
+async fn migrate_milestone_status(conn: &mut SqliteConnection) -> Result<()> {
+    // Fill legacy metadata before other migrations deserialize or rewrite Milestones.
+    sqlx::query("UPDATE milestones SET data=json_set(data,'$.status','PLANNED','$.started_at',NULL,'$.completed_at',NULL,'$.cancelled_at',NULL,'$.archived_at',NULL) WHERE json_type(data,'$.status') IS NULL")
+        .execute(&mut *conn).await?;
+    sqlx::query("INSERT OR REPLACE INTO pending_documents(key,generation) VALUES ('rebuild',?)")
+        .bind(new_id("publication"))
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
 }
 
 async fn migrate_features(conn: &mut SqliteConnection, version: i64) -> Result<()> {

@@ -927,3 +927,529 @@ async fn issue_cancellation_notices_prioritize_recent_cancellations() {
     assert_eq!(notices.as_array().unwrap().len(), 32);
     assert_eq!(notices[0]["id"], latest);
 }
+
+async fn milestone_command(f: &Fixture, id: &str, command: &str) -> Value {
+    f.service
+        .execute(
+            json!({"command":format!("milestone.{command}"),"milestone":id}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap()
+        .result
+}
+
+#[tokio::test]
+async fn milestone_lifecycle_is_manual_guarded_and_does_not_cancel_delivery() {
+    let f = Fixture::new().await;
+    let stage = f
+        .service
+        .execute(
+            json!({"command":"milestone.create","project":f.project,"title":"Release"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap()
+        .result;
+    assert_eq!(stage["status"], "PLANNED");
+    let id = stage["id"].as_str().unwrap();
+    let item = issue(&f).await;
+    f.service
+        .execute(
+            json!({"command":"issue.update","issue":item["id"],"milestone":id}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    link(&f, &f.job, item["id"].as_str().unwrap()).await;
+    let started = milestone_command(&f, id, "start").await;
+    assert_eq!(started["status"], "ACTIVE");
+    let error = f
+        .service
+        .execute(
+            json!({"command":"milestone.complete","milestone":id}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("unfinished Issues"), "{error}");
+    assert!(
+        f.service
+            .execute(
+                json!({"command":"milestone.archive","milestone":id}),
+                WriteOptions::default()
+            )
+            .await
+            .is_err()
+    );
+    let cancelled = milestone_command(&f, id, "cancel").await;
+    assert_eq!(cancelled["status"], "CANCELLED");
+    assert_eq!(
+        f.service
+            .store()
+            .issue_record(item["id"].as_str().unwrap())
+            .await
+            .unwrap()
+            .status,
+        agentix_task::IssueStatus::Todo
+    );
+    let snapshot = f.service.store().snapshot().await.unwrap();
+    assert_eq!(
+        snapshot
+            .jobs
+            .iter()
+            .find(|job| job.id == f.job)
+            .unwrap()
+            .status,
+        agentix_task::JobStatus::Active
+    );
+    milestone_command(&f, id, "reopen").await;
+    f.service
+        .execute(
+            json!({"command":"issue.cancel","issue":item["id"]}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(f.service.store().milestone_record(id).await.unwrap()).unwrap()["status"],
+        "PLANNED"
+    );
+    let complete = milestone_command(&f, id, "complete").await;
+    assert_eq!(complete["status"], "COMPLETED");
+    let progress = f.service.store().milestone_detail(id).await.unwrap();
+    assert_eq!(progress["progress"]["completed"], 0);
+    assert_eq!(progress["progress"]["cancelled"], 1);
+    assert!(
+        f.service
+            .execute(
+                json!({"command":"milestone.cancel","milestone":id}),
+                WriteOptions::default()
+            )
+            .await
+            .is_err()
+    );
+    assert!(
+        f.service
+            .execute(
+                json!({"command":"milestone.reopen","milestone":id}),
+                WriteOptions {
+                    expected_revision: Some(1),
+                    ..WriteOptions::default()
+                }
+            )
+            .await
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn milestone_legacy_defaults_and_board_show_only_open_stages() {
+    let f = Fixture::new().await;
+    let mut stage = f
+        .service
+        .execute(
+            json!({"command":"milestone.create","project":f.project,"title":"Release"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap()
+        .result;
+    for field in [
+        "status",
+        "started_at",
+        "completed_at",
+        "cancelled_at",
+        "archived_at",
+    ] {
+        stage.as_object_mut().unwrap().remove(field);
+    }
+    let legacy: agentix_task::Milestone = serde_json::from_value(stage.clone()).unwrap();
+    assert_eq!(serde_json::to_value(legacy).unwrap()["status"], "PLANNED");
+    let root = f.service.config().output_dir();
+    let issue_base: Value = serde_yaml::from_str(
+        &std::fs::read_to_string(root.join("Projects/demo/Issue.base")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        issue_base["filters"],
+        json!({"and":[format!("project_id == {}", json!(f.project))]})
+    );
+    let board = std::fs::read_to_string(root.join("Projects/demo/Milestone.base")).unwrap();
+    let yaml: serde_json::Value = serde_yaml::from_str(&board).unwrap();
+    assert!(
+        yaml["views"][0]["filters"]["and"]
+            .as_array()
+            .unwrap()
+            .contains(&json!({"or":["status == \"PLANNED\"", "status == \"ACTIVE\""]}))
+    );
+    assert!(
+        yaml["views"][0]["order"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("status"))
+    );
+    let note =
+        std::fs::read_to_string(root.join(stage["document_path"].as_str().unwrap())).unwrap();
+    let properties: Value = serde_yaml::from_str(note.split("---").nth(1).unwrap()).unwrap();
+    assert_eq!(properties["status"], "PLANNED");
+}
+
+#[tokio::test]
+async fn milestone_schema_upgrade_backfills_status_and_rejects_legacy_writes() {
+    let f = Fixture::new().await;
+    let stage = f
+        .service
+        .execute(
+            json!({"command":"milestone.create","project":f.project,"title":"Legacy"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap()
+        .result;
+    let db = &f.service.config().storage.path;
+    let pool =
+        sqlx::SqlitePool::connect_with(sqlx::sqlite::SqliteConnectOptions::new().filename(db))
+            .await
+            .unwrap();
+    sqlx::raw_sql("DROP TRIGGER IF EXISTS milestone_status_insert; DROP TRIGGER IF EXISTS milestone_status_update; PRAGMA user_version=24; UPDATE milestones SET data=json_remove(data,'$.status','$.started_at','$.completed_at','$.cancelled_at','$.archived_at');").execute(&pool).await.unwrap();
+    let upgraded = Store::open(db).await.unwrap();
+    let raw: String = sqlx::query_scalar("SELECT data FROM milestones WHERE id=?")
+        .bind(stage["id"].as_str().unwrap())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        serde_json::from_str::<Value>(&raw).unwrap()["status"],
+        "PLANNED"
+    );
+    assert!(
+        sqlx::query("UPDATE milestones SET data=json_remove(data,'$.status')")
+            .execute(&pool)
+            .await
+            .is_err()
+    );
+    let service = Service::new(f.service.config().clone(), upgraded).unwrap();
+    service.sync().await.unwrap();
+    let note = service
+        .obsidian_note(stage["id"].as_str().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(note["status"], "PLANNED");
+}
+
+#[tokio::test]
+async fn milestone_existing_default_base_upgrades_and_preserves_later_filters() {
+    let f = Fixture::new().await;
+    let path = f
+        .service
+        .config()
+        .output_dir()
+        .join("Projects/demo/Milestone.base");
+    let mut base: Value = serde_yaml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    base["filters"] = json!({"and":["file.hasTag(\"agent/milestone\")",format!("project_id == {}",json!(f.project))]});
+    base["views"][0]["order"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|column| column != "status");
+    std::fs::write(&path, serde_yaml::to_string(&base).unwrap()).unwrap();
+    f.service.sync().await.unwrap();
+    let upgraded: Value = serde_yaml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert!(
+        upgraded["views"][0]["filters"]["and"]
+            .as_array()
+            .unwrap()
+            .contains(&json!({"or":["status == \"PLANNED\"", "status == \"ACTIVE\""]}))
+    );
+    let mut customized = upgraded;
+    customized["views"][0]["filters"]["and"]
+        .as_array_mut()
+        .unwrap()
+        .pop();
+    std::fs::write(&path, serde_yaml::to_string(&customized).unwrap()).unwrap();
+    f.service.sync().await.unwrap();
+    let retained: Value = serde_yaml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    assert_eq!(retained, customized);
+}
+
+#[tokio::test]
+async fn milestone_completion_checks_pending_review_and_refreshes_archive_links() {
+    let f = Fixture::new().await;
+    let stage = f
+        .service
+        .execute(
+            json!({"command":"milestone.create","project":f.project,"title":"Release"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap()
+        .result;
+    let id = stage["id"].as_str().unwrap();
+    let item = issue(&f).await;
+    f.service
+        .execute(
+            json!({"command":"issue.update","issue":item["id"],"milestone":id}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    for command in ["issue.start", "issue.submit"] {
+        f.service
+            .execute(
+                json!({"command":command,"issue":item["id"]}),
+                WriteOptions::default(),
+            )
+            .await
+            .unwrap();
+        let error = f
+            .service
+            .execute(
+                json!({"command":"milestone.complete","milestone":id}),
+                WriteOptions::default(),
+            )
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("unfinished Issues"));
+    }
+    f.service
+        .execute(
+            json!({"command":"issue.approve","issue":item["id"]}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    milestone_command(&f, id, "start").await;
+    let note = f.service.obsidian_note(id).await.unwrap();
+    assert!(note["properties"]["started_at"].is_string());
+    let complete = milestone_command(&f, id, "complete").await;
+    let archived = milestone_command(&f, id, "archive").await;
+    let root = f.service.config().output_dir();
+    assert!(
+        !root
+            .join(complete["document_path"].as_str().unwrap())
+            .exists()
+    );
+    assert!(
+        root.join(archived["document_path"].as_str().unwrap())
+            .exists()
+    );
+    let issue_note =
+        std::fs::read_to_string(root.join(item["document_path"].as_str().unwrap())).unwrap();
+    assert!(issue_note.contains("/Milestones/Archived/"));
+    let restored = milestone_command(&f, id, "unarchive").await;
+    assert_eq!(restored["document_path"], complete["document_path"]);
+    assert!(
+        !root
+            .join(archived["document_path"].as_str().unwrap())
+            .exists()
+    );
+    let issue_note =
+        std::fs::read_to_string(root.join(item["document_path"].as_str().unwrap())).unwrap();
+    assert!(!issue_note.contains("/Milestones/Archived/"));
+}
+
+#[tokio::test]
+async fn milestone_events_include_status_without_loading_goal_text() {
+    let f = Fixture::new().await;
+    let stage = f.service.execute(json!({"command":"milestone.create","project":f.project,"title":"Release","goal":"Private goal text"}), WriteOptions::default()).await.unwrap().result;
+    f.service
+        .execute(
+            json!({"command":"milestone.start","milestone":stage["id"]}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    let events = f.service.store().events(None, 0, 100).await.unwrap();
+    let event = events
+        .iter()
+        .find(|event| event.event_type == "milestone.start")
+        .unwrap();
+    assert_eq!(event.payload["status"], "ACTIVE");
+    assert!(event.payload.get("goal").is_none());
+}
+
+#[tokio::test]
+async fn milestone_cancelled_archive_requires_restore_before_reopening() {
+    let f = Fixture::new().await;
+    let stage = f
+        .service
+        .execute(
+            json!({"command":"milestone.create","project":f.project,"title":"Release"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap()
+        .result;
+    let id = stage["id"].as_str().unwrap();
+    milestone_command(&f, id, "cancel").await;
+    let archived = milestone_command(&f, id, "archive").await;
+    assert_eq!(archived["status"], "CANCELLED");
+    assert!(archived["archived_at"].is_i64());
+    assert!(
+        archived["document_path"]
+            .as_str()
+            .unwrap()
+            .contains("/Milestones/Archived/")
+    );
+    assert!(
+        f.service
+            .execute(
+                json!({"command":"milestone.reopen","milestone":id}),
+                WriteOptions::default()
+            )
+            .await
+            .is_err()
+    );
+    milestone_command(&f, id, "unarchive").await;
+    let reopened = milestone_command(&f, id, "reopen").await;
+    assert_eq!(reopened["status"], "PLANNED");
+    assert!(reopened["cancelled_at"].is_null());
+}
+
+#[tokio::test]
+async fn milestone_base_board_has_all_statuses_while_table_defaults_to_open() {
+    let f = Fixture::new().await;
+    let path = f
+        .service
+        .config()
+        .output_dir()
+        .join("Projects/demo/Milestone.base");
+    let base: Value = serde_yaml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    let views = base["views"].as_array().unwrap();
+    assert!(views.iter().any(|view| view["type"] == "table"));
+    let board = views
+        .iter()
+        .find(|view| view["type"] == "kanban")
+        .expect("Milestone status board");
+    assert_eq!(board["groupBy"]["property"], "note.status");
+    assert_eq!(
+        board["groupOrder"],
+        json!(["PLANNED", "ACTIVE", "COMPLETED", "CANCELLED"])
+    );
+    assert!(
+        board["order"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("formula.name"))
+    );
+    assert!(
+        board["order"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("completed_issues"))
+    );
+    assert!(board.get("limit").is_none());
+    assert!(board.get("filters").is_none());
+    assert_eq!(
+        base["filters"],
+        json!({"and":["file.hasTag(\"agent/milestone\")",format!("project_id == {}",json!(f.project))]})
+    );
+    assert!(
+        base["views"][0]["filters"]["and"]
+            .as_array()
+            .unwrap()
+            .contains(&json!({"or":["status == \"PLANNED\"", "status == \"ACTIVE\""]}))
+    );
+}
+
+#[tokio::test]
+async fn milestone_base_upgrade_adds_board_once_and_preserves_custom_views() {
+    let f = Fixture::new().await;
+    let path = f
+        .service
+        .config()
+        .output_dir()
+        .join("Projects/demo/Milestone.base");
+    let mut base: Value = serde_yaml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    base["views"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|view| view["type"] == "table");
+    base["views"][0]["name"] = json!("Release schedule");
+    base["views"][0]["columnSize"] = json!({"note.status":150});
+    base["filters"] =
+        json!({"and":[format!("project_id == {}",json!(f.project)),"status == \"COMPLETED\""]});
+    std::fs::write(&path, serde_yaml::to_string(&base).unwrap()).unwrap();
+    f.service.sync().await.unwrap();
+    let mut upgraded: Value =
+        serde_yaml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(upgraded["filters"], base["filters"]);
+    assert_eq!(upgraded["views"][0], base["views"][0]);
+    assert_eq!(upgraded["views"].as_array().unwrap().len(), 2);
+    assert_eq!(upgraded["views"][1]["type"], "kanban");
+    upgraded["views"][1]["name"] = json!("My stages");
+    upgraded["views"][1]["columnWidth"] = json!(420);
+    upgraded["views"][1]["filters"] = json!("order > 0");
+    std::fs::write(&path, serde_yaml::to_string(&upgraded).unwrap()).unwrap();
+    f.service.sync().await.unwrap();
+    let retained: Value = serde_yaml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    assert_eq!(retained, upgraded);
+}
+
+#[tokio::test]
+async fn milestone_base_upgrade_moves_default_global_status_filter_to_table() {
+    let f = Fixture::new().await;
+    let path = f
+        .service
+        .config()
+        .output_dir()
+        .join("Projects/demo/Milestone.base");
+    let mut base: Value = serde_yaml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    let open = json!({"or":["status == \"PLANNED\"", "status == \"ACTIVE\""]});
+    base["filters"] = json!({"and":["file.hasTag(\"agent/milestone\")",format!("project_id == {}",json!(f.project)),open]});
+    base["views"][0].as_object_mut().unwrap().remove("filters");
+    std::fs::write(&path, serde_yaml::to_string(&base).unwrap()).unwrap();
+    f.service.sync().await.unwrap();
+    let upgraded: Value = serde_yaml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+    assert_eq!(upgraded["filters"]["and"].as_array().unwrap().len(), 2);
+    assert_eq!(upgraded["views"][0]["filters"], json!({"and":[open]}));
+    assert!(
+        upgraded["views"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|view| view["type"] == "kanban" && view.get("filters").is_none())
+    );
+}
+
+#[tokio::test]
+async fn milestone_base_renames_registered_plural_file_preserving_custom_views() {
+    let f = Fixture::new().await;
+    let root = f.service.config().output_dir();
+    let old = root.join("Projects/demo/Milestones.base");
+    let new = root.join("Projects/demo/Milestone.base");
+    if new.exists() {
+        std::fs::rename(&new, &old).unwrap();
+    }
+    let mut base: Value = serde_yaml::from_str(&std::fs::read_to_string(&old).unwrap()).unwrap();
+    base["views"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"type":"table","name":"View","filters":"order > 3"}));
+    std::fs::write(&old, serde_yaml::to_string(&base).unwrap()).unwrap();
+    let pool = sqlx::SqlitePool::connect_with(
+        sqlx::sqlite::SqliteConnectOptions::new().filename(f.dir.path().join("tasks.sqlite3")),
+    )
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE document_registry SET path = 'Projects/demo/Milestones.base' WHERE key = ?",
+    )
+    .bind(format!("milestone-base:{}", f.project))
+    .execute(&pool)
+    .await
+    .unwrap();
+    f.service.sync().await.unwrap();
+    assert!(new.exists(), "singular Milestone.base must be generated");
+    assert!(!old.exists(), "registered plural file must be retired");
+    let migrated: Value = serde_yaml::from_str(&std::fs::read_to_string(&new).unwrap()).unwrap();
+    assert_eq!(migrated, base);
+    let board = std::fs::read_to_string(root.join("Projects/demo/Board.md")).unwrap();
+    assert!(board.contains("/Milestone.base"));
+    assert!(!board.contains("/Milestones.base"));
+    f.service.sync().await.unwrap();
+    assert_eq!(
+        serde_yaml::from_str::<Value>(&std::fs::read_to_string(new).unwrap()).unwrap(),
+        base
+    );
+}
