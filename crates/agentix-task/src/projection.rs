@@ -178,7 +178,15 @@ impl Service {
             {
                 // Rebase only across our own serialized authoring import.
                 // An externally changed revision must still fail its guard.
-                if options.expected_revision == Some(*before) {
+                let writes_authored_content = match command {
+                    "issue.update" => ["requirement", "acceptance", "notes"]
+                        .iter()
+                        .any(|field| request.get(field).is_some()),
+                    "milestone.update" => request.get("goal").is_some(),
+                    "issue.approve" => true,
+                    _ => false,
+                };
+                if !writes_authored_content && options.expected_revision == Some(*before) {
                     options.expected_revision = Some(*after);
                 }
             }
@@ -316,7 +324,17 @@ impl Service {
     }
 
     async fn render_pending_document(&self, key: &str, generation: String) -> Result<()> {
-        let state = self.store.projection_snapshot(key).await?;
+        let mut state = self.store.projection_snapshot(key).await?;
+        if key.starts_with("issue:") || key.starts_with("milestone:") {
+            state
+                .issues
+                .retain(|issue| key == format!("issue:{}", issue.id));
+            state
+                .milestones
+                .retain(|milestone| key == format!("milestone:{}", milestone.id));
+            self.reconcile_issue_documents_locked(Some(&state)).await?;
+            state = self.store.projection_snapshot(key).await?;
+        }
         self.render_state_locked(
             &state,
             Some(key),

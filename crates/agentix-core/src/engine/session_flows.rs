@@ -798,6 +798,7 @@ impl Engine {
             return self.request_new_session(conversation, &session).await;
         }
         if matches!(command, SessionCommand::Rename(None)) {
+            self.clear_reply_inputs(conversation).await;
             self.interactions.session_inputs.lock().await.insert(
                 conversation.clone(),
                 PendingSessionInput::Rename(session.clone()),

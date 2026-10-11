@@ -22,6 +22,8 @@ Issue changes participate in the same state-difference transaction, event log an
 
 TODO may also be submitted directly for an Issue implemented outside Taskix. Submission requires meaningful requirement and acceptance criteria and every associated Job to be COMPLETED or CANCELLED. Approval rechecks those conditions. A PENDING_REVIEW Job is unfinished and blocks Issue submission. Successful Job delivery, approval, rejection, interruption and lease expiry do not automatically change Issue acceptance state. Empty-Job Issues can be accepted after the same explicit submission and human verification.
 
+Requirement or acceptance changes while PENDING_REVIEW return the Issue to ACTIVE and invalidate the review request. COMPLETED and CANCELLED Issues reject changes to Requirement, Acceptance Criteria and Notes until explicitly reopened. Reopen before editing a terminal note.
+
 Human approval requires a `user:` actor. Agent execution cannot self-approve an Issue. Cancellation retains completed Task outcomes, revokes unfinished work's leases and preserves history. Reopening keeps prior Jobs and results; it does not rerun Tasks. Only terminal Issues can be archived. Project archival requires closed Jobs and terminal Issues. Milestone deletion requires explicitly unlinking its Issues first. Progress counts accepted Issues, total Issues and cancelled Issues separately; Milestones have no automatic status or scheduling/dependency engine.
 
 ## Documents and shared Bases
@@ -45,7 +47,7 @@ Projects/<project>/
   Tasks/...
 ```
 
-Issue documents use a single fixed template: Requirement, Acceptance Criteria, Notes, and Related Jobs. The three editable text sections have protected start/end markers. Managed frontmatter includes stable ID, Project/Milestone identity, status, revision and lifecycle dates. The body and SQLite facts are synchronized using registered identities and publication receipts; malformed or duplicated markers reject import. Deleting a note does not cancel its Issue. Copied notes are never accepted as an alternative identity.
+Issue documents use a single fixed template: Requirement, Acceptance Criteria, Notes, and Related Jobs. The three editable text sections have protected start/end markers. Managed frontmatter includes stable ID, Project/Milestone identity, status, revision and lifecycle dates. The body and SQLite facts are synchronized using registered identities and publication receipts; malformed or duplicated markers reject import. Deleting a note does not cancel its Issue. Copied notes are never accepted as an alternative identity. Pending publication retries (`taskix sync --pending`) check registered Issue and Milestone notes before writing; conflicting authored edits remain untouched and the publication stays queued. Resolve the conflict against the committed content before retrying. Revision-guarded content updates and acceptance never silently rebase over imported edits; reread the current revision and content before retrying.
 
 There is one shared `Issue.base` per Project. Its global filter selects the Project. Its Issue board, By Milestone and Pending review views select Issue notes. The Related Jobs view selects active and archived Job notes using `issue_id == this.id`, and requires the embedding note to be an Issue. Each Issue embeds that view. The Milestone Issues view uses `milestone_id == this.id` for the embedding Milestone. No separate per-Issue Job Base is generated.
 
@@ -64,6 +66,8 @@ An owned Job's associated Issue takes priority. An explicit Issue/Job selected t
 Start/Continue/New round requires a writable same-Project session. The workflow can select an existing session, use the adapter's existing new-session capability, or create a workspace through the existing backend/directory picker. Selection is rechecked against fresh session workspace metadata. An owned Task on another Job prevents starting a different round. Continuing prioritizes the owned Job; multiple other active rounds require explicit selection. Attached-session completion resumes only the expected attachment epoch.
 
 Execution dispatch includes explicit Issue and, for continuation, Job provenance plus requirement and acceptance context. Pending edits/execution are bounded and guarded by owner, conversation generation, attachment epoch and entity revision. Foreign replies cannot consume another owner's pending edit. `/cancel`, stale controls and duplicate callbacks are fenced. Job delivery notices identify its Issue and offer another round while leaving the Issue ACTIVE. Issue review notices are scoped to the submitting conversation, without Project-wide fanout. Feishu, Telegram and Slack render the same opaque scoped controls through their existing adapters.
+
+Issue edit/rejection replies share one conversation reply mode with directory selection, Task reasons, session rename and interaction text replies. Starting one replaces the previous mode. Issue submission notifies its bound conversation with acceptance controls. Deleted historical Issues do not block Job notification delivery; cancellation notices prioritize the newest cancellations within the bounded session result.
 
 ## Upgrade and acceptance boundaries
 

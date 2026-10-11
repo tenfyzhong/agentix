@@ -965,6 +965,10 @@ fn parse_backend(kind: &str) -> Result<crate::AgentKind, EngineError> {
 
 #[async_trait::async_trait]
 impl TaskBoardUi for Engine {
+    async fn clear_reply_inputs(&self, conversation: &ConversationRef) {
+        self.clear_reply_inputs(conversation).await;
+    }
+
     fn agent(&self) -> &dyn AgentAdapter {
         self.agent.as_ref()
     }

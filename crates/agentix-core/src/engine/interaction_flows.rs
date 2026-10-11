@@ -8,6 +8,14 @@ use super::{
 };
 
 impl Engine {
+    pub(super) async fn clear_reply_inputs(&self, conversation: &ConversationRef) {
+        self.cancel_directory_draft(conversation).await;
+        self.tasks.take_input(conversation).await;
+        self.tasks.take_issue_input(conversation).await;
+        self.interactions.take_session_input(conversation).await;
+        self.interactions.take_reply_mode(conversation).await;
+    }
+
     pub(super) async fn cancel_pending_reply(
         &self,
         conversation: &ConversationRef,
@@ -562,6 +570,7 @@ impl Engine {
             .lock()
             .await
             .insert(interaction.clone(), pending);
+        self.clear_reply_inputs(conversation).await;
         self.interactions
             .reply_modes
             .lock()

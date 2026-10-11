@@ -87,10 +87,7 @@ impl Engine {
         mutation: MultiplexerMutation,
         initial_directory: Option<String>,
     ) -> Result<(), EngineError> {
-        self.cancel_directory_draft(conversation).await;
-        self.tasks.take_input(conversation).await;
-        self.interactions.take_session_input(conversation).await;
-        self.interactions.take_reply_mode(conversation).await;
+        self.clear_reply_inputs(conversation).await;
         let runtime = self
             .multiplexer
             .runtime(self.agent.as_ref(), conversation)

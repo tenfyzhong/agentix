@@ -123,7 +123,7 @@ impl Store {
             FROM candidates c CROSS JOIN jobs j ON j.id=c.id
             JOIN issues i ON i.id=json_extract(j.data,'$.issue_id')
             WHERE json_extract(i.data,'$.status')='CANCELLED'
-            ORDER BY i.id,j.id LIMIT 32",
+            ORDER BY json_extract(i.data,'$.cancelled_at') DESC,i.id DESC,j.id DESC LIMIT 32",
         )
         .bind(session)
         .fetch_all(&self.pool)

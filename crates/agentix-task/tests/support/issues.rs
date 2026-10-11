@@ -877,3 +877,40 @@ async fn issue_milestone_association_rejects_foreign_project() {
             .contains("same Project")
     );
 }
+
+#[tokio::test]
+async fn issue_cancellation_notices_prioritize_recent_cancellations() {
+    let f = Fixture::new().await;
+    let mut latest = Value::Null;
+    for n in 0..33 {
+        let item = f
+            .service
+            .store()
+            .execute(
+                json!({"command":"issue.create","project":f.project,"title":format!("Issue {n}")}),
+                WriteOptions::default(),
+            )
+            .await
+            .unwrap()
+            .result;
+        f.service.store().execute(json!({"command":"job.create","project":f.project,"title":format!("Job {n}"),"issue":item["id"],"issue_revision":item["revision"],"issue_content_hash":item["content_hash"]}), WriteOptions {session_ref:Some("worker".into()), ..WriteOptions::default()}).await.unwrap();
+        f.clock.fetch_add(1, Ordering::SeqCst);
+        f.service
+            .store()
+            .execute(
+                json!({"command":"issue.cancel","issue":item["id"]}),
+                WriteOptions::default(),
+            )
+            .await
+            .unwrap();
+        latest = item["id"].clone();
+    }
+    let notices = f
+        .service
+        .store()
+        .issue_cancellations("worker")
+        .await
+        .unwrap();
+    assert_eq!(notices.as_array().unwrap().len(), 32);
+    assert_eq!(notices[0]["id"], latest);
+}

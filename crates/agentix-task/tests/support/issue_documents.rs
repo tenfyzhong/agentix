@@ -612,3 +612,173 @@ async fn task_job_property_uses_filename_after_creation_sync_and_job_rename() {
         assert_eq!(props["job_id"], f.job);
     }
 }
+
+#[tokio::test]
+async fn review_content_changes_require_reopening_and_invalidate_pending_acceptance() {
+    let f = Fixture::new().await;
+    for terminal in ["issue.approve", "issue.cancel"] {
+        let item = create_issue(&f).await;
+        let id = item["id"].as_str().unwrap();
+        f.service
+            .execute(
+                json!({"command":"issue.submit","issue":id}),
+                WriteOptions::default(),
+            )
+            .await
+            .unwrap();
+        f.service
+            .execute(
+                json!({"command":terminal,"issue":id}),
+                WriteOptions::default(),
+            )
+            .await
+            .unwrap();
+        let result = f
+            .service
+            .execute(
+                json!({"command":"issue.update","issue":id,"requirement":"Unreviewed"}),
+                WriteOptions::default(),
+            )
+            .await;
+        assert!(result.is_err(), "terminal content requires reopening");
+        f.service
+            .execute(
+                json!({"command":"issue.reopen","issue":id}),
+                WriteOptions::default(),
+            )
+            .await
+            .unwrap();
+        f.service
+            .execute(
+                json!({"command":"issue.update","issue":id,"requirement":"Reopened"}),
+                WriteOptions::default(),
+            )
+            .await
+            .unwrap();
+    }
+    let item = create_issue(&f).await;
+    let id = item["id"].as_str().unwrap();
+    let pending = f
+        .service
+        .execute(
+            json!({"command":"issue.submit","issue":id}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap()
+        .result;
+    let path = f
+        .service
+        .config()
+        .output_dir()
+        .join(item["document_path"].as_str().unwrap());
+    std::fs::write(
+        &path,
+        std::fs::read_to_string(&path)
+            .unwrap()
+            .replace("Allow users to sign in.", "Unreviewed requirement"),
+    )
+    .unwrap();
+    assert!(
+        f.service
+            .execute(
+                json!({"command":"issue.approve","issue":id}),
+                WriteOptions {
+                    expected_revision: pending["revision"].as_i64(),
+                    ..WriteOptions::default()
+                }
+            )
+            .await
+            .is_err()
+    );
+    let updated = f.service.store().issue_record(id).await.unwrap();
+    assert_eq!(updated.status, agentix_task::IssueStatus::Active);
+    assert!(updated.pending_review_at.is_none());
+}
+
+#[tokio::test]
+async fn delivery_updates_preserve_stale_revision_conflicts_for_authored_fields() {
+    let f = Fixture::new().await;
+    let issue = create_issue(&f).await;
+    let milestone = f.service.execute(json!({"command":"milestone.create","project":f.project,"title":"Release","goal":"Original goal"}), WriteOptions::default()).await.unwrap().result;
+    for (kind, item, field, original) in [
+        ("issue", issue, "requirement", "Allow users to sign in."),
+        ("milestone", milestone, "goal", "Original goal"),
+    ] {
+        let path = f
+            .service
+            .config()
+            .output_dir()
+            .join(item["document_path"].as_str().unwrap());
+        std::fs::write(
+            &path,
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .replace(original, "Authored change"),
+        )
+        .unwrap();
+        let mut request = json!({"command":format!("{kind}.update")});
+        request[kind] = item["id"].clone();
+        request[field] = json!("Stale overwrite");
+        let result = f
+            .service
+            .execute(
+                request,
+                WriteOptions {
+                    expected_revision: item["revision"].as_i64(),
+                    ..WriteOptions::default()
+                },
+            )
+            .await;
+        assert!(
+            result.is_err(),
+            "{kind} must reject the stale content writer"
+        );
+        assert!(
+            std::fs::read_to_string(&path)
+                .unwrap()
+                .contains("Authored change")
+        );
+    }
+}
+
+#[tokio::test]
+async fn pending_delivery_publication_rejects_intervening_authored_edits() {
+    let f = Fixture::new().await;
+    let issue = create_issue(&f).await;
+    let milestone = f.service.execute(json!({"command":"milestone.create","project":f.project,"title":"Release","goal":"Original goal"}), WriteOptions::default()).await.unwrap().result;
+    for (kind, item, field, original) in [
+        ("issue", issue, "notes", "Keep browser sessions."),
+        ("milestone", milestone, "goal", "Original goal"),
+    ] {
+        let path = f
+            .service
+            .config()
+            .output_dir()
+            .join(item["document_path"].as_str().unwrap());
+        let mut request = json!({"command":format!("{kind}.update")});
+        request[kind] = item["id"].clone();
+        request[field] = json!("Committed replacement");
+        f.service
+            .store()
+            .execute(request, WriteOptions::default())
+            .await
+            .unwrap();
+        let edited = std::fs::read_to_string(&path)
+            .unwrap()
+            .replace(original, "Intervening edit");
+        std::fs::write(&path, &edited).unwrap();
+        assert!(
+            f.service.sync_pending_documents().await.is_err(),
+            "{kind} pending publication must detect conflict"
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), edited);
+        // Resolving to the committed body permits the durable retry.
+        std::fs::write(
+            &path,
+            edited.replace("Intervening edit", "Committed replacement"),
+        )
+        .unwrap();
+        f.service.sync_pending_documents().await.unwrap();
+    }
+}

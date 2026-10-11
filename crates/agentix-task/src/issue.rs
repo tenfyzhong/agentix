@@ -212,6 +212,21 @@ pub(crate) fn apply(
             if request.get("milestone").is_some() {
                 issue.milestone_id = milestone;
             }
+            let content_changed = issue.requirement != original.requirement
+                || issue.acceptance != original.acceptance
+                || issue.notes != original.notes;
+            ensure!(
+                !original.status.terminal() || !content_changed,
+                "conflict: reopen terminal Issue before updating content"
+            );
+            if original.status == IssueStatus::PendingReview
+                && (issue.requirement != original.requirement
+                    || issue.acceptance != original.acceptance)
+            {
+                issue.status = IssueStatus::Active;
+                issue.pending_review_at = None;
+                issue.review_reason = None;
+            }
             issue.content_hash = content_hash(issue);
         }
         "issue.start" => {

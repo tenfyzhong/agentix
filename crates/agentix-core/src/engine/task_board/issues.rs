@@ -139,12 +139,11 @@ impl TaskBoardView<'_> {
         view: &mut OutboundView,
         id: &str,
     ) -> Result<(), EngineError> {
-        let item = self
-            .tasks_service()?
-            .store()
-            .issue_record(id)
-            .await
-            .map_err(error)?;
+        let item = match self.tasks_service()?.store().issue_record(id).await {
+            Ok(item) => item,
+            Err(failure) if failure.to_string().starts_with("not_found:") => return Ok(()),
+            Err(failure) => return Err(error(failure)),
+        };
         view.body.push_str(&format!("\n\n**Issue:** {} (`{}`)\nIssue remains {}. Job review and Issue acceptance are separate.",escape(&item.title),item.id,issue_status_label(item.status)));
         self.add_action_section(
             conversation,
@@ -774,6 +773,7 @@ impl TaskBoardView<'_> {
         action: IssueAction,
     ) -> Result<(), EngineError> {
         if matches!(action.command.as_str(), "edit" | "issue.reject") {
+            self.ui.clear_reply_inputs(conversation).await;
             let mut inputs = self.service.issue_inputs.lock().await;
             if inputs.len() >= 128 && !inputs.contains_key(conversation) {
                 return Err(error("Too many pending Issue edits"));

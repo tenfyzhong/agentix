@@ -891,3 +891,174 @@ async fn issue_acceptance_is_separate_and_edit_cancel_does_not_reach_the_agent()
             .is_err()
     );
 }
+
+#[tokio::test]
+async fn issue_edit_and_session_rename_replace_each_others_reply_mode() {
+    for issue_first in [true, false] {
+        let (_dir, service, _) = task_fixture().await;
+        let project = service.store().snapshot().await.unwrap().projects[0]
+            .id
+            .clone();
+        let item = write(&service, json!({"command":"issue.create","project":project,"title":"Reply modes","requirement":"Original"})).await;
+        let agent = Arc::new(FakeAgent::new());
+        let channel = Arc::new(FakeChannel::default());
+        let engine = Engine::new(
+            agent.clone(),
+            SqliteState::in_memory().await.unwrap(),
+            vec![channel.clone()],
+        )
+        .with_task_board(service.clone());
+        engine.handle_inbound(input("/attach thr_a")).await.unwrap();
+        engine
+            .handle_inbound(input(&format!("/issue {}", item["id"].as_str().unwrap())))
+            .await
+            .unwrap();
+        let edit = button(&last(&channel), "Edit requirement");
+        if issue_first {
+            click(&engine, edit).await;
+            engine.handle_inbound(input("/rename")).await.unwrap();
+        } else {
+            engine.handle_inbound(input("/rename")).await.unwrap();
+            click(&engine, edit).await;
+        }
+        engine.handle_inbound(input("New content")).await.unwrap();
+        let issue = service
+            .store()
+            .issue_record(item["id"].as_str().unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            issue.requirement,
+            if issue_first {
+                "Original"
+            } else {
+                "New content"
+            }
+        );
+        if !issue_first {
+            engine
+                .handle_inbound(input("Ordinary prompt"))
+                .await
+                .unwrap();
+            assert!(
+                !agent
+                    .calls()
+                    .iter()
+                    .any(|call| call.contains("Rename(Some"))
+            );
+            assert!(
+                agent
+                    .calls()
+                    .iter()
+                    .any(|call| call.contains("Ordinary prompt"))
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn issue_submission_notifies_bound_session_with_acceptance_controls() {
+    let (_dir, service, _) = task_fixture().await;
+    let project = service.store().snapshot().await.unwrap().projects[0]
+        .id
+        .clone();
+    let item = write(&service, json!({"command":"issue.create","project":project,"title":"Review this","requirement":"Deliver","acceptance":"Verified"})).await;
+    let (engine, channel) = engine(service.clone()).await;
+    engine.handle_inbound(input("/attach thr_a")).await.unwrap();
+    service
+        .execute(
+            json!({"command":"issue.submit","issue":item["id"]}),
+            WriteOptions {
+                session_ref: Some("thr_a".into()),
+                ..WriteOptions::default()
+            },
+        )
+        .await
+        .unwrap();
+    refresh_and_deliver_tasks(&engine).await.unwrap();
+    let view = channel
+        .sent()
+        .into_iter()
+        .map(|(_, v)| v)
+        .find(|v| v.title == "Task update" && v.body.contains("issue.pending_review"))
+        .expect("Issue submission notification");
+    assert!(view.actions.iter().any(|a| a.label == "Accept"));
+    assert!(view.actions.iter().any(|a| a.label == "Reject"));
+}
+
+#[tokio::test]
+async fn deleted_issue_does_not_block_historical_job_notifications() {
+    let (_dir, service, task) = task_fixture().await;
+    let state = service.store().snapshot().await.unwrap();
+    let project = &state.projects[0].id;
+    let job = &state.jobs[0].id;
+    let item = write(
+        &service,
+        json!({"command":"issue.create","project":project,"title":"Deleted requirement"}),
+    )
+    .await;
+    write(&service, json!({"command":"job.update","job":job,"issue":item["id"],"issue_revision":item["revision"],"issue_content_hash":item["content_hash"]})).await;
+    let (engine, channel) = engine(service.clone()).await;
+    engine.handle_inbound(input("/attach thr_a")).await.unwrap();
+    service
+        .execute(
+            json!({"command":"task.done","task":task}),
+            task_write_options(&service, &task).await,
+        )
+        .await
+        .unwrap();
+    write(
+        &service,
+        json!({"command":"project.delete","project":project}),
+    )
+    .await;
+    refresh_and_deliver_tasks(&engine).await.unwrap();
+    assert!(
+        channel
+            .sent()
+            .iter()
+            .any(|(_, v)| v.title == "Task update" && v.body.contains("job.pending_review"))
+    );
+    refresh_and_deliver_tasks(&engine).await.unwrap();
+    assert_eq!(
+        channel
+            .sent()
+            .iter()
+            .filter(|(_, v)| v.title == "Task update" && v.body.contains("job.pending_review"))
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn directory_path_reply_replaces_pending_issue_edit() {
+    let (_dir, service, _) = task_fixture().await;
+    let project = service.store().snapshot().await.unwrap().projects[0]
+        .id
+        .clone();
+    let item = write(&service, json!({"command":"issue.create","project":project,"title":"Directory reply","requirement":"Original"})).await;
+    let (engine, channel) = engine(service.clone()).await;
+    engine
+        .handle_inbound(input(&format!("/issue {}", item["id"].as_str().unwrap())))
+        .await
+        .unwrap();
+    click(&engine, button(&last(&channel), "Edit requirement")).await;
+    engine.handle_inbound(input("/rmux")).await.unwrap();
+    for label in ["+ Session", "Choose directory", "Enter path"] {
+        click(&engine, button(&last(&channel), label)).await;
+    }
+    engine
+        .handle_inbound(input("/custom/work tree"))
+        .await
+        .unwrap();
+    assert_eq!(
+        service
+            .store()
+            .issue_record(item["id"].as_str().unwrap())
+            .await
+            .unwrap()
+            .requirement,
+        "Original"
+    );
+    assert!(last(&channel).body.contains("/custom/work tree"));
+}

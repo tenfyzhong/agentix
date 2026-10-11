@@ -61,6 +61,7 @@ pub(super) struct TaskBoardService {
 pub(super) trait TaskBoardUi: Send + Sync {
     fn agent(&self) -> &dyn crate::AgentAdapter;
     fn sessions(&self) -> &super::SessionService;
+    async fn clear_reply_inputs(&self, conversation: &ConversationRef);
     async fn conversation_owner(&self, conversation: &ConversationRef) -> Option<String>;
     async fn send_view(
         &self,
@@ -399,6 +400,7 @@ impl TaskBoardView<'_> {
             action.command.as_str(),
             "task.block" | "task.wait" | "task.fail"
         ) {
+            self.ui.clear_reply_inputs(conversation).await;
             self.service.inputs.lock().await.insert(
                 conversation.clone(),
                 PendingTaskInput {
@@ -541,7 +543,7 @@ impl TaskBoardView<'_> {
                     | "job.completed"
                     | "job.pending_review"
                     | "job.rejected"
-                    | "issue.submit"
+                    | "issue.pending_review"
             ) && let Some(session) = event.session_ref.as_deref()
                 && let Ok(session) = self
                     .ui
@@ -562,7 +564,7 @@ impl TaskBoardView<'_> {
                 let mut view = OutboundView::text("Task update", body);
                 if let Some(owner) = self.ui.conversation_owner(&conversation).await {
                     let issue = event.payload["issue_id"].as_str().or_else(|| {
-                        (event.event_type == "issue.submit")
+                        (event.event_type == "issue.pending_review")
                             .then(|| event.payload["id"].as_str())
                             .flatten()
                     });
