@@ -83,7 +83,6 @@ async fn obsidian_export_ignores_authored_bodies() {
     for query in [
         "UPDATE tasks SET data = json_set(data, '$.title', json('{}'))",
         "UPDATE jobs SET data = json_set(data, '$.title', json('{}'), '$.goal', json('{}'), '$.prompt', json('{}'), '$.conversation', json('{}'))",
-        "UPDATE issues SET data = json_set(data, '$.requirement', json('{}'), '$.acceptance', json('{}'), '$.notes', json('{}'))",
     ] {
         sqlx::query(query)
             .execute(&service.store.pool)

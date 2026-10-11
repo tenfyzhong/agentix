@@ -746,7 +746,14 @@ mod tests {
             .await
             .unwrap()
             .result;
-        let issue = store.execute(json!({"command":"issue.create","project":project["id"],"title":"Requirement","requirement":"Build it","acceptance":"Tests pass"}), crate::WriteOptions::default()).await.unwrap().result;
+        let issue = store
+            .execute(
+                json!({"command":"issue.create","project":project["id"],"title":"Requirement"}),
+                crate::WriteOptions::default(),
+            )
+            .await
+            .unwrap()
+            .result;
         for n in 0..12 {
             store.execute(json!({"command":"job.create","project":project["id"],"title":format!("Round {n}"),"issue":issue["id"],"goal":"x".repeat(100_000)}), crate::WriteOptions::default()).await.unwrap();
         }

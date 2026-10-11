@@ -42,6 +42,7 @@ pub(crate) async fn persist(
         if previous == Some(issue) {
             continue;
         }
+        require_migrated_content(conn, &issue.id).await?;
         upsert(conn, "issues", &issue.id, issue).await?;
         let kind = if previous.is_some_and(|previous| previous.status != issue.status) {
             format!("issue.{}", issue.status.to_string().to_lowercase())
@@ -113,5 +114,15 @@ pub(crate) async fn persist(
             .execute(&mut *conn)
             .await?;
     }
+    Ok(())
+}
+
+async fn require_migrated_content(conn: &mut SqliteConnection, id: &str) -> Result<()> {
+    let legacy: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM issues WHERE id=? AND (json_type(data,'$.requirement') IS NOT NULL OR json_type(data,'$.acceptance') IS NOT NULL OR json_type(data,'$.notes') IS NOT NULL))")
+        .bind(id).fetch_one(conn).await?;
+    anyhow::ensure!(
+        !legacy,
+        "conflict: synchronize Issue documents to migrate legacy content before writing"
+    );
     Ok(())
 }

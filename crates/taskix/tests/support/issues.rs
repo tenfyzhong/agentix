@@ -68,7 +68,12 @@ fn context_exposes_issue_and_milestone_without_inbox_compatibility() {
     ]);
     let context = cli.ok(&["context", "--job", job["id"].as_str().unwrap()]);
     assert_eq!(context["issue_id"], item["id"]);
-    assert_eq!(context["issue"]["requirement"], "Allow login");
+    assert!(context["issue"].get("requirement").is_none());
+    assert_eq!(context["issue"]["document_path"], item["document_path"]);
+    assert_eq!(
+        cli.ok(&["issue", "show", item["id"].as_str().unwrap()])["issue"]["requirement"],
+        "Allow login"
+    );
     assert_eq!(context["milestone"]["goal"], "Ship login");
     assert_eq!(context["issue_candidates"][0]["id"], item["id"]);
     for field in ["inbox", "inbox_path", "inbox_todos", "inbox_cancellations"] {
@@ -316,4 +321,31 @@ fn issue_cli_paginates_after_filtering_and_preserves_milestone_progress() {
     assert_eq!(progress["progress"]["total"], 9);
     assert_eq!(progress["progress"]["completed"], 0);
     assert_eq!(progress["progress"]["cancelled"], 3);
+}
+
+#[test]
+fn issue_cli_allows_title_only_status_changes_without_body_markers() {
+    let cli = Cli::new();
+    let issue = cli.ok(&["issue", "create", "--title", "Simple issue"]);
+    let id = issue["id"].as_str().unwrap();
+    let path = cli
+        .dir
+        .path()
+        .join("vault/Tasks ☃")
+        .join(issue["document_path"].as_str().unwrap());
+    let original = std::fs::read_to_string(&path).unwrap();
+    let frontmatter = original.split("---").nth(1).unwrap();
+    std::fs::write(&path, format!("---{frontmatter}---\n# Simple issue\n")).unwrap();
+    cli.ok(&["issue", "start", id]);
+    assert_eq!(cli.ok(&["issue", "submit", id])["status"], "PENDING_REVIEW");
+    assert_eq!(cli.ok(&["issue", "approve", id])["status"], "COMPLETED");
+    assert_eq!(
+        std::fs::read_to_string(path)
+            .unwrap()
+            .splitn(3, "---")
+            .nth(2)
+            .unwrap()
+            .trim_start_matches('\n'),
+        "# Simple issue\n"
+    );
 }

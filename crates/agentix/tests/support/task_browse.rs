@@ -315,7 +315,14 @@ async fn issue_round_trip(browser: &Browser, service: &agentix_task::Service) {
     browser.assert_markdown(&detail, "Issue detail");
     let state = service.store().snapshot().await.unwrap();
     assert_eq!(state.issues.len(), 1);
-    assert_eq!(state.issues[0].requirement, content);
+    assert_eq!(
+        service
+            .issue_content(&state.issues[0].id)
+            .await
+            .unwrap()
+            .requirement,
+        content
+    );
 }
 
 #[tokio::test]

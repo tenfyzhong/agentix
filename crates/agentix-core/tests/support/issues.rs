@@ -277,8 +277,7 @@ async fn pending_issue_edits_reject_changed_revision_generation_and_attachment_w
         );
         assert_eq!(
             service
-                .store()
-                .issue_record(item["id"].as_str().unwrap())
+                .issue_content(item["id"].as_str().unwrap())
                 .await
                 .unwrap()
                 .requirement,
@@ -728,8 +727,7 @@ async fn foreign_issue_reply_does_not_discard_the_owners_pending_edit() {
         .unwrap();
     assert_eq!(
         service
-            .store()
-            .issue_record(item["id"].as_str().unwrap())
+            .issue_content(item["id"].as_str().unwrap())
             .await
             .unwrap()
             .requirement,
@@ -762,7 +760,14 @@ async fn issue_commands_create_template_requirements_without_an_agent_turn() {
     let state = service.store().snapshot().await.unwrap();
     assert_eq!(state.issues.len(), 1);
     assert_eq!(state.issues[0].title, "Passkey login");
-    assert_eq!(state.issues[0].requirement, original);
+    assert_eq!(
+        service
+            .issue_content(&state.issues[0].id)
+            .await
+            .unwrap()
+            .requirement,
+        original
+    );
     assert_eq!(state.issues[0].status, agentix_task::IssueStatus::Todo);
     assert!(last(&channel).body.contains(&state.issues[0].id));
     engine
@@ -847,8 +852,7 @@ async fn issue_acceptance_is_separate_and_edit_cancel_does_not_reach_the_agent()
     engine.handle_inbound(input("/cancel")).await.unwrap();
     assert_eq!(
         service
-            .store()
-            .issue_record(item["id"].as_str().unwrap())
+            .issue_content(item["id"].as_str().unwrap())
             .await
             .unwrap()
             .requirement,
@@ -923,8 +927,7 @@ async fn issue_edit_and_session_rename_replace_each_others_reply_mode() {
         }
         engine.handle_inbound(input("New content")).await.unwrap();
         let issue = service
-            .store()
-            .issue_record(item["id"].as_str().unwrap())
+            .issue_content(item["id"].as_str().unwrap())
             .await
             .unwrap();
         assert_eq!(
@@ -1053,8 +1056,7 @@ async fn directory_path_reply_replaces_pending_issue_edit() {
         .unwrap();
     assert_eq!(
         service
-            .store()
-            .issue_record(item["id"].as_str().unwrap())
+            .issue_content(item["id"].as_str().unwrap())
             .await
             .unwrap()
             .requirement,

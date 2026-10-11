@@ -631,8 +631,26 @@ async fn telegram_task_button_reason_database_projection_and_notification_round_
     join_stack(stack).await;
 }
 
-#[tokio::test]
-async fn feishu_task_card_reason_database_projection_and_notification_round_trip() {
+#[test]
+fn feishu_task_card_reason_database_projection_and_notification_round_trip() {
+    // The unoptimized Feishu SDK HTTP/token stack exceeds the harness's 2 MiB
+    // thread stack on Linux. Keep this full transport test on a bounded 4 MiB stack.
+    std::thread::Builder::new()
+        .name("feishu_task_card_round_trip".into())
+        .stack_size(4 * 1024 * 1024)
+        .spawn(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(feishu_task_card_round_trip());
+        })
+        .unwrap()
+        .join()
+        .unwrap();
+}
+
+async fn feishu_task_card_round_trip() {
     let (_dir, service, id) = task_board_fixture().await;
     let codex = MockCodexAppServer::start();
     codex

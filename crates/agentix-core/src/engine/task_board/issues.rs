@@ -577,9 +577,10 @@ impl TaskBoardView<'_> {
             .issue_job_page(id, None, None, 0, i64::try_from(PAGE_SIZE).map_err(error)?)
             .await
             .map_err(error)?;
+        let authored = service.issue_content(id).await.map_err(error)?;
         let body = format!(
             "## Requirement\n{}\n\n## Acceptance criteria\n{}\n\n## Notes\n{}",
-            item.requirement, item.acceptance, item.notes
+            authored.requirement, authored.acceptance, authored.notes
         );
         let content = markdown_pages(&body);
         let page = page.min(content.len() - 1);

@@ -19,7 +19,7 @@ mod issue;
 mod issue_model;
 mod issue_read;
 mod issue_store;
-pub use issue_model::{Issue, IssueStatus, Milestone};
+pub use issue_model::{Issue, IssueContent, IssueStatus, Milestone};
 pub use issue_read::IssueFilter;
 mod memory_source;
 mod model;
