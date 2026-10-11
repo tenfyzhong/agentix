@@ -96,7 +96,7 @@ async fn recent_jobs_base_is_independent_scoped_and_safe_to_regenerate() {
         base["views"][0]["order"],
         json!([
             "formula.name",
-            "project_id",
+            "project",
             "formula.updated",
             "formula.review_time"
         ])

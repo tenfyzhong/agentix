@@ -47,7 +47,7 @@ async fn global_issue_base_exposes_cross_project_table_board_and_archive_filters
             view["order"]
                 .as_array()
                 .unwrap()
-                .contains(&json!("project_id"))
+                .contains(&json!("project"))
         );
         assert!(view["order"].as_array().unwrap().contains(&json!("status")));
     }
@@ -62,7 +62,10 @@ async fn global_issue_base_exposes_cross_project_table_board_and_archive_filters
     ] {
         let doc = read(&f, item["document_path"].as_str().unwrap());
         assert!(doc.contains(project));
-        assert!(!doc.contains("projects:"), "Issues expose only project_id");
+        assert!(
+            !doc.contains("projects:"),
+            "Legacy projects field is removed"
+        );
     }
 }
 
@@ -513,7 +516,7 @@ async fn job_issue_links_match_bridge_and_follow_renames_and_unlink() {
 }
 
 #[tokio::test]
-async fn entity_project_metadata_drops_legacy_links_and_preserves_project_id() {
+async fn entity_project_metadata_links_board_and_preserves_project_id() {
     let f = Fixture::new().await;
     let issue = create_issue(&f).await;
     let milestone = f
@@ -553,6 +556,8 @@ async fn entity_project_metadata_drops_legacy_links_and_preserves_project_id() {
             props.get("projects").is_none(),
             "new {id} has no projects field"
         );
+        assert_eq!(props["project"], "[[Tasks ☃/Projects/demo/Board|demo]]");
+        props["project"] = json!("[[Wrong Board]]");
         props["projects"] = json!(["[[Legacy Project]]"]);
         props["custom"] = json!("keep");
         let body = source.splitn(3, "---").nth(2).unwrap();
@@ -569,6 +574,7 @@ async fn entity_project_metadata_drops_legacy_links_and_preserves_project_id() {
         let props: Value = serde_yaml::from_str(source.split("---").nth(1).unwrap()).unwrap();
         assert!(props.get("projects").is_none());
         assert_eq!(props["project_id"], f.project);
+        assert_eq!(props["project"], "[[Tasks ☃/Projects/demo/Board|demo]]");
         assert_eq!(props["custom"], "keep");
     }
 }
@@ -586,16 +592,13 @@ async fn registered_bases_migrate_project_columns_without_losing_saved_filters()
     let migrated: Value = serde_yaml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
     assert_eq!(
         migrated["views"][0]["order"],
-        json!(["formula.name", "project_id", "status"])
+        json!(["formula.name", "project", "status"])
     );
     assert_eq!(
         migrated["views"][0]["filters"],
         json!({"and":["status == \"ACTIVE\"", format!("(project_id == {})", json!(f.project))]})
     );
-    assert_eq!(
-        migrated["views"][2]["groupBy"]["property"],
-        "note.project_id"
-    );
+    assert_eq!(migrated["views"][2]["groupBy"]["property"], "note.project");
 }
 
 #[tokio::test]
@@ -982,4 +985,26 @@ async fn milestone_progress_matches_detail_pages_and_full_rebuild_with_archived_
             assert!(after.contains(&property));
         }
     }
+}
+
+#[tokio::test]
+async fn recent_jobs_migrates_project_id_display_without_changing_filters() {
+    let f = Fixture::new().await;
+    let path = f.service.config().output_dir().join("Recent Jobs.base");
+    let mut base: Value = serde_yaml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    base["views"][0]["name"] = json!("Saved jobs");
+    base["views"][0]["order"] = json!(["formula.name", "project_id", "status"]);
+    base["views"][0]["filters"] = json!(format!("project_id == {:?}", f.project));
+    std::fs::write(&path, serde_yaml::to_string(&base).unwrap()).unwrap();
+    f.task("Trigger incremental publication").await;
+    let migrated: Value = serde_yaml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(
+        migrated["views"][0]["order"],
+        json!(["formula.name", "project", "status"])
+    );
+    assert_eq!(migrated["views"][0]["name"], "Saved jobs");
+    assert_eq!(migrated["views"][0]["filters"], base["views"][0]["filters"]);
+    let saved = std::fs::read_to_string(&path).unwrap();
+    f.service.sync().await.unwrap();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), saved);
 }

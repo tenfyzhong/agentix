@@ -630,7 +630,7 @@ impl Service {
                 );
                 String::new()
             };
-            let doc = Self::task_document(&index, task, plan, &existing)?;
+            let doc = self.task_document(&index, task, plan, &existing)?;
             files.insert(path.clone(), doc);
             paths.insert(key, path.clone());
             if let Some(plan) = plan {
@@ -654,7 +654,7 @@ impl Service {
         let preserve_base = |key: &str, path: &str| -> Result<Option<Option<String>>> {
             let registered = previous.get(key).is_some_and(|old| old == path);
             let absolute = self.safe_path(path)?;
-            if selected.is_some() && registered && absolute.is_file() {
+            if (selected.is_some() || key == "pending-review") && registered && absolute.is_file() {
                 return Ok(Some(migrate_legacy_base(
                     &std::fs::read_to_string(absolute)?,
                     &project_filters,
@@ -911,7 +911,7 @@ impl Service {
             "properties":{
                 "formula.name":{"displayName":"Job"},
                 "formula.updated":{"displayName":"Updated"},
-                "note.project_id":{"displayName":"Project"},
+                "note.project":{"displayName":"Project"},
                 "formula.review_time":{"displayName":"Pending review since"}
             },
             "views": recent_jobs_views()
@@ -983,6 +983,7 @@ impl Service {
             json!(["agent/job"])
         };
         properties["title"] = json!(job.name);
+        properties["project"] = json!(self.config.project_link(project));
         properties["issue"] = issue.map_or(Value::Null, |issue| {
             json!(self.link(&issue.document_path, &issue.name))
         });
@@ -1057,6 +1058,7 @@ impl Service {
     }
 
     fn task_document(
+        &self,
         index: &ProjectionIndex<'_>,
         task: &Task,
         plan: Option<&Plan>,
@@ -1085,6 +1087,7 @@ impl Service {
         let mut generated = task_state_properties(task)?;
         generated.as_object_mut().unwrap().extend(json!({
             "id":task.id,"task_id":task.id,"plan_id":task.current_plan,"job_id":task.job_id,"project_id":task.project_id,
+            "project":self.config.project_link(project),
             "sequence":task.sequence,
             "agent":task.last_executor.as_deref().and_then(crate::model::agent_name),"session_id":task.last_session,
             "archived":job.archived_at.is_some() || project.archived_at.is_some(),
@@ -1123,28 +1126,31 @@ impl Service {
     }
 
     pub(crate) fn link(&self, to: &str, label: &str) -> String {
-        let escaped_label = escape(label);
-        let needs_plain_label = escaped_label != label;
-        let label = escaped_label;
-        let to = self
-            .config
-            .vault_relative_path(Path::new(to))
-            .to_string_lossy()
-            .replace('\\', "/");
-        let to = to.trim_start_matches("./").trim_end_matches(".md");
-        if needs_plain_label {
-            // Obsidian aliases do not decode HTML entities. Keep labels
-            // with reserved characters outside a stable wiki link.
-            let label = label
-                .replace('\\', "&#92;")
-                .replace('*', "&#42;")
-                .replace('_', "&#95;")
-                .replace('`', "&#96;")
-                .replace('~', "&#126;");
-            format!("[[{to}|Open]] {label}")
-        } else {
-            format!("[[{to}|{label}]]")
-        }
+        document_link(&self.config, to, label)
+    }
+}
+
+pub(crate) fn document_link(config: &Config, to: &str, label: &str) -> String {
+    let escaped_label = escape(label);
+    let needs_plain_label = escaped_label != label;
+    let label = escaped_label;
+    let to = config
+        .vault_relative_path(Path::new(to))
+        .to_string_lossy()
+        .replace('\\', "/");
+    let to = to.trim_start_matches("./").trim_end_matches(".md");
+    if needs_plain_label {
+        // Obsidian aliases do not decode HTML entities. Keep labels
+        // with reserved characters outside a stable wiki link.
+        let label = label
+            .replace('\\', "&#92;")
+            .replace('*', "&#42;")
+            .replace('_', "&#95;")
+            .replace('`', "&#96;")
+            .replace('~', "&#126;");
+        format!("[[{to}|Open]] {label}")
+    } else {
+        format!("[[{to}|{label}]]")
     }
 }
 
@@ -1463,8 +1469,10 @@ fn migrate_project_columns(value: &mut Value) -> bool {
     if let Some(object) = value.as_object_mut() {
         if let Some(properties) = object.get_mut("properties").and_then(Value::as_object_mut) {
             for (old, new) in [
-                ("projects", "project_id"),
-                ("note.projects", "note.project_id"),
+                ("projects", "project"),
+                ("note.projects", "note.project"),
+                ("project_id", "project"),
+                ("note.project_id", "note.project"),
             ] {
                 if let Some(value) = properties.remove(old) {
                     properties.entry(new).or_insert(value);
@@ -1476,17 +1484,34 @@ fn migrate_project_columns(value: &mut Value) -> bool {
             if key == "order" {
                 if let Some(columns) = value.as_array_mut() {
                     for column in columns {
-                        if column == "projects" || column == "note.projects" {
-                            *column =
-                                json!(column.as_str().unwrap().replace("projects", "project_id"));
+                        if matches!(
+                            column.as_str(),
+                            Some("projects" | "note.projects" | "project_id" | "note.project_id")
+                        ) {
+                            *column = json!(
+                                column
+                                    .as_str()
+                                    .unwrap()
+                                    .replace("projects", "project")
+                                    .replace("project_id", "project")
+                            );
                             changed = true;
                         }
                     }
                 }
             } else if (key == "property" || key == "column")
-                && (value == "projects" || value == "note.projects")
+                && matches!(
+                    value.as_str(),
+                    Some("projects" | "note.projects" | "project_id" | "note.project_id")
+                )
             {
-                *value = json!(value.as_str().unwrap().replace("projects", "project_id"));
+                *value = json!(
+                    value
+                        .as_str()
+                        .unwrap()
+                        .replace("projects", "project")
+                        .replace("project_id", "project")
+                );
                 changed = true;
             } else {
                 changed |= migrate_project_columns(value);
@@ -1605,18 +1630,20 @@ fn recent_jobs_views() -> Vec<Value> {
     let mut views = vec![json!({
         "type":"kanban", "name":"Recent jobs",
         "groupBy":{"property":"note.status","direction":"ASC"},
-        "order":["formula.name", "project_id", "formula.updated", "formula.review_time"],
+        "order":["formula.name", "project", "formula.updated", "formula.review_time"],
         "sort":sort,
         "groupOrder":statuses,
         "hideEmptyColumns":false, "columnWidth":300
     })];
     // Per-status tables remain available alongside the unlimited native board.
-    views.extend(statuses.map(|status| json!({
-        "type":"table", "name":status,
-        "filters":format!("note.status == {status:?}"),
-        "order":["formula.name", "project_id", "status", "formula.updated", "formula.review_time"],
-        "sort":sort
-    })));
+    views.extend(statuses.map(|status| {
+        json!({
+            "type":"table", "name":status,
+            "filters":format!("note.status == {status:?}"),
+            "order":["formula.name", "project", "status", "formula.updated", "formula.review_time"],
+            "sort":sort
+        })
+    }));
     views
 }
 
@@ -1625,7 +1652,7 @@ fn pending_review_view() -> Value {
         "type":"kanban", "name":"Pending review",
         "filters":{"and":["file.hasTag(\"agent/job\")", "note.status == \"PENDING_REVIEW\"", "archived != true"]},
         "groupBy":{"property":"note.status","direction":"ASC"},
-        "order":["formula.name", "project_id", "formula.review_time"],
+        "order":["formula.name", "project", "formula.review_time"],
         "sort":completion_sort(),
         "groupOrder":["PENDING_REVIEW"],
         "hideEmptyColumns":false, "columnWidth":300

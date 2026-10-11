@@ -72,6 +72,12 @@ async fn project_folder_rename_preserves_identity_content_and_tracking() {
         let document = fs::read_to_string(output.join(relative)).unwrap();
         assert!(relative.starts_with("Projects/视频项目/"));
         assert!(!document.contains("Projects/demo/"), "{document}");
+        let properties: Value =
+            serde_yaml::from_str(document.split("---").nth(1).unwrap()).unwrap();
+        assert_eq!(
+            properties["project"],
+            "[[Tasks ☃/Projects/视频项目/Board|视频项目]]"
+        );
     }
     let board = fs::read_to_string(new.join("Board.md")).unwrap();
     assert!(board.contains("name: \"视频项目\""));

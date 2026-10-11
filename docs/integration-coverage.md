@@ -676,3 +676,5 @@ answers, automatic CLI aggregation, nested-measurement deduplication, invalid ki
 rejection before I/O, unchanged callback errors and atomic answer rollback.
 These tests do not measure real provider accuracy or guarantee retention when
 best-effort writes time out.
+
+Project display links: Issue document, project rename/archive, memory projection and real memory CLI tests cover managed `project` Board links, unchanged `project_id`, incremental/full Base display-column migration with saved filters, and read-only memory metadata refresh without revision changes.

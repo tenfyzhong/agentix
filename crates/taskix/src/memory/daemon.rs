@@ -723,7 +723,8 @@ impl Application {
             .components()
             .collect::<PathBuf>();
         let projection =
-            MemoryProjection::new(self.store.clone(), &config.documents.root, &directory)?;
+            MemoryProjection::new(self.store.clone(), &config.documents.root, &directory)?
+                .with_project_link(config.project_link(&project));
         Ok(serde_json::to_value(if pending {
             projection.sync_pending(&project.id, after, limit).await?
         } else {

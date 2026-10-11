@@ -13,6 +13,7 @@ pub struct MemoryProjection {
     store: MemoryStore,
     root: PathBuf,
     directory: PathBuf,
+    project_link: String,
 }
 #[derive(Default, Serialize)]
 pub struct ProjectionPage {
@@ -32,12 +33,28 @@ impl MemoryProjection {
                     .all(|c| matches!(c, Component::Normal(_))),
             "invalid projection directory"
         );
+        let parent = directory
+            .parent()
+            .context("memory directory has no parent")?;
+        let name = parent
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("Project");
+        let board = parent.join("Board").to_string_lossy().replace('\\', "/");
         Ok(Self {
             store,
             root: root.to_owned(),
             directory: directory.to_owned(),
+            project_link: format!("[[{board}|{name}]]"),
         })
     }
+    /// Supply the authoritative Project display name and current Board path.
+    #[must_use]
+    pub fn with_project_link(mut self, project_link: String) -> Self {
+        self.project_link = project_link;
+        self
+    }
+
     pub fn path(&self, id: &str) -> Result<PathBuf> {
         ensure!(
             !id.is_empty()
@@ -130,7 +147,7 @@ impl MemoryProjection {
             .store
             .show(&initial.project_id, &initial.id, None)
             .await?;
-        let output = document::render(&current)?;
+        let output = document::render(&current, &self.project_link)?;
         let output_hash = digest(&output);
         ensure!(
             legacy.is_empty() || text.is_none() || text.as_deref() == Some(&output),
@@ -182,15 +199,14 @@ impl MemoryProjection {
 }
 impl MemoryStore {
     /// Read the authoritative document without requiring a running service.
-    pub async fn rendered_note(&self, id: &str) -> Result<(Memory, String)> {
+    pub async fn document_memory(&self, id: &str) -> Result<Memory> {
         let data: String = sqlx::query_scalar("SELECT data FROM memories WHERE id=?")
             .bind(id)
             .fetch_optional(&self.pool)
             .await?
             .context("not_found: memory")?;
         let memory: Memory = serde_json::from_str(&data)?;
-        let text = document::render(&memory)?;
-        Ok((memory, text))
+        Ok(memory)
     }
 
     pub async fn projection_status(&self, project: &str) -> Result<Value> {
@@ -201,5 +217,12 @@ impl MemoryStore {
         Ok(
             json!({"total":row.get::<i64,_>("total"),"pending":row.get::<i64,_>("pending"),"errors":errors.iter().map(|r|json!({"id":r.get::<String,_>("id"),"error":r.get::<String,_>("error")})).collect::<Vec<_>>()}),
         )
+    }
+}
+
+impl Memory {
+    /// Render authoritative metadata with the caller-resolved Project Board link.
+    pub fn rendered_note(&self, project_link: &str) -> Result<String> {
+        document::render(self, project_link)
     }
 }

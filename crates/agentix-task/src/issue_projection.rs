@@ -30,7 +30,7 @@ impl Service {
         let active = json!({"and":["archived != true"]});
         let columns = json!([
             "formula.name",
-            "project_id",
+            "project",
             "status",
             "milestone",
             "updated_at"
@@ -43,7 +43,7 @@ impl Service {
             "formulas":{"name":NAME_FORMULA},
             "properties":{
                 "formula.name":{"displayName":"Issue"},
-                "note.project_id":{"displayName":"Project"},
+                "note.project":{"displayName":"Project"},
                 "note.status":{"displayName":"Status"},
                 "note.milestone":{"displayName":"Milestone"},
                 "note.updated_at":{"displayName":"Updated"}
@@ -54,7 +54,7 @@ impl Service {
                     "groupBy":{"property":"note.status","direction":"ASC"},"groupOrder":IssueStatus::ALL,
                     "hideEmptyColumns":false,"columnWidth":300},
                 {"type":"table","name":"By project","filters":active,"order":columns,"sort":completion_sort(),
-                    "groupBy":{"property":"note.project_id","direction":"ASC"}},
+                    "groupBy":{"property":"note.project","direction":"ASC"}},
                 {"type":"table","name":"Archived","filters":{"and":["archived == true"]},"order":columns,"sort":completion_sort()}
             ]
         });
@@ -138,6 +138,7 @@ impl Service {
         ] {
             managed[field] = optional_local_timestamp(managed[field].as_i64())?;
         }
+        managed["project"] = json!(self.config.project_link(project));
         managed["tags"] = json!(["agent/issue"]);
         managed["title"] = json!(issue.name);
         managed["archived"] = json!(issue.archived_at.is_some() || project.archived_at.is_some());
@@ -195,6 +196,7 @@ impl Service {
         for field in ["created_at", "updated_at"] {
             managed[field] = optional_local_timestamp(managed[field].as_i64())?;
         }
+        managed["project"] = json!(self.config.project_link(project));
         managed["tags"] = json!(["agent/milestone"]);
         managed["title"] = json!(milestone.name);
         managed["total_issues"] = json!(progress.total);

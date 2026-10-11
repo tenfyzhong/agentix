@@ -549,12 +549,13 @@ async fn job_approval_preserves_registered_bases_saved_without_comments() {
         );
     }
     f.service.sync().await.unwrap();
-    for (path, _) in saved {
-        assert!(
-            fs::read_to_string(path)
-                .unwrap()
-                .starts_with("# taskix-generated:")
-        );
+    for (path, contents) in saved {
+        let actual = fs::read_to_string(&path).unwrap();
+        if path.file_name().unwrap() == "Recent Jobs.base" {
+            assert_eq!(actual, contents);
+        } else {
+            assert!(actual.starts_with("# taskix-generated:"));
+        }
     }
 }
 

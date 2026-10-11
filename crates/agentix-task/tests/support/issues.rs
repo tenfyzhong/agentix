@@ -793,6 +793,23 @@ async fn issue_and_milestone_follow_project_rename_archive_and_delete() {
             .unwrap()
             .starts_with("Archived Projects/Renamed/Issues/")
     );
+    for entity in [id, milestone["id"].as_str().unwrap(), &f.job] {
+        let note = f.service.obsidian_note(entity).await.unwrap();
+        let text = std::fs::read_to_string(
+            f.service
+                .config()
+                .documents
+                .root
+                .join(note["path"].as_str().unwrap()),
+        )
+        .unwrap();
+        let props: Value = serde_yaml::from_str(text.split("---").nth(1).unwrap()).unwrap();
+        assert_eq!(
+            props["project"],
+            "[[Archived Projects/Renamed/Board|Renamed]]"
+        );
+        assert_eq!(props["project_id"], f.project);
+    }
     f.service
         .execute(
             json!({"command":"project.delete","project":f.project}),
