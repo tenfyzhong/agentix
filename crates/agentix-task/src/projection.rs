@@ -744,8 +744,7 @@ impl Service {
                     existing.starts_with("# taskix-generated: global-issues\n")
                 } else if relative == "Recent Jobs.base" {
                     existing.starts_with("# taskix-generated: pending-review\n")
-                } else if relative.ends_with("/Issue.base")
-                    || relative.ends_with("/Milestones.base")
+                } else if relative.ends_with("/Issue.base") || relative.ends_with("/Milestone.base")
                 {
                     existing.lines().next() == contents.lines().next()
                 } else {
@@ -1043,7 +1042,7 @@ impl Service {
         doc.push_str(&format!(
             "\n## Issues\n\n![[{}#Issue board]]\n\n## Milestones\n\n![[{}]]\n",
             self.base_link(&format!("{}/Issue.base", project.document_directory())),
-            self.base_link(&format!("{}/Milestones.base", project.document_directory()))
+            self.base_link(&format!("{}/Milestone.base", project.document_directory()))
         ));
         for (kind, statuses) in [
             ("Job", json!(crate::JobStatus::ALL)),

@@ -387,7 +387,7 @@ impl Service {
                 ("issue-base", "Issue.base", Self::issue_base(project)?),
                 (
                     "milestone-base",
-                    "Milestones.base",
+                    "Milestone.base",
                     Self::milestones_base(project)?,
                 ),
             ] {
@@ -396,16 +396,8 @@ impl Service {
                     continue;
                 }
                 let path = format!("{}/{name}", project.document_directory());
-                let body = if previous.contains_key(&key) && self.safe_path(&path)?.exists() {
-                    let existing = std::fs::read_to_string(self.safe_path(&path)?)?;
-                    if kind == "milestone-base" {
-                        Self::migrate_milestones_base(existing, project)?
-                    } else {
-                        existing
-                    }
-                } else {
-                    body
-                };
+                let body =
+                    self.preserved_delivery_base(previous.get(&key), &path, kind, project, body)?;
                 files.insert(path.clone(), body);
                 paths.insert(key, path);
             }
@@ -451,6 +443,30 @@ impl Service {
             paths.insert(key, milestone.document_path.clone());
         }
         Ok(())
+    }
+
+    fn preserved_delivery_base(
+        &self,
+        previous: Option<&String>,
+        path: &str,
+        kind: &str,
+        project: &Project,
+        default: String,
+    ) -> Result<String> {
+        let source = if self.safe_path(path)?.exists() {
+            path
+        } else {
+            previous.map_or(path, String::as_str)
+        };
+        if previous.is_none() || !self.safe_path(source)?.exists() {
+            return Ok(default);
+        }
+        let existing = std::fs::read_to_string(self.safe_path(source)?)?;
+        if kind == "milestone-base" {
+            Self::migrate_milestones_base(existing, project)
+        } else {
+            Ok(existing)
+        }
     }
 
     pub(super) fn delivery_source(

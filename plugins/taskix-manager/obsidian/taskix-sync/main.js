@@ -552,7 +552,7 @@ class TaskixSyncPlugin extends Plugin {
                     if (type === "bases") {
                         managed = ["Dashboard.base", "Recent Jobs.base", "Issue.base"].some(name =>
                             file.path === path.posix.join(this.engine.directory, name));
-                        if (!managed && ["Issue.base", "Milestones.base"].includes(path.posix.basename(file.path))) {
+                        if (!managed && ["Issue.base", "Milestone.base"].includes(path.posix.basename(file.path))) {
                             const board = this.app.vault.getAbstractFileByPath(path.posix.join(path.posix.dirname(file.path), "Board.md"));
                             managed = this.app.metadataCache.getFileCache(board)?.frontmatter?.["taskix-generated"] === true;
                         }

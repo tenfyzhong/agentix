@@ -1075,7 +1075,7 @@ async fn milestone_legacy_defaults_and_board_show_only_open_stages() {
         issue_base["filters"],
         json!({"and":[format!("project_id == {}", json!(f.project))]})
     );
-    let board = std::fs::read_to_string(root.join("Projects/demo/Milestones.base")).unwrap();
+    let board = std::fs::read_to_string(root.join("Projects/demo/Milestone.base")).unwrap();
     let yaml: serde_json::Value = serde_yaml::from_str(&board).unwrap();
     assert!(
         yaml["views"][0]["filters"]["and"]
@@ -1145,7 +1145,7 @@ async fn milestone_existing_default_base_upgrades_and_preserves_later_filters() 
         .service
         .config()
         .output_dir()
-        .join("Projects/demo/Milestones.base");
+        .join("Projects/demo/Milestone.base");
     let mut base: Value = serde_yaml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
     base["filters"] = json!({"and":["file.hasTag(\"agent/milestone\")",format!("project_id == {}",json!(f.project))]});
     base["views"][0]["order"]
@@ -1313,7 +1313,7 @@ async fn milestone_base_board_has_all_statuses_while_table_defaults_to_open() {
         .service
         .config()
         .output_dir()
-        .join("Projects/demo/Milestones.base");
+        .join("Projects/demo/Milestone.base");
     let base: Value = serde_yaml::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
     let views = base["views"].as_array().unwrap();
     assert!(views.iter().any(|view| view["type"] == "table"));
@@ -1359,7 +1359,7 @@ async fn milestone_base_upgrade_adds_board_once_and_preserves_custom_views() {
         .service
         .config()
         .output_dir()
-        .join("Projects/demo/Milestones.base");
+        .join("Projects/demo/Milestone.base");
     let mut base: Value = serde_yaml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
     base["views"]
         .as_array_mut()
@@ -1393,7 +1393,7 @@ async fn milestone_base_upgrade_moves_default_global_status_filter_to_table() {
         .service
         .config()
         .output_dir()
-        .join("Projects/demo/Milestones.base");
+        .join("Projects/demo/Milestone.base");
     let mut base: Value = serde_yaml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
     let open = json!({"or":["status == \"PLANNED\"", "status == \"ACTIVE\""]});
     base["filters"] = json!({"and":["file.hasTag(\"agent/milestone\")",format!("project_id == {}",json!(f.project)),open]});
@@ -1409,5 +1409,47 @@ async fn milestone_base_upgrade_moves_default_global_status_filter_to_table() {
             .unwrap()
             .iter()
             .any(|view| view["type"] == "kanban" && view.get("filters").is_none())
+    );
+}
+
+#[tokio::test]
+async fn milestone_base_renames_registered_plural_file_preserving_custom_views() {
+    let f = Fixture::new().await;
+    let root = f.service.config().output_dir();
+    let old = root.join("Projects/demo/Milestones.base");
+    let new = root.join("Projects/demo/Milestone.base");
+    if new.exists() {
+        std::fs::rename(&new, &old).unwrap();
+    }
+    let mut base: Value = serde_yaml::from_str(&std::fs::read_to_string(&old).unwrap()).unwrap();
+    base["views"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"type":"table","name":"View","filters":"order > 3"}));
+    std::fs::write(&old, serde_yaml::to_string(&base).unwrap()).unwrap();
+    let pool = sqlx::SqlitePool::connect_with(
+        sqlx::sqlite::SqliteConnectOptions::new().filename(f.dir.path().join("tasks.sqlite3")),
+    )
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE document_registry SET path = 'Projects/demo/Milestones.base' WHERE key = ?",
+    )
+    .bind(format!("milestone-base:{}", f.project))
+    .execute(&pool)
+    .await
+    .unwrap();
+    f.service.sync().await.unwrap();
+    assert!(new.exists(), "singular Milestone.base must be generated");
+    assert!(!old.exists(), "registered plural file must be retired");
+    let migrated: Value = serde_yaml::from_str(&std::fs::read_to_string(&new).unwrap()).unwrap();
+    assert_eq!(migrated, base);
+    let board = std::fs::read_to_string(root.join("Projects/demo/Board.md")).unwrap();
+    assert!(board.contains("/Milestone.base"));
+    assert!(!board.contains("/Milestones.base"));
+    f.service.sync().await.unwrap();
+    assert_eq!(
+        serde_yaml::from_str::<Value>(&std::fs::read_to_string(new).unwrap()).unwrap(),
+        base
     );
 }

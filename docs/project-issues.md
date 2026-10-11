@@ -141,7 +141,10 @@ engine or automatic advancement is introduced.
 Schema 25 fills existing Milestones with PLANNED and queues a document rebuild.
 Upgrade Agentix and Taskix together; older binaries reject the new schema, and
 SQLite triggers reject already-connected legacy writers that omit the status.
-New `Milestones.base` tables default to PLANNED or ACTIVE within their Project and
+Synchronization renames the registered legacy `Milestones.base` to `Milestone.base`,
+preserving saved views and updating the generated Board embed.
+
+New `Milestone.base` tables default to PLANNED or ACTIVE within their Project and
 include both the Milestones table and a Milestone board grouped by status. The board
 orders columns as PLANNED, ACTIVE, COMPLETED, CANCELLED and shows due dates and Issue
 counts. Its four status columns remain visible, including empty columns, and its
@@ -167,7 +170,7 @@ Each Project creates these directories and files:
 Projects/<project>/
   Board.md
   Issue.base
-  Milestones.base
+  Milestone.base
   Issues/YYMMDD-seq-name.md
   Milestones/YYMMDD-seq-name.md
   Jobs/...

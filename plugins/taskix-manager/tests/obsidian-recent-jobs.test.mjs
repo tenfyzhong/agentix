@@ -17,13 +17,15 @@ test("board styling follows managed notes and Bases without affecting personal b
     const recent = leaf("11-Agents/Recent Jobs.base");
     const dashboard = leaf("11-Agents/Dashboard.base");
     const issues = leaf("11-Agents/Issue.base");
+    const milestone = leaf("11-Agents/Projects/Demo/Milestone.base");
+    plugin.app.vault.getAbstractFileByPath = path => path === "11-Agents/Projects/Demo/Board.md" ? { properties: { "taskix-generated": true } } : null;
     const personal = leaf("11-Agents/Personal.base");
     const job = leaf("11-Agents/Projects/Demo/Jobs/One.md", { "taskix-generated": true, tags: ["agent/job"] });
     const note = leaf("11-Agents/Personal.md", { tags: ["agent/job"] });
-    plugin.app.workspace.getLeavesOfType = type => type === "bases" ? [recent, dashboard, issues, personal] : [job, note];
+    plugin.app.workspace.getLeavesOfType = type => type === "bases" ? [recent, dashboard, issues, milestone, personal] : [job, note];
     plugin.app.metadataCache.getFileCache = file => ({ frontmatter: file?.properties });
     workspaceEvents.get("layout-change")();
-    for (const item of [recent, dashboard, issues, job]) assert.equal(item.view.containerEl.classList["taskix-board"], true);
+    for (const item of [recent, dashboard, issues, milestone, job]) assert.equal(item.view.containerEl.classList["taskix-board"], true);
     for (const item of [personal, note]) assert.equal(item.view.containerEl.classList["taskix-board"], false);
     recent.view.file.path = "Personal.base";
     workspaceEvents.get("layout-change")();
