@@ -332,7 +332,8 @@ impl Service {
             state
                 .milestones
                 .retain(|milestone| key == format!("milestone:{}", milestone.id));
-            self.reconcile_issue_documents_locked(Some(&state)).await?;
+            // Keep reconciliation's transaction future out of every caller's inline state.
+            Box::pin(self.reconcile_issue_documents_locked(Some(&state))).await?;
             state = self.store.projection_snapshot(key).await?;
         }
         self.render_state_locked(
