@@ -10,6 +10,14 @@ Association rejects cross-Project links and guards the selected Issue revision/c
 
 Issue changes participate in the same state-difference transaction, event log and durable document publication queue as Jobs and Tasks. Cancellation uses the existing Job cancellation and memory-source invalidation path. Publication records the document body hash only after successful file writes, together with registered paths and generation-checked acknowledgements. Pending generations survive failures and restarts.
 
+## Query and publication cost
+
+Ordinary Issue mutations materialize only the Issue and its Project/Milestone parents. Submission and approval use a transaction-local indexed existence query for unfinished Jobs; they do not deserialize Job prompts or conversations or issue per-Job Task-count queries. Cancellation intentionally loads the affected Jobs, Tasks and leases because it changes all unfinished execution records atomically. Renaming an Issue queues linked Job documents using indexed IDs, without loading their bodies during the mutation.
+
+IM Milestone browsing and selection use SQL pagination (six summaries), clamp stale page numbers, and batch progress counts for the selected IDs in one read transaction. Goal previews contain at most 500 Unicode characters plus an ellipsis; the full goal remains in the Milestone note and CLI detail. Count queries and deep offsets still cost work proportional to matching rows; pagination bounds application memory, not every database operation. CLI full lists and full document rebuilds intentionally remain proportional to the selected data set.
+
+A pending full rebuild imports Issue/Milestone authored edits before rendering, using the same receipt/conflict rules as normal synchronization. Conflicting edits stop publication and retain the files. The regression fixtures verify bounded hydration with 12 linked Jobs containing 1.2 MB of goals, and Milestone page order/progress with large Unicode goals. These are deterministic allocation-bound checks, not production latency benchmarks.
+
 ## Issue lifecycle
 
 | State | Meaning | Transition |

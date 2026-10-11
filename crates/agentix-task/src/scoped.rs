@@ -234,7 +234,7 @@ pub(crate) async fn request_scope(conn: &mut SqliteConnection, request: &Value) 
             selected.extend(ids(conn,&format!("SELECT id FROM {table} WHERE project_id IN (SELECT value FROM json_each(?))"),&json!(scope.projects).to_string()).await?);
         }
     }
-    if command.starts_with("issue.") && command != "issue.create" {
+    if command == "issue.cancel" {
         scope.jobs.extend(ids(conn,"SELECT id FROM jobs WHERE json_extract(data,'$.issue_id') IN (SELECT value FROM json_each(?))",&json!(scope.issues).to_string()).await?);
     }
     if command == "milestone.delete"
@@ -415,6 +415,16 @@ async fn load_query_context(
         .fetch_one(&mut *conn)
         .await?;
         ensure!(!collision, "conflict: Project root is already registered");
+    }
+    if matches!(command, "issue.submit" | "issue.approve") {
+        for issue in &state.issues {
+            let active: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM jobs WHERE json_extract(data,'$.issue_id')=? AND json_extract(data,'$.status') NOT IN ('COMPLETED','CANCELLED'))")
+                .bind(&issue.id).fetch_one(&mut *conn).await?;
+            state
+                .query_context
+                .issue_active_jobs
+                .insert(issue.id.clone(), active);
+        }
     }
     let selected = json!(state.tasks.iter().map(|t| &t.id).collect::<Vec<_>>()).to_string();
     for job in &state.jobs {
@@ -721,6 +731,69 @@ async fn read_tasks(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn issue_mutations_do_not_hydrate_related_job_bodies() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join("tasks.sqlite3"))
+            .await
+            .unwrap();
+        let project = store
+            .execute(
+                json!({"command":"project.register","name":"Scope","root":dir.path()}),
+                crate::WriteOptions::default(),
+            )
+            .await
+            .unwrap()
+            .result;
+        let issue = store.execute(json!({"command":"issue.create","project":project["id"],"title":"Requirement","requirement":"Build it","acceptance":"Tests pass"}), crate::WriteOptions::default()).await.unwrap().result;
+        for n in 0..12 {
+            store.execute(json!({"command":"job.create","project":project["id"],"title":format!("Round {n}"),"issue":issue["id"],"goal":"x".repeat(100_000)}), crate::WriteOptions::default()).await.unwrap();
+        }
+        let mut tx = store.pool.begin().await.unwrap();
+        for command in [
+            "issue.update",
+            "issue.submit",
+            "issue.approve",
+            "issue.archive",
+            "issue.reopen",
+        ] {
+            let state = load_request(
+                &mut tx,
+                &json!({"command":command,"issue":issue["id"]}),
+                store.now(),
+            )
+            .await
+            .unwrap();
+            assert!(
+                state.jobs.is_empty(),
+                "{command} hydrated {} Jobs",
+                state.jobs.len()
+            );
+            assert!(state.tasks.is_empty());
+        }
+        tx.rollback().await.unwrap();
+        assert!(
+            store
+                .execute(
+                    json!({"command":"issue.submit","issue":issue["id"]}),
+                    crate::WriteOptions::default()
+                )
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("terminal")
+        );
+        let mut tx = store.pool.begin().await.unwrap();
+        let cancel = load_request(
+            &mut tx,
+            &json!({"command":"issue.cancel","issue":issue["id"]}),
+            store.now(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(cancel.jobs.len(), 12);
+    }
 
     #[tokio::test]
     async fn filtered_jobs_preserve_scope_order_and_full_records() {

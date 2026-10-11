@@ -302,6 +302,7 @@ impl Service {
         let _lock = self.lock_output().await?;
         self.cleanup_deleted_documents().await?;
         if self.store.rebuild_pending().await? {
+            Box::pin(self.reconcile_issue_documents_locked(None)).await?;
             return self.render_locked().await;
         }
         let mut error = None;

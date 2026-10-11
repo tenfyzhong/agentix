@@ -325,11 +325,17 @@ pub(crate) fn apply(
 
 fn terminal_jobs(state: &Snapshot, issue: &str) -> Result<()> {
     ensure!(
-        state
-            .jobs
-            .iter()
-            .filter(|job| job.issue_id.as_deref() == Some(issue))
-            .all(|job| job.status.terminal()),
+        !state
+            .query_context
+            .issue_active_jobs
+            .get(issue)
+            .copied()
+            .unwrap_or(false)
+            && state
+                .jobs
+                .iter()
+                .filter(|job| job.issue_id.as_deref() == Some(issue))
+                .all(|job| job.status.terminal()),
         "conflict: all associated Jobs must be terminal before Issue acceptance"
     );
     Ok(())

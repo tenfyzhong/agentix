@@ -269,6 +269,8 @@ pub struct Snapshot {
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct QueryContext {
+    /// Acceptance checks without materializing related Job content.
+    pub(crate) issue_active_jobs: std::collections::BTreeMap<String, bool>,
     pub(crate) registered_project: Option<String>,
     pub(crate) available_project_key: Option<String>,
     pub(crate) done_dependencies: Option<std::collections::BTreeSet<String>>,

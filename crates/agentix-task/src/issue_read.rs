@@ -225,6 +225,37 @@ impl Store {
         )
     }
 
+    /// Bounded IM summaries and progress from one read transaction.
+    pub async fn milestone_page(&self, project: &str, page: usize, limit: usize) -> Result<Value> {
+        ensure!((1..=100).contains(&limit), "invalid: Milestone page bounds");
+        let mut tx = self.pool.begin().await?;
+        let project = resolve(&mut tx, "projects", project).await?;
+        let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM milestones WHERE project_id=?")
+            .bind(&project)
+            .fetch_one(&mut *tx)
+            .await?;
+        let pages = usize::try_from(total)?.div_ceil(limit).max(1);
+        let page = page.min(pages - 1);
+        let rows = sqlx::query("SELECT id,json_extract(data,'$.title') AS title,substr(json_extract(data,'$.goal'),1,500) AS goal,length(json_extract(data,'$.goal'))>500 AS truncated FROM milestones WHERE project_id=? ORDER BY json_extract(data,'$.order'),id LIMIT ? OFFSET ?")
+            .bind(&project).bind(i64::try_from(limit)?).bind(i64::try_from(page * limit)?).fetch_all(&mut *tx).await?;
+        let ids: Vec<String> = rows.iter().map(|row| row.get("id")).collect();
+        let counts = sqlx::query("SELECT json_extract(data,'$.milestone_id') AS id,COUNT(*) AS total,SUM(json_extract(data,'$.status')='COMPLETED') AS completed,SUM(json_extract(data,'$.status')='CANCELLED') AS cancelled FROM issues WHERE json_extract(data,'$.milestone_id') IN (SELECT value FROM json_each(?)) GROUP BY json_extract(data,'$.milestone_id')")
+            .bind(json!(ids).to_string()).fetch_all(&mut *tx).await?;
+        let mut items = Vec::new();
+        for row in rows {
+            let id: String = row.get("id");
+            let count = counts.iter().find(|c| c.get::<String, _>("id") == id);
+            let value = |key| count.map_or(0, |c| c.get::<i64, _>(key));
+            let mut goal: String = row.get("goal");
+            if row.get::<bool, _>("truncated") {
+                goal.push('…');
+            }
+            items.push(json!({"id":id,"title":row.get::<String,_>("title"),"goal":goal,"progress":{"total":value("total"),"completed":value("completed"),"cancelled":value("cancelled")}}));
+        }
+        tx.commit().await?;
+        Ok(json!({"items":items,"total":total,"page":page,"pages":pages}))
+    }
+
     pub async fn milestones(&self, project: Option<&str>) -> Result<Vec<Milestone>> {
         let mut tx = self.pool.begin().await?;
         let mut query = QueryBuilder::<Sqlite>::new("SELECT data FROM milestones WHERE 1");

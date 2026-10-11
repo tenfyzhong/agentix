@@ -493,38 +493,33 @@ impl TaskBoardView<'_> {
         page: usize,
     ) -> Result<(), EngineError> {
         let service = self.tasks_service()?;
-        let stages = service
+        let result = service
             .store()
-            .milestones(Some(project))
+            .milestone_page(project, page, PAGE_SIZE)
             .await
             .map_err(error)?;
-        let pages = page_count(stages.len());
-        let page = page.min(pages - 1);
+        let pages = usize::try_from(result["pages"].as_u64().unwrap_or(1)).map_err(error)?;
+        let page = usize::try_from(result["page"].as_u64().unwrap_or(0)).map_err(error)?;
         let mut view = OutboundView::text("Milestones", "Select a Milestone to filter its Issues.");
-        for stage in stages.iter().skip(page * PAGE_SIZE).take(PAGE_SIZE) {
-            let progress = service
-                .store()
-                .milestone_detail(&stage.id)
-                .await
-                .map_err(error)?["progress"]
-                .clone();
+        for stage in result["items"].as_array().into_iter().flatten() {
+            let progress = &stage["progress"];
             self.add_entry(
                 conversation,
                 owner,
                 &mut view,
                 format!(
                     "**{}**\n{}\nAccepted: {} / {} · Cancelled: {}",
-                    escape(&short(&stage.title)),
-                    escape(&stage.goal),
+                    escape(&short(stage["title"].as_str().unwrap_or_default())),
+                    escape(stage["goal"].as_str().unwrap_or_default()),
                     progress["completed"],
                     progress["total"],
                     progress["cancelled"]
                 ),
-                stage.title.clone(),
+                stage["title"].as_str().unwrap_or_default().to_owned(),
                 TaskBrowse::Issues {
                     project: project.into(),
                     status: None,
-                    milestone: Some(stage.id.clone()),
+                    milestone: Some(stage["id"].as_str().unwrap_or_default().to_owned()),
                     page: 0,
                 },
             )
@@ -892,14 +887,14 @@ impl TaskBoardView<'_> {
         if item.revision != revision {
             return Err(EngineError::InvalidAction);
         }
-        let stages = self
+        let result = self
             .tasks_service()?
             .store()
-            .milestones(Some(&item.project_id))
+            .milestone_page(&item.project_id, page, PAGE_SIZE)
             .await
             .map_err(error)?;
-        let pages = page_count(stages.len());
-        let page = page.min(pages - 1);
+        let pages = usize::try_from(result["pages"].as_u64().unwrap_or(1)).map_err(error)?;
+        let page = usize::try_from(result["page"].as_u64().unwrap_or(0)).map_err(error)?;
         let mut view = OutboundView::text("Issue milestone", "Choose a Milestone in this Project.");
         self.add_issue_action(
             conversation,
@@ -912,16 +907,16 @@ impl TaskBoardView<'_> {
             None,
         )
         .await;
-        for stage in stages.iter().skip(page * PAGE_SIZE).take(PAGE_SIZE) {
+        for stage in result["items"].as_array().into_iter().flatten() {
             self.add_issue_action(
                 conversation,
                 owner,
                 &mut view,
-                &stage.title,
+                stage["title"].as_str().unwrap_or_default(),
                 &item,
                 "issue.update",
                 Some("milestone"),
-                Some(stage.id.clone()),
+                Some(stage["id"].as_str().unwrap_or_default().to_owned()),
             )
             .await;
         }

@@ -782,3 +782,76 @@ async fn pending_delivery_publication_rejects_intervening_authored_edits() {
         f.service.sync_pending_documents().await.unwrap();
     }
 }
+
+#[tokio::test]
+async fn rebuild_publication_imports_authored_issue_edits_before_rendering() {
+    let f = Fixture::new().await;
+    let issue = create_issue(&f).await;
+    let path = f
+        .service
+        .config()
+        .output_dir()
+        .join(issue["document_path"].as_str().unwrap());
+    let edited = std::fs::read_to_string(&path)
+        .unwrap()
+        .replace("Keep browser sessions.", "Keep my offline edit.");
+    std::fs::write(&path, &edited).unwrap();
+    let mut conn = super::incremental::connection(&f).await;
+    sqlx::query(
+        "INSERT OR REPLACE INTO pending_documents(key,generation) VALUES('rebuild','audit')",
+    )
+    .execute(&mut conn)
+    .await
+    .unwrap();
+    f.service.sync_pending_documents().await.unwrap();
+    assert!(
+        std::fs::read_to_string(&path)
+            .unwrap()
+            .contains("Keep my offline edit.")
+    );
+    assert_eq!(
+        f.service
+            .store()
+            .issue_record(issue["id"].as_str().unwrap())
+            .await
+            .unwrap()
+            .notes,
+        "Keep my offline edit."
+    );
+}
+
+#[tokio::test]
+async fn milestone_pages_bound_goals_and_preserve_progress_and_order() {
+    let f = Fixture::new().await;
+    let mut stages = Vec::new();
+    for order in 0..8 {
+        stages.push(f.service.store().execute(json!({"command":"milestone.create","project":f.project,"title":format!("Release {order}"),"order":order,"goal":"界".repeat(10_000)}), WriteOptions::default()).await.unwrap().result);
+    }
+    f.service.store().execute(json!({"command":"issue.create","project":f.project,"title":"Accepted","milestone":stages[6]["id"]}), WriteOptions::default()).await.unwrap();
+    let page = f
+        .service
+        .store()
+        .milestone_page(&f.project, 1, 6)
+        .await
+        .unwrap();
+    assert_eq!(page["total"], 8);
+    assert_eq!(page["page"], 1);
+    assert_eq!(page["items"].as_array().unwrap().len(), 2);
+    assert_eq!(page["items"][0]["id"], stages[6]["id"]);
+    assert_eq!(page["items"][0]["progress"]["total"], 1);
+    assert!(page["items"][0]["goal"].as_str().unwrap().chars().count() <= 501);
+    let last = f
+        .service
+        .store()
+        .milestone_page(&f.project, usize::MAX, 6)
+        .await
+        .unwrap();
+    assert_eq!(last["page"], 1);
+    assert!(
+        f.service
+            .store()
+            .milestone_page(&f.project, 0, 0)
+            .await
+            .is_err()
+    );
+}

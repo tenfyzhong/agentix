@@ -112,11 +112,14 @@ pub(crate) async fn enqueue_changes(
         if old.is_some_and(|old| old.name != issue.name || old.document_path != issue.document_path)
         {
             keys.extend(
-                after
-                    .jobs
-                    .iter()
-                    .filter(|job| job.issue_id.as_ref() == Some(&issue.id))
-                    .map(|job| format!("job:{}", job.id)),
+                ids(
+                    conn,
+                    "SELECT id FROM jobs WHERE json_extract(data,'$.issue_id')=?",
+                    &issue.id,
+                )
+                .await?
+                .into_iter()
+                .map(|id| format!("job:{id}")),
             );
         }
         keys.insert(format!("board:{}", issue.project_id));

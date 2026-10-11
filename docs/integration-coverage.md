@@ -641,4 +641,18 @@ acceptance across all rclone providers.
 | Owner/epoch/revision fencing, SQL pagination, session/workspace execution, edits and human review | [IM Issue workflows](../crates/agentix-core/tests/support/issues.rs) |
 | Explicit Issue/Job routing precedence and four-host provenance | [Jev Issue tests](../plugins/taskix-manager/tests/jev-issues.test.mjs), host hook/extension tests |
 
+Additional Issue regression coverage:
+
+| Contract | Reusable coverage |
+| --- | --- |
+| Root cross-Project table/Kanban filters, saved Base configuration, immutable Project properties, short Task Job links | `support/issue_documents.rs`, `support/job_graph.rs`, `obsidian-sync.test.mjs` |
+| New Milestone folder menu, fixed template and publication recovery | `obsidian-milestones.test.mjs`, `support/issue_documents.rs` |
+| Job `issue` wikilink resolution, generated `issue_id`, unlinking and rejection of foreign/copied notes | `obsidian-job-issues.test.mjs`, `support/issues.rs` |
+| Accepted-content freeze, pending-review invalidation, stale content revisions and pending/full-rebuild edit preservation | `support/issue_documents.rs` |
+| Issue mutations exclude related Job bodies while acceptance still rejects active Jobs | `scoped::tests::issue_mutations_do_not_hydrate_related_job_bodies` |
+| SQL Milestone pagination, Unicode preview bounds, progress and stale page clamping | `milestone_pages_bound_goals_and_preserve_progress_and_order` |
+| Reply-mode replacement, Issue review notification, deleted historical Issue delivery and newest-first cancellation notices | `agentix-core/tests/support/issues.rs`, `agentix-task/src/routing.rs` |
+
+The fixtures check behavioral and materialization bounds. They do not establish production p95 latency, exhaustive interleavings, or 100% line/branch coverage. Full rebuild and cancellation costs grow with affected data by design. Live IM account delivery is outside the mocked adapter contract.
+
 Feishu, Telegram and Slack adapter HTTP tests validate local rendered controls. They do not prove live account delivery. The isolated Obsidian acceptance exercises actual native Base filtering and status/body writes; the optional desktop regression requires an explicitly selected open vault.
