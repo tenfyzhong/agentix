@@ -387,7 +387,10 @@ for (const host of ["pi", "omp"]) {
         let current=await f.run(["context"],{session:x.ctx.sessionManager.getSessionId()});
         assert.equal(current.issue_id,item.id);
         assert.equal(current.issue.status,"ACTIVE");
-        assert.equal(current.issue.requirement,"Allow login");
+        for (const key of ["requirement", "acceptance", "notes"]) {
+            assert.equal(Object.hasOwn(current.issue, key), false);
+        }
+        assert.equal((await f.run(["issue","show",item.id])).issue.requirement,"Allow login");
         await x.invoke(["task","done",task.id]);
         await f.run(["job","approve",first.id]);
         assert.equal((await f.run(["issue","show",item.id])).issue.status,"ACTIVE");
