@@ -344,7 +344,11 @@ impl Store {
             _ => (),
         }
         scope.parents(&mut tx).await?;
-        let state = scope.load(&mut tx).await?;
+        let mut state = scope.load(&mut tx).await?;
+        if let Some(("milestone", id)) = key.split_once(':') {
+            state.query_context.milestone_progress =
+                crate::issue_read::milestone_progress(&mut tx, &[id.to_owned()]).await?;
+        }
         tx.commit().await?;
         Ok(state)
     }

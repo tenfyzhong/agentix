@@ -519,8 +519,7 @@ impl Service {
             .await?;
         let mut paths = BTreeMap::new();
         let mut files = BTreeMap::new();
-        self.render_delivery_documents(state, selected, &previous, &mut files, &mut paths)
-            .await?;
+        self.render_delivery_documents(state, selected, &previous, &mut files, &mut paths)?;
         for project in &state.projects {
             let board_path = format!("{}/Board.md", project.document_directory());
             if includes(&format!("board:{}", project.id)) {

@@ -180,9 +180,10 @@ impl Service {
         Ok(doc)
     }
 
-    async fn milestone_document(
+    fn milestone_document(
         &self,
         milestone: &Milestone,
+        progress: crate::issue_read::MilestoneProgress,
         project: &Project,
         existing: &str,
     ) -> Result<String> {
@@ -196,14 +197,9 @@ impl Service {
         }
         managed["tags"] = json!(["agent/milestone"]);
         managed["title"] = json!(milestone.name);
-        let progress = self.store().milestone_detail(&milestone.id).await?["progress"].clone();
-        for (key, field) in [
-            ("total_issues", "total"),
-            ("completed_issues", "completed"),
-            ("cancelled_issues", "cancelled"),
-        ] {
-            managed[key] = progress[field].clone();
-        }
+        managed["total_issues"] = json!(progress.total);
+        managed["completed_issues"] = json!(progress.completed);
+        managed["cancelled_issues"] = json!(progress.cancelled);
         properties
             .as_object_mut()
             .unwrap()
@@ -217,7 +213,7 @@ impl Service {
         Ok(doc)
     }
 
-    pub(super) async fn render_delivery_documents(
+    pub(super) fn render_delivery_documents(
         &self,
         state: &Snapshot,
         selected: Option<&str>,
@@ -236,6 +232,22 @@ impl Service {
             .iter()
             .map(|milestone| (milestone.id.as_str(), milestone))
             .collect();
+        let mut progress = if selected.is_none() {
+            BTreeMap::new()
+        } else {
+            state.query_context.milestone_progress.clone()
+        };
+        if selected.is_none() {
+            // Full snapshots already contain every Issue; aggregate once for all Milestones.
+            for issue in &state.issues {
+                if let Some(id) = &issue.milestone_id {
+                    let counts = progress.entry(id.clone()).or_default();
+                    counts.total += 1;
+                    counts.completed += i64::from(issue.status == IssueStatus::Completed);
+                    counts.cancelled += i64::from(issue.status == IssueStatus::Cancelled);
+                }
+            }
+        }
         for project in &state.projects {
             for folder in ["Issues", "Milestones"] {
                 std::fs::create_dir_all(
@@ -295,8 +307,12 @@ impl Service {
                 self.delivery_source(&key, &milestone.id, &milestone.document_path, previous)?;
             files.insert(
                 milestone.document_path.clone(),
-                self.milestone_document(milestone, project, &existing)
-                    .await?,
+                self.milestone_document(
+                    milestone,
+                    progress.get(&milestone.id).copied().unwrap_or_default(),
+                    project,
+                    &existing,
+                )?,
             );
             paths.insert(key, milestone.document_path.clone());
         }
@@ -484,5 +500,80 @@ impl Service {
             }
         }
         Ok(imported)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn milestone_rendering_uses_frozen_full_and_scoped_snapshots_without_database_reads() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("vault");
+        std::fs::create_dir_all(root.join(".obsidian")).unwrap();
+        let config: crate::Config = toml::from_str(&format!(
+            "schema_version=1\n[storage]\npath={:?}\n[documents]\nroot={:?}\ndirectory='Taskix'\n",
+            dir.path().join("state.db"),
+            root
+        ))
+        .unwrap();
+        let store = crate::Store::open(&config.storage.path).await.unwrap();
+        let service = Service::new(config, store).unwrap();
+        let project = service
+            .store()
+            .execute(
+                json!({"command":"project.register","name":"Snapshot","root":dir.path()}),
+                WriteOptions::default(),
+            )
+            .await
+            .unwrap()
+            .result;
+        let milestone = service
+            .store()
+            .execute(
+                json!({"command":"milestone.create","project":project["id"],"title":"Release"}),
+                WriteOptions::default(),
+            )
+            .await
+            .unwrap()
+            .result;
+        let issue = service.store().execute(json!({"command":"issue.create","project":project["id"],"milestone":milestone["id"],"title":"First"}), WriteOptions::default()).await.unwrap().result;
+        let key = format!("milestone:{}", milestone["id"].as_str().unwrap());
+        let full = service.store().snapshot().await.unwrap();
+        let scoped = service.store().projection_snapshot(&key).await.unwrap();
+        assert!(
+            scoped.issues.is_empty(),
+            "progress must not load Issue bodies"
+        );
+        service
+            .store()
+            .execute(
+                json!({"command":"issue.cancel","issue":issue["id"]}),
+                WriteOptions::default(),
+            )
+            .await
+            .unwrap();
+        service.store().execute(json!({"command":"issue.create","project":project["id"],"milestone":milestone["id"],"title":"Later"}), WriteOptions::default()).await.unwrap();
+        // Rendering must not acquire another connection or observe either later write.
+        service.store().pool.close().await;
+        for (state, selected) in [(&full, None), (&scoped, Some(key.as_str()))] {
+            let mut files = BTreeMap::new();
+            let mut paths = BTreeMap::new();
+            service
+                .render_delivery_documents(
+                    state,
+                    selected,
+                    &BTreeMap::new(),
+                    &mut files,
+                    &mut paths,
+                )
+                .unwrap();
+            let source = &files[milestone["document_path"].as_str().unwrap()];
+            let properties = split_properties(source).unwrap().0;
+            assert_eq!(properties["total_issues"], 1);
+            assert_eq!(properties["cancelled_issues"], 0);
+            assert_eq!(properties["completed_issues"], 0);
+        }
     }
 }

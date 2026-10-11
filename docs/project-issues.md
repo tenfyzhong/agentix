@@ -16,6 +16,8 @@ Ordinary Issue mutations materialize only the Issue and its Project/Milestone pa
 
 IM Milestone browsing and selection use SQL pagination (six summaries), clamp stale page numbers, and batch progress counts for the selected IDs in one read transaction. Goal previews contain at most 500 Unicode characters plus an ellipsis; the full goal remains in the Milestone note and CLI detail. Count queries and deep offsets still cost work proportional to matching rows; pagination bounds application memory, not every database operation. CLI full lists and full document rebuilds intentionally remain proportional to the selected data set.
 
+Milestone document progress comes from the same database snapshot as the document identity. Scoped publication reads aggregate counts without loading Issue bodies; full rebuilds aggregate their existing Issue snapshot once, with no per-Milestone database reads during rendering. Detail, IM page and document counts include archived Issues and distinguish completed, cancelled and remaining work. Regression tests close the database after taking snapshots and verify that later writes cannot leak into either full or scoped rendering.
+
 A pending full rebuild imports Issue/Milestone authored edits before rendering, using the same receipt/conflict rules as normal synchronization. Conflicting edits stop publication and retain the files. The regression fixtures verify bounded hydration with 12 linked Jobs containing 1.2 MB of goals, and Milestone page order/progress with large Unicode goals. These are deterministic allocation-bound checks, not production latency benchmarks.
 
 ## Issue lifecycle

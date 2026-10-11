@@ -650,6 +650,7 @@ Additional Issue regression coverage:
 | Job `issue` wikilink resolution, generated `issue_id`, unlinking and rejection of foreign/copied notes | `obsidian-job-issues.test.mjs`, `support/issues.rs` |
 | Accepted-content freeze, pending-review invalidation, stale content revisions and pending/full-rebuild edit preservation | `support/issue_documents.rs` |
 | Issue mutations exclude related Job bodies while acceptance still rejects active Jobs | `scoped::tests::issue_mutations_do_not_hydrate_related_job_bodies` |
+| Frozen full/scoped Milestone snapshots render with a closed database; empty, archived and mixed-status progress agrees with detail and paged APIs | `milestone_rendering_uses_frozen_full_and_scoped_snapshots_without_database_reads`, `milestone_progress_matches_detail_pages_and_full_rebuild_with_archived_issues` |
 | SQL Milestone pagination, Unicode preview bounds, progress and stale page clamping | `milestone_pages_bound_goals_and_preserve_progress_and_order` |
 | Reply-mode replacement, Issue review notification, deleted historical Issue delivery and newest-first cancellation notices | `agentix-core/tests/support/issues.rs`, `agentix-task/src/routing.rs` |
 

@@ -855,3 +855,96 @@ async fn milestone_pages_bound_goals_and_preserve_progress_and_order() {
             .is_err()
     );
 }
+
+#[tokio::test]
+async fn milestone_progress_matches_detail_pages_and_full_rebuild_with_archived_issues() {
+    let f = Fixture::new().await;
+    let mut stages = Vec::new();
+    for title in ["Mixed", "Empty", "Other"] {
+        stages.push(
+            f.service
+                .execute(
+                    json!({"command":"milestone.create","project":f.project,"title":title}),
+                    WriteOptions::default(),
+                )
+                .await
+                .unwrap()
+                .result,
+        );
+    }
+    for (index, status) in ["TODO", "COMPLETED", "CANCELLED"].into_iter().enumerate() {
+        let issue = f.service.execute(json!({"command":"issue.create","project":f.project,"title":format!("Item {index}"),"milestone":stages[0]["id"],"requirement":"Deliver a feature","acceptance":"Verify the feature"}), WriteOptions::default()).await.unwrap().result;
+        if status == "COMPLETED" {
+            for command in ["issue.submit", "issue.approve", "issue.archive"] {
+                f.service
+                    .execute(
+                        json!({"command":command,"issue":issue["id"]}),
+                        WriteOptions::default(),
+                    )
+                    .await
+                    .unwrap();
+            }
+        } else if status == "CANCELLED" {
+            f.service
+                .execute(
+                    json!({"command":"issue.cancel","issue":issue["id"]}),
+                    WriteOptions::default(),
+                )
+                .await
+                .unwrap();
+        }
+    }
+    f.service.execute(json!({"command":"issue.create","project":f.project,"title":"Elsewhere","milestone":stages[2]["id"]}), WriteOptions::default()).await.unwrap();
+    f.service
+        .execute(
+            json!({"command":"issue.create","project":f.project,"title":"Unassigned"}),
+            WriteOptions::default(),
+        )
+        .await
+        .unwrap();
+    let page = f
+        .service
+        .store()
+        .milestone_page(&f.project, 0, 6)
+        .await
+        .unwrap();
+    for (stage, expected) in stages.iter().zip([(3, 1, 1), (0, 0, 0), (1, 0, 0)]) {
+        let detail = f
+            .service
+            .store()
+            .milestone_detail(stage["id"].as_str().unwrap())
+            .await
+            .unwrap();
+        let summary = page["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|item| item["id"] == stage["id"])
+            .unwrap();
+        for (field, count) in [
+            ("total", expected.0),
+            ("completed", expected.1),
+            ("cancelled", expected.2),
+        ] {
+            assert_eq!(detail["progress"][field], count);
+            assert_eq!(summary["progress"][field], count);
+        }
+        assert_eq!(
+            detail["progress"]["remaining"],
+            expected.0 - expected.1 - expected.2
+        );
+        let path = stage["document_path"].as_str().unwrap();
+        let before = read(&f, path);
+        f.service.sync().await.unwrap();
+        let after = read(&f, path);
+        for (field, count) in [
+            ("total_issues", expected.0),
+            ("completed_issues", expected.1),
+            ("cancelled_issues", expected.2),
+        ] {
+            let property = format!("{field}: {count}");
+            assert!(before.contains(&property));
+            assert!(after.contains(&property));
+        }
+    }
+}
