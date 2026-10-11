@@ -71,7 +71,7 @@ The Obsidian memory guard is covered by
 `plugins/taskix-manager/tests/obsidian-memory.test.mjs`: saved edits roll back,
 normal projections stay quiet, Recovery files are excluded, concurrent edits
 are rechecked, and lookup failure/unload prevents unsafe writes. Fake-clock tests
-verify typing debounce, per-file notice cooldown and pending timer cancellation. The CLI
+verify the five-second idle debounce, per-file notice cooldown and pending timer cancellation. See [Obsidian editing synchronization](obsidian-edit-sync.md) for timing and native-notice filtering. The CLI
 projection test verifies canonical document reads with the daemon stopped and
 rejects foreign Project paths. Desktop Obsidian itself is not exercised.
 

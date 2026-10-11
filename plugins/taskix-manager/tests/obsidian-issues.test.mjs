@@ -168,7 +168,7 @@ test("Issue creation does not create a blank note when its projection is not cac
 });
 
 for (const kind of ["issue", "milestone"]) {
-    test(`${kind} editing waits five idle seconds and cancels on unload`, async t => {
+    test(`${kind}_editing_waits_five_idle_seconds_and_cancels_on_unload`, async t => {
         t.mock.timers.enable({ apis: ["setTimeout"] });
         const f = await connectionFixture();
         t.after(() => f.plugin.onunload());
@@ -190,5 +190,35 @@ for (const kind of ["issue", "milestone"]) {
         f.plugin.onunload();
         t.mock.timers.tick(5000); await flush();
         assert.equal(calls.length, 1);
+    });
+}
+
+for (const kind of ["issue", "milestone"]) {
+    test(`${kind}_pending_delivery_survives_unload_and_recovers_closed_note`, async t => {
+        t.mock.timers.enable({ apis: ["setTimeout"] });
+        const storage = new Map();
+        const first = await connectionFixture("11-Agents", {}, { storage });
+        const filePath = `11-Agents/Projects/Demo/${kind}.md`;
+        const props = { id: `${kind}_one`, "taskix-generated": true };
+        const keys = kind === "issue" ? ["requirement", "acceptance", "notes"] : ["goal"];
+        const body = keys.map(key => `<!-- taskix:${key}:start -->\nSaved content\n<!-- taskix:${key}:end -->`).join("\n");
+        first.plugin.queueDelivery(filePath, body, props);
+        first.plugin.onunload();
+        const second = await connectionFixture("11-Agents", {}, { storage });
+        t.after(() => second.plugin.onunload());
+        second.file.path = filePath;
+        second.plugin.app.vault.getAbstractFileByPath = path => path === filePath ? second.file : null;
+        second.plugin.app.vault.read = async () => `---\n${JSON.stringify(props)}\n---\n${body}`;
+        second.plugin.engine = { directory: "11-Agents", watches: () => true, observe() {}, flush: async () => {}, dispose() {} };
+        await second.plugin.recoverDeliveries(second.plugin.engine);
+        t.mock.timers.tick(5000);
+        await new Promise(resolve => setImmediate(resolve));
+        assert.equal(second.requests.length, 1);
+        second.reply(null, undefined, { id: props.id });
+        await second.plugin.deliveryQueue;
+        assert.deepEqual([...second.plugin.pendingDeliveries], []);
+        const third = await connectionFixture("11-Agents", {}, { storage });
+        t.after(() => third.plugin.onunload());
+        assert.equal(third.plugin.pendingDeliveries.size, 0);
     });
 }
