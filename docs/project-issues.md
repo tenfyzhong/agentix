@@ -20,6 +20,38 @@ A pending full rebuild imports Issue/Milestone authored edits before rendering, 
 
 ## Issue lifecycle
 
+```mermaid
+stateDiagram-v2
+    [*] --> TODO: Create Issue
+    TODO --> ACTIVE: Task execution starts / human starts Issue
+    TODO --> PENDING_REVIEW: Submit
+    ACTIVE --> PENDING_REVIEW: Submit
+    PENDING_REVIEW --> COMPLETED: Human approves
+    PENDING_REVIEW --> ACTIVE: Human rejects with a reason
+    PENDING_REVIEW --> ACTIVE: Requirement or acceptance criteria change
+    TODO --> CANCELLED: Human cancels
+    ACTIVE --> CANCELLED: Human cancels
+    PENDING_REVIEW --> CANCELLED: Human cancels
+    COMPLETED --> TODO: Human reopens
+    CANCELLED --> TODO: Human reopens
+
+    note right of ACTIVE
+        Linking an already executing Job also starts a TODO Issue.
+        Job completion does not complete the Issue.
+    end note
+    note right of PENDING_REVIEW
+        Submit requires requirement and acceptance criteria.
+        All related Jobs must be COMPLETED or CANCELLED.
+        Human approval rechecks related Job readiness.
+    end note
+    note right of CANCELLED
+        Cancel unfinished related Jobs and Tasks.
+        Revoke their leases; preserve completed outcomes.
+    end note
+```
+
+Archival is a separate property, not another lifecycle state. Only COMPLETED or CANCELLED Issues can be archived; unarchive before reopening an archived Issue. Reopening preserves Job history and returns the Issue to TODO.
+
 | State | Meaning | Transition |
 | --- | --- | --- |
 | TODO | Requirement recorded; execution has not started | First successful Task start or explicit human activation → ACTIVE |
