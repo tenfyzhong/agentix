@@ -22,8 +22,11 @@ export function answerScore(question, answer, criteria, threshold) {
     return { question, choice: known ? answer.choice : null, confidence: valid ? answer.confidence : null, probability, margin, valid: valid ? 1 : 0, issue };
 }
 
-export async function measuredRouting({ env, options, config }, callback) {
-    const metric = { id: randomUUID(), started_at: Date.now(), called: false, answers: [], outcome: { action: "agent", reason: "preparation_unavailable" } };
+// One assessment owns one event; nested helpers reuse its telemetry.
+export async function measureDecision({ env = process.env, options, config, kind = "routing", telemetry }, callback) {
+    if (telemetry) return callback(telemetry);
+    if (!config || !/^(true|1)$/i.test(env.TASKIX_JEV_METRICS_ENABLED?.trim() || "")) return callback(undefined);
+    const metric = { kind, id: randomUUID(), started_at: Date.now(), called: false, answers: [], outcome: { action: "agent", reason: "preparation_unavailable" } };
     const start = performance.now();
     try { return await callback(metric); }
     finally {
@@ -38,6 +41,8 @@ export async function measuredRouting({ env, options, config }, callback) {
 }
 
 export async function writeMetric({ path, options, config, metric }) {
+    const kind = metric.kind ?? "routing";
+    if (typeof kind !== "string" || !/^[a-z][a-z0-9_]{0,63}$/.test(kind)) return false;
     let db;
     try {
         await mkdir(dirname(path), { recursive: true, mode: 0o700 });
@@ -58,8 +63,6 @@ export async function writeMetric({ path, options, config, metric }) {
         if (version === 1) {
             db.exec("ALTER TABLE requests ADD COLUMN kind TEXT NOT NULL DEFAULT 'routing'; PRAGMA user_version=2");
         }
-        const kind = ["routing", "discussion", "recovery", "outcome", "review_policy", "completion", "memory_triage"].includes(metric.kind)
-            ? metric.kind : metric.kind == null ? "routing" : "unknown";
         db.prepare("INSERT INTO requests (id, started_at, session_id, turn_id, project_id, model, threshold, duration_ms, called, accepted, action, reason, review, answer_count, kind) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)").run(
             metric.id, metric.started_at, options?.session ?? null, options?.turn_id ?? null, metric.project_id ?? null,
             config.model, config.threshold, metric.duration_ms, Number(metric.called),

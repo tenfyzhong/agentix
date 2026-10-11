@@ -671,5 +671,8 @@ JSON reports. `actual_triage_calls_record_success_and_fallback_metrics_once`
 uses local HTTP responses and a temporary database to verify memory-service
 collection for successful, uncertain, invalid, failed and oversized-input
 decisions, including the absence of source text and credentials.
+Generic collector regressions additionally verify new decision kinds with multiple
+answers, automatic CLI aggregation, nested-measurement deduplication, invalid kind
+rejection before I/O, unchanged callback errors and atomic answer rollback.
 These tests do not measure real provider accuracy or guarantee retention when
 best-effort writes time out.

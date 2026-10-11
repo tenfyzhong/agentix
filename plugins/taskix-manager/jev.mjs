@@ -159,11 +159,11 @@ async function unchangedJob(job, project, runner, options) {
         !fresh.archived_at && fresh.project_id === project && (fresh.issue_id ?? null) === (job.issue_id ?? null);
 }
 
-export async function withJevMetrics(env = process.env, options, callback) {
+export async function withJevMetrics(env = process.env, options, callback, kind = "routing") {
     const config = jevConfig(env);
     if (!config || !/^(true|1)$/i.test(env.TASKIX_JEV_METRICS_ENABLED?.trim() || "")) return callback(undefined);
-    const { measuredRouting } = await import("./jev-metrics.mjs");
-    return measuredRouting({ env, options, config }, callback);
+    const { measureDecision } = await import("./jev-metrics.mjs");
+    return measureDecision({ env, options, config, kind }, callback);
 }
 
 // Shares the prompt projection, request budget, provider validation and revision guard.
