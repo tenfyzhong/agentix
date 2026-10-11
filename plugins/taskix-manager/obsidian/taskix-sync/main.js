@@ -405,14 +405,15 @@ class TaskixSyncPlugin extends Plugin {
             callback: () => this.checkConnection(),
         });
         this.registerEvent(this.app.workspace.on("file-menu", (menu, file) => {
-            if (Array.isArray(file.children) && path.posix.basename(file.path) === "Issues") {
+            if (Array.isArray(file.children) && ["Issues", "Milestones"].includes(path.posix.basename(file.path))) {
                 const parent = path.posix.dirname(file.path);
                 const projectBoard = this.app.vault.getAbstractFileByPath(path.posix.join(parent, "Board.md"));
                 const properties = projectBoard && this.app.metadataCache.getFileCache(projectBoard)?.frontmatter;
                 if (this.engine?.watches(file.path) && properties?.["taskix-generated"] === true &&
                     /^prj_/.test(properties.id) && properties.status === "ACTIVE") {
-                    menu.addItem(item => item.setTitle("New Issue").setIcon("plus")
-                        .onClick(() => this.prepareIssue(properties.id, file.path)));
+                    const milestone = path.posix.basename(file.path) === "Milestones";
+                    menu.addItem(item => item.setTitle(milestone ? "New Milestone" : "New Issue").setIcon("plus")
+                        .onClick(() => milestone ? this.prepareMilestone(properties.id, file.path) : this.prepareIssue(properties.id, file.path)));
                 }
                 return;
             }
@@ -531,6 +532,23 @@ class TaskixSyncPlugin extends Plugin {
         this.deliveryBodies?.clear();
     }
 
+    async prepareMilestone(id, folderPath) {
+        try {
+            const settings = { ...this.settings, vaultPath: this.app.vault.adapter.getBasePath() };
+            const { result: project } = await runCli(settings, ["project", "show", id], this.children);
+            const directory = project?.document_directory || `Projects/${project?.key}`;
+            if (project?.id !== id || project.archived_at != null || !Number.isInteger(project.revision) ||
+                typeof directory !== "string" || directory.startsWith("/") || /^[A-Za-z]:/.test(directory) ||
+                directory.replace(/\\/g, "/").split("/").includes("..") ||
+                folderPath !== path.posix.join(this.engine.directory, directory.replace(/\\/g, "/"), "Milestones")) {
+                throw new Error("This Milestones folder does not match a registered active Project.");
+            }
+            if (!this.stopped) this.openMilestoneDialog(project, folderPath);
+        } catch (error) {
+            if (!this.stopped) new Notice(`Could not create Milestone: ${error.message}`, 10000);
+        }
+    }
+
     async prepareIssue(id, folderPath) {
         try {
             const settings = { ...this.settings, vaultPath: this.app.vault.adapter.getBasePath() };
@@ -548,6 +566,42 @@ class TaskixSyncPlugin extends Plugin {
         } catch (error) {
             if (!this.stopped) new Notice(`Could not create Issue: ${error.message}`, 10000);
         }
+    }
+
+    openMilestoneDialog(project, folderPath) {
+        const plugin = this;
+        class MilestoneDialog extends Modal {
+            onOpen() {
+                this.contentEl.createEl("h2", { text: "New Milestone" });
+                const fields = { title: "", goal: "" };
+                let key = randomUUID();
+                new Setting(this.contentEl).setName("Title").addText(text => text.onChange(value => {
+                    if (value !== fields.title) key = randomUUID();
+                    fields.title = value;
+                }));
+                new Setting(this.contentEl).setName("Goal (optional)").addText(text => text.onChange(value => {
+                    if (value !== fields.goal) key = randomUUID();
+                    fields.goal = value;
+                }));
+                new Setting(this.contentEl).addButton(button => {
+                    button.setButtonText("Create Milestone").setCta().onClick(async () => {
+                        if (this.saving || !fields.title.trim()) return;
+                        this.saving = true;
+                        button.setDisabled(true);
+                        try {
+                            await plugin.createMilestone(project, folderPath, fields, key);
+                            this.close();
+                        } catch (error) {
+                            new Notice(`Could not create Milestone: ${error.message}`, 10000);
+                            this.saving = false;
+                            button.setDisabled(false);
+                        }
+                    });
+                });
+            }
+            onClose() { this.contentEl.empty(); }
+        }
+        new MilestoneDialog(this.app).open();
     }
 
     openIssueDialog(project, folderPath, milestones) {
@@ -591,22 +645,31 @@ class TaskixSyncPlugin extends Plugin {
     }
 
     async createIssue(project, folderPath, fields, key) {
-        if (!fields.title?.trim()) throw new Error("Issue title is required.");
+        return this.createDelivery("Issue", project, folderPath, fields, key);
+    }
+
+    async createMilestone(project, folderPath, fields, key) {
+        return this.createDelivery("Milestone", project, folderPath, fields, key);
+    }
+
+    async createDelivery(kind, project, folderPath, fields, key) {
+        if (!fields.title?.trim()) throw new Error(`${kind} title is required.`);
         const settings = { ...this.settings, vaultPath: this.app.vault.adapter.getBasePath() };
-        const args = ["issue", "create", "--project", project.id, "--title", fields.title.trim(), "--idempotency-key", key];
-        if (fields.milestone) args.push("--milestone", fields.milestone);
+        const args = [kind.toLowerCase(), "create", "--project", project.id, "--title", fields.title.trim(), "--idempotency-key", key];
+        if (kind === "Issue" && fields.milestone) args.push("--milestone", fields.milestone);
+        if (kind === "Milestone" && fields.goal?.trim()) args.push("--goal", fields.goal.trim());
         const response = await runCli(settings, args, this.children);
         if (this.stopped) return response;
         if (response.projection_pending) {
-            new Notice(`Issue created; document publication is pending: ${response.projection_pending}. Run taskix sync after resolving the conflict.`, 10000);
+            new Notice(`${kind} created; document publication is pending: ${response.projection_pending}. Run taskix sync after resolving the conflict.`, 10000);
             return response;
         }
-        const issue = response.result;
-        const relative = issue?.document_path?.replace(/\\/g, "/");
+        const delivery = response.result;
+        const relative = delivery?.document_path?.replace(/\\/g, "/");
         const filePath = relative && path.posix.join(this.engine.directory, relative);
-        if (issue?.project_id !== project.id || typeof relative !== "string" || relative.startsWith("/") ||
+        if (delivery?.project_id !== project.id || typeof relative !== "string" || relative.startsWith("/") ||
             /^[A-Za-z]:/.test(relative) || relative.split("/").includes("..") || path.posix.dirname(filePath) !== folderPath) {
-            throw new Error("Issue created, but the returned document path does not match this Project. Refresh the Project before opening it.");
+            throw new Error(`${kind} created, but the returned document path does not match this Project. Refresh the Project before opening it.`);
         }
         let file = this.app.vault.getAbstractFileByPath(filePath);
         for (let attempt = 0; !file && attempt < 20 && !this.stopped; attempt++) {
@@ -615,7 +678,7 @@ class TaskixSyncPlugin extends Plugin {
         }
         if (this.stopped) return response;
         if (file) await this.app.workspace.getLeaf(false).openFile(file);
-        else new Notice("Issue created. Refresh the vault before opening its document.", 10000);
+        else new Notice(`${kind} created. Refresh the vault before opening its document.`, 10000);
         return response;
     }
 
