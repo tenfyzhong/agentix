@@ -46,6 +46,7 @@ dependencies = [
  "dirs",
  "futures-util",
  "larksuite-oapi-sdk-rs",
+ "nix",
  "prost",
  "reqwest",
  "serde",

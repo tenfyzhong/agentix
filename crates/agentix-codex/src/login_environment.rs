@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::Duration;
 
-use anyhow::{Context, Result, ensure};
+use anyhow::{Context, Result, bail, ensure};
 use nix::unistd::{Uid, User};
 use tokio::process::Command;
 
@@ -15,7 +15,10 @@ const ENVIRONMENT_MARKER: &[u8] = b"\0agentix-login-environment\0";
 const ENVIRONMENT_COMMAND: &str =
     r"/usr/bin/printf '\0agentix-login-environment\0'; exec /usr/bin/env -0";
 
-pub(crate) async fn apply(command: &mut Command) {
+pub(crate) async fn apply(command: &mut Command) -> Result<()> {
+    if agentix_multiplexer::service_environment_loaded() {
+        return Ok(());
+    }
     match tokio::time::timeout(LOGIN_ENVIRONMENT_TIMEOUT, read()).await {
         Ok(Ok(environment)) => {
             // Use the complete snapshot so shell `unset` operations also apply.
@@ -26,11 +29,14 @@ pub(crate) async fn apply(command: &mut Command) {
             tracing::warn!(%error, "Could not load login shell environment; using inherited environment for Codex daemon");
         }
         Err(_) => {
-            tracing::warn!(
-                "Login shell environment lookup timed out; using inherited environment for Codex daemon"
+            // Do not permanently start Codex with launchd's incomplete environment.
+            // Service startup can retry through DeferredAgent after the host recovers.
+            bail!(
+                "Codex login environment lookup timed out after 3 seconds (account lookup and shell startup); deferring Codex startup"
             );
         }
     }
+    Ok(())
 }
 
 async fn read() -> Result<Vec<(OsString, OsString)>> {

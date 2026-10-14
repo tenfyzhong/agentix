@@ -1,8 +1,6 @@
 use super::*;
 
-#[path = "../../tests/support/mod.rs"]
-#[allow(dead_code)]
-mod support;
+use super::test_support as support;
 use support::{MockCodexAppServer, MockThread, MockTurn};
 
 #[tokio::test]

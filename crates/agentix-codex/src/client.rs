@@ -86,6 +86,8 @@ pub enum ClientError {
         command: PathBuf,
         source: std::io::Error,
     },
+    #[error("{0}")]
+    LoginEnvironment(#[source] anyhow::Error),
     #[error("Codex daemon start command timed out: {0}")]
     DaemonStartTimeout(PathBuf),
     #[error("Codex daemon start command {command} exited with {status}: {stderr}")]
@@ -2351,7 +2353,9 @@ async fn connect_managed_socket(
 
 async fn start_daemon(command: &Path) -> Result<(), ClientError> {
     let mut process = Command::new(command);
-    crate::login_environment::apply(&mut process).await;
+    crate::login_environment::apply(&mut process)
+        .await
+        .map_err(ClientError::LoginEnvironment)?;
     process
         .args(["app-server", "daemon", "start"])
         .kill_on_drop(true);
@@ -3907,3 +3911,8 @@ mod tests {
 
 #[cfg(all(test, unix))]
 mod lifecycle_tests;
+
+#[cfg(all(test, unix))]
+#[path = "../tests/support/mod.rs"]
+#[allow(dead_code)]
+mod test_support;

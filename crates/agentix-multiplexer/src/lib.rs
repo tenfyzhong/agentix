@@ -12,6 +12,17 @@ pub use interactions::{
     TerminalInteractions, inspect_terminal_interaction, parse_terminal_interaction,
     respond_terminal_interaction,
 };
+/// Internal PID marker set only when the service re-execs with its login environment.
+#[doc(hidden)]
+pub const SERVICE_ENVIRONMENT_PID: &str = "AGENTIX_SERVICE_ENVIRONMENT_PID";
+
+/// True only in the process whose environment was initialized, not its children.
+#[doc(hidden)]
+#[must_use]
+pub fn service_environment_loaded() -> bool {
+    std::env::var(SERVICE_ENVIRONMENT_PID).as_deref() == Ok(std::process::id().to_string().as_str())
+}
+
 mod terminal_command;
 #[cfg(test)]
 use native_control::validate_codex_prompt;

@@ -1,5 +1,7 @@
 mod control;
 mod control_runtime;
+#[cfg(unix)]
+mod login_environment;
 mod reload;
 #[cfg(test)]
 use agentix::run_engine_loop;
@@ -125,12 +127,37 @@ enum ClientCommand {
     },
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
+    let cli = Cli::parse();
+    #[cfg(unix)]
+    if matches!(cli.command, CliCommand::Serve { .. }) {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        let ready = runtime.block_on(async {
+            tokio::select! {
+                result = login_environment::reexec() => result.map(|()| true),
+                result = shutdown_signal() => result.map(|()| false),
+            }
+        });
+        // A system account query can outlive its timeout. Do not let a stuck
+        // blocking worker prevent termination while bootstrap is waiting.
+        runtime.shutdown_timeout(Duration::ZERO);
+        if !ready? {
+            return Ok(());
+        }
+    }
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(run(cli))
+}
+
+async fn run(cli: Cli) -> Result<()> {
     let Cli {
         config: config_path,
         command,
-    } = Cli::parse();
+    } = cli;
     if let CliCommand::Completions { shell } = command {
         clap_complete::generate(
             shell,
