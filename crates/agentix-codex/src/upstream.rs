@@ -97,7 +97,7 @@ impl UpstreamServer {
             tokio::fs::create_dir_all(parent).await?;
         }
         let mut process = Command::new(command);
-        crate::login_environment::apply(&mut process).await;
+        crate::login_environment::apply(&mut process).await?;
         let child = process
             .args(["app-server", "--listen", &address])
             .stdin(Stdio::null())

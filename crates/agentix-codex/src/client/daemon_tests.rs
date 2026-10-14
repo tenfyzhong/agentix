@@ -105,13 +105,6 @@ fn daemon_preserves_an_explicitly_empty_login_path() {
     check_daemon_path("export PATH=''\nexec /bin/sh -c \"$2\"", "", false);
 }
 
-#[test]
-fn daemon_keeps_original_path_when_login_shell_times_out() {
-    let started = std::time::Instant::now();
-    check_daemon_path("exec /bin/sleep 30", "/usr/bin:/bin", false);
-    assert!(started.elapsed() < std::time::Duration::from_secs(10));
-}
-
 // Run in a subprocess so environment fixtures never modify the test runner.
 #[tokio::test]
 #[ignore = "invoked by daemon environment tests with an isolated environment"]
@@ -156,4 +149,146 @@ fn daemon_keeps_entire_original_environment_when_shell_output_is_truncated() {
         "/usr/bin:/bin",
         false,
     );
+}
+
+#[test]
+fn daemon_login_timeout_does_not_spawn_codex() {
+    check_login_timeout("daemon");
+}
+
+#[test]
+fn upstream_login_timeout_does_not_spawn_codex() {
+    check_login_timeout("upstream");
+}
+
+#[test]
+fn deferred_daemon_recovers_login_environment_after_timeout() {
+    check_login_timeout("recovery");
+}
+
+fn check_login_timeout(mode: &str) {
+    let directory = tempfile::tempdir().unwrap();
+    let shell = directory.path().join("login-shell");
+    let codex = directory.path().join("codex");
+    script(
+        &shell,
+        r#"if [ ! -f "$FIXTURE/attempted" ]; then
+    touch "$FIXTURE/attempted"
+    exec /bin/sleep 30
+fi
+export PATH="$FIXTURE:/usr/bin:/bin"
+export SHELL_ONLY=recovered
+unset KEEP_ME
+exec /bin/sh -c "$2""#,
+    );
+    script(
+        &codex,
+        r#"printf '%s\n' "$PATH" "${KEEP_ME-unset}" "${SHELL_ONLY-unset}" >> "$FIXTURE/started""#,
+    );
+    let output = Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "client::daemon_tests::login_timeout_child",
+            "--ignored",
+            "--nocapture",
+        ])
+        .env_clear()
+        .env("HOME", directory.path())
+        .env("PATH", "/usr/bin:/bin")
+        .env("KEEP_ME", "must-be-unset")
+        .env("AGENTIX_LOGIN_SHELL", &shell)
+        .env("FIXTURE", directory.path())
+        .env("TIMEOUT_TEST_MODE", mode)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+use super::test_support as support;
+
+#[tokio::test]
+#[ignore = "invoked by login timeout tests with an isolated environment"]
+async fn login_timeout_child() {
+    use agentix_core::{AgentAdapter, AgentError, DeferredAgent};
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    let directory = std::path::PathBuf::from(std::env::var_os("FIXTURE").unwrap());
+    let command = directory.join("codex");
+    let marker = directory.join("started");
+    let started = Instant::now();
+    match std::env::var("TIMEOUT_TEST_MODE").unwrap().as_str() {
+        "daemon" => {
+            let error = super::start_daemon(&command)
+                .await
+                .expect_err("must reject timeout");
+            assert!(
+                error
+                    .to_string()
+                    .contains("login environment lookup timed out"),
+                "{error}"
+            );
+            assert!(
+                !marker.exists(),
+                "Codex started with the service environment"
+            );
+        }
+        "upstream" => {
+            let endpoint =
+                crate::CodexEndpoint::from_socket_path(&directory.join("upstream.sock")).unwrap();
+            let result = crate::UpstreamServer::ensure(&endpoint, &command).await;
+            let error = result.err().expect("must reject timeout");
+            assert!(
+                !crate::is_fatal_startup_error(&error),
+                "service must retry: {error:#}"
+            );
+            assert!(
+                error
+                    .to_string()
+                    .contains("login environment lookup timed out"),
+                "{error:#}"
+            );
+            assert!(
+                !marker.exists(),
+                "upstream started with the service environment"
+            );
+        }
+        "recovery" => {
+            let server = support::MockCodexAppServer::start();
+            let endpoint = server.endpoint();
+            let deferred = DeferredAgent::new("Codex", String::new(), move || {
+                let command = command.clone();
+                let endpoint = endpoint.clone();
+                async move {
+                    super::start_daemon(&command)
+                        .await
+                        .map_err(|e| AgentError::Unavailable(e.to_string()))?;
+                    let client = super::CodexClient::connect(endpoint)
+                        .await
+                        .map_err(|e| AgentError::Unavailable(e.to_string()))?;
+                    Ok(Arc::new(client) as Arc<dyn AgentAdapter>)
+                }
+            });
+            let mut events = deferred.subscribe();
+            tokio::time::timeout(Duration::from_secs(12), events.recv())
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(
+                std::fs::read_to_string(&marker).unwrap(),
+                format!("{}:/usr/bin:/bin\nunset\nrecovered\n", directory.display()),
+                "only the recovered login environment may reach Codex"
+            );
+            // The parent service environment must remain unchanged.
+            assert_eq!(std::env::var("PATH").unwrap(), "/usr/bin:/bin");
+            assert_eq!(std::env::var("KEEP_ME").unwrap(), "must-be-unset");
+        }
+        mode => panic!("unknown timeout test mode: {mode}"),
+    }
+    assert!(started.elapsed() < Duration::from_secs(12));
 }

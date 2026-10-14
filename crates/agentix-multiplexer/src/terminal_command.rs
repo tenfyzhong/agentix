@@ -1,10 +1,10 @@
-//! All terminal subprocesses use the login shell PATH before execution.
+//! Service terminal subprocesses inherit the initialized environment.
 use super::MultiplexerError;
 use std::process::Output;
 use std::time::Duration;
 use tokio::process::Command;
 
-/// Execute once with the login PATH, preserving all other command settings.
+/// Execute once with the service environment or standalone login PATH.
 /// The deadline includes both login environment lookup and command execution.
 pub async fn terminal_command_output(command: &mut Command) -> Result<Output, MultiplexerError> {
     let program = command
@@ -14,7 +14,7 @@ pub async fn terminal_command_output(command: &mut Command) -> Result<Output, Mu
         .into_owned();
     tokio::time::timeout(Duration::from_secs(5), async {
         #[cfg(unix)]
-        {
+        if !super::service_environment_loaded() {
             let path = login_path().await.ok_or_else(|| {
                 MultiplexerError::Backend(format!("could not read login shell PATH for {program}"))
             })?;
