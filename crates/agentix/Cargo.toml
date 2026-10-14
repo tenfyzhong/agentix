@@ -39,7 +39,7 @@ tracing-subscriber.workspace = true
 uuid.workspace = true
 
 [target.'cfg(unix)'.dependencies]
-nix = { version = "0.31", default-features = false, features = ["user"] }
+nix = { version = "0.31", default-features = false, features = ["user", "signal", "process"] }
 
 [dev-dependencies]
 larksuite-oapi-sdk-rs.workspace = true

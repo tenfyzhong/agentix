@@ -1,0 +1,20 @@
+name: Install Windows protobuf compiler
+description: Install a verified protobuf compiler from the upstream release.
+runs:
+  using: composite
+  steps:
+    - shell: pwsh
+      run: |
+        $archive = Join-Path $env:RUNNER_TEMP 'protoc-33.0-win64.zip'
+        $destination = Join-Path $env:RUNNER_TEMP 'protoc-33.0'
+        Invoke-WebRequest -Uri 'https://github.com/protocolbuffers/protobuf/releases/download/v33.0/protoc-33.0-win64.zip' -OutFile $archive
+        $expected = '3742cd49c8b6bd78b6760540367eb0ff62fa70a1032e15dafe131bfaf296986a'
+        if ((Get-FileHash $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expected) {
+          throw 'Protobuf compiler archive checksum mismatch'
+        }
+        Expand-Archive -Path $archive -DestinationPath $destination -Force
+        $compiler = Join-Path $destination 'bin/protoc.exe'
+        & $compiler --version
+        if ($LASTEXITCODE -ne 0) { throw 'Protobuf compiler verification failed' }
+        "PROTOC=$compiler" >> $env:GITHUB_ENV
+        (Join-Path $destination 'bin') >> $env:GITHUB_PATH

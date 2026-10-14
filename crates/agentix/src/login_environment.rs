@@ -91,15 +91,35 @@ async fn account_shell() -> Result<PathBuf> {
 
 async fn read(shell: &std::path::Path) -> Result<Vec<(OsString, OsString)>> {
     ensure!(shell.is_absolute(), "login shell must be an absolute path");
-    let output = Command::new(shell)
+    let child = Command::new(shell)
         .args(["-lc", ENVIRONMENT_COMMAND])
         .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .process_group(0)
         .kill_on_drop(true)
-        .output()
-        .await
+        .spawn()
         .context("could not run login shell")?;
+    let _group = LoginProcessGroup(nix::unistd::Pid::from_raw(i32::try_from(
+        child.id().context("login shell has no process ID")?,
+    )?));
+    let output = child
+        .wait_with_output()
+        .await
+        .context("could not read login shell output")?;
     ensure!(output.status.success(), "login shell exited unsuccessfully");
     parse(&output.stdout)
+}
+
+// Cancellation drops this guard as well as the kill-on-drop child. Kill the
+// entire group so startup helpers cannot survive a timeout or service shutdown.
+// Tokio reaps the direct child when its wait future is cancelled.
+struct LoginProcessGroup(nix::unistd::Pid);
+
+impl Drop for LoginProcessGroup {
+    fn drop(&mut self) {
+        let _ = nix::sys::signal::killpg(self.0, nix::sys::signal::Signal::SIGKILL);
+    }
 }
 
 fn parse(bytes: &[u8]) -> Result<Vec<(OsString, OsString)>> {
@@ -109,6 +129,9 @@ fn parse(bytes: &[u8]) -> Result<Vec<(OsString, OsString)>> {
         .context("login shell did not return an environment marker")?
         + MARKER.len();
     let bytes = &bytes[start..];
+    if bytes.is_empty() {
+        return Ok(Vec::new());
+    }
     ensure!(
         bytes.ends_with(&[0]),
         "login shell returned an incomplete environment"
@@ -135,6 +158,59 @@ fn parse(bytes: &[u8]) -> Result<Vec<(OsString, OsString)>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn snapshot_accepts_no_exported_variables() {
+        assert!(parse(MARKER).unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn cancelled_lookup_terminates_shell_descendants() {
+        use std::os::unix::fs::PermissionsExt;
+        let directory = tempfile::tempdir().unwrap();
+        let shell = directory.path().join("shell");
+        let helper = directory.path().join("helper");
+        let pid_file = directory.path().join("pid");
+        let escaped = directory.path().join("escaped");
+        std::fs::write(
+            &helper,
+            format!(
+                "#!/bin/sh\necho $$ > '{}'\nsleep 2\ntouch '{}'\n",
+                pid_file.display(),
+                escaped.display()
+            ),
+        )
+        .unwrap();
+        std::fs::write(&shell, format!("#!/bin/sh\n'{}'\n", helper.display())).unwrap();
+        for path in [&shell, &helper] {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        {
+            let lookup = read(&shell);
+            tokio::pin!(lookup);
+            tokio::select! {
+                result = &mut lookup => panic!("lookup finished before cancellation: {result:?}"),
+                () = async {
+                    tokio::time::timeout(Duration::from_secs(5), async {
+                        while !pid_file.exists() {
+                            tokio::time::sleep(Duration::from_millis(10)).await;
+                        }
+                    }).await.unwrap();
+                } => {}
+            }
+            // Timeout drops the same future as service shutdown cancellation.
+            assert!(
+                tokio::time::timeout(Duration::from_millis(20), lookup)
+                    .await
+                    .is_err()
+            );
+        }
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        assert!(
+            !escaped.exists(),
+            "cancelled shell left a running descendant"
+        );
+    }
 
     #[test]
     fn snapshot_preserves_bytes_empty_values_and_startup_noise() {
