@@ -77,7 +77,7 @@ export function normalizeMessages(messages) {
                     });
                 }
             }
-            if (message.error) turn.status = 'failed';
+            // Failed model steps can retry; only idle marks execution terminal.
         } else if (message.type === 'idle') {
             const status = {
                 succeeded: 'completed',

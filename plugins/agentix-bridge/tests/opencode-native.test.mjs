@@ -129,6 +129,29 @@ test(
         mkdirSync(config, { recursive: true });
         mkdirSync(join(root, "project"));
         mkdirSync(join(root, "tmp"));
+        const gitEnv = {
+            ...process.env,
+            GIT_CONFIG_NOSYSTEM: "1",
+            GIT_CONFIG_GLOBAL: "/dev/null",
+        };
+        execFileSync("git", ["init", "--quiet", join(root, "project")], {
+            env: gitEnv,
+        });
+        writeFileSync(join(root, "project", "native-diff.txt"), "before\n");
+        execFileSync("git", ["add", "native-diff.txt"], {
+            cwd: join(root, "project"),
+            env: gitEnv,
+        });
+        execFileSync(
+            "git",
+            [
+                "-c", "user.name=Native fixture",
+                "-c", "user.email=fixture@example.invalid",
+                "-c", "commit.gpgsign=false",
+                "commit", "-s", "--quiet", "-m", "Initialize native diff fixture",
+            ],
+            { cwd: join(root, "project"), env: gitEnv },
+        );
         const servicePort = net.createServer();
         await new Promise((resolve) =>
             servicePort.listen(0, "127.0.0.1", resolve),
@@ -155,6 +178,24 @@ test(
             for await (const chunk of req) body += chunk;
             const input = JSON.parse(body);
             requests.push(input);
+            const latestUser = input.messages
+                ?.filter((message) => message.role === "user")
+                .at(-1);
+            if (
+                input.stream &&
+                input.tools?.length &&
+                JSON.stringify(latestUser?.content)?.includes("bridge-provider-failure")
+            ) {
+                // Authentication failures are non-retryable, keeping native
+                // failure/recovery acceptance independent of retry backoffs.
+                res.writeHead(401, { "content-type": "application/json" });
+                res.end(JSON.stringify({ error: {
+                    message: "Native fixture rejected this provider request",
+                    type: "authentication_error",
+                    code: "invalid_api_key",
+                } }));
+                return;
+            }
             if (
                 input.stream &&
                 input.tools?.length &&
@@ -273,7 +314,8 @@ test(
                     {
                         command:
                             "printf 'native-permission\\n' >> " +
-                            quote(permissionMarker),
+                            quote(permissionMarker) +
+                            "; printf 'after\\n' > native-diff.txt",
                     },
                     "call_shell",
                 );
@@ -468,6 +510,10 @@ test(
                         models: {
                             fixture: {
                                 name: "Fixture",
+                                limit: { context: 32768, output: 4096 },
+                            },
+                            alternate: {
+                                name: "Alternate fixture",
                                 limit: { context: 32768, output: 4096 },
                             },
                         },
@@ -762,14 +808,39 @@ process.stdout.write(JSON.stringify({schema_version:1,ok:true,result:{}})+'\\n')
         assert.equal((await rpc("info")).session.name, "Native acceptance");
         const models = await rpc("command", { name: "model" });
         assert.ok(models.choices.some((m) => m.value === "fixture/fixture"));
+        assert.ok(models.choices.some((m) => m.value === "fixture/alternate"));
+        await rpc("command", { name: "model", value: "fixture/alternate" });
+        const beforeAlternate = requests.length;
+        const alternate = await rpc("prompt", {
+            request_id: "native-alternate-model",
+            text: "Answer using the selected alternate fixture model.",
+        });
+        await until(
+            () => completions.some((c) => c.turn_id === alternate.turn_id),
+            "alternate native model completion",
+        );
+        assert.ok(
+            requests.slice(beforeAlternate).some(
+                (request) =>
+                    request.stream &&
+                    request.tools?.length &&
+                    request.model === "alternate",
+            ),
+            "Changing the session model must change the actual provider request",
+        );
         await rpc("command", { name: "model", value: "fixture/fixture" });
         await rpc("command", { name: "compact" });
         assert.equal(
             (await rpc("history")).turns.at(-1).agent_text,
             "Native fixture answer",
         );
-        await rpc("command", { name: "diff" });
-        await rpc("command", { name: "skills" });
+        const initialDiff = await rpc("command", { name: "diff" });
+        assert.ok(
+            !initialDiff.body.includes("native-diff.txt"),
+            "Unmodified fixture has no session file change",
+        );
+        const skills = await rpc("command", { name: "skills" });
+        assert.match(skills.body, /taskix-manager/);
         const terminalTurns = completions.length;
         execFileSync(tmux, [
             "-L",
@@ -893,6 +964,13 @@ process.stdout.write(JSON.stringify({schema_version:1,ok:true,result:{}})+'\\n')
             async () => (await rpc("info")).session.status === "idle",
             "permission idle",
         );
+        assert.equal(
+            readFileSync(join(root, "project", "native-diff.txt"), "utf8"),
+            "after\n",
+        );
+        const changedDiff = await rpc("command", { name: "diff" });
+        assert.match(changedDiff.body, /native-diff\.txt/);
+        assert.match(changedDiff.body, /after/);
         const stale = await rpc(
             "interaction",
             { rpc_id: permission.rpc_id, response: { decision: "once" } },
@@ -1019,6 +1097,39 @@ process.stdout.write(JSON.stringify({schema_version:1,ok:true,result:{}})+'\\n')
             async () => (await rpc("info")).session.status === "idle",
             "Taskix idle",
         );
+        const failed = await rpc("prompt", {
+            request_id: "native-provider-failure",
+            text: "bridge-provider-failure",
+        });
+        await until(
+            () => completions.some((completion) => completion.turn_id === failed.turn_id),
+            "native failed terminal after provider rejection",
+        );
+        const failedCompletions = completions.filter(
+            (completion) => completion.turn_id === failed.turn_id,
+        );
+        assert.equal(failedCompletions.length, 1);
+        assert.equal(failedCompletions[0].status, "failed");
+        assert.ok(failedCompletions[0].error, "Provider rejection must retain failure details");
+        await until(
+            async () => (await rpc("info")).session.status === "idle",
+            "failed native execution becomes idle",
+        );
+        const recoveredTurn = await rpc("prompt", {
+            request_id: "native-after-provider-failure",
+            text: "Answer normally after the previous provider rejection.",
+        });
+        await until(
+            () => completions.some((completion) => completion.turn_id === recoveredTurn.turn_id),
+            "native prompt recovers after provider rejection",
+        );
+        assert.equal(
+            completions.find((completion) => completion.turn_id === recoveredTurn.turn_id).status,
+            "completed",
+        );
+        const recoveredHistory = await rpc("history");
+        assert.equal(recoveredHistory.turns.at(-1).id, recoveredTurn.turn_id);
+        assert.equal(recoveredHistory.turns.at(-1).agent_text, "Native fixture answer");
         const overflow = await rpc("prompt", {
             request_id: "native-overflow",
             text: "bridge-overflow",

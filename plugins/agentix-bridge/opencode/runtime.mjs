@@ -158,20 +158,25 @@ export class OpenCodeBridge {
     }
     async start() {
         const version = this.api.app.version
-            .match(/(?:^|v)(\d+)\.(\d+)\.(\d+)/)
+            .trim()
+            .match(/^(?:opencode v)?(\+?\d+)\.(\+?\d+)\.(\+?\d+)$/)
             ?.slice(1)
-            .map(Number);
+            .map(BigInt);
         if (
             !version ||
-            version[0] < 2 ||
-            (version[0] === 2 && version[1] === 0 && version[2] < 32)
+            version.some((part) => part > 18446744073709551615n) ||
+            version[0] < 2n ||
+            (version[0] === 2n && version[1] === 0n && version[2] < 32n)
         )
             throw new Error('Agentix requires OpenCode 2.0.32 or newer');
         for (const name of eventTypes)
             this.disposers.push(
                 this.api.data.on(name, (event) => {
-                    // Admission payloads can contain large inline attachments. Identity is
-                    // sufficient here; the native transcript remains their only owner.
+                    const sessionID =
+                        event.data.sessionID ?? event.data.form?.sessionID;
+                    if (sessionID !== this.session?.id || this.closed) return;
+                    // Queue only consumed tool fields, never native input/output blobs.
+                    // Admission identity likewise avoids retaining inline attachments.
                     const snapshot =
                         name === 'session.inbox.enqueued'
                             ? {
@@ -182,7 +187,21 @@ export class OpenCodeBridge {
                                       item: { type: event.data.item.type },
                                   },
                               }
-                            : structuredClone(event);
+                            : name.startsWith('session.tool.')
+                              ? {
+                                    type: name,
+                                    data: {
+                                        sessionID,
+                                        assistantMessageID:
+                                            event.data.assistantMessageID,
+                                        id: event.data.id,
+                                        name: event.data.name,
+                                        metadata: {
+                                            title: event.data.metadata?.title,
+                                        },
+                                    },
+                                }
+                              : structuredClone(event);
                     this.events = this.events
                         .then(() => this.event(snapshot))
                         .catch((error) => this.report(error));
@@ -228,11 +247,23 @@ export class OpenCodeBridge {
         }
     }
     async open(id, previous) {
+        const generation = (this.openGeneration =
+            (this.openGeneration ?? 0) + 1);
+        const current = () => {
+            const route = this.api.ui.router.current();
+            return (
+                !this.closed &&
+                generation === this.openGeneration &&
+                route.type === 'session' &&
+                route.sessionID === id
+            );
+        };
         const session = await this.sdk(this.client.session.get, {
             sessionID: id,
         });
-        if (this.closed) return;
+        if (!current()) return;
         await this.transport.close(true);
+        if (!current()) return;
         this.session = session;
         this.instance = randomUUID();
         this.pending.clear();
@@ -267,7 +298,7 @@ export class OpenCodeBridge {
         };
         const instance = this.instance;
         try {
-            const history = await this.history({});
+            const history = await this.history({}, { seed: true });
             if (this.busy())
                 for (const turn of history.turns.filter(
                     (turn) => turn.status === 'inProgress',
@@ -303,7 +334,7 @@ export class OpenCodeBridge {
             },
         };
     }
-    async history({ cursor, limit = 20 }) {
+    async history({ cursor, limit = 20 }, { seed = false } = {}) {
         limit = Math.min(100, Math.max(1, limit));
         const instance = this.instance,
             deadline = Date.now() + (this.options.sdkTimeoutMs ?? 5000);
@@ -396,21 +427,26 @@ export class OpenCodeBridge {
                 'history_unavailable',
                 'Native turn exceeds history read limit',
             );
-        for (const [id, turn] of normalized.messageTurns)
-            this.aliases.set(id, turn);
-        for (const row of rows.slice(-4096)) {
-            this.messages.set(row.id, { id: row.id, type: row.type });
-            if (row.type === 'user') this.announced.add(row.id);
-            if (row.type === 'assistant') {
-                let ordinal = 0;
-                for (const part of row.content || []) {
-                    if (part.type !== 'text') continue;
-                    const key = row.id + ':' + ordinal++;
-                    if (!this.parts.has(key)) this.parts.set(key, part.text);
+        // Ordinary reads must not acknowledge native deliveries or pre-consume
+        // text events still waiting in the live dispatch chain.
+        if (seed) {
+            for (const [id, turn] of normalized.messageTurns)
+                this.aliases.set(id, turn);
+            for (const row of rows.slice(-4096)) {
+                this.messages.set(row.id, { id: row.id, type: row.type });
+                if (row.type === 'user') this.announced.add(row.id);
+                if (row.type === 'assistant') {
+                    let ordinal = 0;
+                    for (const part of row.content || []) {
+                        if (part.type !== 'text') continue;
+                        const key = row.id + ':' + ordinal++;
+                        if (!this.parts.has(key))
+                            this.parts.set(key, part.text);
+                    }
                 }
             }
+            this.prune();
         }
-        this.prune();
         const older = turns[0]?.id;
         return {
             turns,
@@ -448,14 +484,27 @@ export class OpenCodeBridge {
     }
     async replayInteractions() {
         if (this.closed || !this.session) return;
-        for (const request of await this.sdk(this.client.permission.list, {
-            sessionID: this.session.id,
-        }))
-            this.interaction('permission', request);
-        for (const form of await this.sdk(this.client.session.form.list, {
-            sessionID: this.session.id,
-        }))
-            this.interaction('form', form);
+        const instance = this.instance,
+            sessionID = this.session.id;
+        const current = () =>
+            !this.closed &&
+            this.instance === instance &&
+            this.session?.id === sessionID;
+        const requests = await this.sdk(this.client.permission.list, {
+            sessionID,
+        });
+        if (!current()) return;
+        for (const request of requests) {
+            if (request.sessionID === sessionID)
+                this.interaction('permission', request);
+        }
+        const forms = await this.sdk(this.client.session.form.list, {
+            sessionID,
+        });
+        if (!current()) return;
+        for (const form of forms) {
+            if (form.sessionID === sessionID) this.interaction('form', form);
+        }
     }
     interaction(kind, request) {
         if (this.pending.size >= 256 && !this.pending.has(request.id))

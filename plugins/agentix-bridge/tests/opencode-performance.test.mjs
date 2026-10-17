@@ -16,6 +16,12 @@ import { promisify } from 'node:util';
 // Phase CPU/time include the final GC; RSS is post-GC and max RSS is cumulative.
 // OPENCODE_PERF_TASKIX=/absolute/path/to/taskix adds actual subprocess timings
 // using isolated HOME/config/vault/SQLite and disabled external memory/routing.
+// Direct Taskix context tools include a current-ownership lookup plus the requested
+// operation; their CLI calls are reported separately from setup/session lifecycle.
+// Event dispatch concurrency is 1 so generator acknowledgements follow completed
+// processing; separate runtime tests exercise production cross-session concurrency.
+// The fixture supplies AbortSignal only on native tool execution, matching the
+// SDK contract, so signal-bearing runner calls identify this tool scope.
 // OPENCODE_PERF_TASKIX_ONLY=1 isolates that scenario's Node RSS from cache stress.
 // OPENCODE_PERF_ROOT selects another checkout's plugins for a paired comparison.
 // Fixtures target OpenCode 2.0.32. Historical 1.19.3 comparisons require their
@@ -56,8 +62,8 @@ function bridgeHost(directory, sessionID, list = async () => ({ data: [], cursor
 }
 
 async function taskixHost(setup, directory, options) {
-    const sessionHooks = new Map(), toolHooks = new Map(), pending = [], errors = [], storage = new Map(), histories = new Map();
-    let waiter, sequence = 0;
+    const sessionHooks = new Map(), tools = new Map(), pending = [], errors = [], storage = new Map(), histories = new Map();
+    let waiter, sequence = 0, toolInvocations = 0;
     const cleanup = await setup({
         location: { directory },
         storage: {
@@ -72,8 +78,7 @@ async function taskixHost(setup, directory, options) {
         },
         skill: { transform: async callback => callback({ add() {} }) },
         tool: {
-            transform: async callback => callback({ add() {} }),
-            hook: async (name, callback) => { toolHooks.set(name, callback); },
+            transform: async callback => callback({ add(tool) { tools.set(tool.name, tool); } }),
         },
         event: { async *subscribe({ signal }) {
             signal.addEventListener('abort', () => { waiter?.(undefined); waiter = undefined; }, { once: true });
@@ -84,7 +89,7 @@ async function taskixHost(setup, directory, options) {
                 item.done();
             }
         } },
-    }, { ...options, onError: error => errors.push(error) });
+    }, { ...options, maxConcurrentEvents: 1, onError: error => errors.push(error) });
     function event(type, data) {
         return new Promise(done => {
             const item = { frame: { id: 'evt_' + sequence++, type, created: Date.now(), data, location: { directory } }, done };
@@ -93,12 +98,18 @@ async function taskixHost(setup, directory, options) {
         });
     }
     return {
+        get toolInvocations() { return toolInvocations; },
         async prompt(sessionID, messageID, text) {
             await sessionHooks.get('prompt')({ sessionID, messageID, prompt: { text } });
             histories.set(sessionID, [...(histories.get(sessionID) ?? []), { id: messageID, type: 'user', text, time: { created: Date.now() } }]);
             await event('session.inbox.delivered', { sessionID, inboxID: messageID });
         },
-        beforeTool: sessionID => toolHooks.get('execute.before')?.({ sessionID, id: 'tool_' + sequence++, input: {} }),
+        tool: (sessionID, args = ['context']) => {
+            const tool = tools.get('taskix');
+            assert.equal(typeof tool?.execute, 'function', 'native Taskix tool must be registered');
+            toolInvocations++;
+            return tool.execute({ args }, { sessionID, id: 'tool_' + sequence++, signal: new AbortController().signal });
+        },
         event,
         async dispose() {
             await cleanup();
@@ -198,11 +209,12 @@ async function workload() {
             assert.deepEqual(restored.queue.receipt('request_0', { method: 'prompt', text: 'x'.repeat(1024) }), { turn_id: 'turn_0' });
             return { hot_receipts: restored.queue.state().receipts.length, journal_bytes: statSync(file).size, total_queue_storage_bytes: storedBytes(queueDirectory) };
         }));
-        results.push(await measure('taskix_100_sessions_2000_tool_callbacks', async () => {
-            let heartbeats = 0, shutdowns = 0, contexts = 0;
+        results.push(await measure('taskix_100_sessions_2000_direct_context_tools', async () => {
+            let heartbeats = 0, shutdowns = 0, contexts = 0, requestedTools = 0;
             const timers = new Map();
             const hooks = await taskixHost(setupOpenCode, root, {
-                runner: async args => {
+                runner: async (args, options) => {
+                    if (options.signal) requestedTools++;
                     if (args[0] === 'hook' && args[1] === 'heartbeat') heartbeats++;
                     if (args[0] === 'hook' && args[1] === 'session-end') shutdowns++;
                     if (args[0] === 'context') contexts++;
@@ -215,13 +227,13 @@ async function workload() {
                 for (let index = 0; index < 100; index++) {
                     const sessionID = 'ses_' + index;
                     await hooks.prompt(sessionID, 'msg_' + index, 'Inspect the repository');
-                    for (let tool = 0; tool < 20; tool++) await hooks.beforeTool(sessionID);
+                    for (let tool = 0; tool < 20; tool++) await hooks.tool(sessionID);
                     await hooks.event('session.execution.succeeded', { sessionID });
                     await hooks.event('session.execution.succeeded', { sessionID });
                 }
                 const idleTimers = timers.size, idleShutdowns = shutdowns;
                 await hooks.dispose();
-                return { heartbeat_cli_calls: heartbeats, context_cli_calls: contexts, idle_timers: idleTimers, idle_sessions_shutdown: idleShutdowns, disposed_timers: timers.size };
+                return { heartbeat_cli_calls: heartbeats, native_tool_invocations: hooks.toolInvocations, tool_scope_cli_calls: requestedTools, lifecycle_context_cli_calls: contexts - requestedTools, context_cli_calls: contexts, idle_timers: idleTimers, idle_sessions_shutdown: idleShutdowns, disposed_timers: timers.size };
             } finally { await hooks.dispose(); }
         }));
         results.push(await measure('taskix_owned_lease_survives_idle_and_session_churn', async () => {
@@ -248,7 +260,7 @@ async function workload() {
                 return { owned_heartbeat_calls: ownedHeartbeats, owned_shutdowns_before_dispose: ownedShutdowns, retained_renewal_timers: timers.size };
             } finally { await hooks.dispose(); assert.equal(timers.size, 0); }
         }));
-        if (process.env.OPENCODE_PERF_TASKIX) results.push(await measure('actual_taskix_cli_1_session_40_native_tool_callbacks', async () => {
+        if (process.env.OPENCODE_PERF_TASKIX) results.push(await measure('actual_taskix_cli_1_session_40_direct_context_tools', async () => {
             const binary = resolve(process.env.OPENCODE_PERF_TASKIX);
             const { buildArgs } = await import(pathToFileURL(join(plugins, 'taskix-manager/taskix-cli.mjs')));
             const directory = join(root, 'actual-taskix'), home = join(directory, 'home'), vault = join(directory, 'vault');
@@ -257,9 +269,11 @@ async function workload() {
                 XDG_CONFIG_HOME: join(home, '.config'), XDG_CACHE_HOME: join(home, '.cache'), XDG_STATE_HOME: join(home, '.local/state'),
                 TASKIX_CONFIG: join(directory, 'config.toml'), TASKIX_MEMORY_ENABLED: 'false', TASKIX_JEV_ENABLED: 'false' };
             const execute = promisify(execFile);
-            let calls = 0, heartbeats = 0, contexts = 0, cliElapsed = 0;
+            let calls = 0, heartbeats = 0, contexts = 0, cliElapsed = 0, requestedToolCalls = 0, requestedToolElapsed = 0;
             const runner = async (args, options = {}) => {
                 const start = performance.now(); calls++;
+                const requested = Boolean(options.signal);
+                if (requested) requestedToolCalls++;
                 if (args[0] === 'hook' && args[1] === 'heartbeat') heartbeats++;
                 if (args[0] === 'context') contexts++;
                 try {
@@ -269,10 +283,11 @@ async function workload() {
                     const response = JSON.parse(stdout);
                     assert.equal(response.ok, true, stdout);
                     return response;
-                } finally { cliElapsed += performance.now() - start; }
+                } finally { const elapsed = performance.now() - start; cliElapsed += elapsed; if (requested) requestedToolElapsed += elapsed; }
             };
             await runner(['init', '--root', vault, '--directory', 'Tasks', '--database', join(directory, 'tasks.sqlite3')]);
             await runner(['project', 'register', '--root', directory, '--name', 'Isolated performance fixture']);
+            const setupCalls = calls, setupElapsed = cliElapsed;
             const timers = new Set();
             const hooks = await taskixHost(setupOpenCode, directory, {
                 runner, routing: { env: { TASKIX_MEMORY_ENABLED: 'false', TASKIX_JEV_ENABLED: 'false' } },
@@ -280,17 +295,36 @@ async function workload() {
             });
             try {
                 await hooks.prompt('ses_actual', 'msg_actual', 'Inspect the isolated fixture');
-                for (let tool = 0; tool < 40; tool++) await hooks.beforeTool('ses_actual');
+                for (let tool = 0; tool < 40; tool++) await hooks.tool('ses_actual');
                 await hooks.event('session.execution.succeeded', { sessionID: 'ses_actual' });
             } finally { await hooks.dispose(); }
             assert.equal(timers.size, 0);
-            return { cli_binary: binary, cli_invocations: calls, heartbeat_cli_calls: heartbeats, context_cli_calls: contexts,
+            return { cli_binary: binary, cli_invocations: calls, setup_cli_invocations: setupCalls, setup_cli_elapsed_ms: +setupElapsed.toFixed(2), native_tool_invocations: hooks.toolInvocations, requested_operation_cli_invocations: hooks.toolInvocations, tool_scope_cli_invocations: requestedToolCalls, tool_ownership_context_cli_invocations: requestedToolCalls - hooks.toolInvocations, lifecycle_cli_invocations: calls - setupCalls - requestedToolCalls, tool_scope_cli_elapsed_ms: +requestedToolElapsed.toFixed(2), lifecycle_cli_elapsed_ms: +(cliElapsed - setupElapsed - requestedToolElapsed).toFixed(2), heartbeat_cli_calls: heartbeats, context_cli_calls: contexts,
                 cli_total_elapsed_ms: +cliElapsed.toFixed(2), cpu_scope: 'parent_node_only_excludes_taskix_children',
                 isolation: 'temporary_HOME_config_vault_SQLite_no_inherited_credentials' };
         }));
         return results.filter(Boolean);
     } finally { await bridge?.close(); rmSync(root, { recursive: true, force: true }); }
 }
+
+if (process.env.OPENCODE_PERF_CHILD !== '1') test('performance host executes the registered native Taskix tool', async () => {
+    const { setupOpenCode } = await import(pathToFileURL(join(plugins, 'taskix-manager/opencode/runtime.mjs')));
+    const directory = mkdtempSync(join(tmpdir(), 'opencode-performance-contract-'));
+    const calls = [];
+    const hooks = await taskixHost(setupOpenCode, directory, {
+        runner: async (args, options) => { calls.push({ args, options }); return { result: {} }; },
+        routing: { env: {} },
+    });
+    try {
+        await hooks.prompt('ses_contract', 'msg_contract', 'Inspect context');
+        calls.length = 0;
+        await hooks.tool('ses_contract', ['context']);
+        const requested = calls.filter(call => Boolean(call.options.signal));
+        assert.equal(requested.length, 2, 'ownership lookup and requested context must both execute');
+        assert.deepEqual(requested[0].args, ['context']);
+        assert.equal(requested[0].options.executor, 'agent:opencode:ses_contract');
+    } finally { await hooks.dispose(); rmSync(directory, { recursive: true, force: true }); }
+});
 
 if (process.env.OPENCODE_PERF_CHILD === '1') {
     process.stdout.write(JSON.stringify({ fixture_contract: 'OpenCode 2.0.32 native API', node: process.version, platform: process.platform, arch: process.arch, results: await workload() }) + '\n');
@@ -305,6 +339,8 @@ if (process.env.OPENCODE_PERF_CHILD === '1') {
         if (process.env.OPENCODE_PERF_REPORT_ONLY === '1') return;
         if (process.env.OPENCODE_PERF_TASKIX_ONLY === '1') {
             assert.equal(report.results.length, 1, 'the isolated CLI scenario requires OPENCODE_PERF_TASKIX');
+            assert.equal(report.results[0].native_tool_invocations, 40);
+            assert.equal(report.results[0].tool_scope_cli_invocations, 80);
             assert.equal(report.results[0].heartbeat_cli_calls, 0, 'actual CLI verification must eliminate per-tool heartbeats');
             return;
         }
@@ -317,14 +353,20 @@ if (process.env.OPENCODE_PERF_CHILD === '1') {
         assert.ok(journal.journal_bytes < 4 * 1024 * 1024, 'checkpointing must bound journal replay bytes for admitted workload');
         assert.ok(journal.fs_write_bytes < 20 * 1024 * 1024, 'checkpoint maintenance must keep total writes within the sustained workload budget');
         assert.ok(journal.checkpoints < 200, 'checkpoint size must not retrigger checkpointing on every state update');
-        assert.ok(hooks.heartbeat_cli_calls <= 100, 'nearby native tool callbacks must share heartbeat freshness');
-        assert.ok(hooks.context_cli_calls <= 200, 'duplicate native idle events must share one ownership check per turn');
+        assert.equal(hooks.heartbeat_cli_calls, 0, 'direct native Taskix tools must not spawn heartbeat subprocesses');
+        assert.equal(hooks.native_tool_invocations, 2000);
+        assert.equal(hooks.tool_scope_cli_calls, 4000, 'all requested tools must execute the registered native tool');
+        assert.ok(hooks.lifecycle_context_cli_calls <= 200, 'duplicate native idle events must share one ownership check per turn');
         assert.equal(hooks.idle_timers, 0, 'idle native sessions must not retain renewal timers');
         assert.ok(hooks.idle_sessions_shutdown >= 36, 'inactive session retention must be bounded across 100 sessions');
         assert.equal(hooks.disposed_timers, 0);
         assert.ok(owned.owned_heartbeat_calls >= 20, 'an owned executing Task must continue renewal during native idle');
         assert.equal(owned.owned_shutdowns_before_dispose, 0, 'session trimming must preserve ownership of active Tasks');
         assert.equal(owned.retained_renewal_timers, 1, 'only the owned lease should retain background renewal');
-        if (actual) assert.equal(actual.heartbeat_cli_calls, 0, 'actual CLI verification must eliminate per-tool heartbeats');
+        if (actual) {
+            assert.equal(actual.native_tool_invocations, 40);
+            assert.equal(actual.tool_scope_cli_invocations, 80);
+            assert.equal(actual.heartbeat_cli_calls, 0, 'direct native tools must not spawn per-tool heartbeats');
+        }
     });
 }

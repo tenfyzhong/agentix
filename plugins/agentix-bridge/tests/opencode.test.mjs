@@ -717,3 +717,368 @@ test('opencode2_rejected_supported_and_native_only_forms_include_native_feedback
         ]);
     }
 });
+
+test('opencode2_history_read_does_not_consume_a_live_user_delivery_or_text', async (t) => {
+    const f = fixture(t);
+    await f.bridge.start();
+    f.rows.set('ses_one', [
+        { id: 'new_user', type: 'user', text: 'Live prompt' },
+        {
+            id: 'new_assistant',
+            type: 'assistant',
+            content: [{ type: 'text', text: 'Live response' }],
+        },
+    ]);
+    await f.bridge.history({});
+    await f.user('new_user');
+    await f.emit('session.step.started', {
+        sessionID: 'ses_one',
+        assistantMessageID: 'new_assistant',
+    });
+    await f.emit('session.text.ended', {
+        sessionID: 'ses_one',
+        assistantMessageID: 'new_assistant',
+        ordinal: 0,
+        text: 'Live response',
+    });
+    assert.equal(
+        f.events.filter((e) => e.TurnStarted?.turn_id === 'new_user').length,
+        1,
+    );
+    assert.equal(
+        f.events
+            .filter((e) => e.AgentMessageDelta)
+            .map((e) => e.AgentMessageDelta.delta)
+            .join(''),
+        'Live response',
+    );
+});
+
+test('opencode2_interaction_replay_cannot_leak_previous_session_requests_after_switch', async (t) => {
+    const f = fixture(t);
+    await f.bridge.start();
+    let release;
+    f.api.client.permission.list = () =>
+        new Promise((resolve) => {
+            release = resolve;
+        });
+    const replay = f.bridge.replayInteractions();
+    f.api.ui.router.navigate({ type: 'session', sessionID: 'ses_two' });
+    await f.bridge.refresh();
+    release([
+        {
+            id: 'old_request',
+            sessionID: 'ses_one',
+            action: 'shell',
+            resources: ['private old command'],
+        },
+    ]);
+    await replay;
+    assert.equal(f.bridge.pending.has('old_request'), false);
+    assert.equal(
+        f.events.some((e) => e.InteractionRequested?.rpc_id === 'old_request'),
+        false,
+    );
+});
+
+test('opencode2_slow_previous_route_cannot_replace_newer_session_registration', async (t) => {
+    const f = fixture(t);
+    await f.bridge.start();
+    const get = f.api.client.session.get;
+    let release;
+    f.api.client.session.get = (input) =>
+        input.sessionID === 'ses_two'
+            ? new Promise((resolve) => {
+                  release = () => get(input).then(resolve);
+              })
+            : get(input);
+    f.api.ui.router.navigate({ type: 'session', sessionID: 'ses_two' });
+    const older = f.bridge.refresh();
+    f.api.ui.router.navigate({ type: 'session', sessionID: 'ses_three' });
+    await f.bridge.refresh();
+    await release();
+    await older;
+    assert.equal(f.registration().session_id, 'ses_three');
+    assert.equal(f.bridge.session.id, 'ses_three');
+});
+
+test('opencode2_other_session_events_do_not_enter_the_native_dispatch_backlog', async (t) => {
+    const f = fixture(t);
+    await f.bridge.start();
+    let calls = 0;
+    const event = f.bridge.event.bind(f.bridge);
+    f.bridge.event = (frame) => {
+        calls++;
+        return event(frame);
+    };
+    const dispatch = f.listeners.get('session.text.ended');
+    for (let i = 0; i < 100; i++)
+        dispatch({
+            type: 'session.text.ended',
+            data: {
+                sessionID: 'ses_two',
+                assistantMessageID: 'other',
+                ordinal: i,
+                text: 'x'.repeat(1024 * 1024),
+            },
+        });
+    await f.bridge.events;
+    assert.equal(
+        calls,
+        0,
+        'foreign event payloads must be filtered before cloning and queuing',
+    );
+});
+
+test('opencode2_busy_reconnect_restores_a_native_turn_during_recoverable_step_failure', async (t) => {
+    const f = fixture(t);
+    f.api.data.session.status = () => 'running';
+    f.rows.set('ses_one', [
+        { id: 'retry_user', type: 'user', text: 'Retry' },
+        {
+            id: 'failed_step',
+            type: 'assistant',
+            error: { type: 'provider.rate_limit', message: 'Retrying' },
+            content: [],
+        },
+    ]);
+    await f.bridge.start();
+    assert.equal(f.bridge.turn, 'retry_user');
+    await f.emit('session.step.started', {
+        sessionID: 'ses_one',
+        assistantMessageID: 'retry_step',
+    });
+    await f.emit('session.text.delta', {
+        sessionID: 'ses_one',
+        assistantMessageID: 'retry_step',
+        ordinal: 0,
+        delta: 'Recovered',
+    });
+    assert.equal(f.events.at(-1).AgentMessageDelta.turn_id, 'retry_user');
+    f.rows.get('ses_one').push(
+        {
+            id: 'retry_step',
+            type: 'assistant',
+            content: [{ type: 'text', text: 'Recovered' }],
+        },
+        { id: 'retry_idle', type: 'idle', outcome: 'succeeded' },
+    );
+    await f.emit('session.execution.succeeded', { sessionID: 'ses_one' });
+    assert.equal(
+        f.events.find((e) => e.TurnCompleted).TurnCompleted.status,
+        'completed',
+    );
+});
+
+test('opencode2_version_gate_rejects_prerelease_and_malformed_versions', async (t) => {
+    for (const version of [
+        '2.0.32-dev',
+        '2.0.32.4',
+        'garbagev2.0.32',
+        'v2.0.32',
+        '2.0',
+        '1.99.99',
+        '2.0.31',
+        '18446744073709551616.0.0',
+    ]) {
+        const f = fixture(t);
+        f.api.app.version = version;
+        await assert.rejects(
+            f.bridge.start(),
+            /requires OpenCode 2\.0\.32/,
+            version,
+        );
+    }
+});
+
+test('opencode2_version_gate_accepts_stable_host_and_cli_version_formats', async (t) => {
+    for (const version of ['2.0.32', 'opencode v2.0.32', ' 2.1.0\n', '3.0.0']) {
+        const f = fixture(t);
+        f.api.app.version = version;
+        await f.bridge.start();
+        assert.equal(f.registration().session_id, 'ses_one', version);
+    }
+});
+
+test('opencode2_form_representability_preserves_hidden_defaults_and_terminal_fallback', async (t) => {
+    const cases = [
+        { name: 'plain', field: { type: 'string' }, supported: true },
+        {
+            name: 'conditional',
+            field: {
+                type: 'string',
+                when: [{ field: 'other', equals: 'yes' }],
+            },
+        },
+        {
+            name: 'hidden_default',
+            field: {
+                type: 'integer',
+                hidden: true,
+                required: true,
+                default: 7,
+            },
+            supported: true,
+            answer: { value: 7 },
+        },
+        {
+            name: 'hidden_required',
+            field: { type: 'integer', hidden: true, required: true },
+        },
+        {
+            name: 'hidden_optional',
+            field: { type: 'integer', hidden: true },
+            supported: true,
+            answer: {},
+        },
+        {
+            name: 'duplicate_labels',
+            field: {
+                type: 'string',
+                options: [
+                    { label: 'Same', value: 'a' },
+                    { label: 'Same', value: 'b' },
+                ],
+            },
+        },
+        { name: 'minimum_items', field: { type: 'multiselect', minItems: 1 } },
+        { name: 'maximum_items', field: { type: 'multiselect', maxItems: 2 } },
+    ];
+    const f = fixture(t);
+    await f.bridge.start();
+    for (const row of cases) {
+        const field = { key: 'value', ...row.field };
+        await f.emit('form.created', {
+            form: {
+                id: row.name,
+                sessionID: 'ses_one',
+                title: row.name,
+                fields: [field],
+            },
+        });
+        const card = f.events.at(-1).InteractionRequested;
+        assert.equal(
+            f.bridge.pending.get(row.name).supported,
+            Boolean(row.supported),
+            row.name,
+        );
+        if (row.supported) {
+            assert.equal(
+                card.payload.questions.length,
+                field.hidden ? 0 : 1,
+                row.name,
+            );
+            await f.bridge.command('interaction', {
+                rpc_id: row.name,
+                response: { answers: { value: { answers: ['Response'] } } },
+            });
+            assert.deepEqual(
+                f.calls.at(-1),
+                [
+                    'form',
+                    {
+                        sessionID: 'ses_one',
+                        formID: row.name,
+                        answer: row.answer ?? { value: 'Response' },
+                    },
+                ],
+                row.name,
+            );
+        } else {
+            assert.match(card.detail, /native terminal/, row.name);
+            await assert.rejects(
+                f.bridge.command('interaction', {
+                    rpc_id: row.name,
+                    response: { answers: { value: { answers: ['Response'] } } },
+                }),
+                /terminal/,
+                row.name,
+            );
+            await f.bridge.command('interaction', {
+                rpc_id: row.name,
+                response: { decision: 'reject' },
+            });
+            assert.deepEqual(
+                f.calls.at(-1),
+                [
+                    'cancel',
+                    {
+                        sessionID: 'ses_one',
+                        formID: row.name,
+                        message: 'Rejected by user from Agentix.',
+                    },
+                ],
+                row.name,
+            );
+        }
+    }
+});
+
+test('opencode2_tool_dispatch_snapshots_only_consumed_fields_without_reading_large_payloads', async (t) => {
+    const f = fixture(t);
+    await f.bridge.start();
+    await f.user('tool_user');
+    await f.emit('session.step.started', {
+        sessionID: 'ses_one',
+        assistantMessageID: 'tool_assistant',
+    });
+    const snapshots = [];
+    const dispatch = f.bridge.event.bind(f.bridge);
+    f.bridge.event = (snapshot) => {
+        snapshots.push(snapshot);
+        return dispatch(snapshot);
+    };
+    for (const type of [
+        'session.tool.input.started',
+        'session.tool.called',
+        'session.tool.success',
+        'session.tool.failed',
+    ]) {
+        const data = {
+            sessionID: 'ses_one',
+            assistantMessageID: 'tool_assistant',
+            id: type,
+            name: 'shell',
+            metadata: { title: 'Original title' },
+        };
+        for (const key of ['input', 'output', 'error']) {
+            Object.defineProperty(data, key, {
+                enumerable: true,
+                get() {
+                    throw new Error('Unused tool payload was read: ' + key);
+                },
+            });
+        }
+        Object.defineProperty(data.metadata, 'unused', {
+            enumerable: true,
+            get() {
+                throw new Error('Unused tool metadata was read');
+            },
+        });
+        f.listeners.get(type)({ type, data });
+        data.name = 'mutated';
+        data.metadata.title = 'mutated';
+    }
+    await f.bridge.events;
+    assert.equal(snapshots.length, 4);
+    for (const snapshot of snapshots) {
+        assert.deepEqual(Object.keys(snapshot.data).sort(), [
+            'assistantMessageID',
+            'id',
+            'metadata',
+            'name',
+            'sessionID',
+        ]);
+        assert.equal(snapshot.data.name, 'shell');
+        assert.deepEqual(snapshot.data.metadata, { title: 'Original title' });
+    }
+    assert.equal(
+        f.events.filter((event) => event.ItemStarted?.kind === 'tool').length,
+        2,
+    );
+    assert.equal(
+        f.events.filter((event) => event.ItemCompleted?.item.kind === 'tool')
+            .length,
+        2,
+    );
+});

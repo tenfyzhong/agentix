@@ -9,6 +9,9 @@ import {
     chmod,
     realpath,
     cp,
+    stat,
+    symlink,
+    readlink,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -159,6 +162,76 @@ test("opencode_rejects_invalid_config_before_replacing_installation", async (t) 
         "not JSON",
     );
 });
+
+for (const action of ["install", "remove"]) {
+    test(`opencode_${action}_restores_package_and_all_configs_when_publication_fails`, async (t) => {
+        const f = await fixture(t);
+        const installed = f.run("install", "local");
+        assert.equal(installed.status, 0, installed.stderr);
+        const marker = join(f.config, ".agentix-plugin", "previous-install");
+        await writeFile(marker, "keep installed package");
+        // Ensure the first config also changes before the second write fails.
+        if (action === "install") {
+            await writeFile(join(f.config, "cli.json"), '{"plugins":[],"theme":"fixture"}\n');
+        }
+        const before = await Promise.all(
+            ["cli.json", "opencode.json"].map((name) => readFile(join(f.config, name), "utf8")),
+        );
+        const result = f.runWithEnv({
+            NODE_OPTIONS: `--import=${new URL("./fixtures/opencode-install-fault.mjs", import.meta.url).href}`,
+            OPENCODE_TEST_FAIL_RENAME: join(f.config, "opencode.json"),
+        }, action, "local");
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /Fixture config publication failed/);
+        assert.equal(await readFile(marker, "utf8"), "keep installed package");
+        assert.deepEqual(await Promise.all(
+            ["cli.json", "opencode.json"].map((name) => readFile(join(f.config, name), "utf8")),
+        ), before);
+    });
+}
+
+test("opencode_failed_first_install_removes_new_configs_and_package", async (t) => {
+    const f = await fixture(t);
+    const result = f.runWithEnv({
+        NODE_OPTIONS: `--import=${new URL("./fixtures/opencode-install-fault.mjs", import.meta.url).href}`,
+        OPENCODE_TEST_FAIL_RENAME: join(f.config, "opencode.json"),
+    }, "install", "local");
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Fixture config publication failed/);
+    for (const path of ["cli.json", "opencode.json", ".agentix-plugin/package.json"])
+        await assert.rejects(readFile(join(f.config, path)), { code: "ENOENT" });
+});
+
+test("opencode_config_updates_preserve_restrictive_file_permissions", { skip: process.platform === "win32" }, async (t) => {
+    const f = await fixture(t);
+    const path = join(f.config, "opencode.json");
+    await writeFile(path, "{}\n", { mode: 0o600 });
+    for (const action of ["install", "remove"]) {
+        const result = f.run(action, "local");
+        assert.equal(result.status, 0, result.stderr);
+        assert.equal((await stat(path)).mode & 0o777, 0o600);
+    }
+});
+
+for (const relative of [false, true]) {
+    test(`opencode_failed_update_preserves_${relative ? "relative" : "absolute"}_config_symlinks`, { skip: process.platform === "win32" }, async (t) => {
+        const f = await fixture(t);
+        const original = '{"plugins":[],"theme":"original"}\n';
+        const target = join(f.config, "dotfile.json");
+        const link = relative ? "dotfile.json" : target;
+        await writeFile(target, original);
+        await symlink(link, join(f.config, "cli.json"));
+        const result = f.runWithEnv({
+            NODE_OPTIONS: `--import=${new URL("./fixtures/opencode-install-fault.mjs", import.meta.url).href}`,
+            OPENCODE_TEST_FAIL_RENAME: join(f.config, "opencode.json"),
+        }, "install", "local");
+        assert.notEqual(result.status, 0);
+        assert.match(result.stderr, /Fixture config publication failed/);
+        assert.equal(await readFile(target, "utf8"), original);
+        assert.equal(await readFile(join(f.config, "cli.json"), "utf8"), original);
+        assert.equal(await readlink(join(f.config, "cli.json")), link);
+    });
+}
 
 test(
     "native_opencode_loads_installed_server_over_tcp_and_sends_taskix_schema",

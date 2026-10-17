@@ -73,7 +73,13 @@ Taskix context. Discussion provenance uses the delivered native inbox/user ID.
 Minimal active ownership/context state is saved in native plugin storage for
 restart and compacted-history recovery. Cleanup aborts event consumption and
 stops lease timers. Native execution terminal events settle promoted turns;
-individual model/tool steps do not.
+individual model/tool steps and assistant step errors do not. Cleanup preserves
+active source/context for native continuation rather than recording a completed
+reply. Failed activation can retry with the same native source ID.
+
+Dispatch allows sixteen outstanding event jobs globally and four per session,
+with native-stream backpressure and per-session ordering. Active work, leases and
+dispatcher work pin wrappers against the inactive-session LRU limit.
 
 Use `make plugin HOSTS=opencode SOURCE=local` or `SOURCE=main`. It configures both
 packages without third-party npm dependencies or Zod. Earlier 2.0 patches and

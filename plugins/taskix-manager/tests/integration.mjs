@@ -1220,6 +1220,7 @@ test('OpenCode native hooks use real Taskix leases and deduplicate Bridge discus
             }
         }},
     }, {
+        maxConcurrentEvents:1,
         timers:{setInterval(){return 1;},clearInterval(){}},
         routing:{env:{TASKIX_JEV_ENABLED:'false',TASKIX_MEMORY_ENABLED:'false'}},
     });

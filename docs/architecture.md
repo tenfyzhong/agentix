@@ -500,7 +500,8 @@ synthetic part stamps and heuristic compaction aliases. The canonical contract i
 `plugins/shared/opencode-turns.mjs` generates self-contained copies for both
 packages; `node scripts/generate-opencode-turns.mjs --check` guards drift. Prompt
 preparation/admission does not replace active Taskix ownership; native delivery
-activates it. Execution terminal events settle promoted turns. Taskix saves
+activates it. Execution terminal events settle promoted turns; an assistant step
+error alone does not. Taskix saves
 minimal active identity/context in native plugin storage for compaction/restart
 recovery. Delivery queues and receipts stay in an Agentix sidecar journal.
 
@@ -510,9 +511,9 @@ separate from that wire version. The tested host baseline is 2.0.32; earlier pat
 are rejected and later API changes need compatibility testing. See
 [OpenCode protocol](host-protocol.md#opencode) for lifecycle and capability limits.
 
-OpenCode projection state has explicit bounds: 4,096 message/alias metadata
-entries, 8,192 parts and 8 MiB of retained part text. Active/compaction identities
-remain pinned where needed. History reads fetch at most twenty pages of 200 native
+OpenCode metadata/alias caches target 4,096 entries with active identity pinning.
+The part-text cache has independent bounds of 8,192 entries / 8 MiB; active text
+is not pinned against eviction. History reads fetch at most twenty pages of 200 native
 messages within a five-second total deadline. Queued remote work is limited to
 128 prompts / 8 MiB, with 256 KiB per prompt. The sidecar checkpoints after
 4,096 delta records or 1 MiB of deltas. Hot receipts retain at most 2,048 entries /
@@ -525,3 +526,15 @@ stop lease timers and refresh ownership from context; wrappers with active owned
 leases renew them and are not evicted to meet the idle limit. See
 [performance](performance.md#opencode-working-set-and-taskix-overhead) for measured
 latency and write-cost tradeoffs.
+
+Session-incarnation fences reject stale asynchronous history, interaction replay
+and route results. Bridge filtering excludes foreign sessions and unused tool
+payloads before queueing. Selected-session event count remains uncapped during
+bounded SDK waits, so cache limits are not an end-to-end memory ceiling.
+
+Taskix dispatch has a sixteen-job global limit and four-job per-session limit,
+with native-stream backpressure and ordered work within each session. It pins
+wrappers with active work, leases or dispatcher work. Retryable activation retains
+native source identity; cleanup preserves continuation context without recording
+a completed reply. The event pool bounds queued plugin work, not native history
+or external provider memory.

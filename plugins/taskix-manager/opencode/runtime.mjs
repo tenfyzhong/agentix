@@ -87,7 +87,10 @@ export async function setupOpenCode(input, options = {}) {
         return sessions.get(id);
     }
     function serialized(state, work) {
-        const result = state.chain.then(work);
+        state.work = (state.work ?? 0) + 1;
+        const result = state.chain.then(work).finally(() => {
+            state.work--;
+        });
         state.chain = result.catch(() => {});
         return result;
     }
@@ -95,12 +98,20 @@ export async function setupOpenCode(input, options = {}) {
         let idle = 0;
         for (const ready of sessions.values()) {
             const state = await ready;
-            if (!state.turns.size && !state.ownedLease) idle++;
+            // Heartbeat may have observed an external release since settlement.
+            // Read the extension's local ownership cache, without another CLI.
+            state.ownedLease = state.handlers.get('lease_owned')({}, state.ctx);
+            if (!state.turns.size && !state.ownedLease && !state.work) idle++;
         }
         for (const [id, ready] of sessions) {
             if (idle <= (options.maxIdleSessions ?? 64)) break;
             const state = await ready;
-            if (id === current || state.turns.size || state.ownedLease)
+            if (
+                id === current ||
+                state.turns.size ||
+                state.ownedLease ||
+                state.work
+            )
                 continue;
             await state.handlers.get('session_shutdown')({}, state.ctx);
             sessions.delete(id);
@@ -209,20 +220,30 @@ export async function setupOpenCode(input, options = {}) {
     async function activate(state, id, fallback) {
         const text = state.pending.get(id)?.text ?? fallback;
         if (text === undefined || state.seen.has(id)) return;
-        forgetPending(state, id);
-        state.seen.add(id);
-        while (state.seen.size > 4096)
-            state.seen.delete(state.seen.values().next().value);
-        state.native.user(id);
-        state.current = id;
-        state.turns.set(id, text);
         await state.handlers.get('agent_start')({}, state.ctx);
         const result = await state.handlers.get('before_agent_start')(
             { prompt: text, turnId: id },
             state.ctx,
         );
+        const previous = { current: state.current, context: state.context };
+        state.current = id;
+        state.turns.set(id, text);
         state.context = `Task session: ${state.ctx.sessionManager.getSessionId()}. Use the taskix-manager skill for tracked work.\n${result.message.content}`;
-        await save(state);
+        try {
+            await save(state);
+        } catch (error) {
+            state.turns.delete(id);
+            state.current = previous.current;
+            state.context = previous.context;
+            throw error;
+        }
+        // A failed route or storage write must remain retryable. Mark the
+        // native prompt consumed only after both operations have succeeded.
+        state.native.user(id);
+        state.seen.add(id);
+        while (state.seen.size > 4096)
+            state.seen.delete(state.seen.values().next().value);
+        forgetPending(state, id);
     }
     async function reconcile(state, delivered) {
         const rows = await input.session.context({
@@ -294,7 +315,10 @@ export async function setupOpenCode(input, options = {}) {
                 frame.type === 'session.execution.failed'
             )
                 await settle(state);
-            else if (frame.type === 'session.execution.interrupted')
+            else if (
+                frame.type === 'session.execution.interrupted' &&
+                data.reason !== 'shutdown'
+            )
                 await settle(state, true);
             else if (frame.type === 'session.deleted') {
                 try {
@@ -382,20 +406,72 @@ export async function setupOpenCode(input, options = {}) {
             },
         }),
     );
+    const eventLimit = Math.max(1, options.maxConcurrentEvents ?? 16);
+    const sessionEventLimit = Math.max(1, options.maxSessionEvents ?? 4);
+    const inflight = new Set(),
+        sessionEvents = new Map();
+    // There is one serial event-stream consumer, hence at most one capacity
+    // waiter. Consume its resolver on every wake; never accumulate Promise.race
+    // reactions on a long-lived abort signal or a slow accepted operation.
+    let capacityWaiter;
+    const notifyCapacity = () => {
+        const resolve = capacityWaiter;
+        capacityWaiter = undefined;
+        resolve?.();
+    };
+    controller.signal.addEventListener('abort', notifyCapacity, { once: true });
+    async function dispatch(frame) {
+        // A single-worker mode is also useful for deterministic host tests.
+        if (eventLimit === 1) {
+            try {
+                await event(frame);
+            } catch (error) {
+                report(error);
+            }
+            return;
+        }
+        const id = frame.data?.sessionID;
+        let group = sessionEvents.get(id);
+        if (!group) {
+            group = new Set();
+            sessionEvents.set(id, group);
+        }
+        while (inflight.size >= eventLimit || group.size >= sessionEventLimit) {
+            await new Promise((resolve) => {
+                capacityWaiter = resolve;
+            });
+            if (controller.signal.aborted) return;
+        }
+        if (controller.signal.aborted) return;
+        // A previous task may have removed the now-empty group while this
+        // dispatcher was waiting for capacity. Reattach it before admission.
+        sessionEvents.set(id, group);
+        const work = event(frame)
+            .catch(report)
+            .finally(() => {
+                inflight.delete(work);
+                group.delete(work);
+                if (!group.size && sessionEvents.get(id) === group)
+                    sessionEvents.delete(id);
+                notifyCapacity();
+            });
+        inflight.add(work);
+        group.add(work);
+    }
     const subscription = (async () => {
         try {
             for await (const frame of input.event.subscribe({
                 signal: controller.signal,
             })) {
                 if (controller.signal.aborted) break;
-                try {
-                    await event(frame);
-                } catch (error) {
-                    report(error);
-                }
+                await dispatch(frame);
             }
         } catch (error) {
             if (!controller.signal.aborted) report(error);
+        } finally {
+            // Backpressure limits accepted work globally and per session.
+            // At a sustained flood, the shared native stream waits at capacity.
+            await Promise.allSettled(inflight);
         }
     })();
     return async () => {
@@ -406,11 +482,10 @@ export async function setupOpenCode(input, options = {}) {
             [...sessions.values()].map(async (ready) => {
                 const state = await ready;
                 await state.chain;
-                try {
-                    await settle(state, true);
-                } finally {
-                    await state.handlers.get('session_shutdown')({}, state.ctx);
-                }
+                // Plugin shutdown is not a native terminal reply. Preserve
+                // the active source record for a resumed execution, while
+                // releasing this process's Taskix lease and renewal timer.
+                await state.handlers.get('session_shutdown')({}, state.ctx);
             }),
         );
         sessions.clear();

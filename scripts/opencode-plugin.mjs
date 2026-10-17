@@ -1,5 +1,6 @@
 import {
     cp,
+    copyFile,
     mkdir,
     mkdtemp,
     readFile,
@@ -9,7 +10,7 @@ import {
 } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const config =
@@ -147,71 +148,128 @@ const updates = [
     )),
 ];
 await mkdir(config, { recursive: true });
-if (action === "install") {
-    const temporary = await mkdtemp(join(tmpdir(), "agentix-opencode-"));
-    try {
-        let repository = fileURLToPath(new URL("../", import.meta.url));
-        if (source === "main") {
-            repository = join(temporary, "repository");
-            execFileSync(
-                "git",
-                [
-                    "clone",
-                    "--depth",
-                    "1",
-                    "--branch",
-                    "main",
-                    "https://github.com/tenfyzhong/agentix.git",
-                    repository,
-                ],
-                { stdio: "inherit" },
-            );
-        }
-        const stage = join(temporary, "package");
-        await mkdir(stage);
-        for (const path of [
-            "plugins/taskix-manager",
-            "plugins/agentix-bridge",
-        ]) {
-            await cp(join(repository, path), join(stage, path), {
-                recursive: true,
-                filter: (path) =>
-                    !/[\\/](node_modules|tests)([\\/]|$)/.test(path),
-            });
-        }
-        // Native V2 local directories resolve literal index/tui files, while named
-        // npm packages resolve exports. Keep both install paths on the same modules.
-        await writeFile(join(stage,"plugins/taskix-manager/index.js"), "export { default } from './opencode/server.mjs';\n");
-        await writeFile(join(stage,"plugins/agentix-bridge/tui.js"), "export { default } from './opencode/tui.mjs';\n");
-        const pkg = JSON.parse(
-            await readFile(join(repository, "package.json"), "utf8"),
-        );
-        delete pkg.workspaces;
-        delete pkg.devDependencies;
-        await writeFile(
-            join(stage, "package.json"),
-            JSON.stringify(pkg, null, 2) + "\n",
-        );
-        // Stage beside the destination so rename remains atomic across filesystems.
-        const pending = destination + ".new";
-        await rm(pending, { recursive: true, force: true });
-        await cp(stage, pending, { recursive: true });
-        await rm(destination + ".old", { recursive: true, force: true });
+const transaction = await mkdtemp(join(config, ".agentix-install-"));
+const previous = join(transaction, "previous-package");
+const committed = [];
+let movedPackage = false;
+let publishedPackage = false;
+let keepRecovery = false;
+try {
+    // Prepare every config and its rollback copy before changing the installation.
+    for (const [index, update] of updates.entries()) {
+        update.staged = join(transaction, `config-${index}`);
+        update.backup = join(transaction, `backup-${index}`);
         try {
-            await rename(destination, destination + ".old");
+            await cp(update.path, update.backup, { verbatimSymlinks: true });
+            // Staging must never write through a symlink into the live config.
+            await copyFile(update.path, update.staged);
+        } catch (error) {
+            if (error.code !== "ENOENT") throw error;
+            update.backup = undefined;
+        }
+        await writeFile(update.staged, update.text);
+    }
+    if (action === "install") {
+        const temporary = await mkdtemp(join(tmpdir(), "agentix-opencode-"));
+        try {
+            let repository = fileURLToPath(new URL("../", import.meta.url));
+            if (source === "main") {
+                repository = join(temporary, "repository");
+                execFileSync(
+                    "git",
+                    [
+                        "clone",
+                        "--depth",
+                        "1",
+                        "--branch",
+                        "main",
+                        "https://github.com/tenfyzhong/agentix.git",
+                        repository,
+                    ],
+                    { stdio: "inherit" },
+                );
+            }
+            const stage = join(transaction, "package");
+            await mkdir(stage);
+            for (const path of [
+                "plugins/taskix-manager",
+                "plugins/agentix-bridge",
+            ]) {
+                await cp(join(repository, path), join(stage, path), {
+                    recursive: true,
+                    filter: (path) =>
+                        !/[\\/](node_modules|tests)([\\/]|$)/.test(path),
+                });
+            }
+            // Native V2 local directories resolve literal index/tui files, while named
+            // npm packages resolve exports. Keep both install paths on the same modules.
+            await writeFile(
+                join(stage, "plugins/taskix-manager/index.js"),
+                "export { default } from './opencode/server.mjs';\n",
+            );
+            await writeFile(
+                join(stage, "plugins/agentix-bridge/tui.js"),
+                "export { default } from './opencode/tui.mjs';\n",
+            );
+            const pkg = JSON.parse(
+                await readFile(join(repository, "package.json"), "utf8"),
+            );
+            delete pkg.workspaces;
+            delete pkg.devDependencies;
+            await writeFile(
+                join(stage, "package.json"),
+                JSON.stringify(pkg, null, 2) + "\n",
+            );
+            // Keep the previous package until all config publication succeeds.
+            try {
+                await rename(destination, previous);
+                movedPackage = true;
+            } catch (error) {
+                if (error.code !== "ENOENT") throw error;
+            }
+            await rename(stage, destination);
+            publishedPackage = true;
+        } finally {
+            await rm(temporary, { recursive: true, force: true });
+        }
+    }
+    for (const update of updates) {
+        await rename(update.staged, update.path);
+        committed.push(update);
+    }
+    if (action === "remove") {
+        try {
+            await rename(destination, previous);
+            movedPackage = true;
         } catch (error) {
             if (error.code !== "ENOENT") throw error;
         }
-        await rename(pending, destination);
-        await rm(destination + ".old", { recursive: true, force: true });
-    } finally {
-        await rm(temporary, { recursive: true, force: true });
     }
+} catch (error) {
+    const failures = [];
+    for (const update of committed.reverse()) {
+        try {
+            if (update.backup) await rename(update.backup, update.path);
+            else await rm(update.path, { force: true });
+        } catch (rollback) {
+            failures.push(rollback);
+        }
+    }
+    try {
+        if (publishedPackage)
+            await rm(destination, { recursive: true, force: true });
+        if (movedPackage) await rename(previous, destination);
+    } catch (rollback) {
+        failures.push(rollback);
+    }
+    if (failures.length) {
+        keepRecovery = true;
+        throw new AggregateError(
+            [error, ...failures],
+            `OpenCode installation rollback failed; recovery files remain at ${transaction}`,
+        );
+    }
+    throw error;
+} finally {
+    if (!keepRecovery) await rm(transaction, { recursive: true, force: true });
 }
-for (const update of updates) {
-    await mkdir(dirname(update.path), { recursive: true });
-    await writeFile(update.path + ".agentix-tmp", update.text);
-    await rename(update.path + ".agentix-tmp", update.path);
-}
-if (action === "remove")
-    await rm(destination, { recursive: true, force: true });

@@ -342,12 +342,14 @@ Node 26.9.0 give these medians. [Raw samples](benchmarks/opencode-audit.json)
 record each run. The baseline is a frozen copy of the prior uncommitted OpenCode
 implementation, not `main` (which had no OpenCode backend). That frozen checkout
 is not a published commit; the raw samples preserve its measurements, while the
-commands above reproduce the current workload. The paired snapshot predates the final prompt-byte/media-retention
-repair; current harness runs verify the updated limits separately:
+commands above run the corrected current 2.x fixture and do not reproduce that
+unpublished 1.x baseline. These historical callbacks are host hook notifications,
+not forty requested Taskix tool executions. The paired snapshot also predates the
+prompt-byte/media-retention repair:
 
 | Workload | Before | After | Scope |
 | --- | ---: | ---: | --- |
-| Native tool phase elapsed time | 767.33 ms | 204.06 ms | 40 native tool callbacks plus initialization/bootstrap |
+| Historical hook phase elapsed time | 767.33 ms | 204.06 ms | 40 host hook callbacks plus initialization/bootstrap; not actual requested tool commands |
 | Cumulative Taskix child elapsed time | 756.68 ms | 196.41 ms | Time awaiting actual CLI subprocesses |
 | Actual Taskix CLI calls | 47 | 8 | Per-tool heartbeats: 40 to 0; context calls: 1 to 2 |
 | Parent Node CPU | 66.51 ms | 22.40 ms | Excludes Taskix child CPU |
@@ -357,16 +359,17 @@ repair; current harness runs verify the updated limits separately:
 | Queue stress filesystem writes | 6.77 MB | 18.66 MB | After path creates seven checkpoints |
 | Synthetic sequence peak RSS | 153.14 MiB | 114.83 MiB | Cumulative process peak across stress phases |
 
-The actual tool path reduces subprocess overhead; working-set limits reduce
-retained memory. Checkpointing and hash-addressed receipt archives add write cost and
+The historical hook path reduces heartbeat subprocess overhead; its measurements
+do not establish the cost of executing forty Taskix commands. Checkpointing and
+hash-addressed receipt archives add write cost and
 make the synthetic queue phase slower. These results do not establish an overall
 zero-regression claim or predict provider/IM latency. Warm filesystem state,
 process startup and workload shape affect the samples; parent CPU/RSS do not
 include child-process resource use.
 
-The retained bridge metadata and aliases are bounded at 4,096 entries, and part
-state at 8,192 parts / 8 MiB of text, with active identities pinned. History reads
-have a twenty-page / 200-message page bound and a five-second total deadline.
+Bridge metadata/alias caches target 4,096 entries with active identity pinning.
+The part-text cache retains at most 8,192 entries / 8 MiB and evicts old entries
+without active-text pinning. History reads have a twenty-page / 200-message page bound and a five-second total deadline.
 Queue admission is 128 prompts / 8 MiB, with 256 KiB per prompt. Checkpoints
 trigger after 4,096 delta records or 1 MiB of deltas, independently of checkpoint
 size. Hot receipts retain 2,048 entries / 1 MiB except active pinned work; older
@@ -385,29 +388,48 @@ OpenCode 2.x uses bounded ID-only turn associations rather than the historical
 prompt-fingerprint and user-part caches. Native plugin storage retains minimal
 active Taskix context/ownership for compacted-history recovery.
 
-### OpenCode 2.0.32 current measurements
+### OpenCode 2.0.32 corrected current measurements
 
-[Three current-only full and actual-CLI samples](benchmarks/opencode-2.0.32.json)
-use Node 26.9.0 on macOS ARM64 and fixtures matching the 2.0.32 native API. There
-is no paired 2.x baseline. These measure the plugin Node process and, separately,
-actual Taskix CLI invocation time in isolated state. They do not profile the
-OpenCode TUI or provider, and Node CPU/RSS excludes child processes.
+[Three corrected full and actual-CLI samples](benchmarks/opencode-2.0.32-review.json)
+use Node 26.9.0 on macOS ARM64 with source hashes unchanged across all six runs.
+The fixture directly invokes the registered native Taskix tool forty times with
+`args: ["context"]` and verifies forty requested CLI calls. It uses isolated
+Taskix state, with Jev and memory disabled. There is no paired 2.x baseline.
+
+The [earlier 2.x dataset](benchmarks/opencode-2.0.32.json) is retained as historical
+audit evidence: its forty old-hook callbacks were no-ops after the API migration.
+Its eight CLI calls measured setup/lifecycle only. The former 169.93 ms figure
+therefore does not measure forty actual tool executions and must not be compared
+to the corrected tool phase as a performance regression or improvement.
 
 | Workload | Median | Scope |
 | --- | ---: | --- |
-| 12,000 step/text events | 45.21 ms | 66.91 ms parent CPU; bounded metadata/text state |
-| 2,400-tool history | 6.77 ms | 13 SDK fixture calls |
-| 5,000 receipts / 10,000 updates | 1,854.74 ms | 1,652.67 ms CPU; seven checkpoints |
-| Queue logical filesystem writes | 18,656,608 bytes | Synchronous filesystem API bytes, not physical disk I/O |
-| Queue restore | 47.73 ms | Oldest archived delivery still deduplicates |
-| Full synthetic workload peak RSS | 126.14 MiB | Parent Node process |
-| Actual Taskix CLI tool phase | 169.93 ms | 40 callbacks; eight CLI calls, zero per-tool heartbeats, two context calls |
-| Actual Taskix CLI cumulative time | 162.04 ms | Time awaiting CLI children |
-| CLI-only parent CPU / peak RSS | 19.52 ms / 52.36 MiB | Separate Node process |
+| 12,000 step/text events | 46.30 ms | Deterministic native event fixtures |
+| 2,400-tool history | 5.58 ms | 13 SDK fixture reads |
+| 5,000 receipts / 10,000 updates | 1,782.86 ms | Seven checkpoints |
+| Queue logical filesystem writes | 18,656,608 bytes | Filesystem API bytes, not physical disk I/O |
+| Queue restore | 46.63 ms | Archived oldest-delivery deduplication verified |
+| Full synthetic workload peak RSS | 130.67 MiB | Parent Node process |
+| Forty actual Taskix context tools | 1,297.24 ms | 88 CLI calls; zero per-tool heartbeats |
+| Cumulative actual CLI elapsed time | 1,287.67 ms | Time awaiting child processes |
+| CLI-only parent CPU / peak RSS | 68.16 ms / 55.02 MiB | Separate Node process |
 
-The 100-session/2,000-tool fixture retains no idle heartbeat timers; inactive
-wrappers remain LRU-bounded. A separate owned-lease fixture renews twenty times
-with one timer and preserves active ownership through session churn. Queue
-archives still grow with distinct deliveries. These results verify current
-bounds and costs without claiming zero regression or predicting IM/provider
-latency.
+The 88 CLI calls comprise two setup, six lifecycle, forty ownership-context
+checks and forty explicitly requested context commands. This preserves current
+ownership and requested behavior; it does not claim eight calls for forty actual
+tools. The 2,000-tool synthetic session fixture invokes the registered tool and
+verifies 4,000 mock tool-runner calls plus 200 lifecycle contexts (100.46 ms).
+Its deterministic acknowledgment path uses one concurrent event job; separate
+regressions exercise the production sixteen-global/four-per-session event pool.
+
+The stress fixture retains no idle heartbeat timers, while a separate owned-lease
+fixture renews twenty times with one timer. Active leases/work pin wrappers
+against inactive-session LRU eviction. Bridge selected-session event count is
+still uncapped during bounded SDK waits; unused tool payloads are excluded, but
+cache limits do not establish a total memory ceiling. Receipt archives have no
+lifetime disk quota and grow with distinct deliveries.
+
+These samples measure the plugin Node parent and actual Taskix CLI elapsed time.
+Node CPU/RSS excludes Taskix children. They do not profile native OpenCode TUI,
+provider resources or external IM latency, and establish no zero-regression or
+complete memory-bound claim.

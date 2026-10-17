@@ -499,7 +499,7 @@ Native compaction entries are separate tagged messages and do not create user
 turns. Queue admission does not activate a Taskix discussion: native inbox
 delivery does. Real user IDs remain distinct even for identical text or attachments.
 One busy execution may include several promoted or steered users; its terminal
-event settles them together. Model/tool step completion is not a turn boundary.
+event settles them together. Model/tool step completion or an assistant step error is not a turn boundary.
 An unfinished execution can survive native process exit for resume. Minimal
 Taskix ownership/context persists in native plugin storage when compaction omits
 old users from the model context.

@@ -213,7 +213,9 @@ prompts remain distinct. Admission alone does not activate queued Taskix context
 native inbox delivery does. One busy execution may promote several user prompts;
 its terminal/idle boundary settles them together. Individual model/tool steps
 do not complete a turn. Native process exit can preserve an unfinished tail for
-resume. History follows opaque native pagination cursors. A session
+resume. A failed assistant step remains active until a native execution terminal
+or idle marker; it is not itself a failed-turn boundary. History follows opaque
+native pagination cursors. A session
 change creates a fresh bridge incarnation; an ordinary resume carries no predecessor
 link. `/new` aborts active work, creates and navigates to a native session, and
 registers that replacement with the previous session ID for the IM handoff.
@@ -246,9 +248,12 @@ uncertain on reload; it is never resent automatically. Incomplete final journal
 records are truncated, while complete corrupt records fail explicitly. Sidecar
 writes do not provide a per-record power-loss durability guarantee.
 
-OpenCode working-set limits are 4,096 message/alias metadata entries and 8,192
-parts / 8 MiB retained part text, with active identities pinned. History fetches
-at most twenty 200-message pages in a five-second total deadline. Remote queue
+OpenCode metadata/alias caches target 4,096 entries, with active identity pinning.
+The separate part-text cache retains at most 8,192 entries / 8 MiB and evicts old
+entries without pinning active text. History fetches
+at most twenty 200-message pages in a five-second total deadline. A turn that
+cannot be reconstructed within this limit reports `history_unavailable` rather
+than silently returning a complete-looking partial turn. Remote queue
 admission is 128 prompts / 8 MiB and 256 KiB per prompt. The sidecar checkpoints
 after 4,096 delta records or 1 MiB of deltas; hot receipts retain 2,048 entries /
 1 MiB except pinned active work. Older receipts move to hash-addressed disk
@@ -258,3 +263,18 @@ with distinct deliveries; the limits are not a lifetime session quota.
 Taskix persists minimal active ownership/context in native plugin storage so
 compaction and process restart do not attribute a reply to a later queued prompt.
 Prompt staging is bounded and does not start a lease timer before delivery.
+
+Bridge history, interaction replay and asynchronous route changes are fenced to
+their originating session incarnation. Foreign-session events are filtered before
+queueing; selected-session tool snapshots omit unused payloads. Selected-session
+event count remains uncapped while a bounded SDK operation is waiting (normally
+five seconds), so retained-cache bounds do not establish a total memory ceiling.
+
+Taskix event dispatch uses at most sixteen outstanding jobs globally and four per
+native session. It retains per-session ordering while allowing different sessions
+to progress concurrently below those limits. At capacity, backpressure pauses
+the shared native event stream. Wrappers with active work,
+owned leases or dispatcher work are not evicted to meet the inactive-session LRU
+limit. Failed activation can retry with the same native identity. Plugin cleanup
+preserves active source/context for native continuation while releasing timers;
+it does not synthesize a completed assistant reply.

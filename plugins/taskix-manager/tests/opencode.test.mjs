@@ -15,7 +15,8 @@ function fixture(options = {}) {
         projection = [],
         store = options.store ?? new Map();
     let wake,
-        contextReads = 0;
+        contextReads = 0,
+        yielded = 0;
     const ctx = {
         location: { directory: '/work' },
         storage: {
@@ -64,6 +65,7 @@ function fixture(options = {}) {
                     const item = queue.shift();
                     if (!item) continue;
                     try {
+                        yielded++;
                         yield item.event;
                     } finally {
                         item.done();
@@ -73,6 +75,7 @@ function fixture(options = {}) {
         },
     };
     const runtimeOptions = {
+        maxConcurrentEvents: 1,
         ...options,
         runner: async (args, opts) => {
             calls.push({ args, options: opts });
@@ -115,6 +118,7 @@ function fixture(options = {}) {
         projection,
         store,
         contextReads: () => contextReads,
+        yielded: () => yielded,
         start: () => setupOpenCode(ctx, runtimeOptions),
         prompt: async (
             sessionID,
@@ -330,7 +334,7 @@ test('opencode2 idle owned timer stops after external lease release', async () =
     await cleanup();
 });
 
-test('opencode2 cleanup stops renewal even when final capture fails', async () => {
+test('opencode2 cleanup stops renewal without recording an active reply as terminal', async () => {
     let failing = false;
     const f = fixture({
             runner: async (args) => {
@@ -342,7 +346,7 @@ test('opencode2 cleanup stops renewal even when final capture fails', async () =
         cleanup = await f.start();
     await f.prompt('s', 'msg_user');
     failing = true;
-    await assert.rejects(cleanup(), /capture unavailable/);
+    await cleanup();
     assert.equal(f.timers.size, 0);
     assert.ok(f.calls.some((c) => c.args.join(' ') === 'hook session-end'));
 });
@@ -728,4 +732,417 @@ test('opencode2 Taskix uses direct native calls so CodeMode cannot alias indepen
         ['opencode:s:direct_a', 'opencode:s:direct_b', 'opencode:s:direct_a'],
     );
     await cleanup();
+});
+
+test('opencode2 retries transient delivered prompt routing before exposing model context', async () => {
+    let fail = true;
+    const f = fixture({
+            runner: async (args) => {
+                if (fail && args[0] === 'hook' && args[1] === 'record') {
+                    fail = false;
+                    throw new Error('record unavailable');
+                }
+                return { result: {} };
+            },
+        }),
+        cleanup = await f.start();
+    await f.prompt('s', 'msg_retry', { text: 'Retry routing' });
+    f.projection.push({ type: 'user', id: 'msg_retry', text: 'Retry routing' });
+    const context = { sessionID: 's', system: [] };
+    await f.hooks.get('context')(context);
+    assert.ok(context.system.some((part) => part.text.includes('msg_retry')));
+    assert.equal(
+        f.calls.filter((c) => c.args[0] === 'hook' && c.args[1] === 'record')
+            .length,
+        2,
+    );
+    await cleanup();
+});
+
+test('opencode2 retries active source persistence before exposing model context', async () => {
+    const f = fixture(),
+        cleanup = await f.start();
+    const write = f.ctx.storage.set;
+    let fail = true;
+    f.ctx.storage.set = async (...args) => {
+        if (fail) {
+            fail = false;
+            throw new Error('storage unavailable');
+        }
+        return write(...args);
+    };
+    await f.prompt('s', 'msg_retry', { text: 'Persist source' });
+    f.projection.push({
+        type: 'user',
+        id: 'msg_retry',
+        text: 'Persist source',
+    });
+    await f.hooks.get('context')({ sessionID: 's', system: [] });
+    assert.ok(f.store.has('active:s'));
+    await cleanup();
+});
+
+test('opencode2 native shutdown retains active ownership through plugin cleanup for continuation', async () => {
+    const f = fixture(),
+        cleanup = await f.start();
+    await f.prompt('s', 'msg_resume', { text: 'Continue after shutdown' });
+    await f.event('session.step.started', {
+        sessionID: 's',
+        assistantMessageID: 'msg_partial',
+    });
+    await f.event('session.text.ended', {
+        sessionID: 's',
+        assistantMessageID: 'msg_partial',
+        ordinal: 0,
+        text: 'Partial',
+    });
+    await f.event('session.execution.interrupted', {
+        sessionID: 's',
+        reason: 'shutdown',
+    });
+    assert.ok(
+        f.store.has('active:s'),
+        'Native shutdown is a continuation boundary',
+    );
+    assert.ok(!f.calls.some((c) => c.args.join(' ') === 'hook interrupt'));
+    await cleanup();
+    assert.ok(
+        f.store.has('active:s'),
+        'Plugin cleanup must preserve the continuation source',
+    );
+    assert.equal(f.timers.size, 0);
+    assert.ok(
+        !f.captures.some((c) =>
+            c.messages.some((message) => message.role === 'assistant'),
+        ),
+        'Partial shutdown output is not recorded as a completed reply',
+    );
+});
+
+async function eventually(predicate, message) {
+    const deadline = Date.now() + 1000;
+    while (Date.now() < deadline) {
+        if (predicate()) return;
+        await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    assert.ok(predicate(), message);
+}
+
+test('opencode2 default event pool lets an independent session progress past a blocked route', async () => {
+    let release,
+        fast = false;
+    const blocked = new Promise((resolve) => {
+        release = resolve;
+    });
+    const f = fixture({
+            maxConcurrentEvents: undefined,
+            runner: async (args, opts) => {
+                if (args[0] === 'hook' && args[1] === 'record') {
+                    if (opts.session === 'slow') await blocked;
+                    if (opts.session === 'fast') fast = true;
+                }
+                return { result: {} };
+            },
+        }),
+        cleanup = await f.start();
+    await f.hooks.get('prompt')({
+        sessionID: 'slow',
+        messageID: 'msg_slow',
+        prompt: { text: 'Slow' },
+        delivery: 'steer',
+    });
+    await f.hooks.get('prompt')({
+        sessionID: 'fast',
+        messageID: 'msg_fast',
+        prompt: { text: 'Fast' },
+        delivery: 'steer',
+    });
+    const slow = f.event('session.inbox.delivered', {
+        sessionID: 'slow',
+        inboxID: 'msg_slow',
+    });
+    const other = f.event('session.inbox.delivered', {
+        sessionID: 'fast',
+        inboxID: 'msg_fast',
+    });
+    try {
+        await eventually(
+            () => fast,
+            'Independent session is not blocked behind another session CLI',
+        );
+    } finally {
+        release();
+        await Promise.all([slow, other]);
+        await cleanup();
+    }
+});
+
+test('opencode2 default event pool bounds a blocked session backlog and applies backpressure', async () => {
+    let release,
+        started = false;
+    const blocked = new Promise((resolve) => {
+        release = resolve;
+    });
+    const f = fixture({
+            maxConcurrentEvents: undefined,
+            runner: async (args) => {
+                if (args[0] === 'hook' && args[1] === 'record') {
+                    started = true;
+                    await blocked;
+                }
+                return { result: {} };
+            },
+        }),
+        cleanup = await f.start();
+    await f.hooks.get('prompt')({
+        sessionID: 'slow',
+        messageID: 'msg_slow',
+        prompt: { text: 'Slow' },
+        delivery: 'steer',
+    });
+    const sends = [
+        f.event('session.inbox.delivered', {
+            sessionID: 'slow',
+            inboxID: 'msg_slow',
+        }),
+    ];
+    for (let i = 0; i < 9; i++)
+        sends.push(f.event('session.execution.started', { sessionID: 'slow' }));
+    try {
+        await eventually(
+            () => started && f.yielded() >= 5,
+            'Default four-event session capacity is filled',
+        );
+        assert.equal(
+            f.yielded(),
+            5,
+            'Only four admitted events and one native frame waiting for capacity',
+        );
+    } finally {
+        release();
+        await Promise.all(sends);
+        await cleanup();
+    }
+});
+
+test('opencode2 default event pool bounds global work and cleanup joins admitted events', async () => {
+    let release,
+        running = 0,
+        peak = 0;
+    const blocked = new Promise((resolve) => {
+        release = resolve;
+    });
+    const f = fixture({
+            maxConcurrentEvents: undefined,
+            runner: async (args) => {
+                if (args[0] === 'hook' && args[1] === 'record') {
+                    running++;
+                    peak = Math.max(peak, running);
+                    try {
+                        await blocked;
+                    } finally {
+                        running--;
+                    }
+                }
+                return { result: {} };
+            },
+        }),
+        cleanup = await f.start();
+    for (let i = 0; i < 20; i++)
+        await f.hooks.get('prompt')({
+            sessionID: 's' + i,
+            messageID: 'msg_' + i,
+            prompt: { text: 'Work' },
+            delivery: 'steer',
+        });
+    const sends = [];
+    for (let i = 0; i < 20; i++)
+        sends.push(
+            f.event('session.inbox.delivered', {
+                sessionID: 's' + i,
+                inboxID: 'msg_' + i,
+            }),
+        );
+    try {
+        await eventually(
+            () => running === 16,
+            'Sixteen independent events are admitted',
+        );
+        assert.equal(peak, 16);
+        assert.equal(f.yielded(), 17);
+    } finally {
+        release();
+        await Promise.all(sends);
+        await cleanup();
+    }
+    assert.equal(running, 0);
+    assert.equal(
+        f.store.size,
+        20,
+        'All admitted source writes finish before cleanup releases their sessions',
+    );
+    assert.equal(f.timers.size, 0);
+});
+
+test('opencode2 default parallel event pool preserves order within each native session', async () => {
+    const f = fixture({ maxConcurrentEvents: undefined }),
+        cleanup = await f.start();
+    await f.prompt('s', 'msg_user', { text: 'Ordered turn' });
+    await f.event('session.step.started', {
+        sessionID: 's',
+        assistantMessageID: 'msg_answer',
+    });
+    await f.event('session.text.delta', {
+        sessionID: 's',
+        assistantMessageID: 'msg_answer',
+        ordinal: 0,
+        delta: 'One',
+    });
+    await f.event('session.text.delta', {
+        sessionID: 's',
+        assistantMessageID: 'msg_answer',
+        ordinal: 0,
+        delta: 'Two',
+    });
+    await f.event('session.execution.succeeded', { sessionID: 's' });
+    await eventually(
+        () =>
+            f.captures.some((c) => c.messages.some((m) => m.text === 'OneTwo')),
+        'Same-session frames are captured in native order',
+    );
+    await cleanup();
+});
+
+test('opencode2 externally released idle lease no longer pins an otherwise evictable wrapper', async () => {
+    let owned = true;
+    const f = fixture({
+            maxIdleSessions: 0,
+            runner: async (args, opts) => ({
+                result:
+                    args[0] === 'context' && opts.session === 'owned' && owned
+                        ? { lease: { token: 'lease' } }
+                        : {},
+            }),
+        }),
+        cleanup = await f.start();
+    await f.prompt('owned', 'msg_owned');
+    await f.event('session.execution.succeeded', { sessionID: 'owned' });
+    owned = false;
+    await [...f.timers][0]();
+    assert.equal(f.timers.size, 0);
+    await f.hooks.get('prompt')({
+        sessionID: 'other',
+        messageID: 'msg_other',
+        prompt: { text: 'Queued' },
+        delivery: 'queue',
+    });
+    assert.ok(
+        f.calls.some(
+            (call) =>
+                call.args.join(' ') === 'hook session-end' &&
+                call.options.session === 'owned',
+        ),
+    );
+    await cleanup();
+});
+
+test('opencode2 idle eviction cannot close a session while its admitted route is running', async () => {
+    let release,
+        started = false;
+    const gate = new Promise((resolve) => {
+        release = resolve;
+    });
+    const f = fixture({
+            maxConcurrentEvents: undefined,
+            maxIdleSessions: 0,
+            runner: async (args, opts) => {
+                if (
+                    args[0] === 'hook' &&
+                    args[1] === 'record' &&
+                    opts.session === 'routing'
+                ) {
+                    started = true;
+                    await gate;
+                }
+                return { result: {} };
+            },
+        }),
+        cleanup = await f.start();
+    await f.hooks.get('prompt')({
+        sessionID: 'routing',
+        messageID: 'msg_route',
+        prompt: { text: 'Work' },
+        delivery: 'steer',
+    });
+    const admitted = f.event('session.inbox.delivered', {
+        sessionID: 'routing',
+        inboxID: 'msg_route',
+    });
+    try {
+        await eventually(
+            () => started,
+            'Route has entered its asynchronous record operation',
+        );
+        await f.hooks.get('prompt')({
+            sessionID: 'other',
+            messageID: 'msg_other',
+            prompt: { text: 'Queued' },
+            delivery: 'queue',
+        });
+        assert.ok(
+            !f.calls.some(
+                (c) =>
+                    c.args.join(' ') === 'hook session-end' &&
+                    c.options.session === 'routing',
+            ),
+        );
+    } finally {
+        release();
+        await admitted;
+        await cleanup();
+    }
+});
+
+test('opencode2 cleanup aborts a capacity wait without admitting the held native frame', async () => {
+    let release,
+        started = false;
+    const blocked = new Promise((resolve) => {
+        release = resolve;
+    });
+    const f = fixture({
+            maxConcurrentEvents: 4,
+            runner: async (args) => {
+                if (args[0] === 'hook' && args[1] === 'record' && !started) {
+                    started = true;
+                    await blocked;
+                }
+                return { result: {} };
+            },
+        }),
+        cleanup = await f.start();
+    for (let i = 0; i < 5; i++)
+        await f.hooks.get('prompt')({
+            sessionID: 's',
+            messageID: 'msg_' + i,
+            prompt: { text: 'Work ' + i },
+            delivery: 'steer',
+        });
+    for (let i = 0; i < 5; i++)
+        void f.event('session.inbox.delivered', {
+            sessionID: 's',
+            inboxID: 'msg_' + i,
+        });
+    await eventually(
+        () => started && f.yielded() === 5,
+        'Four events accepted and one frame waits for capacity',
+    );
+    const closing = cleanup();
+    await new Promise((resolve) => setImmediate(resolve));
+    release();
+    await closing;
+    assert.deepEqual(
+        f.store.get('active:s').turns.map((turn) => turn.id),
+        ['msg_0', 'msg_1', 'msg_2', 'msg_3'],
+    );
+    assert.equal(f.timers.size, 0);
 });

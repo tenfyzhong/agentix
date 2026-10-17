@@ -759,21 +759,31 @@ compaction/restart recovery, bounded failed preadmission staging and per-call
 idempotency outside Code Mode. String/multiselect forms are supported in IM;
 conditional or unsupported typed/validated forms require the terminal.
 
-The installed 2.0.32 headless integration passed locally, covering native TCP
-registration, Taskix schema/skills, attachment history and compaction identity.
-The current production Telegram-to-Engine/BridgeHub/native-TUI/Taskix chain passed
-with both tmux and rmux (two tests, 34.02 seconds), including permission replay and
-multiselect answers. The final installed, uninstrumented native TUI control suite
-also passed with tmux (20.13 seconds) and rmux (20.12 seconds): original-terminal
-isolation, permissions/forms including rejection feedback, queue/crash recovery,
-compaction, history and session replacement. A denied shell tool was not executed,
-and the native session accepted subsequent prompts.
-The default Node suite passed 777 tests with 20 opt-in skips (797 total); the six
-affected Rust crates passed 1,126 tests with 19 ignored across 55 targets. Their
-Clippy checks, formatting and generated native-contract checks also passed.
-Linux ARM64's earlier Node 24.0.0/npm 11.3.0/OpenCode 1.19.3 headless
-run (40.59 seconds) is historical 1.x evidence only. The Linux and Windows native
-2.0.32 headless jobs are wired in CI; local macOS runs do not establish their
-results or a full Linux/Windows IM/TUI chain. No fixture proves live IM account
-delivery, production-provider behavior, complete branch coverage or absence of
-all performance regressions.
+The installed 2.0.32 headless integration passed locally against the native HTTP
+server API, covering Taskix schema/skills, attachment history and compaction
+identity. It does not exercise Bridge TCP registration. The production
+Telegram-to-Engine/BridgeHub/native-TUI/Taskix chain passed with tmux and rmux,
+including permission replay and multiselect answers. The installed native TUI
+suite passed on both multiplexers: terminal isolation, permissions/forms and
+rejection feedback, queue/crash recovery, compaction, history and replacement.
+A denied shell tool was not executed and subsequent prompts still ran.
+
+Regression fixtures additionally cover stale history/route/replay results,
+foreign-session filtering, failed-step versus native terminal status, Taskix
+activation retry and continuation-source preservation, event-pool backpressure
+and active/queued-wrapper retention. Installer fault injection covers update,
+fresh install and removal failures during configuration publication, including
+regular-file modes and original symlinks. Rollback is for reported operation
+failures; it is not crash-atomic or a concurrent-installer guarantee.
+
+The focused Node/Rust checks and native contract generation/formatting checks
+passed locally. Exact test counts and CI outcomes belong to their recorded runs.
+Linux ARM64's earlier Node 24.0.0/npm 11.3.0/OpenCode 1.19.3 headless run is
+historical 1.x evidence only. Linux and Windows native 2.0.32 headless CI jobs
+exercise the HTTP server/plugin boundary; they do not establish a full native
+IM/TUI chain on those platforms. Separate native tmux/Telegram jobs run on
+Linux/macOS; Windows native TUI/IM acceptance remains unverified. Native
+Feishu/Slack closed loops and live IM
+accounts or production providers have not been accepted by these fixtures.
+No fixture proves complete branch coverage, a total memory ceiling or absence
+of all performance regressions.

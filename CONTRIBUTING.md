@@ -214,7 +214,9 @@ the Bridge TUI package in `cli.json`/`cli.jsonc`, using the native `plugins` key
 The Make target configures both entrypoints; installing a repository package
 alone does not perform that setup. Earlier 2.0 patches and OpenCode 1.x are not
 supported. The validated host baseline is 2.0.32; later API changes still require
-compatibility testing.
+compatibility testing. Reported publication failures roll back the selected
+package and configuration, preserving existing file modes and original symlinks.
+This is not crash-atomic or safe for concurrent installer invocations.
 
 OMP's marketplace CLI does not expose a branch selector. If the repository's
 default branch changes, its remote source handling must be updated accordingly.
@@ -223,8 +225,9 @@ Local marketplace paths use `./`, which OMP requires for relative paths.
 All selected host CLIs must be on PATH; missing commands, unknown hosts, an empty selection,
 or an invalid source fail before cleanup. Unselected hosts are untouched.
 
-Installation first removes the selected hosts' Agentix registrations.
-Cleanup is best-effort so absent plugins do not prevent setup. OMP also removes
+Installation first removes the selected hosts' Agentix registrations, except
+OpenCode, which retains its prior package/configuration for publication rollback.
+Other host cleanup is best-effort so absent plugins do not prevent setup. OMP also removes
 the legacy `agentix-plugins` package. Pi cleanup covers the current checkout and
 the unqualified and `@main` Git sources. If Pi still has another checkout
 registered, remove it explicitly with `pi remove /path/to/old/checkout`;
