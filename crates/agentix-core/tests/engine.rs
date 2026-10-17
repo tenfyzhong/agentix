@@ -9635,8 +9635,10 @@ async fn pending_runtime_input() -> (
         .handle_inbound(inbound("chat-a", "/attach thr_a"))
         .await
         .unwrap();
+    // The unreleased gate proves acknowledgement cannot complete. This timeout
+    // only detects a blocked runtime lane, allowing for CI database/scheduler load.
     tokio::time::timeout(
-        std::time::Duration::from_millis(250),
+        std::time::Duration::from_secs(5),
         engine.execute_work(agentix_core::EngineWork::Inbound(inbound(
             "chat-a",
             "pending runtime input",
@@ -9645,6 +9647,13 @@ async fn pending_runtime_input() -> (
     .await
     .expect("release the runtime lane before input acknowledgement")
     .unwrap();
+    assert!(
+        agent
+            .calls()
+            .iter()
+            .any(|call| call == "start:thr_a:pending runtime input"),
+        "the input must reach the blocked adapter before the runtime lane is released"
+    );
     (engine, agent, channel, gate, state)
 }
 
